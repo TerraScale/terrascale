@@ -94,14 +94,11 @@ public sealed class DemoEnvironment
         {
             builder.Services.AddSingleton<IStartupFilter, TestClientAddress>();
             builder.Services.AddSingleton(stripe);
-            builder.Services.Replace(ServiceDescriptor.Singleton<IAuthAttemptBudget>(new TestAuthAttemptBudget()));
             builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(checkoutPersistence));
             builder.Services.Replace(ServiceDescriptor.Singleton<IAuthGateway>(auth));
             builder.Services.Replace(ServiceDescriptor.Singleton<IAuthRefreshGateway>(auth));
-            builder.Services.Replace(ServiceDescriptor.Singleton<IAuthEnrollmentGateway>(auth));
             builder.Services.Replace(ServiceDescriptor.Singleton<IAuthOidcGateway>(auth));
             builder.Services.Replace(ServiceDescriptor.Singleton<IAuthLogoutGateway>(auth));
-            builder.Services.Replace(ServiceDescriptor.Singleton<IProfileIdentityGateway>(auth));
             builder.Services.Replace(ServiceDescriptor.Singleton<IPlatformRoleGateway>(auth));
             builder.Services.Replace(ServiceDescriptor.Singleton<IProjectAccessTokens>(auth));
             builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform>(workspace));
@@ -117,8 +114,10 @@ public sealed class DemoEnvironment
             configureScenario?.Invoke(builder);
         });
         app.MapGet("/__test/checkout", (string id) => Results.Redirect(stripe.Complete(id)));
-        app.MapGet("/__test/oidc", (string? state) => state is { Length: 64 } && state.All(char.IsAsciiHexDigitLower)
-            ? (IResult)Results.Redirect("/login/callback?state=" + Uri.EscapeDataString(state) + "&code=test-code")
+        // Test-only stand-in for ts-auth's hosted sign-in and sign-up pages: the journey names the
+        // account it signs in as; without one it is the default demo user.
+        app.MapGet("/__test/oidc", (string? state, string? email, string? password, string? signup) => state is { Length: 64 } && state.All(char.IsAsciiHexDigitLower)
+            ? (IResult)Results.Redirect("/login/callback?state=" + Uri.EscapeDataString(state) + "&" + auth.Authorize(email ?? "user@example.com", password, signup == "1"))
             : Results.BadRequest("Invalid test-only OIDC state."));
         app.MapGet("/__test/portal", () => Results.Content("<h1>Test-only Stripe customer portal</h1><p>The official Stripe SDK issued this portal session.</p><a href='/organization?tab=billing'>Return to billing</a>", "text/html"));
         reporting.MapRoutes(app);
@@ -144,7 +143,7 @@ sealed class TestClock : TimeProvider
     public override DateTimeOffset GetUtcNow() => now;
     public void Advance(TimeSpan delta) => now += delta;
 }
-sealed class TestAuth(Func<string, string, string, string> projectRole) : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, IAuthRefreshGateway, IAuthLogoutGateway, IProfileIdentityGateway, IPlatformRoleGateway, IProjectAccessTokens
+sealed class TestAuth(Func<string, string, string, string> projectRole) : IAuthGateway, IAuthOidcGateway, IAuthRefreshGateway, IAuthLogoutGateway, IPlatformRoleGateway, IProjectAccessTokens
 {
     private readonly TerraScale.DotNet.TerraScaleIdGenerator subjectIds = new();
     private readonly ConcurrentDictionary<string, string> passwords = new();
@@ -161,9 +160,8 @@ sealed class TestAuth(Func<string, string, string, string> projectRole) : IAuthG
     public bool Active { get; set; } = true;
     public Exception? RevokeError { get; set; }
     public Exception? ExchangeError { get; set; }
+    private readonly ConcurrentDictionary<string, SessionRecord> codes = new();
     public int SignIns { get; private set; }
-    public int Resets { get; private set; }
-    public string LastPasswordIp { get; private set; } = "";
     public void RegisterFixturePrincipal(ReferencePrincipal principal)
     {
         if (string.IsNullOrEmpty(principal.Subject) || string.IsNullOrEmpty(principal.Email) ||
@@ -202,31 +200,33 @@ sealed class TestAuth(Func<string, string, string, string> projectRole) : IAuthG
     public (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)? ResolveProjectToken(string token) =>
         projectTokens.TryGetValue(token, out var grant) && ResolveAccessToken(grant.SessionToken) is { } actor
             ? (actor.UserId, grant.OrganizationId, grant.ProjectId, grant.Scopes) : null;
-    public Task<SessionRecord> PasswordAsync(string email, string password, string ip, CancellationToken cancellationToken)
+    // The query a hosted sign-in answers the dashboard's callback with: a one-time code or access_denied.
+    public string Authorize(string email, string? password, bool signUp)
     {
-        if (string.IsNullOrWhiteSpace(ip)) throw new ArgumentException("Test password provider requires client address.");
-        LastPasswordIp = ip;
+        if (signUp && !passwords.ContainsKey(email) && email != "user@example.com")
+        {
+            passwords[email] = password ?? "test-password";
+            fixturePrincipals.GetOrAdd(email, address => new(subjectIds.NewId(), address, address, passwords[email]));
+        }
         SignIns++;
-        if (!Active || email != "user@example.com" && !passwords.ContainsKey(email) || password != passwords.GetValueOrDefault(email, "test-password")) throw new SignInRejectedException();
-        if (fixturePrincipals.TryGetValue(email, out var principal))
-            return Task.FromResult(Issue(principal.Subject, principal.Name, principal.Email));
-        return Task.FromResult(Issue(email == "user@example.com" ? "test-user" : "test-signup-" + email, email == "user@example.com" ? "Test User" : email, email));
+        if (!Active || email != "user@example.com" && !passwords.ContainsKey(email) || (password ?? passwords.GetValueOrDefault(email, "test-password")) != passwords.GetValueOrDefault(email, "test-password"))
+            return "error=access_denied";
+        var session = fixturePrincipals.TryGetValue(email, out var principal)
+            ? Issue(principal.Subject, principal.Name, principal.Email)
+            : Issue(email == "user@example.com" ? "test-user" : "test-signup-" + email, email == "user@example.com" ? "Test User" : email, email);
+        var code = "test-code-" + Guid.NewGuid().ToString("N");
+        codes[code] = session;
+        return "code=" + code;
     }
-    public Task<SessionRecord> EmailCodeAsync(string email, string code, string ip, CancellationToken cancellationToken) => code == "123456"
-        ? PasswordAsync(email, passwords.GetValueOrDefault(email, "test-password"), ip, cancellationToken) : Task.FromException<SessionRecord>(new SignInRejectedException());
-    public Task StartEmailCodeAsync(string email, string ip, CancellationToken cancellationToken) => Task.CompletedTask;
-    public Task StartPasswordResetAsync(string email, string ip, CancellationToken cancellationToken) => Task.CompletedTask;
-    public Task CompletePasswordResetAsync(string email, string code, string password, string ip, CancellationToken cancellationToken)
+    // Changing a password happens on ts-auth's hosted account page; it ends every grant of that user.
+    public void ChangePassword(string email, string password)
     {
-        if (code != "123456") throw new SignInRejectedException();
-        Resets++;
         passwords[email] = password;
         foreach (var token in tokenOwners.Where(entry => entry.Value == email).Select(entry => entry.Key))
         {
             revoked[token] = 0;
             if (tokenFamilies.TryGetValue(token, out var family)) revokedFamilies[family] = 0;
         }
-        return Task.CompletedTask;
     }
     public Task<bool> IsActiveAsync(SessionRecord session, CancellationToken cancellationToken) =>
         Task.FromResult(ResolveAccessToken(session.AccessToken) is { } identity && identity.UserId == session.UserId && identity.Email == session.Email);
@@ -258,46 +258,17 @@ sealed class TestAuth(Func<string, string, string, string> projectRole) : IAuthG
         family ??= Guid.NewGuid().ToString("N");
         var access = "test-access-" + Guid.NewGuid().ToString("N");
         var refresh = "test-refresh-" + Guid.NewGuid().ToString("N");
-        var session = new SessionRecord(subject, name, email, access, refresh, DateTimeOffset.UtcNow.AddHours(1));
+        var session = new SessionRecord(subject, name, email, access, refresh, DateTimeOffset.UtcNow.AddHours(1)) { IdToken = "test-id-token-" + family };
         tokenOwners[access] = email;
         tokenFamilies[access] = family;
         refreshGrants[refresh] = new(session, family);
         return session;
     }
     private sealed record TestRefresh(SessionRecord Session, string Family);
-    public Task<string> EndSessionUrlAsync(string dashboardOrigin, CancellationToken cancellationToken) => Task.FromResult("/login");
-    public async Task StartPasswordChangeAsync(SessionRecord session, string currentPassword, string ip, CancellationToken cancellationToken)
-    {
-        SessionRecord grant;
-        try { grant = await PasswordAsync(session.Email, currentPassword, ip, cancellationToken); }
-        catch (SignInRejectedException) { throw new AuthRequestRejectedException("Current password is incorrect.", "currentPassword"); }
-        try
-        {
-            if (grant.UserId != session.UserId) throw new AuthRequestRejectedException("Current password is incorrect.", "currentPassword");
-            await StartPasswordResetAsync(session.Email, ip, cancellationToken);
-        }
-        finally { await RevokeAsync(grant, cancellationToken); }
-    }
-    public async Task CompletePasswordChangeAsync(SessionRecord session, string code, string newPassword, string confirmPassword, string ip, CancellationToken cancellationToken)
-    {
-        if (newPassword.EnumerateRunes().Count() < 12) throw new AuthRequestRejectedException("Use at least 12 characters.", "newPassword");
-        if (System.Text.Encoding.UTF8.GetByteCount(newPassword) > 1024) throw new AuthRequestRejectedException("Use a password with 1024 bytes or fewer.", "newPassword");
-        if (newPassword != confirmPassword) throw new AuthRequestRejectedException("Passwords do not match.", "confirmPassword");
-        try { await CompletePasswordResetAsync(session.Email, code, newPassword, ip, cancellationToken); }
-        catch (SignInRejectedException) { throw new AuthRequestRejectedException("The code is incorrect or has expired.", "code"); }
-    }
-    public Task<string> SignUpAsync(string email, string password, string ip, CancellationToken cancellationToken)
-    {
-        passwords[email] = password;
-        if (email != "user@example.com") fixturePrincipals.GetOrAdd(email, address => new(subjectIds.NewId(), address, address, password));
-        return Task.FromResult("test-pending-signup");
-    }
-    public Task<SessionRecord> VerifySignUpAsync(string email, string code, string pendingToken, string ip, CancellationToken cancellationToken) => code == "123456"
-        ? PasswordAsync(email, passwords.GetValueOrDefault(email, "test-password"), ip, cancellationToken)
-        : Task.FromException<SessionRecord>(new SignInRejectedException());
+    public Task<string> EndSessionUrlAsync(string dashboardOrigin, string? idToken, CancellationToken cancellationToken) => Task.FromResult("/login");
     public Task<string> AuthorizationUrlAsync(OidcFlow flow, CancellationToken cancellationToken) => Task.FromResult("/__test/oidc?state=" + Uri.EscapeDataString(flow.State));
-    public Task<SessionRecord> ExchangeAsync(string code, OidcFlow flow, CancellationToken cancellationToken) => code == "test-code"
-        ? PasswordAsync("user@example.com", passwords.GetValueOrDefault("user@example.com", "test-password"), "127.0.0.1", cancellationToken)
+    public Task<SessionRecord> ExchangeAsync(string code, OidcFlow flow, CancellationToken cancellationToken) => codes.TryRemove(code, out var session)
+        ? Task.FromResult(session)
         : Task.FromException<SessionRecord>(new SignInRejectedException());
 }
 
@@ -1004,9 +975,4 @@ sealed class TestClientAddress(TestStripeTransport stripe) : IStartupFilter
         app.Use((context, handler) => { context.Connection.RemoteIpAddress ??= IPAddress.Loopback; stripe.SetOrigin(context.Request.Scheme + "://" + context.Request.Host); return handler(context); });
         next(app);
     };
-}
-sealed class TestAuthAttemptBudget : IAuthAttemptBudget
-{
-    public Task ReserveAsync(HttpContext http, string account, AuthBudgetKind kind, CancellationToken cancellationToken) => Task.CompletedTask;
-    public Task ForgiveAsync(HttpContext http, string account, CancellationToken cancellationToken) => Task.CompletedTask;
 }

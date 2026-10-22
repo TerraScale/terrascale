@@ -1,146 +1,110 @@
-using System.Net.Mail;
+using System.Security.Cryptography;
+using System.Text;
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Auth;
 
+// The dashboard signs in only through ts-auth's hosted pages, as a confidential
+// OIDC client: authorization code with PKCE, state and nonce.
 public static class AuthEndpoints
 {
+    public static void AddAuth(this IServiceCollection services)
+    {
+        services.AddSingleton<AuthFlows>();
+        services.AddSingleton<TsAuthGateway>();
+        services.AddSingleton<IAuthGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
+        services.AddSingleton<IAuthOidcGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
+        services.AddSingleton<IAuthRefreshGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
+        services.AddSingleton<IAuthLogoutGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
+        services.AddSingleton<IPlatformRoleGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
+        services.AddSingleton<IProjectAccessTokens>(provider => provider.GetRequiredService<TsAuthGateway>());
+        services.AddSingleton<ITsAuthPlatform>(provider => provider.GetRequiredService<TsAuthGateway>());
+    }
+
     public static void MapAuth(this WebApplication app)
     {
-        app.MapEnrollmentAuth();
-        app.MapGet("/login", (HttpContext context) => View(context, "login"));
-        app.MapGet("/login/code", (HttpContext context) => View(context, "code"));
-        app.MapGet("/reset-password", (HttpContext context) => View(context, "reset"));
-        app.MapPost("/login", (HttpContext context, IAuthGateway auth, DashboardSessions sessions) => SubmitAsync(context, auth, sessions, "login"));
-        app.MapPost("/login/code", (HttpContext context, IAuthGateway auth, DashboardSessions sessions) => SubmitAsync(context, auth, sessions, "code"));
-        app.MapPost("/login/code/verify", (HttpContext context, IAuthGateway auth, DashboardSessions sessions) => SubmitAsync(context, auth, sessions, "code-verify"));
-        app.MapPost("/reset-password", (HttpContext context, IAuthGateway auth, DashboardSessions sessions) => SubmitAsync(context, auth, sessions, "reset"));
-        app.MapPost("/reset-password/complete", (HttpContext context, IAuthGateway auth, DashboardSessions sessions) => SubmitAsync(context, auth, sessions, "reset-complete"));
-        app.MapPost("/api/v1/auth/logout", async (HttpContext context, DashboardSessions sessions, IAuthGateway auth) =>
-        {
-            if (!context.Request.HasFormContentType) return Results.BadRequest();
-            var form = await context.Request.ReadFormAsync(context.RequestAborted);
-            if (!Csrf.Validate(context, form)) return Results.StatusCode(403);
-            var session = await sessions.ReadAsync(context);
-            if (session is not null) await auth.RevokeAsync(session, context.RequestAborted);
-            await sessions.EndAsync(context);
-            var target = await context.RequestServices.GetRequiredService<IAuthLogoutGateway>().EndSessionUrlAsync(
-                $"{context.Request.Scheme}://{context.Request.Host}", context.RequestAborted);
-            return HttpRedirects.SeeOther(target);
-        });
+        app.MapGet("/login", StartAsync);
+        app.MapGet("/login/callback", CompleteAsync);
+        app.MapPost("/api/v1/auth/logout", LogoutAsync);
     }
 
-    private static RazorSlices.RazorSlice View(HttpContext context, string mode) => AuthView.Create(Page(context, mode));
-
-    private static AuthPage Page(HttpContext context, string mode)
+    // A signed-in visitor continues; everyone else goes to ts-auth's hosted sign-in.
+    private static async Task<IResult> StartAsync(HttpContext context, DashboardSessions sessions)
     {
-        var query = context.Request.Query;
-        var returnTo = query["returnTo"].ToString();
-        if (returnTo.Length == 0) returnTo = query["next"].ToString();
-        if (returnTo.Length == 0) returnTo = query["redirectTo"].ToString();
-        return new AuthPage(
-            new DocumentModel(mode.StartsWith("reset", StringComparison.Ordinal) ? "Reset password" : mode.StartsWith("code", StringComparison.Ordinal) ? "Sign in with a code" : "Sign in", DocumentModel.NonceFor(context)),
-            mode, Csrf.Token(context), Email: query["email"].ToString(), ReturnTo: Csrf.LocalRedirect(returnTo),
-            Notice: mode == "login" && query["notice"] == "password-reset" ? "Your password was changed. Sign in with your new password." : "");
+        var returnTo = Csrf.LocalRedirect(context.Request.Query["returnTo"].ToString());
+        if (await sessions.ReadAsync(context) is not null) return HttpRedirects.SeeOther(returnTo);
+        return await AuthorizeAsync(context, returnTo);
     }
 
-    private static async Task<IResult> SubmitAsync(HttpContext context, IAuthGateway auth, DashboardSessions sessions, string mode)
+    public static async Task<IResult> AuthorizeAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0)
+    {
+        try
+        {
+            var flow = await context.RequestServices.GetRequiredService<AuthFlows>().StartOidcAsync(context, returnTo, tokenName, tokenDays);
+            return Results.Redirect(await context.RequestServices.GetRequiredService<IAuthOidcGateway>().AuthorizationUrlAsync(flow, context.RequestAborted));
+        }
+        catch (Exception error) when (DependencyFailure(error, context))
+        { return Failure(context, returnTo, "Sign-in is unavailable right now. Try again in a moment.", 503, error); }
+    }
+
+    private static async Task<IResult> CompleteAsync(HttpContext context, AuthFlows flows, IAuthOidcGateway auth, DashboardSessions sessions)
+    {
+        var flow = await flows.TakeOidcAsync(context);
+        var state = context.Request.Query["state"].ToString();
+        if (flow is null || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(state), Encoding.UTF8.GetBytes(flow.State)))
+            return Failure(context, "/", "This sign-in link expired or was started in another browser. Sign in again.", 400);
+        if (context.Request.Query["error"].Count != 0)
+            return Failure(context, flow.ReturnTo, "ts-auth did not sign you in. Sign in again.", 401);
+        try
+        {
+            var session = await auth.ExchangeAsync(context.Request.Query["code"].ToString(), flow, context.RequestAborted);
+            if (flow.TokenName.Length != 0) return await AccessTokenEndpoints.IssueAsync(context, flow, session);
+            var account = await EnsureAccountAsync(context, session);
+            await sessions.StartAsync(context, session);
+            return HttpRedirects.SeeOther(flow.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : flow.ReturnTo);
+        }
+        catch (SignInRejectedException)
+        { return Failure(context, flow.ReturnTo, "ts-auth could not confirm this sign-in. Sign in again.", 401); }
+        catch (TerraScale.DotNet.TerraScaleAuthException error) when (error.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+        {
+            var seconds = Math.Clamp((int)Math.Ceiling(error.RetryAfter?.TotalSeconds ?? 60), 1, 3600);
+            context.Response.Headers.RetryAfter = seconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return Failure(context, flow.ReturnTo, $"Too many sign-in attempts. Try again in {seconds} seconds.", 429, error);
+        }
+        catch (Exception error) when (DependencyFailure(error, context))
+        { return Failure(context, flow.ReturnTo, "Sign-in could not finish right now. Try again in a moment.", 503, error); }
+    }
+
+    private static async Task<IResult> LogoutAsync(HttpContext context)
     {
         if (!context.Request.HasFormContentType) return Results.BadRequest();
         var form = await context.Request.ReadFormAsync(context.RequestAborted);
         if (!Csrf.Validate(context, form)) return Results.StatusCode(403);
-        var email = form["email"].ToString().Trim();
-        var model = Page(context, mode) with { Email = email, ReturnTo = Csrf.LocalRedirect(form["redirectTo"]) };
-        SignUpFlow? signUp = null;
-        if (mode == "code-verify" && form["signUp"] == "1")
-        {
-            var flows = context.RequestServices.GetRequiredService<AuthFlows>();
-            signUp = await flows.ReadSignUpAsync(context);
-            if (signUp is null || signUp.Email != email)
-                return Failure(model with { Mode = "signup-expired" }, StatusCodes.Status400BadRequest);
-            model = model with { SignUp = true, Name = signUp.Name, ReturnTo = signUp.ReturnTo, ResendSeconds = flows.Remaining(signUp) };
-        }
-        if (!MailAddress.TryCreate(email, out var address) || address.Address != email)
-        {
-            return Failure(model with { EmailError = "Enter a valid email address." });
-        }
-        var password = form["password"].ToString();
-        if (mode == "login" && string.IsNullOrEmpty(password))
-        {
-            return Failure(model with { PasswordError = "Enter your password." });
-        }
-        var code = string.Concat(form["code"].ToString().Where(character => !char.IsWhiteSpace(character)));
-        if ((mode is "code-verify" or "reset-complete") && (code.Length == 0 || code.Length > 64))
-        {
-            return Failure(model with { CodeError = "Enter the code from the email." });
-        }
-        if (mode == "reset-complete")
-        {
-            if (password.Length == 0) return Failure(model with { PasswordError = "Enter a password." });
-            if (password.EnumerateRunes().Count() < 12) return Failure(model with { PasswordError = "Use a password with at least 12 characters." });
-            if (System.Text.Encoding.UTF8.GetByteCount(password) > 1024) return Failure(model with { PasswordError = "Use a password with 1024 bytes or fewer." });
-            if (form["confirmPassword"].ToString().Length == 0) return Failure(model with { ConfirmPasswordError = "Enter your password again." });
-            if (password != form["confirmPassword"]) return Failure(model with { ConfirmPasswordError = "Passwords do not match." });
-        }
-        var ip = EnrollmentEndpoints.ClientIp(context);
-        try
-        {
-            var budget = context.RequestServices.GetRequiredService<IAuthAttemptBudget>();
-            await budget.ReserveAsync(context, email, mode is "code" or "reset" ? AuthBudgetKind.Mail : AuthBudgetKind.SignIn, context.RequestAborted);
-            switch (mode)
-            {
-                case "code":
-                    await auth.StartEmailCodeAsync(email, ip, context.RequestAborted);
-                    return AuthView.Create(model with { Mode = "code-verify" });
-                case "reset":
-                    await auth.StartPasswordResetAsync(email, ip, context.RequestAborted);
-                    return AuthView.Create(model with { Mode = "reset-complete" });
-                case "reset-complete":
-                    await auth.CompletePasswordResetAsync(email, code, password, ip, context.RequestAborted);
-                    await budget.ForgiveAsync(context, email, context.RequestAborted);
-                    return HttpRedirects.SeeOther("/login?email=" + Uri.EscapeDataString(email) + "&notice=password-reset");
-                default:
-                    var session = signUp is not null
-                        ? await context.RequestServices.GetRequiredService<IAuthEnrollmentGateway>().VerifySignUpAsync(email, code, signUp.PendingToken, ip, context.RequestAborted)
-                        : mode == "code-verify"
-                        ? await auth.EmailCodeAsync(email, code, ip, context.RequestAborted)
-                        : await auth.PasswordAsync(email, password, ip, context.RequestAborted);
-                    await budget.ForgiveAsync(context, email, context.RequestAborted);
-                    if (signUp is not null)
-                    {
-                        if (session.Name == session.Email) session = session with { Name = signUp.Name };
-                        await context.RequestServices.GetRequiredService<AuthFlows>().EndSignUpAsync(context);
-                    }
-                    var account = await EnsureAccountAsync(context, auth, session);
-                    await sessions.StartAsync(context, session);
-                    return HttpRedirects.SeeOther(model.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : model.ReturnTo);
-            }
-        }
-        catch (AuthRequestRejectedException error)
-        {
-            if (error.RetryAfter > 0) context.Response.Headers.RetryAfter = error.RetryAfter.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            return Failure(error.Field == "password" ? model with { PasswordError = error.Message } : model with { Error = error.Message }, error.StatusCode);
-        }
-        catch (SignInRejectedException)
-        {
-            return mode switch
-            {
-                "login" => Failure(model with { Error = "Incorrect email or password." }, StatusCodes.Status401Unauthorized),
-                "code-verify" => Failure(model with { CodeError = "That code is wrong or has expired. Check the latest email, or send a new code." }, StatusCodes.Status401Unauthorized),
-                "reset-complete" => Failure(model with { CodeError = "That code is wrong or has expired. Check the latest email, or request a new code." }, StatusCodes.Status401Unauthorized),
-                _ => Failure(model with { Error = "We couldn't verify those details. Check them and try again." })
-            };
-        }
+        return await SignOutAsync(context);
     }
 
-    internal static async Task<AccountRecord> EnsureAccountAsync(HttpContext context, IAuthGateway auth, SessionRecord session)
+    // Ends the dashboard session and ts-auth's own, so the next /login shows the hosted sign-in
+    // instead of silently signing the same account back in. The caller validates CSRF.
+    public static async Task<IResult> SignOutAsync(HttpContext context)
+    {
+        var sessions = context.RequestServices.GetRequiredService<DashboardSessions>();
+        var auth = context.RequestServices.GetRequiredService<IAuthGateway>();
+        var logout = context.RequestServices.GetRequiredService<IAuthLogoutGateway>();
+        var session = await sessions.ReadAsync(context);
+        if (session is not null) await auth.RevokeAsync(session, context.RequestAborted);
+        await sessions.EndAsync(context);
+        return HttpRedirects.SeeOther(await logout.EndSessionUrlAsync($"{context.Request.Scheme}://{context.Request.Host}", session?.IdToken, context.RequestAborted));
+    }
+
+    private static async Task<AccountRecord> EnsureAccountAsync(HttpContext context, SessionRecord session)
     {
         try { return await context.RequestServices.GetRequiredService<AccountService>().EnsureAsync(session, context.RequestAborted); }
         catch
         {
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            try { await auth.RevokeAsync(session, cleanup.Token); }
+            try { await context.RequestServices.GetRequiredService<IAuthGateway>().RevokeAsync(session, cleanup.Token); }
             catch (Exception error)
             {
                 context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("DashboardAuth")
@@ -150,10 +114,16 @@ public static class AuthEndpoints
         }
     }
 
-    private static RazorSlices.RazorSlice Failure(AuthPage model, int statusCode = StatusCodes.Status422UnprocessableEntity)
+    // A fixed page with a manual retry link: a failed callback never redirects back into ts-auth by itself.
+    private static RazorSlices.RazorSlice Failure(HttpContext context, string returnTo, string error, int status, Exception? exception = null)
     {
-        var view = AuthView.Create(model);
-        view.StatusCode = statusCode;
+        var reference = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(5));
+        context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("DashboardAuth").LogWarning("ts-auth sign-in failed: {Reference} ({ErrorType})", reference, exception?.GetType().Name ?? "Rejected");
+        var view = AuthFailureView.Create(new(new("Sign in", DocumentModel.NonceFor(context)), error, reference, Csrf.LocalRedirect(returnTo)));
+        view.StatusCode = status;
         return view;
     }
+
+    private static bool DependencyFailure(Exception error, HttpContext context) => error is HttpRequestException or IOException or System.Text.Json.JsonException or TimeoutException ||
+        error is OperationCanceledException && !context.RequestAborted.IsCancellationRequested;
 }

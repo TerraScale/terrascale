@@ -114,7 +114,6 @@ public sealed class StateSdkScenario : IAsyncDisposable
         });
         builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(services => new StateFactory(transport, services.GetRequiredService<IHttpMessageHandlerFactory>())));
         builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState, TerraBaseDashboardState>());
-        builder.Services.Replace(ServiceDescriptor.Singleton<IAuthAttemptBudget, AuthAttemptBudget>());
     });
 
     // Sends through the running host's credentialed state client to a destination other than the state listener.

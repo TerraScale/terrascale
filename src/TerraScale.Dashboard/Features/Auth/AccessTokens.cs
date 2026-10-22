@@ -19,33 +19,14 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
         return set.Tokens.Where(token => token.RevokedAt is null && token.Token.ExpiresAt > time.GetUtcNow()).OrderByDescending(token => token.Token.CreatedAt).Select(token => token.Token).ToArray();
     }
 
-    public async Task<CreatedProfileToken> CreateAsync(AccountContext context, string name, int expiresInDays, string password, string clientIp, CancellationToken cancellationToken)
-    {
-        name = name.Trim();
-        if (name.EnumerateRunes().Count() is 0 or > 64 || name.Any(char.IsControl)) throw new AccountAccessException("Access token names use 1–64 printable characters.", 422);
-        if (expiresInDays is < 1 or > 365) throw new AccountAccessException("Choose an expiration between 1 and 365 days.", 422);
-        if (string.IsNullOrEmpty(password)) throw new AccountAccessException("Enter your current password.", 422);
-        SessionRecord fresh;
-        try { fresh = await auth.PasswordAsync(context.Account.Email, password, clientIp, cancellationToken); }
-        catch (SignInRejectedException) { throw new AccountAccessException("Current password is incorrect.", 401); }
-        return await IssueAsync(context, name, expiresInDays, fresh, null, cancellationToken);
-    }
+    // The fresh grant comes from its own ts-auth authorization round trip, so the
+    // token's rotating family is never copied from the browser session.
+    public Task<CreatedProfileToken> CreateAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, CancellationToken cancellationToken) =>
+        IssueAsync(context, name, expiresInDays, fresh, cancellationToken);
 
-    // CLI approval owns a separate password grant. Polling transfers that
-    // encrypted credential into a PAT without copying a rotating token family.
-    // The caller must consume its single-use grant before invoking this method.
-    public async Task<CreatedProfileToken> CreateFromCredentialAsync(AccountContext context, string name, int expiresInDays, string credentialId, CancellationToken cancellationToken)
+    private async Task<CreatedProfileToken> IssueAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, CancellationToken cancellationToken)
     {
-        var grant = await sessions.ReadCredentialAsync(credentialId, cancellationToken)
-            ?? throw new AccountAccessException("Authorization has expired.", 401);
-        return await IssueAsync(context, name, expiresInDays, grant, credentialId, cancellationToken);
-    }
-
-    private async Task<CreatedProfileToken> IssueAsync(AccountContext context, string name, int expiresInDays, SessionRecord fresh, string? credential, CancellationToken cancellationToken)
-    {
-        name = name.Trim();
-        if (name.EnumerateRunes().Count() is 0 or > 64 || name.Any(char.IsControl)) throw new AccountAccessException("Access token names use 1–64 printable characters.", 422);
-        if (expiresInDays is < 1 or > 365) throw new AccountAccessException("Choose an expiration between 1 and 365 days.", 422);
+        name = Validate(name, expiresInDays);
         if (fresh.UserId != context.UserId)
         {
             await auth.RevokeAsync(fresh, cancellationToken);
@@ -53,11 +34,11 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
         }
         var now = time.GetUtcNow();
         var secret = "tspat_" + WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
-        var expiresAt = fresh.SessionExpiresAt is { } credentialExpiry && credentialExpiry < now.AddDays(expiresInDays) ? credentialExpiry : now.AddDays(expiresInDays);
-        var token = new ProfileToken(Guid.CreateVersion7().ToString(), name, secret[^4..], now, expiresAt);
+        var token = new ProfileToken(Guid.CreateVersion7().ToString(), name, secret[^4..], now, now.AddDays(expiresInDays));
+        string? credential = null;
         try
         {
-            credential ??= await sessions.CreateCredentialAsync(fresh, token.ExpiresAt, cancellationToken);
+            credential = await sessions.CreateCredentialAsync(fresh, token.ExpiresAt, cancellationToken);
             var stored = new StoredToken(token, Hash(secret), credential);
             // The index alone cannot authenticate: the account's CAS-protected
             // token set must still contain the token on every request.
@@ -80,22 +61,6 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
 
     public Task RevokeAsync(AccountContext context, string id, CancellationToken cancellationToken) =>
         RevokeAsync(context.UserId, id, cancellationToken);
-
-    // Operator jobs do not retain the device PAT after the command finishes.
-    // Possession of the exact hashed secret permits only its own revocation,
-    // including cleanup after its issuer grant became unavailable.
-    public async Task RevokeSecretAsync(string secret, CancellationToken cancellationToken)
-    {
-        if (secret.Length != 49 || !secret.StartsWith("tspat_", StringComparison.Ordinal)) return;
-        var hash = Hash(secret);
-        var index = await state.GetAsync(IndexCollection, hash, cancellationToken);
-        if (index is null) return;
-        if (index.Id != hash) throw new IOException("Access token index identity does not match.");
-        var owner = AccountService.Read<TokenOwner>(index);
-        var set = await ReadAsync(owner.UserId, cancellationToken);
-        var token = set.Tokens.SingleOrDefault(item => item.Token.Id == owner.TokenId && item.SecretHash == hash);
-        if (token is not null) await RevokeAsync(owner.UserId, token.Token.Id, cancellationToken);
-    }
 
     private async Task RevokeAsync(string userId, string id, CancellationToken cancellationToken)
     {
@@ -138,15 +103,7 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
         await state.DeleteAsync(Collection, id, document.Version, cancellationToken);
     }
 
-    public Task<AccountContext?> ResolveAsync(string secret, CancellationToken cancellationToken) =>
-        ResolveAsync(secret, cancellationToken, requireFreshPrivilege: false);
-
-    // Operator commands must verify a role minted after their first credential
-    // read. Ordinary PAT/MCP requests retain their existing refresh behavior.
-    public Task<AccountContext?> ResolveForPrivilegeAsync(string secret, CancellationToken cancellationToken) =>
-        ResolveAsync(secret, cancellationToken, requireFreshPrivilege: true);
-
-    private async Task<AccountContext?> ResolveAsync(string secret, CancellationToken cancellationToken, bool requireFreshPrivilege)
+    public async Task<AccountContext?> ResolveAsync(string secret, CancellationToken cancellationToken)
     {
         if (secret.Length != 49 || !secret.StartsWith("tspat_", StringComparison.Ordinal)) return null;
         var hash = Hash(secret);
@@ -157,22 +114,8 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
         var set = await ReadAsync(owner.UserId, cancellationToken);
         var token = set.Tokens.SingleOrDefault(item => item.RevokedAt is null && item.Token.Id == owner.TokenId && item.SecretHash == hash && item.Token.ExpiresAt > time.GetUtcNow());
         if (token is null) return null;
-        var grant = requireFreshPrivilege
-            ? await sessions.ReadCredentialForPrivilegeAsync(token.CredentialId, cancellationToken)
-            : await sessions.ReadCredentialAsync(token.CredentialId, cancellationToken);
+        var grant = await sessions.ReadCredentialAsync(token.CredentialId, cancellationToken);
         if (grant is null || grant.UserId != owner.UserId) return null;
-        if (requireFreshPrivilege)
-        {
-            // A revocation that wins while the issuer is rotating the encrypted
-            // family must deny this operator action before it reads its target.
-            var current = await ReadAsync(owner.UserId, cancellationToken);
-            if (!current.Tokens.Any(item => item.RevokedAt is null && item.Token.Id == token.Token.Id &&
-                item.SecretHash == hash && item.CredentialId == token.CredentialId && item.Token.ExpiresAt > time.GetUtcNow())) return null;
-            var latestIndex = await state.GetAsync(IndexCollection, hash, cancellationToken);
-            if (latestIndex is null) return null;
-            if (latestIndex.Id != hash || AccountService.Read<TokenOwner>(latestIndex) != owner)
-                throw new IOException("Access token index ownership changed.");
-        }
         return await accounts.GetContextAsync(grant, cancellationToken);
     }
 
@@ -198,6 +141,14 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
             try { await state.PutAsync(Collection, id, JsonSerializer.SerializeToElement(set), document is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(document.Version), cancellationToken); return; }
             catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
         }
+    }
+
+    public static string Validate(string name, int expiresInDays)
+    {
+        name = name.Trim();
+        if (name.EnumerateRunes().Count() is 0 or > 64 || name.Any(char.IsControl)) throw new AccountAccessException("Access token names use 1–64 printable characters.", 422);
+        if (expiresInDays is < 1 or > 365) throw new AccountAccessException("Choose an expiration between 1 and 365 days.", 422);
+        return name;
     }
 
     private static string Hash(string secret) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));

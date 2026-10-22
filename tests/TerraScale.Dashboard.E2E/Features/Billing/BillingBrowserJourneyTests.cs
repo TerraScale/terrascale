@@ -24,15 +24,9 @@ public sealed class BillingBrowserJourneyTests(DashboardE2EFixture fixture)
         page.PageError += (_, error) => errors.Enqueue(error);
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var password = "E2E-billing-" + suffix;
-        await NavigateAsync("/onboarding?plan=starter");
-        await page.Locator("#displayName").FillAsync("TUnit Billing " + suffix);
-        await page.Locator("#email").FillAsync("billing-" + suffix + "@example.test");
-        await page.Locator("#password").FillAsync(password);
-        await page.Locator("#confirmPassword").FillAsync(password);
-        await page.Locator("#terms").CheckAsync();
-        await SubmitAsync("/onboarding", "Create account", 200, exact: false);
-        await page.Locator("#code").FillAsync("123456");
-        await SubmitAsync("/login/code/verify", "Continue");
+        var email = "billing-" + suffix + "@example.test";
+        var signedUp = await BrowserAudit.SignInAsync(page, fixture.Origin, "/onboarding?plan=starter", email, password, signUp: true);
+        await Assert.That(signedUp!.Status).IsEqualTo(200);
         await page.GetByRole(AriaRole.Heading, new() { Name = "Review your account information", Exact = true }).WaitForAsync();
         await SubmitAsync("/onboarding/step", "Save and continue →");
         await page.GetByRole(AriaRole.Heading, new() { Name = "Choose your plan", Exact = true }).WaitForAsync();
@@ -97,8 +91,8 @@ public sealed class BillingBrowserJourneyTests(DashboardE2EFixture fixture)
         if (holdImage) await page.WaitForLoadStateAsync(LoadState.Load);
 
         using var client = fixture.CreateClient();
-        var cookies = await context.CookiesAsync();
-        client.DefaultRequestHeaders.Add("Cookie", string.Join("; ", cookies.Select(cookie => cookie.Name + "=" + cookie.Value)));
+        using var clientLogin = await HttpJourney.LoginAsync(client, email, password);
+        await Assert.That(clientLogin.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         var secret = await HttpJourney.CreatePatAsync(client, "Billing branch " + suffix, password);
         var listing = await ToolAsync("list_invoices", new { page = 2 });
         await Assert.That(listing.GetProperty("pageCount").GetInt32()).IsEqualTo(3);

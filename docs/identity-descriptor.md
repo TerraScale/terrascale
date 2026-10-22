@@ -27,8 +27,9 @@ Fixed in code, not delivered: the ts-auth tenant `terrascale`, its issuer
 `https://auth.terrascale.tech/terrascale` and the dashboard client id
 `01M4EQ2FRJ8S8B29E8TQVWNW4J` (terrascale `OidcServer.cs:38`). There is no
 state project, state API key, management credential or ts-auth management key:
-ts-auth serves no `/v1/{slug}/users` management routes, and a signed-in
-password change uses its password-reset code flow.
+ts-auth serves no `/v1/{slug}/users` management routes. Sign-in, sign-up,
+password reset, password change and MFA happen only on ts-auth's hosted pages;
+the profile links to `https://auth.terrascale.tech/ui/terrascale/account`.
 
 ## ts-auth client registration (nonsecret values, ts-auth's own secrets)
 
@@ -41,14 +42,15 @@ ts-auth seeds the dashboard client at every start from its environment
   the URI from the request host).
 - `TS_AUTH_DASHBOARD_POST_LOGOUT_REDIRECT_URIS`: `https://dash.terrascale.tech/login`.
 
-Grants the client holds: `authorization_code` with PKCE `S256`,
-`refresh_token`, `urn:terrascale:params:oauth:grant-type:password`,
-`urn:terrascale:params:oauth:grant-type:email-code` and
-`urn:ietf:params:oauth:grant-type:token-exchange`. The dashboard requests the
+Grants the dashboard uses: `authorization_code` with PKCE `S256`, state and
+nonce (`GET /login` to `{issuer}/oauth/authorize`, `GET /login/callback`),
+`refresh_token` and `urn:ietf:params:oauth:grant-type:token-exchange`. Sign-out
+redirects to `{issuer}/oauth/logout` with `id_token_hint`,
+`post_logout_redirect_uri` and `client_id`. The dashboard requests the
 exact project scopes an action needs (`databases:read|write`,
 `documents:read|write`); ts-auth grants them only within the user's role.
-Headless `/terrascale/headless/v1/{sign-up, email-code/start,
-password-reset/start, password-reset/complete}` use HTTP Basic and JSON.
+The internal-billing commands sign in as ts-auth's public CLI client `ts-cli`
+with the device authorization grant (`{issuer}/oauth/device`).
 
 Settled against ts-auth source at terrascale `e30ffdc2`:
 

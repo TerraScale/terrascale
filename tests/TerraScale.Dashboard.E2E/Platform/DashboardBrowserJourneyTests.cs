@@ -27,10 +27,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
                 var errors = new ConcurrentQueue<string>();
                 page.PageError += (_, error) => errors.Enqueue(error);
                 var name = $"qa-{size}-{Guid.NewGuid().ToString("N")[..10]}";
-                await GotoAsync("/login");
-                await page.Locator("#email").FillAsync("user@example.com");
-                await page.Locator("#password").FillAsync("test-password");
-                await SubmitAsync("form[action=\"/login\"]", "Sign in");
+                await BrowserAudit.SignInAsync(page, fixture.Origin);
                 await GotoAsync("/");
                 var personalOrg = (await (await context.APIRequest.GetAsync(origin + "/api/v1/auth/me")).JsonAsync())!.Value.GetProperty("organizationId").GetString()!;
                 await ShotAsync("home");
@@ -123,7 +120,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
 
                 await GotoAsync("/profile?tab=access-tokens");
                 await page.Locator("#accessTokenName").FillAsync(name);
-                await page.Locator("#accessTokenPassword").FillAsync("test-password");
+                // Creating a token signs in again through the hosted page; the callback renders the secret once.
                 await SubmitAsync("#profile-access-token-create form", "Create token");
                 var secret = await page.Locator("#access-token-secret").InputValueAsync();
                 await Assert.That(secret).Matches("^tspat_[A-Za-z0-9_-]{43}$");
@@ -220,7 +217,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
     }
 
     [Test]
-    public async Task AccessibleAuthPagesAndNativePasswordControls()
+    public async Task AccessibleSignInFailureAndNotFoundPages()
     {
         var output = BrowserAudit.Output(fixture.Root, "");
         var origin = fixture.Origin.ToString().TrimEnd('/');
@@ -232,23 +229,14 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
             var page = await context.NewPageAsync();
             var errors = new ConcurrentQueue<string>();
             page.PageError += (_, error) => errors.Enqueue(error);
-            var response = await page.GotoAsync(origin + "/login");
-            await Assert.That(response!.Status).IsEqualTo(200);
-            var password = page.Locator("#password");
-            await password.FillAsync("browser-test-password");
-            await page.GetByRole(AriaRole.Button, new() { Name = "Show password" }).ClickAsync();
-            await Assert.That(await password.GetAttributeAsync("type")).IsEqualTo("text");
-            await page.GetByRole(AriaRole.Button, new() { Name = "Hide password" }).ClickAsync();
-            await Assert.That(await password.GetAttributeAsync("type")).IsEqualTo("password");
-            await password.FillAsync("");
+            // Sign-in UI lives on ts-auth's hosted pages; the dashboard only renders a failed callback.
+            var response = await page.GotoAsync(origin + "/login/callback?state=forged&code=forged");
+            await Assert.That(response!.Status).IsEqualTo(400);
+            await page.GetByRole(AriaRole.Heading, new() { Name = "Sign in", Exact = true }).WaitForAsync();
+            await Assert.That(await page.GetByRole(AriaRole.Link, new() { Name = "Try again", Exact = true }).GetAttributeAsync("href")).IsEqualTo("/login");
             await page.EvaluateAsync("() => document.fonts.ready");
-            await page.ScreenshotAsync(new() { Path = Path.Combine(output, $"login-{name}.png"), FullPage = true });
-            await BrowserAudit.AssertAccessibleAsync(page, "WCAG 2.2 AA on /login " + name);
-            await page.GetByRole(AriaRole.Link, new() { Name = "Forgot password" }).ClickAsync();
-            await page.GetByRole(AriaRole.Heading, new() { Name = "Reset password" }).WaitForAsync();
-            await page.ScreenshotAsync(new() { Path = Path.Combine(output, $"reset-{name}.png"), FullPage = true });
-            await page.GotoAsync(origin + "/login/code");
-            await page.GetByRole(AriaRole.Heading, new() { Name = "Sign in with a code" }).WaitForAsync();
+            await page.ScreenshotAsync(new() { Path = Path.Combine(output, $"signin-failure-{name}.png"), FullPage = true });
+            await BrowserAudit.AssertAccessibleAsync(page, "WCAG 2.2 AA on the sign-in failure page " + name);
             await page.GotoAsync(origin + "/missing");
             await page.GetByRole(AriaRole.Heading, new() { Name = "We can’t find that page." }).WaitForAsync();
             await page.ScreenshotAsync(new() { Path = Path.Combine(output, $"notfound-{name}.png"), FullPage = true });

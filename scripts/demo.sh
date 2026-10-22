@@ -23,7 +23,7 @@ var port = 7500 + (int)(Convert.ToUInt32(Convert.ToHexStringLower(SHA256.HashDat
 var environment = new DemoEnvironment();
 await environment.InitializeAsync();
 await using var app = environment.CreateHost(Path.Combine(root, "src", "TerraScale.Dashboard"), port, $"http://{host}:{port}");
-Console.WriteLine($"Test-only demo: http://{host}:{port}; user@example.com / test-password; code 123456");
+Console.WriteLine($"Test-only demo: http://{host}:{port}; signs in as user@example.com");
 await app.RunAsync();
 ''')
 (target / 'DemoHost.csproj').write_text(f'''<Project Sdk="Microsoft.NET.Sdk.Web">

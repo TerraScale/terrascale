@@ -35,10 +35,7 @@ public sealed class SyntheticNotificationsBrowserJourneyTests(DashboardRootFixtu
         page.SetDefaultTimeout(15000);
         var errors = new ConcurrentQueue<string>();
         page.PageError += (_, error) => errors.Enqueue(error);
-        await NavigateAsync("/login");
-        await page.Locator("#email").FillAsync("user@example.com");
-        await page.Locator("#password").FillAsync("test-password");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await BrowserAudit.SignInAsync(page, host.Origin);
         await page.WaitForURLAsync(host.Origin.ToString());
         await NavigateAsync("/notifications?status=unread&page=2");
         await Assert.That(await page.Locator("main .ts-notification-unread").CountAsync()).IsEqualTo(2);

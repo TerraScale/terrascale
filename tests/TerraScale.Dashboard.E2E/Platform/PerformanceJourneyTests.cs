@@ -53,12 +53,12 @@ public sealed class PerformanceJourneyTests(DashboardRootFixture fixture)
             await Assert.That(database).Matches(@"^/databases/[0-9A-HJKMNP-TV-Z]{26}$");
         }
         foreach (var profile in new[] { "desktop", "mobile" })
-            foreach (var path in new[] { "/login", "/", "/databases", database + "/sql", "/usage" })
+            foreach (var path in new[] { "/", "/databases", database + "/sql", "/usage" })
                 for (var run = 0; run < Runs; run++)
                     await MeasureAsync(profile, path, run);
 
         await Assert.That(errors.ToArray()).IsEmpty();
-        await Assert.That(results.Count).IsEqualTo(100);
+        await Assert.That(results.Count).IsEqualTo(80);
         var summary = results.GroupBy(row => row["profile"] + " " + row["path"] + " " + row["cache"]).Select(group =>
         {
             var row = new Dictionary<string, object> { ["key"] = group.Key };
@@ -73,7 +73,7 @@ public sealed class PerformanceJourneyTests(DashboardRootFixture fixture)
         var output = Path.Combine(BrowserAudit.Output(fixture.Root, ""), "performance.json");
         var json = JsonSerializer.Serialize(new { baseURL = origin, runs = Runs, summary, results }, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(output, json + "\n");
-        Console.WriteLine("PASS: 100 real cold/warm desktop/mobile measurements; " + output);
+        Console.WriteLine("PASS: 80 real cold/warm desktop/mobile measurements; " + output);
 
         async Task MeasureAsync(string profile, string path, int run)
         {
@@ -83,7 +83,7 @@ public sealed class PerformanceJourneyTests(DashboardRootFixture fixture)
             });
             var page = await context.NewPageAsync();
             page.PageError += (_, error) => errors.Enqueue(error);
-            if (path != "/login") await LoginAsync(page);
+            await LoginAsync(page);
             var cdp = await context.NewCDPSessionAsync(page);
             await cdp.SendAsync("Network.enable");
             await cdp.SendAsync("Network.clearBrowserCache");
@@ -120,13 +120,9 @@ public sealed class PerformanceJourneyTests(DashboardRootFixture fixture)
 
         async Task LoginAsync(IPage page)
         {
-            var response = await page.GotoAsync(origin + "/login");
+            var response = await BrowserAudit.SignInAsync(page, scenario.Origin, email: "mario@terrascale.tech", password: "terrascale");
             await Assert.That(response!.Status).IsEqualTo(200);
-            await page.Locator("#email").FillAsync("mario@terrascale.tech");
-            await page.Locator("#password").FillAsync("terrascale");
-            await Task.WhenAll(
-                page.WaitForURLAsync(origin + "/"),
-                page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync());
+            await Assert.That(page.Url).IsEqualTo(origin + "/");
         }
     }
 }

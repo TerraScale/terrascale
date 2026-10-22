@@ -23,10 +23,7 @@ public sealed class PaymentCurrencyEvidenceJourneyTests
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
         await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
         var page = await context.NewPageAsync();
-        await page.GotoAsync(new Uri(scenario.Origin, "/login").ToString());
-        await page.Locator("#email").FillAsync("user@example.com");
-        await page.Locator("#password").FillAsync("test-password");
-        await page.Locator("form[action='/login'] button[type='submit']").ClickAsync();
+        await BrowserAudit.SignInAsync(page, scenario.Origin);
         await page.WaitForURLAsync(scenario.Origin.ToString());
         await page.GotoAsync(new Uri(scenario.Origin, "/organization?tab=billing").ToString());
         var table = page.Locator("#recent-invoices .ts-table-wrap");

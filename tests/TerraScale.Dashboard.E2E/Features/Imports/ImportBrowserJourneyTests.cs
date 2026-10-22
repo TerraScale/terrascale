@@ -24,10 +24,7 @@ public sealed class ImportBrowserJourneyTests(DashboardRootFixture fixture)
         page.PageError += (_, error) => errors.Enqueue(page.Url + " :: " + error);
         var output = BrowserAudit.Output(fixture.Root, "imports");
 
-        await page.GotoAsync(new Uri(scenario.Origin, "/login").ToString());
-        await page.Locator("#email").FillAsync("user@example.com");
-        await page.Locator("#password").FillAsync("test-password");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await BrowserAudit.SignInAsync(page, scenario.Origin);
         await page.WaitForURLAsync(scenario.Origin.ToString());
         await page.GotoAsync(new Uri(scenario.Origin, "/databases").ToString());
         await page.GetByRole(AriaRole.Link, new() { Name = "Import", Exact = true }).ClickAsync();

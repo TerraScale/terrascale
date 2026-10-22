@@ -24,13 +24,11 @@ public static class OnboardingProgress
     }
 }
 
-public sealed record OnboardingPage(DocumentModel Document, string CsrfToken, bool Registration = true,
-    string DisplayName = "", string Email = "", bool AcceptedTerms = false, string Error = "", string ErrorField = "",
-    bool PaymentCanceled = false, string Plan = "", string ReturnTo = "", string Step = "account-information", IReadOnlyList<BillingPlan>? Plans = null)
+public sealed record OnboardingPage(DocumentModel Document, string CsrfToken,
+    string DisplayName = "", string Email = "", string Error = "",
+    bool PaymentCanceled = false, string Plan = "", string Step = "account-information", IReadOnlyList<BillingPlan>? Plans = null)
 {
     public IReadOnlyList<OnboardingStep> Steps => OnboardingProgress.Steps(Step);
     public int CurrentStep => Steps.Select((step, index) => (step, index)).FirstOrDefault(item => item.step.Current).index + 1;
     public int Progress => CurrentStep * 100 / 3;
-    public string SignInUrl => ReturnTo.Length == 0 ? "/login" : "/login?returnTo=" + Uri.EscapeDataString(ReturnTo);
-    public string FieldError(string field) => ErrorField == field ? Error : "";
 }

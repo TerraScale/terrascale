@@ -13,10 +13,10 @@ Internal billing cannot enter Stripe checkout or accept Stripe projections.
 Run the command with the dashboard's configured environment credentials,
 delivered through ts-orch from OCI Vault using instance principal in production. It needs an existing platform
 admin who is a member of the target organization and the exact organization ID.
-The command prints a `/cli/approve` link
-and user code on `https://dash.terrascale.tech`; the admin named by
-`--admin-email` approves it in the browser. The command revokes that access
-token when it ends. Configuration requires the active projects
+The command signs in with ts-auth's device authorization grant (RFC 8628, client
+`ts-cli`): it prints a verification link on `https://auth.terrascale.tech` and a
+user code, and the admin named by `--admin-email` approves it on ts-auth's hosted
+page. The command keeps that grant only in memory and revokes it when it ends. Configuration requires the active projects
 `ts-dashboard`, `ts-auth`, `ts-router`, `ts-status`, `ts-orchestrator`, `ku` and
 `ts-reviewer`. It creates no identities, projects, keys or service data.
 

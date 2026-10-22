@@ -36,8 +36,8 @@ Both launchers bind all interfaces and watch C#/Razor and browser assets.
 Same-origin Datastar SSE updates CSS and refreshes pages when source changes.
 Stopping the launcher stops its application and asset watchers.
 
-Demo login is `user@example.com` / `test-password`, and email codes are
-`123456`. Checkout and billing-portal pages are local test-only vendor pages.
+Sign-in redirects to a test-only stand-in for ts-auth's hosted pages that signs
+you in as `user@example.com`. Checkout and billing-portal pages are local test-only vendor pages.
 Their transports reject unknown external origins.
 
 ## E2E tests

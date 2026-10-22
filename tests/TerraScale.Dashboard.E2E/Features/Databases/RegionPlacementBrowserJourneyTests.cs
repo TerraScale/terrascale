@@ -33,11 +33,7 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
         var organizationId = initialContext.GetProperty("selection").GetProperty("organizationId").GetString()!;
         var projectName = "Map placement " + width + " " + Guid.NewGuid().ToString("N")[..8];
 
-        var login = await page.GotoAsync(new Uri(scenario.Origin, "/login").ToString(), new() { WaitUntil = WaitUntilState.DOMContentLoaded });
-        await Assert.That(login!.Status).IsEqualTo(200);
-        await page.Locator("#email").FillAsync(persona.Email);
-        await page.Locator("#password").FillAsync(persona.Password);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await BrowserAudit.SignInAsync(page, scenario.Origin, email: persona.Email, password: persona.Password);
         await page.WaitForURLAsync(scenario.Origin.ToString());
         await NavigateAsync("/organization?tab=projects");
 
@@ -167,11 +163,7 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
         var organizationId = initialContext.GetProperty("selection").GetProperty("organizationId").GetString()!;
         var projectName = "Keyboard map placement " + width + " " + Guid.NewGuid().ToString("N")[..8];
 
-        var login = await page.GotoAsync(new Uri(scenario.Origin, "/login").ToString(), new() { WaitUntil = WaitUntilState.DOMContentLoaded });
-        await Assert.That(login!.Status).IsEqualTo(200);
-        await page.Locator("#email").FillAsync(persona.Email);
-        await page.Locator("#password").FillAsync(persona.Password);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await BrowserAudit.SignInAsync(page, scenario.Origin, email: persona.Email, password: persona.Password);
         await page.WaitForURLAsync(scenario.Origin.ToString());
         await NavigateAsync("/organization?tab=projects");
 

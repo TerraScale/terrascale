@@ -8,27 +8,6 @@ namespace TerraScale.Dashboard.Features.Auth;
 
 public sealed partial class TsAuthGateway
 {
-    public async Task<string> SignUpAsync(string email, string password, string ip, CancellationToken cancellationToken)
-    {
-        var credentials = await identity.ReadAsync(cancellationToken);
-        TerraScaleAuthHeadlessPendingSignUp pending;
-        try
-        {
-            pending = await Client().Headless.SignUpAsync(credentials.AuthClientId, credentials.AuthClientSecret,
-                new(email, password, Address(ip)), cancellationToken);
-        }
-        catch (TerraScaleAuthException error) when (error.StatusCode is System.Net.HttpStatusCode.TooManyRequests) { throw RateLimited(error); }
-        // Only the fixed password-policy code is shown; producer text could echo the submitted credentials.
-        catch (TerraScaleAuthException error) when (error.StatusCode is System.Net.HttpStatusCode.BadRequest && error.ErrorCode == "invalid_password")
-        { throw new AuthRequestRejectedException("Choose a different password.", "password"); }
-        if (pending.PendingToken is not { Length: > 0 and <= 4096 }) throw new HttpRequestException("ts-auth answered without a signup token.");
-        return pending.PendingToken;
-    }
-
-    public Task<SessionRecord> VerifySignUpAsync(string email, string code, string pendingToken, string ip, CancellationToken cancellationToken) =>
-        GrantAsync((client, credentials, address) => client.Headless.SignInWithEmailCodeAsync(credentials.AuthClientId, credentials.AuthClientSecret,
-            email, code, address, pendingToken, SignInScope, cancellationToken), ip, cancellationToken);
-
     // ts-auth answers prompt=login with login_required, so no prompt is sent; sign-out ends its session instead.
     public async Task<string> AuthorizationUrlAsync(OidcFlow flow, CancellationToken cancellationToken)
     {
@@ -97,6 +76,7 @@ public sealed partial class TsAuthGateway
         {
             AccessToken = tokens.AccessToken,
             RefreshToken = string.IsNullOrWhiteSpace(tokens.RefreshToken) ? session.RefreshToken : tokens.RefreshToken,
+            IdToken = tokens.IdToken is { Length: > 0 } ? tokens.IdToken : session.IdToken,
             ExpiresAt = time.GetUtcNow().AddSeconds(tokens.ExpiresIn),
             RefreshLease = "",
             RefreshLeaseUntil = null
@@ -105,7 +85,8 @@ public sealed partial class TsAuthGateway
         return refreshed;
     }
 
-    public async Task<string> EndSessionUrlAsync(string dashboardOrigin, CancellationToken cancellationToken)
+    // ts-auth ends its own session, shows its hosted "Signed out" page, then continues to the dashboard's /login.
+    public async Task<string> EndSessionUrlAsync(string dashboardOrigin, string? idToken, CancellationToken cancellationToken)
     {
         if (!Uri.TryCreate(dashboardOrigin, UriKind.Absolute, out var dashboard) || dashboard.UserInfo.Length != 0 ||
             dashboard.AbsolutePath != "/" || dashboard.Query.Length != 0 || dashboard.Fragment.Length != 0 ||
@@ -116,8 +97,9 @@ public sealed partial class TsAuthGateway
             var metadata = await Client().Oidc.GetDiscoveryDocumentAsync(cancellationToken);
             if (string.IsNullOrWhiteSpace(metadata.EndSessionEndpoint)) return "/login";
             var endpoint = TrustedEndpoint(metadata.EndSessionEndpoint);
-            return endpoint + "?client_id=" + Uri.EscapeDataString(credentials.AuthClientId) +
-                "&post_logout_redirect_uri=" + Uri.EscapeDataString(new Uri(dashboard, "/login").AbsoluteUri);
+            return endpoint + (idToken is { Length: > 0 } ? "?id_token_hint=" + Uri.EscapeDataString(idToken) + "&" : "?") +
+                "post_logout_redirect_uri=" + Uri.EscapeDataString(new Uri(dashboard, "/login").AbsoluteUri) +
+                "&client_id=" + Uri.EscapeDataString(credentials.AuthClientId);
         }
         catch (HttpRequestException) { return "/login"; }
     }
@@ -134,7 +116,8 @@ public sealed partial class TsAuthGateway
         var claims = AuthIdToken.Validate(tokens.IdToken, metadata.Issuer, credentials.AuthClientId, nonce, keys, time.GetUtcNow());
         var user = await UserInfoAsync(client, tokens.AccessToken, cancellationToken);
         if (user.Subject != claims.Subject || user.EmailVerified != true || user.Email?.Trim().ToLowerInvariant() != claims.Email) throw new SignInRejectedException();
-        var session = new SessionRecord(claims.Subject, claims.Name, claims.Email, tokens.AccessToken, tokens.RefreshToken, time.GetUtcNow().AddSeconds(tokens.ExpiresIn));
+        var session = new SessionRecord(claims.Subject, claims.Name, claims.Email, tokens.AccessToken, tokens.RefreshToken, time.GetUtcNow().AddSeconds(tokens.ExpiresIn))
+        { IdToken = tokens.IdToken };
         if (!await IsActiveAsync(session, cancellationToken)) throw new SignInRejectedException();
         return session;
     }
@@ -164,13 +147,6 @@ public sealed partial class TsAuthGateway
         try { return await client.Oidc.GetUserInfoAsync(accessToken, cancellationToken); }
         catch (TerraScaleAuthException error) when (error.StatusCode == System.Net.HttpStatusCode.Unauthorized)
         { throw new SignInRejectedException(); }
-    }
-
-    private static AuthRequestRejectedException RateLimited(TerraScaleAuthException error)
-    {
-        var seconds = error.RetryAfter is { } delay ? (int)Math.Ceiling(delay.TotalSeconds) : 60;
-        seconds = Math.Clamp(seconds, 1, 3600);
-        return new($"Too many attempts. Please wait {seconds} seconds and try again.", statusCode: 429, retryAfter: seconds);
     }
 
     private static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');

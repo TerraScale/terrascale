@@ -31,10 +31,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
                 path.StartsWith("/api/v1/auth-management", StringComparison.Ordinal) || path.StartsWith("/api/v1/dashboard/backups", StringComparison.Ordinal)))
                 mutations.Add(path);
         };
-        await page.GotoAsync(new Uri(scenario.Origin, "/login").ToString());
-        await page.Locator("#email").FillAsync(account.Email);
-        await page.Locator("#password").FillAsync(account.Password);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await BrowserAudit.SignInAsync(page, scenario.Origin, email: account.Email, password: account.Password);
         await page.WaitForURLAsync(scenario.Origin.ToString());
         foreach (var (path, status, message) in new[]
         {
@@ -95,10 +92,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
         await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
         var page = await context.NewPageAsync();
-        await page.GotoAsync(new Uri(scenario.Origin, "/login").ToString());
-        await page.Locator("#email").FillAsync(account.Email);
-        await page.Locator("#password").FillAsync(account.Password);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await BrowserAudit.SignInAsync(page, scenario.Origin, email: account.Email, password: account.Password);
         await page.WaitForURLAsync(scenario.Origin.ToString());
         await page.GotoAsync(new Uri(scenario.Origin, "/databases/" + id + "/sql").ToString());
         await page.Locator("#sql-editor ts-code-editor[data-ready]").WaitForAsync();
@@ -138,10 +132,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
         await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
         var page = await context.NewPageAsync();
-        await page.GotoAsync(new Uri(scenario.Origin, "/login").ToString());
-        await page.Locator("#email").FillAsync(account.Email);
-        await page.Locator("#password").FillAsync(account.Password);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await BrowserAudit.SignInAsync(page, scenario.Origin, email: account.Email, password: account.Password);
         await page.WaitForURLAsync(scenario.Origin.ToString());
         var sqlPath = new Uri(scenario.Origin, "/databases/" + id + "/sql").ToString();
         var response = await page.GotoAsync(sqlPath);

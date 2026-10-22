@@ -23,9 +23,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         var setup = await PrepareAsync(browser, producer);
         var reservations = Organization(await ObserveAsync(producer), setup.Organization).GetProperty("InvitationReservations").Clone();
 
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         await BillingStateOnlyAsync(await ObserveAsync(producer), setup.Organization, setup.Projects, reservations);
-        await BillAsync(await RunAsync(scenario, browser, producer, Report(setup.Organization)), setup.Month);
+        await BillAsync(await RunAsync(scenario, Report(setup.Organization)), setup.Month);
         var observed = await ObserveAsync(producer);
         await BillingStateOnlyAsync(observed, setup.Organization, setup.Projects, reservations);
         await CheckAsync(Alerts(observed, setup.Organization).Length == 1,
@@ -59,15 +59,15 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         using var producer = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         var original = Organization(await ObserveAsync(producer), setup.Organization);
         await PolicyAsync(original);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         var repeated = Organization(await ObserveAsync(producer), setup.Organization);
         await CheckAsync(repeated.GetProperty("PlanId").GetString() == original.GetProperty("PlanId").GetString() &&
             repeated.GetProperty("InternalBilling").GetProperty("ConfigurationId").GetString() == original.GetProperty("InternalBilling").GetProperty("ConfigurationId").GetString(),
             "Repeating the actual configure command preserves its immutable hidden plan and committed configuration");
-        var first = await RunAsync(scenario, browser, producer, Report(setup.Organization));
+        var first = await RunAsync(scenario, Report(setup.Organization));
         await BillAsync(first, setup.Month);
         var beforeRestart = await ObserveAsync(producer);
         await ScopeAsync(beforeRestart, setup.Organization, setup.Projects, setup.Month);
@@ -83,7 +83,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             "The native card retains original US$ prices, overage rates and alert text while the organization cap label keeps its source dollar format");
         await scenario.RestartAsync();
         using var restarted = CookieClient(scenario, setup.Cookie);
-        await BillAsync(await RunAsync(scenario, restarted, producer, Report(setup.Organization)), setup.Month);
+        await BillAsync(await RunAsync(scenario, Report(setup.Organization)), setup.Month);
         var afterRestart = await ObserveAsync(producer);
         await CheckAsync(Alerts(afterRestart, setup.Organization).Length == 1 &&
             Organization(afterRestart, setup.Organization).GetProperty("PlanId").GetString() == original.GetProperty("PlanId").GetString(),
@@ -105,9 +105,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         using var producer = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         await ControlAsync(producer, new { command = "internal-usage", value = mode });
-        var result = await RunAsync(scenario, browser, producer, Report(setup.Organization));
+        var result = await RunAsync(scenario, Report(setup.Organization));
         var bill = Json(result);
         await CheckAsync(result.Exit == 1 && result.Error == "report-internal-billing: " + MissingUsage + "\n" &&
             !bill.GetProperty("available").GetBoolean() && bill.GetProperty("reportOnly").GetBoolean() &&
@@ -133,8 +133,8 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization, writeRate: "9223372036854775807")), setup.Organization);
-        var result = await RunAsync(scenario, browser, producer, Report(setup.Organization));
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization, writeRate: "9223372036854775807")), setup.Organization);
+        var result = await RunAsync(scenario, Report(setup.Organization));
         await CheckAsync(result.Exit == 1 && result.Error == "report-internal-billing: " + InvalidAmount + "\n",
             "A valid signed rate whose monetary estimate overflows returns the exact original amount error through the full command entry");
         await CoherentPricingFailureAsync(Json(result), setup.Month);
@@ -159,13 +159,13 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         var setup = await PrepareAsync(browser, producer);
         var args = Configure(setup.Organization, cap, writes);
         args[^1] = storage;
-        await SuccessAsync(await RunAsync(scenario, browser, producer, args), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, args), setup.Organization);
         var policy = Organization(await ObserveAsync(producer), setup.Organization);
         await CheckAsync(policy.GetProperty("SpendCapCents").GetInt64() == 12000 &&
             policy.GetProperty("InternalBilling").GetProperty("WriteCentsPerMillion").GetInt64() == 100 &&
             policy.GetProperty("InternalBilling").GetProperty("StorageCentsPerGiBMonth").GetInt64() == 20,
             "The full production command entry admits original Go hexadecimal, binary, octal, signed and separator syntax into the independently known persisted values");
-        await BillAsync(await RunAsync(scenario, browser, producer, Report(setup.Organization)), setup.Month);
+        await BillAsync(await RunAsync(scenario, Report(setup.Organization)), setup.Month);
         await NoStripeAsync(await ObserveAsync(producer));
     }
 
@@ -177,7 +177,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         var setup = await PrepareAsync(browser, producer, paymentMethodValidated: true);
         await CheckAsync(Organization(await ObserveAsync(producer), setup.Organization).GetProperty("PaymentMethodValidated").GetBoolean(),
             "The external persisted fixture already records the historical validation fact before the command runs");
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         var secret = await HttpJourney.CreatePatAsync(browser, "Preserved legacy validation");
         var billing = await ToolAsync(browser, secret, "get_billing", new { organizationId = setup.Organization });
         await CheckAsync(billing.GetProperty("paymentMethod").GetProperty("validated").GetBoolean() &&
@@ -202,7 +202,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
         await ControlAsync(producer, new { command = "internal-fail-put-once", collection = "dashboard_organizations", after = true });
-        var ambiguous = await RunAsync(scenario, browser, producer, Configure(setup.Organization));
+        var ambiguous = await RunAsync(scenario, Configure(setup.Organization));
         await CheckAsync(ambiguous.Exit == 1 && ambiguous.Error == "configure-internal-billing: Internal billing dependencies are unavailable.\n",
             "A lost successful organization-write reply cannot be reported as a completed configuration");
         var interrupted = await ObserveAsync(producer);
@@ -212,7 +212,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             "The acknowledged billing fence remains closed until the committed proposal is reconciled");
         await scenario.RestartAsync();
         using var restarted = CookieClient(scenario, setup.Cookie);
-        await SuccessAsync(await RunAsync(scenario, restarted, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         var recovered = await ObserveAsync(producer);
         var completed = Organization(recovered, setup.Organization);
         await CheckAsync(completed.GetProperty("PlanId").GetString() == committed.GetProperty("PlanId").GetString() &&
@@ -229,9 +229,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         using var producer = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         await ControlAsync(producer, new { command = "internal-fail-put-once", collection = "dashboard_accounts", after = false });
-        var interrupted = await RunAsync(scenario, browser, producer, Report(setup.Organization));
+        var interrupted = await RunAsync(scenario, Report(setup.Organization));
         await CheckAsync(interrupted.Exit == 1 && interrupted.Error == "report-internal-billing: Internal billing dependencies are unavailable.\n",
             "An interrupted inbox write never claims the complete report and notification were delivered");
         var before = await ObserveAsync(producer);
@@ -240,8 +240,8 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             "The committed month reservation survives an unsuccessful owner-inbox projection");
         await scenario.RestartAsync();
         using var restarted = CookieClient(scenario, setup.Cookie);
-        await BillAsync(await RunAsync(scenario, restarted, producer, Report(setup.Organization)), setup.Month);
-        await BillAsync(await RunAsync(scenario, restarted, producer, Report(setup.Organization)), setup.Month);
+        await BillAsync(await RunAsync(scenario, Report(setup.Organization)), setup.Month);
+        await BillAsync(await RunAsync(scenario, Report(setup.Organization)), setup.Month);
         await CheckAsync(Alerts(await ObserveAsync(producer), setup.Organization).Length == 1,
             "Actual command retries recover exactly one persisted notification for the month");
         await ActiveAsync(restarted);
@@ -254,7 +254,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         using var producer = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
-        var rejected = await RunAsync(scenario, browser, producer, Configure(setup.Organization), beforePoll: () =>
+        var rejected = await RunAsync(scenario, Configure(setup.Organization), beforeDecision: () =>
             ControlAsync(producer, new { command = "platform-role", value = "" }));
         await CheckAsync(rejected.Exit == 1 && rejected.Error == "configure-internal-billing: Platform administrator authorization is required.\n",
             "An old approved device identity cannot replace the role removed before its forced privileged rotation");
@@ -274,7 +274,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         var setup = await PrepareAsync(browser, producer);
         using var replica = CookieClient(scenario, setup.Cookie, true);
         await ControlAsync(producer, new { command = "internal-pause-put", collection = "dashboard_billing", id = setup.Organization, kind = "internal", after = true });
-        await using var configuring = await StartAsync(scenario, browser, producer, Configure(setup.Organization));
+        await using var configuring = await StartAsync(scenario, Configure(setup.Organization));
         try
         {
             await PausedAsync(producer);
@@ -301,7 +301,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         try
         {
             await PausedAsync(producer);
-            var rejected = await RunAsync(scenario, browser, producer, Configure(setup.Organization));
+            var rejected = await RunAsync(scenario, Configure(setup.Organization));
             await CheckAsync(rejected.Exit == 1 && rejected.Error == "configure-internal-billing: Internal billing cannot replace Stripe billing or checkout state.\n",
                 "The public operator command cannot replace the checkout's already committed Stripe fence");
             var observed = await ObserveAsync(producer);
@@ -327,8 +327,8 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer, 2);
         await ControlAsync(producer, new { command = "internal-pause-put", collection = "dashboard_billing", kind = "internal", after = true, count = 2 });
-        await using var first = await StartAsync(scenario, browser, producer, Configure(setup.Targets[0]));
-        await using var second = await StartAsync(scenario, browser, producer, Configure(setup.Targets[1]));
+        await using var first = await StartAsync(scenario, Configure(setup.Targets[0]));
+        await using var second = await StartAsync(scenario, Configure(setup.Targets[1]));
         try { await PausedAsync(producer, 2); }
         finally { await ControlAsync(producer, new { command = "internal-release-put" }); }
         var results = await Task.WhenAll(first.ResultAsync(), second.ResultAsync());
@@ -350,14 +350,14 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         var initial = Organization(await ObserveAsync(producer), setup.Organization);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization, "20000", "200")), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization, "20000", "200")), setup.Organization);
         var changed = Organization(await ObserveAsync(producer), setup.Organization);
         await CheckAsync(initial.GetProperty("PlanId").GetString() == changed.GetProperty("PlanId").GetString() &&
             initial.GetProperty("InternalBilling").GetProperty("ConfigurationId").GetString() != changed.GetProperty("InternalBilling").GetProperty("ConfigurationId").GetString(),
             "A real reconfiguration copies the new rates under a new proposal while preserving the one hidden plan identity");
-        var result = await RunAsync(scenario, browser, producer, Report(setup.Organization));
+        var result = await RunAsync(scenario, Report(setup.Organization));
         var bill = Json(result);
         await CheckAsync(result.Exit == 0 && bill.GetProperty("available").GetBoolean() && bill.GetProperty("writeCents").GetInt64() == 5000 &&
             bill.GetProperty("storageCents").GetInt64() == 40 && bill.GetProperty("totalCents").GetInt64() == 14940 &&
@@ -378,7 +378,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
         await ControlAsync(producer, new { command = "internal-pause-put", collection = "dashboard_internal_billing", after = true });
-        await using var running = await StartAsync(scenario, browser, producer, Configure(setup.Organization));
+        await using var running = await StartAsync(scenario, Configure(setup.Organization));
         try
         {
             await PausedAsync(producer);
@@ -394,7 +394,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             reserved.GetProperty("billing").GetProperty("bindings").EnumerateArray().Single().GetProperty("State").GetString() == "reserved",
             "Current authority denial leaves the uncertain persisted reservation closed and commits no entitlements");
         await ControlAsync(producer, new { command = "platform-role", value = "admin" });
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         await CheckAsync(Organization(await ObserveAsync(producer), setup.Organization).GetProperty("PlanId").GetString() == claimedPlan,
             "A newly approved current operator resumes the same canonical global plan after the authority failure");
     }
@@ -405,9 +405,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         await ControlAsync(producer, new { command = "internal-pause-put", collection = "dashboard_organizations", id = setup.Organization, after = true });
-        await using var running = await StartAsync(scenario, browser, producer, Report(setup.Organization));
+        await using var running = await StartAsync(scenario, Report(setup.Organization));
         try
         {
             await PausedAsync(producer);
@@ -419,7 +419,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             Alerts(await ObserveAsync(producer), setup.Organization).Length == 0,
             "A newly revoked operator cannot use its earlier cap reservation to append an owner notification");
         await ControlAsync(producer, new { command = "platform-role", value = "admin" });
-        await BillAsync(await RunAsync(scenario, browser, producer, Report(setup.Organization)), setup.Month);
+        await BillAsync(await RunAsync(scenario, Report(setup.Organization)), setup.Month);
         await CheckAsync(Alerts(await ObserveAsync(producer), setup.Organization).Length == 1,
             "A real fresh operator retry safely resumes the reserved month alert once");
     }
@@ -430,9 +430,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         await ControlAsync(producer, new { command = "internal-pause-put", collection = "dashboard_organizations", id = setup.Organization, after = true });
-        await using var running = await StartAsync(scenario, browser, producer, Report(setup.Organization));
+        await using var running = await StartAsync(scenario, Report(setup.Organization));
         try
         {
             await PausedAsync(producer);
@@ -442,12 +442,12 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         var rejected = await running.ResultAsync();
         await CheckAsync(rejected.Exit == 1 && Alerts(await ObserveAsync(producer), setup.Organization).Length == 0,
             "The old report cannot append an owner inbox event after the native organization cap changes");
-        var fresh = await RunAsync(scenario, browser, producer, Report(setup.Organization));
+        var fresh = await RunAsync(scenario, Report(setup.Organization));
         await CheckAsync(fresh.Exit == 0 && Json(fresh).GetProperty("spendCapCents").GetInt64() == 20000 && !Json(fresh).GetProperty("capReached").GetBoolean() &&
             Alerts(await ObserveAsync(producer), setup.Organization).Length == 0,
             "A fresh actual report reads the new cap and does not deliver the old pending cap event");
         await CapAsync(browser, "120.00");
-        await BillAsync(await RunAsync(scenario, browser, producer, Report(setup.Organization)), setup.Month);
+        await BillAsync(await RunAsync(scenario, Report(setup.Organization)), setup.Month);
         await CheckAsync(Alerts(await ObserveAsync(producer), setup.Organization).Length == 1,
             "A later coherent cap report recovers one current owner event after native cap restoration");
     }
@@ -458,9 +458,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         await ControlAsync(producer, new { command = "internal-pause-put", collection = "dashboard_organizations", id = setup.Organization, after = true });
-        await using var running = await StartAsync(scenario, browser, producer, Report(setup.Organization));
+        await using var running = await StartAsync(scenario, Report(setup.Organization));
         try
         {
             await PausedAsync(producer);
@@ -486,7 +486,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             Json(rejected).GetProperty("available").GetBoolean() &&
             Json(rejected).GetProperty("spendCapCents").GetInt64() == 12000 && Alerts(await ObserveAsync(producer), setup.Organization).Length == 0,
             "The command preserves its genuine measured bill but rejects stale alert delivery after a cap change inside refresh");
-        var fresh = await RunAsync(scenario, browser, producer, Report(setup.Organization));
+        var fresh = await RunAsync(scenario, Report(setup.Organization));
         await CheckAsync(fresh.Exit == 0 && fresh.Error == "" && Json(fresh).GetProperty("spendCapCents").GetInt64() == 20000 &&
             !Json(fresh).GetProperty("capReached").GetBoolean() && Alerts(await ObserveAsync(producer), setup.Organization).Length == 0,
             "The next full approved command uses the current cap without replaying the old owner alert");
@@ -500,11 +500,11 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
-        await BillAsync(await RunAsync(scenario, browser, producer, Report(setup.Organization)), setup.Month);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
+        await BillAsync(await RunAsync(scenario, Report(setup.Organization)), setup.Month);
         var delivered = Alerts(await ObserveAsync(producer), setup.Organization).Single();
         var pauses = (await ObserveAsync(producer)).GetProperty("refreshPauses").GetInt32();
-        await using var report = await StartAsync(scenario, browser, producer, Report(setup.Organization),
+        await using var report = await StartAsync(scenario, Report(setup.Organization),
             () => ControlAsync(producer, new { command = "pause-refresh-after", count = 1 }));
         try
         {
@@ -522,7 +522,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             Organization(observed, setup.Organization).GetProperty("SpendCapCents").GetInt64() == 20000,
             "An existing delivered month never bypasses current signed refresh and canonical cap validation or falsely reports deduplication success for a stale bill");
         await CapAsync(browser, "120.00");
-        await BillAsync(await RunAsync(scenario, browser, producer, Report(setup.Organization)), setup.Month);
+        await BillAsync(await RunAsync(scenario, Report(setup.Organization)), setup.Month);
         await CheckAsync(Alerts(await ObserveAsync(producer), setup.Organization).Single().GetRawText() == delivered.GetRawText(),
             "A fresh approved report with the restored current cap succeeds without rewriting or duplicating the original delivered notification");
         await ActiveAsync(browser);
@@ -535,10 +535,10 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         var csrf = await HttpJourney.CsrfAsync(browser, "/usage?tab=settings");
         JsonElement before = default;
-        var rejected = await RunAsync(scenario, browser, producer, Configure(setup.Organization, "20000"), async () =>
+        var rejected = await RunAsync(scenario, Configure(setup.Organization, "20000"), async () =>
         {
             before = await ObserveAsync(producer);
             await ControlAsync(producer, new { command = "internal-misbind-organization-read", id = setup.Organization });
@@ -601,10 +601,10 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         await ControlAsync(producer, new { command = "internal-pause-put", collection = "dashboard_accounts", count = 2 });
-        await using var first = await StartAsync(scenario, browser, producer, Report(setup.Organization));
-        await using var second = await StartAsync(scenario, browser, producer, Report(setup.Organization));
+        await using var first = await StartAsync(scenario, Report(setup.Organization));
+        await using var second = await StartAsync(scenario, Report(setup.Organization));
         try { await PausedAsync(producer, 2); }
         finally { await ControlAsync(producer, new { command = "internal-release-put" }); }
         await BillAsync(await first.ResultAsync(), setup.Month); await BillAsync(await second.ResultAsync(), setup.Month);
@@ -621,9 +621,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         var nextMonth = new DateTimeOffset(utcNow.Year, utcNow.Month, 1, 0, 0, 0, TimeSpan.Zero).AddMonths(1);
         var boundaryStart = nextMonth.AddMinutes(-10);
         var setup = await PrepareAsync(browser, producer, time: boundaryStart);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         await ControlAsync(producer, new { command = "internal-pause-usage" });
-        await using var report = await StartAsync(scenario, browser, producer, Report(setup.Organization));
+        await using var report = await StartAsync(scenario, Report(setup.Organization));
         try
         {
             await PausedAsync(producer, 4, "pausedUsage");
@@ -644,7 +644,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
-        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         var secret = await HttpJourney.CreatePatAsync(browser, "Internal policy protocol journey");
         var billing = await ToolAsync(browser, secret, "get_billing", new { organizationId = setup.Organization });
         await CheckAsync(billing.GetProperty("planKey").GetString() == "internal" && billing.GetProperty("planName").GetString() == "TerraScale Internal" &&
@@ -691,10 +691,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             "The actual public entry sanitizes a whole application construction failure before issuing any device grant");
         var observed = await ObserveAsync(producer);
         await CheckAsync(observed.GetProperty("billing").GetProperty("cliBuildFailures").GetInt32() == 1 &&
-            observed.GetProperty("encryptedCredentialRecords").GetInt32() == 0 && observed.GetProperty("accessTokenHashRecords").GetInt32() == 0 &&
             observed.GetProperty("billing").GetProperty("bindings").GetArrayLength() == 0 &&
             observed.GetProperty("billing").GetProperty("singleton").ValueKind == JsonValueKind.Null,
-            "The failed real command graph leaves no forgotten credential, payment fence or internal singleton");
+            "The failed real command graph leaves no payment fence or internal singleton");
         await ActiveAsync(browser);
         await NoStripeAsync(observed);
     }
@@ -708,11 +707,11 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         using var producer = scenario.CreateProviderClient(); using var owner = scenario.CreateClient();
         using var nominee = scenario.CreateClient(replica: true);
         var setup = await PrepareAsync(owner, producer);
-        await SuccessAsync(await RunAsync(scenario, owner, producer, Configure(setup.Organization)), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         var enrolled = await EnrollNomineeAsync(nominee, producer);
         await InviteAndJoinAsync(owner, nominee, enrolled.Email);
         await ControlAsync(producer, new { command = "internal-pause-put", collection = "dashboard_organizations", id = setup.Organization, after = true });
-        await using var report = await StartAsync(scenario, owner, producer, Report(setup.Organization));
+        await using var report = await StartAsync(scenario, Report(setup.Organization));
         try
         {
             await PausedAsync(producer);
@@ -772,8 +771,8 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             probe.GetProperty("requests").EnumerateArray().Any(row => row.GetProperty("path").GetString() == "/v1/terrascale/organizations/" + setup.Organization + "/ownership-transfer/confirm" &&
                 row.GetProperty("userId").GetString() == enrolled.Subject),
             "External producer evidence proves the verified email acceptance and nominee-authorized SDK confirm without any dashboard projection shortcut");
-        await BillAsync(await RunAsync(scenario, owner, producer, Report(setup.Organization)), setup.Month);
-        await BillAsync(await RunAsync(scenario, owner, producer, Report(setup.Organization)), setup.Month);
+        await BillAsync(await RunAsync(scenario, Report(setup.Organization)), setup.Month);
+        await BillAsync(await RunAsync(scenario, Report(setup.Organization)), setup.Month);
         using var oldInbox = await owner.GetAsync("/notifications");
         using var newInbox = await nominee.GetAsync("/notifications");
         await CheckAsync(oldInbox.StatusCode == HttpStatusCode.OK && newInbox.StatusCode == HttpStatusCode.OK &&
@@ -797,17 +796,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
     {
         const string email = "second-owner@example.com";
         const string password = "native-second-owner-123";
-        var csrf = await HttpJourney.CsrfAsync(browser, "/onboarding");
-        using var registered = await HttpJourney.PostFormAsync(browser, "/onboarding", new()
-        { ["_csrf"] = csrf, ["displayName"] = "Second Owner", ["email"] = email, ["password"] = password, ["confirmPassword"] = password, ["terms"] = "true", ["returnTo"] = "/onboarding" });
-        await CheckAsync(registered.StatusCode == HttpStatusCode.OK,
-            "A second ordinary principal begins signup through the actual confidential first-party enrollment producer");
-        using var verified = await HttpJourney.PostFormAsync(browser, "/login/code/verify", new()
-        { ["_csrf"] = csrf, ["email"] = email, ["code"] = "123456", ["signUp"] = "1", ["redirectTo"] = "/onboarding" });
-        var enrollmentEvidence = await ObserveAsync(producer);
-        var signupActions = enrollmentEvidence.GetProperty("actions").EnumerateArray().Count(row => row.GetString() == "sign-up");
-        await CheckAsync(verified.StatusCode == HttpStatusCode.SeeOther && verified.Headers.Location?.OriginalString == "/onboarding",
-            $"Native signup verification failed with HTTP {(int)verified.StatusCode}, Location '{verified.Headers.Location?.OriginalString ?? "<none>"}', producer sign-up actions {signupActions}, pending-token redemptions {enrollmentEvidence.GetProperty("signupGrantBindings").GetInt32()}, and contract failures {enrollmentEvidence.GetProperty("contractFailures").GetInt32()}");
+        using (var verified = await HttpJourney.LoginAsync(browser, email, password, "/onboarding", signUp: true))
+            await CheckAsync(verified.StatusCode == HttpStatusCode.SeeOther && verified.Headers.Location?.OriginalString == "/onboarding",
+                $"Hosted ts-auth sign-up returned HTTP {(int)verified.StatusCode}, Location '{verified.Headers.Location?.OriginalString ?? "<none>"}'");
         foreach (var fields in new Dictionary<string, string>[]
         {
             new() { ["step"] = "account-information", ["displayName"] = "Second Owner" },
@@ -830,8 +821,8 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         var observed = await ObserveAsync(producer);
         var principal = observed.GetProperty("registeredPrincipals").EnumerateArray().Single(row => row.GetProperty("userId").GetString() == subject);
         await CheckAsync(principal.GetProperty("email").GetString() == email && principal.GetProperty("platformRole").ValueKind == JsonValueKind.Null &&
-            observed.GetProperty("signupGrantBindings").GetInt32() == 1 && observed.GetProperty("contractFailures").GetInt32() == 0,
-            "Only native signup admitted the second private producer row; no role fixture control or privileged management route granted it authority");
+            observed.GetProperty("contractFailures").GetInt32() == 0,
+            "Only hosted sign-up admitted the second private producer row; no role fixture control or privileged management route granted it authority");
         return (subject, email);
     }
 
@@ -904,29 +895,26 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         ["configure-internal-billing", "--org", organization, "--admin-email", "user@example.com", "--base-plan", "business", "--spend-cap-cents", cap, "--write-cents-per-million", writeRate, "--storage-cents-per-gib-month", "20"];
     private static string[] Report(string organization) => ["report-internal-billing", "--org", organization, "--admin-email", "user@example.com"];
 
-    private static async Task<Command> RunAsync(AuthProviderScenario scenario, HttpClient browser, HttpClient producer, string[] args, Func<Task>? beforePoll = null)
+    private static async Task<Command> RunAsync(AuthProviderScenario scenario, string[] args, Func<Task>? beforeDecision = null)
     {
-        await using var running = await StartAsync(scenario, browser, producer, args, beforePoll);
+        await using var running = await StartAsync(scenario, args, beforeDecision);
         return await running.ResultAsync();
     }
 
-    private static async Task<RunningCommand> StartAsync(AuthProviderScenario scenario, HttpClient browser, HttpClient producer, string[] args, Func<Task>? beforePoll = null)
+    // Approves the printed code on the test stand-in for ts-auth's hosted device verification page.
+    private static async Task<RunningCommand> StartAsync(AuthProviderScenario scenario, string[] args, Func<Task>? beforeDecision = null)
     {
         var running = new RunningCommand();
         running.Run = scenario.RunCliAsync(args, running.Output, running.Error, running.Deadline.Token);
         try
         {
             var approval = new Uri(await running.Output.Prompt.WaitAsync(running.Deadline.Token));
-            await CheckAsync(approval.GetLeftPart(UriPartial.Authority) == scenario.Origin.GetLeftPart(UriPartial.Authority) && approval.AbsolutePath == "/cli/approve",
-                "The public command prints its actual native device-approval origin");
+            await CheckAsync(approval.Scheme == "https" && approval.IsDefaultPort && approval.Host == "auth.terrascale.tech" &&
+                approval.AbsolutePath == "/ui/terrascale/device" && approval.Query.StartsWith("?user_code=", StringComparison.Ordinal),
+                "The public command prints ts-auth's hosted device verification page");
             var code = Uri.UnescapeDataString(approval.Query["?user_code=".Length..]);
-            var csrf = await HttpJourney.CsrfAsync(browser, approval.PathAndQuery);
-            using var approved = await HttpJourney.PostFormAsync(browser, "/cli/approve/submit", new()
-            { ["_csrf"] = csrf, ["user_code"] = code, ["decision"] = "approve", ["password"] = "test-password" });
-            await CheckAsync(approved.StatusCode == HttpStatusCode.OK && (await approved.Content.ReadAsStringAsync()).Contains("CLI authorized", StringComparison.Ordinal),
-                "The real native form reauthenticates and approves the independent CLI grant");
-            if (beforePoll is not null) await beforePoll();
-            await ControlAsync(producer, new { command = "advance", seconds = 60 });
+            if (beforeDecision is not null) await beforeDecision();
+            await CheckAsync(scenario.DecideDevice(code), "The operator approves the command's pending ts-auth device grant");
             return running;
         }
         catch { await running.DisposeAsync(); throw; }

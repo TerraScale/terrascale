@@ -44,10 +44,10 @@ application or strict visual parity describe the state at that time.
 - One .NET 10 application project, RazorSlices, Datastar and the original
   Lightning CSS sources, Monaco bundles, fonts, flags and file-backed SVG
   brand/map assets. Asset fingerprints retain the Go six-byte SHA-256 format.
-- Password and email-code login, signup/verification/resend, password reset,
-  SSO with PKCE/state/nonce and signed ID-token validation, provider logout,
-  password changes, persistent browser sessions and CLI/device authorization.
-  Auth attempts use persistent limits; refresh coordination uses conditional
+- Sign-in only through ts-auth's hosted pages: authorization code with
+  PKCE/state/nonce and signed ID-token validation, provider logout and
+  persistent browser sessions. Sign-up, password reset, password change, MFA
+  and CLI device approval live on ts-auth. Refresh coordination uses conditional
   writes. Browser sessions, independent credentials and refresh leases are
   encrypted; bearer lookup keys are hashed. Provider activity is checked on
   use. CLI approval and delivery are bounded and single-use.
@@ -67,8 +67,8 @@ application or strict visual parity describe the state at that time.
   Customer ownership and checkout/subscription bindings persist in TerraBase;
   conditional reconciliation refetches authoritative Stripe state on races.
   The organization wizard binds checkout return to the authorized organization.
-- Public internal-billing configure/report commands authenticate through native
-  device approval and refresh signed administrator authority before privileged
+- Public internal-billing configure/report commands authenticate through
+  ts-auth's device authorization grant and refresh signed administrator authority before privileged
   writes. Persisted payment reservations fence internal billing and Stripe
   checkout; a singleton binds the canonical internal organization. Monthly
   estimates use every project's actual producer usage, copied plan allowances
@@ -128,7 +128,7 @@ nice -n 19 make perf
 
 Use the demo URL printed by its launcher, including its worktree-specific
 port. It binds all interfaces and supports the same Tailscale refresh path.
-Demo login is `user@example.com` / `test-password`; email codes are `123456`.
+Demo sign-in goes through a test-only stand-in for ts-auth's hosted pages as `user@example.com`.
 The launcher loads demo-only provider fixtures into a temporary test host and
 runs it with the production route/service graph. All identity, state,
 provider and Stripe protocol fixtures remain under

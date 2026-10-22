@@ -96,10 +96,7 @@ public sealed class AccountsMembersSettingsBrowserAuditJourneyTests(AccountsAudi
 
     private async Task LoginAsync(IPage page, string path)
     {
-        await page.GotoAsync(new Uri(scenario.Origin, "/login?returnTo=" + Uri.EscapeDataString(path)).ToString());
-        await page.GetByLabel("Email", new() { Exact = true }).FillAsync("owner@accounts-audit.example.test");
-        await page.GetByRole(AriaRole.Textbox, new() { Name = "Password", Exact = true }).FillAsync(AccountsAuditScenario.Password);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await BrowserAudit.SignInAsync(page, scenario.Origin, path, "owner@accounts-audit.example.test", AccountsAuditScenario.Password);
         await page.WaitForURLAsync(new Uri(scenario.Origin, path).ToString());
     }
 

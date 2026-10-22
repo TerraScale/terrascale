@@ -5,9 +5,13 @@ namespace TerraScale.Dashboard.Features.Profile;
 
 public static class AccessTokenEndpoints
 {
+    private const string ReturnTo = "/profile?tab=access-tokens";
+
     public static IEndpointRouteBuilder MapProfileAccessTokens(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapPost("/api/v1/dashboard/profile/access-tokens", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens, IAuthAttemptBudget budgets) =>
+        // A token acts as its owner until it expires, so it gets its own grant from a
+        // fresh ts-auth authorization instead of copying the browser session's.
+        endpoints.MapPost("/api/v1/dashboard/profile/access-tokens", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
@@ -16,22 +20,9 @@ public static class AccessTokenEndpoints
             try
             {
                 if (!int.TryParse(form["expiresInDays"], out var days)) throw new AccountAccessException("Choose a valid token expiration.", 422);
-                await budgets.ReserveAsync(http, context.Account.Email, AuthBudgetKind.SignIn, http.RequestAborted);
-                var created = await tokens.CreateAsync(context, form["name"].ToString(), days, form["password"].ToString(), EnrollmentEndpoints.ClientIp(http), http.RequestAborted);
-                await budgets.ForgiveAsync(http, context.Account.Email, http.RequestAborted);
-                return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "access-tokens", Tokens: await tokens.ListAsync(context, http.RequestAborted), CreatedToken: created, Sessions: await sessions.ListAsync(http, context.Session)));
+                return await AuthEndpoints.AuthorizeAsync(http, ReturnTo, AccessTokens.Validate(form["name"].ToString(), days), days);
             }
-            catch (AuthRequestRejectedException error)
-            {
-                if (error.RetryAfter > 0) http.Response.Headers.RetryAfter = error.RetryAfter.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                return Results.Problem(error.Message, statusCode: error.StatusCode);
-            }
-            catch (AccountAccessException error)
-            {
-                var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "access-tokens", Error: error.Message, Tokens: await tokens.ListAsync(context, http.RequestAborted), Sessions: await sessions.ListAsync(http, context.Session)));
-                view.StatusCode = error.StatusCode;
-                return view;
-            }
+            catch (AccountAccessException error) { return await FailureAsync(http, context, sessions, tokens, error); }
         });
         endpoints.MapPost("/api/v1/dashboard/profile/access-tokens/{id}/revoke", async (HttpContext http, string id, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens) =>
         {
@@ -44,5 +35,31 @@ public static class AccessTokenEndpoints
             return HttpRedirects.SeeOther("/profile?tab=danger");
         });
         return endpoints;
+    }
+
+    // The ts-auth callback for a token flow: the fresh grant must belong to the signed-in browser's user.
+    public static async Task<IResult> IssueAsync(HttpContext http, OidcFlow flow, SessionRecord fresh)
+    {
+        var sessions = http.RequestServices.GetRequiredService<DashboardSessions>();
+        var tokens = http.RequestServices.GetRequiredService<IProfileTokens>();
+        var context = await AccountRequest.RequireAsync(http, sessions, http.RequestServices.GetRequiredService<AccountService>());
+        if (context is null)
+        {
+            await http.RequestServices.GetRequiredService<IAuthGateway>().RevokeAsync(fresh, http.RequestAborted);
+            return HttpRedirects.SeeOther("/login?returnTo=" + Uri.EscapeDataString(ReturnTo));
+        }
+        try
+        {
+            var created = await tokens.CreateAsync(context, flow.TokenName, flow.TokenDays, fresh, http.RequestAborted);
+            return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "access-tokens", Tokens: await tokens.ListAsync(context, http.RequestAborted), CreatedToken: created, Sessions: await sessions.ListAsync(http, context.Session)));
+        }
+        catch (AccountAccessException error) { return await FailureAsync(http, context, sessions, tokens, error); }
+    }
+
+    private static async Task<IResult> FailureAsync(HttpContext http, AccountContext context, DashboardSessions sessions, IProfileTokens tokens, AccountAccessException error)
+    {
+        var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "access-tokens", Error: error.Message, Tokens: await tokens.ListAsync(context, http.RequestAborted), Sessions: await sessions.ListAsync(http, context.Session)));
+        view.StatusCode = error.StatusCode;
+        return view;
     }
 }

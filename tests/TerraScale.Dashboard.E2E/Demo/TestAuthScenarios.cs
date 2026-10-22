@@ -39,7 +39,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
     private readonly ConcurrentQueue<string> cliRequests = new();
     private string root = "";
 
-    private AuthProviderScenario() => provider = new(clock, state, environment.Workspace);
+    private AuthProviderScenario() => provider = new(clock, state, environment.Workspace, cliRequests);
 
     public Uri Origin { get; private set; } = null!;
     public Uri ReplicaOrigin { get; private set; } = null!;
@@ -98,7 +98,18 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         await second.StartAsync();
         Origin = Address(first);
         ReplicaOrigin = Address(second);
+        RegisterProvider();
     }
+
+    // Lets HttpJourney follow the dashboard's redirects to https://auth.terrascale.tech into this producer.
+    private void RegisterProvider()
+    {
+        HttpJourney.AuthProviders[Origin.GetLeftPart(UriPartial.Authority)] = ProviderOrigin;
+        HttpJourney.AuthProviders[ReplicaOrigin.GetLeftPart(UriPartial.Authority)] = ProviderOrigin;
+    }
+
+    // Test-only stand-in for a user deciding on ts-auth's hosted device verification page.
+    public bool DecideDevice(string userCode, string email = "user@example.com", bool approve = true) => provider.DecideDevice(userCode, email, approve);
 
     private void Configure(WebApplicationBuilder application)
     {
@@ -107,17 +118,14 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         application.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(provider.Billing));
         application.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
         application.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(clock));
-        application.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new ProducerFactory(transport, () => Origin, cliRequests)));
+        application.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new ProducerFactory(transport)));
         application.Services.AddSingleton<TsAuthGateway>();
         application.Services.Replace(ServiceDescriptor.Singleton<IAuthGateway>(services => services.GetRequiredService<TsAuthGateway>()));
         application.Services.Replace(ServiceDescriptor.Singleton<IAuthRefreshGateway>(services => services.GetRequiredService<TsAuthGateway>()));
-        application.Services.Replace(ServiceDescriptor.Singleton<IAuthEnrollmentGateway>(services => services.GetRequiredService<TsAuthGateway>()));
         application.Services.Replace(ServiceDescriptor.Singleton<IAuthOidcGateway>(services => services.GetRequiredService<TsAuthGateway>()));
         application.Services.Replace(ServiceDescriptor.Singleton<IAuthLogoutGateway>(services => services.GetRequiredService<TsAuthGateway>()));
-        application.Services.Replace(ServiceDescriptor.Singleton<IProfileIdentityGateway>(services => services.GetRequiredService<TsAuthGateway>()));
         application.Services.Replace(ServiceDescriptor.Singleton<IPlatformRoleGateway>(services => services.GetRequiredService<TsAuthGateway>()));
         application.Services.Replace(ServiceDescriptor.Singleton<IProjectAccessTokens>(services => services.GetRequiredService<TsAuthGateway>()));
-        application.Services.Replace(ServiceDescriptor.Singleton<IAuthAttemptBudget, AuthAttemptBudget>());
         application.Services.Replace(ServiceDescriptor.Singleton<IUsageMeasurements, UsageBackend>());
         if (provider.ReportingExtension is not null)
             application.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Home.IHomeMeasurements, TerraScale.Dashboard.Features.Home.TerraBaseHomeMeasurements>());
@@ -141,6 +149,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         second = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
         await first.StartAsync(); await second.StartAsync();
         Origin = Address(first); ReplicaOrigin = Address(second);
+        RegisterProvider();
     }
 
     private static Uri Address(WebApplication application) => new(application.Services.GetRequiredService<IServer>()
@@ -174,20 +183,9 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         public void Set(DateTimeOffset value) => Interlocked.Exchange(ref ticks, value.UtcTicks);
     }
 
-    private sealed class ProducerFactory(ProducerTransport transport, Func<Uri> dashboardOrigin, ConcurrentQueue<string> cliRequests) : IHttpClientFactory
+    private sealed class ProducerFactory(ProducerTransport transport) : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => name == "dashboard-cli"
-            ? new(new CliTransport(cliRequests)) { BaseAddress = dashboardOrigin(), Timeout = TimeSpan.FromSeconds(30) }
-            : new(transport, disposeHandler: false);
-    }
-
-    private sealed class CliTransport(ConcurrentQueue<string> requests) : DelegatingHandler(new HttpClientHandler { AllowAutoRedirect = false })
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            requests.Enqueue(request.Method + " " + request.RequestUri!.AbsolutePath);
-            return base.SendAsync(request, cancellationToken);
-        }
+        public HttpClient CreateClient(string name) => new(transport, disposeHandler: false);
     }
 
     private sealed class ProducerTransport(Uri localOrigin, InternalBillingProducer billing, TestAuthApiKeys apiKeys) : DelegatingHandler(new HttpClientHandler { AllowAutoRedirect = false })
@@ -229,7 +227,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         }
     }
 
-    private sealed class ScenarioProvider(ScenarioClock clock, TestState state, TestWorkspace workspace) : IDisposable
+    private sealed class ScenarioProvider(ScenarioClock clock, TestState state, TestWorkspace workspace, ConcurrentQueue<string> cliRequests) : IDisposable
     {
         // ts-auth 6bb896bb: one global issuer, {PublicOrigin}/{tenant}, served from every region.
         private const string Issuer = "https://auth.terrascale.tech/terrascale";
@@ -240,7 +238,6 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private readonly string subject = new TerraScaleIdGenerator().NewId();
         private readonly Principal foreignPrincipal = new(new TerraScaleIdGenerator().NewId(), "foreign@example.com", "Foreign Protocol User", "", 0, null);
         private readonly ConcurrentDictionary<string, Principal> principals = new(StringComparer.Ordinal);
-        private readonly ConcurrentDictionary<string, PendingEnrollment> pendingEnrollments = new(StringComparer.Ordinal);
         private long authEpoch;
         private InternalBillingProducer? billing;
         private TestAuthApiKeys? apiKeys;
@@ -258,8 +255,6 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private int projectReportReads;
         private readonly ConcurrentDictionary<string, Authorization> codes = new();
         private readonly ConcurrentDictionary<string, byte> consumedRefresh = new();
-        private readonly ConcurrentQueue<string> actions = new();
-        private readonly ConcurrentBag<string> enrollmentSecrets = ["pending-enrollment", "test-password"];
         private TaskCompletionSource? refreshGate;
         private int refreshesBeforePause;
         private TaskCompletionSource? userInfoGate;
@@ -273,9 +268,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private int tokenSeconds = 3600;
         private int refreshes;
         private int refreshPauses;
-        private int passwordGrants;
         private int codeExchanges;
-        private int signupGrantBindings;
         private int managementRequests;
         private int managementMutations;
         private int revocations;
@@ -288,7 +281,6 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private bool unavailableRefresh;
         private bool revoked;
         private bool storedClaimSpoof;
-        private bool signupPending;
         private TaskCompletionSource? accountReservations;
         private int identityAttempts;
         private int projectionWrites;
@@ -348,7 +340,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 lock (keyGate) parameters = (fault == "jwks-substitution" ? wrongKey : signingKey).ExportParameters(false);
                 return Results.Json(new { keys = new[] { new { kty = "EC", crv = "P-256", alg = "ES256", use = "sig", kid = "test-signing-key", x = B64(parameters.Q.X!), y = B64(parameters.Q.Y!) } } });
             }
-            if (path == "/terrascale/oauth/authorize")
+            // A descendant-issuer discovery points the browser below the tenant; the hosted stand-in serves it too.
+            if (path is "/terrascale/oauth/authorize" or "/terrascale/descendant/oauth/authorize")
             {
                 var query = http.Request.Query;
                 if (query["client_id"] != ClientId || query["response_type"] != "code" || query["code_challenge_method"] != "S256" ||
@@ -360,8 +353,15 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 foreach (var (prompt, error) in new[] { ("login", "login_required"), ("consent", "consent_required"), ("select_account", "account_selection_required") })
                     if (query["prompt"].ToString().Split(' ').Contains(prompt))
                         return Results.Redirect(redirect.AbsoluteUri + "?error=" + error + "&state=" + Uri.EscapeDataString(query["state"].ToString()));
+                // Test-only stand-in for the hosted sign-in/sign-up page: the journey names the account.
+                var hostedEmail = query["email"].Count == 0 ? "user@example.com" : query["email"].ToString().Trim().ToLowerInvariant();
+                if (query["signup"] == "1" && hostedEmail != "user@example.com")
+                    principals.TryAdd(hostedEmail, new(new TerraScaleIdGenerator().NewId(), hostedEmail, hostedEmail, query["password"].ToString(), 0, null));
+                var who = hostedEmail == "user@example.com" ? DefaultPrincipal : principals.GetValueOrDefault(hostedEmail);
+                if (who is null || query["password"].Count != 0 && query["password"] != who.Password)
+                    return Results.Redirect(redirect.AbsoluteUri + "?error=access_denied&state=" + Uri.EscapeDataString(query["state"].ToString()));
                 var code = "authorization-" + Guid.NewGuid().ToString("N");
-                codes[code] = new(query["nonce"].ToString(), query["code_challenge"].ToString(), redirect.AbsoluteUri);
+                codes[code] = new(query["nonce"].ToString(), query["code_challenge"].ToString(), redirect.AbsoluteUri, hostedEmail);
                 return Results.Redirect(redirect.AbsoluteUri + "?state=" + Uri.EscapeDataString(query["state"].ToString()) + "&code=" + code);
             }
             if (path == "/terrascale/oauth/userinfo")
@@ -393,9 +393,10 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 if (http.Request.Method is not "GET" and not "HEAD") Interlocked.Increment(ref managementMutations);
                 return Results.NotFound();
             }
-            if (path.Contains("/headless/v1/", StringComparison.Ordinal)) return await HeadlessAsync(http, path);
             if (!http.Request.HasFormContentType) return ContractFailure("Missing form-encoded auth operation.");
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            if (form["client_id"] == "ts-cli" && !http.Request.Headers.ContainsKey("Authorization") && form["client_secret"].Count == 0)
+                return await CliAsync(http, path, form);
             if (!Confidential(http, form)) return ContractFailure("Missing confidential client credentials.");
             if (path == "/terrascale/oauth/revoke")
             {
@@ -435,41 +436,80 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                     authorization.RedirectUri != form["redirect_uri"] ||
                     authorization.Challenge != B64(SHA256.HashData(Encoding.ASCII.GetBytes(form["code_verifier"].ToString()))))
                     return ContractFailure("Authorization code did not bind the original PKCE/redirect URI.");
-                return Results.Json(Issue(nonce: authorization.Nonce));
+                var signedIn = authorization.Email == "user@example.com" ? DefaultPrincipal : principals.GetValueOrDefault(authorization.Email);
+                if (signedIn is null) return OAuthError("invalid_grant", 400);
+                return Results.Json(Issue(nonce: authorization.Nonce, principal: signedIn));
             }
-            if (kind is not ("urn:terrascale:params:oauth:grant-type:password" or "urn:terrascale:params:oauth:grant-type:email-code") ||
-                form["scope"] != "openid email profile offline_access" ||
-                !IsLoopback(form["ip_address"].ToString()))
-                return ContractFailure("Headless grant did not bind scope, email and native client address.");
-            var email = form["email"].ToString().Trim().ToLowerInvariant();
-            var principalForGrant = email == "user@example.com" ? DefaultPrincipal : principals.GetValueOrDefault(email);
-            if (kind.EndsWith(":password", StringComparison.Ordinal))
+            return ContractFailure("Unsupported token grant.");
+        }
+
+        // ts-auth's public CLI client: RFC 8628 device authorization, its token polling, refresh and revocation.
+        private readonly ConcurrentDictionary<string, DeviceAuthorization> devices = new();
+        public bool DecideDevice(string userCode, string email, bool approve)
+        {
+            var entry = devices.FirstOrDefault(item => item.Value.UserCode == userCode);
+            if (entry.Key is null || entry.Value.Email is not null || entry.Value.Denied) return false;
+            return devices.TryUpdate(entry.Key, entry.Value with { Email = approve ? email : null, Denied = !approve }, entry.Value);
+        }
+
+        private async Task<IResult> CliAsync(HttpContext http, string path, IFormCollection form)
+        {
+            cliRequests.Enqueue(http.Request.Method + " " + path);
+            if (path == "/terrascale/oauth/device")
             {
-                Interlocked.Increment(ref passwordGrants);
-                if (principalForGrant is null || form["password"] != principalForGrant.Password) return OAuthError("invalid_grant", 400);
+                if (form["scope"] != "openid email offline_access") return ContractFailure("Device authorization did not request the CLI scope.");
+                var device = B64(RandomNumberGenerator.GetBytes(32));
+                var raw = RandomNumberGenerator.GetString("BCDFGHJKLMNPQRSTVWXZ", 8);
+                var userCode = raw[..4] + "-" + raw[4..];
+                devices[device] = new(userCode, clock.GetUtcNow().AddMinutes(10));
+                return Results.Json(new
+                {
+                    device_code = device,
+                    user_code = userCode,
+                    verification_uri = "https://auth.terrascale.tech/ui/terrascale/device",
+                    verification_uri_complete = "https://auth.terrascale.tech/ui/terrascale/device?user_code=" + Uri.EscapeDataString(userCode),
+                    expires_in = 600,
+                    interval = 1
+                });
             }
-            else
+            if (path == "/terrascale/oauth/revoke")
             {
-                if (form["code"] != "123456") return OAuthError("invalid_grant", 400);
-                if (email != "user@example.com" && form["pending_token"].Count > 0)
-                {
-                    if (!pendingEnrollments.TryGetValue(email, out var pending) || pending.Token != form["pending_token"] ||
-                        pending.ExpiresAt <= clock.GetUtcNow() || !pendingEnrollments.TryRemove(email, out var consumed) || consumed != pending ||
-                        !principals.TryAdd(email, pending.Principal)) return OAuthError("invalid_grant", 400);
-                    principalForGrant = pending.Principal;
-                    Interlocked.Increment(ref signupGrantBindings);
-                }
-                else if (email == "user@example.com" && signupPending && form["pending_token"] != "pending-enrollment")
-                    return ContractFailure("Signup verification omitted the owning pending enrollment token.");
-                if (email == "user@example.com" && form["pending_token"].Count > 0)
-                {
-                    if (form["pending_token"] != "pending-enrollment") return OAuthError("invalid_grant", 400);
-                    Interlocked.Increment(ref signupGrantBindings);
-                    signupPending = false;
-                }
+                var found = refresh.GetValueOrDefault(form["token"].ToString()) ?? access.GetValueOrDefault(form["token"].ToString());
+                if (found is not null)
+                    foreach (var entry in access.Values.Where(item => item.Family == found.Family)) entry.Revoked = true;
+                Interlocked.Increment(ref revocations);
+                return Results.Ok(new { });
             }
-            if (principalForGrant is null) return OAuthError("invalid_grant", 400);
-            return Results.Json(Issue(principal: principalForGrant));
+            if (path != "/terrascale/oauth/token") return ContractFailure("Unknown CLI auth operation.");
+            if (form["grant_type"] == "urn:ietf:params:oauth:grant-type:device_code")
+            {
+                if (!devices.TryGetValue(form["device_code"].ToString(), out var pending)) return OAuthError("invalid_grant", 400);
+                if (pending.ExpiresAt <= clock.GetUtcNow()) { devices.TryRemove(form["device_code"].ToString(), out _); return OAuthError("expired_token", 400); }
+                if (pending.Denied) { devices.TryRemove(form["device_code"].ToString(), out _); return OAuthError("access_denied", 400); }
+                if (pending.Email is null) return OAuthError("authorization_pending", 400);
+                if (!devices.TryRemove(form["device_code"].ToString(), out _)) return OAuthError("invalid_grant", 400);
+                var approver = pending.Email == "user@example.com" ? DefaultPrincipal : principals.GetValueOrDefault(pending.Email);
+                return approver is null ? OAuthError("invalid_grant", 400) : Results.Json(Issue(includeIdToken: false, principal: approver));
+            }
+            if (form["grant_type"] == "refresh_token")
+            {
+                Interlocked.Increment(ref refreshes);
+                var secret = form["refresh_token"].ToString();
+                if (!refresh.TryGetValue(secret, out var previous) || previous.Revoked || revoked || !consumedRefresh.TryAdd(secret, 0))
+                    return OAuthError("invalid_grant", 400);
+                var principal = PrivatePrincipal(previous.Subject);
+                if (principal is null || principal.AuthEpoch != previous.AuthEpoch) return OAuthError("invalid_grant", 400);
+                var answer = Issue(previous.Family, includeIdToken: false, previousAccess: previous.AccessToken, principal: principal);
+                // The same pause and lost-reply controls as the confidential client's rotation.
+                if (refreshGate is { } gate && Interlocked.Decrement(ref refreshesBeforePause) < 0)
+                {
+                    Interlocked.Increment(ref refreshPauses);
+                    await gate.Task.WaitAsync(http.RequestAborted);
+                }
+                if (dropRefresh) { http.Abort(); return Results.Empty; }
+                return Results.Json(answer);
+            }
+            return OAuthError("unsupported_grant_type", 400);
         }
 
         private IResult ProjectExchange(IFormCollection form)
@@ -570,55 +610,6 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             scopes_supported = new[] { "openid", "email", "profile", "offline_access" }
         });
 
-        private async Task<IResult> HeadlessAsync(HttpContext http, string path)
-        {
-            if (!Basic(http)) return ContractFailure("Missing headless client authentication.");
-            using var body = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
-            var email = body.RootElement.GetProperty("email").GetString()?.Trim().ToLowerInvariant() ?? "";
-            if (email.Length == 0 ||
-                !IsLoopback(body.RootElement.GetProperty("ip_address").GetString()))
-                return ContractFailure("Missing headless email/client address binding.");
-            var action = path.Split("/headless/v1/", StringSplitOptions.None)[1];
-            actions.Enqueue(action);
-            if (action == "password-reset/start" && fault == "reset-start-missing")
-                return Results.NotFound();
-            if (fault == "signup-policy" && action == "sign-up")
-                return Results.Json(new { error = new { code = "invalid_password", message = "That password is too common." } }, statusCode: 400);
-            if (action == "sign-up")
-            {
-                var proposedPassword = body.RootElement.GetProperty("password").GetString()!;
-                enrollmentSecrets.Add(proposedPassword);
-                if (email == "user@example.com")
-                {
-                    password = proposedPassword;
-                    signupPending = true;
-                    return Results.Json(new { pending_token = "pending-enrollment" }, statusCode: StatusCodes.Status202Accepted);
-                }
-                var identity = pendingEnrollments.GetValueOrDefault(email)?.Principal.Subject ?? new TerraScaleIdGenerator().NewId();
-                var pending = new PendingEnrollment(new(identity, email, email, proposedPassword, 0, null),
-                    B64(RandomNumberGenerator.GetBytes(32)), clock.GetUtcNow().AddMinutes(10));
-                pendingEnrollments[email] = pending;
-                enrollmentSecrets.Add(pending.Token);
-                return Results.Json(new { pending_token = pending.Token }, statusCode: StatusCodes.Status202Accepted);
-            }
-            if (action == "password-reset/complete")
-            {
-                if (body.RootElement.GetProperty("code").GetString() != "123456") return HeadlessError("invalid_code");
-                if (fault == "reset-password-policy")
-                    return Results.Json(new { error = new { code = "invalid_password", message = "Secret vendor payload: password policy refusal." } }, statusCode: 400);
-                var nextPassword = body.RootElement.GetProperty("new_password").GetString()!;
-                enrollmentSecrets.Add(nextPassword);
-                if (email == "user@example.com") { password = nextPassword; authEpoch++; }
-                else if (principals.TryGetValue(email, out var principal))
-                    principals[email] = principal with { Password = nextPassword, AuthEpoch = checked(principal.AuthEpoch + 1) };
-                else return HeadlessError("invalid_code");
-                foreach (var grant in access.Values.Where(grant => grant.Email == email)) grant.Revoked = true;
-                if (fault == "reset-drop-completion-response") { http.Abort(); return Results.Empty; }
-                return Results.NoContent();
-            }
-            return action is "email-code/start" or "password-reset/start" ? Results.StatusCode(StatusCodes.Status202Accepted) : ContractFailure("Unknown headless operation.");
-        }
-
         private Principal DefaultPrincipal => new(subject, "user@example.com", "Protocol User", password, authEpoch, platformRole);
         private Principal? PrivatePrincipal(string userId) => userId == subject ? DefaultPrincipal : userId == foreignPrincipal.Subject
             ? foreignPrincipal : principals.Values.FirstOrDefault(principal => principal.Subject == userId);
@@ -626,7 +617,6 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private object Issue(string? family = null, bool includeIdToken = true, string? nonce = null, string? previousAccess = null, Principal? principal = null)
         {
             principal ??= DefaultPrincipal;
-            if (fault == "password-substitution") principal = foreignPrincipal;
             var seconds = family is null ? tokenSeconds : 3600;
             var grant = new Grant(principal.Subject, principal.Email, principal.AuthEpoch, family ?? Guid.NewGuid().ToString("N"), clock.GetUtcNow().AddSeconds(seconds), principal.PlatformRole);
             grant.AuthenticatedAt = previousAccess is not null && access.TryGetValue(previousAccess, out var original) ? original.AuthenticatedAt : clock.GetUtcNow().ToUnixTimeSeconds();
@@ -728,6 +718,12 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 case "drop-refresh-response": dropRefresh = true; break;
                 case "unavailable-refresh": unavailableRefresh = true; break;
                 case "revoke": revoked = true; break;
+                // Test-only stand-in for a password change on ts-auth's hosted account page: it revokes every grant of that user.
+                case "change-password":
+                    password = body.GetProperty("value").GetString()!;
+                    authEpoch++;
+                    foreach (var grant in access.Values.Where(grant => grant.Email == "user@example.com")) grant.Revoked = true;
+                    break;
                 case "expire-access":
                     foreach (var grant in access.Values) grant.ActivityExpiresAt = clock.GetUtcNow().AddSeconds(-1);
                     break;
@@ -836,13 +832,11 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 refreshes,
                 refreshPauses,
                 billing = Billing.Observations(),
-                passwordGrants,
                 codeExchanges,
                 projectExchanges,
                 projectScopeExchanges = projectScopeExchanges.ToArray(),
                 projectReportReads,
                 projectRequests = projectRequests.ToArray(),
-                signupGrantBindings,
                 managementMutations = 0,
                 managementRequests,
                 revocations,
@@ -854,7 +848,6 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 publishedIssuer = CurrentIssuer,
                 unsupportedIntrospectionRequests,
                 forgedIdRoleTokens,
-                actions = actions.ToArray(),
                 storedClaimSpoof,
                 identityAttempts,
                 projectionWrites,
@@ -869,8 +862,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                     .Select(entry => new { storageKey = entry.Value.Id, publicId = entry.Value.Document.GetProperty("AccountId").GetString() }).ToArray(),
                 accounts = state.Items.Where(entry => entry.Key.StartsWith(AccountService.AccountsCollection + "/", StringComparison.Ordinal))
                     .Select(entry => new { storageKey = entry.Value.Id, publicId = entry.Value.Document.GetProperty("Id").GetString() }).ToArray(),
-                credentialsEncrypted = access.Keys.Concat(refresh.Keys).All(token => plaintext.All(body => !body.Contains(token, StringComparison.Ordinal))),
-                enrollmentSecretsEncrypted = enrollmentSecrets.All(secret => plaintext.All(body => !body.Contains(secret, StringComparison.Ordinal)))
+                credentialsEncrypted = access.Keys.Concat(refresh.Keys).All(token => plaintext.All(body => !body.Contains(token, StringComparison.Ordinal)))
             });
         }
 
@@ -916,8 +908,6 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             JsonValueKind.Array => claim.EnumerateArray().Any(value => value.ValueKind == JsonValueKind.String && value.GetString() == CurrentIssuer),
             _ => false
         };
-        private static bool IsLoopback(string? value) => IPAddress.TryParse(value, out var address) &&
-            IPAddress.IsLoopback(address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address);
         private static bool Confidential(HttpContext http, IFormCollection form) => Basic(http) || form["client_id"] == ClientId && form["client_secret"] == "test-dashboard-client-secret-0123456789abcdef";
         private IResult ContractFailure(string message)
         {
@@ -926,16 +916,15 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             return Results.Json(new { error = "contract_failure", message }, statusCode: 400);
         }
         private static IResult OAuthError(string code, int status) => Results.Json(new { error = code }, statusCode: status);
-        private static IResult HeadlessError(string code) => Results.Json(new { error = new { code, message = "The code is wrong or has expired. Request a new one if needed." } }, statusCode: 400);
         private static string B64(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         private static byte[] UnB64(string text) => Convert.FromBase64String(text.Replace('-', '+').Replace('_', '/') + new string('=', (4 - text.Length % 4) % 4));
         public void ReleaseRefresh() => refreshGate?.TrySetResult();
         public void ReleaseUserInfo() => userInfoGate?.TrySetResult();
         public void ReleaseAccountReservations() => accountReservations?.TrySetResult();
         public void Dispose() { userInfoGate?.TrySetResult(); accountReservations?.TrySetResult(); signingKey.Dispose(); wrongKey.Dispose(); }
-        private sealed record Authorization(string Nonce, string Challenge, string RedirectUri);
+        private sealed record Authorization(string Nonce, string Challenge, string RedirectUri, string Email);
+        private sealed record DeviceAuthorization(string UserCode, DateTimeOffset ExpiresAt, string? Email = null, bool Denied = false);
         private sealed record Principal(string Subject, string Email, string Name, string Password, long AuthEpoch, string? PlatformRole);
-        private sealed record PendingEnrollment(Principal Principal, string Token, DateTimeOffset ExpiresAt);
         private sealed record Grant(string Subject, string Email, long AuthEpoch, string Family, DateTimeOffset ExpiresAt, string? PlatformRole)
         {
             public long AuthenticatedAt { get; set; }

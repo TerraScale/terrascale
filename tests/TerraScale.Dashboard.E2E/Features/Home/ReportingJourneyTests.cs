@@ -340,10 +340,14 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await anonPage.GetByRole(AriaRole.Link, new() { Name = "Sign in", Exact = true }).WaitForAsync();
             await SigninAsync(anonPage, ownerUser, first);
             await anonPage.GetByRole(AriaRole.Alert).Filter(new() { HasText = "but you are signed in as" }).WaitForAsync();
-            await Assert.That((await flow.SubmitAsync(anonPage, "form[action$=\"/switch-account\"]", "Sign out and switch account")).Status).IsEqualTo(303);
+            // The browser stops on ts-auth's hosted sign-in page (stood in here) instead of the stand-in signing straight back in.
+            await anonPage.RouteAsync("**/__test/oidc?*", route => route.FulfillAsync(new() { ContentType = "text/html", Body = "<!doctype html><title>ts-auth sign-in</title><main><h1>Sign in</h1></main>" }));
+            var switched = await flow.SubmitAsync(anonPage, "form[action$=\"/switch-account\"]", "Sign out and switch account");
+            await anonPage.UnrouteAsync("**/__test/oidc?*");
+            await Assert.That(switched.Status).IsEqualTo(303);
             await Assert.That((await anonContext.APIRequest.GetAsync(flow.Origin + "/api/v1/auth/me")).Status).IsEqualTo(401).Because("switch-account ends the independently created dashboard session");
             await Assert.That(Text(await flow.MeAsync(ownerContext), "userId")).IsEqualTo(Text(original, "userId")).Because("switch-account leaves the separate owner session usable");
-            await Assert.That(QueryHelpers.ParseQuery(new Uri(anonPage.Url).Query)["returnTo"].ToString()).IsEqualTo(first).Because("switch-account preserves the invitation return path");
+            await Assert.That(switched.Headers["location"]).IsEqualTo("/login").Because("switch-account signs out at ts-auth's end-session (the demo host's end-session answers /login), so ts-auth shows its sign-in instead of the same account");
             await SigninAsync(anonPage, guestUser, first);
             await anonPage.GetByRole(AriaRole.Button, new() { Name = "Accept invitation", Exact = true }).WaitForAsync();
             await flow.GotoAsync(ownerPage, "/organization?tab=members");
@@ -494,10 +498,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             }
             async Task SigninAsync(IPage page, FlowUser user, string invitationPath)
             {
-                await flow.GotoAsync(page, "/login?returnTo=" + Uri.EscapeDataString(invitationPath));
-                await page.Locator("#email").FillAsync(user.Email);
-                await page.Locator("#password").FillAsync(user.Password);
-                await Assert.That((await flow.SubmitAsync(page, "form[action=\"/login\"]", "Sign in")).Status).IsEqualTo(303);
+                await BrowserAudit.SignInAsync(page, new Uri(flow.Origin), invitationPath, user.Email, user.Password);
                 await page.WaitForURLAsync(flow.Origin + invitationPath, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
             }
             async Task RequestTransferAsync(IPage page, string recipient)
@@ -593,20 +594,13 @@ file sealed class BrowserFlow(IBrowser browser, Uri origin, string output, float
         if (accessibility) await BrowserAudit.AssertAccessibleAsync(page, "WCAG 2.2 AA on " + name);
     }
 
-    // Native signup, email confirmation and free onboarding.
+    // Hosted ts-auth sign-up, then free onboarding.
     public async Task SignupAsync(IPage page, FlowUser user)
     {
-        await GotoAsync(page, "/onboarding");
-        await page.Locator("#displayName").FillAsync(user.Name);
-        await page.Locator("#email").FillAsync(user.Email);
-        await page.Locator("#password").FillAsync(user.Password);
-        await page.Locator("#confirmPassword").FillAsync(user.Password);
-        await page.Locator("#terms").CheckAsync();
-        await Assert.That((await SubmitAsync(page, "form[action=\"/onboarding\"]", "Create account")).Status).IsEqualTo(200);
-        await page.GetByRole(AriaRole.Heading, new() { Name = "Verify your email", Exact = true }).WaitForAsync();
-        await page.Locator("#code").FillAsync("123456");
-        await Assert.That((await SubmitAsync(page, "form[action=\"/login/code/verify\"]", "Continue")).Status).IsEqualTo(303);
+        active = page;
+        await Assert.That((await BrowserAudit.SignInAsync(page, new Uri(Origin), "/onboarding", user.Email, user.Password, signUp: true))!.Status).IsEqualTo(200);
         await page.GetByRole(AriaRole.Heading, new() { Name = "Review your account information", Exact = true }).WaitForAsync();
+        await page.Locator("#displayName").FillAsync(user.Name);
         await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Save and continue");
         await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Continue on Free");
         await page.Locator("#projectName").FillAsync(user.Name + " Project");

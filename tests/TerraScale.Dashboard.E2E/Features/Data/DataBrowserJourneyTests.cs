@@ -31,10 +31,7 @@ public sealed class DataBrowserJourneyTests(DashboardRootFixture fixture)
             var path = new Uri(request.Url).AbsolutePath;
             if (path.StartsWith("/js/", StringComparison.Ordinal)) bootFailures.Enqueue(path + ": " + request.Failure);
         };
-        await NavigateAsync("/login");
-        await page.Locator("#email").FillAsync(scenario.Personas.Seeded.Email);
-        await page.Locator("#password").FillAsync(scenario.Personas.Seeded.Password);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await BrowserAudit.SignInAsync(page, scenario.Origin, email: scenario.Personas.Seeded.Email, password: scenario.Personas.Seeded.Password);
         await page.WaitForURLAsync(scenario.Origin.ToString());
         const string database = "/databases/0Z793APJ2ECFW2F7P6J9F2RKVY";
         await NavigateAsync(database + "/documents");

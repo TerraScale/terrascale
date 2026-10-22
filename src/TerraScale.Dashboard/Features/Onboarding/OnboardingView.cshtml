@@ -23,42 +23,16 @@
         {
             <div class="ts-alert ts-alert-warning" role="status"><strong class="ts-alert-title">Payment setup canceled</strong><p class="ts-alert-body">Your earlier account progress is still saved. No payment method was changed; you can continue on the Free plan or try checkout again.</p></div>
         }
-        @if (Model.Error.Length != 0 && Model.ErrorField.Length == 0)
+        @if (Model.Error.Length != 0)
         { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
-        @if (Model.Registration)
-        {
-            <div class="ts-onboarding-heading"><h2 class="ts-section-title" id="create-account-title">Create your account</h2><p class="ts-meta">Your Personal workspace is ready as soon as your account is created.</p></div>
-            <form class="ts-form" method="post" action="/onboarding" data-submit-once aria-labelledby="create-account-title">
-                <input type="hidden" name="_csrf" value="@Model.CsrfToken" />
-                @if (Model.Plan.Length != 0) { <input type="hidden" name="plan" value="@Model.Plan" /> }
-                @if (Model.ReturnTo.Length != 0) { <input type="hidden" name="returnTo" value="@Model.ReturnTo" /> }
-                <div class="ts-field"><label class="ts-label" for="displayName">Full name</label><input class="ts-input" id="displayName" name="displayName" value="@Model.DisplayName" autocomplete="name" maxlength="128" required aria-invalid="@Invalid("displayName")" aria-describedby="@ErrorId("displayName")" />
-                    @if (Model.FieldError("displayName").Length != 0) { <p class="ts-field-error" id="displayName-error">@Model.Error</p> }
-                </div>
-                <div class="ts-field"><label class="ts-label" for="email">Email</label><input class="ts-input" id="email" name="email" type="email" value="@Model.Email" autocomplete="email" placeholder="name@@company.com" required aria-invalid="@Invalid("email")" aria-describedby="@ErrorId("email")" />
-                    @if (Model.FieldError("email").Length != 0) { <p class="ts-field-error" id="email-error">@Model.Error</p> }
-                </div>
-                <div class="ts-form-grid">
-                    <div class="ts-field"><label class="ts-label" for="password">Password</label>@(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.PasswordInput, PasswordField>(new("password", "new-password", Model.FieldError("password"), MinLength: 12, HintId: "password-hint")))<p class="ts-field-hint" id="password-hint">Use at least 12 characters.</p>
-                        @if (Model.FieldError("password").Length != 0) { <p class="ts-field-error" id="password-error">@Model.Error</p> }
-                    </div>
-                    <div class="ts-field"><label class="ts-label" for="confirmPassword">Confirm password</label>@(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.PasswordInput, PasswordField>(new("confirmPassword", "new-password", Model.FieldError("confirmPassword"))))
-                        @if (Model.FieldError("confirmPassword").Length != 0) { <p class="ts-field-error" id="confirmPassword-error">@Model.Error</p> }
-                    </div>
-                </div>
-                <div class="ts-field"><label class="ts-check"><input type="checkbox" id="terms" name="terms" value="true" checked="@(Model.AcceptedTerms ? "checked" : null)" required aria-invalid="@Invalid("terms")" aria-describedby="@ErrorId("terms")" /><span>I accept the <a href="https://docs.terrascale.tech/legal/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a>, <a href="https://docs.terrascale.tech/legal/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a> and <a href="https://docs.terrascale.tech/legal/dpa" target="_blank" rel="noopener noreferrer">Data Processing Agreement</a></span></label>
-                    @if (Model.FieldError("terms").Length != 0) { <p class="ts-field-error" id="terms-error">@Model.Error</p> }
-                </div>
-                <div class="ts-onboarding-footer"><p class="ts-meta">Already have an account? <a class="ts-link" href="@Model.SignInUrl">Sign in</a></p><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create account <span aria-hidden="true">→</span></button></div>
-            </form>
-        }
-        else if (Model.Step == "account-information")
+        @if (Model.Step == "account-information")
         {
             <div class="ts-onboarding-heading"><h2 class="ts-section-title" id="account-information-title">Review your account information</h2><p class="ts-meta">Signed in as @Model.Email</p></div>
             <form class="ts-form" method="post" action="/onboarding/step" data-submit-once aria-labelledby="account-information-title">
                 <input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="step" value="account-information" />
                 <div class="ts-field"><label class="ts-label" for="displayName">Full name</label><input class="ts-input" id="displayName" name="displayName" value="@Model.DisplayName" maxlength="128" autocomplete="name" required /></div>
                 <div class="ts-field"><label class="ts-label" for="accountEmail">Email</label><input class="ts-input" id="accountEmail" type="email" value="@Model.Email" readonly aria-describedby="accountEmail-hint" /><p class="ts-field-hint" id="accountEmail-hint">Your sign-in email cannot be changed during account setup.</p></div>
+                <p class="ts-meta">By continuing you accept the <a href="https://docs.terrascale.tech/legal/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a>, <a href="https://docs.terrascale.tech/legal/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a> and <a href="https://docs.terrascale.tech/legal/dpa" target="_blank" rel="noopener noreferrer">Data Processing Agreement</a>.</p>
                 <div class="ts-onboarding-footer"><span></span><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Save and continue <span aria-hidden="true">→</span></button></div>
             </form>
         }
@@ -99,6 +73,4 @@
 </main>
 @functions {
     public DocumentModel LayoutModel => Model.Document;
-    private string? Invalid(string field) => Model.FieldError(field).Length == 0 ? null : "true";
-    private string? ErrorId(string field) => Model.FieldError(field).Length == 0 ? null : field + "-error";
 }

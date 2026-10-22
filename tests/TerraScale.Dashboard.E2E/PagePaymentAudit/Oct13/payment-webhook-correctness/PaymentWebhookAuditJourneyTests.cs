@@ -235,19 +235,7 @@ public sealed class PaymentWebhookAuditJourneyTests
         if (plan == "free")
         {
             const string email = "free-onboarding@example.test";
-            using var registered = await HttpJourney.PostFormAsync(owner, "/onboarding", new()
-            {
-                ["_csrf"] = await HttpJourney.CsrfAsync(owner, "/onboarding"),
-                ["displayName"] = "Free onboarding",
-                ["email"] = email,
-                ["password"] = "Free-local-password-123",
-                ["confirmPassword"] = "Free-local-password-123",
-                ["terms"] = "true"
-            });
-            await Assert.That(registered.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var token = WebUtility.HtmlDecode(Regex.Match(await registered.Content.ReadAsStringAsync(), "name=\"_csrf\" value=\"([^\"]+)\"").Groups[1].Value);
-            using var verified = await HttpJourney.PostFormAsync(owner, "/login/code/verify", new()
-            { ["_csrf"] = token, ["email"] = email, ["code"] = "123456", ["signUp"] = "1", ["redirectTo"] = "/onboarding" });
+            using var verified = await HttpJourney.LoginAsync(owner, email, "Free-local-password-123", "/onboarding", signUp: true);
             await Assert.That(verified.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             foreach (var form in new Dictionary<string, string>[]
             {

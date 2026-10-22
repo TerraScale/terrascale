@@ -34,11 +34,12 @@ A token acts as its user with that user's roles, and the services recheck
 every permission on each call. The Go application's `admin_*` tools are not
 ported: `tools/list` never shows them and calls to them fail as unknown tools.
 
-Changing the password calls ts-auth's revoke-all for the user. Each access
-token depends on its own ts-auth credential; that this ends existing tokens
-is not verified against a live ts-auth. Assistants cannot create access tokens
-or change credentials. Password and email changes stay in the browser, so a
-leaked token can't extend its own access.
+Each access token holds its own ts-auth grant, obtained by a fresh redirect
+through ts-auth's hosted sign-in when the token is created in the browser.
+Password changes happen on ts-auth's hosted account page; that they end
+existing tokens is not verified against a live ts-auth. Assistants cannot
+create access tokens or change credentials, so a leaked token can't extend its
+own access.
 
 ## Scope
 

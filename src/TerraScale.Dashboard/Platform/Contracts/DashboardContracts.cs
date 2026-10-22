@@ -26,7 +26,7 @@ public static class DashboardContracts
                     Type = SecuritySchemeType.ApiKey,
                     In = ParameterLocation.Cookie,
                     Name = "ts-dashboard-session",
-                    Description = "Server-managed HttpOnly session cookie. Obtain through the native login flow."
+                    Description = "Server-managed HttpOnly session cookie. Obtain by signing in through ts-auth's hosted pages (GET /login)."
                 };
                 foreach (var path in document.Paths.Values)
                     foreach (var operation in path.Operations!.Values)

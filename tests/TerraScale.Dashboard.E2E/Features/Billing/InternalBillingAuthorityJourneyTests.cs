@@ -20,8 +20,8 @@ public sealed class InternalBillingAuthorityJourneyTests(DashboardRootFixture fi
         using var targets = JsonDocument.Parse(await seeded.Content.ReadAsStringAsync());
         var organization = targets.RootElement.GetProperty("targets")[0].GetProperty("organizationId").GetString()!;
 
-        var result = await InternalBillingAuthenticationJourneyTests.RunApprovedAsync(scenario, browser, producer,
-            InternalBillingAuthenticationJourneyTests.CommandArguments("configure-internal-billing", organization), beforePoll: async () =>
+        var result = await InternalBillingAuthenticationJourneyTests.RunApprovedAsync(scenario, producer,
+            InternalBillingAuthenticationJourneyTests.CommandArguments("configure-internal-billing", organization), beforeDecision: async () =>
             {
                 using var removed = await producer.PostAsJsonAsync("/__test/control", new { command = "workspace-role", role = "" });
                 removed.EnsureSuccessStatusCode();
@@ -29,7 +29,8 @@ public sealed class InternalBillingAuthorityJourneyTests(DashboardRootFixture fi
 
         await Assert.That(result.ExitCode).IsEqualTo(1);
         await Assert.That(result.Error).IsEqualTo("configure-internal-billing: Organization is unavailable.\n");
-        await Assert.That(result.Observed.GetProperty("issuedAdminRoleGrants").GetInt32()).IsEqualTo(3);
+        // Browser sign-in and the device grant; membership fails before the privileged rotation.
+        await Assert.That(result.Observed.GetProperty("issuedAdminRoleGrants").GetInt32()).IsEqualTo(2);
         var billing = result.Observed.GetProperty("billing");
         var stored = billing.GetProperty("organizations").EnumerateArray().Single(row => row.GetProperty("id").GetString() == organization).GetProperty("document");
         await Assert.That(stored.TryGetProperty("Members", out var members) &&
@@ -42,7 +43,5 @@ public sealed class InternalBillingAuthorityJourneyTests(DashboardRootFixture fi
         await Assert.That(billing.GetProperty("stripeRequests").GetArrayLength()).IsEqualTo(0);
         await Assert.That(result.Observed.GetProperty("contractFailures").GetInt32()).IsEqualTo(0);
         await Assert.That(result.Observed.GetProperty("managementMutations").GetInt32()).IsEqualTo(0);
-        await Assert.That(result.Observed.GetProperty("encryptedCredentialRecords").GetInt32()).IsEqualTo(0);
-        await Assert.That(result.Observed.GetProperty("accessTokenHashRecords").GetInt32()).IsEqualTo(0);
     }
 }
