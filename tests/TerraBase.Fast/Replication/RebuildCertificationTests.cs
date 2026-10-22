@@ -553,7 +553,7 @@ public sealed class RebuildCertificationTests
         // Larger documents fill the same 2 MiB page with fewer writes; keys and framing exceed that bound below.
         var json = $$"""{"v":"{{new string('v', 8192)}}"}""";
         var ids = Enumerable.Range(0, 256).Select(index => $"{EntityIds.New()}-{index:D4}-{new string('k', 968)}").ToArray();
-        foreach (var chunk in ids.Chunk(256))
+        foreach (var chunk in ids.Chunk(64))
         {
             await pair.Gru.WriteAsync(async transaction =>
             {
