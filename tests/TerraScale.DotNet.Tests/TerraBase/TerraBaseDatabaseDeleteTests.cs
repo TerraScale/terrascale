@@ -62,7 +62,7 @@ public sealed class TerraBaseDatabaseDeleteTests
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
         });
         using var http = new HttpClient(handler);
-        var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("http://top1.nearest.of.ts-terrabase.internal:8081/") })
+        var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("http://100.64.0.1:8081/") })
             .Database("project", "app");
 
         await database.DeleteAsync();

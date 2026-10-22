@@ -149,10 +149,10 @@ list of `TerraBasePatchOperation`. `TransactAsync` applies `Create`, `Put`,
 atomically.
 
 ```csharp
-// On Fly's private network: TerraBase's internal listener trusts the network and acts as the platform operator.
+// Use the ts-orch NetBird service address; the caller configures the required peer credential on httpClient.
 var management = new TerraBaseManagementClient(httpClient, new TerraBaseManagementClientOptions
 {
-    BaseAddress = new Uri("http://terrabase.example.internal:8080"),
+    BaseAddress = new Uri("http://100.64.0.1:8081"),
 });
 
 TerraBaseOrganization organization = await management.CreateOrganizationAsync(

@@ -228,7 +228,7 @@ public sealed class TerraBaseResponseTests
 public sealed class TerraBaseResponseIntegrationTests
 {
     private static readonly Uri Origin = new("https://terrabase.example.test/");
-    private static readonly Uri Private = new("http://top1.nearest.of.ts-terrabase.internal:8081/");
+    private static readonly Uri Private = new("http://100.64.0.1:8081/");
     private const string DocumentPath = "/v1/projects/01JA0000000000000000000001/databases/bounds/collections/items/documents/by-key?id=01JA0000000000000000000009";
 
     [Test]
