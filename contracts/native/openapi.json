@@ -62,43 +62,6 @@
         "description": "Exactly 32 bytes in lowercase hexadecimal.",
         "pattern": "^[0-9a-f]{64}$"
       },
-      "TransactionId": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "expires_at_unix_ms": {
-            "$ref": "#/components/schemas/DecimalU64"
-          },
-          "nonce": {
-            "$ref": "#/components/schemas/Hex16"
-          }
-        },
-        "required": [
-          "expires_at_unix_ms",
-          "nonce"
-        ],
-        "description": "Expiry must be later than server time and within the configured retry window (24 hours in the current default profile). Generate a fresh random nonce for each new logical transaction; reuse both fields only for an exact retry."
-      },
-      "Observed": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "replica": {
-            "$ref": "#/components/schemas/CanonicalUuid"
-          },
-          "incarnation": {
-            "$ref": "#/components/schemas/Hex16"
-          },
-          "sequence": {
-            "$ref": "#/components/schemas/PositiveDecimalU64"
-          }
-        },
-        "required": [
-          "replica",
-          "incarnation",
-          "sequence"
-        ]
-      },
       "NullValue": {
         "type": "object",
         "additionalProperties": false,
@@ -125,164 +88,6 @@
         "required": [
           "type",
           "value"
-        ]
-      },
-      "IntegerValue": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "type": {
-            "const": "i64"
-          },
-          "value": {
-            "type": "string",
-            "description": "Canonical signed i64 decimal string.",
-            "pattern": "^(0|-?[1-9][0-9]*)$"
-          }
-        },
-        "required": [
-          "type",
-          "value"
-        ]
-      },
-      "TextValue": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "type": {
-            "const": "utf8"
-          },
-          "value": {
-            "type": "string",
-            "description": "UTF-8 text."
-          }
-        },
-        "required": [
-          "type",
-          "value"
-        ]
-      },
-      "BytesValue": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "type": {
-            "const": "bytes"
-          },
-          "value": {
-            "type": "string",
-            "description": "Unpadded canonical base64url bytes.",
-            "pattern": "^[A-Za-z0-9_-]*$"
-          }
-        },
-        "required": [
-          "type",
-          "value"
-        ]
-      },
-      "MapValue": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "type": {
-            "const": "map"
-          },
-          "fields": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Field"
-            },
-            "maxItems": 1024
-          }
-        },
-        "required": [
-          "type",
-          "fields"
-        ]
-      },
-      "ArrayValue": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "type": {
-            "const": "array"
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/FieldValue"
-            },
-            "maxItems": 1024
-          }
-        },
-        "required": [
-          "type",
-          "items"
-        ]
-      },
-      "FieldValue": {
-        "oneOf": [
-          {
-            "$ref": "#/components/schemas/NullValue"
-          },
-          {
-            "$ref": "#/components/schemas/BooleanValue"
-          },
-          {
-            "$ref": "#/components/schemas/IntegerValue"
-          },
-          {
-            "$ref": "#/components/schemas/TextValue"
-          },
-          {
-            "$ref": "#/components/schemas/BytesValue"
-          },
-          {
-            "$ref": "#/components/schemas/MapValue"
-          },
-          {
-            "$ref": "#/components/schemas/ArrayValue"
-          }
-        ],
-        "description": "Tagged document value. Nesting is limited to 16 levels and 4096 total value nodes."
-      },
-      "Field": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "id": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 1
-          },
-          "value": {
-            "$ref": "#/components/schemas/FieldValue"
-          }
-        },
-        "required": [
-          "id",
-          "value"
-        ],
-        "description": "Field IDs in each field array must be unique and strictly increasing."
-      },
-      "LiveWrite": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "kind": {
-            "const": "live"
-          },
-          "fields": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Field"
-            },
-            "maxItems": 1024
-          }
-        },
-        "required": [
-          "kind",
-          "fields"
         ]
       },
       "TombstoneWrite": {
@@ -323,59 +128,6 @@
           "value"
         ]
       },
-      "QueryIntegerValue": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "type": {
-            "const": "i64"
-          },
-          "value": {
-            "type": "string",
-            "description": "Canonical signed i64 decimal string.",
-            "pattern": "^(0|-?[1-9][0-9]*)$"
-          }
-        },
-        "required": [
-          "type",
-          "value"
-        ]
-      },
-      "QueryTextValue": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "type": {
-            "const": "utf8"
-          },
-          "value": {
-            "type": "string",
-            "description": "UTF-8 text bounded to 1 MiB of encoded value bytes and the 4 MiB request limit."
-          }
-        },
-        "required": [
-          "type",
-          "value"
-        ]
-      },
-      "QueryBytesValue": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "type": {
-            "const": "bytes"
-          },
-          "value": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]*$",
-            "maxLength": 1398102
-          }
-        },
-        "required": [
-          "type",
-          "value"
-        ]
-      },
       "QueryValue": {
         "oneOf": [
           {
@@ -390,53 +142,6 @@
           {
             "$ref": "#/components/schemas/QueryBytesValue"
           }
-        ]
-      },
-      "QueryValuePredicate": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "op": {
-            "type": "string",
-            "enum": [
-              "equal",
-              "less_than",
-              "less_than_or_equal",
-              "greater_than",
-              "greater_than_or_equal"
-            ]
-          },
-          "path": {
-            "$ref": "#/components/schemas/QueryPath"
-          },
-          "value": {
-            "$ref": "#/components/schemas/QueryValue"
-          }
-        },
-        "required": [
-          "op",
-          "path",
-          "value"
-        ]
-      },
-      "QueryPresencePredicate": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "op": {
-            "type": "string",
-            "enum": [
-              "is_null",
-              "is_missing"
-            ]
-          },
-          "path": {
-            "$ref": "#/components/schemas/QueryPath"
-          }
-        },
-        "required": [
-          "op",
-          "path"
         ]
       },
       "QueryPredicate": {
@@ -465,58 +170,6 @@
           "point"
         ]
       },
-      "QueryResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "version": {
-            "const": 1
-          },
-          "rows": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/QueryRow"
-            },
-            "maxItems": 128
-          },
-          "next_cursor": {
-            "type": "string",
-            "maxLength": 1024,
-            "pattern": "^[A-Za-z0-9_-]+$"
-          }
-        },
-        "required": [
-          "version",
-          "rows"
-        ],
-        "description": "Rows are ordered by canonical document ID. Each point contains complete causal state, including all visible conflict siblings."
-      },
-      "SubscriptionPollRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "version": {
-            "const": 1
-          },
-          "phase": {
-            "const": "poll"
-          },
-          "predicate": {
-            "$ref": "#/components/schemas/QueryPredicate"
-          },
-          "poll_cursor": {
-            "type": "string",
-            "maxLength": 1024,
-            "pattern": "^[A-Za-z0-9_-]+$"
-          }
-        },
-        "required": [
-          "version",
-          "phase",
-          "predicate",
-          "poll_cursor"
-        ]
-      },
       "SubscriptionRequest": {
         "oneOf": [
           {
@@ -525,26 +178,6 @@
           {
             "$ref": "#/components/schemas/SubscriptionPollRequest"
           }
-        ]
-      },
-      "SubscriptionGroup": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "sequence": {
-            "$ref": "#/components/schemas/PositiveDecimalU64"
-          },
-          "effects": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SubscriptionEffect"
-            },
-            "maxItems": 128
-          }
-        },
-        "required": [
-          "sequence",
-          "effects"
         ]
       },
       "SubscriptionResponse": {
@@ -558,31 +191,6 @@
           {
             "$ref": "#/components/schemas/SubscriptionPollResponse"
           }
-        ]
-      },
-      "SubscriptionResyncError": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "error": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "code": {
-                "const": "resync_required"
-              },
-              "action": {
-                "const": "start_snapshot"
-              }
-            },
-            "required": [
-              "code",
-              "action"
-            ]
-          }
-        },
-        "required": [
-          "error"
         ]
       },
       "WriterIdentity": {
