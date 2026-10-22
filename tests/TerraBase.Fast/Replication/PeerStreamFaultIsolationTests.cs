@@ -340,7 +340,7 @@ public sealed class PeerStreamFaultIsolationTests
         await WarmAsync(sender, receiver, deadline.Token);
         var before = sender.Status(sender.Database)!.Acknowledged;
         var initialized = source.Initializations;
-        var gate = new BookkeepingGate(sender.Database, stableReport);
+        var gate = new BookkeepingGate(sender.Database, stableReport, deadline.Token);
         source.Hold(gate);
         try
         {
@@ -707,10 +707,11 @@ public sealed class PeerStreamFaultIsolationTests
             ValueTask.FromResult<RebuildOutcome>(new RebuildOutcome.Busy());
     }
 
-    private sealed class BookkeepingGate(TenantContext database, bool stableReport)
+    private sealed class BookkeepingGate(TenantContext database, bool stableReport, CancellationToken cancellationToken)
     {
         public TenantContext Database { get; } = database;
         public bool StableReport { get; } = stableReport;
+        public CancellationToken CancellationToken { get; } = cancellationToken;
         public TaskCompletionSource<long> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Refused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -845,25 +846,26 @@ public sealed class PeerStreamFaultIsolationTests
             inner.ProveAsync(database, incarnation, from, through, held, cancellationToken);
 
         public ValueTask<bool> AckAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken) =>
-            BookkeepingAsync(database, stableReport: false, changeId, () => inner.AckAsync(database, incarnation, peer, changeId, stable, cancellationToken), cancellationToken);
+            BookkeepingAsync(database, stableReport: false, changeId, token => inner.AckAsync(database, incarnation, peer, changeId, stable, token), cancellationToken);
 
         public ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) =>
-            BookkeepingAsync(database, stableReport: true, 0, () => inner.RecordStableAsync(database, incarnation, peer, stable, cancellationToken), cancellationToken);
+            BookkeepingAsync(database, stableReport: true, 0, token => inner.RecordStableAsync(database, incarnation, peer, stable, token), cancellationToken);
 
-        private async ValueTask<bool> BookkeepingAsync(TenantContext database, bool stableReport, long changeId, Func<ValueTask<bool>> work, CancellationToken cancellationToken)
+        private async ValueTask<bool> BookkeepingAsync(TenantContext database, bool stableReport, long changeId, Func<CancellationToken, ValueTask<bool>> work, CancellationToken cancellationToken)
         {
             var gate = Volatile.Read(ref _held);
             if (gate is null || gate.Database != database || gate.StableReport != stableReport
                 || Interlocked.CompareExchange(ref _held, null, gate) != gate)
             {
-                return await work();
+                return await work(cancellationToken);
             }
 
             _ = gate.Entered.TrySetResult(changeId);
-            await gate.Release.Task.WaitAsync(cancellationToken);
+            // Another stream worker may see the node fault first; keep the held guard observable under the test deadline.
+            await gate.Release.Task.WaitAsync(gate.CancellationToken);
             try
             {
-                var recorded = await work();
+                var recorded = await work(gate.CancellationToken);
                 if (!recorded)
                 {
                     _ = gate.Refused.TrySetResult();
