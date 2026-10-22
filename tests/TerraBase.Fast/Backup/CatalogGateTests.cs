@@ -24,7 +24,6 @@ public sealed class CatalogGateTests
     private static readonly string[] ReadScopes = ["documents:read"];
 
     [Test]
-    [Skip("Quarantine: owner R5; deadline 2026-10-23 20:00Z; root-cause fix and removal in #364 (Q-MAIN-GREEN).")]
     [Arguments(StatusCode.Cancelled)]
     [Arguments(StatusCode.Internal)]
     public async Task Catalog_gate_shutdown_normalizes_only_genuine_RPC_cancellation(StatusCode status)

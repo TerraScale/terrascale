@@ -119,7 +119,7 @@ internal sealed partial class EngineManagementService
             static error => error, cancellationToken);
 
     private async ValueTask<CatalogCheck> FinishDatabaseCleanupAsync(
-        TenantContext storage, CancellationToken cancellationToken, bool abandonedCreation = false)
+        TenantContext storage, CancellationToken cancellationToken, bool abandonedCreation = false, Ulid? incarnation = null)
     {
         // This also protects a create whose registration committed before a later error was reported.
         var registered = await HasDatabaseRowAsync(storage, cancellationToken).ConfigureAwait(false);
@@ -139,7 +139,12 @@ internal sealed partial class EngineManagementService
             throw new InvalidOperationException("a database cleanup intent conflicts with the catalog");
         }
 
-        await engine.DeleteDatabaseAsync(storage, cancellationToken, retainIntentOwnership: true).ConfigureAwait(false);
+        var deleted = await engine.DeleteDatabaseAsync(storage, cancellationToken, retainIntentOwnership: true, incarnation: incarnation).ConfigureAwait(false);
+        if (incarnation is not null && !deleted)
+        {
+            return new Unavailable("the database copy changed during cleanup; retry");
+        }
+
         checkpoint("cleanup.files", storage);
         return await ClearDatabaseCleanupAsync(storage, cancellationToken).ConfigureAwait(false);
     }

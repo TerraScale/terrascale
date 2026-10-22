@@ -1,11 +1,18 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
+using TerraBase.Errors;
+using TerraBase.Features.Management;
+using TerraBase.Features.Platform;
 using TerraBase.Features.Replication;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -18,6 +25,7 @@ namespace TerraBase.Fast.Replication;
 public sealed class CatalogLatticeTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
+    private static readonly string[] Sjc = ["sjc"];
 
     [Test]
     public async Task Catalog_replication_frontiers_and_stability_use_the_system_store()
@@ -90,7 +98,8 @@ public sealed class CatalogLatticeTests
         var members = await cluster.SeparateAsync();
         await sjc.WriteAsync(async transaction => await transaction.PatchAsync("api_keys", id, Json("""{"name":"renamed"}"""),
             [new FieldOperation(FieldOperationKind.Set, "name", JsonElement.Parse("\"renamed\""))], CancellationToken.None));
-        await Task.Delay(TimeSpan.FromMilliseconds(5));
+        var renamedVersion = (await sjc.VersionAsync("api_keys", id))!.Value.Version;
+        gru.Api.Server.Services.GetRequiredService<LocalReplica>().Clock.Observe(new Hlc(checked((ulong)renamedVersion + 1)));
         await gru.WriteAsync(async transaction => await Assert.That(await transaction.DeleteAsync("api_keys", id, CancellationToken.None)).IsTrue());
         cluster.Rejoin(members);
 
@@ -117,6 +126,172 @@ public sealed class CatalogLatticeTests
         await Assert.That(await cluster.UntilConvergedAsync("organizations", organization)).IsTrue();
     }
 
+    [Test]
+    public async Task A_database_deleted_in_its_home_goes_from_its_former_replica_and_its_name_serves_a_new_database()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var user = gru.Api.User;
+        var (organization, project, database) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(user,
+            new { op = "create_organization", id = organization, name = "Deleting" },
+            new { op = "create_project", organization, id = project, name = "p" },
+            new { op = "create_database", organization, project, name = "main", id = database, replica_regions = Sjc });
+        var tenant = new TenantContext(organization, PlanTier.Hobby, project, database);
+
+        await Assert.That(await sjc.UntilAsync($"projects/{project}/databases", database, json => json is not null)).IsTrue();
+        await Assert.That(await sjc.Tenants.EnsureLocalDatabaseAsync(tenant, CancellationToken.None) is Done).IsTrue();
+        await Assert.That(File.Exists(sjc.FileOf(tenant))).IsTrue();
+        await gru.WriteAsync(tenant, async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", "one", Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilDocumentAsync(tenant, "items", "one", json => json == """{"n":1}""")).IsTrue();
+
+        await gru.CommitAsync(user, new { op = "set_database_regions", organization, project, database, replica_regions = Array.Empty<string>() });
+        await gru.CommitAsync(user, new { op = "delete_database", organization, project, database });
+        await Assert.That(await Until(() => Task.FromResult(!File.Exists(sjc.FileOf(tenant))))).IsTrue();
+        await Assert.That(await sjc.VersionAsync($"projects/{project}/databases", database) is { Deleted: true }).IsTrue();
+        await Assert.That(await sjc.Tenants.RegisteredAsync(tenant, CancellationToken.None) is false).IsTrue();
+        await Assert.That(await sjc.UntilAsync($"projects/{project}/database_names", "main", json => json is null)).IsTrue();
+
+        var recreated = EntityIds.New().ToString();
+        await sjc.CommitAsync(user, new { op = "create_database", organization, project, name = "main", id = recreated });
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await region.UntilAsync($"projects/{project}/database_names", "main", json => json == $"\"{recreated}\"")).IsTrue().Because(region.Name);
+            await Assert.That(await region.VersionAsync($"projects/{project}/databases", database) is { Deleted: true }).IsTrue().Because(region.Name);
+        }
+
+        await Assert.That(File.Exists(gru.FileOf(tenant))).IsFalse();
+    }
+
+    [Test]
+    public async Task Two_regions_creating_one_name_at_once_keep_the_database_of_the_smaller_id_everywhere()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(gru.Api.User,
+            new { op = "create_organization", id = organization, name = "Racing" },
+            new { op = "create_project", organization, id = project, name = "p" });
+        await Assert.That(await sjc.UntilAsync($"organizations/{organization}/projects", project, json => json is not null)).IsTrue();
+
+        string[] ids = [EntityIds.New().ToString(), EntityIds.New().ToString()];
+        Array.Sort(ids, StringComparer.Ordinal);
+        var (winner, loser) = (ids[0], ids[1]);
+        var members = await cluster.SeparateAsync();
+        // Isolated HTTP writes can refuse remote durability; seed the two already-committed catalog decisions directly.
+        await sjc.SeedDatabaseAsync(new TenantContext(organization, PlanTier.Hobby, project, winner), "twin");
+        var winningVersion = (await sjc.VersionAsync($"projects/{project}/database_names", "twin"))!.Value.Version;
+        gru.Api.Server.Services.GetRequiredService<LocalReplica>().Clock.Observe(new Hlc(checked((ulong)winningVersion + 1)));
+        await gru.SeedDatabaseAsync(new TenantContext(organization, PlanTier.Hobby, project, loser), "twin");
+        await Assert.That((await gru.VersionAsync($"projects/{project}/database_names", "twin"))!.Value.Version).IsGreaterThan(winningVersion);
+        cluster.Rejoin(members);
+
+        var lost = new TenantContext(organization, PlanTier.Hobby, project, loser);
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await region.UntilAsync($"projects/{project}/database_names", "twin", json => json == $"\"{winner}\"")).IsTrue().Because(region.Name);
+            await Assert.That(await Until(async () => await region.VersionAsync($"projects/{project}/databases", loser) is { Deleted: true })).IsTrue().Because(region.Name);
+            await Assert.That(await region.ReadAsync($"projects/{project}/databases", winner)).IsNotNull().Because(region.Name);
+        }
+
+        await Assert.That(await Until(() => Task.FromResult(!File.Exists(gru.FileOf(lost))))).IsTrue();
+        await Assert.That(File.Exists(sjc.FileOf(lost with { DatabaseId = winner }))).IsTrue();
+    }
+
+    [Test]
+    public async Task New_machines_opening_together_seed_the_platform_databases_once_and_identically()
+    {
+        await using var cluster = await Cluster.StartSeededWithAnchorsAsync("gru", "sjc", "fra");
+        var organization = PlatformDatabases.OrganizationId;
+        (string Collection, string Id)[] seeded =
+        [
+            ("organizations", organization),
+            .. PlatformDatabases.Databases.Values.SelectMany(database => new (string, string)[]
+            {
+                ("project_organizations", database.ProjectId),
+                ($"organizations/{organization}/projects", database.ProjectId),
+                ($"projects/{database.ProjectId}/databases", database.Id),
+            }),
+        ];
+        foreach (var (collection, id) in seeded)
+        {
+            foreach (var region in cluster.Regions)
+            {
+                await Assert.That(await region.UntilAsync(collection, id, json => json is not null)).IsTrue().Because($"{region.Name} {collection}");
+            }
+
+            await Assert.That(await cluster.UntilConvergedAsync(collection, id)).IsTrue().Because(collection);
+        }
+
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await region.IdsAsync($"organizations/{organization}/projects"))
+                .IsEquivalentTo(PlatformDatabases.Databases.Values.Select(database => database.ProjectId)).Because(region.Name);
+            foreach (var (id, projectId) in PlatformDatabases.Databases.Values)
+            {
+                await Assert.That(await region.IdsAsync($"projects/{projectId}/databases")).IsEquivalentTo([id]).Because(region.Name);
+            }
+
+            await Assert.That(await Until(() => Task.FromResult(region.Api.Server.Services.GetRequiredService<ICatalogGate>().IsOpen))).IsTrue().Because(region.Name);
+        }
+    }
+
+    [Test]
+    public async Task A_cleanup_interrupted_after_its_file_is_deleted_retries_and_releases_its_reservation()
+    {
+        var clock = new FakeTimeProvider(TimeProvider.System.GetUtcNow());
+        var fail = 1;
+        await using var api = await ManagementApi.StartAsync(services: services =>
+            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
+            {
+                if (step == "cleanup.files" && Interlocked.Exchange(ref fail, 0) == 1)
+                {
+                    throw new IOException("interrupted after file deletion");
+                }
+            }), time: clock);
+        var database = await api.CreateManagedDatabaseAsync();
+        var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        using var deleted = await api.Client.DeleteAsync(ManagementApi.Uri(
+            $"/v1/management/organizations/{database.Organization}/projects/{database.Project}/databases/{database.Id}"));
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await engine.OpenDatabaseAsync(tenant, CancellationToken.None)).IsNull();
+        var system = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
+        await using (var read = await system.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            await Assert.That(await read.GetAsync("pending_database_cleanup", database.Id, CancellationToken.None)).IsNotNull();
+        }
+
+        await Assert.That(await Until(async () =>
+        {
+            clock.Advance(TimeSpan.FromSeconds(2));
+            await using var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
+            return await read.GetAsync("pending_database_cleanup", database.Id, CancellationToken.None) is null;
+        })).IsTrue();
+        // A leftover in-memory ownership reservation would refuse this fixture-only recreation.
+        await Assert.That(await engine.CreateDatabaseAsync(tenant, CancellationToken.None)).IsTrue();
+    }
+
+    private static async Task<bool> Until(Func<Task<bool>> condition)
+    {
+        var deadline = DateTime.UtcNow + Deadline;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition())
+            {
+                return true;
+            }
+
+            await Task.Delay(100);
+        }
+
+        return false;
+    }
+
     private static byte[] Json(string json) => Encoding.UTF8.GetBytes(json);
 
     private sealed class Cluster : IAsyncDisposable
@@ -125,20 +300,36 @@ public sealed class CatalogLatticeTests
 
         public FakeMemberStore Members { get; } = new();
 
+        public FakeS3? Bucket { get; init; }
+
+        public bool Seeds { get; init; }
+
         public IEnumerable<Region> Regions => _regions.Values;
 
         public Region this[string name] => _regions[name];
 
-        public static async Task<Cluster> StartAsync(params string[] regions)
+        public static Task<Cluster> StartAsync(params string[] regions) => StartAsync(new Cluster(), regions);
+
+        public static Task<Cluster> StartSeededWithAnchorsAsync(params string[] regions) =>
+            StartAsync(new Cluster { Bucket = new FakeS3(), Seeds = true }, regions);
+
+        private static async Task<Cluster> StartAsync(Cluster cluster, string[] regions)
         {
-            var cluster = new Cluster();
             try
             {
                 foreach (var name in regions)
                 {
                     var region = new Region(cluster, name);
                     cluster._regions[name] = region;
-                    await region.StartAsync();
+                    if (!cluster.Seeds)
+                    {
+                        await region.StartAsync();
+                    }
+                }
+
+                if (cluster.Seeds)
+                {
+                    await Task.WhenAll(cluster.Regions.Select(region => region.StartAsync()));
                 }
 
                 return cluster;
@@ -150,13 +341,16 @@ public sealed class CatalogLatticeTests
             }
         }
 
-        // Unlists every machine, so no machine streams to another; Rejoin lists them again.
+        // Unlists every machine and waits until its streams have stopped; Rejoin lists them again.
         public async Task<List<ClusterMember>> SeparateAsync()
         {
             var members = (await Members.ListAsync(CancellationToken.None)).ToList();
             members.ForEach(member => Members.Leave(member.Name));
-            // A heartbeat (1 s) for every stream to notice it lost its peer.
-            await Task.Delay(TimeSpan.FromSeconds(2));
+            foreach (var region in Regions)
+            {
+                await Assert.That(await Until(() => Task.FromResult(region.Api.Server.Services.GetRequiredService<IReplicationStatus>().Snapshot().Peers.Count == 0)))
+                    .IsTrue().Because(region.Name);
+            }
             return members;
         }
 
@@ -205,12 +399,79 @@ public sealed class CatalogLatticeTests
                 settings["region"] = Name;
                 settings["node-name"] = _machine;
                 settings["data-directory"] = _directory;
-            }, services => services.AddSingleton<IMemberDirectory>(cluster.Members));
+                cluster.Bucket?.Configure(settings);
+                if (cluster.Seeds)
+                {
+                    settings[TerraBaseTestServer.PlatformSeedKey] = "true";
+                }
+            }, services =>
+            {
+                services.AddSingleton<IMemberDirectory>(cluster.Members);
+                cluster.Bucket?.Route(services);
+                if (cluster.Bucket is not null)
+                {
+                    ManualBackupHosting.Configure(services);
+                }
+            });
 
         public async Task StopAsync()
         {
             await Api.DisposeAsync();
             _api = null;
+        }
+
+        public ITenantDirectory Tenants => Api.Server.Services.GetRequiredService<ITenantDirectory>();
+
+        public string FileOf(TenantContext database) =>
+            Path.Combine(_directory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
+
+        public async Task CommitAsync(string user, params object[] ops)
+        {
+            using var service = Api.Service(user);
+            using var response = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new { id = EntityIds.New().ToString(), ops });
+            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+        }
+
+        public async Task SeedDatabaseAsync(TenantContext tenant, string name)
+        {
+            var engine = Api.Server.Services.GetRequiredService<IStorageEngine>();
+            await Assert.That(await engine.CreateDatabaseAsync(tenant, CancellationToken.None)).IsTrue();
+            var record = new ManagedDatabase(tenant.DatabaseId!, tenant.ProjectId!, name, null, DateTimeOffset.UnixEpoch, Name, [], 1);
+            await WriteAsync(async transaction =>
+            {
+                _ = await transaction.PutAsync($"projects/{tenant.ProjectId}/database_names", name, Json($"\"{tenant.DatabaseId}\""), CancellationToken.None);
+                _ = await transaction.PutAsync($"projects/{tenant.ProjectId}/databases", tenant.DatabaseId!,
+                    EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(record, TerraBaseJsonContext.Default.ManagedDatabase), record.Id, nested: true), CancellationToken.None);
+            });
+        }
+
+        public async Task WriteAsync(TenantContext database, Func<IStorageTransaction, Task> work)
+        {
+            var store = await Api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+                ?? throw new InvalidOperationException($"{Name} does not hold the database");
+            await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+            await work(transaction);
+            _ = await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        public Task<bool> UntilDocumentAsync(TenantContext database, string collection, string id, Func<string?, bool> expected) =>
+            Until(async () =>
+            {
+                if (await Api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None) is not { } store)
+                {
+                    return expected(null);
+                }
+
+                await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+                return expected(await transaction.GetAsync(collection, id, CancellationToken.None) is { } document ? Encoding.UTF8.GetString(document.Json.Span) : null);
+            });
+
+        public async Task<string[]> IdsAsync(string collection)
+        {
+            var store = await SystemAsync();
+            await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+            var page = await transaction.ListAsync(collection, null, 100, 1024 * 1024, CancellationToken.None);
+            return [.. page.Documents.Select(document => document.Id).Order(StringComparer.Ordinal)];
         }
 
         private Task<IDatabaseStore> SystemAsync() =>

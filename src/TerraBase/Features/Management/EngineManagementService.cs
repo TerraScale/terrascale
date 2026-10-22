@@ -662,10 +662,13 @@ internal sealed partial class EngineManagementService(
 
     // Removes a database's record and records its cleanup intent, in the caller's transaction, after the caller's checks.
     private static async ValueTask<TenantContext> UnregisterRecordAsync(
-        IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken)
+        IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken, bool releaseName = true)
     {
         await PutAsync(transaction, PendingDatabaseCleanup, database.Id, storage, TerraBaseJsonContext.Default.TenantContext, cancellationToken).ConfigureAwait(false);
-        await transaction.DeleteAsync(DatabaseNames(database.ProjectId), database.Name, cancellationToken).ConfigureAwait(false);
+        if (releaseName)
+        {
+            await transaction.DeleteAsync(DatabaseNames(database.ProjectId), database.Name, cancellationToken).ConfigureAwait(false);
+        }
         await transaction.DeleteAsync(Databases(database.ProjectId), database.Id, cancellationToken).ConfigureAwait(false);
         // The database's backups expire through the storage sweep from this commit on, and its tooling state
         // (backup schedule, usage and query field counts) goes with it.
