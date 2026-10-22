@@ -37,7 +37,7 @@ CREATE TABLE orders (
   PRIMARY KEY (customer_id, order_no)
 );
 
-CREATE TABLE audit_log (message text, logged_at timestamp); -- no primary key
+CREATE TABLE audit_log (message text, logged_at timestamp); -- no primary key: imports like any other table
 
 INSERT INTO customers (email, balance, profile) VALUES
   ('ada@example.com', 10.25, '{"plan": "starter", "beta": true}'),
@@ -51,7 +51,7 @@ INSERT INTO orders VALUES
 INSERT INTO audit_log VALUES ('created', '2026-01-01'), ('created', '2026-01-01');
 ```
 
-Expect two blocking issues: `public.orders` column `tags` is an array (`unsupported_type`), and `public.audit_log` has no primary key (`missing_primary_key`). Resolve them with `exclude: ["public.orders.tags"]` and `missingPrimaryKey: "generate"`. The order with key `(1, 2)` gets a deterministic ULID document ID and keeps both key columns as fields, and `9007199254740993` stays exact.
+Expect one blocking issue: `public.orders` column `tags` is an array (`unsupported_type`). Resolve it with `exclude: ["public.orders.tags"]`. The order with key `(1, 2)` gets a generated ULID document ID and keeps both key columns as fields, and `9007199254740993` stays exact.
 
 ## 2. Create a read-only role
 
@@ -85,7 +85,7 @@ DROP ROLE terrascale_export;
 
 Run these as the database owner to plan your [options](/guides/import#options) before the preview reports them.
 
-**Tables without a primary key** need `missingPrimaryKey: "generate"` or an `exclude` entry. Quote names that are not plain lowercase identifiers, such as `public."Order Items"`.
+Quote names that are not plain lowercase identifiers, such as `public."Order Items"`.
 
 ```sql
 SELECT c.oid::regclass AS table_name
