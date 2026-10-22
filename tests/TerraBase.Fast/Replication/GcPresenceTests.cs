@@ -20,7 +20,8 @@ public sealed class GcPresenceTests
         var machine = cluster["gru"];
         var member = machine.Api.Server.Services.GetRequiredService<LocalReplica>();
         var peer = new ReplicaId(member.Id.Value == 1 ? 2UL : 1UL);
-        var store = await machine.StoreAsync();
+        var engine = machine.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
         var placement = new DatabasePlacement("gru", placed ? ["sjc"] : [], 1);
         member.Presence.Listed([("unheard", "sjc")], member.Clock.Tick().Milliseconds);
         clock.Offset = TimeSpan.FromDays(2);
@@ -57,7 +58,8 @@ public sealed class GcPresenceTests
         var machine = cluster["gru"];
         var member = machine.Api.Server.Services.GetRequiredService<LocalReplica>();
         var peer = new ReplicaId(member.Id.Value == 1 ? 2UL : 1UL);
-        var store = await machine.StoreAsync();
+        var engine = machine.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
         await using (var write = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             await write.RecordStableAsync(peer, default, clock.GetUtcNow(), CancellationToken.None);
