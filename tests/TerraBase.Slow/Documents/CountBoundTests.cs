@@ -3,6 +3,7 @@ using System.Text.Json;
 using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -152,23 +153,42 @@ public sealed class CountBoundTests
         using var registered = await client.PutAsync(tenant.Database("db"), null, cancellationToken);
         registered.EnsureSuccessStatusCode();
         var databaseId = (await registered.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("id").GetString()!;
-        (await client.PostAsJsonAsync(tenant.Database("db", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
         var database = new TenantContext(tenant.OrganizationId, PlanTier.Enterprise, tenant.ProjectId, databaseId);
-        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, cancellationToken))!;
         // Ids in index order, so the document written last is also the last one count examines.
         static string Id(int index)
         {
             return index.ToString("D26", System.Globalization.CultureInfo.InvariantCulture);
         }
 
-        // Seed through the engine's batch path: this test exercises HTTP counts, not 100000 individual write-lane hops.
-        ReadOnlyMemory<byte> document = """{"n":1}"""u8.ToArray();
-        for (var start = 0; start < 100_000; start += 1000)
+        // Seed a current-format snapshot: the write workflow otherwise consumes almost the entire count-test timeout.
+        await api.Server.Services.GetRequiredService<IStorageEngine>().DeleteDatabaseAsync(database, cancellationToken);
+        var path = Path.Combine(api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId, databaseId + ".db");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await DocumentFiles.WriteAsync(path, ("items", Id(0), """{"n":1}"""));
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
         {
-            await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken);
-            var puts = Enumerable.Range(start, 1000).Select(index => ("items", Id(index), document)).ToArray();
-            await transaction.PutBatchAsync(puts, new (long Version, DocumentVersion? Previous)[puts.Length], cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            await connection.OpenAsync(cancellationToken);
+            using var body = JsonDocument.Parse("""{"n":1}""");
+            var state = DocumentState.Bottom.Put(new EntryVersion(new Hlc((ulong)StoredStates.Version), StoredStates.Replica), body.RootElement);
+            connection.CreateFunction<string, long>("seed_bucket", id => DocumentStateEncoding.Bucket("items", id));
+            connection.CreateFunction<string, long, long>("seed_digest", (id, part) =>
+            {
+                var digest = DocumentStateEncoding.Digest("items", id, state);
+                return part == 0 ? unchecked((long)(ulong)(digest >> 64)) : unchecked((long)(ulong)digest);
+            });
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 99999)
+                INSERT INTO "items" (id, doc) SELECT printf('%026d', n), '{"n":1}' FROM rows;
+                INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2)
+                    SELECT 'items', items.id, seed_bucket(items.id), template.state, template.stamp, template.origin,
+                        1, seed_digest(items.id, 0), seed_digest(items.id, 1)
+                    FROM "items" AS items CROSS JOIN (
+                        SELECT state, stamp, origin FROM _tb_state WHERE collection = 'items' AND id = $first
+                    ) AS template WHERE items.id != $first;
+                """;
+            command.Parameters.AddWithValue("$first", Id(0));
+            await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
         async Task<(long Value, bool Exact)> CountAsync(object? filter)
