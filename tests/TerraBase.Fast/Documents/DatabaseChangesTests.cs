@@ -353,13 +353,17 @@ public sealed class DatabaseChangesTests
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var clock = new HeartbeatClock();
         await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
-        using var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor=now");
-        var head = await stream.NextAsync();
+        using var initial = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor=now");
+        var head = await initial.NextAsync();
+        // Seed a normal-cursor cache entry whose output equals its input while time is frozen.
+        using var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(head.Id)}");
+        _ = await stream.NextAsync();
         await Assert.That(head.Event).IsEqualTo("cursor");
         for (var interval = 0; interval < 2; interval++)
         {
             var next = stream.NextAsync();
             // The server arms the interval after flushing its cursor; the client can read that cursor much later.
+            await Assert.That(await clock.NextIntervalAsync(token)).IsEqualTo(TimeSpan.FromSeconds(15));
             await Assert.That(await clock.NextIntervalAsync(token)).IsEqualTo(TimeSpan.FromSeconds(15));
             clock.Advance(TimeSpan.FromSeconds(14));
             await Assert.That(next.IsCompleted).IsFalse();
@@ -369,12 +373,16 @@ public sealed class DatabaseChangesTests
             // The same position, issued again at the read before the heartbeat.
             await Assert.That(ChangeCursor.Decode(beat.Id)!.Stamps).IsEquivalentTo(ChangeCursor.Decode(head.Id)!.Stamps);
             await Assert.That(beat.Data.GetProperty("cursor").GetString()).IsEqualTo(beat.Id);
+            if (interval > 0)
+            {
+                await Assert.That(ChangeCursor.Decode(beat.Id)!.Issued.Value).IsGreaterThan(ChangeCursor.Decode(head.Id)!.Issued.Value);
+            }
         }
     }
 
     private sealed class HeartbeatClock() : FakeTimeProvider(DateTimeOffset.UtcNow)
     {
-        private readonly Channel<TimeSpan> _intervals = Channel.CreateBounded<TimeSpan>(1);
+        private readonly Channel<TimeSpan> _intervals = Channel.CreateBounded<TimeSpan>(2);
 
         public ValueTask<TimeSpan> NextIntervalAsync(CancellationToken token) => _intervals.Reader.ReadAsync(token);
 
