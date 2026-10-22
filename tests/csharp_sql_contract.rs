@@ -429,7 +429,7 @@ async fn dropping_sql_future_cancels_the_pending_http_request() {
 async fn sql_requires_a_project_client_before_dispatch() {
     let fixture = Fixture::new(Vec::new()).await;
     let token = format!("tbk1.{}.{}", "a".repeat(22), "b".repeat(43));
-    let database = Client::builder(&fixture.url, token)
+    let database = Client::for_platform(&fixture.url, token)
         .build()
         .unwrap()
         .database("orders");
