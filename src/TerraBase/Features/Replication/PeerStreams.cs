@@ -793,7 +793,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             (cursor.InFlight, cursor.InFlightGroups, cursor.Refilling) = (null, 0, false);
             if (ack.Refused)
             {
-                // The peer does not hold the database yet (its catalog lags): try again later.
+                // Catalog lag only retries; missing coverage requests a pinned refill even without a stored peer scope.
+                cursor.RequiresRefill |= ack.RefillRequired;
                 cursor.RetryAt = _time.GetTimestamp() + (long)(Retry.TotalSeconds * _time.TimestampFrequency);
                 return;
             }

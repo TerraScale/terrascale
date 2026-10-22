@@ -128,6 +128,9 @@ message Ack {
   bool refused = 4;
   // The receiver's stable stamp for the database (section 11): every origin it hears from is applied up to it.
   fixed64 stable = 5;
+  // A refused batch crossed missing coverage after a failed refill. Request a pinned refill even when the sender's
+  // renewed copy has no scoped peer row. Ordinary catalog-lag and in-progress-refill refusals do not request one.
+  bool refill_required = 6;
 }
 
 message DigestRequest {

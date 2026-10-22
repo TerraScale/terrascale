@@ -1212,7 +1212,7 @@ public sealed class PeerStreamTests
             await Assert.That(entered.Count).IsEqualTo(4);
             await Assert.That(sjc.RefillMemory!.Reserved).IsEqualTo(4 * RefillMemory.BytesPerRefill);
             await second.BatchAsync(cluster.Database, 2, EntityIds.New().ToString());
-            await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = await second.WireAsync(cluster.Database), Refused = true });
+            await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = await second.WireAsync(cluster.Database), Refused = true, RefillRequired = true });
 
             held.SetResult();
             for (var index = 0; index < 4; index++)
@@ -1529,7 +1529,7 @@ public sealed class PeerStreamTests
         held.SetException(new IOException("a test fails the repair"));
         await Assert.That(await push.AckAsync()).IsEqualTo(refused);
         await push.BatchAsync(cluster.Database, 2, first);
-        await Assert.That(await push.AckAsync()).IsEqualTo(refused);
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = database, Refused = true, RefillRequired = true });
         await Assert.That(await sjc.ReadAsync(first)).IsNull();
 
         // Asked again, the refill commits before its ack, and only then the database's next batch joins.
@@ -1581,7 +1581,7 @@ public sealed class PeerStreamTests
 
         using var newer = await RawPush.StartAsync(sjc, peer);
         await newer.BatchAsync(cluster.Database, 2, later);
-        await Assert.That(await newer.AckAsync()).IsEqualTo(new Ack { Database = database, Refused = true });
+        await Assert.That(await newer.AckAsync()).IsEqualTo(new Ack { Database = database, Refused = true, RefillRequired = true });
         await Assert.That(await sjc.ReadAsync(later)).IsNull();
 
         sjc.HeldRepairs = null;
@@ -1629,14 +1629,14 @@ public sealed class PeerStreamTests
         await push.RefillAsync(cluster.Database, 5);
         await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database, old), Refused = true });
         await push.BatchAsync(cluster.Database, 6, held);
-        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database, old), Refused = true });
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database, old), Refused = true, RefillRequired = true });
 
         // The sender is now gru's real copy Y, whose change ids restart: its batch is still refused.
         var renewed = await gru.IncarnationAsync();
         push.Pin(cluster.Database, renewed);
         var wire = ChangeGroups.Wire(cluster.Database, renewed);
         await push.BatchAsync(cluster.Database, 2, held);
-        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = wire, Refused = true }).Because("the cut outlives the old incarnation");
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = wire, Refused = true, RefillRequired = true }).Because("the cut outlives the old incarnation");
         await Assert.That(await sjc.ReadAsync(held)).IsNull();
         await Assert.That(await sjc.ReadAsync(lost)).IsNull();
 
@@ -1690,6 +1690,15 @@ public sealed class PeerStreamTests
         });
         await Assert.That(await gru.Groups.AckedAsync(cluster.Database, sjc.Node, CancellationToken.None))
             .IsEqualTo(new SourceCursor(renewed!.Value, 0)).Because("the fresh sender has no scoped peer ACK or refill requirement");
+        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, renewed.Value, 0, CancellationToken.None)).IsEqualTo(true);
+        var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)await gru.StoreAsync();
+        var peers = await store.WithWriterAsync(session =>
+        {
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = "SELECT count(*) FROM _tb_peers;";
+            return (long)command.ExecuteScalar()!;
+        }, "a test checking the rebuilt sender has no peer rows", CancellationToken.None);
+        await Assert.That(peers).IsEqualTo(0);
 
         var digested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gru.BeforeDigest = (database, token) =>
@@ -1793,7 +1802,7 @@ public sealed class PeerStreamTests
             await Assert.That(await middle.WelcomeAsync()).IsFalse().Because("the latest replacement cancels its predecessor before either can join a batch");
             await Assert.That(sjc.RefillMemory!.Reserved).IsEqualTo(0).Because("cancelled predecessor work releases its byte reservation before handover");
             await latest.BatchAsync(cluster.Database, 2, later);
-            await Assert.That(await latest.AckAsync()).IsEqualTo(new Ack { Database = await latest.WireAsync(cluster.Database), Refused = true });
+            await Assert.That(await latest.AckAsync()).IsEqualTo(new Ack { Database = await latest.WireAsync(cluster.Database), Refused = true, RefillRequired = true });
             await Assert.That(await sjc.ReadAsync(later)).IsNull();
 
             sjc.HeldRepairs = null;
