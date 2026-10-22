@@ -5,7 +5,7 @@
   import { dict, locale } from '@/lib/i18n'
   import { localeMeta } from '@/lib/i18n/locales'
   import { formatPlanLimits } from '@/lib/pricing'
-  import { launchPhase, publicAlphaCatalog, registrationUrl } from '@/lib/site'
+  import { publicAlphaCatalog, registrationUrl } from '@/lib/site'
 
   export let headingLevel: 1 | 2 = 2
 

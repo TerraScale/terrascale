@@ -13,7 +13,7 @@
     </div>
     <div class="pricing-cta__actions">
       <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary pricing-cta__btn">
-        {launchPhase === 'public-alpha' ? $dict.pricing.finalCta.cta : $dict.hero.ctaPrelaunch}
+        {$dict.pricing.finalCta.cta}
         <Icon name="arrowRight" className="pricing-cta__icon" />
       </ExternalLink>
       <ExternalLink href="https://docs.terrascale.tech" class="ts-btn ts-btn-glass pricing-cta__btn">
