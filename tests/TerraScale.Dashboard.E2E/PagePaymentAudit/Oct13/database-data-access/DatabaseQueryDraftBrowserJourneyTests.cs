@@ -107,7 +107,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         await check.FocusAsync();
         var response = await page.RunAndWaitForResponseAsync(() => check.PressAsync("Enter"), value =>
             value.Request.IsNavigationRequest && value.Request.Method == "POST" && new Uri(value.Url).AbsolutePath == "/api/v1/dashboard/data/sql/check");
-        await Assert.That(response.Status).IsEqualTo(200);
+        await Assert.That(response.Status).IsEqualTo((int)HttpStatusCode.UnprocessableEntity);
         await page.WaitForLoadStateAsync(LoadState.Load);
         await page.Locator("#sql-editor ts-code-editor[data-ready]").WaitForAsync();
         await Assert.That(await page.Locator("#sql").InputValueAsync()).IsEqualTo(statement);
@@ -118,7 +118,9 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         await page.ScreenshotAsync(new() { Path = Path.Combine(evidence, $"sql-check-{width}.png"), FullPage = true });
         await Assert.That(passed).IsEqualTo(0)
             .Because("An unbound parameter is an execution error, so the visible check cannot announce success.");
-        await Assert.That(await page.GetByRole(AriaRole.Alert).InnerTextAsync()).Contains("The console cannot bind parameters");
+        var sqlAlert = page.Locator(".ts-data-sql .ts-alert-danger[role='alert']");
+        await Assert.That(await sqlAlert.CountAsync()).IsEqualTo(1);
+        await Assert.That(await sqlAlert.InnerTextAsync()).Contains("The console cannot bind parameters");
     }
 
     [Test]
