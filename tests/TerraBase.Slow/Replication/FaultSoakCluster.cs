@@ -164,18 +164,7 @@ internal sealed partial class FaultSoakCluster : IAsyncDisposable
 
     private async Task RebuildLinksAsync()
     {
-        foreach (var link in _links.Values)
-        {
-            await link.DisposeAsync();
-        }
-
-        _links.Clear();
-        foreach (var lossy in _lossy)
-        {
-            await lossy.DisposeAsync();
-        }
-
-        _lossy.Clear();
+        // Keep healthy routes and proxy ports stable while one process changes its listener port.
         foreach (var source in _nodes.Values)
         {
             foreach (var target in _nodes.Values.Where(node => node.Client is not null))
@@ -183,13 +172,31 @@ internal sealed partial class FaultSoakCluster : IAsyncDisposable
                 var address = target.Peer!;
                 if (source != target)
                 {
-                    var link = new PeerLink(new IPEndPoint(IPAddress.Loopback, address.Port)) { Cut = _cuts.Contains((source.Region, target.Region)) };
-                    _links.Add((source.Region, target.Region), link);
-                    if (_networkFaults.TryGetValue((source.Region, target.Region), out var fault))
+                    var edge = (source.Region, target.Region);
+                    var endpoint = new IPEndPoint(IPAddress.Loopback, address.Port);
+                    var changed = !_links.TryGetValue(edge, out var link);
+                    if (link is null)
+                    {
+                        link = new PeerLink(endpoint);
+                        _links.Add(edge, link);
+                    }
+                    else if (!link.Target.Equals(endpoint))
+                    {
+                        link.Target = endpoint;
+                        changed = true;
+                    }
+
+                    link.Cut = _cuts.Contains(edge);
+                    if (changed && _networkFaults.TryGetValue(edge, out var fault))
                     {
                         var lossy = new LossyLink(link.Target, fault.Delay, fault.Rate, fault.Resets, unchecked(_seed + _lossy.Count)).Start();
                         _lossy.Add(lossy);
                         link.Via = lossy.Endpoint;
+                    }
+
+                    if (changed)
+                    {
+                        link.Reset();
                     }
 
                     address = new Uri(link.Address);

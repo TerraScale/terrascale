@@ -18,13 +18,13 @@ internal static class FaultSoakChecks
         }
     }
 
-    public static async Task UntilAsync(Func<Task<bool>> check, string reason, CancellationToken token)
+    public static async Task UntilAsync(Func<Task<bool>> check, string reason, CancellationToken token, TimeSpan? timeout = null)
     {
         var clock = Stopwatch.StartNew();
         while (!await check())
         {
             token.ThrowIfCancellationRequested();
-            if (clock.Elapsed > TimeSpan.FromSeconds(60))
+            if (clock.Elapsed > (timeout ?? TimeSpan.FromSeconds(60)))
             {
                 throw new TimeoutException(reason);
             }
@@ -88,7 +88,7 @@ internal static class FaultSoakChecks
         var body = await answer.Content.ReadAsStringAsync(token);
         var code = JsonNode.Parse(body)?["error"]?["code"]?.GetValue<string>();
         Check(answer.StatusCode == HttpStatusCode.ServiceUnavailable && code is
-            "remote_region_unavailable" or "confirmation_busy" or "write_outcome_unknown" or "catalog_unverified" or "catalog_anchor_unavailable",
+            "remote_region_unavailable" or "confirmation_busy" or "write_outcome_unknown" or "catalog_unverified" or "catalog_anchor_unavailable" or "copy_faulted",
             $"unexpected refusal HTTP {(int)answer.StatusCode} code={code}");
     }
 

@@ -26,7 +26,7 @@ internal sealed class PeerLink : IAsyncDisposable
     }
 
     /// <summary>The peer's listener.</summary>
-    public IPEndPoint Target { get; }
+    public IPEndPoint Target { get; set; }
 
     /// <summary>Where the machine connects instead of <see cref="Target"/>.</summary>
     public string Address => $"http://127.0.0.1:{((IPEndPoint)_listener.LocalEndpoint).Port}";

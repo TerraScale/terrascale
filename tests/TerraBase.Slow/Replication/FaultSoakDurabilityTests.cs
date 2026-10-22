@@ -26,6 +26,8 @@ public sealed class FaultSoakDurabilityTests
         await Assert.That(answer.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var receipt = await answer.Content.ReadFromJsonAsync<JsonElement>(token);
         await Assert.That(receipt.GetProperty("durability").GetString()).IsEqualTo(remote ? "remote_durable" : "local_durable");
+        FaultSoakChecks.Check(!remote || cluster.DelayedSyncs("sjc") + cluster.DelayedSyncs("fra") > 0,
+            "the remote durability scenario did not exercise a delayed WAL sync");
         foreach (var region in cluster.Regions)
         {
             cluster.DropUnsynced(region);

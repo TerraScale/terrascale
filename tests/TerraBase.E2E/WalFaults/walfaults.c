@@ -79,6 +79,17 @@ static int sync_with_faults(int fd, const char *name)
             while (nanosleep(&wait, &wait) != 0 && errno == EINTR)
             {
             }
+
+            snprintf(file, sizeof file, "%s/delayed", dir);
+            int delayed = open(file, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0600);
+            if (delayed >= 0)
+            {
+                if (write(delayed, "sync\n", 5) < 0)
+                {
+                }
+
+                close(delayed);
+            }
         }
 
         if (strcmp(mode, "fail") == 0)

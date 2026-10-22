@@ -56,6 +56,12 @@ internal sealed partial class FaultSoakCluster
 
     public void SlowDisk(string region, int milliseconds) => Faults(region).Delay(TimeSpan.FromMilliseconds(milliseconds));
 
+    public long DelayedSyncs(string region)
+    {
+        var path = Path.Combine(Faults(region).Directory, "delayed");
+        return File.Exists(path) ? File.ReadLines(path).LongCount() : 0;
+    }
+
     public void HealDisk(string region) => Faults(region).Clear();
 
     public void DropUnsynced(string region)

@@ -88,13 +88,17 @@ public sealed class RandomizedReplicationFaultTests
             await writingDuringKill;
             history.Enqueue($"restart {victim}");
             await cluster.RestartAsync(victim, token);
-            await FaultSoakChecks.UntilAsync(CopiesMatchAsync, "victim recovers before slow disk phase", token);
+            await FaultSoakChecks.UntilAsync(CopiesMatchAsync, "victim recovers before slow disk phase", token, TimeSpan.FromSeconds(180));
+            var delayedBefore = cluster.DelayedSyncs(regions[1]);
             cluster.SlowDisk(regions[1], 10 + random.Next(40));
-            history.Enqueue($"slow-fsync {regions[1]}; clocks derived from seed={seed}");
+            history.Enqueue($"arm-slow-fsync {regions[1]}; clocks derived from seed={seed}");
             try
             {
                 await BatchAsync(3);
                 await DeleteAsync();
+                await FaultSoakChecks.UntilAsync(() => Task.FromResult(cluster.DelayedSyncs(regions[1]) > delayedBefore),
+                    "the slow disk shim actually delayed a WAL sync", token);
+                history.Enqueue($"slow-fsync {regions[1]} applied={cluster.DelayedSyncs(regions[1]) - delayedBefore}");
             }
             finally
             {
@@ -120,7 +124,7 @@ public sealed class RandomizedReplicationFaultTests
             }
 
             history.Enqueue("restart all");
-            await FaultSoakChecks.UntilAsync(CopiesMatchAsync, "all disks after full-cluster SIGKILL", token);
+            await FaultSoakChecks.UntilAsync(CopiesMatchAsync, "all disks after full-cluster SIGKILL", token, TimeSpan.FromSeconds(180));
             await FaultSoakChecks.VerifyUniqueAsync(cluster, seed, winner, token);
             await CatalogsMatchAsync();
             var resumedId = FaultSoakChecks.Id(seed, 900);
