@@ -95,7 +95,7 @@ function fingerprint(url) {
 }
 
 // Brotli at quality 11 is too slow to run per request but shrinks the
-// stylesheet by a quarter over the server's on-the-fly compression.
+// stylesheet by a quarter over the server's dynamic compression.
 const compress = promisify(brotliCompress);
 async function precompress(file, contents) {
   const compressed = await compress(contents, {

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
@@ -11,10 +12,10 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
-// The built production program off Fly (ts-orchestrator M1): Production, TS_DASHBOARD_TERRABASE_URL for the state
+// The built production program under ts-orch (ts-orchestrator M1): Production, TS_DASHBOARD_TERRABASE_URL for the state
 // listener, ASPNETCORE_URLS for the listen address and a loopback TLS edge that forwards the scheme and client IP.
 [ClassDataSource<DashboardRootFixture>]
-public sealed class OffFlyProductionJourneyTests(DashboardRootFixture fixture)
+public sealed class OciProductionJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task ProductionServesFromTheConfiguredTerraBaseOnTheConfiguredUrl()
@@ -55,10 +56,15 @@ public sealed class OffFlyProductionJourneyTests(DashboardRootFixture fixture)
             }
             string output;
             lock (log) output = log.ToString();
-            await Assert.That(ready).IsEqualTo(HttpStatusCode.OK).Because("Production off Fly is ready on ASPNETCORE_URLS: " + output);
+            await Assert.That(ready).IsEqualTo(HttpStatusCode.OK).Because("Production under ts-orch is ready on ASPNETCORE_URLS: " + output);
             await Assert.That(credentialed).IsGreaterThan(0).Because("State requests reach the configured TerraBase with the peer credential.");
 
-            // The loopback edge terminates TLS: its X-Forwarded-Proto makes cookies Secure, as on Fly.
+            using var probe = await client.GetAsync("/health/ready");
+            using var health = JsonDocument.Parse(await probe.Content.ReadAsStringAsync());
+            await Assert.That(health.RootElement.TryGetProperty("region", out _)).IsFalse()
+                .Because("The ts-orch single-host service contract supplies no region metadata.");
+
+            // The loopback edge terminates TLS: its X-Forwarded-Proto makes cookies Secure.
             using var behindEdge = new HttpRequestMessage(HttpMethod.Get, "/login");
             behindEdge.Headers.Add("X-Forwarded-Proto", "https");
             behindEdge.Headers.Add("X-Forwarded-For", "203.0.113.7");
@@ -83,7 +89,7 @@ public sealed class OffFlyProductionJourneyTests(DashboardRootFixture fixture)
         var start = new ProcessStartInfo("dotnet") { WorkingDirectory = project, RedirectStandardOutput = true, RedirectStandardError = true };
         start.ArgumentList.Add(application);
         foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TS_", StringComparison.Ordinal) ||
-                     name.StartsWith("STRIPE_", StringComparison.Ordinal) || name.StartsWith("FLY_", StringComparison.Ordinal) ||
+                     name.StartsWith("STRIPE_", StringComparison.Ordinal) ||
                      name.StartsWith("ASPNETCORE_", StringComparison.Ordinal) || name.StartsWith("DOTNET_ENVIRONMENT", StringComparison.Ordinal) ||
                      name == "DEMO" || name == "TERRABASE_PEER_SECRET").ToArray())
             start.Environment.Remove(name);
@@ -95,8 +101,8 @@ public sealed class OffFlyProductionJourneyTests(DashboardRootFixture fixture)
         // Format-valid test-only identity; no real ts-auth or Stripe is contacted by readiness.
         start.Environment["TS_AUTH_DASHBOARD_CLIENT_SECRET"] = new string('a', 48);
         start.Environment["TS_DASHBOARD_SESSION_ENCRYPTION_KEY"] = Convert.ToBase64String(new byte[32]);
-        start.Environment["STRIPE_SECRET_KEY"] = "sk_test_offflyjourney";
-        start.Environment["STRIPE_WEBHOOK_SECRET"] = "whsec_offflyjourney";
+        start.Environment["STRIPE_SECRET_KEY"] = "sk_test_ocijourney";
+        start.Environment["STRIPE_WEBHOOK_SECRET"] = "whsec_ocijourney";
         start.Environment["TERRABASE_PEER_SECRET"] = peerSecret;
         return Process.Start(start) ?? throw new IOException("Could not launch the dashboard program.");
     }

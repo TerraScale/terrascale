@@ -29,8 +29,7 @@ public sealed class DeviceAuthorization(DeviceGrants grants, DashboardSessions s
             catch (DeviceCodeTakenException) { }
         }
         code = code[..4] + "-" + code[4..];
-        var fly = Environment.GetEnvironmentVariable("FLY_APP_NAME");
-        var origin = fly is { Length: > 0 } ? "https://" + fly + ".fly.dev" : $"{http.Request.Scheme}://{http.Request.Host}";
+        var origin = $"{http.Request.Scheme}://{http.Request.Host}";
         if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) || uri.UserInfo.Length != 0 || uri.AbsolutePath != "/" || uri.Query.Length != 0 || uri.Fragment.Length != 0)
             throw new DeviceRejectedException("invalid_request");
         var verification = origin + "/cli/approve";
