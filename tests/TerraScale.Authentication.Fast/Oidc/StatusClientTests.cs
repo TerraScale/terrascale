@@ -75,6 +75,10 @@ public sealed class StatusClientTests(TerraBaseFixture fixture)
             ["client_id"] = OidcIssuer.StatusClientId,
         }, clientId: null, secret: null);
         await Assert.That(serviceGrant.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await OidcHarness.ErrorAsync(serviceGrant)).IsEqualTo("unauthorized_client");
+        // Client-credentials requires authentication, so a secretless request fails before grant permissions.
+        var refusedGrant = await OidcHarness.JsonAsync(serviceGrant);
+        await Assert.That(refusedGrant.GetProperty("error").GetString()).IsEqualTo("invalid_request");
+        await Assert.That(refusedGrant.TryGetProperty("access_token", out _)).IsFalse();
+        await Assert.That(refusedGrant.TryGetProperty("refresh_token", out _)).IsFalse();
     }
 }
