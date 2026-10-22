@@ -1651,6 +1651,84 @@ public sealed class PeerStreamTests
     }
 
     [Test]
+    public async Task A_rebuilt_sender_without_peer_rows_refills_a_receivers_failed_coverage_before_live_batches()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (lost, pending, live) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", lost, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, await gru.HeadAsync(cluster.Database))).IsTrue();
+
+        // Keep the receiver alive with its failed coverage while the sender's storage is rebuilt without peer rows.
+        await gru.Api.Server.Services.GetRequiredService<PeerStreams>().StopAsync(CancellationToken.None);
+        await gru.Api.Server.Services.GetRequiredService<AntiEntropy>().StopAsync(CancellationToken.None);
+        await sjc.Api.Server.Services.GetRequiredService<AntiEntropy>().StopAsync(CancellationToken.None);
+        await sjc.LoseAsync("items", lost);
+        using (var push = await RawPush.StartAsync(sjc, gru.Name, gru.Node))
+        {
+            push.Pin(cluster.Database, Ulid.NewUlid());
+            await push.RefillAsync(cluster.Database, 1);
+            await Assert.That((await push.AckAsync()).Refused).IsTrue();
+            await push.CompleteAsync();
+        }
+
+        var storage = gru.Api.Server.Services.GetRequiredService<IRebuildStorage>();
+        var old = await gru.IncarnationAsync();
+        var renewed = await storage.SwapAsync(cluster.Database, old, storage.SidePath(cluster.Database, old), CancellationToken.None);
+        await Assert.That(renewed).IsNotNull();
+        await Assert.That(renewed).IsNotEqualTo(old);
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", lost, Json("""{"n":1}"""), CancellationToken.None);
+            _ = await transaction.PutAsync("items", pending, Json("""{"n":2}"""), CancellationToken.None);
+        });
+        await Assert.That(await gru.Groups.AckedAsync(cluster.Database, sjc.Node, CancellationToken.None))
+            .IsEqualTo(new SourceCursor(renewed!.Value, 0)).Because("the fresh sender has no scoped peer ACK or refill requirement");
+
+        var digested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gru.BeforeDigest = (database, token) =>
+        {
+            if (database == cluster.Database)
+            {
+                _ = digested.TrySetResult();
+            }
+            return Task.CompletedTask;
+        };
+        var release = sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sender = ActivatorUtilities.CreateInstance<PeerStreams>(gru.Api.Server.Services);
+        try
+        {
+            await sender.StartAsync(CancellationToken.None);
+            await digested.Task.WaitAsync(Deadline);
+            await sjc.RepairWaits.Task.WaitAsync(Deadline);
+            await Assert.That(await sjc.ReadAsync(lost)).IsNull();
+            await Assert.That(await sjc.ReadAsync(pending)).IsNull().Because("no live batch crosses unfinished coverage");
+            await Assert.That(await gru.AckedAsync(cluster.Database, sjc.Node)).IsEqualTo(0);
+
+            sjc.HeldRepairs = null;
+            release.SetResult();
+            await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+            await Assert.That(await sjc.UntilAsync(pending, """{"n":2}""")).IsTrue();
+            await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, await gru.HeadAsync(cluster.Database))).IsTrue();
+            await gru.WriteAsync(async transaction =>
+                _ = await transaction.PutAsync("items", live, Json("""{"n":3}"""), CancellationToken.None));
+            await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, await gru.HeadAsync(cluster.Database))).IsTrue();
+            await Assert.That(await sjc.ReadAsync(live)).IsEqualTo("""{"n":3}""");
+        }
+        finally
+        {
+            _ = release.TrySetResult();
+            await sender.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task Concurrent_replacements_of_one_origin_keep_only_the_latest_stream_and_its_refill_cut(bool throwingCancellation)
