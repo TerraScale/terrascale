@@ -9,7 +9,7 @@ namespace TerraBase.Fast.Replication;
 
 /// <summary>
 /// The internal listener records every peer credential check before admitting a matching request or refusing an unmatched one.
-/// Fly startup also refuses a missing or malformed secret.
+/// Cluster startup also refuses a missing or malformed secret.
 /// </summary>
 public sealed class PeerCredentialObservationTests
 {
@@ -68,16 +68,16 @@ public sealed class PeerCredentialObservationTests
     }
 
     [Test]
-    public async Task Server_entry_point_on_fly_without_a_peer_secret_exits_2_before_touching_its_data_directory()
+    public async Task Server_entry_point_in_a_cluster_without_a_peer_secret_exits_2_before_touching_its_data_directory()
     {
-        await AssertFlyStartupRefusedAsync(secret: null, echoed: null);
+        await AssertClusterStartupRefusedAsync(secret: null, echoed: null);
     }
 
     [Test]
-    public async Task Server_entry_point_on_fly_with_a_malformed_peer_secret_exits_2_without_echoing_it()
+    public async Task Server_entry_point_in_a_cluster_with_a_malformed_peer_secret_exits_2_without_echoing_it()
     {
         var malformed = $"{PeerTls.NewSecret()[..62]}zz";
-        await AssertFlyStartupRefusedAsync(secret: malformed, echoed: malformed);
+        await AssertClusterStartupRefusedAsync(secret: malformed, echoed: malformed);
     }
 
     // The matched and unmatched sums of the scrape, read without credentials. An absent series counts as zero.
@@ -112,14 +112,14 @@ public sealed class PeerCredentialObservationTests
         return response.StatusCode;
     }
 
-    // The server entry point on Fly with a missing or malformed secret: exit 2 naming the setting, nothing on stdout, and an
+    // The server entry point in a cluster with a missing or malformed secret: exit 2 naming the setting, nothing on stdout, and an
     // empty data directory, because the secret is read before the directory is opened.
-    private static async Task AssertFlyStartupRefusedAsync(string? secret, string? echoed)
+    private static async Task AssertClusterStartupRefusedAsync(string? secret, string? echoed)
     {
-        var directory = Directory.CreateTempSubdirectory("terrabase-peer-fly-").FullName;
+        var directory = Directory.CreateTempSubdirectory("terrabase-peer-cluster-").FullName;
         try
         {
-            var environment = FlyIdentity();
+            var environment = ClusterIdentity();
             if (secret is not null)
             {
                 environment[PeerCredential.EnvironmentVariable] = secret;
@@ -160,7 +160,7 @@ public sealed class PeerCredentialObservationTests
     }
 
     // Starts this build's server DLL with the production entry point. Ports are ephemeral, the data directory is the given one, and every other
-    // setting is passed empty; inherited Fly, TerraBase and AWS variables are removed so only the given environment applies.
+    // setting is passed empty; inherited TS_*, TerraBase and AWS variables are removed so only the given environment applies.
     private static Process StartBinary(string directory, IReadOnlyDictionary<string, string> environment)
     {
         var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet")
@@ -181,7 +181,7 @@ public sealed class PeerCredentialObservationTests
             start.ArgumentList.Add($"--{name}={value}");
         }
 
-        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("FLY_", StringComparison.Ordinal)
+        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TS_", StringComparison.Ordinal)
             || name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name.StartsWith("AWS_", StringComparison.Ordinal)
             || name is "BUCKET_NAME" or "PRIMARY_REGION").ToList())
         {
@@ -196,12 +196,12 @@ public sealed class PeerCredentialObservationTests
         return Process.Start(start) ?? throw new InvalidOperationException("the TerraBase process did not start");
     }
 
-    // Fly's identity of a production machine: the production app name, so the production checks apply.
-    private static Dictionary<string, string> FlyIdentity() => new(StringComparer.Ordinal)
+    // ts-orch's identity of a production cluster node, so the cluster checks apply.
+    private static Dictionary<string, string> ClusterIdentity() => new(StringComparer.Ordinal)
     {
-        ["FLY_APP_NAME"] = "ts-terrabase",
-        ["FLY_REGION"] = "gru",
-        ["FLY_MACHINE_ID"] = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14],
+        ["TS_REGION"] = "gru",
+        ["TS_NODE"] = "ts-gru-1",
+        ["TS_PEERS_FILE"] = "/run/ts-orch/peers/peers",
         ["ASPNETCORE_ENVIRONMENT"] = "Production",
         ["DOTNET_ENVIRONMENT"] = "Production",
     };

@@ -1,4 +1,5 @@
 using TerraBase.Configuration;
+using TerraBase.Engine.Cluster;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -7,78 +8,87 @@ namespace TerraBase.Fast.Platform;
 public sealed class ConfigurationTests
 {
     [Test]
-    public async Task A_machine_takes_its_identity_from_fly_and_a_process_elsewhere_is_local()
+    public async Task A_node_takes_its_identity_and_peers_from_ts_orch_and_a_process_elsewhere_is_local()
     {
-        const string ChildFlag = "TERRABASE_TEST_FLY_IDENTITY_CHILD";
+        const string ChildFlag = "TERRABASE_TEST_CLUSTER_IDENTITY_CHILD";
         if (Environment.GetEnvironmentVariable(ChildFlag) != "1")
         {
-            // The FLY_* variables are process-wide: only a process that runs this test alone may set them.
-            await IsolatedTestChild.RunAsync(typeof(ConfigurationTests), nameof(A_machine_takes_its_identity_from_fly_and_a_process_elsewhere_is_local), ChildFlag);
+            // The TS_* variables are process-wide: only a process that runs this test alone may set them.
+            await IsolatedTestChild.RunAsync(typeof(ConfigurationTests), nameof(A_node_takes_its_identity_and_peers_from_ts_orch_and_a_process_elsewhere_is_local), ChildFlag);
             return;
         }
 
         var local = TerraBaseOptions.FromValues(new Dictionary<string, string>());
-        await Assert.That((local.Region, local.MachineId, local.App)).IsEqualTo(("local", "local", (string?)null));
-        // Off Fly a production node trusts the platform's tokens, as ts-terrabase does; Development trusts none unless set.
-        var offFly = TerraBaseOptions.FromValues(new Dictionary<string, string>(), production: true);
-        await Assert.That((offFly.AuthIssuer, offFly.AuthAudiences.Single())).IsEqualTo((TerraBaseOptions.PlatformAuthIssuer, TerraBaseOptions.PlatformAuthAudience));
+        await Assert.That((local.Region, local.MachineId, local.PeersFile)).IsEqualTo(("local", "local", (string?)null));
+        // A production node trusts the platform's tokens; Development trusts none unless set.
+        var production = TerraBaseOptions.FromValues(new Dictionary<string, string>(), production: true);
+        await Assert.That((production.AuthIssuer, production.AuthAudiences.Single())).IsEqualTo((TerraBaseOptions.PlatformAuthIssuer, TerraBaseOptions.PlatformAuthAudience));
         await Assert.That(local.AuthIssuer).IsNull();
 
-        Environment.SetEnvironmentVariable("FLY_REGION", "sjc");
-        Environment.SetEnvironmentVariable("FLY_MACHINE_ID", "d894655b3ed118");
-        Environment.SetEnvironmentVariable("FLY_APP_NAME", "ts-terrabase");
-        var fly = TerraBaseOptions.FromValues(new Dictionary<string, string>());
-        await Assert.That((fly.Region, fly.MachineId, fly.App)).IsEqualTo(("sjc", "d894655b3ed118", (string?)"ts-terrabase"));
+        var directory = Directory.CreateTempSubdirectory("terrabase-peers-").FullName;
+        try
+        {
+            var peers = Path.Combine(directory, "peers");
+            // ts-orch's lines; a malformed one is no member.
+            await File.WriteAllTextAsync(peers, "ts-sjc-1 sjc 10.200.109.193\ngru-1-ctl-1 gru 10.200.165.148\nNot A Node fra 10.200.40.238\nts-fra-1 fra not-an-ip\n");
+            Environment.SetEnvironmentVariable("TS_REGION", "sjc");
+            Environment.SetEnvironmentVariable("TS_NODE", "ts-sjc-1");
+            Environment.SetEnvironmentVariable("TS_PEERS_FILE", peers);
+            var node = TerraBaseOptions.FromValues(new Dictionary<string, string> { ["internal-port"] = "18081" });
+            await Assert.That((node.Region, node.MachineId, node.PeersFile)).IsEqualTo(("sjc", "ts-sjc-1", (string?)peers));
+            await Assert.That(PeersFile.SelfAddress(node).ToString()).IsEqualTo("10.200.109.193");
+            var members = await new PeersFile(node).ListAsync(CancellationToken.None);
+            await Assert.That(members).IsEquivalentTo([
+                new ClusterMember("ts-sjc-1", "http://10.200.109.193:18081/", "sjc", string.Empty),
+                new ClusterMember("gru-1-ctl-1", "http://10.200.165.148:18081/", "gru", string.Empty),
+            ]);
 
-        // Fly sets all three together; a partial or malformed identity never starts, and the error names no value.
-        Environment.SetEnvironmentVariable("FLY_MACHINE_ID", "Not A Machine");
-        var malformed = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string>())).Throws<TerraBaseConfigurationException>();
-        await Assert.That(malformed!.Message).Contains("FLY_MACHINE_ID");
-        await Assert.That(malformed.Message).DoesNotContain("Not A Machine");
-        Environment.SetEnvironmentVariable("FLY_MACHINE_ID", null);
-        await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string>())).Throws<TerraBaseConfigurationException>();
+            // A node missing from the file never binds a public address in its place.
+            Environment.SetEnvironmentVariable("TS_NODE", "ts-sjc-2");
+            var missing = await Assert.That(() => PeersFile.SelfAddress(TerraBaseOptions.FromValues(new Dictionary<string, string>()))).Throws<TerraBaseConfigurationException>();
+            await Assert.That(missing!.Message).Contains("TS_PEERS_FILE");
+
+            // ts-orch sets all three together; a partial or malformed identity never starts, and the error names no value.
+            Environment.SetEnvironmentVariable("TS_NODE", "Not A Node");
+            var malformed = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string>())).Throws<TerraBaseConfigurationException>();
+            await Assert.That(malformed!.Message).Contains("TS_NODE");
+            await Assert.That(malformed.Message).DoesNotContain("Not A Node");
+            Environment.SetEnvironmentVariable("TS_NODE", null);
+            await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string>())).Throws<TerraBaseConfigurationException>();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Test]
     public async Task Production_trusts_only_the_one_platform_issuer_and_audience_ts_auth_issues_in_every_region()
     {
-        const string ChildFlag = "TERRABASE_TEST_AUTH_PAIR_CHILD";
-        if (Environment.GetEnvironmentVariable(ChildFlag) != "1")
-        {
-            // The FLY_* variables are process-wide: only a process that runs this test alone may set them.
-            await IsolatedTestChild.RunAsync(typeof(ConfigurationTests), nameof(Production_trusts_only_the_one_platform_issuer_and_audience_ts_auth_issues_in_every_region), ChildFlag);
-            return;
-        }
-
         static Dictionary<string, string> Auth(string issuer, string audience)
         {
             return new() { ["auth-issuer"] = issuer, ["auth-audience"] = audience };
         }
 
-        Environment.SetEnvironmentVariable("FLY_REGION", "sjc");
-        Environment.SetEnvironmentVariable("FLY_MACHINE_ID", "d894655b3ed118");
-        Environment.SetEnvironmentVariable("FLY_APP_NAME", "ts-terrabase");
-
-        // ts-auth's issuer and TerraBase's audience have no region: the same token is accepted in gru, sjc and fra.
-        var production = TerraBaseOptions.FromValues(Auth(TerraBaseOptions.PlatformAuthIssuer, TerraBaseOptions.PlatformAuthAudience));
+        // gru's spec sets the platform pair explicitly; the same token is accepted in gru, sjc and fra.
+        var production = TerraBaseOptions.FromValues(Auth(TerraBaseOptions.PlatformAuthIssuer, TerraBaseOptions.PlatformAuthAudience), production: true);
         await Assert.That((production.AuthIssuer, production.AuthAudiences.Single())).IsEqualTo(("https://auth.terrascale.tech/terrascale", "https://api.terrascale.tech"));
-        var defaults = TerraBaseOptions.FromValues(new Dictionary<string, string>());
-        await Assert.That((defaults.AuthIssuer, defaults.AuthAudiences.Single())).IsEqualTo((production.AuthIssuer, production.AuthAudiences.Single()));
         foreach (var (issuer, audience) in new[]
         {
+            ("https://attacker.example/terrascale", TerraBaseOptions.PlatformAuthAudience),
             ("https://gru.auth.terrascale.tech/terrascale", TerraBaseOptions.PlatformAuthAudience),
             ("https://auth.terrascale.tech", TerraBaseOptions.PlatformAuthAudience),
             (TerraBaseOptions.PlatformAuthIssuer, "https://gru.api.terrascale.tech"),
         })
         {
-            var refused = await Assert.That(() => TerraBaseOptions.FromValues(Auth(issuer, audience))).Throws<TerraBaseConfigurationException>();
+            var refused = await Assert.That(() => TerraBaseOptions.FromValues(Auth(issuer, audience), production: true)).Throws<TerraBaseConfigurationException>();
             await Assert.That(refused!.Message).Contains("auth-issuer must be https://auth.terrascale.tech/terrascale");
+            await Assert.That(refused.Message).DoesNotContain("Fly");
         }
 
-        // A preview runs its own ts-auth under its own origin.
-        Environment.SetEnvironmentVariable("FLY_APP_NAME", "ts-pr-7");
-        var preview = TerraBaseOptions.FromValues(Auth("https://ts-pr-7.fly.dev/terrascale", "https://ts-pr-7.fly.dev:8443"));
-        await Assert.That(preview.AuthIssuer).IsEqualTo("https://ts-pr-7.fly.dev/terrascale");
+        // Development (tests, local runs) trusts the ts-auth it names.
+        var development = TerraBaseOptions.FromValues(Auth("https://127.0.0.1:5001/terrascale", "terrabase-test"));
+        await Assert.That(development.AuthIssuer).IsEqualTo("https://127.0.0.1:5001/terrascale");
     }
 
     [Test]

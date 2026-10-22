@@ -942,7 +942,7 @@ public sealed class Cluster : IAsyncDisposable
             }
         }
 
-        // FLY_REGION and FLY_MACHINE_ID come from the harness's region and node-name keys; the machine ID has Fly's shape.
+        // TS_REGION and TS_NODE come from the harness's region and node-name keys.
         private async Task StartNodeAsync(Node node)
         {
             node.Api = await ManagementApi.StartAsync(settings =>

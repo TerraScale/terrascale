@@ -1,6 +1,5 @@
 using System.Diagnostics.Metrics;
 using System.Net;
-using System.Net.Sockets;
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.OpenApi;
@@ -16,8 +15,8 @@ namespace TerraBase.Hosting;
 public enum TerraBaseListener
 {
     /// <summary>
-    /// Fly's private network only (<c>fly-local-6pn</c>), HTTP/2 without TLS: inter-node gRPC, administration and the
-    /// platform operator's API. Every request requires the shared peer credential from Fly secrets.
+    /// The private mesh only (this node's address in ts-orch's peers file), HTTP/2 without TLS: inter-node gRPC, administration
+    /// and the platform operator's API. Every request requires the shared peer credential.
     /// </summary>
     Internal,
 
@@ -168,7 +167,7 @@ public static class Listeners
                     };
                     response.Headers["X-TerraBase-Machine"] = new OpenApiHeader
                     {
-                        Description = "Machine of the serving TerraBase node (FLY_MACHINE_ID; local off Fly; client listener only).",
+                        Description = "Node of the serving TerraBase node (TS_NODE; local outside a cluster; client listener only).",
                         Schema = new OpenApiSchema { Type = JsonSchemaType.String },
                     };
                 }
@@ -200,21 +199,13 @@ public static class Listeners
     }
 
     /// <summary>
-    /// The address of the internal listener: the machine's private address on Fly, which Fly lists as <c>fly-local-6pn</c>
-    /// in <c>/etc/hosts</c>; loopback off Fly.
+    /// The address of the internal listener: this node's private mesh address from ts-orch's peers file in a cluster, never
+    /// the host's public interfaces; loopback outside one.
     /// </summary>
     public static IPAddress InternalAddress(TerraBaseOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        try
-        {
-            return options.App is null ? IPAddress.Loopback
-                : Dns.GetHostAddresses("fly-local-6pn").First(address => address.AddressFamily == AddressFamily.InterNetworkV6);
-        }
-        catch (Exception error) when (error is SocketException or InvalidOperationException)
-        {
-            throw new TerraBaseConfigurationException("fly-local-6pn must resolve to the machine's private IPv6 address");
-        }
+        return options.PeersFile is null ? IPAddress.Loopback : PeersFile.SelfAddress(options);
     }
 
     /// <summary>
@@ -226,7 +217,7 @@ public static class Listeners
     {
         ArgumentNullException.ThrowIfNull(kestrel);
         ArgumentNullException.ThrowIfNull(options);
-        var local = options.App is null && environmentName == Environments.Development;
+        var local = options.PeersFile is null && environmentName == Environments.Development;
         // HTTP/2 only: without TLS there is no ALPN, and gRPC needs HTTP/2 prior knowledge.
         kestrel.Listen(internalAddress, options.InternalPort, listen =>
         {

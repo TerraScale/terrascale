@@ -228,9 +228,9 @@ public sealed class RegionTests
             start.Environment["ASPNETCORE_ENVIRONMENT"] = "Production";
             // Identity validation must precede host construction, even with a malformed framework setting.
             start.Environment["DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE"] = "invalid-test-value";
-            start.Environment["FLY_REGION"] = region;
-            start.Environment["FLY_MACHINE_ID"] = "d894655b3ed118";
-            start.Environment["FLY_APP_NAME"] = "ts-terrabase";
+            start.Environment["TS_REGION"] = region;
+            start.Environment["TS_NODE"] = "ts-gru-1";
+            start.Environment["TS_PEERS_FILE"] = Path.Combine(directory, "peers");
             start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, typeof(Program).Assembly.GetName().Name + ".dll"));
             foreach (var name in TerraBaseOptions.SettingNames)
             {
@@ -253,7 +253,7 @@ public sealed class RegionTests
 
                 await Assert.That(process.ExitCode).IsEqualTo(2);
                 await Assert.That(await output).IsEmpty();
-                await Assert.That(await error).Contains("FLY_REGION");
+                await Assert.That(await error).Contains("TS_REGION");
                 await Assert.That(await error).DoesNotContain(region);
 
                 await Assert.That(Directory.EnumerateFileSystemEntries(directory)).IsEmpty();
