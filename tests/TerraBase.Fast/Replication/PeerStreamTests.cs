@@ -2732,11 +2732,16 @@ public sealed class PeerStreamTests
             var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
             _ = await store.WithWriterAsync(session =>
             {
+                using var transaction = session.Connection.BeginTransaction();
                 using var command = session.Connection.CreateCommand();
+                command.Transaction = transaction;
                 command.CommandText = $"DELETE FROM \"{collection}\" WHERE id = $id; DELETE FROM _tb_state WHERE collection = $collection AND id = $id;";
                 command.Parameters.AddWithValue("$id", id);
                 command.Parameters.AddWithValue("$collection", collection);
-                return command.ExecuteNonQuery();
+                var changed = command.ExecuteNonQuery();
+                MerkleFixture.Rebuild(session, transaction);
+                transaction.Commit();
+                return changed;
             }, "a test losing a document", CancellationToken.None);
             store.ForgetCollections();
         }

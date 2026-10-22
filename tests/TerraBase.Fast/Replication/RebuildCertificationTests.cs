@@ -1494,10 +1494,15 @@ public sealed class RebuildCertificationTests
             var store = (SqliteDatabaseStore)await StoreAsync();
             _ = await store.WithWriterAsync(session =>
             {
+                using var transaction = session.Connection.BeginTransaction();
                 using var command = session.Connection.CreateCommand();
+                command.Transaction = transaction;
                 command.CommandText = "DELETE FROM \"items\" WHERE id = $id; DELETE FROM _tb_state WHERE collection = 'items' AND id = $id;";
                 command.Parameters.AddWithValue("$id", id);
-                return command.ExecuteNonQuery();
+                var changed = command.ExecuteNonQuery();
+                MerkleFixture.Rebuild(session, transaction);
+                transaction.Commit();
+                return changed;
             }, "a test editing rows directly", pair.Token);
             store.ForgetCollections();
             await Assert.That(await ReadAsync(id)).IsNull();
