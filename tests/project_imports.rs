@@ -116,3 +116,30 @@ async fn import_errors_and_upload_limits_keep_uncertain_mutations_single_attempt
         assert_eq!(fixture.requests.lock().unwrap().len(), 1);
     }
 }
+
+#[tokio::test]
+async fn import_responses_preserve_non_null_progress_validation_and_errors() {
+    let mut expected: Value = serde_json::from_str(JOB).unwrap();
+    expected["state"] = json!("failed");
+    expected["cancelRequested"] = json!(true);
+    expected["confirmedPreviewId"] = json!(PREVIEW);
+    expected["source"]["retainedUntil"] = json!("2026-10-23T00:00:00Z");
+    expected["startedAt"] = json!("2026-10-22T00:00:00Z");
+    expected["finishedAt"] = json!("2026-10-22T00:00:30Z");
+    expected["progress"] = json!({"tablesDone":0,"tablesTotal":1,"rowsWritten":2,"rowsTotal":3,"currentTable":"public.orgs"});
+    expected["validation"] = json!({"passed":false,"tables":[{"source":"public.orgs","collection":"orgs","sourceRows":3,"documents":2,"sourceChecksum":"a".repeat(64),"documentChecksum":"b".repeat(64),"match":false}]});
+    expected["error"] = json!({"code":"validation_failed","message":"read-back mismatch","retryable":true,"table":"public.orgs","row":3,"column":"name"});
+    expected["preview"]["tables"][0]["issues"] = json!([{"severity":"warning","code":"excluded_column","column":"name","row":3,"message":"fixture issue"}]);
+    let fixture = Fixture::new(vec![reply(200, &expected.to_string())]).await;
+    let actual: Value = fixture
+        .client()
+        .database("orders")
+        .get_import()
+        .await
+        .unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(actual["progress"]["rowsWritten"], 2);
+    assert_eq!(actual["validation"]["tables"][0]["documents"], 2);
+    assert_eq!(actual["error"]["column"], "name");
+    assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+}

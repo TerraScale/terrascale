@@ -64,17 +64,25 @@ async fn saved_queries_preserve_fields_ulid_paths_and_management_cursors() {
 #[tokio::test]
 async fn reporting_keeps_query_ranges_and_arbitrary_response_fields() {
     let period = json!({"from":"2026-10-22T00:00:00Z","to":"2026-10-22T01:00:00Z","granularity":"hour","reads":123,"writes":7});
-    let usage = json!({"projectId":PROJECT,"databases":0,"storageBytes":0,"logicalBytes":0,"documents":0,"reads":123,"writes":7,"period":period,"series":[],"items":[]});
-    let database_usage = json!({"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FAW","storageBytes":0,"logicalBytes":0,"collections":0,"documents":0,"reads":123,"writes":7,"period":period,"series":[]});
-    let analytics = json!({"projectId":PROJECT,"range":"1h","from":"2026-10-22T00:00:00Z","to":"2026-10-22T01:00:00Z","bucketSeconds":60,"items":[]});
+    let point = json!({"start":"2026-10-22T00:00:00Z","reads":123,"writes":7});
+    let database_usage = json!({"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FAW","storageBytes":8192,"logicalBytes":128,"collections":1,"documents":2,"reads":123,"writes":7,"period":period,"series":[point]});
+    let mut item_usage = database_usage.clone();
+    item_usage["series"] = json!([]);
+    let usage = json!({"projectId":PROJECT,"databases":1,"storageBytes":8192,"logicalBytes":128,"documents":2,"reads":123,"writes":7,"period":period,"series":[point],"items":[item_usage]});
+    let bandwidth = json!({"sourceRegion":"gru","destinationRegion":"fra","kind":"delta","bytesSent":512,"bytesReceived":256});
+    let analytics_point = json!({"start":"2026-10-22T00:00:00Z","requests":{"GET":123},"operations":{"read":123,"write":7},"errors":1,"latency":{"p50Ms":1.5,"p95Ms":4.5,"p99Ms":null},"storageBytes":8192,"clientBandwidth":{"bytesSent":1000,"bytesReceived":2000},"replicationBandwidth":{"bytesSent":512,"bytesReceived":256}});
+    let analytics = json!({"projectId":PROJECT,"range":"1h","from":"2026-10-22T00:00:00Z","to":"2026-10-22T01:00:00Z","bucketSeconds":60,"items":[{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FAW","databaseName":"orders","region":"gru","series":[analytics_point]}]});
+    let mut replication = analytics.clone();
+    replication["items"] = json!([{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FAW","databaseName":"orders","region":"gru","status":"healthy","replicatedOps":7,"lagMs":2.5,"divergence":false,"convergenceMs":4.0,"lastApplied":"2026-10-22T00:00:30Z","bandwidth":[bandwidth],"series":[{"start":"2026-10-22T00:00:00Z","replicatedOps":7,"bandwidth":[bandwidth]}]}]);
+    let shapes = json!({"items":[{"id":"a".repeat(64),"collection":"items","shape":"{\"filter\":{\"eq\":{\"score\":\"?\"}}}","queries":3,"totalLatencyMs":4.5,"maxLatencyMs":2.5,"rowsScanned":10,"lastSeenAt":"2026-10-22T00:00:30Z"}]});
     let fixture = Fixture::new(vec![
         reply(200, &usage.to_string()),
         reply(200, &analytics.to_string()),
-        reply(200, &analytics.to_string()),
+        reply(200, &replication.to_string()),
         reply(200, &database_usage.to_string()),
         reply(200, &analytics.to_string()),
-        reply(200, &analytics.to_string()),
-        reply(200, r#"{"items":[]}"#),
+        reply(200, &replication.to_string()),
+        reply(200, &shapes.to_string()),
     ])
     .await;
     let client = fixture.client();
@@ -96,8 +104,18 @@ async fn reporting_keeps_query_ranges_and_arbitrary_response_fields() {
     ];
     assert_eq!(values[0], usage);
     assert_eq!(values[3], database_usage);
-    assert_eq!(values[1]["bucketSeconds"], 60);
-    assert_eq!(values[6], json!({"items":[]}));
+    for i in [1, 4] {
+        assert_eq!(values[i], analytics);
+        assert_eq!(values[i]["items"][0]["series"][0]["latency"]["p50Ms"], 1.5);
+    }
+    for i in [2, 5] {
+        assert_eq!(values[i], replication);
+        assert_eq!(
+            values[i]["items"][0]["series"][0]["bandwidth"][0]["bytesSent"],
+            512
+        );
+    }
+    assert_eq!(values[6], shapes);
     let requests = fixture.requests.lock().unwrap();
     for (i, suffix) in [
         "usage",

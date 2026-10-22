@@ -4,8 +4,7 @@ use http::{reply, Fixture, PROJECT};
 use serde_json::{json, Value};
 
 const INFERRED: &str = r#"{"collection":"items","documents":1,"sampledDocuments":1,"fields":[{"path":"email","present":1,"types":{"string":1}}],"uniqueConstraints":[]}"#;
-const CONSTRAINTS: &str =
-    r#"{"constraints":[{"name":"email_unique","fields":["email"],"normalization":"lowercase"}]}"#;
+const CONSTRAINTS: &str = r#"{"constraints":[{"name":"field_82244417f956ac7c","fields":["email"],"normalization":"lowercase"},{"name":"tenant_handle","fields":["tenant","handle"],"normalization":"none"}]}"#;
 const INDEX: &str =
     r#"{"name":"items_score","collection":"items","fields":["score"],"state":"active"}"#;
 const RECOMMENDATIONS: &str = r#"{"items":[{"id":"items:score","collection":"items","fields":["score"],"reason":"1 queries filtered or sorted on this field without an index","queries":1}]}"#;
