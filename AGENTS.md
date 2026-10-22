@@ -13,7 +13,7 @@ Production uses persistent state and ts-auth authorization. In-memory demos, fak
 
 ## Stack
 
-- Use Go and datastar. Deploy to OCI gru under ts-orch. Use the official Stripe library for payments.
+- Use Go and datastar. Deploy to fly.io. Use the official Stripe library for payments.
 - The dashboard must not depend on terrabase (project); depend on ts-go instead.
 
 ## Preview
@@ -51,7 +51,7 @@ Production uses persistent state and ts-auth authorization. In-memory demos, fak
 
 - Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled-config keys, deploy toggles, or kill switches in code, config, or CI. Delete switches and their guarded paths.
 - Every region always serves. NetBird membership admits a node automatically; it discovers all regions, infers its own from where it runs, and serves with no per-region enable step.
-- Discover authentication, database, and orchestrator endpoints automatically. Production runtime secrets come from OCI Vault through ts-orch using instance principal; CI secrets are GitHub Actions secrets. The complete secret inventory lives in the terrascale repository under `ops/secrets/`. Never put secret values in code or config.
+- Discover authentication, database, and orchestrator endpoints automatically. Production runtime secrets are Fly secrets on each Fly app; CI secrets are GitHub Actions secrets. The complete secret inventory lives in the terrascale repository under `ops/secrets/`. Never put secret values in code or config.
 - Values have one correct setting in code. Expose no tuning knobs.
 - CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance, with a one-line reason.
 
