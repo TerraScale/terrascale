@@ -7,7 +7,7 @@ use serde_json::value::RawValue;
 
 use super::client::{Client, Req, Resp};
 use super::errors::{Error, Result};
-use super::ids::{check_document_id, check_name, DocumentId, IdempotencyKey, Version};
+use super::ids::{check_document_id, check_name, DocumentId, Version};
 use super::shapes::Shape;
 use super::tx::{Tx, TxResult};
 use super::types::{u64_string, Durability, Number};
@@ -103,9 +103,8 @@ impl Database {
 
     /// Atomically commits `tx` (`POST /v1/databases/{db}/transactions`).
     ///
-    /// Failures name the failing op through [`Error::op`]. With
-    /// [`Tx::idempotency_key`] set, an uncertain commit is retried and an
-    /// exact replay returns the original result.
+    /// Failures name the failing op through [`Error::op`]. An uncertain
+    /// mutation must be reconciled by reading state before an explicit retry.
     pub async fn commit(&self, tx: &Tx) -> Result<TxResult> {
         check_name("database", &self.name)?;
         let body = tx.encode()?;
@@ -114,7 +113,6 @@ impl Database {
             vec!["v1", "databases", &self.name, "transactions"],
         );
         req.body = Some(body);
-        req.idempotency_key = tx.key();
         let resp = self.client.send_project(req).await?;
         let out: TxResult = resp.decode_status(&[StatusCode::OK])?;
         tx.check_results(&out.results, self.client.is_project())
@@ -178,13 +176,10 @@ pub enum Precondition {
 pub struct WriteOptions {
     /// Optional precondition.
     pub precondition: Option<Precondition>,
-    /// Optional `Idempotency-Key`; makes the write replay-safe, so transient
-    /// failures and `commit_uncertain` are retried.
-    pub idempotency_key: Option<IdempotencyKey>,
 }
 
 impl WriteOptions {
-    /// No precondition and no idempotency key.
+    /// No precondition.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -203,20 +198,12 @@ impl WriteOptions {
         self.precondition = Some(Precondition::IfNoneMatchAny);
         self
     }
-
-    /// Sets the `Idempotency-Key`.
-    #[must_use]
-    pub fn idempotency_key(mut self, key: IdempotencyKey) -> Self {
-        self.idempotency_key = Some(key);
-        self
-    }
 }
 
 impl From<Precondition> for WriteOptions {
     fn from(p: Precondition) -> Self {
         Self {
             precondition: Some(p),
-            idempotency_key: None,
         }
     }
 }
@@ -634,7 +621,6 @@ impl Collection {
         let mut req = self.point_request(Method::PUT, &id);
         req.body = Some(body.get().as_bytes().to_vec());
         req.headers = precondition_headers(opts.precondition.as_ref());
-        req.idempotency_key = opts.idempotency_key.as_ref();
         write_result(
             self.client().send(req).await?,
             Some(&id),
@@ -656,7 +642,6 @@ impl Collection {
         let body = encode_object(doc)?;
         let mut req = Req::new(Method::POST, self.segments(&["documents"]));
         req.body = Some(body.get().as_bytes().to_vec());
-        req.idempotency_key = opts.idempotency_key.as_ref();
         write_result(self.client().send(req).await?, None, &[StatusCode::CREATED])
     }
 
@@ -680,7 +665,6 @@ impl Collection {
         req.body = Some(patch.body()?);
         req.content_type = Some(patch.content_type());
         req.headers = precondition_headers(opts.precondition.as_ref());
-        req.idempotency_key = opts.idempotency_key.as_ref();
         write_result(self.client().send(req).await?, Some(&id), &[StatusCode::OK])
     }
 
@@ -696,7 +680,6 @@ impl Collection {
         check_document_id(&id)?;
         let mut req = self.point_request(Method::DELETE, &id);
         req.headers = precondition_headers(opts.precondition.as_ref());
-        req.idempotency_key = opts.idempotency_key.as_ref();
         write_result(self.client().send(req).await?, Some(&id), &[StatusCode::OK])
     }
 

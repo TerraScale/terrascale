@@ -6,7 +6,7 @@ use serde_json::value::RawValue;
 
 use super::documents::{encode_object, Patch, PatchOp, Precondition};
 use super::errors::{Error, Result};
-use super::ids::{check_document_id, check_name, DocumentId, IdempotencyKey, Version};
+use super::ids::{check_document_id, check_name, DocumentId, Version};
 use super::query::Filter;
 use super::types::{opt_u64_string, u64_string, Durability};
 
@@ -98,14 +98,12 @@ impl CountBounds {
 /// database, committed with [`Database::commit`](super::Database::commit).
 ///
 /// Builder methods never fail; the first invalid op is reported, with its
-/// index, by `commit`. A `Tx` can be committed again with the same
-/// idempotency key to learn the outcome after an uncertain failure.
+/// index, by `commit`. Reconcile uncertain commits by reading their effects.
 #[derive(Debug, Clone, Default)]
 pub struct Tx {
     ops: Vec<TxOp>,
     error: Option<(usize, String)>,
     count_ops: usize,
-    key: Option<IdempotencyKey>,
 }
 
 impl Tx {
@@ -125,16 +123,6 @@ impl Tx {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.ops.is_empty()
-    }
-
-    /// Sets the transaction's `Idempotency-Key`.
-    pub fn idempotency_key(&mut self, key: IdempotencyKey) -> &mut Self {
-        self.key = Some(key);
-        self
-    }
-
-    pub(crate) fn key(&self) -> Option<&IdempotencyKey> {
-        self.key.as_ref()
     }
 
     fn fail(&mut self, msg: impl Into<String>) {

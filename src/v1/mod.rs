@@ -58,7 +58,7 @@ pub use documents::{
     WriteResult,
 };
 pub use errors::{Error, Result};
-pub use ids::{is_valid_name, uuidv5_for, DocumentId, IdempotencyKey, Version};
+pub use ids::{is_valid_name, uuidv5_for, DocumentId, Version};
 pub use management::{DatabasePlacement, ManagementPage};
 pub use query::{Count, Explain, Filter, Order, Pages, Path, Query, QueryPage, Scalar, SortKey};
 pub use shapes::{Shape, ShapeChange, ShapeDocument, ShapeOp, ShapeState, ShapeUpdate};

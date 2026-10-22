@@ -12,15 +12,6 @@ fn ids_names_and_builder_validation() {
     assert!(!is_valid_name("Users") && !is_valid_name("9a") && !is_valid_name(""));
     assert!(Version::new("tbv1-0123456789abcdef0123456789abcdef").is_ok());
     assert!(Version::new("tbv1-0123456789ABCDEF0123456789abcdef").is_err());
-    assert!(IdempotencyKey::new("a.b-c_D9").is_ok());
-    assert!(IdempotencyKey::new("").is_err() && IdempotencyKey::new("a b").is_err());
-    assert!(IdempotencyKey::new("x".repeat(65)).is_err());
-    let derived = IdempotencyKey::derive(&["refresh", "abc"]);
-    assert_eq!(derived, IdempotencyKey::derive(&["refresh", "abc"]));
-    assert_ne!(derived, IdempotencyKey::derive(&["refres", "habc"]));
-    assert_eq!(derived.as_str().len(), 64);
-    assert_ne!(IdempotencyKey::random(), IdempotencyKey::random());
-
     let token = "fixture-access-token";
     let bad = |url: &str, tok: &str| {
         matches!(

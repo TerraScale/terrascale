@@ -14,7 +14,6 @@ use serde::Serialize;
 use super::atlas::AtlasResolver;
 use super::documents::Database;
 use super::errors::{self, Error, Result};
-use super::ids::IdempotencyKey;
 
 /// The server's request body limit (4 MiB).
 pub const MAX_REQUEST_BYTES: usize = 4 << 20;
@@ -28,9 +27,8 @@ pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 64 << 20;
 /// * Transport errors and the transient 503s (`capacity`,
 ///   `storage_unavailable`, `dependencies_unavailable`, `commit_uncertain`)
 ///   are retried only when the request is replay-safe: reads, queries and
-///   mutations carrying an `Idempotency-Key`.
-/// * `500 internal_error` is retried only for requests with an
-///   `Idempotency-Key`.
+///   other explicitly read-only requests.
+/// * `500 internal_error` is returned without retry.
 /// * `stored_corruption` and every other error are never retried.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetryPolicy {
@@ -432,7 +430,6 @@ pub(crate) struct Req<'a> {
     pub body: Option<Vec<u8>>,
     pub content_type: Option<&'static str>,
     pub headers: Vec<(&'static str, String)>,
-    pub idempotency_key: Option<&'a IdempotencyKey>,
     /// Reads and read-only POSTs that may be resent after a transport error.
     pub replay_safe: bool,
     /// Only public health probes omit the configured bearer credential.
@@ -449,7 +446,6 @@ impl<'a> Req<'a> {
             body: None,
             content_type: None,
             headers: Vec::new(),
-            idempotency_key: None,
             replay_safe,
             anonymous_probe: false,
         }
@@ -779,9 +775,6 @@ impl Client {
                 "request requires a canonical project or platform route".into(),
             ));
         }
-        if req.idempotency_key.is_some() {
-            return Err(Error::InvalidInput("C# TerraBase does not support Idempotency-Key; an uncertain mutation must be reconciled by reading its state".into()));
-        }
         if req
             .body
             .as_ref()
@@ -807,8 +800,7 @@ impl Client {
         let mut url = self.url(&origin, &req.segments, &req.query)?;
         // Serialized once; each attempt shares it without copying.
         let body = req.body.take().map(bytes::Bytes::from);
-        let keyed = req.idempotency_key.is_some();
-        let replay_safe = req.replay_safe || keyed;
+        let replay_safe = req.replay_safe;
         let policy = &self.inner.retry;
         let mut attempt: u32 = 0;
         let mut refreshed = false;
@@ -863,7 +855,6 @@ impl Client {
                                         | "not_primary",
                                     ),
                                 ) => replay_safe,
-                                (Some(500), Some("internal_error")) => keyed,
                                 _ => false,
                             });
                     if !retry {
@@ -901,9 +892,6 @@ impl Client {
         }
         for (name, value) in &req.headers {
             rb = rb.header(*name, value);
-        }
-        if let Some(key) = req.idempotency_key {
-            rb = rb.header("Idempotency-Key", key.as_str());
         }
         if let Some(body) = body {
             rb = rb
@@ -1127,38 +1115,6 @@ mod tests {
         ));
         let mut tx = super::super::Tx::new();
         tx.put("items", "customer:key", &serde_json::json!({}), None);
-        assert!(matches!(
-            client.database("orders").commit(&tx).await,
-            Err(Error::InvalidInput(_))
-        ));
-    }
-
-    #[tokio::test]
-    async fn project_rejects_keyed_writes_before_dispatch() {
-        let client = Client::builder("http://127.0.0.1:1", "jwt")
-            .project("01ARZ3NDEKTSV4RRFFQ69G5FAV")
-            .build()
-            .unwrap();
-        let key = IdempotencyKey::random();
-        let err = client
-            .database("orders")
-            .collection("items")
-            .put(
-                uuid::Uuid::new_v4(),
-                &serde_json::json!({"a":1}),
-                super::super::WriteOptions::new().idempotency_key(key.clone()),
-            )
-            .await
-            .unwrap_err();
-        assert!(matches!(err, Error::InvalidInput(_)), "{err:?}");
-        let mut tx = super::super::Tx::new();
-        tx.put(
-            "items",
-            uuid::Uuid::new_v4(),
-            &serde_json::json!({"a":1}),
-            None,
-        )
-        .idempotency_key(key);
         assert!(matches!(
             client.database("orders").commit(&tx).await,
             Err(Error::InvalidInput(_))
