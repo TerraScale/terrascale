@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 )
 
 // Databases lists a project's databases using a project access token with
@@ -108,4 +109,66 @@ func (d *Database) sql(ctx context.Context, statement, endpoint string, out any)
 		SQL string `json:"sql"`
 	}{statement}, out)
 	return err
+}
+
+// projectRequest addresses the public project hierarchy; selectors remain names.
+func projectRequest(method, project string, query url.Values, extra ...string) (request, error) {
+	if err := checkID(project); err != nil {
+		return request{}, err
+	}
+	return request{method: method, path: append([]string{"v1", "projects", project}, extra...), query: query, replaySafe: method == http.MethodGet}, nil
+}
+
+func publicCall[T any](ctx context.Context, c *Client, req request, in any) (*T, error) {
+	var out T
+	if _, err := c.call(ctx, req, in, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func databaseCall[T any](ctx context.Context, d *Database, method string, query url.Values, in any, extra ...string) (*T, error) {
+	p, err := d.path(extra...)
+	if err != nil {
+		return nil, err
+	}
+	return publicCall[T](ctx, d.c, request{method: method, path: p, query: query, replaySafe: method == http.MethodGet}, in)
+}
+
+// CreateIn creates this database with explicit placement. Nil ReplicaRegions
+// lets the server select serving regions; an empty list is sent explicitly.
+func (d *Database) CreateIn(ctx context.Context, placement Placement) (*ManagedDatabase, error) {
+	if _, err := d.path(); err != nil {
+		return nil, err
+	}
+	req, err := projectRequest(http.MethodPost, d.project, nil, "databases")
+	if err != nil {
+		return nil, err
+	}
+	body := struct {
+		Name           string   `json:"name"`
+		HomeRegion     string   `json:"homeRegion,omitempty"`
+		ReplicaRegions []string `json:"replicaRegions"`
+	}{d.name, placement.HomeRegion, placement.ReplicaRegions}
+	return publicCall[ManagedDatabase](ctx, d.c, req, body)
+}
+
+// SetRegions replaces the database's replica regions from its home region.
+// An empty slice removes every replica; the home region cannot change.
+func (d *Database) SetRegions(ctx context.Context, regions []string) (*ManagedDatabase, error) {
+	if regions == nil {
+		regions = []string{}
+	}
+	return databaseCall[ManagedDatabase](ctx, d, http.MethodPatch, nil, struct {
+		ReplicaRegions []string `json:"replicaRegions"`
+	}{regions})
+}
+
+// Branch clones this database into a new database of the same project.
+// Later changes to either database are independent.
+func (d *Database) Branch(ctx context.Context, name string) (*ManagedDatabase, error) {
+	if err := checkName("database", name); err != nil {
+		return nil, err
+	}
+	return databaseCall[ManagedDatabase](ctx, d, http.MethodPost, nil, nameBody{name}, "branches")
 }
