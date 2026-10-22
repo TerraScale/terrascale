@@ -422,12 +422,6 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     // A refill that fails (the named machine unreachable, a deadline) refuses the database: the sender asks again later.
     private async Task<int?> RefillAsync(Task before, TenantContext database, string machine, Hlc horizon, Ulid incarnation, CancellationToken cancellationToken)
     {
-        await before.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        if (!before.IsCompletedSuccessfully)
-        {
-            return null;
-        }
-
         try
         {
             // Refuse excess work immediately; a queue or an admission wait here would grow with reconnecting databases.
@@ -438,6 +432,13 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
             using var reservation = _memory.TryReserve(MemoryLane.Bulk, RefillBytes, tenant: null);
             if (reservation is null)
+            {
+                return null;
+            }
+
+            // Waiting on the catalog is admitted work too; excess refills must be refused before that wait.
+            await before.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            if (!before.IsCompletedSuccessfully)
             {
                 return null;
             }
