@@ -217,7 +217,8 @@ public sealed class DatabaseChangesTests
         }
 
         // A client that still names the forgotten origin gets it dropped from the next cursor.
-        var named = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc> { [gone] = old }, FeedCursor.At(now)));
+        var scope = ChangeCursor.Scope(await api.TenantOfAsync(), null);
+        var named = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc> { [gone] = old }, FeedCursor.At(now)), scope);
         using (var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(named)}"))
         {
             _ = await stream.NextAsync();
@@ -227,7 +228,7 @@ public sealed class DatabaseChangesTests
         }
 
         // A cursor issued longer ago than the retention could lack such an origin: expired.
-        var stale = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc>(), FeedCursor.At(now - FeedCursor.Retention - TimeSpan.FromMinutes(1))));
+        var stale = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc>(), FeedCursor.At(now - FeedCursor.Retention - TimeSpan.FromMinutes(1))), scope);
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(stale)}", UriKind.Relative)),
             HttpStatusCode.Gone, "cursor_expired", "events after the cursor are no longer retained here; start again with cursor=now and re-read");
     }
@@ -255,7 +256,7 @@ public sealed class DatabaseChangesTests
     {
         await using var api = await DocumentApi.StartAsync();
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        var future = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc>(), FeedCursor.At(DateTimeOffset.UtcNow + TimeSpan.FromDays(30))));
+        var future = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc>(), FeedCursor.At(DateTimeOffset.UtcNow + TimeSpan.FromDays(30))), ChangeCursor.Scope(await api.TenantOfAsync(), null));
         var joined = await JoinAsync(store, ReplicaId.Of(4518, 12, 1), DateTimeOffset.UtcNow);
         await Assert.That(await TrimAsync(store, new Hlc(joined.Value + 1))).IsEqualTo(1);
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(future)}", UriKind.Relative)),
@@ -428,6 +429,8 @@ public sealed class DatabaseChangesTests
             cursor = (await stream.ChangesAsync(1))[0].Id;
         }
 
+        // These fixtures have separate tenant identities; preserve the prefix proof while matching the target scope.
+        cursor = ChangeCursor.Encode(ChangeCursor.Decode(cursor)!, ChangeCursor.Scope(await destination.TenantOfAsync(), new HashSet<string>(StringComparer.Ordinal) { DocumentApi.Collection }));
         var uri = $"{destination.DatabasePath()}/changes?collections={DocumentApi.Collection}&cursor={Uri.EscapeDataString(cursor)}";
         using var response = await destination.Client.GetAsync(new Uri(uri, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead);
         await Assert.That(response.StatusCode).IsEqualTo(differentPrefix ? HttpStatusCode.Gone : HttpStatusCode.OK);
@@ -480,6 +483,7 @@ public sealed class DatabaseChangesTests
 
         _ = await destination.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await destination.TenantOfAsync(), origin,
             [Group(3, events[2].Id, events[2].Stamp, origin)], CancellationToken.None);
+        cursor = ChangeCursor.Encode(ChangeCursor.Decode(cursor)!, ChangeCursor.Scope(await destination.TenantOfAsync(), null));
         using var resumed = await Sse.OpenAsync(destination.Client, $"{destination.DatabasePath()}/changes?cursor={Uri.EscapeDataString(cursor)}");
         _ = await resumed.NextAsync();
         await Assert.That((await resumed.ChangesAsync(1))[0].Data.GetProperty("id").GetString()).IsEqualTo(events[2].Id);
@@ -569,7 +573,8 @@ public sealed class DatabaseChangesTests
         {
             foreach (var (region, api, sentinel) in new[] { ("fra", fra, fraSentinel), ("gru", gru, gruSentinel) })
             {
-                var uri = $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(cursor)}";
+                var scoped = ChangeCursor.Encode(ChangeCursor.Decode(cursor)!, ChangeCursor.Scope(await api.TenantOfAsync(), null));
+                var uri = $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(scoped)}";
                 using (var probe = await api.Client.GetAsync(new Uri(uri, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead))
                 {
                     if (probe.StatusCode != HttpStatusCode.OK)
