@@ -84,6 +84,7 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
         var results = QosContext.Enter(database, memory);
         try
         {
+            var cursorScope = ChangeCursor.Scope(database, collections);
             // A cursor older than the retention may lack an origin whose events all aged out since and were forgotten.
             if (cursor is not null && cursor.Issued.Value < FeedCursor.At(time.GetUtcNow() - FeedCursor.Retention).Value)
             {
@@ -138,7 +139,7 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
             context.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
             var position = new Dictionary<ReplicaId, Hlc>(cursor?.Stamps ?? new Dictionary<ReplicaId, Hlc>());
             var prefixes = page.Before.ToDictionary();
-            Cursor(buffer, new FeedCursor(position, issued) { Issuer = page.Issuer, Machine = options.MachineId, Prefixes = prefixes });
+            Cursor(buffer, new FeedCursor(position, issued) { Issuer = page.Issuer, Machine = options.MachineId, Prefixes = prefixes }, cursorScope);
             await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
             var beat = time.GetUtcNow() + Heartbeat;
             while (true)
@@ -158,7 +159,7 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
                     // Only the last event of an (origin, stamp) carries the advanced cursor: a reader that leaves inside one
                     // resumes before it, never past events of that stamp it did not get.
                     var last = i + 1 == page.Events.Count || (page.Events[i + 1].Origin, page.Events[i + 1].Stamp) != (change.Origin, change.Stamp);
-                    Change(buffer, change, last ? ChangeCursor.Encode(new FeedCursor(position, issued) { Issuer = page.Issuer, Machine = options.MachineId, Prefixes = prefixes }) : null);
+                    Change(buffer, change, last ? ChangeCursor.Encode(new FeedCursor(position, issued) { Issuer = page.Issuer, Machine = options.MachineId, Prefixes = prefixes }, cursorScope) : null);
                     if (buffer.WrittenCount >= 64 * 1024)
                     {
                         await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
@@ -178,7 +179,7 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
 
                 if (time.GetUtcNow() >= beat)
                 {
-                    Cursor(buffer, new FeedCursor(position, issued) { Issuer = page.Issuer, Machine = options.MachineId, Prefixes = prefixes });
+                    Cursor(buffer, new FeedCursor(position, issued) { Issuer = page.Issuer, Machine = options.MachineId, Prefixes = prefixes }, cursorScope);
                     await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
                     beat = time.GetUtcNow() + Heartbeat;
                 }
@@ -356,9 +357,9 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
         buffer.Write("\n\n"u8);
     }
 
-    private static void Cursor(ArrayBufferWriter<byte> buffer, FeedCursor cursor)
+    private static void Cursor(ArrayBufferWriter<byte> buffer, FeedCursor cursor, ReadOnlyMemory<byte> scope)
     {
-        var text = ChangeCursor.Encode(cursor);
+        var text = ChangeCursor.Encode(cursor, scope);
         Line(buffer, "event: cursor\nid: ", text);
         buffer.Write("data: "u8);
         using (var json = new Utf8JsonWriter(buffer))

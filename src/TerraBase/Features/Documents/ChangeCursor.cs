@@ -1,9 +1,11 @@
 using System.Buffers.Binary;
 using System.Buffers.Text;
+using System.Security.Cryptography;
 using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Documents;
 
@@ -26,11 +28,19 @@ internal static class ChangeCursor
     private const int OriginBytes = 56;
 
     /// <summary>Maximum decoded cursor length, including the issuing machine and every origin.</summary>
-    public const int MaxBytes = HeaderBytes + MaxMachineBytes + (OriginBytes * MaxOrigins);
+    public const int MaxBytes = 17 + HeaderBytes + MaxMachineBytes + (OriginBytes * MaxOrigins);
 
     /// <exception cref="InvalidOperationException">More than <see cref="MaxOrigins"/> origins: no cursor this API would accept.</exception>
-    public static string Encode(FeedCursor cursor)
+    public static string Encode(FeedCursor cursor) => Encode(cursor, default);
+
+    /// <summary>Encodes the HTTP feed cursor with its database and canonical collection-filter scope.</summary>
+    public static string Encode(FeedCursor cursor, ReadOnlyMemory<byte> scope)
     {
+        if (!scope.IsEmpty && scope.Length != 16)
+        {
+            throw new ArgumentException("a feed scope is 16 bytes", nameof(scope));
+        }
+
         if (cursor.Stamps.Count > MaxOrigins)
         {
             throw new InvalidOperationException($"a changes feed cursor holds at most {MaxOrigins} origins");
@@ -42,13 +52,21 @@ internal static class ChangeCursor
             throw new InvalidOperationException("a changes feed cursor names a valid issuing machine");
         }
 
-        var bytes = new byte[HeaderBytes + machine.Length + (OriginBytes * cursor.Stamps.Count)];
-        bytes[0] = Marker;
-        BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(1), cursor.Issued.Value);
-        BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(9), cursor.Issuer.Value);
-        bytes[17] = (byte)machine.Length;
-        _ = Encoding.ASCII.GetBytes(machine, bytes.AsSpan(HeaderBytes));
-        var at = HeaderBytes + machine.Length;
+        var envelope = scope.IsEmpty ? 0 : 17;
+        var bytes = new byte[envelope + HeaderBytes + machine.Length + (OriginBytes * cursor.Stamps.Count)];
+        if (envelope > 0)
+        {
+            bytes[0] = 2;
+            scope.Span.CopyTo(bytes.AsSpan(1, 16));
+        }
+
+        var data = bytes.AsSpan(envelope);
+        data[0] = Marker;
+        BinaryPrimitives.WriteUInt64BigEndian(data[1..], cursor.Issued.Value);
+        BinaryPrimitives.WriteUInt64BigEndian(data[9..], cursor.Issuer.Value);
+        data[17] = (byte)machine.Length;
+        _ = Encoding.ASCII.GetBytes(machine, data[HeaderBytes..]);
+        var at = envelope + HeaderBytes + machine.Length;
         foreach (var (origin, stamp) in cursor.Stamps.OrderBy(pair => pair.Key.Value))
         {
             BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(at), origin.Value);
@@ -62,24 +80,48 @@ internal static class ChangeCursor
         return Base64Url.EncodeToString(bytes);
     }
 
+    /// <summary>Database identity and collection set bound into HTTP feed cursors; this is not authentication.</summary>
+    public static ReadOnlyMemory<byte> Scope(TenantContext database, IReadOnlySet<string>? collections) =>
+        SHA256.HashData(Encoding.UTF8.GetBytes($"{database.OrganizationId}\0{database.ProjectId}\0{database.DatabaseId}\0{(collections is null ? "*" : string.Join('\0', collections.Order(StringComparer.Ordinal)))}")).AsMemory(0, 16);
+
     /// <summary>The cursor <paramref name="text"/> encodes, or null when it is not a canonical cursor.</summary>
-    public static FeedCursor? Decode(string text)
+    public static FeedCursor? Decode(string text) => Decode(text, out _);
+
+    /// <summary>Decodes a cursor and exposes the HTTP envelope scope, empty for internal shape cursors.</summary>
+    public static FeedCursor? Decode(string text, out ReadOnlyMemory<byte> scope)
     {
+        scope = default;
         if (text.Length > Base64Url.GetEncodedLength(MaxBytes) || !Base64Url.IsValid(text, out var length) || length < HeaderBytes)
         {
             return null;
         }
 
         var bytes = Base64Url.DecodeFromChars(text);
+        if (Base64Url.EncodeToString(bytes) != text)
+        {
+            return null;
+        }
+
+        if (bytes[0] == 2)
+        {
+            if (bytes.Length < 17 + HeaderBytes)
+            {
+                return null;
+            }
+
+            scope = bytes.AsMemory(1, 16);
+            bytes = bytes[17..];
+        }
+
         var header = HeaderBytes + bytes[17];
-        if (bytes[17] > MaxMachineBytes || header > length || (length - header) % OriginBytes != 0 || (length - header) / OriginBytes > MaxOrigins)
+        if (bytes[17] > MaxMachineBytes || header > bytes.Length || (bytes.Length - header) % OriginBytes != 0 || (bytes.Length - header) / OriginBytes > MaxOrigins)
         {
             return null;
         }
 
         var machine = Encoding.ASCII.GetString(bytes.AsSpan(HeaderBytes, bytes[17]));
         var issued = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(1));
-        if (bytes[0] != Marker || issued is 0 or > long.MaxValue || Base64Url.EncodeToString(bytes) != text
+        if (bytes[0] != Marker || issued is 0 or > long.MaxValue
             || (machine.Length > 0 && !TerraBaseOptions.IsMachineId(machine)))
         {
             return null;
