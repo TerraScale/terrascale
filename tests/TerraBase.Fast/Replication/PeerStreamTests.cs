@@ -2964,7 +2964,7 @@ public sealed class PeerStreamTests
             return true;
         }
 
-        private async Task<bool> UntilUnlistedAsync(ReplicaId peer)
+        public async Task<bool> UntilUnlistedAsync(ReplicaId peer)
         {
             var presence = Api.Server.Services.GetRequiredService<LocalReplica>().Presence;
             var deadline = DateTime.UtcNow + Deadline;
