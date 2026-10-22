@@ -28,6 +28,7 @@ public sealed class DatabaseListCountsJourneyTests(DashboardRootFixture fixture)
             if (!first && state == "partial") return Task.FromResult<IResult?>(Results.Json(new { error = new { code = "unavailable" } }, statusCode: 503));
             if (!first && state == "duplicate") return Task.FromResult<IResult?>(Results.Json(new
             { items = new[] { new { name = "items", documents = 5L, bytes = 50L }, new { name = "items", documents = 1L, bytes = 10L } } }));
+            if (state == "zero") return Task.FromResult<IResult?>(Results.Json(new { items = new[] { new { name = "items", documents = 0L, bytes = 0L } } }));
             var documents = state == "overflow" ? first ? long.MaxValue : 1L : !first && state == "negative" ? -1L : first ? 7L : 5L;
             return Task.FromResult<IResult?>(Results.Json(new { items = new[] { new { name = "items", documents, bytes = first ? 70L : 50L } } }));
         });
@@ -55,13 +56,21 @@ public sealed class DatabaseListCountsJourneyTests(DashboardRootFixture fixture)
         var known = await TotalsAsync(replica);
         await Assert.That(known).Contains(">12</dd>");
         await Assert.That(known).Contains("Across 2 collections, 120 B");
+        await Assert.That(known.Contains("Try again", StringComparison.Ordinal)).IsFalse();
         Volatile.Write(ref measurement, failure);
         var unknown = await TotalsAsync(replica);
         await Assert.That(unknown).Contains(">Unavailable</dd>");
         await Assert.That(unknown).Contains("No zero count is inferred.");
         await Assert.That(unknown.Contains("Across ", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(unknown).Contains("href=\"/databases?range=24h\">Try again</a>");
         Volatile.Write(ref measurement, "");
         await Assert.That(await TotalsAsync(replica)).Contains(">12</dd>");
+        // A real zero stays a factual 0, not the outage state.
+        Volatile.Write(ref measurement, "zero");
+        var zero = await TotalsAsync(replica);
+        await Assert.That(zero).Contains(">0</dd>");
+        await Assert.That(zero).Contains("Across 2 collections, 0 B");
+        await Assert.That(zero.Contains("Unavailable", StringComparison.Ordinal)).IsFalse();
 
         static async Task<string> TotalsAsync(HttpClient instance)
         {
