@@ -21,8 +21,22 @@ internal sealed partial class SqliteStorageTransaction
         RunAsync(() => Join(collection, id, state, at, cancellationToken, baseline: true), cancellationToken, mutation: true);
 
     internal ValueTask<bool> CanSalvageAsync(string collection, string id, DocumentState state, CancellationToken cancellationToken) =>
-        RunAsync(() => !state.Exists || ReadState(collection, id).MaxStamp.Value != 0 || CollectedBefore() is not { Value: > 0 } floor
-            || new DocumentState(CollectedClear(floor), DocumentState.Bottom.Fields).Join(state).Equals(state), cancellationToken);
+        RunAsync(() =>
+        {
+            if (!state.Exists || CollectedBefore() is not { Value: > 0 } floor)
+            {
+                return true;
+            }
+
+            // Keep Join's collection-metadata admission ahead of the target state admission.
+            if (IsClient && !IsMetadata(collection))
+            {
+                _ = ReadState(DocumentDelta.Collections, collection);
+            }
+
+            return ReadState(collection, id).MaxStamp.Value != 0
+                || new DocumentState(CollectedClear(floor), DocumentState.Bottom.Fields).Join(state).Equals(state);
+        }, cancellationToken);
 
     public async ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken)
     {
