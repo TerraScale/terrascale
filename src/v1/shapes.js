@@ -16,7 +16,7 @@ import { stringifyExactJson } from "./json.js";
  * @property {boolean | undefined} [live] True only for log positions; waits up to 20 seconds.
  * @property {string | undefined} [cursor] Previous live response's TB-Shape-Cursor.
  */
-/** @typedef {{ readonly op: "upsert"; readonly id: import("../ids.js").EntityId; readonly version: string; readonly document: JsonObject } | { readonly op: "delete"; readonly id: import("../ids.js").EntityId }} V1ShapeOp */
+/** @typedef {{ readonly op: "upsert"; readonly id: string; readonly version: string; readonly document: JsonObject } | { readonly op: "delete"; readonly id: string }} V1ShapeOp */
 /** @typedef {{ readonly offset: string; readonly ops: readonly V1ShapeOp[] }} V1ShapeChange */
 /**
  * One snapshot page or log chunk. Only a fresh open tail/live response can report upToDate.

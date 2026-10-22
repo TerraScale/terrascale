@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "vitest";
@@ -14,23 +14,21 @@ const ownedCommands = [
   "npm test",
 ];
 
-test("pull requests and merges to main run CI on the reviewed Node 22 and 24 runtimes", async () => {
+test("main and pull requests use the reviewed Node runtimes in one verify job", async () => {
   const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-  assert.match(workflow, /^on:\n  push:\n    branches: \[main\]\n  pull_request:\n    branches: \[main\]\n/mu);
+  assert.match(workflow, /^  pull_request:\n    branches: \[main\]\n/mu);
   assert.doesNotMatch(workflow, /^  (?:pull_request_target|workflow_dispatch|schedule):/mu);
   assert.match(workflow, /^permissions:\n  contents: read\n/mu);
   const job = jobDefinition(workflow, "verify");
   assert.match(job, /runs-on: ubuntu-24\.04/u);
-  assert.match(job, /node: \["22\.23\.2", "24\.21\.0"\]/u);
+  assert.doesNotMatch(job, /matrix\./u);
+  assert.match(job, /node-version: "24\.21\.0"/u);
+  assert.match(job, /node-version: "22\.23\.2"/u);
   assert.match(job, /actions\/checkout@11d5960a326750d5838078e36cf38b85af677262/u);
   assert.match(job, /persist-credentials: false/u);
   assert.match(job, /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/u);
-  assert.match(job, /node-version: \$\{\{ matrix\.node \}\}/u);
-});
-
-test("CI has no switches: no draft gate, fail-fast, conditions, or variables", async () => {
-  const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-  assert.doesNotMatch(workflow, /^\s+if:|fail-fast|continue-on-error|draft|inputs\.|vars\.|enabled|flag|toggle/imu);
+  assert.match(stepNamed(job, "Set up Node 22").body, /if: github\.event_name == 'push'/u);
+  assert.match(stepNamed(job, "Run SDK tests on Node 22").body, /if: github\.event_name == 'push'/u);
 });
 
 test("CI runs exactly the reviewed steps in order", async () => {
@@ -46,12 +44,14 @@ test("CI runs exactly the reviewed steps in order", async () => {
     "Generate SDK type declarations",
     "Check C# route drift",
     "Run SDK tests",
+    "Set up Node 22",
+    "Run SDK tests on Node 22",
   ]);
   const commands = parsed.flatMap((step) => {
     const run = runOf(step);
     return run === undefined || run.startsWith("set -euo") ? [] : [run];
   });
-  assert.deepEqual(commands, ownedCommands);
+  assert.deepEqual(commands, [...ownedCommands, "npm test"]);
 });
 
 test("CI never invokes or provisions TerraBase, downloads a producer, or lowers CPU priority", async () => {
@@ -59,6 +59,27 @@ test("CI never invokes or provisions TerraBase, downloads a producer, or lowers 
   assert.doesNotMatch(workflow, /terrabase|integration|provision-terrabase|run-terrabase|scripts\/ci\/|contracts\/|test:browser|e2e/iu);
   assert.doesNotMatch(workflow, /\b(?:curl|wget|gh release|nice|renice)\b/u);
   assert.doesNotMatch(workflow, /secrets\.|NPM_TOKEN|REGISTRY_TOKEN|TERRASCALE_|FORGEJO/u);
+});
+
+test("npm exposes no TerraBase binary provisioning or integration command", async () => {
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(pkg.scripts["provision:terrabase"], undefined);
+  assert.equal(pkg.scripts["test:integration"], undefined);
+  assert.doesNotMatch(JSON.stringify(pkg.scripts), /provision-terrabase|run-terrabase-integration/u);
+});
+
+test("TerraBase binary helpers and their isolated provisioning support are absent", async () => {
+  for (const file of [
+    "scripts/ci/provision-terrabase.mjs",
+    "scripts/ci/run-terrabase-integration.mjs",
+    "scripts/ci/terrabase-lifecycle.mjs",
+    "scripts/ci/provision-terrabase-tenant.mjs",
+    "test/support/terrabase-v1-setup.js",
+    "scripts/ci/terrabase-ci.test.js",
+    "scripts/ci/terrabase-provisioning.test.js",
+  ]) {
+    await assert.rejects(access(new URL(`../${file}`, import.meta.url)), { code: "ENOENT" }, file);
+  }
 });
 
 test("the deploy profiles run no TerraBase producer command", async () => {

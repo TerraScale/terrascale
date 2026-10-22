@@ -50,6 +50,23 @@ function sse(response, value, end = false) {
 }
 
 describe("current database SSE contract", () => {
+  test("resumes before an interrupted transaction until its final change issues a cursor", async () => {
+    const finalChange = { ...change, id: "second" };
+    const { db, requests } = await fixture((_request, response) => {
+      if (requests.length === 1) sse(response, cursor(committedCursor) + event("change", change), true);
+      else sse(response, event("change", change) + event("change", finalChange, advancedCursor));
+    });
+    const iter = db.changes();
+    expect((await iter.next()).value).toEqual({ type: "cursor", cursor: committedCursor });
+    const intermediate = { type: "change", cursor: undefined, ...change };
+    expect((await iter.next()).value).toEqual(intermediate);
+    expect((await iter.next()).value).toEqual(intermediate);
+    expect(requests.map(request => request.headers["last-event-id"])).toEqual([undefined, committedCursor]);
+    expect((await iter.next()).value).toEqual({ type: "change", cursor: advancedCursor, ...finalChange });
+    await iter.return();
+    expect(requests).toHaveLength(2);
+  });
+
   test("normal EOF reconnects with the latest Last-Event-ID and identical snapshotted filter", async () => {
     const advancedChange = { ...change, version: "9007199254740994" };
     const { db, requests } = await fixture((_request, response) => {
@@ -150,6 +167,23 @@ describe("SSE failures preserve errors without reconnecting", () => {
       expect(requests).toHaveLength(1);
     },
   );
+
+  test("returns issuer-routing metadata without another SDK fetch", async () => {
+    const { baseUrl } = await fixture((_request, response) => response.writeHead(421,
+      { "content-type": "application/json", "fly-replay": "instance=issuer-machine" })
+      .end(JSON.stringify({ error: { code: "cursor_elsewhere" } })));
+    let calls = 0;
+    const db = createTerraBaseV1Client({ project, token, baseUrl, fetch: (input, init) => {
+      calls++;
+      // Native fetch may retry a bodyless GET on 421 within this single invocation.
+      return globalThis.fetch(input, init);
+    } }).database("app");
+    const error = await db.changes({ cursor: "previous" }).next().catch(error => error);
+    expect(error).toBeInstanceOf(TerraBaseV1Error);
+    expect(error).toMatchObject({ status: 421, code: "cursor_elsewhere" });
+    expect(error.headers.get("fly-replay")).toBe("instance=issuer-machine");
+    expect(calls).toBe(1);
+  });
 
   test.each(["cursor_expired", "unknown_database", "tenant_memory", "storage_busy"])("returns terminal %s with the actual stream status", async code => {
     const body = { error: { code, message: "Terminal stream failure" } };

@@ -1,4 +1,5 @@
 // The proposed free-read v1 protocol is separate from the historical shape() contract.
+import { requireId } from "../ids.js";
 import { malformed, object, string } from "./decode.js";
 import { decodeShapePage, encodeShapeRequest, requireShapeHandle, requireShapeOffset } from "./shapes.js";
 import { decryptShapeObject } from "./shape-crypto.js";
@@ -96,9 +97,10 @@ export function decodeFreeShapePage(value, headers) {
  * Follows exactly one authorized same-route 307; credentials never follow an arbitrary Location.
  * @param {V1Transport} transport @param {Readonly<Record<string,string>>} params
  * @param {V1ShapeRequest} request @param {AbortSignal | undefined} signal
+ * @param {string | undefined} [ifNoneMatch] A complete entity-tag list or *; 304 throws not_modified with response headers.
  * @returns {Promise<V1ShapePage>}
  */
-export async function readShapePage(transport, params, request, signal) {
+export async function readShapePage(transport, params, request, signal, ifNoneMatch) {
   const isResume = (request.offset ?? "-1") === "-1" && request.cursor !== undefined;
   if (isResume && (request.handle !== undefined || request.live !== undefined)) throw new TypeError("Shape resume requires offset=-1 without handle or live.");
   const query = encodeShapeRequest(isResume ? { ...request, cursor: undefined } : request);
@@ -107,6 +109,11 @@ export async function readShapePage(transport, params, request, signal) {
   if (query.get("offset") === "-1" && query.has("handle")) throw new TypeError("Shape bootstrap must omit handle.");
   /** @type {Record<string,string>} */
   const headers = {};
+  if (ifNoneMatch !== undefined) {
+    if (typeof ifNoneMatch !== "string" || !/^[ \t]*(?:\*|(?:W\/)?"[\x21\x23-\x7e\x80-\xff]*"(?:[ \t]*,[ \t]*(?:W\/)?"[\x21\x23-\x7e\x80-\xff]*")*)[ \t]*$/u.test(ifNoneMatch))
+      throw new TypeError("ifNoneMatch must be * or a list of quoted entity tags.");
+    headers["If-None-Match"] = ifNoneMatch;
+  }
   const source = new URL(await transport.url("readFreeShape", params, signal));
   if (isResume) {
     query.set("cursor", resumeToken(request.cursor));
@@ -132,9 +139,10 @@ export async function readShapePage(transport, params, request, signal) {
     if (target.searchParams.has("where") !== query.has("where")) malformed("shape redirect filter");
     // Keep the caller's validated filter: the server's canonical spelling must not broaden it.
     query.delete("cursor");
+    delete headers["TB-Shape-Resume"];
     query.set("handle", handle);
     query.set("offset", offset);
-    response = await shapeCall(transport, params, "readFreeShape", { query, signal });
+    response = await shapeCall(transport, params, "readFreeShape", { query, headers, signal });
     if (response.status !== 200) malformed("repeated shape redirect");
   } else if (query.get("offset") === "-1") malformed("shape bootstrap requires redirect");
   const page = decodeFreeShapePage(response.value, response.headers);
@@ -154,9 +162,8 @@ export async function decryptSealedShapePage(transport, params, bytes, position,
   const offset = requireShapeOffset(position.offset);
   if (offset === "-1") throw new TypeError("Sealed shapes require a snapshot or log offset.");
   if (typeof position.epoch !== "string" || !/^(?:0|[1-9][0-9]*)$/u.test(position.epoch) || BigInt(position.epoch) > (1n << 64n) - 1n) throw new TypeError("Shape epoch must be a canonical uint64.");
-  if (typeof position.keyId !== "string" || !/^[\x00-\x7f]{26}$/u.test(position.keyId)) throw new TypeError("Shape key id must be 26 ASCII characters.");
   const epoch = position.epoch;
-  const keyId = position.keyId;
+  const keyId = requireId(position.keyId, "Shape key ID");
   signal?.throwIfAborted();
   const cache = currentKeys(transport, params);
   const cacheId = JSON.stringify([handle, epoch, keyId]);
@@ -183,4 +190,23 @@ export async function decryptSealedShapePage(transport, params, bytes, position,
   const page = decodeFreeShapePage(parseExactJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(plaintext)), new Headers());
   if (page.handle !== handle || page.offset !== offset || page.upToDate) malformed("sealed shape position");
   return page;
+}
+
+/** @typedef {{readonly handle: string; readonly epoch: string; readonly keyId: string}} V1ShapeKeyRequest */
+/** @typedef {V1ShapeKeyRequest & {readonly key: Uint8Array}} V1ShapeKey */
+/** @param {V1Transport} transport @param {Readonly<Record<string, string>>} params @param {V1ShapeKeyRequest} request @param {AbortSignal | undefined} signal @returns {Promise<V1ShapeKey>} */
+export async function readShapeKey(transport, params, request, signal) {
+  const handle = requireShapeHandle(request.handle);
+  const epoch = decimal(request.epoch);
+  const keyId = requireId(request.keyId);
+  const response = await shapeCall(transport, params, "getShapeKey", {
+    query: new URLSearchParams({ handle, epoch, key_id: keyId }), cache: "no-store", signal,
+  });
+  const key = object(response.value, "shape epoch key");
+  if (key.handle !== handle || key.epoch !== epoch || key.key_id !== keyId) malformed("shape epoch key binding");
+  const encoded = string(key.key, "shape key");
+  if (!/^[A-Za-z0-9_-]{43}$/u.test(encoded)) malformed("shape key encoding");
+  const bytes = Uint8Array.from(atob(encoded.replace(/-/gu, "+").replace(/_/gu, "/")), c => c.charCodeAt(0));
+  if (btoa(String.fromCharCode(...bytes)).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "") !== encoded) malformed("shape key encoding");
+  return Object.freeze({ handle, epoch, keyId, key: bytes });
 }

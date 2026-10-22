@@ -1,11 +1,13 @@
+import { managementV1Routes } from "./management-routes.js";
 // Current TerraBase routes at e30ffdc; readShape is retained from release 6cb9745 only.
-/** @typedef {"readFreeShape" | "getShapeKey" | "getDocument" | "putDocument" | "createDocument" | "patchDocument" | "deleteDocument" | "commitTransaction" | "queryDocuments" | "createCollection" | "getCollection" | "listCollections" | "dropCollection" | "readShape" | "runSql" | "checkSql" | "explainSql" | "streamDatabaseChanges" | "listDocuments" | "getCollectionSchema" | "putCollectionSchema" | "deleteCollectionSchema" | "createDatabase" | "listDatabases" | "getDatabase" | "updateDatabase" | "deleteDatabase" | "branchDatabase"} V1Operation */
+/** @typedef {import("./management-routes.js").ManagementOperation | "readFreeShape" | "getShapeKey" | "getDocument" | "putDocument" | "createDocument" | "patchDocument" | "deleteDocument" | "commitTransaction" | "queryDocuments" | "createCollection" | "getCollection" | "listCollections" | "dropCollection" | "readShape" | "runSql" | "checkSql" | "explainSql" | "streamDatabaseChanges" | "listDocuments" | "getCollectionSchema" | "putCollectionSchema" | "deleteCollectionSchema" | "createDatabase" | "listDatabases" | "getDatabase" | "updateDatabase" | "deleteDatabase" | "branchDatabase"} V1Operation */
 /**
  * @typedef {object} V1Route
  * @property {V1Operation} operation
  * @property {"GET" | "PUT" | "POST" | "PATCH" | "DELETE"} method
  * @property {string} pathTemplate
- * @property {"documents:read" | "documents:write" | "shapes:read" | "databases:read" | "databases:write"} permission
+ * @property {"documents:read" | "documents:write" | "shapes:read" | "databases:read" | "databases:write" | "anonymous" | "platform-admin"} permission
+ * @property {readonly string[]} [additionalPermissions]
  * @property {readonly string[]} requestMediaTypes
  * @property {string} responseMediaType
  * @property {readonly number[]} successStatuses
@@ -59,7 +61,7 @@ export const v1Routes = Object.freeze(/** @type {V1Route[]} */ ([
 })));
 /** @param {V1Operation} operation @returns {V1Route} */
 export function v1Route(operation) {
-  const route = [...v1Routes, ...shapeV1Routes].find(candidate => candidate.operation === operation);
+  const route = [...v1Routes, ...shapeV1Routes, ...managementV1Routes].find(candidate => candidate.operation === operation);
   if (route === undefined) throw new TypeError(`Unknown v1 operation ${operation}.`);
   return route;
 }
