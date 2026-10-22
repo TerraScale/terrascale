@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
+using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine.Lattices;
 
@@ -7,17 +8,17 @@ namespace TerraBase.Engine.Sqlite;
 
 /// <summary>
 /// The member's replica identity in its data directory (docs/design/anna-core.md, Identities and dots): a format byte,
-/// the member number (uint32, little-endian), the epoch (uint16), whether the last process stopped cleanly, and the
-/// first 4 bytes of the SHA-256 of those 8 bytes. Read and rewritten under the data directory's lock, before anything
-/// can mint a dot.
+/// the member number (uint32, little-endian), the epoch (uint16), whether the last process stopped cleanly, a 32-byte
+/// owner fingerprint, and the first 4 bytes of the SHA-256 of those 40 bytes. Read and rewritten under the data
+/// directory's lock, before anything can mint a dot.
 /// </summary>
 internal static class ReplicaIdentityFile
 {
     /// <summary>The file's name in the data directory's root.</summary>
     internal const string FileName = ".terrabase.replica";
 
-    private const byte Format = 1;
-    private const int Record = 8;
+    private const byte Format = 2;
+    private const int Record = 40;
     private const int Length = Record + 4;
     private const byte Running = 0;
     private const byte Stopped = 1;
@@ -29,11 +30,13 @@ internal static class ReplicaIdentityFile
     /// recovered state must not mint their dots again). Past the last epoch it takes a new member number. The identity is
     /// written through to disk, marked running, before it is returned.
     /// </summary>
-    public static ReplicaId Start(string dataDirectory)
+    public static ReplicaId Start(string dataDirectory, string owner)
     {
         var path = Path.Combine(dataDirectory, FileName);
         RefuseLink(path);
         var id = New();
+        var fingerprint = SHA256.HashData(Encoding.UTF8.GetBytes(
+            owner + "\0" + Environment.MachineName + "\0" + Path.TrimEndingDirectorySeparator(Path.GetFullPath(dataDirectory))));
 
         // An empty file: a first start died between creating it and writing it, so nothing minted under it.
         if (Read(path) is { Length: > 0 } bytes)
@@ -59,18 +62,22 @@ internal static class ReplicaIdentityFile
                     throw new TerraBaseConfigurationException(Unsupported);
                 }
 
-                if (bytes[7] == Stopped)
+                // A cloned or relocated directory keeps the fresh member, never the donor's node-local identity.
+                if (bytes.AsSpan(8, 32).SequenceEqual(fingerprint))
                 {
-                    id = Of(member, epoch);
-                }
-                else if (epoch < ushort.MaxValue)
-                {
-                    id = Of(member, (ushort)(epoch + 1));
+                    if (bytes[7] == Stopped)
+                    {
+                        id = Of(member, epoch);
+                    }
+                    else if (epoch < ushort.MaxValue)
+                    {
+                        id = Of(member, (ushort)(epoch + 1));
+                    }
                 }
             }
         }
 
-        Write(path, id, Running);
+        Write(path, id, Running, fingerprint);
         return id;
     }
 
@@ -85,6 +92,17 @@ internal static class ReplicaIdentityFile
     {
         var path = Path.Combine(dataDirectory, FileName);
         RefuseLink(path);
+        var bytes = Read(path);
+        if (bytes.Length != Length || bytes[0] != Format
+            || !bytes.AsSpan(Record).SequenceEqual(Checksum(bytes.AsSpan(0, Record)))
+            || bytes[7] is not (Running or Stopped)
+            || id.Member == 0 || id.Region != 0
+            || BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(1)) != id.Member
+            || BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(5)) != id.Epoch)
+        {
+            throw new TerraBaseConfigurationException(Unsupported);
+        }
+
         var options = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false };
         foreach (var log in Directory.EnumerateFiles(dataDirectory, "*.db-wal", options))
         {
@@ -92,7 +110,7 @@ internal static class ReplicaIdentityFile
             stream.Flush(flushToDisk: true);
         }
 
-        Write(path, id, Stopped);
+        Write(path, id, Stopped, bytes.AsSpan(8, 32));
     }
 
     // A random member number works with static peers as with NATS membership (design decision 8): 3 members collide with
@@ -137,13 +155,14 @@ internal static class ReplicaIdentityFile
     }
 
     // One write at offset 0, through to disk. A crash can still tear it: the checksum catches that at the next start.
-    private static void Write(string path, ReplicaId id, byte state)
+    private static void Write(string path, ReplicaId id, byte state, ReadOnlySpan<byte> fingerprint)
     {
         Span<byte> bytes = stackalloc byte[Length];
         bytes[0] = Format;
         BinaryPrimitives.WriteUInt32LittleEndian(bytes[1..], id.Member);
         BinaryPrimitives.WriteUInt16LittleEndian(bytes[5..], id.Epoch);
         bytes[7] = state;
+        fingerprint.CopyTo(bytes[8..Record]);
         Checksum(bytes[..Record]).CopyTo(bytes[Record..]);
         using var file = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None, 1, FileOptions.WriteThrough);
         file.Write(bytes);
