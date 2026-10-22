@@ -61,13 +61,16 @@ internal sealed partial class SqliteStorageTransaction
     {
         var stable = now.Value;
         var reported = ulong.MaxValue;
-        HashSet<ReplicaId> progressed = [];
+        var progress = Member.Presence.TrackProgress(placement);
         using (var reader = Command("SELECT node, applied, stable, seen FROM _tb_peers;").ExecuteReader())
         {
             while (reader.Read())
             {
                 var node = new ReplicaId(unchecked((ulong)reader.GetInt64(0)));
-                _ = progressed.Add(node);
+                if (progress.ContainsKey(node))
+                {
+                    progress[node] = true;
+                }
                 if (!Member.Gone(node, reader.GetInt64(3), now.Milliseconds))
                 {
                     stable = Math.Min(stable, (ulong)reader.GetInt64(1));
@@ -76,7 +79,7 @@ internal sealed partial class SqliteStorageTransaction
             }
         }
 
-        if (Member.Presence.HoldsMissingProgress(placement, progressed))
+        if (Member.Presence.HoldsMissingProgress(placement, progress))
         {
             (stable, reported) = (0, 0);
         }

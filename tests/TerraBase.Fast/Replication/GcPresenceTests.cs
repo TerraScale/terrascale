@@ -84,9 +84,9 @@ public sealed class GcPresenceTests
 
         await AssertHeldAsync();
         clock.Offset = TimeSpan.FromDays(3) + TimeSpan.FromMinutes(1);
-        await using (var read = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        await using (var remapped = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
         {
-            await Assert.That(await read.GetStableAsync(member.Clock.Tick(), CancellationToken.None)).IsEqualTo(covered);
+            await Assert.That(await remapped.GetStableAsync(member.Clock.Tick(), CancellationToken.None)).IsEqualTo(covered);
         }
 
         member.Presence.Listed([("unknown", "sjc")], member.Clock.Tick().Milliseconds);

@@ -37,12 +37,32 @@ internal sealed class PeerPresence
         }
     }
 
-    public bool HoldsMissingProgress(DatabasePlacement? placement, IReadOnlySet<ReplicaId> progressed)
+    public Dictionary<ReplicaId, bool> TrackProgress(DatabasePlacement? placement)
+    {
+        lock (_gate)
+        {
+            Dictionary<ReplicaId, bool> progress = [];
+            if (_nodes is not null)
+            {
+                foreach (var known in _nodes.Values)
+                {
+                    if ((placement is null || placement.Includes(known.Region)) && known.Node is { } node)
+                    {
+                        _ = progress.TryAdd(node, false);
+                    }
+                }
+            }
+
+            return progress;
+        }
+    }
+
+    public bool HoldsMissingProgress(DatabasePlacement? placement, IReadOnlyDictionary<ReplicaId, bool> progress)
     {
         lock (_gate)
         {
             return _nodes is null || _nodes.Values.Any(known => (placement is null || placement.Includes(known.Region))
-                && (known.Node is not { } node || !progressed.Contains(node)));
+                && (known.Node is not { } node || !progress.GetValueOrDefault(node)));
         }
     }
 
