@@ -93,7 +93,7 @@ version said a document a machine held is never missing; that holds only without
     cell: the members it lists). A pull joins the peer's whole catalog, so M then holds every entry any listed machine holds.
   - **While closed:** every endpoint that authorizes (any endpoint that is not anonymous) answers 503 `catalog_unverified`
     before authentication, so no API key, token, membership or creation is decided from the catalog; the operator's
-    `POST /admin/api-keys` answers the same; `/readyz` answers 503 (Fly Proxy routes nothing here); `CatalogConvergence`
+    `POST /admin/api-keys` answers the same; `/readyz` answers 503; `CatalogConvergence`
     decides nothing about files or names. Peer gRPC (streams, digests, bucket reads), probes, metrics and status run.
   - **Unreachable listed machine or a failed directory read:** stays closed, however long; passes retry every second.
     Never opens on its own.

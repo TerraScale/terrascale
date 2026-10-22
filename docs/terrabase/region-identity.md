@@ -2,9 +2,11 @@
 
 ## Node identity
 
-The node's region is the Fly region it runs in (`FLY_REGION`, see [fly.md](fly.md)); there is no region setting or
-enable step. Its bounded syntax is a lowercase ASCII letter followed by letters, digits or hyphens, at most 63
-characters, without a trailing hyphen; a malformed value stops the process.
+Node and region identity must be inferred from the running environment. Verify the
+identity reported by the deployed OCI runtime; this document does not prescribe a
+provider-specific environment variable or establish that ts-orch migration is complete.
+The region's bounded syntax is a lowercase ASCII letter followed by letters, digits
+or hyphens, at most 63 characters, without a trailing hyphen; malformed values stop startup.
 
 Region identity does not grant database placement, replication rights or a
 residency exemption. Peer Hello/Welcome still validates reported regions;
@@ -14,15 +16,15 @@ database or journal identity.
 ## HTTP contract
 
 Every response on the client listener includes `X-TerraBase-Region: <region-id>` and `X-TerraBase-Machine: <machine-id>`
-(`FLY_MACHINE_ID`, `local` off Fly),
+(the deployed runtime identity),
 including authentication failures, missing routes, and pin rejection responses.
 Clients may send `X-TerraScale-Region-Pin: <region-id>` with the raw region ID.
 The pin is optional; when present, it must contain exactly one nonempty value
 matching the configured node region. An empty, duplicate, or mismatched pin
 returns `421 Misdirected Request` with the correct `X-TerraBase-Region` header.
-TerraBase does not proxy or forward the rejected request; behind Fly Proxy a
-mismatched pin naming a single well-formed region also answers
-`fly-replay: region=<pin>`, so Fly replays it there ([fly.md](fly.md#fly-replay)).
+TerraBase does not proxy or forward a rejected request. OCI ingress must preserve
+pin validation and verify the answering node; no retired proxy replay behavior is
+assumed by this HTTP contract.
 
 ### Regional hosts
 
@@ -32,18 +34,16 @@ the nearest region, as before. The host is matched case-insensitively and its po
 
 | The request | Answer |
 | --- | --- |
-| lands in the host's region | served (a replayed one too) |
-| lands elsewhere, and the region has a started machine (Fly's machine list) | `421`, `fly-replay: region=<region>;fallback=prefer_self`: Fly replays it there |
-| Fly replayed it and it still landed elsewhere (`Fly-Replay-Src`), or Fly's replay found no machine there and came back (`fly-replay-failed`), or the region has no started machine | `503 region_unavailable`, naming the region and listing the regional hosts; no replay, so no loop |
+| lands in the host's region | served |
 | the label is not a region (`gru_1.api…`, `a.b.api…`) | `421 misdirected_request`, listing the regional hosts; the label is not echoed |
 | carries `X-TerraScale-Region-Pin` naming another region than the host | `421`, no replay: the two pins contradict each other |
 
-A region whose machines are all stopped cannot be told from one this app was never deployed to (Fly's internal DNS
-lists started machines only), so both answer `503 region_unavailable`. A request whose host is not a regional host keeps
-the header pin's rules above. A `200` over `sjc.api.terrascale.tech` proves DNS and TLS for that name only; that the
-answer came from sjc is shown by `X-TerraBase-Region: sjc`.
+A request whose host is not regional keeps the header pin's rules above.
+A `200` over `sjc.api.terrascale.tech` proves DNS and TLS for that name only;
+`X-TerraBase-Region: sjc` identifies the answering region. Unavailable regional
+routing must fail closed; its OCI ingress behavior requires runtime verification.
 
-The `/healthz` JSON body includes `status`, `version`, `region`, `storageFormat`, `revision`: the source commit the build was made from (`TERRABASE_REVISION` in CI images, null when a build recorded none), and `machine` (`FLY_MACHINE_ID`, `local` off Fly), so each answer names the exact machine and commit (`/readyz` and `/backupz` carry the same fields).
+The `/healthz` JSON body includes `status`, `version`, `region`, `storageFormat`, `revision`: the source commit the build was made from (`TERRABASE_REVISION` in CI images, null when a build recorded none), and `machine` (the deployed runtime identity), so each answer names the exact machine and commit (`/readyz` and `/backupz` carry the same fields).
 Management API database JSON includes `region` on create, branch, get, and list
 responses. This value is the responding node's region at response time, including
 for existing database records; it is not persisted placement metadata and

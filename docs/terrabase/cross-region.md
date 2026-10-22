@@ -8,12 +8,12 @@
 A write accepted in one region becomes readable in every other region of its replication group, with the same version
 token. This is stage 1 of [anna-core §10](design/anna-core.md#10-stage-2-later) on today's engine: the simpler route
 now, with every simplification marked `anna-full (TS-643)` in the code.
-
 - Each region keeps its own members, ring, leases and catalog. Nothing in-region waits for another region: a client
   write answers after its region's write-wait only, and replication across regions is asynchronous.
-- A member asks the other regions' members directly with gRPC `Wan.Ask` (one request, one reply) on their peer
-  listeners over Fly's private network. The regions and their members come from Fly's internal DNS ([fly.md](fly.md));
-  a region is pulled from as soon as one of its machines is listed.
+
+A member contacts other regions through gRPC `Wan.Ask` on private peer listeners.
+The current membership transport must be verified during the ts-orch migration;
+see [OCI hosting](../oci.md).
 
 ## How it works
 
@@ -120,7 +120,7 @@ How the regions learn it:
   database. Each machine records it in its own catalog from the heads, with the same id and name.
   - A region in the placement also creates the file and pulls the database's origins.
   - Any other region keeps only the record, so its API can answer `421 wrong_region` with the regions that serve the
-    database, and `fly-replay: region=<home>` behind Fly Proxy ([fly.md](fly.md#fly-replay)).
+    database.
   - Data goes only where the placement says: a member serves a database's groups only to regions its placement names
     (`PullRequest.region`).
 - **Removal.** A region removed from the placement stops serving the database at once. It keeps its copy, unserved and
@@ -152,15 +152,14 @@ A database another region holds is not recorded here when:
 
 `terrabase_wan_unregistered` also counts databases recorded here whose placement does not name this region.
 
-Runtime credentials arrive from Fly secrets on each Fly app; CI credentials are
-GitHub Actions secrets. See the [operating contract](zero-configuration.md) for secret ownership.
-
 ## Automatic region discovery
 
-Every region serves and the replication group is discovered automatically from Fly's internal DNS: a machine infers
-its own region from `FLY_REGION`, and the other regions are the ones `vms.<app>.internal` lists. Placement and
-residency restrictions still decide which data may replicate. A replica region needs no machines when it is named;
-it pulls the database once its machines start.
+The operating contract discovers serving regions automatically. Database placement
+and residency restrictions still determine which data may replicate; discovering
+another region grants neither placement nor authorization. A named replica region
+pulls the database once its admitted members start. OCI Vault owns runtime secrets;
+CI credentials remain GitHub Actions secrets. See the [operating contract](zero-configuration.md)
+and [hosting implementation limits](../oci.md).
 
 ## Metrics
 

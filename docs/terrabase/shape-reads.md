@@ -116,7 +116,7 @@ URLs.
 
 - `seq` is a new `_tb_feed` column allocated from a persisted counter row in the same transaction as the feed insert
   (B1). It is never `rowid` or `AUTOINCREMENT`: on Turso 0.8.2 an emptied table restarts at 1 after reopen
-  (`turso-spike.md`), and retention can empty the feed.
+  ([historical engine spike](https://github.com/TerraScale/terrascale/blob/e7fa366ddb289f5612c93d316b316fb92c568151/docs/terrabase/turso-spike.md)), and retention can empty the feed.
 - The counter is per database file, shared by every collection, positive, and never reused within an incarnation.
 - One commit's rows get consecutive `seq` values. The commit's last value is its `commit_seq`. A **commit boundary**
   is any `commit_seq`, or `0`.
@@ -219,7 +219,7 @@ Inputs, all UTF-8, in this order:
 
 Any input change rotates both values: database copy, restore or re-create; collection drop or re-create; a machine
 change or unclean start (new `replica_epoch`); a filter-encoding change. **Handles are per machine, not per region.**
-Fly can send two requests from one client to different machines in the same region. A handle unknown to the
+Ingress can send two requests from one client to different machines in the same region. A handle unknown to the
 receiving machine answers `409 must_refetch`; the client may make one resume attempt (section 7, rule 6).
 
 ## 6. Body
@@ -531,7 +531,7 @@ from the object. A mismatched object fails its tags. Reject the whole object, ap
   check, an API key is looked up again in the catalog, which authentication may have read before a healed partition
   delivered its revocation; a key no longer found answers `401 invalid_key`. The catalog is
   fresh when all of these hold, within one epoch (600 s, `ShapeCrypto.EpochSeconds`):
-  - the last directory read listed this machine. Fly's DNS answers a lost name with no records, and such a view proves
+  - the last directory read listed this machine. An empty directory response alone proves
     nothing;
   - every machine the directory lists was proved. A proof is a completed anti-entropy comparison of the system
     database into the copy still in place, timed from when it began. The system catalog runs its own anti-entropy

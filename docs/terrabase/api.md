@@ -43,7 +43,7 @@ service ownership decided by the user on 2026-10-06
    - `iss` is exactly the configured `auth-issuer` (`https://auth.terrascale.tech/terrascale`: ts-auth issues this one issuer in every region).
      In production `auth-audience` must include `https://api.terrascale.tech`, and `ts-terrabase` refuses to start with any other
      pair (`TerraBaseOptions.PlatformAuthIssuer`/`PlatformAuthAudience`). Setting the pair is still the user-approved activation
-     of ts-auth trust (not done on Fly);
+     of ts-auth trust (the current deployed trust must be verified);
      project tenants' issuers are never trusted: those customer end-user tokens authenticate customer
      applications, while a **project access token** for TerraBase uses the trusted platform issuer and carries `project_id`;
    - `aud` includes TerraBase's audience, and `exp` and `nbf` hold with 30 seconds of skew;
@@ -228,7 +228,7 @@ A successful write (`createDocument`, `putDocument`, `patchDocument`, `deleteDoc
 `"durability"` according to the accepting machine's topology:
 
 - `"local_durable"`: the write committed, with `synchronous = FULL`, to the database file of the member that answered.
-  A cell of one (a machine without a member directory, such as development off Fly) answers this way. A machine in a
+  A cell of one (a machine without a member directory, such as development) answers this way. A machine in a
   cell never falls back to this answer when another placed region is unavailable.
 - `"remote_durable"`: the write committed locally, and a machine of another placed region confirmed a durable copy
   within 10 s. The attempt's whole effect is then in two regions. This is the target contract for document and
@@ -333,15 +333,14 @@ SSE subscriptions (`C/subscribe`) and the per-collection polling feed (`C/change
 
 Unchanged: ts-orchestrator, ts-router, ts-atlas, ts-status and ts-deploy probe these paths.
 
-`/health/replication` is the public replication summary ts-status checks per region (pick the region with Fly's
-`fly-prefer-region` header). It answers `Cache-Control: public, max-age=5` and carries region codes and lag seconds only:
+`/health/replication` is the public replication summary ts-status checks per region (use the responding node's verified region identity). It answers `Cache-Control: public, max-age=5` and carries region codes and lag seconds only:
 
 ```json
 {"region":"gru","status":"degraded","maxLagSeconds":2.5,
  "peers":[{"region":"fra","status":"degraded","lagSeconds":null},{"region":"sjc","status":"ok","lagSeconds":2.5}]}
 ```
 
-- `peers` are the other regions this node sees in Fly's internal DNS (`vms.<app>.internal`), plus any region a
+- `peers` are the other regions this node's member directory lists, plus any region a
   replication stream reports, in region order.
 - `lagSeconds` is the age of this node's oldest unreplicated change towards that region (the largest over its
   databases); `null` means no replication stream to that region reports.
@@ -362,7 +361,7 @@ Unchanged: ts-orchestrator, ts-router, ts-atlas, ts-status and ts-deploy probe t
 
 These are not operations in the document ([API reference](api-reference.md)). Unchanged.
 
-## Internal listener (Fly private network only, not in the public document)
+## Internal listener (private service network only, not in the public document)
 
 | Method | Route | Old route | Use |
 | --- | --- | --- | --- |

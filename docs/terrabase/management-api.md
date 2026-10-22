@@ -122,7 +122,7 @@ remains available to ordinary members ([commit contract](management-commits.md#m
 ### Management service credential
 
 The separate bootstrap management bearer credential is retired. Internal platform
-operator requests carry `TERRABASE_PEER_SECRET` from Fly secrets on each app;
+operator requests carry `TERRABASE_PEER_SECRET` from OCI Vault on each app;
 [peer authentication](peer-authentication.md) describes its rollout and enforcement.
 The operator acts as the canonical ULID in `X-TerraBase-User-Id`, only on the
 internal listener, without an `Authorization` header. Membership and roles still
@@ -296,14 +296,13 @@ Region ids are Atlas region ids (`gru-1`, `sfo-1`), the values of `X-TerraBase-R
 - On create, `homeRegion` defaults to the called region. A replica region must be one this deployment replicates with,
   listed once, and not the home (`400 invalid_request`). Each replica region must register the organization and project
   under the same ids to take the database.
-- **Two regions or more** (decision 0013a, option A) apply on a machine that belongs to a cell, which is every machine on
-  Fly:
+- **Two regions or more** (decision 0013a, option A) apply on a machine that belongs to a production cell:
   - A create without `replicaRegions` places replicas in every other region the membership lists. With none listed, it
     answers `503 remote_region_unavailable` and creates nothing.
   - A create with an empty `replicaRegions` answers `400 placement_needs_two_regions`.
   - A `PATCH` may still remove every replica region, which is the step before a delete. That database then takes no
     writes until a region is added back: under 0013a its writes are refused with `503 remote_region_unavailable`.
-  - A machine without a member directory (development off Fly, single-machine tests) is a cell of one. It still
+  - A machine without a member directory (development, single-machine tests) is a cell of one. It still
     defaults to no replica regions.
 - `PATCH` sets the complete new `replicaRegions`; `homeRegion` may be repeated but cannot change. An added region takes
   the database and fills its copy. A removed region stops serving it at once and keeps its copy unserved, so the writes it
@@ -679,7 +678,7 @@ TerraBase parses it (SqlParserCS, SQLite dialect) and runs its own query; client
 | `LIMIT` | 1–1000, default 100. |
 
 - Anything else (joins, subqueries, functions, `WITH`, aliases, DML, DDL, parameters, several statements) is rejected. The error names the construct and never repeats the SQL text.
-- `LIKE` takes only a prefix pattern: one trailing `%`, no other `%` or `_`, no `ESCAPE`. Unlike SQLite (and like PostgreSQL) it is case-sensitive. It runs as the range `field >= 'prefix' AND field < successor`, and `IN` as equalities joined by `OR`, so an index on the field serves both (docs/terrabase/turso-spike.md, planner findings).
+- `LIKE` takes only a prefix pattern: one trailing `%`, no other `%` or `_`, no `ESCAPE`. Unlike SQLite (and like PostgreSQL) it is case-sensitive. It runs as the range `field >= 'prefix' AND field < successor`, and `IN` as equalities joined by `OR`, so an index on the field serves both ([historical engine spike](https://github.com/TerraScale/terrascale/blob/e7fa366ddb289f5612c93d316b316fb92c568151/docs/terrabase/turso-spike.md), planner findings).
 - Comparisons follow SQL: `!=` and `NOT IN` never match a missing or `null` field. `TRUE` and `FALSE` match JSON booleans (and, like SQLite, the numbers `1` and `0`).
 - Statements read live documents only: a deleted document's tombstone is never selected.
 - `POST …/sql` → `{"matched":2,"truncated":false,"rows":[{"id":"01K6RZ0Z1EF90RTETYDXR836HB","value":{…}}]}`. `value` is the whole document for `*`; otherwise it has one member per field, named as written, and a missing field is `null`. Rows stop at the limit or before the complete serialized response exceeds 8 MiB (escaped ids, values, row wrappers, separators and envelope included); `truncated` reports either. Only the projected output counts against that bound: rows are projected as they are read, one stored document at a time, so a small projection of large documents is not cut short by their stored size. A statement that needs more than the engine's work budget, the one the document query API uses (5 million SQLite instructions or 5 seconds, counted on the work SQLite does, not the rows it returns), answers `400` `invalid_query`, `query too expensive` (so does `POST …/sql/check`), also when an unindexed filter matches nothing or an unindexed sort reads the whole collection before the first row. Documents at the data API's accepted nesting depth (16) are returned whole. Invalid SQL returns `400` `invalid_request` with the rule it breaks; `…/sql/check` reports it as `{"ok":false,"error":…}` instead. Saved queries answer `400 invalid_request` for an invalid name or SQL, `403 forbidden_role` when a viewer saves, updates or deletes one, and `404 not_found`.

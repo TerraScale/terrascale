@@ -372,13 +372,13 @@ days**, and **7 days** after the job failed or was cancelled (`source.retainedUn
 These periods are constants in code (zero-configuration rule): changing them is a code change. This retention must be
 disclosed to users before any real upload.
 
-One TerraBase machine serves each region today (`src/TerraBase/fly.toml`): the staged source, the job's lock and its
-runner live on that machine, and only the machine holding a job's staged source works on it. Pin every import call of a
+The staged source, the job's lock and its
+runner live on the staging machine, and only the machine holding a job's staged source works on it. Pin every import call of a
 job to its region (`X-TerraScale-Region-Pin`). If a region ever runs several machines, import calls must also be pinned
 to the staging machine before imports are offered there.
 
 Measured locally (Debug build, low CPU priority, a busy 16-core machine): about 400 documents per second through
-TerraBase's normal write path, so a source of millions of rows takes hours. Copy throughput on Fly is unmeasured.
+TerraBase's normal write path, so a source of millions of rows takes hours. Copy throughput on OCI is unmeasured.
 
 ## 9. Error codes
 

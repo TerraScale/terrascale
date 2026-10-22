@@ -1,7 +1,7 @@
-# Graceful shutdown on Fly
+# Graceful shutdown
 
-TerraBase targets a 20-second shutdown. `src/TerraBase/fly.toml` sends SIGTERM and gives the process 30 seconds before
-SIGKILL. These are code constants, not operator settings. CI deploys that file through `scripts/fly/deploy.sh`.
+TerraBase targets a 20-second graceful shutdown. Host termination deadlines must be
+verified in the deployed runtime; this document does not establish a ts-orch deadline.
 
 1. `ApplicationStopping` makes readiness fail and rejects new work, including requests on existing connections.
    Health probes retain their normal JSON responses; rejected API work receives the standard 503 error body.
@@ -17,8 +17,8 @@ SIGKILL. These are code constants, not operator settings. CI deploys that file t
 
 The budgets require cancellation-aware work and responsive local I/O. The entry point deliberately joins live workers
 and native cleanup rather than disposing dependencies under them or reporting a successful close with open sessions.
-A stuck native call or a worker that ignores cancellation can still exceed the target; Fly supplies the hard stop at
-30 seconds. The shutdown logs identify unfinished stages. This change does not repair F7 or assert that catalog commits
+A stuck native call or a worker that ignores cancellation can still exceed the target; verify the actual runtime
+termination deadline. The shutdown logs identify unfinished stages. This change does not repair F7 or assert that catalog commits
 survive SIGKILL; catalog anchoring and crash durability remain R10a's responsibility.
 
 Fast integration coverage keeps four changes streams and two peer streams open during shutdown, checks native session
