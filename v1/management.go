@@ -114,8 +114,9 @@ type Project struct {
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
-// ManagedDatabase is a database as the Management API returns it. Its Name
-// addresses it in the Documents API: Client.Database(ProjectID, Name).
+// ManagedDatabase represents lifecycle metadata and catalog restore results.
+// Name addresses Client.Database(ProjectID, Name). Restore results omit Region
+// and may have null placement; lifecycle results include the serving region.
 type ManagedDatabase struct {
 	ID        string `json:"id" ulid:"required"`
 	ProjectID string `json:"projectId" ulid:"required"`
@@ -123,13 +124,15 @@ type ManagedDatabase struct {
 	// BranchedFrom is the id of the database this one was branched from.
 	BranchedFrom *string   `json:"branchedFrom" ulid:"optional"`
 	CreatedAt    time.Time `json:"createdAt"`
-	// Region is the region id, such as gru-1, of the node that answered.
+	// Region identifies the answering node; it is absent from restore results.
 	Region string `json:"region"`
-	// HomeRegion is the region id the database was created in; it
-	// never changes.
-	HomeRegion string `json:"homeRegion"`
+	// HomeRegion is null when catalog placement has not been assigned.
+	HomeRegion *string `json:"homeRegion"`
 	// ReplicaRegions are the region ids that replicate the database.
 	ReplicaRegions []string `json:"replicaRegions"`
+	// PlacementVersion and Replicas are included in catalog restore results.
+	PlacementVersion int64    `json:"placementVersion"`
+	Replicas         []string `json:"replicas"`
 }
 
 // Placement places a new database. Regions are region ids such as

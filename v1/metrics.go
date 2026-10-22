@@ -132,6 +132,10 @@ func (u *ManagementUser) Analytics(ctx context.Context, project string, opts Met
 	if err := u.metrics(ctx, project, "analytics", opts, &out); err != nil {
 		return nil, err
 	}
+	return validateAnalytics(&out)
+}
+
+func validateAnalytics(out *AnalyticsResponse) (*AnalyticsResponse, error) {
 	if out.Items == nil || out.Range == "" || out.From.IsZero() || out.To.IsZero() || out.BucketSeconds <= 0 {
 		return nil, errors.New("terrabase: metrics response is missing its window or items")
 	}
@@ -145,7 +149,7 @@ func (u *ManagementUser) Analytics(ctx context.Context, project string, opts Met
 			}
 		}
 	}
-	return &out, nil
+	return out, nil
 }
 
 // Replication reads GET /v1/projects/{project}/replication. Database IDs are plain
@@ -156,6 +160,10 @@ func (u *ManagementUser) Replication(ctx context.Context, project string, opts M
 	if err := u.metrics(ctx, project, "replication", opts, &out); err != nil {
 		return nil, err
 	}
+	return validateReplication(&out)
+}
+
+func validateReplication(out *ReplicationResponse) (*ReplicationResponse, error) {
 	if out.Items == nil || out.Range == "" || out.From.IsZero() || out.To.IsZero() || out.BucketSeconds <= 0 {
 		return nil, errors.New("terrabase: metrics response is missing its window or items")
 	}
@@ -169,7 +177,7 @@ func (u *ManagementUser) Replication(ctx context.Context, project string, opts M
 			}
 		}
 	}
-	return &out, nil
+	return out, nil
 }
 
 func (u *ManagementUser) metrics(ctx context.Context, project, endpoint string, opts MetricsOptions, out any) error {
@@ -182,15 +190,25 @@ func (u *ManagementUser) metrics(ctx context.Context, project, endpoint string, 
 	if err := ValidateID(project); err != nil {
 		return fmt.Errorf("terrabase: metrics project ID: %w", err)
 	}
+	q, err := opts.query()
+	if err != nil {
+		return err
+	}
+
+	_, err = u.c.call(ctx, request{method: http.MethodGet, path: []string{"v1", "projects", project, endpoint}, query: q, header: u.header, token: u.token, replaySafe: true}, nil, out)
+	return err
+}
+
+func (opts MetricsOptions) query() (url.Values, error) {
 	if opts.DatabaseID != "" {
 		if err := ValidateID(opts.DatabaseID); err != nil {
-			return fmt.Errorf("terrabase: metrics database ID: %w", err)
+			return nil, fmt.Errorf("terrabase: metrics database ID: %w", err)
 		}
 	}
 	switch opts.Range {
 	case "", Range1Hour, Range24Hours, Range7Days, Range30Days:
 	default:
-		return errors.New("terrabase: metrics range must be 1h, 24h, 7d or 30d")
+		return nil, errors.New("terrabase: metrics range must be 1h, 24h, 7d or 30d")
 	}
 	q := url.Values{}
 	for key, value := range map[string]string{"range": string(opts.Range), "database": opts.DatabaseID, "region": opts.Region} {
@@ -198,6 +216,59 @@ func (u *ManagementUser) metrics(ctx context.Context, project, endpoint string, 
 			q.Set(key, value)
 		}
 	}
-	_, err := u.c.call(ctx, request{method: http.MethodGet, path: []string{"v1", "projects", project, endpoint}, query: q, header: u.header, token: u.token, replaySafe: true}, nil, out)
-	return err
+	return q, nil
+}
+
+// ProjectAnalytics reads project analytics with the client's project token.
+func (c *Client) ProjectAnalytics(ctx context.Context, project string, opts MetricsOptions) (*AnalyticsResponse, error) {
+	q, err := opts.query()
+	if err != nil {
+		return nil, err
+	}
+	out, err := projectCall[AnalyticsResponse](ctx, c, http.MethodGet, project, q, nil, "analytics")
+	if err != nil {
+		return nil, err
+	}
+	return validateAnalytics(out)
+}
+
+// ProjectReplication reads project replication with the client's project token.
+func (c *Client) ProjectReplication(ctx context.Context, project string, opts MetricsOptions) (*ReplicationResponse, error) {
+	q, err := opts.query()
+	if err != nil {
+		return nil, err
+	}
+	out, err := projectCall[ReplicationResponse](ctx, c, http.MethodGet, project, q, nil, "replication")
+	if err != nil {
+		return nil, err
+	}
+	return validateReplication(out)
+}
+
+// Analytics reads this named database's analytics; DatabaseID is ignored.
+func (d *Database) Analytics(ctx context.Context, opts MetricsOptions) (*AnalyticsResponse, error) {
+	opts.DatabaseID = ""
+	q, err := opts.query()
+	if err != nil {
+		return nil, err
+	}
+	out, err := databaseCall[AnalyticsResponse](ctx, d, http.MethodGet, q, nil, "analytics")
+	if err != nil {
+		return nil, err
+	}
+	return validateAnalytics(out)
+}
+
+// Replication reads this named database's replication; DatabaseID is ignored.
+func (d *Database) Replication(ctx context.Context, opts MetricsOptions) (*ReplicationResponse, error) {
+	opts.DatabaseID = ""
+	q, err := opts.query()
+	if err != nil {
+		return nil, err
+	}
+	out, err := databaseCall[ReplicationResponse](ctx, d, http.MethodGet, q, nil, "replication")
+	if err != nil {
+		return nil, err
+	}
+	return validateReplication(out)
 }

@@ -394,7 +394,9 @@ func (c *Client) send(ctx context.Context, req request, target string) (*respons
 		hr.Header[k] = v
 	}
 	if req.header.Get("X-TerraBase-Peer-Credential") == "" {
-		hr.Header.Set("Authorization", "Bearer "+cmp.Or(req.token, c.token))
+		if token := cmp.Or(req.token, c.token); token != "" {
+			hr.Header.Set("Authorization", "Bearer "+token)
+		}
 	}
 	hr.Header.Set("Accept", "application/json")
 	if req.body != nil {

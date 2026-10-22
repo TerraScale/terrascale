@@ -21,6 +21,8 @@ type UsageOptions struct {
 type Usage struct {
 	ProjectID    string       `json:"projectId,omitempty" ulid:"optional"`
 	DatabaseID   string       `json:"databaseId,omitempty" ulid:"optional"`
+	Databases    int64        `json:"databases"`
+	Collections  int64        `json:"collections"`
 	StorageBytes int64        `json:"storageBytes"`
 	LogicalBytes int64        `json:"logicalBytes"`
 	Documents    int64        `json:"documents"`
