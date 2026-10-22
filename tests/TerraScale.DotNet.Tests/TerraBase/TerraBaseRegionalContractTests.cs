@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using TerraScale.DotNet.TerraBase;
@@ -6,9 +7,9 @@ using TerraScale.DotNet.TerraBase;
 namespace TerraScale.DotNet.Tests.TerraBase;
 
 /// <summary>
-/// The SDK's side of TerraBase's regional contract (monorepo docs/terrabase/fly.md#fly-replay, region-identity.md), against
-/// a fake server: TerraBase sits behind Fly anycast and answers <c>X-TerraBase-Region</c>; a request for a database another
-/// region serves answers <c>421 wrong_region</c> plus <c>fly-replay</c> (which only Fly Proxy acts on); writes are
+/// The SDK's side of TerraBase's regional contract (monorepo docs/terrabase/region-identity.md), against
+/// a fake OCI HTTP endpoint: TerraBase answers <c>X-TerraBase-Region</c>; a request for a database another
+/// region serves answers <c>421 wrong_region</c> without SDK redirects or retries; writes are
 /// leaderless; TerraBase refuses <c>Idempotency-Key</c>, so a write must never be sent twice and only conditional writes
 /// guard against duplicates. A client with <see cref="TerraBaseDocumentsClientOptions.Region"/> targets that region's
 /// host and pins every request to it; one without sends no routing header at all.
@@ -17,9 +18,6 @@ public sealed class TerraBaseRegionalContractTests
 {
     private const string WriteResult = """{"id":"a","version":"tbv1-v1","offset":"1","durability":"local_durable"}""";
 
-    // Headers that would pin, steer or dedupe a request; the SDK sends none of them.
-    private static readonly string[] RoutingHeaders = ["X-TerraScale-Region-Pin", "fly-prefer-region", "Idempotency-Key", "Fly-Replay-Src"];
-
     private static readonly TerraBaseDocumentsClientOptions Options = new()
     {
         BaseAddress = new Uri("https://api.terrascale.test/"),
@@ -27,18 +25,21 @@ public sealed class TerraBaseRegionalContractTests
     };
 
     [Test]
-    public async Task A_wrong_region_answer_is_sent_once_and_surfaces_the_answering_home_and_serving_regions()
+    public async Task A_wrong_region_ts_replay_answer_preserves_placement_without_redirect_or_retry()
     {
         var sent = new List<HttpRequestMessage>();
         using var handler = new TerraBaseTestHandler((request, _) =>
         {
             sent.Add(request);
-            // What a client outside Fly Proxy receives from sjc for a database served in gru only.
+            // A request to sjc for a database served in gru only.
             var response = Error(HttpStatusCode.MisdirectedRequest, "wrong_region", "the database is served in gru");
             response.Headers.Add("X-TerraBase-Region", "sjc");
             response.Headers.Add("X-TerraBase-Database-Home", "gru");
             response.Headers.Add("X-TerraBase-Database-Regions", "gru");
-            response.Headers.Add("fly-replay", "region=gru");
+            response.Headers.Add("ts-replay", "region=gru"); // Pending producer PR #353; merge hold in contracts/terrabase/README.md.
+            // Misleading hints cannot make a write repeat or disclose its body and credential to another origin.
+            response.Headers.Location = new Uri("https://gru.api.terrascale.test/");
+            response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(1));
             return Task.FromResult(response);
         });
         using var http = new HttpClient(handler);
@@ -47,18 +48,20 @@ public sealed class TerraBaseRegionalContractTests
         var error = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() => database.PutDocumentAsync("items", "01JA00000000000000000000D1", Body()));
 
         await Assert.That(sent.Count).IsEqualTo(1);
-        await Assert.That(sent[0].RequestUri!.Host).IsEqualTo("api.terrascale.test");
-        await AssertNoRoutingHeadersAsync(sent[0]);
+        await Assert.That(sent[0].Method).IsEqualTo(HttpMethod.Put);
+        await Assert.That(sent[0].RequestUri).IsEqualTo(new Uri("https://api.terrascale.test/v1/projects/project/databases/app/collections/items/documents/by-key?id=a"));
+        await AssertOnlyExpectedHeadersAsync(sent[0]);
         await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
         await Assert.That(error.ErrorCode).IsEqualTo("wrong_region");
         await Assert.That(error.Region).IsEqualTo("sjc");
         await Assert.That(error.HomeRegion).IsEqualTo("gru");
         await Assert.That(error.Regions).IsEquivalentTo(["gru"]);
+        await Assert.That(error.RetryAfter).IsEqualTo(TimeSpan.FromSeconds(1));
     }
 
     [Test]
     [Arguments(503, "storage_unavailable", typeof(TerraBaseUnavailableException))]
-    // Fly's edge when the region it picked has no healthy machine.
+    // An HTTP gateway with no healthy upstream.
     [Arguments(502, null, typeof(TerraBaseException))]
     [Arguments(0, null, typeof(HttpRequestException))]
     public async Task An_unavailable_or_unreachable_region_fails_the_write_without_a_retry(int status, string? code, Type type)
@@ -156,7 +159,7 @@ public sealed class TerraBaseRegionalContractTests
         foreach (var request in sent)
         {
             await Assert.That(request.RequestUri!.Host).IsEqualTo("api.terrascale.test");
-            await AssertNoRoutingHeadersAsync(request);
+            await AssertOnlyExpectedHeadersAsync(request);
         }
     }
 
@@ -181,7 +184,7 @@ public sealed class TerraBaseRegionalContractTests
         await Assert.That(sent.Select(request => string.Join(',', request.Headers.GetValues(TerraBaseRegion.PinHeader)))).IsEquivalentTo(["fra", "sjc"]);
         foreach (var request in sent)
         {
-            await Assert.That(request.Headers.Contains("fly-prefer-region") || request.Headers.Contains("Idempotency-Key")).IsFalse();
+            await AssertOnlyExpectedHeadersAsync(request, pinned: true);
         }
     }
 
@@ -253,12 +256,13 @@ public sealed class TerraBaseRegionalContractTests
         Content = new StringContent($$$"""{"error":{"code":"{{{code}}}","message":"{{{message}}}"}}""", Encoding.UTF8, "application/json"),
     };
 
-    private static async Task AssertNoRoutingHeadersAsync(HttpRequestMessage request)
+    private static async Task AssertOnlyExpectedHeadersAsync(HttpRequestMessage request, bool pinned = false)
     {
-        foreach (var header in RoutingHeaders)
-        {
-            await Assert.That(request.Headers.Contains(header)).IsFalse();
-        }
+        // A complete allowlist also rejects unexpected routing, acting-user and idempotency headers.
+        string[] expected = pinned ? ["Authorization", "Accept", "X-TerraScale-Region-Pin"] : ["Authorization", "Accept"];
+        await Assert.That(request.Headers.Select(header => header.Key)).IsEquivalentTo(expected);
+        await Assert.That(request.Headers.Authorization!.Scheme).IsEqualTo("Bearer");
+        await Assert.That(request.Headers.Authorization.Parameter).IsEqualTo("tb_test_key");
     }
 
     private sealed class Resolver(Func<Uri> next) : ITerraBaseEndpointResolver

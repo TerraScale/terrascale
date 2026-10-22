@@ -434,7 +434,7 @@ public sealed class TerraBaseChangesContractTests
                 ? TerraBaseIntegrationFixture.Json("""{"error":{"code":"cursor_elsewhere","message":"the cursor resumes on its issuing machine"}}""", HttpStatusCode.MisdirectedRequest)
                 : new HttpResponseMessage(HttpStatusCode.MisdirectedRequest);
             response.Headers.Add("X-TerraBase-Region", "gru");
-            response.Headers.Add("fly-replay", "instance=issuer-machine;timeout=2s;fallback=force_self");
+            response.Headers.Add("ts-replay", "region=sjc");
             response.Headers.Add("Cache-Control", "no-store");
             return Task.FromResult(response);
         });
@@ -442,9 +442,42 @@ public sealed class TerraBaseChangesContractTests
         var error = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() => DrainAsync(Database(http).StreamChangesAsync()));
         await Assert.That(error!.Region).IsEqualTo("gru");
         await Assert.That(error.ErrorCode).IsEqualTo(structured ? "cursor_elsewhere" : null);
-        await Assert.That(error.ResponseHeaders["FLY-REPLAY"].Single()).IsEqualTo("instance=issuer-machine;timeout=2s;fallback=force_self");
+        await Assert.That(error.ResponseHeaders["TS-REPLAY"].Single()).IsEqualTo("region=sjc");
         await Assert.That(error.ResponseHeaders["Cache-Control"].Single()).IsEqualTo("no-store");
         await Assert.That(calls).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task Empty_421_ignores_ts_replay_and_preserves_region_and_stream_scope_without_retry()
+    {
+        var sent = new List<HttpRequestMessage>();
+        using var handler = new TerraBaseTestHandler((request, _) =>
+        {
+            sent.Add(request);
+            var response = new HttpResponseMessage(HttpStatusCode.MisdirectedRequest);
+            response.Headers.Add("X-TerraBase-Region", "gru");
+            response.Headers.Add("ts-replay", "region=sjc"); // Pending producer PR #353's mismatched-pin response.
+            response.Headers.Location = new Uri("https://gru.api.terrascale.test/");
+            response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(1));
+            return Task.FromResult(response);
+        });
+        using var http = new HttpClient(handler);
+        var error = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() =>
+            DrainAsync(Database(http).StreamChangesAsync(lastEventId: "previous", collections: ["items"])));
+        await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+        await Assert.That(error.Region).IsEqualTo("gru");
+        await Assert.That(error.ErrorCode).IsNull();
+        await Assert.That(error.HomeRegion).IsNull();
+        await Assert.That(error.Regions).IsEmpty();
+        await Assert.That(error.RetryAfter).IsEqualTo(TimeSpan.FromSeconds(1));
+        await Assert.That(sent.Count).IsEqualTo(1);
+        await Assert.That(sent[0].Method).IsEqualTo(HttpMethod.Get);
+        await Assert.That(sent[0].RequestUri).IsEqualTo(new Uri($"https://sjc.api.terrascale.tech/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app/changes?collections=items"));
+        await Assert.That(sent[0].Headers.GetValues("X-TerraScale-Region-Pin").Single()).IsEqualTo("sjc");
+        await Assert.That(sent[0].Headers.GetValues("Last-Event-ID").Single()).IsEqualTo("previous");
+        await Assert.That(sent[0].Headers.Authorization!.Scheme).IsEqualTo("Bearer");
+        await Assert.That(sent[0].Headers.Authorization.Parameter).IsEqualTo("project-user-token");
+        await Assert.That(sent[0].Headers.Accept.Single().MediaType).IsEqualTo("text/event-stream");
     }
 
     [Test]
