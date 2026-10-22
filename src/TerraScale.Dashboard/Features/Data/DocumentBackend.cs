@@ -24,6 +24,7 @@ public sealed class DocumentBackend(IHttpClientFactory http, IProjectAccessToken
 
     public async Task<IReadOnlyList<TerraBaseCollection>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, CancellationToken cancellationToken)
     {
+        if (PlatformDatabases.IsPlatform(scope.OrganizationId)) return await PlatformDatabases.CollectionsAsync(http.CreateClient("platform"), Session(scope), databaseName, cancellationToken);
         var database = await DatabaseAsync(scope, home, databaseName, "documents:read", cancellationToken);
         var result = new List<TerraBaseCollection>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -42,12 +43,15 @@ public sealed class DocumentBackend(IHttpClientFactory http, IProjectAccessToken
         await (await DatabaseAsync(scope, home, databaseName, "documents:write", cancellationToken)).CreateCollectionAsync(collection, cancellationToken);
 
     public async Task<TerraBaseDocumentPage> DocumentsAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, TerraBaseQuery query, CancellationToken cancellationToken) =>
+        PlatformDatabases.IsPlatform(scope.OrganizationId) ? await PlatformDatabases.DocumentsAsync(http.CreateClient("platform"), Session(scope), databaseName, collection, query, cancellationToken) :
         await (await DatabaseAsync(scope, home, databaseName, "documents:read", cancellationToken)).QueryAsync(collection, query, cancellationToken);
 
     public async Task<TerraBaseDocumentPage> ListAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, int limit, string? cursor, CancellationToken cancellationToken) =>
+        PlatformDatabases.IsPlatform(scope.OrganizationId) ? await PlatformDatabases.ListAsync(http.CreateClient("platform"), Session(scope), databaseName, collection, limit, cursor, cancellationToken) :
         await (await DatabaseAsync(scope, home, databaseName, "documents:read", cancellationToken)).ListDocumentsAsync(collection, limit, cursor, cancellationToken);
 
     public async Task<TerraBaseDocument?> GetAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, string id, CancellationToken cancellationToken) =>
+        PlatformDatabases.IsPlatform(scope.OrganizationId) ? await PlatformDatabases.GetAsync(http.CreateClient("platform"), Session(scope), databaseName, collection, id, cancellationToken) :
         await (await DatabaseAsync(scope, home, databaseName, "documents:read", cancellationToken)).GetDocumentAsync(collection, id, cancellationToken);
 
     public async Task<TerraBaseWriteResult> WriteAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, string operation, string id, JsonElement document, string version, CancellationToken cancellationToken)
@@ -83,9 +87,12 @@ public sealed class DocumentBackend(IHttpClientFactory http, IProjectAccessToken
     public async Task<TerraBaseCollectionSchema> SchemaAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken) =>
         await (await DatabaseAsync(scope, home, databaseName, "databases:read", cancellationToken)).GetInferredSchemaAsync(collection, cancellationToken);
 
+    private static SessionRecord Session(DatabaseScope scope) => scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
+
     private async Task<TerraBaseDatabase> DatabaseAsync(DatabaseScope scope, DatabaseRegion home, string name, string permission, CancellationToken cancellationToken)
     {
-        var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
+        if (PlatformDatabases.IsPlatform(scope.OrganizationId)) throw PlatformDatabases.ReadOnly();
+        var session = Session(scope);
         var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, [permission], cancellationToken);
         var client = new TerraBaseDocumentsClient(http.CreateClient("platform"), new TerraBaseDocumentsClientOptions
         {

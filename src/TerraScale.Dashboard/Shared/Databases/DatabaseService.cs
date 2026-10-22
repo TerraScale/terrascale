@@ -12,7 +12,8 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
 
     public static DatabaseRecord Database(AccountContext context, string id) =>
         context.Project?.Databases.GetValueOrDefault(id) is { } database && database.ProjectId == context.Project.Id
-            ? database : throw new AccountAccessException("Database is unavailable.", 404);
+            ? database : PlatformDatabases.Databases.ContainsKey(id) ? throw new AccountAccessException("Platform admin access is required.")
+            : throw new AccountAccessException("Database is unavailable.", 404);
 
     public static void ValidateContents(IReadOnlyList<CollectionStats> contents)
     {

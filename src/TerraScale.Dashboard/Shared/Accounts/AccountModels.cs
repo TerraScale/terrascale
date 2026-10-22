@@ -64,7 +64,8 @@ public sealed class OrganizationRecord
     [JsonIgnore] public DateTimeOffset CreatedAt { get; set; }
     public bool ContainsMember(string userId) => Status == "active" && !Archived &&
         Members.TryGetValue(userId, out var member) && member.Status == "active";
-    public string RoleFor(string userId) => ContainsMember(userId) ? Members[userId].Role : "";
+    // The platform organization is read-only in the dashboard whatever ts-auth grants: every write gate reads this.
+    public string RoleFor(string userId) => !ContainsMember(userId) ? "" : PlatformDatabases.IsPlatform(Id) ? "viewer" : Members[userId].Role;
     public bool CanManage(string userId) => RoleFor(userId) is "owner" or "admin";
     // ts-auth's viewer role reads only.
     public bool CanWrite(string userId) => RoleFor(userId) is "owner" or "admin" or "member";
