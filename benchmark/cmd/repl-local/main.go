@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -26,14 +27,19 @@ func main() {
 }
 
 func run() (runErr error) {
-	profile := flag.String("profile", "loopback", "loopback (WAN requires isolated network namespaces)")
+	profile := flag.String("profile", "loopback", "loopback or wan (isolated netns; inherited original netns FD 3)")
 	docs := flag.Int("docs", 100000, "source documents per write/feed phase")
 	repeats := flag.Int("repeats", 5, "independent cluster repetitions")
 	scenario := flag.String("scenario", "all", "all, writes, feeds, catchup, rebuild")
 	out := flag.String("out", "benchmark/bench/"+time.Now().UTC().Format("2006-01-02")+"-repl-baseline", "output base path without extension")
 	flag.Parse()
-	if *profile != "loopback" {
-		return fmt.Errorf("profile %q unsupported: no host-wide tc/netem changes; use loopback", *profile)
+	if *profile != "loopback" && *profile != "wan" {
+		return fmt.Errorf("unsupported profile %q", *profile)
+	}
+	if *profile == "wan" {
+		if err := isolatedNetwork(); err != nil {
+			return err
+		}
 	}
 	if *docs < 1 || *repeats < 1 {
 		return errors.New("docs and repeats must be positive")
@@ -71,12 +77,23 @@ func run() (runErr error) {
 		if err != nil {
 			return err
 		}
-		err = func() error {
+		err = func() (phaseErr error) {
 			defer func() {
 				if e := c.Close(); e != nil {
 					log.Printf("cluster cleanup: %v", e)
 				}
 			}()
+			if *profile == "wan" {
+				var ports []int
+				for _, region := range []string{"gru", "sjc", "fra"} {
+					ports = append(ports, c.nodes[region].proxy.listener.Addr().(*net.TCPAddr).Port)
+				}
+				cleanup, err := shapeWAN(ctx, ports)
+				if err != nil {
+					return err
+				}
+				defer func() { phaseErr = errors.Join(phaseErr, cleanup()) }()
+			}
 			for _, phase := range []struct {
 				name           string
 				batch, readers int

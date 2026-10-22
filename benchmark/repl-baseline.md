@@ -16,7 +16,7 @@ For a quick command check, use `SCENARIO=writes N=30 REPEATS=1`. Scenarios are
 `writes`, `feeds`, `catchup`, `rebuild`, or `all` (default). Catch-up always uses
 100,000 writes and empty-copy reconstruction always uses 1,000,000 documents;
 `N` controls the ordinary write/feed phases. `REPEATS` repeats fresh clusters.
-WAN/netem is explicitly unsupported until isolated network namespaces are added.
+For the isolated peer-only WAN/netem profile, see [repl-wan.md](repl-wan.md).
 
 For A/B, cherry-pick the harness commit onto each branch, push both branches,
 then run the same command back-to-back on beta, changing only `--branch` and `OUT`:
