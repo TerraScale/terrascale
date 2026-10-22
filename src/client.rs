@@ -1,7 +1,6 @@
 //! Credential-isolated ts-auth client transport.
 
 use crate::auth_idp::AuthIdpClient;
-use crate::auth_routing::AuthRouter;
 use crate::config::ClientConfig;
 use crate::error::{Error, ErrorKind, Result};
 use crate::transport::{
@@ -20,22 +19,12 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
 pub(crate) struct Shared {
     transport: Arc<dyn HttpTransport>,
     config: ClientConfig,
-    auth_router: Option<AuthRouter>,
 }
 pub(crate) type SharedClient = Arc<Shared>;
 
 impl Shared {
     fn new(config: ClientConfig, transport: Arc<dyn HttpTransport>) -> Self {
-        let auth_router = AuthRouter::for_config(
-            config.auth_base_url(),
-            config.auth_reverse_proxy(),
-            config.atlas_base_url(),
-        );
-        Self {
-            transport,
-            config,
-            auth_router,
-        }
+        Self { transport, config }
     }
     pub(crate) fn config(&self) -> &ClientConfig {
         &self.config
@@ -67,21 +56,9 @@ impl Shared {
                 "JSON request exceeds 4 MiB.",
             ));
         }
-        let endpoints = if auth {
-            match &self.auth_router {
-                Some(router) => Some(router.endpoints(&self.transport).await?),
-                None => None,
-            }
-        } else {
-            None
-        };
-        let mut endpoint_index = 0;
         let mut retries = 0;
         loop {
-            let mut attempt = request.clone();
-            if let Some(endpoints) = &endpoints {
-                rebase(&mut attempt, &endpoints[endpoint_index])?;
-            }
+            let attempt = request.clone();
             // AuthIdpClient owns its public deadline and error code.
             let result = if auth {
                 self.transport.send(attempt).await
@@ -104,16 +81,6 @@ impl Shared {
             match result {
                 Ok(response) => return Ok(response),
                 Err(error) => {
-                    // GET authentication discovery can fail over. Mutations never replay.
-                    if request.method == Method::Get
-                        && endpoints
-                            .as_ref()
-                            .is_some_and(|list| endpoint_index + 1 < list.len())
-                        && is_retryable(&error)
-                    {
-                        endpoint_index += 1;
-                        continue;
-                    }
                     let safe = request.method == Method::Get;
                     if !safe
                         || retries >= self.config.max_retry_attempts()
@@ -154,17 +121,6 @@ impl Shared {
 
 fn route_to_code(route: &str) -> String {
     route.replace('.', "_")
-}
-
-fn rebase(request: &mut Request, origin: &str) -> Result<()> {
-    let url = reqwest::Url::parse(&request.url)
-        .map_err(|_| Error::invalid_response("Invalid request URL."))?;
-    let suffix = url.query().map_or_else(
-        || url.path().to_owned(),
-        |query| format!("{}?{query}", url.path()),
-    );
-    request.url = format!("{origin}{suffix}");
-    Ok(())
 }
 
 #[derive(Debug, Default, serde::Deserialize)]

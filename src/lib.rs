@@ -2,7 +2,6 @@
 //! PostgreSQL SQL support and security single-writer admission remain unqualified.
 
 pub mod auth_idp;
-mod auth_routing;
 pub mod client;
 pub mod config;
 pub mod error;

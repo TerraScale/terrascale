@@ -36,14 +36,13 @@ impl HttpTransport for Mock {
     }
 }
 
-/// The production auth origin through the reverse proxy, so URLs stay global.
+/// The production auth origin: one global host, no regional or Atlas hop.
 fn platform(responses: Vec<Response>) -> (Arc<Mock>, TerraScaleClient) {
     let mock = Arc::new(Mock::default());
     mock.responses.lock().unwrap().extend(responses);
     let sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
             .auth_base_url("https://auth.terrascale.tech")
-            .auth_reverse_proxy(true)
             .max_retry_attempts(3)
             .retry_delay_ms(0)
             .build()
@@ -83,19 +82,34 @@ fn constants_equal_the_contract() {
 }
 
 #[tokio::test]
-async fn discovery_and_token_endpoints_live_under_the_issuer() {
-    let (mock, sdk) = platform(vec![Response::json(404, &json!({})), token("")]);
+async fn discovery_and_token_go_straight_to_the_global_issuer() {
+    // A retried discovery read stays on the global host; there is no regional failover.
+    let (mock, sdk) = platform(vec![
+        Response::json(503, &json!({})),
+        Response::json(404, &json!({})),
+        token(""),
+    ]);
     let oidc = sdk.auth_idp("terrascale").unwrap().oidc();
     let _ = oidc.discovery().await;
     oidc.token_client_credentials(form(), TERRABASE_AUDIENCE, "documents:read")
         .await
         .unwrap();
-    let requests = mock.requests.lock().unwrap();
+    let urls: Vec<_> = mock
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|r| r.url.clone())
+        .collect();
+    let discovery = format!("{TERRASCALE_ISSUER}/.well-known/openid-configuration");
     assert_eq!(
-        requests[0].url,
-        format!("{TERRASCALE_ISSUER}/.well-known/openid-configuration")
+        urls,
+        [
+            discovery.clone(),
+            discovery,
+            format!("{TERRASCALE_ISSUER}/oauth/token")
+        ]
     );
-    assert_eq!(requests[1].url, format!("{TERRASCALE_ISSUER}/oauth/token"));
 }
 
 #[tokio::test]
