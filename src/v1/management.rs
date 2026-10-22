@@ -16,7 +16,9 @@ pub struct ManagementPage<T> {
     pub next: Option<String>,
 }
 
-/// Placement supplied when creating or updating a database.
+/// Placement supplied when creating or updating a database. `all_regions`
+/// asks for a full copy in every serving region, including regions added later;
+/// the server rejects it combined with `replica_regions` on create.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabasePlacement {
@@ -24,6 +26,8 @@ pub struct DatabasePlacement {
     pub home_region: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replica_regions: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_regions: Option<bool>,
 }
 
 impl Client {

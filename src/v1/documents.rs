@@ -135,6 +135,9 @@ pub struct ProjectDatabaseInfo {
     pub region: String,
     pub home_region: String,
     pub replica_regions: Vec<String>,
+    /// Absent on responses from servers that predate `allRegions`.
+    #[serde(default)]
+    pub all_regions: bool,
 }
 
 /// A C# TerraBase collection; timestamps are exact decimal milliseconds.
