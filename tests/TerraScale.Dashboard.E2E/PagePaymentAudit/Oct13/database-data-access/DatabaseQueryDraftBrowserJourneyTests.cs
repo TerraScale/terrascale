@@ -120,6 +120,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
             .Because("An unbound parameter is an execution error, so the visible check cannot announce success.");
         var sqlAlert = page.Locator(".ts-data-sql .ts-alert-danger[role='alert']");
         await Assert.That(await sqlAlert.CountAsync()).IsEqualTo(1);
+        await Assert.That(await sqlAlert.IsVisibleAsync()).IsTrue();
         await Assert.That(await sqlAlert.InnerTextAsync()).Contains("The console cannot bind parameters");
     }
 
