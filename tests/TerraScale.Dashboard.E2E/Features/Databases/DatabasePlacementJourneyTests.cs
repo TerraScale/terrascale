@@ -58,7 +58,7 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
         projectId = identity.GetProperty("projectId").GetString()!;
         var organizationId = identity.GetProperty("organizationId").GetString()!;
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
-        // Fly answers api.terrascale.tech in SFO for now, so SFO is the one region the dashboard can choose.
+        // The protocol fixture reports SFO, so SFO is the one region the dashboard can choose.
         await Control(new { command = "api-region", value = "sfo" });
         using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
         { ["_csrf"] = csrf, ["name"] = "native-placement", ["region"] = "sfo" }))

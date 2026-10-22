@@ -10,20 +10,19 @@ public sealed class TerraBaseDashboardState(IHttpClientFactory http, IHostEnviro
     // The only client that carries the peer credential (TerraBasePeerCredential); every other client uses "platform".
     public const string ClientName = "terrabase-state";
 
-    // The private listener's origin (scheme, host, port) when it is not Fly's .internal one, in any environment.
+    // ts-orch supplies the private listener's origin (scheme, host, port).
     public const string OriginName = "TS_DASHBOARD_TERRABASE_URL";
 
     private readonly Uri origin = Origin(environment);
 
     // gru stays the single home until cross-region conditional writes are proven (integration plan G15).
     public static Uri Origin(IHostEnvironment environment) =>
-        Origin(environment, Environment.GetEnvironmentVariable(OriginName), Environment.GetEnvironmentVariable("FLY_APP_NAME"));
+        Origin(environment, Environment.GetEnvironmentVariable(OriginName));
 
-    public static Uri Origin(IHostEnvironment environment, string? configured, string? flyApp) =>
+    public static Uri Origin(IHostEnvironment environment, string? configured) =>
         configured is { Length: > 0 } ? Configured(configured)
-        : flyApp is not null ? new("http://gru.ts-terrabase.internal:8081/")
         : environment.IsDevelopment() ? new("http://127.0.0.1:8081/")
-        : throw new InvalidOperationException($"Set {OriginName}: off Fly only Development defaults to the loopback TerraBase.");
+        : throw new InvalidOperationException($"Set {OriginName}: only Development defaults to the loopback TerraBase.");
 
     // The peer credential goes to exactly this origin, so it is an origin and nothing more.
     private static Uri Configured(string value) =>

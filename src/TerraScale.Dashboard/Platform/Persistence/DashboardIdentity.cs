@@ -64,7 +64,7 @@ public sealed record DashboardCredentials(string AuthClientSecret, string Sessio
     public override string ToString() => "Dashboard credentials [REDACTED]";
 }
 
-// Vendor-issued Stripe keys are set once as Fly secrets on the dashboard app.
+// Vendor-issued Stripe keys arrive through ts-orch's OCI Vault secret delivery.
 // There are no payment feature toggles.
 public sealed record StripeCredentials(string SecretKey, string WebhookSecret)
 {

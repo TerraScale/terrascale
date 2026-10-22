@@ -136,7 +136,7 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
     [Arguments("forbidden")]
     [Arguments("project-missing")]
     [Arguments("region-unavailable")]
-    [Arguments("fly-secrets-unavailable")]
+    [Arguments("secret-delivery-unavailable")]
     [Arguments("invalid-auth-client-secret")]
     [Arguments("invalid-session-key")]
     [Arguments("invalid-peer-secret")]
@@ -154,7 +154,7 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         var observation = await ObserveAsync(controls);
         Check(observation.GetProperty("documentWrites").GetInt32() == 0 && scenario.StartupError is not null,
             "Bootstrap failure cannot write user state, select a fallback store or silently admit traffic: " + failure);
-        if (failure is "authorization" or "forbidden" or "project-missing" or "region-unavailable" or "fly-secrets-unavailable" or "invalid-auth-client-secret" or "invalid-session-key" or "invalid-peer-secret" or "redirect" or "wrong-missing-code")
+        if (failure is "authorization" or "forbidden" or "project-missing" or "region-unavailable" or "secret-delivery-unavailable" or "invalid-auth-client-secret" or "invalid-session-key" or "invalid-peer-secret" or "redirect" or "wrong-missing-code")
             Check(observation.GetProperty("collectionPosts").GetInt32() == 0, "Only a genuine missing collection in the validated fixed database can trigger schema creation.");
         Check(observation.GetProperty("redirectTargetRequests").GetInt32() == 0 && scenario.ForeignCredentials == 0,
             "A state-listener redirect is never followed, so the peer credential reaches no other destination.");

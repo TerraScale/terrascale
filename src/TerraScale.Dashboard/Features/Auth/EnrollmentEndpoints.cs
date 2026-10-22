@@ -39,12 +39,8 @@ public static class EnrollmentEndpoints
         new DocumentModel("Verify your email", DocumentModel.NonceFor(context)), "code-verify", Csrf.Token(context),
         flow.Email, flow.ReturnTo, SignUp: true, Name: flow.Name, ResendSeconds: flows.Remaining(flow));
 
-    public static string ClientIp(HttpContext context)
-    {
-        if (Environment.GetEnvironmentVariable("FLY_APP_NAME") is not null &&
-            System.Net.IPAddress.TryParse(context.Request.Headers["Fly-Client-IP"], out var flyIp)) return flyIp.ToString();
-        return context.Connection.RemoteIpAddress?.ToString() ?? "";
-    }
+    // UseForwardedHeaders accepts client addresses only from the loopback edge.
+    public static string ClientIp(HttpContext context) => context.Connection.RemoteIpAddress?.ToString() ?? "";
 
     private static async Task<IResult> ResendAsync(HttpContext context, AuthFlows flows, IAuthEnrollmentGateway auth)
     {

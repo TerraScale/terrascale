@@ -54,7 +54,7 @@ public sealed class StripeAuditJourneyTests(DashboardRootFixture fixture)
         await using var scenario = new StripeAuditScenario(fixture.Root, mode, fault, restricted);
         var result = await scenario.RunAsync();
         Safe(result);
-        Check(result.ExitCode == 0 && result.Error == "", $"The production audit command reads the Stripe account selected by the Fly-secret identity key (exit {result.ExitCode}; stdout: {result.Output}; stderr: {result.Error})");
+        Check(result.ExitCode == 0 && result.Error == "", $"The production audit command reads the Stripe account selected by the delivered identity key (exit {result.ExitCode}; stdout: {result.Output}; stderr: {result.Error})");
         using var report = JsonDocument.Parse(result.Output);
         Check(report.RootElement.GetProperty("passed").GetBoolean(), "All read-only Stripe.net V1 inventory checks pass through actual Stripe HTTP responses");
         var details = report.RootElement.GetProperty("details");
@@ -95,7 +95,7 @@ public sealed class StripeAuditJourneyTests(DashboardRootFixture fixture)
         var incomplete = completeIdentity with { Stripe = null! };
         var unavailable = await scenario.RunAsync(identity: incomplete);
         Safe(unavailable);
-        Check(unavailable.ExitCode == 2 && unavailable.Output.Length == 0, $"An incomplete Fly-secret identity fails closed (exit {unavailable.ExitCode}; stdout: {unavailable.Output}; stderr: {unavailable.Error})");
+        Check(unavailable.ExitCode == 2 && unavailable.Output.Length == 0, $"An incomplete delivered identity fails closed (exit {unavailable.ExitCode}; stdout: {unavailable.Output}; stderr: {unavailable.Error})");
         Protocol(scenario, 0);
     }
 

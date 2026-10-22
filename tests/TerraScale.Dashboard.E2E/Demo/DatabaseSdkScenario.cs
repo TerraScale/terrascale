@@ -343,7 +343,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             }
         }
         public Func<HttpContext, Task<IResult?>>? Extension { get; set; }
-        // The region that answers api.terrascale.tech, as Fly picks it for the dashboard's machine.
+        // The region reported by the public TerraBase origin.
         public string ApiRegion { get; set; } = "gru";
 
         public void Release() { ApiKeys?.ReleaseLists(); createGate?.TrySetResult(); State?.ReleaseQuotaCommits(); }

@@ -36,4 +36,26 @@ public sealed class HostLifecycleJourneyTests
             await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         }
     }
+
+    [Test]
+    public async Task DeviceApprovalUsesThePublicOriginForwardedByTheLoopbackEdge()
+    {
+        await using var fixture = new DashboardE2EFixture();
+        await fixture.InitializeAsync();
+        using var client = new HttpClient { BaseAddress = fixture.Origin };
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/cli/device-authorization")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["client_id"] = "terrascale-cli" })
+        };
+        request.Headers.Host = "dash.terrascale.tech";
+        request.Headers.Add("X-Forwarded-Proto", "https");
+        request.Headers.Add("X-Forwarded-For", "203.0.113.7");
+        using var response = await client.SendAsync(request);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var grant = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        await Assert.That(grant.RootElement.GetProperty("verification_uri").GetString())
+            .IsEqualTo("https://dash.terrascale.tech/cli/approve");
+        await Assert.That(grant.RootElement.GetProperty("verification_uri_complete").GetString())
+            .StartsWith("https://dash.terrascale.tech/cli/approve?user_code=");
+    }
 }
