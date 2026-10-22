@@ -1,6 +1,0 @@
-2026-10-13T02:04:25Z deleted {"id":"vol_re1w0x91x09wq6o4","region":"gru","size_gb":1,"attached":null}
-2026-10-13T02:04:28Z deleted {"id":"vol_4ql768zo1nzw9n8r","region":"sjc","size_gb":1,"attached":null}
-2026-10-13T02:04:30Z deleted {"id":"vol_r68qm7znymz0xmj4","region":"fra","size_gb":1,"attached":null}
-2026-10-13T02:04:32Z deleted {"id":"vol_40oj6891gnkz86k4","region":"gru","size_gb":1,"attached":null}
-2026-10-13T02:04:34Z deleted {"id":"vol_vwnz160qen7mk8qv","region":"sjc","size_gb":1,"attached":null}
-2026-10-13T02:04:37Z deleted {"id":"vol_r68qenokljx8mpp4","region":"fra","size_gb":1,"attached":null}

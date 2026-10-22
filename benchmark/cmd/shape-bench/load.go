@@ -1,13 +1,11 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"maps"
-	"net"
 	"net/http"
 	"os"
 	"slices"
@@ -57,10 +55,9 @@ type shardStep struct {
 }
 
 // load is the V3 live load (README "Live load"): one shard of readers on one shape, and on shard 0 the writer and the
-// per-node scrapes. Without -app it runs one shard against the local two-node host and merges the report itself.
+// per-node scrapes. It runs one shard against the local two-node host and merges the report itself.
 func load(args []string) error {
 	fs := flag.NewFlagSet("load", flag.ContinueOnError)
-	app := fs.String("app", "", "TerraBase Fly app; regions come from regions.<app>.internal (empty: local host)")
 	project, database := fs.String("project", "", "project id"), fs.String("database", "", "database id")
 	collection := fs.String("collection", "", "collection; shard 0 creates it")
 	start := fs.Int64("start", 0, "unix second the first step starts on every shard")
@@ -79,33 +76,23 @@ func load(args []string) error {
 		ns = append(ns, n)
 	}
 	ctx := context.Background()
-	reg, token, nodes := cmp.Or(os.Getenv("FLY_REGION"), region), os.Getenv("TS_BENCH_API_KEY"), []string(nil)
+	reg, token, nodes := region, os.Getenv("TS_BENCH_API_KEY"), []string(nil)
 	var origin string
-	if *app == "" {
-		work, err := os.MkdirTemp("", "shape-bench-")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(work)
-		h, err := startHost(ctx, work)
-		if err != nil {
-			return err
-		}
-		defer h.stop()
-		t := h.targets
-		*project, *database, origin, token = t.Project, t.Database, t.Regions[region].URL, t.Regions[region].Token
-		*collection, *start = "v3-"+strings.ToLower(ulid.Make().String()), time.Now().Add(10*time.Second).Unix()
-		if nodes, _, err = metricsListeners(ctx, t.PID); err != nil {
-			return err
-		}
-	} else {
-		origin = "http://" + net.JoinHostPort(reg+"."+*app+".internal", "8080")
-		if *shard == 0 {
-			var err error
-			if nodes, err = flyNodes(*app); err != nil {
-				return err
-			}
-		}
+	work, err := os.MkdirTemp("", "shape-bench-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(work)
+	h, err := startHost(ctx, work)
+	if err != nil {
+		return err
+	}
+	defer h.stop()
+	hostTargets := h.targets
+	*project, *database, origin, token = hostTargets.Project, hostTargets.Database, hostTargets.Regions[region].URL, hostTargets.Regions[region].Token
+	*collection, *start = "v3-"+strings.ToLower(ulid.Make().String()), time.Now().Add(10*time.Second).Unix()
+	if nodes, _, err = metricsListeners(ctx, hostTargets.PID); err != nil {
+		return err
 	}
 	if *project == "" || *database == "" || *collection == "" || token == "" || *start == 0 {
 		return fmt.Errorf("load needs -project, -database, -collection, -start and TS_BENCH_API_KEY")
@@ -133,29 +120,7 @@ func load(args []string) error {
 		rec = append(rec, runLoadStep(ctx, b, at, n, *shard, *shards, nodes))
 		fmt.Fprintf(os.Stderr, "step N=%d: admitted %d delivered %d %s\n", n, rec[i].Admitted, rec[i].Delivered, rec[i].Error)
 	}
-	if *app == "" {
-		return mergeReport(*out, [][]shardStep{rec})
-	}
-	return replbench.WriteJSON(*out, rec)
-}
-
-// flyNodes are the metrics URLs of every machine in every region the app serves, by .internal DNS.
-func flyNodes(app string) ([]string, error) {
-	txt, err := net.LookupTXT("regions." + app + ".internal")
-	if err != nil || len(txt) == 0 {
-		return nil, fmt.Errorf("regions.%s.internal: %v", app, err)
-	}
-	var out []string
-	for r := range strings.SplitSeq(strings.Join(txt, ","), ",") {
-		ips, err := net.LookupIP(r + "." + app + ".internal")
-		if err != nil {
-			return nil, err
-		}
-		for _, ip := range ips {
-			out = append(out, "http://"+net.JoinHostPort(ip.String(), "9091")+"/metrics#"+r)
-		}
-	}
-	return out, nil
+	return mergeReport(*out, [][]shardStep{rec})
 }
 
 // runLoadStep runs this shard's share of n readers through one step starting at at.

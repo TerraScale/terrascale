@@ -219,7 +219,7 @@ Validation requirements for the two designs: [pitr-design-validation.md](pitr-de
 ## Safety
 
 - Only test-owned paths: `/home/mariogk/tb-100m-pitr/<run>` locally, one dedicated bucket in Tigris. No production or
-  preview organization, app, bucket, dashboard or shared test data. The harness never runs `fly`.
+  preview organization, app, bucket, dashboard or shared test data.
 - Credentials live only in a 0600 env file the node reads (whitelisted names); the harness never prints or logs them.
 - Nothing is deleted automatically: no bucket, object or local run cleanup. Deletion needs an exact, separate confirmation.
 - Heavy phases hold `flock -o /tmp/ts-heavy.lock` (no child, node or emulator inherits it); every process runs at
@@ -310,7 +310,7 @@ fix carries its own fail-first test.
 
 ## Approvals before any cloud or full-scale work
 
-All testing spend is tracked against the user's US$200 per month total in [test-cost-ledger.md](test-cost-ledger.md).
+All testing spend is tracked against the user's US$200 per month total in test-cost-ledger.md (retired evidence removed).
 
 G1, G2 and G3 stay blocked until all four are granted: the bucket (A1), the user-executed key handoff (A2), the spend
 cap (A3) and the host reservation (A5). Local gates (G0a, G0b) need none of them. Isolated restores use byte-exact local
@@ -331,7 +331,7 @@ combined suite green), the harness's G1 spend monitor, and the user's bucket and
 
 **Proposed target (user selects it in the UI):** the existing TerraScale account, i.e. the Tigris organization whose
 bucket list shows `ts-terrabase` and `ts-terrabase-dev` (read-only evidence 2026-10-12: Fly organization `terrascale`
-holds those two buckets and the production apps `ts-terrabase` and `ts-auth`; the repository's backup docs record that
+held those two buckets; the repository's backup docs record that
 bucket-scoped key policies already exist in that Tigris account: `ts-terrabase-only`, `ts-terrabase-dev-only`). New
 dedicated bucket `ts-pitr-test-g1-20261012`, used by nothing else: private, Standard, default placement, no lifecycle or
 expiry rules, no bucket snapshots, no public access. Isolation: the test node's key can reach only this bucket; this

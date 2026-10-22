@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// Client talks to a node's internal listener (loopback off Fly, HTTP/2 without TLS) as the platform operator: on a
-// project's routes it holds every scope, so no credential exists to leak. Off Fly the listener is reachable only on
+// Client talks to a node's internal listener (loopback, HTTP/2 without TLS) as the platform operator: on a
+// project's routes it holds every scope, so no credential exists to leak. The local listener is reachable only on
 // this host.
 type Client struct {
 	base   string

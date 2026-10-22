@@ -1,9 +1,0 @@
-# TEST-ONLY image for ts-vtest-* (never production): the self-contained terrabase that `vtest.sh deploy` publishes with the
-# repo Dockerfile's publish-terrabase flags (Fly's depot builder OOM-kills crossgen2), on debian-slim with ip6tables and a
-# shell so a run can cut 6PN traffic (vtest.sh partition) and heal it. Context: a directory holding only publish/.
-FROM docker.io/library/debian:trixie-slim
-RUN apt-get update && apt-get install -y --no-install-recommends iptables ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY publish/ /app/
-ENV ASPNETCORE_HTTP_PORTS=
-WORKDIR /data
-ENTRYPOINT ["/app/terrabase"]

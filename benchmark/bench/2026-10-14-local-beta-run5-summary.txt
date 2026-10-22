@@ -1,5 +1,5 @@
 ts-heavy-any: beta ~/remote-builds/feat-repl-v2-v5-harness
-commit bba212ffcfca135b4b6027d369acc78c5936fbdf host beta 2026-10-14T17:12:39Z fly=local faults=0
+commit bba212ffcfca135b4b6027d369acc78c5936fbdf host beta 2026-10-14T17:12:39Z environment=local faults=0
 == WaveAE2ETests 2026-10-14T17:14:26Z
 skipped A_201_survives_the_origin_machines_SIGKILL_right_after_it (33ms)
 V5 peer-down local:gru: HTTP 503 remote_region_unavailable in 18 ms
