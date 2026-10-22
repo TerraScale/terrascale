@@ -78,6 +78,7 @@ pub struct ClientBuilder {
     max_response_bytes: usize,
     user_agent: Option<String>,
     project: Option<String>,
+    access_token: bool,
     atlas: Option<String>,
     region_pin: Option<String>,
 }
@@ -111,6 +112,7 @@ impl ClientBuilder {
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             user_agent: None,
             project: None,
+            access_token: false,
             atlas: None,
             region_pin: None,
         }
@@ -227,7 +229,7 @@ impl ClientBuilder {
                 "Atlas override requires Atlas routing".into(),
             ));
         }
-        if self.project.is_some() {
+        if self.project.is_some() || self.access_token {
             if self.token.is_empty() || !self.token.bytes().all(|b| b.is_ascii_graphic()) {
                 return Err(Error::InvalidInput(
                     "bearer token must be nonempty without whitespace or control characters".into(),
@@ -244,7 +246,10 @@ impl ClientBuilder {
         // Never send a bearer key over plain HTTP through a proxy taken from
         // the environment (HTTP_PROXY/ALL_PROXY): loopback HTTP and loopback
         // hosts always connect directly.
-        let direct = self.project.is_some() || base.scheme() == "http" || is_loopback(&base);
+        let direct = self.project.is_some()
+            || self.access_token
+            || base.scheme() == "http"
+            || is_loopback(&base);
         let mut http = reqwest::Client::builder()
             .use_rustls_tls()
             .min_tls_version(reqwest::tls::Version::TLS_1_3)
@@ -301,6 +306,7 @@ impl ClientBuilder {
                 auth,
                 retry: self.retry,
                 max_response: self.max_response_bytes,
+                current_public: self.project.is_some() || self.access_token,
                 project: self.project,
                 atlas,
                 region_pin: self.region_pin,
@@ -389,6 +395,7 @@ struct Inner {
     retry: RetryPolicy,
     max_response: usize,
     project: Option<String>,
+    current_public: bool,
     atlas: Option<AtlasResolver>,
     region_pin: Option<String>,
     shape_keys: tokio::sync::Mutex<super::shapes::EpochKeys>,
@@ -419,6 +426,13 @@ impl Client {
     /// Use [`ClientBuilder::endpoint`] for an explicit static override.
     pub fn for_project(project: impl ToString, token: impl Into<String>) -> ClientBuilder {
         ClientBuilder::new("", token).project(project)
+    }
+    /// Builds a platform-admin client with a user access token and explicit endpoint.
+    pub fn for_platform(endpoint: impl Into<String>, token: impl Into<String>) -> ClientBuilder {
+        ClientBuilder {
+            access_token: true,
+            ..ClientBuilder::new(endpoint, token)
+        }
     }
     /// Starts a [`ClientBuilder`].
     pub fn builder(base_url: impl Into<String>, token: impl Into<String>) -> ClientBuilder {
@@ -456,6 +470,8 @@ pub(crate) struct Req<'a> {
     pub idempotency_key: Option<&'a IdempotencyKey>,
     /// Reads and read-only POSTs that may be resent after a transport error.
     pub replay_safe: bool,
+    /// Only public health probes omit the configured bearer credential.
+    anonymous_probe: bool,
 }
 
 impl<'a> Req<'a> {
@@ -470,6 +486,7 @@ impl<'a> Req<'a> {
             headers: Vec::new(),
             idempotency_key: None,
             replay_safe,
+            anonymous_probe: false,
         }
     }
 
@@ -653,7 +670,9 @@ impl Client {
         let mut url = base.clone();
         let mut scoped = segments.to_vec();
         if let Some(project) = &self.inner.project {
-            scoped.splice(1..1, ["projects", project.as_str()]);
+            if segments.first() == Some(&"v1") && segments.get(1) != Some(&"platform") {
+                scoped.splice(1..1, ["projects", project.as_str()]);
+            }
         }
         url.path_segments_mut()
             .map_err(|()| Error::InvalidInput("base URL cannot carry a path".into()))?
@@ -666,6 +685,28 @@ impl Client {
         Ok(url)
     }
 
+    pub(crate) async fn probe(&self, segments: Vec<&str>) -> Result<Resp> {
+        let mut req = Req::new(Method::GET, segments);
+        req.anonymous_probe = true;
+        let origin = if let Some(atlas) = &self.inner.atlas {
+            atlas
+                .resolve(
+                    self.inner.project.as_deref().expect("Atlas project"),
+                    None,
+                    false,
+                )
+                .await?
+                .api
+        } else {
+            self.inner.base.clone()
+        };
+        let url = self.url(&origin, &req.segments, &[])?;
+        match self.attempt(&req, &url, None, None, true).await {
+            Attempt::Done(response) => Ok(response),
+            Attempt::Failed(error, _) => Err(error),
+        }
+    }
+
     /// Sends `req` under the retry policy. Returns 2xx and 304 responses.
     pub(crate) async fn send(&self, mut req: Req<'_>) -> Result<Resp> {
         if self.inner.project.is_some() {
@@ -673,7 +714,8 @@ impl Client {
                 || !matches!(
                     req.segments.get(1).copied(),
                     Some(
-                        "databases"
+                        "platform"
+                            | "databases"
                             | "saved-queries"
                             | "backup-destination"
                             | "usage"
@@ -800,8 +842,10 @@ impl Client {
             .inner
             .http
             .request(req.method.clone(), url.clone())
-            .header(AUTHORIZATION, self.inner.auth.clone())
             .header("Accept", "application/json");
+        if !req.anonymous_probe {
+            rb = rb.header(AUTHORIZATION, self.inner.auth.clone());
+        }
         if let Some(region) = region {
             rb = rb.header("X-TerraScale-Region-Pin", region);
         }
@@ -864,7 +908,7 @@ impl Client {
                 headers,
                 body,
                 mutation: !req.replay_safe,
-                project: self.is_project(),
+                project: self.inner.current_public,
             };
             return Attempt::Failed(
                 response.invalid("TerraBase response region does not match the session pin".into()),
@@ -877,7 +921,7 @@ impl Client {
                 headers,
                 body,
                 mutation: !req.replay_safe,
-                project: self.is_project(),
+                project: self.inner.current_public,
             });
         }
         let retry_after = headers
@@ -885,7 +929,7 @@ impl Client {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()));
         let etag = headers.get(ETAG).and_then(|v| v.to_str().ok());
-        let err = if self.is_project() {
+        let err = if self.inner.current_public {
             errors::from_project_response(
                 status.as_u16(),
                 etag,
@@ -906,7 +950,7 @@ impl Client {
         headers: &HeaderMap,
         body: Vec<u8>,
     ) -> Error {
-        if self.is_project() {
+        if self.inner.current_public {
             Error::Response {
                 status: status.as_u16(),
                 error: Box::new(error),
