@@ -25,8 +25,9 @@ TerraBase seeds the storage catalog without calling ts-auth. Auth separately see
 organization and its two projects at startup; these identity records belong to auth. Service collections and signing
 keys also belong to their owning service.
 
-Both databases are placed in gru (home), sjc and fra. Off Fly (development, tests) they are placed in the node's own
-region only.
+Both databases are placed in every region ([all-regions placement](all-regions-placement.md)): each region that serves,
+now or later, holds a full copy. Their records name no home region, so every region seeds the same record and manages
+them as its own. A record seeded with a fixed region list takes this placement on the next seed.
 
 ## Seeding
 
@@ -88,7 +89,7 @@ ts-auth access token; TerraBase accepts it only when it is a user token (no `pro
 
 | Route | Answer |
 |---|---|
-| `GET /v1/platform/databases` | `{items: [{name, id, homeRegion, replicaRegions}]}` |
+| `GET /v1/platform/databases` | `{items: [{name, id, homeRegion, replicaRegions, allRegions}]}` |
 | `GET /v1/platform/databases/{database}/collections` | Up to 200 collections in name order |
 | `GET /v1/platform/databases/{database}/collections/{collection}/documents?limit=&cursor=` | A page of documents |
 | `GET /v1/platform/databases/{database}/collections/{collection}/documents/by-key?id=` | One document |

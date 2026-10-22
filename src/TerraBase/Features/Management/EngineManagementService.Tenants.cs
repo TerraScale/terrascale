@@ -348,7 +348,8 @@ internal sealed partial class EngineManagementService
 
         // Placed elsewhere: only the record, no file and no backups, so requests here can be told where it is served.
         var record = new ManagedDatabase(
-            database.DatabaseId, database.ProjectId, name, null, time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version);
+            database.DatabaseId, database.ProjectId, name, null, time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version,
+            placement.AllRegions);
         return await WriteAsync<AdoptDatabaseResult>(async transaction =>
         {
             var check = await CanAddDatabaseAsync(transaction, project, name, cancellationToken).ConfigureAwait(false);
@@ -397,6 +398,7 @@ internal sealed partial class EngineManagementService
                 HomeRegion = placement.Home,
                 ReplicaRegions = placement.Replicas.Count == 0 ? null : [.. placement.Replicas],
                 PlacementVersion = placement.Version,
+                AllRegions = placement.AllRegions,
             }, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false);
             // Backed up where it is served; a removal leaves no tombstone, so the database can come back with its placement.
             if (placement.Includes(options.Region))

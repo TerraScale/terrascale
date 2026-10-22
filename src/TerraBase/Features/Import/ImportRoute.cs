@@ -63,7 +63,7 @@ public static class ImportRoute
             TenantDatabaseRecord record when record.Placement.Home != options.Region =>
                 new ImportElsewhere(DatabaseRegions.WrongRegion(record.Placement.Home, record.Placement.Regions)),
             // Usage metering attributes the request (and an upload's bytes) to the destination, as for document routes.
-            TenantDatabaseRecord record => Attribute(context, new ImportDestination(database, name.Value, record.Placement.Replicas.Count > 0)),
+            TenantDatabaseRecord record => Attribute(context, new ImportDestination(database, name.Value, record.Placement.AllRegions || record.Placement.Replicas.Count > 0)),
             NotFound => UnknownDatabase,
             Unavailable error => error,
         };

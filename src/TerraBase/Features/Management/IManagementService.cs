@@ -33,9 +33,10 @@ public sealed record Project(string Id, string OrganizationId, string Name, Date
 /// </param>
 /// <param name="ReplicaRegions">The other regions that hold a full copy; <see langword="null"/> for none.</param>
 /// <param name="PlacementVersion">Raised by the home region on every placement change; the highest one wins elsewhere.</param>
+/// <param name="AllRegions">Every serving region holds a full copy, including regions that join later; no replica regions are then recorded.</param>
 public sealed record ManagedDatabase(
     string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt,
-    string? HomeRegion = null, IReadOnlyList<string>? ReplicaRegions = null, long PlacementVersion = 0)
+    string? HomeRegion = null, IReadOnlyList<string>? ReplicaRegions = null, long PlacementVersion = 0, bool AllRegions = false)
 {
     /// <summary>The home region, as a member of <paramref name="region"/> reads it.</summary>
     public string Home(string region) => HomeRegion ?? region;
@@ -47,10 +48,10 @@ public sealed record ManagedDatabase(
     public IReadOnlyList<string> Regions(string region) => [Home(region), .. Replicas];
 
     /// <summary>Whether <paramref name="region"/> serves the database.</summary>
-    public bool PlacedIn(string region) => Home(region) == region || Replicas.Contains(region);
+    public bool PlacedIn(string region) => AllRegions || Home(region) == region || Replicas.Contains(region);
 
     /// <summary>The placement, as a member of <paramref name="region"/> reads it.</summary>
-    public DatabasePlacement Placement(string region) => new(Home(region), Replicas, PlacementVersion);
+    public DatabasePlacement Placement(string region) => new(Home(region), Replicas, PlacementVersion, AllRegions);
 }
 
 /// <summary>The created organization, or why not: its name or a client-chosen id is taken.</summary>
@@ -187,16 +188,18 @@ public interface IManagementService
     /// <summary>Deletes a project that has no databases, API keys or customer backup destination.</summary>
     ValueTask<DeleteProjectResult> DeleteProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 
-    /// <summary>Creates an empty database in a project.</summary>
+    /// <summary>Creates an empty database in a project, placed in every region when <paramref name="allRegions"/>.</summary>
     ValueTask<CreateDatabaseResult> CreateDatabaseAsync(
-        string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken, IReadOnlyList<string>? replicaRegions = null);
+        string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken, IReadOnlyList<string>? replicaRegions = null,
+        bool allRegions = false);
 
     /// <summary>
     /// Sets the replica regions of a database whose home is this region (docs/cross-region.md): <see cref="ManagementErrors.WrongRegion"/> in any
-    /// other region. The caller validated <paramref name="replicaRegions"/>.
+    /// other region. The caller validated <paramref name="replicaRegions"/>, empty when <paramref name="allRegions"/>.
     /// </summary>
     ValueTask<SetDatabaseRegionsResult> SetDatabaseRegionsAsync(
-        string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken);
+        string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken,
+        bool allRegions = false);
 
     /// <summary>
     /// The database named <paramref name="name"/> in a project of an organization, as this region records it, placed here or

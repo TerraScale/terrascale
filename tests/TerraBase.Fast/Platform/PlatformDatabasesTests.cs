@@ -20,6 +20,8 @@ namespace TerraBase.Fast.Platform;
 /// </summary>
 public sealed class PlatformDatabasesTests
 {
+    private static readonly string[] Regions = ["gru", "sjc", "fra"];
+
     private static readonly string Auth = $"/v1/projects/{PlatformDatabases.AuthProjectId}/databases/{PlatformDatabases.Auth}";
     private static readonly string Dashboard = $"/v1/projects/{PlatformDatabases.DashboardProjectId}/databases/{PlatformDatabases.Dashboard}";
 
@@ -111,9 +113,9 @@ public sealed class PlatformDatabasesTests
     }
 
     [Test]
-    public async Task Regions_seeding_at_the_same_time_write_identical_records_placed_in_all_three()
+    public async Task Regions_seeding_at_the_same_time_write_identical_records_placed_in_all_regions()
     {
-        var servers = await Task.WhenAll(PlatformDatabases.Regions.Select(region => TerraBaseTestServer.StartAsync(settings =>
+        var servers = await Task.WhenAll(Regions.Select(region => TerraBaseTestServer.StartAsync(settings =>
         {
             Seeding(settings);
             settings["region"] = region;
@@ -131,8 +133,9 @@ public sealed class PlatformDatabasesTests
             foreach (var database in records[0])
             {
                 await Assert.That(database.Id).IsEqualTo(PlatformDatabases.Databases[database.Name].Id);
-                await Assert.That(database.HomeRegion).IsEqualTo("gru");
-                await Assert.That(database.Replicas).IsEqualTo("sjc,fra");
+                await Assert.That(database.HomeRegion).IsNull();
+                await Assert.That(database.Replicas).IsEqualTo("");
+                await Assert.That(database.AllRegions).IsTrue();
             }
         }
         finally
@@ -275,7 +278,7 @@ public sealed class PlatformDatabasesTests
 
     private static void Seeding(Dictionary<string, string> settings) => settings[TerraBaseTestServer.PlatformSeedKey] = "true";
 
-    private sealed record Seeded(string Id, string Name, string? HomeRegion, string Replicas, long Version, DateTimeOffset CreatedAt);
+    private sealed record Seeded(string Id, string Name, string? HomeRegion, string Replicas, long Version, DateTimeOffset CreatedAt, bool AllRegions);
 
     // The seed runs in the background after startup.
     private static Task SeededAsync(TerraBaseTestServer server) => TerraBaseTestServer.EventuallyAsync(async token =>
@@ -291,7 +294,7 @@ public sealed class PlatformDatabasesTests
         {
             if (await management.FindDatabaseRecordAsync(PlatformDatabases.OrganizationId, database.ProjectId, name, cancellationToken) is ManagedDatabase record)
             {
-                records.Add(new Seeded(record.Id, record.Name, record.HomeRegion, string.Join(',', record.Replicas), record.PlacementVersion, record.CreatedAt));
+                records.Add(new Seeded(record.Id, record.Name, record.HomeRegion, string.Join(',', record.Replicas), record.PlacementVersion, record.CreatedAt, record.AllRegions));
             }
         }
 

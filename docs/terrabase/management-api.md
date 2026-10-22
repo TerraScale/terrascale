@@ -234,7 +234,7 @@ logged and counted as unknown while management requests keep returning `503`.
   `{"error":{"code","message"}}` with a stable code (`invalid_request`, `invalid_query`, `forbidden_role`, `not_found`,
   `name_taken`, `not_empty`, `last_owner`, `already_member`, `invitation_pending`, `already_owner`,
   `invitation_expired`) and a message that never echoes input ([error handling](error-handling.md)).
-- A database carries `region` (the region that answered), `homeRegion` and `replicaRegions` (its [placement](#region-placement)).
+- A database carries `region` (the region that answered), `homeRegion`, `replicaRegions` and `allRegions` (its [placement](#region-placement)).
 - The data API addresses a database as `/v1/projects/{projectId}/databases/{name}/collections/…`,
   with the database name from this API. The API key's organization selects the tenant.
 - Every organization has a trusted resource `plan`: `hobby` (default), `pro` or `enterprise`.
@@ -260,10 +260,10 @@ Base path: `/v1/management`.
 | `GET` | `/organizations/{organization}/projects/{project}` | project |
 | `PATCH` | `/organizations/{organization}/projects/{project}` | `{name}` → renamed project |
 | `DELETE` | `/organizations/{organization}/projects/{project}` | `204`; `409` while it has databases |
-| `POST` | `…/projects/{project}/databases` | `{name, homeRegion?, replicaRegions?}` → `201` empty database, placed in two regions or more on a cell; `400 placement_needs_two_regions`, `503 remote_region_unavailable`; `421 wrong_region` when `homeRegion` is not the called region ([placement](#region-placement)) |
+| `POST` | `…/projects/{project}/databases` | `{name, homeRegion?, replicaRegions? \| allRegions?}` → `201` empty database, placed in two regions or more on a cell; `400 placement_needs_two_regions`, `503 remote_region_unavailable`; `421 wrong_region` when `homeRegion` is not the called region ([placement](#region-placement)) |
 | `GET` | `…/projects/{project}/databases` | page of databases |
 | `GET` | `…/projects/{project}/databases/{database}` | database |
-| `PATCH` | `…/projects/{project}/databases/{database}` | `{replicaRegions}` → database with its new replica regions; home region only (`421 wrong_region` elsewhere) |
+| `PATCH` | `…/projects/{project}/databases/{database}` | `{replicaRegions}` or `{allRegions: true}` → database with its new placement; home region only (`421 wrong_region` elsewhere) |
 | `DELETE` | `…/projects/{project}/databases/{database}` | `204`; deletes the data. Branches are independent and stay. Home region only (`421 wrong_region` elsewhere), once it has no replica regions (`409 database_replicated`) |
 | `POST` | `…/databases/{database}/branches` | `{name}` → `201` database in the same project holding a consistent snapshot copy; home region only, and the branch has no replicas |
 | `POST` | `/commits` | atomic commit of Management operations and dashboard documents ([management-commits.md](management-commits.md)) |
@@ -313,6 +313,7 @@ Region ids are Atlas region ids (`gru-1`, `sfo-1`), the values of `X-TerraBase-R
   `X-TerraBase-Database-Home` and `X-TerraBase-Database-Regions` (comma-separated, home first). Clients resolve one of
   those regions through Atlas and retry there.
 - A database recorded before placement existed has `homeRegion` = the region holding it and no replicas.
+- `allRegions: true` places a full copy in every serving region, including regions that join later: [all-regions placement](all-regions-placement.md).
 
 ## Members and roles
 

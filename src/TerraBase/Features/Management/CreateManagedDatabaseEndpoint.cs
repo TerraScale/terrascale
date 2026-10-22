@@ -21,7 +21,7 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
         Post(ProjectApiRoute.Databases);
         Name(OperationName);
         Summary("Creates a database in a project");
-        Description("name: a lowercase letter, then lowercase letters, digits, _ or -, at most 63 characters; unique within the project. storageName addresses the database in the data API. homeRegion (optional, the called region by default) is the region the database is created and managed in: send the request to that region, any other answers 421 wrong_region with X-TerraBase-Database-Home. replicaRegions lists the other regions that hold a full copy and serve it too (docs/cross-region.md); each must register the project under the same ids. A database is placed in at least two regions (decision 0013): without replicaRegions it is placed in every other serving region (503 remote_region_unavailable when none serves), and an empty list answers 400 placement_needs_two_regions." + " " + ProjectApiRoute.IdentityDescription);
+        Description("name: a lowercase letter, then lowercase letters, digits, _ or -, at most 63 characters; unique within the project. storageName addresses the database in the data API. homeRegion (optional, the called region by default) is the region the database is created and managed in: send the request to that region, any other answers 421 wrong_region with X-TerraBase-Database-Home. replicaRegions lists the other regions that hold a full copy and serve it too (docs/cross-region.md); each must register the project under the same ids. A database is placed in at least two regions (decision 0013): without replicaRegions it is placed in every other serving region (503 remote_region_unavailable when none serves), and an empty list answers 400 placement_needs_two_regions. allRegions: true (instead of replicaRegions, 400 placement_conflict with both) places a full copy in every serving region, including regions that join later; it is valid while one region serves." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -47,8 +47,14 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
 
     private async ValueTask<IResult> CreateAsync(DatabaseRegionsRequest request, string name, CancellationToken cancellationToken)
     {
+        var all = request.AllRegions == true;
+        if (all && request.ReplicaRegions is not null)
+        {
+            return ErrorResponse.From(DatabaseRegions.AllOrListed);
+        }
+
         var home = request.HomeRegion ?? options.Region;
-        var replicas = request.ReplicaRegions ?? await durability.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<string> replicas = all ? [] : request.ReplicaRegions ?? await durability.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
         if (home != options.Region)
         {
             return TerraBaseOptions.IsRegion(home)
@@ -56,26 +62,30 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
                 : ErrorResponse.From(new Validation("homeRegion must name a region"));
         }
 
-        if (request.ReplicaRegions is null && replicas.Count == 0 && durability.Confirms)
+        // Every region, now and later: valid with one region, and writes are confirmed once another serves (decision 0013a).
+        if (!all)
         {
-            return ErrorResponse.From(DatabaseRegions.NoOtherRegion);
-        }
+            if (request.ReplicaRegions is null && replicas.Count == 0 && durability.Confirms)
+            {
+                return ErrorResponse.From(DatabaseRegions.NoOtherRegion);
+            }
 
-        var checkedRegions = DatabaseRegions.Check(home, replicas, durability.Confirms);
-        if (checkedRegions is Validation invalid)
-        {
-            return ErrorResponse.From(invalid);
-        }
+            var checkedRegions = DatabaseRegions.Check(home, replicas, durability.Confirms);
+            if (checkedRegions is Validation invalid)
+            {
+                return ErrorResponse.From(invalid);
+            }
 
-        replicas = checkedRegions switch
-        {
-            IReadOnlyList<string> accepted => accepted,
-            Validation => throw new UnreachableException(),
-        };
+            replicas = checkedRegions switch
+            {
+                IReadOnlyList<string> accepted => accepted,
+                Validation => throw new UnreachableException(),
+            };
+        }
 
         if (HttpContext.Features.Get<LegacyManagementRoute>() is not null)
         {
-            return await CreateAsync(name, replicas, cancellationToken).ConfigureAwait(false);
+            return await CreateAsync(name, replicas, all, cancellationToken).ConfigureAwait(false);
         }
 
         var restricted = HttpContext.User.FindFirst("database")?.Value;
@@ -101,14 +111,14 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
         var grant = new ProjectAccess(actor, project, organization, restricted, DatabaseId: null);
         HttpContext.Features.Set(grant);
         IResult result = null!;
-        await ProjectAccess.RunAsync(grant, async () => result = await CreateAsync(name, replicas, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+        await ProjectAccess.RunAsync(grant, async () => result = await CreateAsync(name, replicas, all, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
         return result;
     }
 
-    private async ValueTask<IResult> CreateAsync(string name, IReadOnlyList<string> replicas, CancellationToken cancellationToken)
+    private async ValueTask<IResult> CreateAsync(string name, IReadOnlyList<string> replicas, bool all, CancellationToken cancellationToken)
     {
         return await management.CreateDatabaseAsync(
-            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), name, cancellationToken, replicas) switch
+            ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), ManagementRoute.Value(HttpContext, "project"), name, cancellationToken, replicas, all) switch
         {
             ManagedDatabase value => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, value), ManagedDatabaseBody.From(value, Listeners.RegionOf(HttpContext))),
             NotFound error => ManagementRoute.DatabaseNotFound(error),

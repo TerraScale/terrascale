@@ -8,7 +8,7 @@ namespace TerraBase.Features.ApiReference;
 internal static class ApiExamples
 {
     private const string Database = """
-        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[]}
+        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false}
         """;
     private const string DeclaredSchema = """{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["name"],"properties":{"name":{"type":"string"}}}""";
     private const string Collection = """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA7","name":"people","created_at":"1791374400000"}""";
@@ -117,11 +117,11 @@ internal static class ApiExamples
         "healthz" => $$"""{"status":"ok","version":"{{ServiceVersion.Value}}","region":"gru-1"}""",
         "readyz" => $$"""{"status":"{{(status == "503" ? "unavailable" : "ready")}}","version":"{{ServiceVersion.Value}}","region":"gru-1"}""",
         "createDatabase" or "getDatabase" or "updateDatabase" => Database,
-        "branchDatabase" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main_branch","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[]}""",
+        "branchDatabase" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main_branch","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false}""",
         "listDatabases" => Page(Database),
         "createBackup" => Backup,
         "listBackups" => Page(Backup),
-        "restoreBackup" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"restored","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","homeRegion":"gru-1","replicaRegions":[],"placementVersion":0}""",
+        "restoreBackup" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"restored","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","homeRegion":"gru-1","replicaRegions":[],"placementVersion":0,"allRegions":false}""",
         "getBackupPolicy" => Policy,
         "getBackupDestination" or "setBackupDestination" => """{"endpoint":"https://s3.example.com","region":"us-east-1","bucket":"customer-backups","mode":"both","updatedAt":"2026-10-07T12:00:00Z"}""",
         "getRestoreWindow" => """{"earliest":"2026-10-07T12:00:00Z","latest":"2026-10-07T12:00:16Z"}""",
