@@ -34,7 +34,7 @@ public sealed class CertifiedGcTests
         var newer = EntityIds.New().ToString();
         var old = Put(1000, """{"old":true}""");
         await RepairAsync(source, new("items", deleted, old.Delete(At(2000))), new("items", baseline, Put(500, """{"baseline":true}""")));
-        await RepairAsync(receiver, new("items", newer, Put(4000, """{"newer":true}""")));
+        await RepairAsync(receiver, new RepairState("items", newer, Put(4000, """{"newer":true}""")));
         if (ambiguous)
         {
             await RepairAsync(receiver, new RepairState("items", deleted, old));
