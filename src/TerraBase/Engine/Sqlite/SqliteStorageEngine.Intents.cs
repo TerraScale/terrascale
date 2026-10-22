@@ -1,0 +1,65 @@
+using TerraBase.Configuration;
+
+namespace TerraBase.Engine.Sqlite;
+
+internal sealed partial class SqliteStorageEngine
+{
+    internal const string IntentName = "_intents";
+    private SqliteDatabaseStore? _intents;
+
+    internal SqliteDatabaseStore? IntentStore => Volatile.Read(ref _intents);
+
+    // The caller holds creation and reuses its admission. Journal writes never need the application catalog's writer.
+    private async Task OpenIntentStoreLockedAsync(CancellationToken cancellationToken)
+    {
+        if (_intents is not null)
+        {
+            return;
+        }
+
+        var path = Path.Combine(_dataDirectory, IntentName + FileExtension);
+        RejectDatabaseLinks(path);
+        CheckIntentJournal();
+        var created = await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
+        var openingToken = created ? CancellationToken.None : cancellationToken;
+        // System semantics suppress recursive intent recording and fail the node closed on native journal damage.
+        var store = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
+            RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
+        {
+            QueryBudget = QueryBudget,
+            Member = Member,
+            Checkpoint = _checkpoint,
+            Ledger = Ledger,
+        };
+        try
+        {
+            await store.BootstrapAsync(openingToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await Io.RunAsync(store.Dispose, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+
+        Volatile.Write(ref _intents, store);
+    }
+
+    // A journal is published before SYSTEM: once SYSTEM exists its absence cannot mean a fresh node.
+    private void CheckIntentJournal()
+    {
+        var path = Path.Combine(_dataDirectory, IntentName + FileExtension);
+        RejectDatabaseLinks(path);
+        if (!File.Exists(path) && SystemDatabaseExists)
+        {
+            throw new TerraBaseConfigurationException("the data directory is missing its storage operation intent journal");
+        }
+    }
+
+    private async Task CloseIntentStoreAsync()
+    {
+        if (Interlocked.Exchange(ref _intents, null) is { } store)
+        {
+            await Io.RunAsync(store.Dispose, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+}
