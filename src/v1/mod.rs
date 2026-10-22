@@ -35,6 +35,7 @@ mod control;
 mod documents;
 mod errors;
 mod ids;
+mod imports;
 mod management;
 mod query;
 mod reporting;
