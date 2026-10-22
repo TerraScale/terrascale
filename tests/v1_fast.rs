@@ -21,25 +21,30 @@ fn ids_names_and_builder_validation() {
     assert_eq!(derived.as_str().len(), 64);
     assert_ne!(IdempotencyKey::random(), IdempotencyKey::random());
 
-    let token = format!("tbk1.{}.{}", "a".repeat(22), "b".repeat(43));
+    let token = "fixture-access-token";
     let bad = |url: &str, tok: &str| {
         matches!(
-            Client::builder(url, tok).build(),
+            Client::builder(url, tok)
+                .project("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+                .build(),
             Err(Error::InvalidInput(_))
         )
     };
-    assert!(bad("https://example.com", "tbk1.short.key"));
-    assert!(bad("http://example.com", &token));
-    assert!(bad("https://example.com?x=1", &token));
-    assert!(bad("ftp://example.com", &token));
-    assert!(Client::builder("http://127.0.0.1:1", &token)
+    assert!(bad("https://example.com", ""));
+    assert!(bad("http://example.com", token));
+    assert!(bad("https://example.com?x=1", token));
+    assert!(bad("ftp://example.com", token));
+    assert!(Client::builder("http://127.0.0.1:1", token)
+        .project("01ARZ3NDEKTSV4RRFFQ69G5FAV")
         .build()
         .is_ok());
-    assert!(Client::builder("https://example.com/prefix/", &token)
+    assert!(Client::builder("https://example.com/prefix/", token)
+        .project("01ARZ3NDEKTSV4RRFFQ69G5FAV")
         .build()
         .is_ok());
     assert!(matches!(
-        Client::builder("https://example.com", &token)
+        Client::builder("https://example.com", token)
+            .project("01ARZ3NDEKTSV4RRFFQ69G5FAV")
             .add_root_ca_pem("not a pem")
             .build(),
         Err(Error::InvalidInput(_))

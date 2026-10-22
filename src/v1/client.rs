@@ -96,10 +96,9 @@ impl fmt::Debug for ClientBuilder {
 }
 
 impl ClientBuilder {
-    /// `base_url` is the TerraBase origin (HTTPS; plain HTTP only for loopback
-    /// hosts; a path prefix is kept). `token` is a `tbk1.<id>.<secret>` key: a
-    /// data key for the retired document protocol. Calling
-    /// [`Self::project`] selects project paths and accepts a bearer access token.
+    /// `base_url` is the TerraBase origin (HTTPS; HTTP only for loopback).
+    /// `token` is a ts-auth bearer access token. Select [`Self::project`]
+    /// before building, or use [`Client::for_platform`] for platform access.
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
@@ -117,9 +116,7 @@ impl ClientBuilder {
         }
     }
 
-    /// Selects the C# TerraBase project-scoped contract. `token` is an
-    /// already exchanged ts-auth access token; legacy producer credentials
-    /// are accepted for explicitly configured producer qualification.
+    /// Selects the project-scoped contract with a ts-auth access token.
     #[must_use]
     pub fn project(mut self, project: impl ToString) -> Self {
         self.project = Some(project.to_string());
@@ -193,6 +190,11 @@ impl ClientBuilder {
 
     /// Validates the configuration and builds the client.
     pub fn build(self) -> Result<Client> {
+        if self.project.is_none() && !self.access_token {
+            return Err(Error::InvalidInput(
+                "select a project or use Client::for_platform".into(),
+            ));
+        }
         if self
             .project
             .as_deref()
@@ -228,15 +230,9 @@ impl ClientBuilder {
                 "Atlas override requires Atlas routing".into(),
             ));
         }
-        if self.project.is_some() || self.access_token {
-            if self.token.is_empty() || !self.token.bytes().all(|b| b.is_ascii_graphic()) {
-                return Err(Error::InvalidInput(
-                    "bearer token must be nonempty without whitespace or control characters".into(),
-                ));
-            }
-        } else if !valid_token(&self.token) {
+        if self.token.is_empty() || !self.token.bytes().all(|b| b.is_ascii_graphic()) {
             return Err(Error::InvalidInput(
-                "token must be a tbk1.<22-char id>.<43-char secret> key".into(),
+                "bearer token must be nonempty without whitespace or control characters".into(),
             ));
         }
         let mut auth = HeaderValue::from_str(&format!("Bearer {}", self.token))
@@ -245,10 +241,6 @@ impl ClientBuilder {
         // Never send a bearer key over plain HTTP through a proxy taken from
         // the environment (HTTP_PROXY/ALL_PROXY): loopback HTTP and loopback
         // hosts always connect directly.
-        let direct = self.project.is_some()
-            || self.access_token
-            || base.scheme() == "http"
-            || is_loopback(&base);
         let mut http = reqwest::Client::builder()
             .use_rustls_tls()
             .min_tls_version(reqwest::tls::Version::TLS_1_3)
@@ -257,9 +249,7 @@ impl ClientBuilder {
                 self.user_agent
                     .unwrap_or_else(|| format!("terrascale-rust/{} v1", env!("CARGO_PKG_VERSION"))),
             );
-        if direct {
-            http = http.no_proxy();
-        }
+        http = http.no_proxy();
         if let Some(t) = self.timeout {
             http = http.timeout(t);
         }
@@ -323,19 +313,6 @@ pub(crate) fn valid_region(region: &str) -> bool {
         && region
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-}
-
-pub(crate) fn valid_token(token: &str) -> bool {
-    let mut parts = token.split('.');
-    let b64 = |s: &str, n: usize| {
-        s.len() == n
-            && s.bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    };
-    matches!(
-        (parts.next(), parts.next(), parts.next(), parts.next()),
-        (Some("tbk1"), Some(id), Some(secret), None) if b64(id, 22) && b64(secret, 43)
-    )
 }
 
 fn is_loopback(url: &Url) -> bool {
@@ -783,28 +760,27 @@ impl Client {
 
     /// Sends `req` under the retry policy. Returns 2xx and 304 responses.
     pub(crate) async fn send(&self, mut req: Req<'_>) -> Result<Resp> {
-        if self.inner.project.is_some() {
-            if req.segments.first() != Some(&"v1")
-                || !matches!(
-                    req.segments.get(1).copied(),
-                    Some(
-                        "platform"
-                            | "databases"
-                            | "saved-queries"
-                            | "backup-destination"
-                            | "usage"
-                            | "analytics"
-                            | "replication"
-                    )
+        if req.segments.first() != Some(&"v1")
+            || !matches!(
+                req.segments.get(1).copied(),
+                Some(
+                    "platform"
+                        | "databases"
+                        | "saved-queries"
+                        | "backup-destination"
+                        | "usage"
+                        | "analytics"
+                        | "replication"
                 )
-            {
-                return Err(Error::InvalidInput(
-                    "the legacy dashboard control plane is unavailable for a project client".into(),
-                ));
-            }
-            if req.idempotency_key.is_some() {
-                return Err(Error::InvalidInput("C# TerraBase does not support Idempotency-Key; an uncertain mutation must be reconciled by reading its state".into()));
-            }
+            )
+            || (self.inner.project.is_none() && req.segments.get(1) != Some(&"platform"))
+        {
+            return Err(Error::InvalidInput(
+                "request requires a canonical project or platform route".into(),
+            ));
+        }
+        if req.idempotency_key.is_some() {
+            return Err(Error::InvalidInput("C# TerraBase does not support Idempotency-Key; an uncertain mutation must be reconciled by reading its state".into()));
         }
         if req
             .body
@@ -1096,7 +1072,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_routes_and_credentials_are_separate_from_legacy_v1() {
+    fn project_routes_require_scope_and_valid_bearer_credentials() {
         let project = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
         let client = Client::builder("https://example.com/prefix", "already-exchanged.jwt")
             .project(project)
@@ -1134,6 +1110,27 @@ mod tests {
             .region_pin("GRU")
             .build()
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn platform_clients_cannot_dispatch_unscoped_document_calls() {
+        let client = Client::for_platform("http://127.0.0.1:1", "fixture-token")
+            .build()
+            .unwrap();
+        assert!(matches!(
+            client
+                .database("orders")
+                .collection("items")
+                .get::<serde_json::Value>("customer:key")
+                .await,
+            Err(Error::InvalidInput(_))
+        ));
+        let mut tx = super::super::Tx::new();
+        tx.put("items", "customer:key", &serde_json::json!({}), None);
+        assert!(matches!(
+            client.database("orders").commit(&tx).await,
+            Err(Error::InvalidInput(_))
+        ));
     }
 
     #[tokio::test]

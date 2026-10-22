@@ -34,9 +34,13 @@ async fn listener(hits: Arc<AtomicUsize>, seen_auth: Arc<AtomicUsize>) -> u16 {
                 let _ = tokio::time::timeout(std::time::Duration::from_secs(5), read).await;
                 if String::from_utf8_lossy(&head)
                     .to_ascii_lowercase()
-                    .contains("authorization: bearer tbk1.")
+                    .contains("authorization: bearer fixture-access-token")
                 {
                     seen_auth.fetch_add(1, Ordering::SeqCst);
+                }
+                if head.starts_with(b"GET ") {
+                    let request = String::from_utf8_lossy(&head);
+                    assert!(request.starts_with("GET /v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/main/collections/items/documents/by-key?id="));
                 }
                 let body = r#"{"error":{"code":"not_found"}}"#;
                 let resp = format!(
@@ -69,9 +73,10 @@ async fn loopback_http_bypasses_environment_proxies() {
     std::env::remove_var("NO_PROXY");
     std::env::remove_var("no_proxy");
 
-    let token = format!("tbk1.{}.{}", "a".repeat(22), "b".repeat(43));
+    let token = "fixture-access-token";
     for host in ["127.0.0.1", "localhost"] {
-        let client = Client::builder(format!("http://{host}:{origin}"), &token)
+        let client = Client::builder(format!("http://{host}:{origin}"), token)
+            .project("01ARZ3NDEKTSV4RRFFQ69G5FAV")
             .retry_policy(RetryPolicy::none())
             .timeout(Some(std::time::Duration::from_secs(5)))
             .build()
@@ -79,7 +84,7 @@ async fn loopback_http_bypasses_environment_proxies() {
         let err = client
             .database("main")
             .collection("items")
-            .get::<Box<RawValue>>(uuidv5_for("items", host))
+            .get::<Box<RawValue>>(host)
             .await
             .unwrap_err();
         assert!(err.is_not_found(), "{host}: {err:?}");

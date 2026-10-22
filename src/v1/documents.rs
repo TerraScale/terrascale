@@ -115,7 +115,7 @@ impl Database {
         );
         req.body = Some(body);
         req.idempotency_key = tx.key();
-        let resp = self.client.send(req).await?;
+        let resp = self.client.send_project(req).await?;
         let out: TxResult = resp.decode_status(&[StatusCode::OK])?;
         tx.check_results(&out.results, self.client.is_project())
             .map_err(|message| resp.invalid(message))?;
@@ -705,13 +705,9 @@ impl Collection {
     }
 
     fn point_request<'a>(&'a self, method: Method, id: &'a str) -> Req<'a> {
-        if self.client().is_project() {
-            let mut req = Req::new(method, self.segments(&["documents", "by-key"]));
-            req.query.push(("id", id.to_owned()));
-            req
-        } else {
-            Req::new(method, self.segments(&["documents", id]))
-        }
+        let mut req = Req::new(method, self.segments(&["documents", "by-key"]));
+        req.query.push(("id", id.to_owned()));
+        req
     }
 }
 
