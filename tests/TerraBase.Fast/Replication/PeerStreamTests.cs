@@ -3135,7 +3135,7 @@ public sealed class PeerStreamTests
     /// <summary>A machine's sink whose repairs wait while the test holds them.</summary>
     private sealed class HeldSink(IChangeGroupSink sink, Machine machine) : IChangeGroupSink
     {
-        public ValueTask<bool> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
+        public ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
             sink.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
 
         public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken) =>

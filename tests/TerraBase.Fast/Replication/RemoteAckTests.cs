@@ -1810,7 +1810,7 @@ public sealed class RemoteAckTests
         public ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
             inner.RepairAsync(database, incarnation, states, cancellationToken);
 
-        public ValueTask<bool> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
+        public ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
             inner.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
     }
 

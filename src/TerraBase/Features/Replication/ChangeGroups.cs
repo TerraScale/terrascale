@@ -126,9 +126,9 @@ public interface IChangeGroupSink
     /// <summary>
     /// Records that this machine holds every event of <paramref name="origin"/> stamped below <paramref name="frontier"/>
     /// (its applied stamp rises there, section 11), durably, after checking <paramref name="expected"/> under its writer.
-    /// False when the database is not held, or <paramref name="incarnation"/> names a replaced receiver copy.
+    /// Returns the persisted incarnation, or null when the database is not held or the named receiver copy was replaced.
     /// </summary>
-    ValueTask<bool> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken);
+    ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken);
 }
 
 /// <summary>The wire form of change groups and its bounds; decoding is a trust boundary.</summary>

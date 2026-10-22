@@ -97,7 +97,7 @@ public sealed class PeerStreamRefillAdmissionTests
         public ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
             sink.RepairAsync(database, incarnation, states, cancellationToken);
 
-        public ValueTask<bool> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
+        public ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
             sink.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
     }
 }

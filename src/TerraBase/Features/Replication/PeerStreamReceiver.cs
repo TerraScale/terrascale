@@ -472,8 +472,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 return null;
             }
 
-            if (!await _sink.RecordFrontierAsync(database, origin, default, default, null, cancellationToken).ConfigureAwait(false)
-                || await _states.DigestAsync(database, null, cancellationToken).ConfigureAwait(false) is not { } local)
+            if (await _sink.RecordFrontierAsync(database, origin, default, default, null, cancellationToken).ConfigureAwait(false) is not { } local)
             {
                 return null;
             }
@@ -484,7 +483,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 return null;
             }
 
-            return await _sink.RecordFrontierAsync(database, origin, coverage, default, local.Incarnation, cancellationToken).ConfigureAwait(false)
+            return await _sink.RecordFrontierAsync(database, origin, coverage, default, local, cancellationToken).ConfigureAwait(false) is not null
                 ? repaired : null;
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
@@ -589,7 +588,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         Hlc stable;
         try
         {
-            if (!await _sink.RecordFrontierAsync(database, origin, new Hlc(frontier.Hlc), new Hlc(frontier.Expect), null, cancellationToken).ConfigureAwait(false))
+            if (await _sink.RecordFrontierAsync(database, origin, new Hlc(frontier.Hlc), new Hlc(frontier.Expect), null, cancellationToken).ConfigureAwait(false) is null)
             {
                 return null;
             }

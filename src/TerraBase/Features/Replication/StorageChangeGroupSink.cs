@@ -53,23 +53,24 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
         return applied;
     }
 
-    public async ValueTask<bool> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken)
+    public async ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken)
     {
         if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
-            return false;
+            return null;
         }
 
         await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
-        if (incarnation is { } pinned && await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != pinned)
+        var current = await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false);
+        if (incarnation is { } pinned && current != pinned)
         {
-            return false;
+            return null;
         }
 
         await transaction.RequireAppliedAsync(origin, expected, cancellationToken).ConfigureAwait(false);
         await transaction.RecordAppliedAsync(origin, frontier, cancellationToken).ConfigureAwait(false);
         _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return true;
+        return current;
     }
 
     public async ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
