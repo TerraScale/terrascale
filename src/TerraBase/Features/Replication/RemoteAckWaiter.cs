@@ -60,9 +60,15 @@ internal sealed class RemoteAckWaiter(TimeProvider time)
                 return;
             }
 
+            var ackedAt = time.GetTimestamp();
             foreach (var waiting in admitted.Pending)
             {
-                waiting.Confirmed |= waiting.Marker.Incarnation == incarnation && from < waiting.Marker.ChangeId && waiting.Marker.ChangeId <= to;
+                if (waiting.Marker.Incarnation == incarnation && from < waiting.Marker.ChangeId && waiting.Marker.ChangeId <= to)
+                {
+                    // Timer callbacks can be delayed: only an ack observed within this attempt's bound confirms it.
+                    waiting.Confirmed |= time.GetElapsedTime(waiting.Started, ackedAt) < Bound;
+                    waiting.Completion.TrySetResult(waiting.Confirmed);
+                }
             }
 
             // Another incarnation's ack replaces the kept ranges: an attempt of the one replaced that has not registered yet
@@ -74,18 +80,24 @@ internal sealed class RemoteAckWaiter(TimeProvider time)
             }
 
             Keep(admitted.Ranges, from, to);
-            Wake(admitted);
         }
     }
 
     /// <summary>A link was lost: every waiter checks whether an eligible link remains.</summary>
     public void Lost()
     {
+        Waiting[] pending;
         lock (_gate)
         {
-            foreach (var admitted in _databases.Values)
+            pending = [.. _databases.Values.SelectMany(admitted => admitted.Pending)];
+        }
+
+        // Eligibility takes the peer locks: never call it while holding the waiter gate.
+        foreach (var waiting in pending)
+        {
+            if (!waiting.Eligible())
             {
-                Wake(admitted);
+                waiting.Completion.TrySetResult(false);
             }
         }
     }
@@ -97,8 +109,8 @@ internal sealed class RemoteAckWaiter(TimeProvider time)
     public async ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, Func<bool> eligible, CancellationToken cancellationToken)
     {
         database = Key(database);
-        var deadline = time.GetTimestamp() + (long)(Bound.TotalSeconds * time.TimestampFrequency);
-        var waiting = new Waiting(marker);
+        var started = time.GetTimestamp();
+        Waiting waiting;
         Admitted admitted;
         lock (_gate)
         {
@@ -109,37 +121,28 @@ internal sealed class RemoteAckWaiter(TimeProvider time)
             }
 
             // Bounded by the admitted attempts: the caller holds one.
+            waiting = new Waiting(marker, started, eligible);
             admitted.Pending.Add(waiting);
         }
 
         try
         {
-            while (true)
+            if (!eligible())
             {
-                Task signal;
+                waiting.Completion.TrySetResult(false);
+            }
+
+            var left = Bound - time.GetElapsedTime(started);
+            try
+            {
+                return await waiting.Completion.Task.WaitAsync(left > TimeSpan.Zero ? left : TimeSpan.Zero, time, cancellationToken).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
                 lock (_gate)
                 {
-                    if (waiting.Confirmed)
-                    {
-                        return true;
-                    }
-
-                    signal = admitted.Signal.Task;
-                }
-
-                var left = TimeSpan.FromSeconds((double)(deadline - time.GetTimestamp()) / time.TimestampFrequency);
-                if (left <= TimeSpan.Zero || !eligible())
-                {
-                    return false;
-                }
-
-                try
-                {
-                    await signal.WaitAsync(left, time, cancellationToken).ConfigureAwait(false);
-                }
-                catch (TimeoutException)
-                {
-                    // Checked once more: an ack may have landed with the bound.
+                    // An on-time ack remains valid even if this continuation ran after the timeout callback.
+                    return waiting.Confirmed;
                 }
             }
         }
@@ -173,13 +176,6 @@ internal sealed class RemoteAckWaiter(TimeProvider time)
         }
     }
 
-    // The caller holds _gate.
-    private static void Wake(Admitted admitted)
-    {
-        admitted.Signal.TrySetResult();
-        admitted.Signal = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    }
-
     private void Release(TenantContext database)
     {
         lock (_gate)
@@ -193,7 +189,7 @@ internal sealed class RemoteAckWaiter(TimeProvider time)
     }
 
     // Plans can change and replication tenants omit them; only the ids identify the database.
-    private static TenantContext Key(TenantContext database) => database with { Plan = PlanTier.Hobby };
+    private static TenantContext Key(TenantContext database) => database.Plan == PlanTier.Hobby ? database : database with { Plan = PlanTier.Hobby };
 
     private sealed class Admitted
     {
@@ -207,12 +203,17 @@ internal sealed class RemoteAckWaiter(TimeProvider time)
         // The attempts waiting now; an ack confirms them directly, so dropping a kept range never unconfirms one.
         public List<Waiting> Pending { get; } = [];
 
-        public TaskCompletionSource Signal { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    private sealed class Waiting(CommitMarker marker)
+    private sealed class Waiting(CommitMarker marker, long started, Func<bool> eligible)
     {
         public CommitMarker Marker { get; } = marker;
+
+        public long Started { get; } = started;
+
+        public Func<bool> Eligible { get; } = eligible;
+
+        public TaskCompletionSource<bool> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public bool Confirmed { get; set; }
     }

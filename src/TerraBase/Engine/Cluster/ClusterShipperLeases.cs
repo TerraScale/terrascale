@@ -5,10 +5,9 @@ namespace TerraBase.Engine.Cluster;
 
 /// <summary>
 /// <see cref="IShipperLeases"/> from the cell's membership (agreed with TS-633 on Ku TS-647): a database's primary ships
-/// its backup while it holds its member lease. A member that becomes primary starts at once when the previous primary
-/// left the view (its lease ended before its key expired, so it already stopped); otherwise it waits out the lease
-/// fence, so the previous primary has either seen the new ring or lost its lease. The epoch is the membership revision
-/// its current unbroken term began at; a static cell (one member, tests) ships with epoch 1.
+/// its backup while it holds its member lease. A member that becomes primary waits out the lease fence, including when
+/// the previous primary left its view. Each observed loss of ownership ends the term; its next term has a new epoch
+/// even when the membership revision stayed the same. A static cell (one member, tests) ships with epoch 1.
 /// </summary>
 internal sealed class ClusterShipperLeases(IMembership membership, TimeProvider time) : IShipperLeases
 {
@@ -24,7 +23,7 @@ internal sealed class ClusterShipperLeases(IMembership membership, TimeProvider 
         {
             if (!membership.HoldsLease || primary?.Name != membership.Self.Name)
             {
-                (term.Since, term.Epoch, term.Previous) = (null, null, primary?.Name);
+                (term.Since, term.Epoch) = (null, null);
                 return null;
             }
 
@@ -39,23 +38,21 @@ internal sealed class ClusterShipperLeases(IMembership membership, TimeProvider 
             }
 
             var fence = membership.Fence;
-            term.Since ??= term.Previous is { } previous && !view.Contains(previous) ? time.GetTimestamp() - Ticks(fence) : time.GetTimestamp();
+            term.Since ??= time.GetTimestamp();
             if (time.GetElapsedTime(term.Since.Value) < fence)
             {
                 return null;
             }
 
-            return term.Epoch = view.Revision;
+            return term.Epoch = checked(++term.LastEpoch);
         }
     }
-
-    private long Ticks(TimeSpan span) => (long)(span.TotalSeconds * time.TimestampFrequency);
 
     // One database's term as primary on this member, touched under its own lock.
     private sealed class Term
     {
         public long? Since { get; set; }
         public ulong? Epoch { get; set; }
-        public string? Previous { get; set; }
+        public ulong LastEpoch { get; set; }
     }
 }
