@@ -24,8 +24,15 @@ public static class BrowserSecurity
         if (headers.ContentSecurityPolicy.Count == 0)
         {
             // Scalar generates its nonce while rendering; OnStarting runs after it and after error responses clear headers.
+            // Scalar 2.17.13 also injects these fixed styles without nonces; hashes keep other inline style elements blocked.
             headers.ContentSecurityPolicy = response.HttpContext.Items[ScalarOptions.NonceHttpContextItemKey] is string nonce
-                ? $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
+                ? $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}' "
+                    + "'sha256-vdYLq+JIuYUT8YppztWIsjJdCfzEYhgcJp8cEVP6zzY=' "
+                    + "'sha256-DLlkYCuDYGe6ME23YkUFB7Tc36rGDeo4mVBFbZX3uaU=' "
+                    + "'sha256-nT0S1Qe6I3DXxjh7v5KM5jmdlxs04kQiH5PEGYxqKcU=' "
+                    + "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=' "
+                    + "'sha256-ZW1GSuo0pKyEx5Ar7ZC5Dflb/mjatjeTW9aVx0iZAzE='; "
+                    + "style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
                 : "default-src 'none'; form-action 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'";
         }
     }
