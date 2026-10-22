@@ -32,6 +32,12 @@ linked into Slow without also pulling in unrelated E2E infrastructure.
    matching the existing test proxy boundary. Authentication remains enforced.
    Each JWT belongs to its own worker/issuer and expires after 12 hours.
 
+Targets appear only after a durable HTTP PUT succeeds. Readiness retries 404/503
+within two minutes; a successful collections listing alone is insufficient.
+For restart/reconstruction, set `readiness_collection` to the existing runner's
+`<collection>-probe` name: the worker waits for that collection to refill before
+writing its readiness marker, so subsequent convergence end-marker PUTs can run.
+
 The host does not create benchmark collections: orchestration uses the real API.
 Readiness proves the database is readable with its JWT on that worker; it does
 not promise remote write admission is already available. Retry admission until

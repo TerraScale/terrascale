@@ -63,6 +63,8 @@ func recoveryPhase(ctx context.Context, c *repllocal.Cluster, repeat int, name s
 		}
 		lagging.Config.Machine = ulid.Make().String()
 	}
+	// Wait for the retained/refilled marker collection, not merely a writable empty database.
+	lagging.Config.ReadinessCollection = state.Collection + "-probe"
 	restart := time.Now()
 	if err := c.Launch(lagging); err != nil {
 		stopLoad()

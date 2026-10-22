@@ -18,14 +18,15 @@ import (
 )
 
 type workerConfig struct {
-	RunDirectory      string `json:"run_directory"`
-	Region            string `json:"region"`
-	Machine           string `json:"machine"`
-	Organization      string `json:"organization"`
-	Project           string `json:"project"`
-	Database          string `json:"database"`
-	User              string `json:"user"`
-	AdvertisedPeerURL string `json:"advertised_peer_url"`
+	RunDirectory        string `json:"run_directory"`
+	Region              string `json:"region"`
+	Machine             string `json:"machine"`
+	Organization        string `json:"organization"`
+	Project             string `json:"project"`
+	Database            string `json:"database"`
+	User                string `json:"user"`
+	AdvertisedPeerURL   string `json:"advertised_peer_url"`
+	ReadinessCollection string `json:"readiness_collection,omitempty"`
 }
 
 type WorkerTarget struct {
