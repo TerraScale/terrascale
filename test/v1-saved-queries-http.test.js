@@ -52,7 +52,7 @@ test.each([{ id: "invalid" }, { updatedAt: 1 }, { sql: null }])("rejects malform
 test("saved SQL uses the producer's UTF-16 length limit rather than UTF-8 bytes", async () => {
   const sql = `SELECT '${"é😀".repeat(5458)}'`;
   expect(sql.length).toBe(16383);
-  const { client, requests } = await fixture((_r, response) => json(response, { ...saved, sql }));
+  const { client, requests } = await fixture((_r, response) => json(response, { ...saved, sql }, 201));
   expect((await client.savedQueries.create({ ...input, sql: `${sql} ` })).sql).toBe(sql);
   expect(JSON.parse(requests[0]?.body ?? "").sql).toBe(`${sql} `);
   await expect(client.savedQueries.update(entity, { ...input, sql: `${sql}  ` })).rejects.toThrow(/UTF-16/u);
