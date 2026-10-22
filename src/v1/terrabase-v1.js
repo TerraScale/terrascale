@@ -14,6 +14,7 @@ import { runSql, checkSql } from "./sql.js";
 import { streamChanges } from "./changes.js";
 import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema } from "./catalog.js";
 import { V1Transport } from "./transport.js";
+import { V1Health, V1Platform } from "./system.js";
 import { V1Imports } from "./imports.js";
 import { V1Backups, V1BackupDestinationClient } from "./backups.js";
 import { V1ProjectUsageClient, V1DatabaseUsageClient } from "./usage.js";
@@ -216,7 +217,7 @@ function encodeQuery(query) {
  * @param {JsonValue | undefined} value
  * @returns {V1QueryPage}
  */
-function decodeQueryPage(value) {
+export function decodeQueryPage(value) {
   const raw = object(value, "query response");
   const next = raw.next_cursor;
   if (next !== null && (typeof next !== "string" || next === "")) malformed("next_cursor");
@@ -685,7 +686,7 @@ export class V1Transaction {
 /** @typedef {{ readonly items: readonly V1CollectionInfo[]; readonly nextCursor: string | null }} V1CollectionPage */
 /** @typedef {{ readonly limit?: number | undefined; readonly cursor?: string | undefined }} V1CollectionListOptions */
 /** @param {JsonValue | undefined} value @returns {V1CollectionInfo} */
-function decodeCollection(value) {
+export function decodeCollection(value) {
   const raw = object(value, "collection");
   return Object.freeze({ id: requireId(raw.id), name: requireName("collection", raw.name), createdAt: u64(raw.created_at, "collection created_at") });
 }
@@ -813,6 +814,10 @@ export class V1Database {
  * privately; it is never serialized, logged or forwarded to redirects.
  */
 export class TerraBaseV1Client {
+  /** @type {V1Health} */
+  #health;
+  /** @type {V1Platform} */
+  #platform;
   /** @type {V1BackupDestinationClient} */
   #backupDestination;
   /** @type {V1ProjectUsageClient} */
@@ -826,11 +831,14 @@ export class TerraBaseV1Client {
 
   /** @param {TerraBaseV1ClientConfig} config */
   constructor(config) {
+    requireId(config.project);
     this.#transport = new V1Transport(config);
     this.#databases = new V1Databases(this.#transport);
     this.#savedQueries = new V1SavedQueries(this.#transport);
     this.#metrics = new V1ProjectUsageClient(this.#transport);
     this.#backupDestination = new V1BackupDestinationClient(this.#transport);
+    this.#health = new V1Health(this.#transport);
+    this.#platform = new V1Platform(this.#transport);
     Object.freeze(this);
   }
 
@@ -850,6 +858,10 @@ export class TerraBaseV1Client {
   get metrics() { return this.#metrics; }
   /** @returns {V1BackupDestinationClient} */
   get backupDestination() { return this.#backupDestination; }
+  /** @returns {V1Health} */
+  get health() { return this.#health; }
+  /** @returns {V1Platform} */
+  get platform() { return this.#platform; }
 }
 
 /**

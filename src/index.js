@@ -125,3 +125,9 @@ export { V1Imports } from "./v1/imports.js";
 /** @typedef {import("./v1/imports.js").V1ImportJob} V1ImportJob */
 /** @typedef {import("./v1/imports.js").V1ImportOptions} V1ImportOptions */
 /** @typedef {import("./v1/imports.js").V1CreateImportRequest} V1CreateImportRequest */
+
+export { createTerraBaseSystemClient, V1Health, V1Platform } from "./v1/system.js";
+/** @typedef {import("./v1/system.js").TerraBaseSystemClientConfig} TerraBaseSystemClientConfig */
+/** @typedef {import("./v1/system.js").V1ProbeStatus} V1ProbeStatus */
+/** @typedef {import("./v1/system.js").V1ReplicationHealth} V1ReplicationHealth */
+/** @typedef {import("./v1/system.js").V1PlatformDatabases} V1PlatformDatabases */

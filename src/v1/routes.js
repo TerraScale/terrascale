@@ -6,7 +6,7 @@ import { managementV1Routes } from "./management-routes.js";
  * @property {V1Operation} operation
  * @property {"GET" | "PUT" | "POST" | "PATCH" | "DELETE"} method
  * @property {string} pathTemplate
- * @property {"documents:read" | "documents:write" | "shapes:read" | "databases:read" | "databases:write"} permission
+ * @property {"documents:read" | "documents:write" | "shapes:read" | "databases:read" | "databases:write" | "anonymous" | "platform-admin"} permission
  * @property {readonly string[]} requestMediaTypes
  * @property {string} responseMediaType
  * @property {readonly number[]} successStatuses
