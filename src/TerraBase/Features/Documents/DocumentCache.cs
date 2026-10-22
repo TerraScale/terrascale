@@ -12,7 +12,8 @@ namespace TerraBase.Features.Documents;
 
 /// <summary>
 /// Read-through cache of documents and list pages. Each entry keeps the <see cref="IWriteStamps"/> stamp taken
-/// before its storage read and is served only while that stamp is unchanged, so no read returns a version older
+/// before its storage read. Tenant keys also pin the certified storage incarnation, so an old in-flight read cannot
+/// populate a replacement copy's cache. An entry is served only while its stamp is unchanged, so no read returns a version older
 /// than a write this node acknowledged. Tenant CLOCK rings share a 4096-entry and quarter-memory-budget bound.
 /// Each organization evicts only its own snapshots; every entry is also charged to <see cref="IMemoryBudget"/>.
 /// </summary>
@@ -69,8 +70,8 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
         }
     }
 
-    public ValueTask<StoredDocument?> GetAsync(DocumentKey key, Func<ValueTask<StoredDocument?>> read) =>
-        GetAsync(key, key.Database, () => _stamps.Document(key.Database, key.Collection, key.Id), "document", read,
+    public ValueTask<StoredDocument?> GetAsync(DocumentKey key, Ulid incarnation, Func<ValueTask<StoredDocument?>> read) =>
+        GetAsync((key, incarnation), key.Database, () => _stamps.Document(key.Database, key.Collection, key.Id), "document", read,
             document => Size(document) + TenantSize(key.Database) + Chars(key.Collection) + Chars(key.Id), Copy);
 
     public ValueTask<StoredDocument?> GetSystemAsync(string collection, string id, Func<ValueTask<StoredDocument?>> read) =>
@@ -78,9 +79,9 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
             document => Size(document) + Chars(collection) + Chars(id), Copy);
 
     public async ValueTask<CachedQuery> QueryAsync(
-        TenantContext database, DocumentQuery query, long? countLimit, Func<ValueTask<CachedQuery>> read)
+        TenantContext database, Ulid incarnation, DocumentQuery query, long? countLimit, Func<ValueTask<CachedQuery>> read)
     {
-        var key = new QueryKey(database, query.Collection, Normalize(query, countLimit));
+        var key = new QueryKey(database, incarnation, query.Collection, Normalize(query, countLimit));
         return (await GetAsync(key, database, () => _stamps.Collection(database, query.Collection), "page",
             async () => (CachedQuery?)await read().ConfigureAwait(false),
             result => result.Page.Rows.Sum(row => Size(row.Document) + DocumentOverhead
@@ -368,7 +369,7 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
 }
 
 /// <summary>A normalized query over raw documents, including its optional bounded count.</summary>
-internal sealed record QueryKey(TenantContext Database, string Collection, string Query);
+internal sealed record QueryKey(TenantContext Database, Ulid Incarnation, string Collection, string Query);
 
 /// <summary>A page and optional count read from the same storage transaction.</summary>
 internal sealed record CachedQuery(QueryPage Page, (long Count, bool Complete)? Count);

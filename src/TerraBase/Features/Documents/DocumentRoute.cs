@@ -10,6 +10,7 @@ using Microsoft.Net.Http.Headers;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -111,8 +112,7 @@ internal static class DocumentRoute
                 };
             }
 
-            context.Features.Set(database);
-            return database;
+            return await AdmitCopyAsync(context, database, cancellationToken).ConfigureAwait(false);
         }
 
         var key = ApiKey.Of(context);
@@ -124,6 +124,20 @@ internal static class DocumentRoute
                 Unavailable error => error,
                 TenantContext or NotFound => UnknownDatabase,
             };
+        }
+
+        return await AdmitCopyAsync(context, tenant, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<TenantResult> AdmitCopyAsync(HttpContext context, TenantContext tenant, CancellationToken cancellationToken)
+    {
+        var faults = context.RequestServices.GetRequiredService<IReplicaCopyFaults>();
+        var storage = context.RequestServices.GetRequiredService<IRebuildStorage>();
+        var incarnation = await storage.IncarnationAsync(tenant, cancellationToken).ConfigureAwait(false);
+        if (await faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false)
+            || incarnation is { } pin && await faults.RefusedAsync(tenant, pin, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ReplicaCopyFaultedException("this database copy is awaiting certified recovery");
         }
 
         context.Features.Set(tenant);

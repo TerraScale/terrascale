@@ -320,6 +320,11 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
     private static List<SideRow> MeasureSide(string workingPath, string afterCollection, string afterId, int maxRows, long maxBytes, CancellationToken cancellationToken)
     {
         using var connection = Working(workingPath);
+        if (afterCollection.Length == 0 && afterId.Length == 0)
+        {
+            VerifySideCoverage(connection, cancellationToken);
+        }
+
         List<(string Collection, string Id, long State)> keys = [];
         using (var page = connection.CreateCommand())
         {
@@ -362,6 +367,73 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
         }
 
         return rows;
+    }
+
+    // Missing state cannot be reconstructed from its body; retain the side copy rather than certify its omission.
+    private static void VerifySideCoverage(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var after = string.Empty;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string collection;
+            using (var next = connection.CreateCommand())
+            {
+                next.CommandText = """
+                    WITH names(name) AS (
+                        SELECT name FROM (SELECT name FROM collections WHERE name > $after ORDER BY name LIMIT 1)
+                        UNION SELECT '_collections' UNION SELECT '_indexes' UNION SELECT '_unique'
+                    )
+                    SELECT name, typeof(name) = 'text' AND octet_length(name) BETWEEN 1 AND 4096
+                    FROM names WHERE name > $after ORDER BY name LIMIT 1;
+                    """;
+                next.Parameters.AddWithValue("$after", after);
+                using var reader = next.ExecuteReader();
+                if (!reader.Read())
+                {
+                    break;
+                }
+
+                if (reader.GetInt64(1) != 1)
+                {
+                    throw new InvalidDataException("a side-copy collection has an invalid name");
+                }
+
+                collection = reader.GetString(0);
+                if (!DatabaseName.TryParse(collection, out _) && !SqliteStorageTransaction.IsMetadata(collection))
+                {
+                    throw new InvalidDataException("a side-copy collection has an invalid name");
+                }
+            }
+
+            using var orphan = connection.CreateCommand();
+            orphan.CommandText = $"""
+                SELECT 1 FROM {SqliteStorageTransaction.Table(collection)} AS document
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM _tb_state AS state WHERE state.collection = $collection AND state.id = document.id
+                ) LIMIT 1;
+                """;
+            orphan.Parameters.AddWithValue("$collection", collection);
+            if (orphan.ExecuteScalar() is not null)
+            {
+                throw new InvalidDataException("a side-copy document has no replicated state");
+            }
+
+            after = collection;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        using var conflict = connection.CreateCommand();
+        conflict.CommandText = """
+            SELECT 1 FROM _tb_unique_conflicts AS document
+            WHERE NOT EXISTS (
+                SELECT 1 FROM _tb_state AS state WHERE state.collection = document.collection AND state.id = document.id
+            ) LIMIT 1;
+            """;
+        if (conflict.ExecuteScalar() is not null)
+        {
+            throw new InvalidDataException("a side-copy uniqueness loser has no replicated state");
+        }
     }
 
     // Worker-only: the measured rows' states, each checked against its stored digest.

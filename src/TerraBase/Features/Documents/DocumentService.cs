@@ -21,7 +21,7 @@ namespace TerraBase.Features.Documents;
 
 internal sealed partial class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage,
     IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters, IStorageQuota quota, IDatabaseStats stats,
-    IRemoteDurability durability, TerraBaseOptions options, ILogger<DocumentService> logger)
+    IRemoteDurability durability, TerraBaseOptions options, ILogger<DocumentService> logger, IReplicaCopyFaults faults)
     : IDocumentService, ISystemDocumentReader
 {
     // assert_count examines at most this many documents.
@@ -60,7 +60,11 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         return collection;
     }
 
-    public async ValueTask<CollectionResult> GetCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
+    public ValueTask<CollectionResult> GetCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+        ReadCertifiedAsync<CollectionResult>(database, _ => ReadCollectionAsync(database, name, cancellationToken),
+            static () => DocumentRoute.UnknownDatabase, cancellationToken);
+
+    private async ValueTask<CollectionResult> ReadCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
         if (await BeginAsync(database, write: false, cancellationToken).ConfigureAwait(false) is not { } transaction)
         {
@@ -73,7 +77,12 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         }
     }
 
-    public async ValueTask<Found<CollectionPage>> ListCollectionsAsync(
+    public ValueTask<Found<CollectionPage>> ListCollectionsAsync(
+        TenantContext database, string? afterName, int limit, CancellationToken cancellationToken) =>
+        ReadCertifiedAsync<Found<CollectionPage>>(database, _ => ReadCollectionsAsync(database, afterName, limit, cancellationToken),
+            static () => DocumentRoute.UnknownDatabase, cancellationToken);
+
+    private async ValueTask<Found<CollectionPage>> ReadCollectionsAsync(
         TenantContext database, string? afterName, int limit, CancellationToken cancellationToken)
     {
         if (await BeginAsync(database, write: false, cancellationToken).ConfigureAwait(false) is not { } transaction)
@@ -132,12 +141,16 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         return collection;
     }
 
-    public async ValueTask<DocumentRead> GetAsync(DocumentKey key, CancellationToken cancellationToken)
+    public ValueTask<DocumentRead> GetAsync(DocumentKey key, CancellationToken cancellationToken) =>
+        ReadCertifiedAsync<DocumentRead>(key.Database, incarnation => ReadCachedDocumentAsync(key, incarnation, cancellationToken),
+            static () => DocumentRoute.UnknownDatabase, cancellationToken);
+
+    private async ValueTask<DocumentRead> ReadCachedDocumentAsync(DocumentKey key, Ulid incarnation, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         // The cache keeps documents only: an absence or a refusal comes back as null, which it never stores.
         DocumentRead? missed = null;
-        var document = await cache.GetAsync(key, async () =>
+        var document = await cache.GetAsync(key, incarnation, async () =>
         {
             var read = await ReadAsync(key, cancellationToken).ConfigureAwait(false);
             if (read is StoredDocument stored)
@@ -210,8 +223,13 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         }
     }
 
-    public async ValueTask<QueryResult> QueryAsync(
-        TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
+    public ValueTask<QueryResult> QueryAsync(
+        TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken) =>
+        ReadCertifiedAsync<QueryResult>(database, incarnation => ReadCachedQueryAsync(database, incarnation, query, countLimit, cancellationToken),
+            static () => DocumentRoute.UnknownDatabase, cancellationToken);
+
+    private async ValueTask<QueryResult> ReadCachedQueryAsync(
+        TenantContext database, Ulid incarnation, DocumentQuery query, long? countLimit, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         string? shape;
@@ -236,7 +254,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         try
         {
             // Count each request outside the cache; only a miss fills this request's scan observation.
-            var result = await cache.QueryAsync(database, query, countLimit, async () =>
+            var result = await cache.QueryAsync(database, incarnation, query, countLimit, async () =>
             {
                 var read = await ReadQueryAsync(database, query, countLimit, observation, cancellationToken).ConfigureAwait(false);
                 if (read is QueryOutcome outcome)
@@ -720,6 +738,31 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
     }
 
     private static PreconditionFailed Failed(string message) => new(message, "precondition_failed");
+
+    private async ValueTask<T> ReadCertifiedAsync<T>(
+        TenantContext database, Func<Ulid, ValueTask<T>> read, Func<T> missing, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        {
+            return missing();
+        }
+
+        var incarnation = store.Incarnation;
+        if (await faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ReplicaCopyFaultedException("this database copy is awaiting certified recovery");
+        }
+
+        var result = await read(incarnation).ConfigureAwait(false);
+        // Admission can overlap a fault, swap and certification; reject results from a copy that stopped being trusted.
+        if (await faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ReplicaCopyFaultedException("this database copy changed while it was being read");
+        }
+
+        return result;
+    }
 
     // Null when the database's storage does not exist.
     private async ValueTask<IStorageTransaction?> BeginAsync(TenantContext database, bool write, CancellationToken cancellationToken) =>

@@ -86,6 +86,87 @@ public sealed class RebuildCertificationTests
     }
 
     [Test]
+    public async Task A_certified_rebuild_invalidates_a_client_document_cached_before_the_copy_fault()
+    {
+        await using var pair = await Pair.StartAsync();
+        var (kept, _) = await pair.SeedAsync();
+        pair.Members.Map = (viewer, member) => viewer == pair.Sjc.Name && member.Name == pair.Gru.Name
+            ? member with { PeerAddress = new UriBuilder(member.PeerAddress) { Port = 1 }.Uri.ToString() }
+            : member;
+        await pair.Sjc.RefreshMembershipAsync();
+        await pair.WaitAsync(_ => Task.FromResult(pair.Sjc.Service<PeerStreams>().Snapshot().Peers.Count == 0));
+        using var data = await pair.Gru.Api.CreateClientAsync(pair.Database.OrganizationId, "documents:read");
+        var path = new Uri($"/v1/projects/{pair.Database.ProjectId}/databases/main/collections/items/documents/by-key?id={kept}", UriKind.Relative);
+        using (var before = await data.GetAsync(path, pair.Token))
+        {
+            await Assert.That(before.StatusCode).IsEqualTo(System.Net.HttpStatusCode.OK);
+            using var body = JsonDocument.Parse(await before.Content.ReadAsStringAsync(pair.Token));
+            await Assert.That(body.RootElement.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
+        }
+
+        var oldState = await pair.Gru.StateAsync(kept);
+        var faulted = await pair.Gru.IncarnationAsync();
+        var rebuilds = pair.Gru.Rebuilds;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rebuilds.Gate = gate;
+        try
+        {
+            await pair.Gru.Service<IReplicaCopyFaults>().RecordAsync(pair.Database, faulted, "a test fault", pair.Token);
+            await rebuilds.Entered.Task.WaitAsync(Deadline, pair.Token);
+            await pair.Sjc.PutAsync(kept, """{"n":2}""");
+            var updated = await pair.Sjc.StateAsync(kept);
+            await Assert.That(updated.State.MaxStamp.Value).IsGreaterThan(oldState.State.MaxStamp.Value);
+            gate.SetResult();
+            await pair.WaitAsync(_ => Task.FromResult(rebuilds.Outcomes.Count > 0));
+            var outcome = rebuilds.Outcomes[0];
+            await Assert.That(outcome is RebuildOutcome.Completed).IsTrue().Because(outcome.ToString());
+            await Assert.That(await pair.Gru.ReadAsync(kept)).IsEqualTo("""{"n":2}""");
+
+            using var after = await data.GetAsync(path, pair.Token);
+            await Assert.That(after.StatusCode).IsEqualTo(System.Net.HttpStatusCode.OK);
+            using var result = JsonDocument.Parse(await after.Content.ReadAsStringAsync(pair.Token));
+            await Assert.That(result.RootElement.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(2)
+                .Because("the certified replacement contains the newer state, including for a previously cached client GET");
+        }
+        finally
+        {
+            gate.TrySetResult();
+        }
+    }
+
+    [Test]
+    public async Task A_retained_materialized_document_without_its_state_refuses_certification_and_keeps_the_side_copy()
+    {
+        await using var pair = await Pair.StartAsync();
+        var (_, only) = await pair.SeedAsync();
+        await Assert.That(await pair.Gru.ReadAsync(only)).IsNull();
+        await Assert.That(await pair.Sjc.ReadAsync(only)).IsEqualTo("""{"n":2}""");
+        var faulted = await pair.Sjc.IncarnationAsync();
+        var rebuilds = pair.Sjc.Rebuilds;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rebuilds.Gate = gate;
+        try
+        {
+            await pair.Sjc.Service<IReplicaCopyFaults>().RecordAsync(pair.Database, faulted, "a test fault", pair.Token);
+            await rebuilds.Entered.Task.WaitAsync(Deadline, pair.Token);
+            await pair.Sjc.RemoveStateKeepingDocumentAsync(only);
+            await Assert.That(await pair.Gru.ReadAsync(only)).IsNull();
+            gate.SetResult();
+            await pair.WaitAsync(_ => Task.FromResult(rebuilds.Outcomes.Count > 0));
+
+            var outcome = rebuilds.Outcomes[0];
+            await Assert.That(outcome is RebuildOutcome.Refused).IsTrue().Because(outcome.ToString());
+            await Assert.That(((RebuildOutcome.Refused)outcome).Reason.Length).IsGreaterThan(0);
+            _ = await pair.Sjc.RetainedRefusalAsync(faulted, pair.Gru.Name);
+            await pair.Sjc.AssertNoSalvageFilesAsync(faulted);
+        }
+        finally
+        {
+            gate.TrySetResult();
+        }
+    }
+
+    [Test]
     public async Task A_live_batch_refused_while_the_copy_is_faulted_streams_into_the_certified_copy()
     {
         await using var pair = await Pair.StartAsync();
@@ -465,6 +546,82 @@ public sealed class RebuildCertificationTests
         await Assert.That(rebuilds.Outcomes[0]).IsEqualTo(new RebuildOutcome.Refused(NoRefill));
         var swapped = await pair.Gru.SwappedAsync(held);
         await AnswersAsync(client, pair.Database, swapped, held: false);
+    }
+
+    [Test]
+    [Arguments(false, false, "document")]
+    [Arguments(true, false, "document")]
+    [Arguments(false, true, "document")]
+    [Arguments(true, true, "document")]
+    [Arguments(false, false, "query")]
+    [Arguments(true, false, "query")]
+    [Arguments(false, true, "query")]
+    [Arguments(true, true, "query")]
+    [Arguments(false, false, "collection")]
+    [Arguments(false, true, "collection")]
+    [Arguments(false, false, "collections")]
+    [Arguments(false, true, "collections")]
+    [Arguments(false, false, "schema")]
+    [Arguments(false, true, "schema")]
+    [Arguments(false, false, "changes")]
+    [Arguments(false, true, "changes")]
+    public async Task Client_reads_refuse_faulted_and_swapped_uncertified_copies(bool cached, bool swapped, string route)
+    {
+        await using var pair = await Pair.StartAsync();
+        var (kept, _) = await pair.SeedAsync();
+        using var data = await pair.Gru.Api.CreateClientAsync(pair.Database.OrganizationId, "documents:read");
+        var collections = $"/v1/projects/{pair.Database.ProjectId}/databases/main/collections";
+        var path = new Uri(route switch
+        {
+            "document" => $"{collections}/items/documents/by-key?id={kept}",
+            "query" => $"{collections}/items/documents",
+            "collection" => $"{collections}/items",
+            "collections" => collections,
+            "schema" => $"{collections}/items/schema",
+            "changes" => $"/v1/projects/{pair.Database.ProjectId}/databases/main/changes?cursor=now",
+            _ => throw new ArgumentOutOfRangeException(nameof(route)),
+        }, UriKind.Relative);
+        if (cached)
+        {
+            using var before = await data.GetAsync(path, pair.Token);
+            await Assert.That(before.StatusCode).IsEqualTo(System.Net.HttpStatusCode.OK);
+        }
+
+        var held = await pair.Gru.IncarnationAsync();
+        var rebuilds = pair.Gru.Rebuilds;
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rebuilds.Gate = gate;
+        pair.Members.Map = (viewer, member) => viewer == pair.Gru.Name && member.Name == pair.Sjc.Name
+            ? member with { PeerAddress = new UriBuilder(member.PeerAddress) { Port = 1 }.Uri.ToString() }
+            : member;
+        await pair.Gru.RefreshMembershipAsync();
+        try
+        {
+            await pair.Gru.Service<IReplicaCopyFaults>().RecordAsync(pair.Database, held, "a test fault", pair.Token);
+            await rebuilds.Entered.Task.WaitAsync(Deadline, pair.Token);
+            if (swapped)
+            {
+                gate.SetResult();
+                await pair.WaitAsync(_ => Task.FromResult(rebuilds.Outcomes.Count > 0));
+                await Assert.That(rebuilds.Outcomes[0]).IsEqualTo(new RebuildOutcome.Refused(NoRefill));
+                _ = await pair.Gru.SwappedAsync(held);
+            }
+            else
+            {
+                await Assert.That(await pair.Gru.InPlaceAsync()).IsEqualTo(held);
+                await Assert.That(await pair.Gru.Service<IReplicaCopyFaults>().RefusedAsync(pair.Database, held, pair.Token)).IsTrue();
+            }
+
+            using var response = await data.GetAsync(path, HttpCompletionOption.ResponseHeadersRead, pair.Token);
+            await Assert.That(response.StatusCode).IsEqualTo(System.Net.HttpStatusCode.ServiceUnavailable);
+            var body = await response.Content.ReadAsStringAsync(pair.Token);
+            using var error = JsonDocument.Parse(body);
+            await Assert.That(error.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("copy_faulted");
+        }
+        finally
+        {
+            gate.TrySetResult();
+        }
     }
 
     [Test]
@@ -988,7 +1145,7 @@ public sealed class RebuildCertificationTests
         }
 
         // A refused refill's state: the record swapped, the side copy kept, no refill proof, the new incarnation refused.
-        public async Task<Ulid> SwappedAsync(Ulid faulted)
+        public async Task<Ulid> SwappedAsync(Ulid faulted, string? refillSource = null)
         {
             var record = await Service<IRebuildLedger>().GetAsync(pair.Database, pair.Token);
             await Assert.That(record?.Phase).IsEqualTo(RebuildPhase.Swapped);
@@ -996,7 +1153,7 @@ public sealed class RebuildCertificationTests
             var rebuilt = record.NewIncarnation!.Value;
             await Assert.That(await IncarnationAsync()).IsEqualTo(rebuilt);
             await Assert.That(SideExists(faulted)).IsTrue();
-            await Assert.That(await RefillSourceAsync()).IsNull().Because("no refill proof was recorded");
+            await Assert.That(await RefillSourceAsync()).IsEqualTo(refillSource).Because("the refill proof matches the reached phase");
             await Assert.That(await Service<IReplicaCopyFaults>().RefusedAsync(pair.Database, rebuilt, pair.Token)).IsTrue();
             _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(DurableWriteAsync);
             return rebuilt;
@@ -1108,9 +1265,9 @@ public sealed class RebuildCertificationTests
             await Assert.That(stored.State + stored.Body).IsGreaterThan(0).And.IsLessThan(4096);
         }
 
-        public async Task<Ulid> RetainedRefusalAsync(Ulid faulted)
+        public async Task<Ulid> RetainedRefusalAsync(Ulid faulted, string? refillSource = null)
         {
-            var rebuilt = await SwappedAsync(faulted);
+            var rebuilt = await SwappedAsync(faulted, refillSource);
             await Assert.That(await CertificateAsync()).IsEmpty();
             var before = pair.SideBeforeRefill ?? throw new InvalidOperationException("the pre-stream side bytes were not captured");
             var after = await SideBytesAsync(faulted);
@@ -1190,6 +1347,25 @@ public sealed class RebuildCertificationTests
         {
             await pair.WaitAsync(async _ => await ReadAsync(id) == expected);
             return true;
+        }
+
+        public async Task RemoveStateKeepingDocumentAsync(string id)
+        {
+            var store = (SqliteDatabaseStore)await StoreAsync();
+            var changed = await store.WithWriterAsync(session => Uncaptured(session, command =>
+            {
+                command.CommandText = "DELETE FROM _tb_state WHERE collection = 'items' AND id = $id;";
+                command.Parameters.AddWithValue("$id", id);
+                var removed = command.ExecuteNonQuery();
+                command.CommandText = "SELECT doc FROM \"items\" WHERE id = $id;";
+                if (command.ExecuteScalar() as string != """{"n":2}""")
+                {
+                    throw new InvalidOperationException("the orphan fixture did not retain its materialized document");
+                }
+
+                return removed;
+            }), "a test removing state while retaining its materialized document", pair.Token);
+            await Assert.That(changed).IsEqualTo(1);
         }
 
         public async Task CorruptStateAsync(string id)
