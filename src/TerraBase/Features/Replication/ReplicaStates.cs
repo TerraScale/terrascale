@@ -58,8 +58,8 @@ public interface IReplicaStates
     /// <summary>
     /// A copying refill: forgets each of <paramref name="keys"/> of <paramref name="incarnation"/> whose state lies wholly
     /// below <paramref name="horizon"/>, the horizon of a peer that no longer holds it. Returns how many went; null, with
-    /// nothing forgotten, when this machine does not hold the database or the copy in place is another (checked under the
-    /// writer).
+    /// nothing forgotten, when this machine does not hold the database, the copy in place is another, or a live local
+    /// state lacks deletion evidence (checked under the writer).
     /// </summary>
     ValueTask<int?> ForgetAsync(
         TenantContext database, Ulid incarnation, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken);

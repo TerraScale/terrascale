@@ -217,6 +217,11 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
                 return 0;
             }
 
+            if (!await transaction.CanForgetAsync(keys, horizon, cancellationToken).ConfigureAwait(false))
+            {
+                return null;
+            }
+
             var forgotten = await transaction.ForgetAsync(keys, horizon, cancellationToken).ConfigureAwait(false);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return forgotten;

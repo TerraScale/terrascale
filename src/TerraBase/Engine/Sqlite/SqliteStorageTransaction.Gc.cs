@@ -168,6 +168,23 @@ internal sealed partial class SqliteStorageTransaction
     internal ValueTask<int> ForgetRefillAsync(IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
         RunAsync(() => Forget(keys, horizon, refill: true, cancellationToken), cancellationToken, mutation: true);
 
+    internal ValueTask<bool> CanForgetAsync(IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            foreach (var (collection, id) in keys)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var state = ReadState(collection, id);
+                // Source absence and age alone do not prove that a live local state was deleted.
+                if (state.Exists && state.MaxStamp.Value < horizon.Value)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }, cancellationToken);
+
     private int Forget(IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, bool refill, CancellationToken cancellationToken)
     {
         var forgotten = 0;

@@ -13,7 +13,7 @@ public sealed class OrdinaryGcTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task Ordinary_refill_preserves_source_present_members_below_its_horizon_when_collection_metadata_was_collected(bool survivor)
+    public async Task Ordinary_refill_refuses_ambiguous_live_absence_and_preserves_source_present_members(bool survivor)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var cluster = await PeerStreamTests.Cluster.StartAsync("gru", "sjc");
@@ -52,7 +52,7 @@ public sealed class OrdinaryGcTests
         var changed = await receiver.AntiEntropy.RefillAsync(cluster.Database, source.Name, new Hlc(3000),
             await source.IncarnationAsync(), token);
 
-        await Assert.That(changed).IsNotNull();
+        await Assert.That(changed).IsNull().Because("source absence does not prove deletion of the receiver's live states");
         foreach (var restart in new[] { false, true })
         {
             if (restart)
@@ -61,15 +61,44 @@ public sealed class OrdinaryGcTests
                 await receiver.StartAsync();
             }
 
-            await Assert.That(await receiver.HasStateAsync(DocumentDelta.Collections, "items")).IsFalse();
-            await Assert.That(await receiver.ReadAsync(missing)).IsNull();
-            await Assert.That(await receiver.HasStateAsync("items", missing)).IsFalse();
+            await Assert.That(await receiver.HasStateAsync(DocumentDelta.Collections, "items")).IsTrue();
+            await Assert.That(await receiver.ReadAsync(missing)).IsEqualTo("""{"missing":true}""");
+            await Assert.That(await receiver.HasStateAsync("items", missing)).IsTrue();
             await Assert.That(await receiver.ReadAsync(retained)).IsEqualTo(survivor ? """{"survivor":true}""" : null);
             await Assert.That(await receiver.HasStateAsync("items", retained)).IsEqualTo(survivor);
             await using var read = await (await receiver.StoreAsync()).BeginTransactionAsync(write: false, token);
             await Assert.That((await read.ListCollectionsAsync(null, 100, token)).Collections.Any(collection => collection.Name == "items"))
-                .IsEqualTo(survivor);
+                .IsTrue();
         }
+    }
+
+    [Test]
+    public async Task Ordinary_refill_keeps_an_old_live_state_that_the_source_never_received_across_restart()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var cluster = await PeerStreamTests.Cluster.StartAsync("gru", "sjc");
+        var source = cluster["gru"];
+        var receiver = cluster["sjc"];
+        var only = EntityIds.New().ToString();
+        var deleted = EntityIds.New().ToString();
+        await RepairAsync(receiver, new RepairState("items", only, Put(1000, """{"only":true}""")));
+        await RepairAsync(source, new RepairState("items", deleted, Put(1000, """{"deleted":true}""").Delete(At(2000))));
+        var store = (SqliteDatabaseStore)(await source.Api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+            .OpenDatabaseAsync(cluster.Database, token))!;
+        await using (var collect = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, token))
+        {
+            await Assert.That(await collect.CollectAsync(new Hlc(3000), token)).IsEqualTo(1);
+            _ = await collect.CommitAsync(token);
+        }
+
+        await Assert.That(await source.HasStateAsync("items", only)).IsFalse();
+        await Assert.That(await receiver.AntiEntropy.RefillAsync(cluster.Database, source.Name, new Hlc(3000),
+            await source.IncarnationAsync(), token)).IsNull();
+        await Assert.That(await receiver.ReadAsync(only)).IsEqualTo("""{"only":true}""");
+        await receiver.StopAsync();
+        await receiver.StartAsync();
+        await Assert.That(await receiver.ReadAsync(only)).IsEqualTo("""{"only":true}""");
+        await Assert.That(await receiver.HasStateAsync("items", only)).IsTrue();
     }
 
     private static async Task RepairAsync(PeerStreamTests.Machine machine, params RepairState[] states) =>
