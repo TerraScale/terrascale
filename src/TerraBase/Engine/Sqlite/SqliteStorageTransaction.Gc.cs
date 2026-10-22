@@ -73,8 +73,23 @@ internal sealed partial class SqliteStorageTransaction
             stable = Math.Min(stable, (ulong)reported);
         }
 
-        return new Hlc(stable > HorizonMargin ? stable - HorizonMargin : 0);
+        return new Hlc(Math.Max(CollectedBefore().Value, stable > HorizonMargin ? stable - HorizonMargin : 0));
     }
+
+    // A returning peer may lower the current horizon, but cannot undo a committed collection.
+    private Hlc CollectedBefore() => Command("SELECT CASE WHEN typeof(stamp) = 'integer' AND stamp >= 0 THEN stamp ELSE -1 END FROM _tb_gc_floor WHERE id = 1;")
+        .ExecuteScalar() is long stamp && stamp >= 0
+        ? new Hlc((ulong)stamp) : throw StoredDataCorruption.Create("the collected-state frontier is missing or invalid");
+
+    private void AdvanceCollectedBefore(Hlc horizon)
+    {
+        var command = Command("UPDATE _tb_gc_floor SET stamp = max(stamp, $stamp) WHERE id = 1;");
+        command.Parameters.AddWithValue("$stamp", Version(horizon));
+        command.ExecuteNonQuery();
+    }
+
+    private static ClearEntry CollectedClear(Hlc horizon) =>
+        new(new EntryVersion(new Hlc(horizon.Value - 1), new ReplicaId(ulong.MaxValue)), true, new Hlc(horizon.Value - 1));
 
     /// <summary>
     /// Deletes up to 1024 states of deleted documents whose every entry lies below <paramref name="horizon"/>, oldest first;
@@ -107,6 +122,11 @@ internal sealed partial class SqliteStorageTransaction
                 var delete = Command("DELETE FROM _tb_state WHERE collection = $collection AND id = $id AND live = 0;", collection);
                 delete.Parameters.AddWithValue("$id", id);
                 delete.ExecuteNonQuery();
+            }
+
+            if (dead.Count > 0)
+            {
+                AdvanceCollectedBefore(horizon);
             }
 
             return dead.Count;
@@ -144,6 +164,11 @@ internal sealed partial class SqliteStorageTransaction
                 }
 
                 forgotten++;
+            }
+
+            if (forgotten > 0)
+            {
+                AdvanceCollectedBefore(horizon);
             }
 
             return forgotten;
