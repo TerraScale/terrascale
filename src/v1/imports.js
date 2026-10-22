@@ -11,14 +11,14 @@ const constraint = record({ kind: text, name: nullable(text), columns: list(text
 const issue = record({ severity: text, code: text, column: nullable(text), row: nullable(numeric), message: text });
 const table = record({ source: text, collection: text, excluded: flag, rows: numeric, idPolicy: text, primaryKey: list(text),
   columns: list(column), constraints: list(constraint), issues: list(issue) });
-const preview = record({ id: text, tables: list(table), skipped: list(record({ kind: text, name: text })), skippedTruncated: flag, blocking: numeric, warnings: numeric });
+const preview = record({ id: requireId, tables: list(table), skipped: list(record({ kind: text, name: text })), skippedTruncated: flag, blocking: numeric, warnings: numeric });
 const progress = record({ tablesDone: numeric, tablesTotal: numeric, rowsWritten: numeric, rowsTotal: numeric, currentTable: nullable(text) });
 const validation = record({ passed: flag, tables: list(record({ source: text, collection: text, sourceRows: numeric, documents: numeric,
   sourceChecksum: text, documentChecksum: text, match: flag })) });
 const error = record({ code: text, message: text, retryable: flag, table: nullable(text), row: nullable(numeric), column: nullable(text) });
 const job = record({ id: requireId, project: requireId, database: text, region: text, state: text, cancelRequested: flag, options: importOptions,
   source: record({ format: text, bytes: numeric, sha256: text, receivedBytes: numeric, staged: flag, retainedUntil: nullable(text) }),
-  preview: nullable(preview), confirmedPreviewId: nullable(text), progress: nullable(progress), validation: nullable(validation), error: nullable(error),
+  preview: nullable(preview), confirmedPreviewId: nullable(requireId), progress: nullable(progress), validation: nullable(validation), error: nullable(error),
   createdAt: text, updatedAt: text, startedAt: nullable(text), finishedAt: nullable(text) });
 /** @typedef {ReturnType<typeof job>} V1ImportJob */
 /** @typedef {{ readonly missingPrimaryKey?: "reject" | "generate" | null; readonly exclude?: readonly string[] | null }} V1ImportOptions */
@@ -61,7 +61,7 @@ export class V1Imports {
   /** @param {{readonly previewId: string}} request @param {V1RequestOptions} [options] @returns {Promise<V1ImportJob>} */
   async start(request, options = {}) {
     members(request, ["previewId"]);
-    if (typeof request.previewId !== "string" || request.previewId === "") throw new TypeError("A confirmed previewId is required.");
+    requireId(request.previewId, "Preview ID");
     mutationOptions(options);
     return job((await this.#transport.call("startImport", this.#params, { body: stringifyExactJson(request, "import start"), signal: options.signal })).value);
   }
