@@ -1,28 +1,34 @@
 name: CI
 
-# One required check: "test". It passes when every area job that ran passed. The area jobs run in parallel, each
-# building one Dockerfile stage on a GitHub-hosted runner (format, Release build with analyzers as errors, the area's checks and Fast
-# suite, plus the local three-node replication matrix and the local-only e2e category for TerraBase): test-libs, test-auth, test-terrabase. On pull requests an area runs only when its files or the shared files
-# changed (`changes`); libs changes run every area. Pushes to main run every area. `make docker-test` runs all three.
-# After it:
-# - slow (main, workflow_dispatch, or a pull request labelled `full-ci`): the slow suites; never blocks. A failure
-#   writes the job summary; on main it also opens (or comments on) one `slow-failure` issue per failed test.
-# Images for ts-orch are published by images-ghcr.yml; ts-orch deploys them. CI does not deploy.
+# One required check: "test". It passes when every `fast` job that ran passed.
+# - changes: which areas (libs, auth, terrabase) the event touched; libs and shared files touch every area. Pull
+#   requests compare with their base, merge-group checks with the queue base, pushes to main with the previous main.
+#   workflow_dispatch runs every area. Docs-only changes run no area job.
+# - fast (pull requests, merge groups, workflow_dispatch), one job per touched area, each building one Dockerfile stage
+#   on a GitHub-hosted runner: format, Release build with analyzers as errors, the area's checks and Fast suite (plus
+#   the local three-node replication matrix and local-only e2e for TerraBase). On pull requests the same job then runs
+#   the area's Slow suite on the warm build (user decision Q-MAIN-GREEN); Slow never blocks. `make docker-test` runs
+#   all three Fast stages.
+# - main (pushes to main, workflow_dispatch), one job per touched auth/terrabase area: the merge group already proved
+#   Fast for this exact tree, so it builds once, writes the area cache and publishes the ghcr image ts-orch deploys.
+# - slow (after main): the area's Slow suite on main's cached build; a newer main cancels it. A Slow failure on main
+#   opens (or comments on) one `slow-failure` issue per failed test.
 
 on:
   pull_request:
-    # `labeled` lets the `full-ci` label start the slow suites; any label re-runs CI and cancels the running check.
-    types: [opened, synchronize, reopened, labeled]
+    # No `labeled`: a label must not re-run and cancel the running check.
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
 
-# A new push cancels the older run of the same PR or branch, main included; each merge-group run has its own group.
+# A new push cancels the older run of the same PR. Every other run has its own group: each main push publishes the
+# images of the areas it changed, so none may be cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -32,21 +38,28 @@ env:
   TS_DOTNET_REV: 78e311fe1dcb6dd603190800ed540d08e06de5fd
 
 jobs:
-  # Runs on every event: a skipped job would skip everything downstream of "test" (slow).
+  # Runs on every event: a skipped job would skip "test".
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read
       pull-requests: read
     outputs:
-      libs: ${{ steps.filter.outputs.libs }}
-      auth: ${{ steps.filter.outputs.auth }}
-      terrabase: ${{ steps.filter.outputs.terrabase }}
+      fast: ${{ steps.areas.outputs.fast }}
+      main: ${{ steps.areas.outputs.main }}
     steps:
+      # Pull requests list their files through the API; merge groups and pushes diff two fetched commits.
+      - if: github.event_name == 'merge_group' || github.event_name == 'push'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
       - id: filter
-        if: github.event_name == 'pull_request'
+        if: github.event_name != 'workflow_dispatch'
         uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
+          # Empty on pushes: the action then diffs against the push's `before` commit.
+          base: ${{ github.event.merge_group.base_sha }}
           filters: |
             shared: &shared
               - .github/workflows/ci.yml
@@ -67,12 +80,13 @@ jobs:
               - src/vendor/**
               - tests/Turso.Data.Sqlite.Tests/**
               - scripts/vendor/**
-              - scripts/ci/**
             libs:
               - *shared
               - libs.slnf
               - src/TerraScale.CLI/**
               - benchmark/dotnet/**
+              # The libs job runs the path-filter fixtures; `test` runs the other CI self-checks on every event.
+              - scripts/ci/**
               # The credential entry point and the scripts it runs (make handoff-test).
               - scripts/handoff/**
               - scripts/e2e/**
@@ -82,9 +96,12 @@ jobs:
               - auth.slnf
               - src/TerraScale.Authentication*/**
               - tests/TerraScale.Authentication*/**
-              - docs/auth/**
+              # The published platform contract (OpenApiTests, auth-openapi-check); the Markdown docs are not inputs.
+              - docs/auth/*.yaml
               - scripts/auth/**
-              # ts-auth's tests run against the TerraBase built from the same commit and check the SDK's routes on it.
+            # ts-auth's tests run against the TerraBase built from the same commit and check the SDK's routes on it:
+            # merge groups and main add auth for it; pull requests get TerraBase's own job as their fast signal.
+            auth-server:
               - src/TerraBase/**
             terrabase:
               - *shared
@@ -92,14 +109,27 @@ jobs:
               - src/TerraBase*/**
               - tests/TerraBase*/**
               - scripts/terrabase/**
+      - id: areas
+        env:
+          CHANGES: ${{ github.event_name == 'workflow_dispatch' && '["libs","auth","terrabase"]' || steps.filter.outputs.changes }}
+        run: |
+          # The ts-auth image does not contain TerraBase: main publishes and Slow-tests auth only for its own changes.
+          echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase")]' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
+          [[ $GITHUB_EVENT_NAME == pull_request ]] || CHANGES=$(jq -c 'if index("auth-server") then . + ["auth"] else . end' <<< "$CHANGES")
+          echo "fast=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
 
-  libs:
+  fast:
     needs: changes
     if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && (github.event_name != 'pull_request' || needs.changes.outputs.libs == 'true')
+      github.event_name != 'push' && needs.changes.outputs.fast != '[]'
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    strategy:
+      fail-fast: false
+      matrix:
+        area: ${{ fromJSON(needs.changes.outputs.fast) }}
+    name: ${{ matrix.area }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -117,6 +147,7 @@ jobs:
           path: ts-dotnet
           persist-credentials: false
       - name: Check out the path-filter matcher for regression fixtures
+        if: matrix.area == 'libs'
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: dorny/paths-filter
@@ -124,76 +155,198 @@ jobs:
           path: path-filter-action
           persist-credentials: false
       - name: Verify CI path filters
+        if: matrix.area == 'libs'
         run: python3 terrascale/scripts/ci/path-filter-test.py terrascale/.github/workflows/ci.yml path-filter-action/dist/index.js
       - &setup-builder
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           driver: docker-container
-      # Only main writes shared area caches; PR/queue refs restore without evicting them with private copies.
+      # Only main writes the area caches; PR/queue refs restore without evicting them with private copies. libs has no
+      # main job: it restores TerraBase's cache, whose base and restore layers it shares.
       - &build-stage
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
-          target: build-${{ github.job }}
+          target: build-${{ matrix.area }}
           build-args: &build-args |
             TERRABASE_REVISION=${{ github.sha }}
             TS_AUTH_REVISION=${{ github.sha }}
             DOTNET_PROCESSOR_COUNT=8
             DOTNET_GCHeapCount=8
           push: false
-          cache-from: ${{ format('type=gha,scope={0}', github.job) }}
-          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', github.job) || '' }}
-      - &build-area
+          cache-from: &cache-from type=gha,scope=${{ matrix.area == 'libs' && 'terrabase' || matrix.area }}
+          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', matrix.area) || '' }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: terrascale
+          file: terrascale/Dockerfile
+          build-contexts: ts-dotnet=ts-dotnet
+          target: test-${{ matrix.area }}
+          # TerraBase's tests check that /healthz reports the exact commit (unused by the other areas' stages).
+          build-args: *build-args
+          # The build stage is reused for identical inputs; the tests always run on the current head.
+          no-cache-filters: test-${{ matrix.area }}
+          push: false
+          cache-from: *cache-from
+      # Slow never blocks: its failures mark these steps, not the job.
+      - &slow-credentials
+        name: Supply bucket-scoped CI storage credentials
+        if: matrix.area == 'terrabase' && (github.event_name == 'pull_request' || github.job == 'slow')
+        continue-on-error: true
+        env:
+          TIGRIS_CI_CREDENTIALS: ${{ secrets.TIGRIS_CI_CREDENTIALS }}
+        run: |
+          [[ -n $TIGRIS_CI_CREDENTIALS ]] || { echo 'TIGRIS_CI_CREDENTIALS is required' >&2; exit 1; }
+          umask 077
+          printf '%s\n' "$TIGRIS_CI_CREDENTIALS" > "$RUNNER_TEMP/tigris-ci.env"
+      # Slow reuses the build stage above in this builder: on pull requests here, on main in the slow job.
+      - &slow
+        if: matrix.area != 'libs' && (github.event_name == 'pull_request' || github.job == 'slow')
+        continue-on-error: true
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
-          target: test-${{ github.job }}
-          # TerraBase's tests check that /healthz reports the exact commit (unused by the other areas' stages).
+          target: test-slow-${{ matrix.area }}
+          secret-files: ${{ matrix.area == 'terrabase' && format('tigris-ci={0}/tigris-ci.env', runner.temp) || '' }}
           build-args: *build-args
-          # The build stage is reused for identical inputs; the tests always run on the current head.
-          no-cache-filters: test-${{ github.job }}
-          push: false
-          # Per-job layer cache: the base stage (apt, Playwright Chromium, ts-dotnet) is rebuilt only when it changes.
-          cache-from: ${{ format('type=gha,scope={0}', github.job) }}
+          # A rerun of the same commit runs the suites again instead of reusing the stored result.
+          no-cache-filters: slow-${{ matrix.area }}-run
+          outputs: type=local,dest=slow
+          cache-from: *cache-from
+      - &slow-cleanup
+        name: Remove the CI credential file
+        if: ${{ always() && matrix.area == 'terrabase' }}
+        run: rm -f "$RUNNER_TEMP/tigris-ci.env"
+      - &slow-report
+        name: Report the Slow result
+        if: ${{ !cancelled() && matrix.area != 'libs' && (github.event_name == 'pull_request' || github.job == 'slow') }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [[ ! -f slow/exit || ! -f slow/log ]]; then
+            mkdir -p slow
+            echo "Slow ${{ matrix.area }} suites did not finish building: $RUN_URL" | tee -a "$GITHUB_STEP_SUMMARY" > slow/log
+            echo 1 > slow/exit
+          fi
+          code=$(<slow/exit)
+          mapfile -t failed < <(sed -nE 's/^failed (.+) \([^)]*\)$/\1/p' slow/log | sort -u)
+          {
+            echo "## Slow suites: exit $code, ${#failed[@]} failed"
+            echo '```'
+            grep -E '^Test run summary|^  (total|failed|succeeded|skipped|duration):' slow/log || true
+            echo '```'
+            [[ ${#failed[@]} -eq 0 ]] || printf -- '- %s\n' "${failed[@]}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          (( code != 0 )) || exit 0
+          # Issues track main only; a pull request or a dispatched branch reports in the summary.
+          [[ $GITHUB_REF == refs/heads/main ]] || exit "$code"
+          [[ ${#failed[@]} -gt 0 ]] || failed=("Slow suites failed without a failed test (build or runner error)")
+          gh label create slow-failure -R "$GITHUB_REPOSITORY" --color B60205 --description "A Slow test failed on main" --force
+          open=$(gh issue list -R "$GITHUB_REPOSITORY" --label slow-failure --state open --limit 500 --json number,title)
+          for test in "${failed[@]}"; do
+            title="Slow: $test"
+            # The exception and stack, without the captured server output; credentials redacted.
+            excerpt=$(awk -v t="failed $test " 'index($0, t) == 1 { on = 1; next } on && (/^[^ ]/ || /^  Standard output/ || ++n > 80) { exit } on' slow/log \
+              | sed -E 's/(Bearer|Basic) [^ "]+/\1 [redacted]/g; s/((api[_-]?key|token|secret|password)["=: ]+)[^ ",]+/\1[redacted]/Ig')
+            # The suite that reported it: its area's make target runs only that suite.
+            target=$(awk -v t="failed $test " 'index($0, t) == 1 { on = 1 } on && /^Test run summary/ { print; exit }' slow/log)
+            case $target in *TerraBase.Slow*) target="terrabase-test-slow" ;; *Authentication.Slow*) target="auth-test-slow" ;; *) target="test-slow" ;; esac
+            body=$(printf '%s\n' \
+              "Failed on \`$GITHUB_SHA\` in the Slow job: $RUN_URL" "" \
+              "Environment: \`${{ github.job }} (${{ matrix.area }})\` job on GitHub-hosted runner, Dockerfile stage \`test-slow-${{ matrix.area }}\`, Release build." \
+              "Reproduce: \`nice -n 19 make $target TEST_ARGS=\"--treenode-filter '/*/*/*/${test%%(*}'\"\`" \
+              "Expected: the test passes. Actual:" "" '```' "${excerpt:-see the run log}" '```')
+            number=$(jq -r --arg t "$title" "first(.[] | select(.title == \$t) | .number) // empty" <<< "$open")
+            if [[ -n $number ]]; then
+              gh issue comment "$number" -R "$GITHUB_REPOSITORY" --body "$body"
+            else
+              gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --label slow-failure --body "$body"
+            fi
+          done
+          exit "$code"
 
-  auth:
+  main:
     needs: changes
     if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && (github.event_name != 'pull_request' || needs.changes.outputs.auth == 'true')
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+      && needs.changes.outputs.main != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        area: ${{ fromJSON(needs.changes.outputs.main) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
+      packages: write
     steps:
       - *checkout
       - *checkout-ts-dotnet
       - *setup-builder
       - *build-stage
-      - *build-area
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      # Public multi-arch images ts-orch runs: ghcr.io/terrascale/{terrabase,ts-auth}:<sha> and :main, linux/amd64 +
+      # linux/arm64 (arm64 cross-published from the amd64 build stage, Dockerfile publish-* stages).
+      - id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: terrascale
+          file: terrascale/Dockerfile
+          build-contexts: ts-dotnet=ts-dotnet
+          target: ${{ matrix.area == 'auth' && 'ts-auth' || 'terrabase' }}
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/terrascale/${{ matrix.area == 'auth' && 'ts-auth' || 'terrabase' }}:${{ github.sha }}
+            ${{ github.ref == 'refs/heads/main' && format('ghcr.io/terrascale/{0}:main', matrix.area == 'auth' && 'ts-auth' || 'terrabase') || '' }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: *build-args
+          cache-from: *cache-from
+          push: true
+      # Index digest plus each platform's child digest (ts-orch specs pin the linux/arm64 child).
+      - env:
+          IMAGE: ghcr.io/terrascale/${{ matrix.area == 'auth' && 'ts-auth' || 'terrabase' }}@${{ steps.image.outputs.digest }}
+        run: |
+          { echo '```'; docker buildx imagetools inspect "$IMAGE"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
 
-  terrabase:
-    needs: changes
+  # Only the newest main runs Slow for an area: a newer push cancels the older Slow, never the image publish above.
+  slow:
+    needs: [changes, main]
     if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && (github.event_name != 'pull_request' || needs.changes.outputs.terrabase == 'true')
+      !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && github.ref == 'refs/heads/main' && needs.changes.outputs.main != '[]'
+    concurrency:
+      group: ${{ github.workflow }}-slow-${{ github.ref_name }}-${{ matrix.area }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        area: ${{ fromJSON(needs.changes.outputs.main) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: read
+      issues: write
     steps:
       - *checkout
       - *checkout-ts-dotnet
       - *setup-builder
-      - *build-stage
-      - *build-area
+      - *slow-credentials
+      - *slow
+      - *slow-cleanup
+      - *slow-report
 
   test:
-    needs: [changes, libs, auth, terrabase]
+    needs: [changes, fast]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -225,96 +378,3 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: terrascale/scripts/terrabase/storage-format-check.sh "$GITHUB_REPOSITORY" "${{ github.event.pull_request.number }}"
-
-  slow:
-    needs: [changes, auth, terrabase]
-    if: >-
-      !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-      && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-      || contains(github.event.pull_request.labels.*.name, 'full-ci'))
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - area: auth
-          - area: terrabase
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - *checkout
-      - *checkout-ts-dotnet
-      - *setup-builder
-      - name: Supply bucket-scoped CI storage credentials
-        if: matrix.area == 'terrabase'
-        env:
-          TIGRIS_CI_CREDENTIALS: ${{ secrets.TIGRIS_CI_CREDENTIALS }}
-        run: |
-          [[ -n $TIGRIS_CI_CREDENTIALS ]] || { echo 'TIGRIS_CI_CREDENTIALS is required' >&2; exit 1; }
-          umask 077
-          printf '%s\n' "$TIGRIS_CI_CREDENTIALS" > "$RUNNER_TEMP/tigris-ci.env"
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: terrascale
-          file: terrascale/Dockerfile
-          build-contexts: ts-dotnet=ts-dotnet
-          target: test-slow-${{ matrix.area }}
-          secret-files: ${{ matrix.area == 'terrabase' && format('tigris-ci={0}/tigris-ci.env', runner.temp) || '' }}
-          build-args: *build-args
-          # A rerun of the same commit runs the suites again instead of reusing the stored result.
-          no-cache-filters: slow-${{ matrix.area }}-run
-          outputs: type=local,dest=slow
-          cache-from: ${{ format('type=gha,scope={0}', matrix.area) }}
-      - name: Remove the CI credential file
-        if: ${{ always() && matrix.area == 'terrabase' }}
-        run: rm -f "$RUNNER_TEMP/tigris-ci.env"
-      - name: Report the Slow result
-        if: ${{ !cancelled() }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          if [[ ! -f slow/exit || ! -f slow/log ]]; then
-            mkdir -p slow
-            echo "Slow ${{ matrix.area }} suites did not finish building: $RUN_URL" | tee -a "$GITHUB_STEP_SUMMARY" > slow/log
-            echo 1 > slow/exit
-          fi
-          code=$(<slow/exit)
-          mapfile -t failed < <(sed -nE 's/^failed (.+) \([^)]*\)$/\1/p' slow/log | sort -u)
-          {
-            echo "## Slow suites: exit $code, ${#failed[@]} failed"
-            echo '```'
-            grep -E '^Test run summary|^  (total|failed|succeeded|skipped|duration):' slow/log || true
-            echo '```'
-            [[ ${#failed[@]} -eq 0 ]] || printf -- '- %s\n' "${failed[@]}"
-          } >> "$GITHUB_STEP_SUMMARY"
-          (( code != 0 )) || exit 0
-          # Issues track main only; a `full-ci` pull request or a dispatched branch reports in the summary.
-          [[ $GITHUB_REF == refs/heads/main ]] || exit "$code"
-          [[ ${#failed[@]} -gt 0 ]] || failed=("Slow suites failed without a failed test (build or runner error)")
-          gh label create slow-failure -R "$GITHUB_REPOSITORY" --color B60205 --description "A Slow test failed on main" --force
-          open=$(gh issue list -R "$GITHUB_REPOSITORY" --label slow-failure --state open --limit 500 --json number,title)
-          for test in "${failed[@]}"; do
-            title="Slow: $test"
-            # The exception and stack, without the captured server output; credentials redacted.
-            excerpt=$(awk -v t="failed $test " 'index($0, t) == 1 { on = 1; next } on && (/^[^ ]/ || /^  Standard output/ || ++n > 80) { exit } on' slow/log \
-              | sed -E 's/(Bearer|Basic) [^ "]+/\1 [redacted]/g; s/((api[_-]?key|token|secret|password)["=: ]+)[^ ",]+/\1[redacted]/Ig')
-            # The suite that reported it: its area's make target runs only that suite.
-            target=$(awk -v t="failed $test " 'index($0, t) == 1 { on = 1 } on && /^Test run summary/ { print; exit }' slow/log)
-            case $target in *TerraBase.Slow*) target="terrabase-test-slow" ;; *Authentication.Slow*) target="auth-test-slow" ;; *) target="test-slow" ;; esac
-            body=$(printf '%s\n' \
-              "Failed on \`$GITHUB_SHA\` in the Slow job: $RUN_URL" "" \
-              "Environment: \`slow (${{ matrix.area }})\` job on GitHub-hosted runner, Dockerfile stage \`test-slow-${{ matrix.area }}\`, Release build." \
-              "Reproduce: \`nice -n 19 make $target TEST_ARGS=\"--treenode-filter '/*/*/*/${test%%(*}'\"\`" \
-              "Expected: the test passes. Actual:" "" '```' "${excerpt:-see the run log}" '```')
-            number=$(jq -r --arg t "$title" "first(.[] | select(.title == \$t) | .number) // empty" <<< "$open")
-            if [[ -n $number ]]; then
-              gh issue comment "$number" -R "$GITHUB_REPOSITORY" --body "$body"
-            else
-              gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --label slow-failure --body "$body"
-            fi
-          done
-          exit "$code"

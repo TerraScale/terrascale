@@ -15,7 +15,7 @@ assert action.is_file(), action
 match = re.search(r"^          filters: \|\n((?:^            .*\n|^\s*\n)+)", workflow.read_text(), re.MULTILINE)
 assert match, "CI filters block was not found"
 filters = textwrap.dedent(match[1])
-areas = ("libs", "auth", "terrabase")
+areas = ("libs", "auth", "auth-server", "terrabase")
 
 
 def git(directory, *args):
@@ -69,13 +69,17 @@ def check(case):
     return f"{status} {filename} -> {','.join(sorted(actual)) or 'no areas'}"
 
 
-all_areas = set(areas)
+all_areas = {"libs", "auth", "terrabase"}
 vendor_paths = ("src/vendor/Turso.Data.Sqlite/Connection.cs", "tests/Turso.Data.Sqlite.Tests/ConnectionTests.cs", "scripts/vendor/audit/check.sh")
 cases = [(path, status, all_areas) for path in vendor_paths for status in ("added", "modified", "deleted")]
 cases += [("src/vendor/Turso.Data.Sqlite/.editorconfig", "modified", all_areas),
-          ("scripts/ci/path-filter-test.py", "modified", all_areas),
+          ("scripts/ci/path-filter-test.py", "modified", {"libs"}),
           ("README.md", "modified", set()),
-          ("docs/auth/platform-api.openapi.yaml", "modified", {"auth"})]
+          ("docs/auth/mfa.md", "modified", set()),
+          ("docs/terrabase/ci.md", "modified", set()),
+          ("docs/auth/platform-api.openapi.yaml", "modified", {"auth"}),
+          ("src/TerraBase/Program.cs", "modified", {"auth-server", "terrabase"}),
+          ("src/TerraScale.Authentication/Program.cs", "modified", {"auth"})]
 errors = []
 with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
     futures = [pool.submit(check, case) for case in cases]
