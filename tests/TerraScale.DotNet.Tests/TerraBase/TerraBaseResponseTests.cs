@@ -22,12 +22,12 @@ public sealed class TerraBaseResponseTests
         var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
         if (depth > 1008)
         {
-            var error = await Assert.ThrowsAsync<TerraBaseException>(() => db.ReadDocumentAsync("items", "a"));
+            var error = await Assert.ThrowsAsync<TerraBaseException>(() => db.ReadDocumentAsync("items", "01JA00000000000000000000D1"));
             await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");
             return;
         }
 
-        var result = await db.ReadDocumentAsync("items", "a");
+        var result = await db.ReadDocumentAsync("items", "01JA00000000000000000000D1");
         await Assert.That(result.Document!.Document.GetRawText()).IsEqualTo(document);
     }
 
@@ -218,7 +218,7 @@ public sealed class TerraBaseResponseTests
         using var request = new HttpRequestMessage();
         TerraBasePrecondition.Matches(document.Version).Apply(request.Headers);
         await Assert.That(request.Headers.IfMatch.ToString()).IsEqualTo($"\"{version}\"");
-        var operation = JsonSerializer.Serialize(new TerraBaseTransaction([TerraBaseTransactionOperation.Delete("items", "a", version)]), context.TerraBaseTransaction);
+        var operation = JsonSerializer.Serialize(new TerraBaseTransaction([TerraBaseTransactionOperation.Delete("items", "01JA00000000000000000000D1", version)]), context.TerraBaseTransaction);
         await Assert.That(operation).Contains($"\"if_match\":\"{version}\"");
     }
 

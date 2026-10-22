@@ -80,18 +80,12 @@ and the required collection identity response shape together with the qualified 
 an old-ID fallback. Auth additionally requires its approved admission design. Removing automatic
 failover establishes its recorded common-authority baseline but does not create a new server guarantee.
 
-Current Documents calls already send a caller-supplied canonical ULID key unchanged in paths or
-transaction `id`. The envelope's `Id` owns document identity; Auth entity payloads must omit `id`.
-Caller-supplied document keys retain the producer's bounded-key exception; entity IDs use
-`TerraScaleIds.Validate` and `TerraScaleIdGenerator.NewId`. Do not encode hashes as pseudo-ULIDs.
-
-The producer has selected `GET/PUT/PATCH/DELETE …/documents/by-key?id=<encoded raw key>` to replace
-point routes that put keys in a path segment ([owner contract comment](https://github.com/TerraScale/ts-dotnet/pulls/29#issuecomment-22961)).
-At the inspected heads, #117 `770e95008b718ff5ad249c20e90a774b01094c1b` and #118 `1c2a7e082829bcebf816691537001f6aba168d9a`
-still contain the old point route. The SDK wire cutover requires its exact committed owner revision
-and a verified combined release. Current tests do not qualify arbitrary slash/dot-segment keys.
-The new route must receive one query-encoded original key, without pre-unescaping or a legacy fallback;
-lists and generated POST creation keep their routes, and transactions keep the original raw key.
+Documents calls send a canonical ULID document id, validated with `TerraScaleIds.Validate`, as the
+query-encoded `id` of `GET/PUT/PATCH/DELETE …/documents/by-key?id=<ULID>` or as a transaction `id`;
+any other id throws `ArgumentException` before a request. The envelope's `Id` owns document identity;
+Auth entity payloads must omit `id`. New entity ids use `TerraScaleIdGenerator.NewId`; natural keys use
+name-based ULIDs (the first 16 bytes of SHA-256 over an unambiguous input including the collection).
+Lists and generated POST creation keep their routes.
 
 No migration, compatibility path, reset, deployment or production data deletion is included here.
 Production data deleted: none. Reset/deployment remains gated on approved admission and qualified pins.

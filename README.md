@@ -41,16 +41,16 @@ The TerraBase document key is the entity ID. Entity payloads must not repeat
 that key in a separate `id` field. Keep IDs in document metadata and references
 to other entities in their reference fields.
 
-**Server cutover is pending.** This foundation does not change request or
-response validation in existing clients. The pinned TerraBase release below
-still generates and accepts UUIDs. ULID-only entity models, request/response
-validation and integration fixtures must follow the owning TerraBase and
-ts-auth contracts and a verified ULID server release. Existing Documents and
-Management clients remain available, including queries, conditional writes
-and transactions. For the greenfield cutover, the owning services delete the
-verified affected data and recreate bootstrap state on startup. There is no
-migration, backfill, compatibility shim or dual-read/write path. This SDK owns
-no persisted service data and performs no production reset.
+**Document ids are ULIDs.** TerraBase accepts only canonical ULIDs as document
+ids and answers `400 invalid_document_id` otherwise. The SDK rejects any other id
+with `ArgumentException` before sending: `GetDocumentAsync`, `PutDocumentAsync`,
+`PatchDocumentAsync`, `DeleteDocumentAsync`, the platform `GetDocumentAsync` and
+every `TerraBaseTransactionOperation` factory that takes an id (`Create`'s id is
+optional; TerraBase generates one when it is omitted). Natural keys such as
+emails become name-based ULIDs: encode the first 16 bytes of a SHA-256 over an
+unambiguous input that includes the collection. SQL queries are not restricted.
+There is no migration, backfill, compatibility shim or dual-read/write path.
+This SDK owns no persisted service data and performs no production reset.
 
 ## Zero-configuration operating contract
 

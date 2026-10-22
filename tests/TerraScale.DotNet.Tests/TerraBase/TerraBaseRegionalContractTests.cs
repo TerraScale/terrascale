@@ -44,7 +44,7 @@ public sealed class TerraBaseRegionalContractTests
         using var http = new HttpClient(handler);
         var database = new TerraBaseDocumentsClient(http, Options).Database("project", "app");
 
-        var error = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() => database.PutDocumentAsync("items", "a", Body()));
+        var error = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() => database.PutDocumentAsync("items", "01JA00000000000000000000D1", Body()));
 
         await Assert.That(sent.Count).IsEqualTo(1);
         await Assert.That(sent[0].RequestUri!.Host).IsEqualTo("api.terrascale.test");
@@ -74,7 +74,7 @@ public sealed class TerraBaseRegionalContractTests
         using var http = new HttpClient(handler);
         var database = new TerraBaseDocumentsClient(http, Options).Database("project", "app");
 
-        var error = await Assert.ThrowsAsync<HttpRequestException>(() => database.PutDocumentAsync("items", "a", Body()));
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() => database.PutDocumentAsync("items", "01JA00000000000000000000D1", Body()));
 
         await Assert.That(sent).IsEqualTo(1);
         await Assert.That(error!.GetType()).IsEqualTo(type);
@@ -111,11 +111,11 @@ public sealed class TerraBaseRegionalContractTests
         var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { EndpointResolver = resolver, ApiKey = "tb_test_key" })
             .Database("project", "app");
 
-        var created = await database.PutDocumentAsync("items", "a", Body(), TerraBasePrecondition.Absent);
+        var created = await database.PutDocumentAsync("items", "01JA00000000000000000000D1", Body(), TerraBasePrecondition.Absent);
         var repeated = await Assert.ThrowsAsync<TerraBasePreconditionFailedException>(
-            () => database.PutDocumentAsync("items", "a", Body(), TerraBasePrecondition.Absent));
+            () => database.PutDocumentAsync("items", "01JA00000000000000000000D1", Body(), TerraBasePrecondition.Absent));
         // A version read in one region satisfies If-Match in another (cross-region.md, version tokens).
-        await database.PutDocumentAsync("items", "a", Body(), TerraBasePrecondition.Matches(created.Version));
+        await database.PutDocumentAsync("items", "01JA00000000000000000000D1", Body(), TerraBasePrecondition.Matches(created.Version));
 
         await Assert.That(created.Created).IsTrue();
         await Assert.That(repeated!.StatusCode).IsEqualTo(HttpStatusCode.PreconditionFailed);
@@ -146,7 +146,7 @@ public sealed class TerraBaseRegionalContractTests
 
         for (var i = 0; i < 3; i++)
         {
-            var written = await database.PutDocumentAsync("items", "a", Body());
+            var written = await database.PutDocumentAsync("items", "01JA00000000000000000000D1", Body());
             await Assert.That(written.Version).IsEqualTo("tbv1-v1");
         }
 
@@ -174,8 +174,8 @@ public sealed class TerraBaseRegionalContractTests
         // An explicit origin keeps its host; the pin still holds the request to the region.
         var explicitOrigin = new TerraBaseDocumentsClient(http, Options with { Region = "sjc" }).Database("project", "app");
 
-        await regional.PutDocumentAsync("items", "a", Body());
-        await explicitOrigin.PutDocumentAsync("items", "a", Body());
+        await regional.PutDocumentAsync("items", "01JA00000000000000000000D1", Body());
+        await explicitOrigin.PutDocumentAsync("items", "01JA00000000000000000000D1", Body());
 
         await Assert.That(sent.Select(request => request.RequestUri!.GetLeftPart(UriPartial.Authority))).IsEquivalentTo(["https://fra.api.terrascale.tech", "https://api.terrascale.test"]);
         await Assert.That(sent.Select(request => string.Join(',', request.Headers.GetValues(TerraBaseRegion.PinHeader)))).IsEquivalentTo(["fra", "sjc"]);
@@ -198,7 +198,7 @@ public sealed class TerraBaseRegionalContractTests
         using var http = new HttpClient(handler);
         var database = new TerraBaseDocumentsClient(http, Options with { Region = "sjc" }).Database("project", "app");
 
-        var error = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() => database.GetDocumentAsync("items", "a"));
+        var error = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() => database.GetDocumentAsync("items", "01JA00000000000000000000D1"));
 
         await Assert.That(error!.Region).IsEqualTo("gru");
         await Assert.That(error.HomeRegion).IsNull();
@@ -221,8 +221,8 @@ public sealed class TerraBaseRegionalContractTests
         using var http = new HttpClient(handler);
         var database = new TerraBaseDocumentsClient(http, Options).Database("project", "app");
 
-        var wrong = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() => database.GetDocumentAsync("items", "a"));
-        var unavailable = await Assert.ThrowsAsync<TerraBaseUnavailableException>(() => database.PutDocumentAsync("items", "a", Body()));
+        var wrong = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() => database.GetDocumentAsync("items", "01JA00000000000000000000D1"));
+        var unavailable = await Assert.ThrowsAsync<TerraBaseUnavailableException>(() => database.PutDocumentAsync("items", "01JA00000000000000000000D1", Body()));
 
         await Assert.That(wrong!.Region).IsNull();
         await Assert.That(wrong.HomeRegion).IsNull();
