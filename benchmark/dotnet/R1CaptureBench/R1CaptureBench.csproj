@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Same project dependency graph as FeedCursorBench; locked restore verifies the shared lock. -->
+    <NuGetLockFilePath>../FeedCursorBench/packages.lock.json</NuGetLockFilePath>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/TerraBase/TerraBase.csproj" />
+  </ItemGroup>
+</Project>
