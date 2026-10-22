@@ -89,7 +89,7 @@ func TestPublicDatabasePlacementAndBranch(t *testing.T) {
 			default:
 				out, err = d.Branch(t.Context(), "preview")
 			}
-			if err != nil || out.ID != parityID || out.HomeRegion != "gru" || len(out.ReplicaRegions) != 1 || out.CreatedAt.IsZero() {
+			if err != nil || out.ID != parityID || out.ProjectID != parityProject || out.Name != "main" || out.BranchedFrom != nil || out.Region != "gru" || out.HomeRegion == nil || *out.HomeRegion != "gru" || len(out.ReplicaRegions) != 1 || out.CreatedAt.IsZero() {
 				t.Fatalf("response = %+v, %v", out, err)
 			}
 		})

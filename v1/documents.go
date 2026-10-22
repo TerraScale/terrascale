@@ -589,6 +589,12 @@ func Unset(path string) PatchOp { return PatchOp{op: "unset", path: path} }
 // Append appends value to the array at path, creating it when missing.
 func Append(path string, value any) PatchOp { return valueOp("append", path, value) }
 
+// Add adds a scalar member to a top-level add-wins set.
+func Add(path string, value any) PatchOp { return valueOp("add", path, value) }
+
+// Remove removes observed occurrences of a scalar from a top-level add-wins set.
+func Remove(path string, value any) PatchOp { return valueOp("remove", path, value) }
+
 // Inc adds by to the number at path (missing counts as 0); arithmetic is exact.
 func Inc[N Number](path string, by N) PatchOp {
 	raw, err := json.Marshal(by)
