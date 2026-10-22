@@ -1,4 +1,5 @@
 import { decodeDocument } from "./decode.js";
+import { requireId } from "../ids.js";
 import { requireDocumentId, requireName } from "./ids.js";
 import { list, nullable, numeric, record, text } from "./management-decode.js";
 import { members } from "./management-validation.js";
@@ -8,7 +9,7 @@ import { V1Transport } from "./transport.js";
 const status = record({ status: text, version: text, region: text, storageFormat: text, revision: nullable(text), machine: text });
 const replication = record({ region: text, status: text, maxLagSeconds: nullable(numeric),
   peers: list(record({ region: text, status: text, lagSeconds: nullable(numeric) })) });
-const databases = record({ items: list(record({ name: text, id: text, homeRegion: text, replicaRegions: list(text) })) });
+const databases = record({ items: list(record({ name: text, id: requireId, homeRegion: text, replicaRegions: list(text) })) });
 /** @typedef {ReturnType<typeof status> & {readonly httpStatus: number}} V1ProbeStatus */
 /** @typedef {ReturnType<typeof replication>} V1ReplicationHealth */
 /** @typedef {ReturnType<typeof databases>} V1PlatformDatabases */
