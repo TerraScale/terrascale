@@ -9,12 +9,12 @@ root = Path(__file__).resolve().parents[2]
 workflow = (root / ".github/workflows/ci.yml").read_text()
 dockerfile = (root / "Dockerfile").read_text()
 writers = re.findall(r"^\s+cache-to: (.+)$", workflow, re.M)
-assert writers == ["${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', github.job) || '' }}"], writers
+assert writers == ["${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', matrix.area) || '' }}"], writers
 # setup-dotnet saves its NuGet cache after any successful job, pull requests included: no job may enable it.
 assert "cache: true" not in workflow
 assert not re.search(r"uses: actions/cache(?:/save)?@", workflow), "Explicit cache writers need a main-only gate"
-assert "cancel-in-progress: ${{ github.event_name != 'merge_group' }}" in workflow.split("\npermissions:", 1)[0]
-assert "no-cache-filters: test-${{ github.job }}" in workflow
+assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow.split("\npermissions:", 1)[0]
+assert "no-cache-filters: test-${{ matrix.area }}" in workflow
 assert "no-cache-filters: slow-${{ matrix.area }}-run" in workflow
 
 inputs = dockerfile.split("FROM base AS restore-inputs\n", 1)[1].split("\nFROM base AS restored", 1)[0]
