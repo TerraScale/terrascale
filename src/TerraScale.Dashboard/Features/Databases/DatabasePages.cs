@@ -27,6 +27,8 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     public string Range { get; init; } = "24h";
     // Range links keep the search filter.
     public string RangePath(string range) => "/databases?" + (Search.Length > 0 ? "q=" + Uri.EscapeDataString(Search) + "&" : "") + "range=" + range + "#project-databases";
+    // Retrying the counts reloads the same filter and range.
+    public string RetryPath => "/databases?" + (Search.Length > 0 ? "q=" + Uri.EscapeDataString(Search) + "&" : "") + "range=" + Range;
     // Clearing the search keeps the selected range.
     public string ClearPath => "/databases?range=" + Range + "#project-databases";
     public IEnumerable<(string Label, string? Value, string Title, AnalyticsLinePlot? Trend, string Hue)> Cells(string databaseId)
