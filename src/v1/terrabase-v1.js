@@ -754,6 +754,7 @@ export class V1Database {
     this.#transport = transport;
     this.name = requireName("database", name);
     this.collections = new V1Collections(transport, this.name);
+    this.schema = new V1DatabaseSchemaClient(transport, this.name);
     Object.freeze(this);
   }
 
