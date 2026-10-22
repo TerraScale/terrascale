@@ -325,9 +325,9 @@ public sealed class CopySourceFaultTests
     private static TenantContext Target(Fixture source) => source.Database with { DatabaseId = EntityIds.New().ToString() };
     private static string TargetPath(Fixture source, TenantContext target) => Path.Combine(Path.GetDirectoryName(source.Path)!, target.DatabaseId + ".db");
 
-    // Separate connections observe committed SYSTEM state while the ledger's recording checkpoint owns its gate.
+    // Separate connections observe committed journal state while the ledger's recording checkpoint owns its gate.
     private static bool HasIntent(string systemPath, Fixture source, ReplicaId replica) =>
-        ReadSystemText(systemPath, source.Database,
+        ReadSystemText(Path.Combine(Path.GetDirectoryName(systemPath)!, SqliteStorageEngine.IntentName + ".db"), source.Database,
             "SELECT incarnation || ':' || replica FROM _tb_write_intent WHERE organization = $organization AND project = $project AND database = $database;")
         == source.Incarnation + ":" + unchecked((long)replica.Value).ToString(CultureInfo.InvariantCulture);
 

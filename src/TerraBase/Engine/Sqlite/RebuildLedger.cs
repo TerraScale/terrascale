@@ -22,7 +22,7 @@ namespace TerraBase.Engine.Sqlite;
 /// <para>
 /// The open gap of section 1.3, a crash between a failed sync and its fault record, is closed by write intents: before an
 /// incarnation's first transaction opens in a process, <c>_tb_write_intent</c> records it, with FULL, under this
-/// process's replica id. A clean stop keeps the replica id; any other ending raises its epoch (<see cref="ReplicaIdentityFile"/>),
+/// process's replica id in a separate node-local journal, independent of the catalog writer. A clean stop keeps the replica id; any other ending raises its epoch (<see cref="ReplicaIdentityFile"/>),
 /// so at the next start every intent of another replica id becomes a fault. An uncertified copy that faults (one under
 /// rebuild) is never certified: its record goes back to pending, and the rebuild starts over from the side copy, keeping
 /// that uncertified copy unwritten at its own side path (at most one) for the salvage. Nothing is deleted or overwritten
@@ -176,6 +176,7 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
                 store.RebuildRow = row;
             }
 
+            await WriteIntentAsync(engine.IntentStore!, key, incarnation, CancellationToken.None).ConfigureAwait(false);
             engine.Checkpoint(Recording, database);
             await WriteAsync(system, [row], [], CancellationToken.None).ConfigureAwait(false);
             Committed(key, row);
@@ -249,32 +250,35 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
     /// </summary>
     internal async Task RecordIntentAsync(SqliteDatabaseStore store, CancellationToken cancellationToken)
     {
-        var system = await SystemAsync(cancellationToken).ConfigureAwait(false);
+        _ = await SystemAsync(cancellationToken).ConfigureAwait(false);
         var key = Key.Of(store.Tenant!);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             // Under the gate: a deletion closes the store before it forgets the database's intents, so none outlives it.
             ObjectDisposedException.ThrowIf(store.IsClosed, store);
-            _ = await InSystemAsync(system, command =>
-            {
-                using var insert = command("""
-                    INSERT INTO _tb_write_intent (organization, project, database, incarnation, replica)
-                    VALUES ($organization, $project, $database, $incarnation, $replica)
-                    ON CONFLICT (organization, project, database) DO UPDATE
-                        SET incarnation = excluded.incarnation, replica = excluded.replica;
-                    """);
-                key.Bind(insert);
-                insert.Parameters.AddWithValue("$incarnation", store.Incarnation.ToString());
-                insert.Parameters.AddWithValue("$replica", unchecked((long)engine.ReplicaId.Value));
-                return insert.ExecuteNonQuery();
-            }, cancellationToken).ConfigureAwait(false);
+            await WriteIntentAsync(engine.IntentStore!, key, store.Incarnation, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _gate.Release();
         }
     }
+
+    private Task<int> WriteIntentAsync(SqliteDatabaseStore system, Key key, Ulid incarnation, CancellationToken cancellationToken) =>
+        InSystemAsync(system, command =>
+        {
+            using var insert = command("""
+                INSERT INTO _tb_write_intent (organization, project, database, incarnation, replica)
+                VALUES ($organization, $project, $database, $incarnation, $replica)
+                ON CONFLICT (organization, project, database) DO UPDATE
+                    SET incarnation = excluded.incarnation, replica = excluded.replica;
+                """);
+            key.Bind(insert);
+            insert.Parameters.AddWithValue("$incarnation", incarnation.ToString());
+            insert.Parameters.AddWithValue("$replica", unchecked((long)engine.ReplicaId.Value));
+            return insert.ExecuteNonQuery();
+        }, cancellationToken);
 
     /// <summary>
     /// Forgets an explicitly deleted database: its record and its write intent, with FULL, once its store is closed and its
@@ -292,17 +296,15 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            _ = await InSystemAsync(system, command =>
+            foreach (var (store, table) in new[] { (system, "_tb_rebuild"), (engine.IntentStore!, "_tb_write_intent") })
             {
-                foreach (var table in (string[])["_tb_rebuild", "_tb_write_intent"])
+                _ = await InSystemAsync(store, command =>
                 {
                     using var delete = command($"DELETE FROM {table} WHERE organization = $organization AND project = $project AND database = $database;");
                     key.Bind(delete);
-                    delete.ExecuteNonQuery();
-                }
-
-                return true;
-            }, cancellationToken).ConfigureAwait(false);
+                    return delete.ExecuteNonQuery();
+                }, cancellationToken).ConfigureAwait(false);
+            }
             Committed(key, null);
         }
         finally
@@ -321,7 +323,7 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
     {
         var member = engine.ReplicaId.Member;
         var replica = unchecked((long)engine.ReplicaId.Value);
-        while (await InSystemAsync(system, command =>
+        while (await InSystemAsync(engine.IntentStore!, command =>
         {
             using var clean = command("DELETE FROM _tb_write_intent WHERE rowid IN (SELECT rowid FROM _tb_write_intent WHERE replica = $replica LIMIT $limit);");
             clean.Parameters.AddWithValue("$replica", replica);
@@ -332,47 +334,64 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
         }
 
         var faults = 0;
-        while (await InSystemAsync(system, command =>
+        while (true)
         {
-            List<(long Rowid, Key Key, Ulid Incarnation)> intents = [];
-            using (var select = command("""
-                SELECT rowid, organization, project, database, incarnation,
-                    length(organization) = 26 AND length(project) = 26 AND length(database) = 26 AND length(incarnation) = 26
-                FROM _tb_write_intent ORDER BY rowid LIMIT $limit;
-                """))
+            // Keep the page admitted through both commits. SYSTEM publication precedes journal retirement: a crash
+            // between them replays the same fault, never loses an uncertain operation.
+            using var reservation = Reserve(Page);
+            var intents = await InSystemAsync(engine.IntentStore!, command =>
             {
-                select.Parameters.AddWithValue("$limit", (long)Page);
-                using var reader = select.ExecuteReader();
-                while (reader.Read())
+                List<(long Rowid, Key Key, Ulid Incarnation)> intents = [];
+                using (var select = command("""
+                    SELECT rowid, organization, project, database, incarnation,
+                        length(organization) = 26 AND length(project) = 26 AND length(database) = 26 AND length(incarnation) = 26
+                    FROM _tb_write_intent ORDER BY rowid LIMIT $limit;
+                    """))
                 {
-                    // Measured before any string is read.
-                    if (reader.GetInt64(5) == 0)
+                    select.Parameters.AddWithValue("$limit", (long)Page);
+                    using var reader = select.ExecuteReader();
+                    while (reader.Read())
                     {
-                        throw new InvalidDataException("a write intent is not one the ledger writes");
+                        // Measured before any string is read.
+                        if (reader.GetInt64(5) == 0)
+                        {
+                            throw new InvalidDataException("a write intent is not one the ledger writes");
+                        }
+
+                        intents.Add((reader.GetInt64(0), new Key(reader.GetString(1), reader.GetString(2), reader.GetString(3)), Stored(reader.GetString(4))));
                     }
-
-                    intents.Add((reader.GetInt64(0), new Key(reader.GetString(1), reader.GetString(2), reader.GetString(3)), Stored(reader.GetString(4))));
                 }
-            }
 
-            foreach (var (rowid, key, incarnation) in intents)
+                return intents;
+            }, cancellationToken, write: false, rows: 0).ConfigureAwait(false);
+            if (intents.Count == 0)
             {
-                // An intent of a database deleted before its deletion forgot it faults nothing: no file is left.
-                if (ReadRow(command, key) is var current && !(current is null && Deleted(key))
-                    && Faulted(key, current, incarnation, "the process exited uncleanly while this copy was written") is { } row)
-                {
-                    Upsert(command, row);
-                    faults++;
-                }
-
-                using var delete = command("DELETE FROM _tb_write_intent WHERE rowid = $rowid;");
-                delete.Parameters.AddWithValue("$rowid", rowid);
-                delete.ExecuteNonQuery();
+                break;
             }
 
-            return intents.Count;
-        }, cancellationToken, rows: Page).ConfigureAwait(false) > 0)
-        {
+            _ = await InSystemAsync(system, command =>
+            {
+                foreach (var (_, key, incarnation) in intents)
+                {
+                    if (ReadRow(command, key) is var current && !(current is null && Deleted(key))
+                        && Faulted(key, current, incarnation, "the process exited uncleanly while this copy was written") is { } row)
+                    {
+                        Upsert(command, row);
+                        faults++;
+                    }
+                }
+                return true;
+            }, cancellationToken, rows: 0).ConfigureAwait(false);
+            _ = await InSystemAsync(engine.IntentStore!, command =>
+            {
+                foreach (var (rowid, _, _) in intents)
+                {
+                    using var delete = command("DELETE FROM _tb_write_intent WHERE rowid = $rowid;");
+                    delete.Parameters.AddWithValue("$rowid", rowid);
+                    delete.ExecuteNonQuery();
+                }
+                return true;
+            }, cancellationToken, rows: 0).ConfigureAwait(false);
         }
 
         var after = 0L;
