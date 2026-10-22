@@ -1,9 +1,12 @@
 name: CI
 
+# Repository-only files neither change the site nor deploy it.
 on:
   pull_request:
+    paths-ignore: &repo-only [AGENTS.md, CLAUDE.md, README.md, SECURITY.md, .github/workflows/codeql.yml, .github/dependabot.yml]
   push:
     branches: [main]
+    paths-ignore: *repo-only
   workflow_dispatch:
 
 permissions:
