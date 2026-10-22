@@ -1025,6 +1025,9 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             _stopping.Dispose();
         }
 
+        // Admitted cleanup can still publish faults or retire intents; keep both node-local writers open for it.
+        await drained.ConfigureAwait(false);
+
         Task? closed = null;
         List<string> files = [];
         // A copy/create holds this through every step. Let it finish before closing its stores.
@@ -1097,8 +1100,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             errors.Add(error);
         }
 
-        // Release of the last admission follows pooling/closure, including queued-BEGIN cleanup.
-        await drained.ConfigureAwait(false);
         try
         {
             await Io.DisposeAsync().ConfigureAwait(false);
