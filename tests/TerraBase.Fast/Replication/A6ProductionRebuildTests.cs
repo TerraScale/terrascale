@@ -231,8 +231,7 @@ public sealed class A6ProductionRebuildTests
             ?? throw new InvalidOperationException("the test copy is missing");
         async Task<bool> IntentAsync()
         {
-            var system = (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(CancellationToken.None);
-            return await system.WithWriterAsync(session =>
+            return await engine.IntentStore!.WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
                 command.CommandText = "SELECT 1 FROM _tb_write_intent WHERE database = $database;";
