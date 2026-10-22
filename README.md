@@ -1,3 +1,515 @@
-# TerraScale Go SDK
+# TerraScale Go SDK (`terrascale.tech/sdk`)
 
-Read the [Go SDK guide and OCI operating contract](SDK-OCI.md).
+Package `v1` is the TerraBase client for project JWTs: databases, collections,
+documents, queries, transactions, read-only SQL and database change streams.
+It also implements the proposed shape-reads v1 client, with local conformance
+coverage; deployed shape endpoints are not qualified. See the
+[shapes contract](contracts/shapes.md) for protocol provenance and limits.
+`tsauth` exchanges customer API keys and user tokens for project access tokens.
+The root package holds hosted TSAuth clients and pure schema and SQL builders.
+The [compatibility matrix](contracts/terrabase-compatibility.md) records the
+exact server revision, local test evidence and remaining qualification gaps.
+
+All entity IDs are canonical uppercase, 26-character Crockford ULIDs. Use
+`sdk.NewID()` (or `v1.NewID()`) to generate one and `ValidateID` to validate it.
+Generation is concurrency-safe and monotonic within a millisecond. Entity
+IDs reject UUIDs, prefixes and lowercase forms. Caller-supplied document keys
+are opaque UTF-8 strings: 1 to 256 UTF-16 units, without control characters.
+Slashes, punctuation and Unicode are query-encoded once. Generated document
+keys remain canonical ULIDs; an application payload may contain its own `id`.
+OAuth client names, database and
+collection names, region/service catalog names, versions and credentials
+remain protocol names or opaque tokens, not entity IDs.
+
+The SDK owns no persistent collections, databases or KV records. This contract
+alignment requires no stored-data deletion or migration.
+
+## Zero-configuration operating contract
+
+The SDK has no regional discovery or failover. Auth calls go to the fixed
+global origin `https://auth.terrascale.tech`, the default API origin is
+`https://api.terrascale.tech`, and ts-orch on OCI handles routing. No region
+activation, endpoint pinning or manual secret copying belongs in setup.
+Customer tenant/project scope and authorized access credentials remain required.
+The examples describe SDK boundaries; deployed issuer trust still requires
+qualification. See [AGENTS.md](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
+
+## TerraBase v1 client (`terrascale.tech/sdk/v1`)
+
+Package `v1` follows the implemented C# API. A database is addressed by its
+project ULID and database name. The project access token must reach that exact
+project and, when narrowed, that database. TerraBase verifies the platform
+issuer `https://auth.terrascale.tech/terrascale`, audience
+`https://api.terrascale.tech`, lifetime, signature and required scopes.
+
+```go
+import tb "terrascale.tech/sdk/v1"
+import "terrascale.tech/sdk/tsauth"
+
+tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: apiKey, Project: projectID}) // tsk_…
+c, err := tb.New(tb.Config{TokenSource: tokens}) // fixed global API origin
+db := c.Database(projectID, "main")
+_, err = db.Create(ctx)                     // POST; existing name returns name_taken
+err = db.Delete(ctx)                        // DELETE; needs databases:write
+_, err = db.CreateCollection(ctx, "users") // 409 name_taken when it exists
+cols, err := db.Collections(ctx, tb.ListOptions{Limit: 50})
+users := db.Collection("users")             // also Info and Drop
+
+res, err := users.Create(ctx, map[string]any{"email": "ana@example.com"}) // server ULID
+doc, err := users.Get(ctx, res.ID)
+var body map[string]any
+err = doc.Decode(&body) // numbers decode as json.Number, never float64
+
+id := tb.NewID() // retain this key when resolving an uncertain outcome
+_, err = users.Put(ctx, id, body, tb.IfNoneMatchAny())
+_, err = users.Patch(ctx, id, tb.Ops(tb.Inc("/logins", 1), tb.Append("/tags", "beta")), tb.IfMatch(doc.Version))
+_, err = users.Patch(ctx, id, tb.MergePatch(map[string]any{"legacy": nil}))
+_, err = users.Delete(ctx, id, tb.IfMatch(version))
+page, err := users.List(ctx, tb.ListOptions{Cursor: next}) // id order
+```
+
+Every call resolves its endpoint through `tb.Resolver`. `BaseURL` wraps a
+`tb.StaticResolver`; alternatively, set `Config.Resolver` to a concurrent-safe
+resolver implementing `Resolve(context.Context) (string, error)`. Omit both
+for `https://api.terrascale.tech`. Resolved URLs are validated before credentials are
+sent, resolution errors stop the call, and retries keep the original endpoint.
+The same transport configuration applies to `NewManagement`. `Token` and
+`TokenSource` are mutually exclusive. A source with `Invalidate(string)` is
+refreshed once after a 401, with the same request and grant; a second denial
+stops the call. Explicit tokens and 403/404 responses never use a fallback.
+Legacy `tb_` keys remain usable only where the server still accepts them.
+
+### Unique keys
+
+Declare the key on an empty collection, then let TerraBase reject duplicates
+instead of checking first. A duplicate write, or any transaction containing
+one, fails as a whole:
+
+```go
+db := c.Database(projectID, "main")
+_, err = db.DeclareUniqueKeys(ctx, "users",
+    []tb.UniqueKey{{Paths: []string{"email"}, Normalization: tb.NormalizationTrimLowercase}})
+_, err = db.Collection("users").Create(ctx, map[string]any{"email": "ana@example.com"})
+if errors.Is(err, tb.ErrUniqueViolation) { /* taken; nothing was written */ }
+```
+
+Declaring fails with `tb.ErrSchemaRequiresEmptyCollection` once the collection
+holds documents. `db.UniqueKeys` reads the declared keys back.
+
+The schema routes take a ts-auth project access token, not a `tb_` API key:
+use it as `Config.Token` with `databases:read` (reads) or `databases:write`
+(declares) plus `documents:write` for the writes.
+
+Every write returns `WriteResult{ID, Version, Offset, Durability}` and the
+version is the `ETag`. Versions are opaque tokens (`tbv1-…`, `tbv2-…`):
+compare and pass them back, never parse them. Unknown `state` and
+`durability` values and new response members decode without error. Errors are `*tb.APIError{Status, Code, Message, Op,
+RetryAfter, ETag, Body, RequestID}`, and every error code is also an error value for
+`errors.Is`, for example `tb.ErrNotFound`, `tb.ErrPreconditionFailed`,
+`tb.ErrUnknownDatabase` or `tb.ErrNameTaken`. A 404 for a deleted document
+carries the tombstone version in `ETag`, which recreates it with `IfMatch`.
+`Body` preserves the complete error response, including malformed JSON;
+`RequestID` preserves an `X-Request-ID` response header when supplied. Truncated
+or oversized error responses retain bounded bytes and an unwrap-able read
+cause. Successful typed responses reject empty, null and malformed envelopes.
+
+Retries: TerraBase does not deduplicate retries and rejects `Idempotency-Key`,
+so the client never sends one. Only requests a replay cannot apply twice are
+retried: reads, read-only SQL, queries and writes with an `IfMatch`
+version (a transaction when every write op has one). `IfNoneMatchAny` is not
+enough, since a tombstone left by another writer satisfies it again. For
+those, 429 is retried after `Retry-After`, and the transient rejections
+(`capacity`, `storage_unavailable`, `dependencies_unavailable`) with backoff.
+Transport errors and `commit_uncertain` are retried only for reads and
+queries. Mutations return uncertain outcomes without a replay: use
+`errors.Is(err, tb.ErrCommitUncertain)` and re-read the state before deciding
+what to do. A transport failure matches that code and retains its original
+cause; a server response retains its `*tb.APIError`. Other writes and
+`500 internal_error` are never retried. First-party retry budgets must be fixed
+in code; existing tuning options remain implementation inventory. Public
+database creation is POST and is never replayed after a transient rejection.
+Point document operations use `/documents/by-key?id=…`, with the opaque key
+query-encoded once. Keys never enter path segments.
+Listing and generated creation use GET and POST `/documents`, respectively.
+The old `/documents/{id}` point routes are removed.
+The pinned server still implements If-Match/ETags and lacks deduplicated PUT,
+read-write SQL and RFC 9457 errors. TS-748 describes future producer changes;
+this client does not assume those changes have shipped.
+
+### Collection shapes
+
+Subscribe to one collection, optionally using the existing query filter helpers.
+Each update is the current local state after a whole response and includes its
+checkpoint. Breaking the loop stops requests; cancelling `ctx` stops a long-poll
+or backoff wait. A refused resume emits an empty reset before bootstrapping again.
+
+```go
+for state, err := range users.Subscribe(ctx, tb.ShapeOptions{Where: tb.Eq("/active", true)}) {
+    if err != nil { return err }
+    // Persist documents and checkpoint together if the application needs storage.
+    render(state.Documents, state.UpToDate)
+}
+```
+
+The client pages a snapshot, reads sealed chunks, then long-polls with live
+cursor buckets. OCI may change the serving machine under the same global API
+origin: one proven cursor resume retains state; refusal drops it and restarts.
+Repeated events are applied because their materialized value can be newer.
+Snapshot page cursors become usable only after the entire snapshot.
+
+`users.ShapeKey(ctx, handle, epoch, keyID)` fetches an authenticated no-store
+epoch key, reused in process memory by `(handle, epoch, keyID)` within the client's
+collection scope. Past epochs and shape/key 409 responses evict cached keys;
+keys are never persisted. The returned key's `Decrypt(offset, ciphertext)`
+verifies and opens TBS1 AES-256-GCM bytes for that authorized binding.
+The origin subscription consumes plaintext JSON; manifests,
+302 and automatic object-storage fetching are deferred until FR-22.
+
+### Transactions
+
+Transactions apply up to 1024 ops atomically; failures name the op index:
+
+```go
+res, err := db.Tx().
+	Create("users", "", map[string]any{"email": "bia@example.com"}).
+	Patch("projects", projectID, tb.Ops(tb.Inc("/db_count", 1)), tb.IfMatch(v)).
+	Assert("plans", planID, tb.Eq("/visible", true)).
+	AssertAbsent("invites", inviteID).
+	Commit(ctx)
+var apiErr *tb.APIError
+if errors.As(err, &apiErr) {
+	op, _ := apiErr.OpIndex() // failing op
+}
+```
+
+Queries use filter constructors (`And`, `Or`, `Not`, `Eq`, `Ne`, `Lt`, `Lte`,
+`Gt`, `Gte`, `In`, `Nin`, `Exists`, `Prefix`, `Contains`), paths as JSON
+Pointers or `tb.IDPath`, and page with keyset cursors:
+
+```go
+q := tb.Query{Filter: tb.And(tb.Eq("/org_id", org), tb.Gte("/created_at", json.Number("1759363200000"))),
+	Sort: []tb.SortKey{tb.Desc("/created_at")}, Project: []string{"/email"}, Limit: 50, Count: true}
+for doc, err := range users.Items(ctx, q) { … }     // every match across pages
+for page, err := range users.Pages(ctx, q) { … }    // page.NextCursor, page.Count
+```
+
+### Public database tooling
+
+`Client.Databases` lists project databases; `Database.Info` reads metadata by
+name. `Database.SQL`, `CheckSQL` and `ExplainSQL` use `/v1/projects/{project}/databases/{name}/sql`
+and its `/check` and `/explain` routes with `databases:read`. SQL is the server's
+read-only SELECT subset, with a default LIMIT of 100, a maximum of 1000 and an
+8 MiB result bound. `CheckSQL` can return `OK: false` for an unsupported
+statement; invalid explain requests return API errors. Root SQL builders do
+not execute this HTTP API.
+
+`Client.ProjectUsage` and `Database.Usage` use public project/name routes and
+the existing `UsageOptions`. Counts are best-effort dashboard observations,
+not billing evidence.
+
+### Database changes
+
+`Database.Changes(ctx, ChangesOptions{Cursor: "now", Collections: []string{"users"}})`
+returns an iterator of `change` and `cursor` events from `GET /v1/projects/{project}/databases/{name}/changes`.
+Consume every cursor checkpoint; retain `ChangeEvent.Cursor` for a later
+subscription. Clean EOF reconnects with `Last-Event-ID`, the original endpoint
+and collection filter. The server gives that header precedence over the
+initial query cursor. Documents are the serving machine's current value,
+possibly null; deduplicate by origin, version, collection and key.
+
+Cancellation, malformed/truncated events and terminal SSE `error` events stop
+iteration. `ErrCursorExpired` is returned without resetting to `now` or
+re-reading customer data. Streams fail visibly if they end before providing a
+resume cursor. Collection/index metadata and dropped collections' former
+documents are absent from the feed.
+
+### Legacy Management API
+
+The hidden legacy `/v1/management` aliases still manage organizations, projects, databases, members,
+invitations, ownership transfers and the audit log as one ts-auth user.
+`WithToken` presents the user's ts-auth access token on the client listener.
+`As` names the user in `X-TerraBase-User-Id` with the management service
+credential (`Config.Token`), which TerraBase accepts only on its loopback admin
+listener, for bootstrap work such as `AddMember`. Take the user id from the
+session, never from browser input. These existing methods retain membership
+and catalog-ID semantics. New identity workflows belong in `tsauth`; public
+TerraBase tooling uses the project/name methods above.
+
+```go
+m, err := tb.NewManagement(tb.Config{BaseURL: origin})
+u := m.WithToken(session.AccessToken)
+org, err := u.CreateOrganization(ctx, "Acme")
+project, err := u.CreateProject(ctx, org.ID, "Production")
+db, err := u.CreateDatabase(ctx, org.ID, project.ID, "main") // then c.Database(project.ID, "main")
+inv, err := u.CreateInvitation(ctx, org.ID, "bia@example.com", tb.RoleAdmin)
+page, err := u.Members(ctx, org.ID, tb.PageOptions{After: next})
+usage, err := u.Usage(ctx, org.ID, project.ID, "", tb.UsageOptions{Granularity: "day", From: monthStart})
+```
+
+`Usage` reads a project (database ID empty) or one database, with UTC
+`hour`/`day` buckets and optional inclusive `From`/exclusive `To`. `Period`
+is nil on servers without windowed metering; lifetime counters must not be
+used for a monthly bill. Organization usage is the sum of its ts-auth projects.
+The pinned server accepts at most seven fractional timestamp digits; truncate
+window boundaries to milliseconds before passing them to `Usage`.
+
+It also covers `Organizations`, `RenameOrganization`, `SetPlan`,
+`DeleteOrganization`, `CurrentOrganization`/`SetCurrentOrganization`, project
+and database reads, renames and deletes, `BranchDatabase`, `SetMemberRole`,
+`RemoveMember`, `Leave`, `Invitations`, `RevokeInvitation`,
+`AcceptInvitation` (the access token's verified email must match),
+`OwnershipTransfer` and its start, cancel and confirm,
+`AuditRetention`/`SetAuditRetention`, `AuditEvents`, and the read-only
+database tooling: `Collections` (document counts and bytes), `DatabaseUsage`
+and `SQL` (rows of the dashboard SQL subset), secondary indexes
+(`CreateIndex`, `Indexes`, `DropIndex`; a duplicate is `ErrIndexExists`), and
+project data API keys:
+`CreateProjectAPIKey` (the `tb_…` secret is returned only once),
+`ProjectAPIKeys` and `RevokeProjectAPIKey`. A 404 (`ErrNotFound`)
+means an unknown id or an organization the user is not a member of.
+Management errors carry structured codes, including `ErrNameTaken` for name
+collisions and `ErrForbidden` for insufficient permission. `SetPlan` requires
+the management service credential on the admin listener.
+A rejected token or credential is `ErrInvalidKey`.
+
+Databases are placed in region ids such as `gru-1` (not `RegionCode`):
+`ManagedDatabase` reports `Region` (the answering node), `HomeRegion` and
+`ReplicaRegions`. `CreateDatabaseIn(ctx, org, project, name, tb.Placement{HomeRegion: "gru-1",
+ReplicaRegions: []string{"sfo-1"}})` places a new database (an empty home is
+the called region), `SetDatabaseRegions` replaces the replica list (the home
+never changes), and deleting a replicated database fails with
+`ErrDatabaseReplicated`. A region outside the placement answers 421
+`ErrWrongRegion`, on Management and Documents routes alike, and the
+`*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
+it elsewhere: send the request to a region in `Regions`. Customer
+placement/residency does not enable or disable serving regions.
+The current legacy placement path still requires per-replica project
+registration: call `PrepareProjectRegistration(ctx, org, project)` using that
+region's admin listener, management service credential and `As(userID)`, then
+`registration.Commit(ctx)`. Supplied IDs require the service credential.
+That manual path is an inventoried implementation gap, not first-party startup
+guidance or proof of automatic node admission. Its handle captures one ULID and
+the missing organization/project operations under their home-region IDs.
+If Commit returns `ErrCommitUncertain`, retry the same handle with a fresh
+context; it resends the exact body without repeating existence checks or
+creating a new commit ID. Retain the handle until the outcome is resolved.
+
+Public client gaps include backups, branches/placement updates, index tooling,
+JSON schema, saved queries and query shapes. Existing hidden aliases do not
+prove public JWT compatibility for those methods. Historical collection shape
+routes were removed; the SDK's new v1 subscription follows the proposed
+[shape protocol](contracts/shapes.md). Query `explain` and `Idempotency-Key`
+remain unserved.
+
+### Replication and analytics (TS-762)
+
+`Analytics` and `Replication` read TerraBase's `/v1/projects` routes using
+a ts-auth **project access token**. Project and database IDs are plain ULIDs.
+The wire shape is reconciled with the pinned server implementation; see
+[the contract](contracts/replication-analytics.md).
+
+```go
+m, err := tb.NewManagement(tb.Config{BaseURL: origin})
+u := m.WithToken(projectAccessToken)
+opts := tb.MetricsOptions{Range: tb.Range24Hours, DatabaseID: databaseID, Region: "gru"}
+analytics, err := u.Analytics(ctx, projectID, opts)
+replication, err := u.Replication(ctx, projectID, opts)
+```
+
+Each call returns the server's bounded window; these routes have no pagination.
+TerraBase chooses time buckets for `1h`, `24h`, `7d`, or `30d`. Analytics groups
+series under database/region `Items` and includes
+requests and operations by type, errors, p50/p95/p99 latency, storage, client
+bandwidth and directed replication bandwidth. Replication reports period ops
+and bytes by region pair, lag, divergence, convergence time, last applied and
+status per database and region. Replication bandwidth carries its traffic
+`Kind`; nullable storage, latency and boolean divergence distinguish missing
+observations from zero or false. Counters are best-effort, not billable totals.
+The methods share the client's context cancellation, response bounds, API
+errors and safe-read retries.
+
+### Tests
+
+Tests use `httptest` fakes and fixtures. No test downloads or starts a
+TerraBase binary, and no other repo may depend on TerraBase from this module.
+Focused HTTP boundary tests check generated IDs and malformed response
+envelopes without simulating persistence. Metrics and SSE fixtures reflect the
+pinned producer's actual models. Fixtures verify SDK behavior, not deployed
+signature/issuer enforcement, durability, replication or retention. Existing
+live status/OIDC tests require separate authorized inputs; no new skips were
+added. The matrix records checks and unverified producer dependencies.
+
+## TSAuth and builders
+
+`client.TSAuth.Instance("slug").OIDC` is ts-auth's OpenID Connect provider
+for applications that sign users in with the redirect flow, as the dashboard
+does for single sign-on: the authorization code with PKCE, verified ID tokens,
+refresh, userinfo, RFC 7009 revocation and RP-initiated logout. Customer auth
+instance/issuer trust and exact registered callbacks remain explicit security
+boundaries. ts-auth calls go to one fixed global origin, `https://auth.terrascale.tech`,
+and every tenant issues from `https://auth.terrascale.tech/<slug>`. There is no
+regional discovery or failover. `TSAuthBaseURL` overrides the origin only for
+dev and test deployments; an issuer must be that origin plus the slug.
+The platform management API, API key tokens and headless sign-in are in
+`terrascale.tech/sdk/tsauth`.
+
+Schema and SQL builders construct and validate statements locally and do not
+execute SQL over HTTP. The explicit pgx-backed PostgreSQL client uses separate
+listener configuration, credentials, and CA trust. Actual PostgreSQL execution
+requires its producer protocol and an admitted signed listener; source and
+package checks do not qualify an actual admitted PostgreSQL runtime.
+
+## Region latency (`client.Status`)
+
+`client.Status.Latency(ctx, "")` reads all regions from the public
+`https://status.terrascale.tech/api/latency` endpoint. Pass a region code such
+as `"gru"` to send `?region=gru`; codes are trimmed and lowercased without
+restricting the available regions. Override the origin with `Config.StatusBaseURL`
+(HTTPS, or HTTP on loopback and `.test` origins for development). Status calls
+need no credentials.
+
+```go
+client, err := sdk.NewClient(sdk.Config{})
+if err != nil {
+    return err
+}
+latency, err := client.Status.Latency(ctx, "gru")
+if err != nil {
+    return err
+}
+for _, region := range latency.Regions {
+    if region.Consensus != nil && region.Consensus.MedianMS != nil {
+        fmt.Printf("%s: %d ms (%s)\n", region.Name, *region.Consensus.MedianMS, region.Status)
+    }
+}
+```
+
+`LatencyResponse.GeneratedAt` is a parsed RFC3339 timestamp; `Window` is `"1h"`.
+Each region contains its code, name, ping URL, status, consensus, and individual
+vantages. Median and p95 measurements are `*int` milliseconds: `nil` means no
+measurement, while a pointer to zero is a measured zero. Consensus may also be
+`nil`. `Samples` is an integer count. Status is `operational`, `degraded`, `down`,
+or `planned`. These are probe measurements, not the caller's own browser ping.
+
+The client shares the SDK's bounded HTTP transport, `RequestTimeout`, retries
+on transient failures (`MaxRetryAttempts`, `RetryDelay`, and `Retry-After`),
+and `*sdk.APIError` responses. Retries default to zero; redirects are refused.
+The service briefly caches responses; the SDK adds no cache.
+[`status_example_test.go`](status_example_test.go) contains a compilable example.
+
+Unit tests use `httptest`. The live contract test requires authorized test inputs and skips HTTP 404
+until the endpoint is deployed:
+
+```sh
+TERRASCALE_STATUS_LIVE=1 nice -n 19 go test . -run '^TestStatusLatencyLive$' -v
+```
+
+Before merging this client, require the deployed endpoint to match the response,
+region filter, public CORS, and cache contract (404 now fails):
+
+```sh
+TERRASCALE_STATUS_REQUIRE_LATENCY=1 nice -n 19 go test . -run '^TestStatusLatencyLive$' -v
+```
+
+## ts-auth tokens (`terrascale.tech/sdk/tsauth`)
+
+ts-auth's platform contract (TS-598) issues every token TerraBase accepts.
+`tsauth` turns credentials into short-lived tokens:
+
+- `NewAPIKeySource` exchanges an API key (`tsk_<ULID>_<secret>`, an OAuth client
+  credential) at `{issuer}/oauth/token` for an organization or project token
+  (`Project`, optional `Scopes`).
+- `NewExchangeSource` exchanges a signed-in user's token (RFC 8693) for an
+  organization or project token, as ts-dashboard (confidential, `ClientSecret`)
+  or ts-cli (public) does.
+
+Both return a `*tsauth.TokenSource`: it caches the token until 60 seconds
+before it expires, concurrent callers share one request, failures are not
+cached, and `Invalidate(token)` drops a token a resource server refused. It
+satisfies `v1.TokenSource`. Errors from the token endpoint are
+`*tsauth.Error{Status, Code, Description, RetryAfter}`. The issuer defaults to
+`https://auth.terrascale.tech/terrascale`.
+
+```go
+tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: apiKey, Project: projectID})
+token, err := tokens.Token(ctx) // or pass tokens as a client's TokenSource
+```
+
+### ts-auth management
+
+`tsauth.New(Config{Issuer})` calls the platform management API of the
+tenant (`{origin}/v1/terrascale/…`) as a signed-in user, `WithToken(token)`:
+organizations (`CreateOrganization`, `Organizations`, `Organization`,
+`RenameOrganization`, `DeleteOrganization`), members (`Members`,
+`SetMemberRole`, `RemoveMember`, `Leave`), invitations to the organization or
+one project (`CreateInvitation`, `Invitations`, `RevokeInvitation`,
+`LookupInvitation`, `AcceptInvitation`, `DeclineInvitation`), ownership
+transfers, projects and project members, organization and project API keys
+(`CreateAPIKey`, `APIKeys`, `APIKey`, `RotateAPIKey`, `RevokeAPIKey`; an empty
+project means an organization key) and `AuditEvents`. Errors are
+`*tsauth.APIError`, and each code is an `errors.Is` value such as
+`tsauth.ErrNotFound` (also an organization the user cannot reach),
+`ErrForbiddenRole` or `ErrLastOwner`.
+
+```go
+c, err := tsauth.New(tsauth.Config{})
+u := c.WithToken(signInToken)
+org, err := u.CreateOrganization(ctx, "Acme")
+project, err := u.CreateProject(ctx, org.ID, "Production")
+key, err := u.CreateAPIKey(ctx, org.ID, project.ID, tsauth.APIKeyRequest{Name: "ci", Scopes: []string{tsauth.ScopeDocumentsWrite}})
+tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: key.Key}) // key.Key is shown once
+```
+
+Management tests use the pinned local contract,
+`tsauth/testdata/platform-api.openapi.json`. They do not establish deployed
+platform compatibility; see the qualification limits in the matrix.
+
+### ts-auth headless sign-in
+
+`tsauth.NewHeadless(HeadlessConfig{ClientID, ClientSecret})` is ts-auth's
+headless API (TS-582) for a first-party confidential client that signs users
+in on its own pages, as ts-dashboard does: `SignInWithPassword`,
+`SignInWithEmailCode` (with the `pendingToken` of `SignUp` for a sign-up
+code), `StartEmailCode`, `ResendEmailCode`, `SignUp`, `StartPasswordReset`,
+`CompletePasswordReset`, `Refresh` and `Revoke`. Every sign-in and step
+takes the end user's IP address, which ts-auth's rate limits key on. Grants
+answer `*tsauth.Tokens` or a `*tsauth.Error` (`invalid_grant` for any wrong
+credential); the JSON steps fail with `*tsauth.APIError` (`ErrInvalidCode`,
+`ErrInvalidPassword`, `ErrRateLimited` with `RetryAfter`, `ErrInvalidClient`).
+`ResendEmailCode(ctx, email, clientIP, pendingToken)` uses the same email-code
+endpoint; pass the `SignUp` token to preserve the pending sign-up, or `""`
+for a sign-in code. Invalid pending tokens succeed without sending an email
+to prevent account enumeration. Respect `APIError.RetryAfter` before retrying.
+
+Issuers require HTTPS. Any existing insecure HTTP issuer support is confined
+to reviewed isolated tests; it is not a first-party deployment mode or setup
+step and remains inventoried for removal. HTTP exposes credentials and tokens.
+Issuer URL validation and the other SDK clients' HTTPS requirement remain.
+First-party confidential client secrets must be created and delivered
+automatically; this SDK docs change does not implement that delivery.
+
+```go
+h, err := tsauth.NewHeadless(tsauth.HeadlessConfig{ClientID: "ts-dashboard", ClientSecret: secret})
+tokens, err := h.SignInWithPassword(ctx, email, password, clientIP, []string{"openid", "email", "offline_access"})
+project, err := tsauth.NewExchangeSource(tsauth.ExchangeConfig{ClientID: "ts-dashboard", ClientSecret: secret,
+	SubjectToken: func(context.Context) (string, error) { return tokens.AccessToken, nil }, Organization: orgID, Project: projectID})
+```
+
+## Checks
+
+```sh
+test -z "$(gofmt -l .)"
+nice -n 19 go vet ./...
+nice -n 19 go build ./...
+nice -n 19 go test -race ./...
+```
+
+The module requires Go 1.25 and has no CGO dependency. CI selects the patched
+Go 1.27.2 toolchain and runs the pinned vulnerability scanner alongside
+formatting, vet, build and race tests.
+
+PostgreSQL connections require plain ULIDs for both `PostgresConfig.Database`
+and `PostgresConfig.KeyID`; the key ID is also the PostgreSQL username.
+API key token sources use `tsk_<26-character ULID>_<52-character secret>`:
+the ULID alone is the OAuth client ID. Credential prefixes identify secret
+formats and are never part of an entity ID.
