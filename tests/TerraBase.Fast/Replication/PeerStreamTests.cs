@@ -1666,8 +1666,6 @@ public sealed class PeerStreamTests
 
         // Keep the receiver alive with its failed coverage while the sender's storage is rebuilt without peer rows.
         await gru.Api.Server.Services.GetRequiredService<PeerStreams>().StopAsync(CancellationToken.None);
-        await gru.Api.Server.Services.GetRequiredService<AntiEntropy>().StopAsync(CancellationToken.None);
-        await sjc.Api.Server.Services.GetRequiredService<AntiEntropy>().StopAsync(CancellationToken.None);
         await sjc.LoseAsync("items", lost);
         using (var push = await RawPush.StartAsync(sjc, gru.Name, gru.Node))
         {
