@@ -171,7 +171,7 @@ foreach (var (name, collections) in plan)
     {
         try { await database.DropCollectionAsync(collection); } catch (TerraBaseNotFoundException) { }
         await database.CreateCollectionAsync(collection);
-        await Parallel.ForEachAsync(rows.Chunk(500), new ParallelOptions { MaxDegreeOfParallelism = 6 }, async (chunk, ct) =>
+        await Parallel.ForEachAsync(rows.Chunk(500), new ParallelOptions { MaxDegreeOfParallelism = 2 }, async (chunk, ct) =>
             await Retry(() => database.TransactAsync(chunk.Select(row => TerraBaseTransactionOperation.Put(collection, row.Id, Json(row.Doc))).ToArray(), ct)));
         foreach (var fields in indexes)
             try { await database.CreateIndexAsync(collection, fields); } catch (TerraBaseConflictException) { }
@@ -195,11 +195,11 @@ foreach (var query in queries)
     Console.WriteLine($"sql-demo: {result.Matched} rows for {query}");
 }
 
-// Traffic: reads, SQL queries and writes across the databases.
+// Traffic: reads, SQL queries and writes across the databases. Two at a time stays inside the organization request budget.
 var shop = client.Database(projectId, "shop");
 var iot = client.Database(projectId, "iot");
 var blog = client.Database(projectId, "blog");
-await Parallel.ForEachAsync(Enumerable.Range(0, 600), new ParallelOptions { MaxDegreeOfParallelism = 4 }, async (i, ct) =>
+await Parallel.ForEachAsync(Enumerable.Range(0, 600), new ParallelOptions { MaxDegreeOfParallelism = 2 }, async (i, ct) =>
 {
     var pick = new Random(i);
     await Retry(async () =>
@@ -225,7 +225,7 @@ static async Task<T> Retry<T>(Func<Task<T>> operation)
 {
     for (var attempt = 1; ; attempt++)
         try { return await operation(); }
-        catch (Exception error) when (attempt < 4 && error is TerraBaseRateLimitedException or TerraBaseUnavailableException or HttpRequestException)
+        catch (Exception error) when (attempt < 8 && error is TerraBaseRateLimitedException or TerraBaseUnavailableException or HttpRequestException)
         { await Task.Delay(TimeSpan.FromSeconds(attempt * 2)); }
 }
 
