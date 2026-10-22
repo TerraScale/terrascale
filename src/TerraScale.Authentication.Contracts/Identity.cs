@@ -10,7 +10,7 @@ namespace TerraScale.Authentication.Contracts;
 /// <param name="PlatformRole">
 /// <c>admin</c> for a TerraScale platform admin of the <c>terrascale</c> instance, who may explore the platform databases
 /// in TerraBase; <see langword="null"/> otherwise. No API sets it: an operator writes it to the user's document through
-/// TerraBase's internal listener (Fly's private network).
+/// TerraBase's internal listener. The platform owner is an admin without it (ts-auth's PlatformBootstrap.OwnerEmail).
 /// </param>
 public sealed record UserRecord(string Id, string InstanceId, string Email, long AuthEpoch, DateTimeOffset CreatedAt, string? PasswordHash = null, string? PlatformRole = null);
 

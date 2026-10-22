@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.IdentityModel.JsonWebTokens;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
@@ -10,7 +11,7 @@ namespace TerraScale.Authentication.Fast.Oidc;
 
 /// <summary>
 /// A platform admin's access token carries platform_role=admin, which TerraBase's explore API requires. The role is read from
-/// the stored user at every sign-in and refresh, and nothing but the stored field grants it.
+/// the stored user at every sign-in and refresh, and nothing but the stored field or being the platform owner grants it.
 /// </summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class PlatformRoleTests(TerraBaseFixture fixture)
@@ -31,6 +32,17 @@ public sealed class PlatformRoleTests(TerraBaseFixture fixture)
         await SetRoleAsync(oidc.Database, admin.Id, null);
         using var refreshed = await oidc.RefreshAsync(adminTokens.GetProperty("refresh_token").GetString()!);
         await Assert.That(Role(await refreshed.Content.ReadFromJsonAsync<JsonElement>())).IsNull();
+    }
+
+    [Test]
+    public async Task The_platform_owner_gets_the_claim_without_a_stored_role_and_no_other_email_does()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await oidc.CreateUserAsync(PlatformBootstrap.OwnerEmail);
+        await oidc.CreateUserAsync("mariogk@example.test");
+
+        await Assert.That(Role(await SignInAsync(oidc, PlatformBootstrap.OwnerEmail))).IsEqualTo(OidcResults.PlatformRoleAdmin);
+        await Assert.That(Role(await SignInAsync(oidc, "mariogk@example.test"))).IsNull();
     }
 
     [Test]
