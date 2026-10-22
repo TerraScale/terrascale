@@ -6,16 +6,13 @@ This is the consumer contract the application implements
 contains no credential values, and none may be added here, to an issue, a chat
 or a command line.
 
-Status (2026-10-13): the client secret and session encryption key are staged
-in Fly and saved in GitHub secrets. The app-scoped deploy token is in GitHub.
-Vendor-issued Stripe keys remain required before the application can start.
+## OCI Vault delivery
 
-## Fly secrets
-
-Fly secrets are the only secret store. `fly secrets set` delivers them to the
-machine as environment variables; there is no file, default or fallback. The
-app reads them at startup (startup fails closed when one is missing or
-invalid) and on each use, and never logs them.
+ts-orch reads production secrets from OCI Vault in gru using instance principal
+and delivers protected files named by `<NAME>_FILE`. The app supports those files
+and direct environment values for test hosts. There is no default; startup fails
+closed on missing or invalid secrets, and values are never logged.
+CI secrets remain in GitHub Actions secrets. This document provisions nothing.
 All five secrets are required in Development too; test-only hosts supply synthetic identities.
 
 | Environment variable | Format checked by the app | Used for | Issued by |
@@ -108,8 +105,8 @@ The dashboard keeps its own state in the `ts-dashboard` database of the
 ts-dashboard project `00000000000000000000000005`, which TerraBase seeds on every
 start (terrascale `PlatformDatabases.cs`). It reaches TerraBase's private
 listener at `TS_DASHBOARD_TERRABASE_URL` when set (any environment, an http(s)
-origin such as `http://127.0.0.1:8081`), else `http://gru.ts-terrabase.internal:8081`
-on Fly and `http://127.0.0.1:8081` only in Development; otherwise it refuses to
+origin such as `http://127.0.0.1:8081`), defaulting to that loopback origin
+only in Development; otherwise it refuses to
 start. Only the `terrabase-state` HTTP client sends
 `X-TerraBase-Peer-Credential`, and only to that origin: its handler
 (`TerraBasePeerCredential`) refuses any other destination and its primary
@@ -122,8 +119,8 @@ no customer members or keys; no customer token reaches this database.
 ## TerraBase origin and regions
 
 The dashboard calls ts-auth only at `https://auth.terrascale.tech/terrascale`
-and TerraBase at `https://api.terrascale.tech/`, which Fly answers in a
-serving region (`Platform/Persistence/TerraBaseDiscovery.cs`). Atlas
+and TerraBase at `https://api.terrascale.tech/`, the public OCI API
+origin (`Platform/Persistence/TerraBaseDiscovery.cs`). Atlas
 `/v1/discovery` was never served and is not called.
 
 No producer publishes a region catalog yet. The dashboard lists one region:
@@ -165,8 +162,7 @@ region that does not manage the database with:
 - `X-TerraBase-Database-Home`: the database's home region;
 - `X-TerraBase-Database-Regions`: the home, then every replica region,
   comma-separated;
-- body `{"error":{"code":"wrong_region","message":"the database is served in <home>"}}`;
-- `fly-replay: region=<home>` behind Fly Proxy only.
+- body `{"error":{"code":"wrong_region","message":"the database is served in <home>"}}`.
 
 The dashboard reads these as ts-dotnet 0.0.2's `TerraBaseWrongRegionException`
 does (`DatabaseWrongRegionException`): region names that are not region ids

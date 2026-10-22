@@ -14,6 +14,12 @@ assertions in TUnit does not satisfy this requirement. Demo providers belong
 only in the test host. Live provider and TypeScript SDK qualification remains
 a separate required E2E journey and must not be reported as passed by a demo.
 
+## Current hosting (2026-10-22)
+
+Production runs on OCI gru under ts-orch. The current contract is in
+[OCI deployment](oci-deployment.md); the dated observations below are historical
+and do not describe current hosting or secret delivery.
+
 ## Status (2026-10-12)
 
 The Go source, its reference host and the strict visual parity journey were
@@ -21,11 +27,11 @@ removed. The C# application in `src/TerraScale.Dashboard` is the only
 implementation. The seed fixture captured once from the Go application is
 `tests/TerraScale.Dashboard.E2E/Fixtures/reference-workspace.json`.
 
-Production is not deployed. Read-only checks at 18:09 UTC found: the Fly app
+Production is not deployed. Read-only checks at 18:09 UTC found: the retired deployment
 `ts-dashboard` has no machines and no releases; ts-auth `/readyz` returned
 503; `atlas.terrascale.tech` and `auth.terrascale.tech` are NXDOMAIN; and
 ts-terrabase was started only in `sjc`. The C# image exits at startup because
-its Fly secrets ([identity-descriptor.md](identity-descriptor.md)) are not
+its runtime secrets ([identity-descriptor.md](identity-descriptor.md)) are not
 set. Persistence migration and live producer qualification remain open.
 
 On 2026-10-12 the user accepted merging the implementation into GitHub
@@ -396,8 +402,8 @@ journeys passed again in the focused follow-up.
   The dashboard calls ts-auth only at its global issuer
   `https://auth.terrascale.tech/terrascale`, as ts-auth serves it from every
   region; it no longer uses Atlas auth discovery or regional auth hosts.
-- **Identity delivery.** The Fly app `ts-dashboard` has no secrets. The app
-  reads four Fly secrets from its environment (ts-auth client secret, session
+- **Identity delivery.** The retired deployment `ts-dashboard` has no secrets. The app
+  reads four runtime secrets from its environment (ts-auth client secret, session
   encryption key, Stripe secret and webhook keys) and keeps its state in the
   seeded `platform-dashboard` database through TerraBase's private listener,
   with no state key. Names, formats and owners are in
@@ -449,7 +455,7 @@ dashboard-used auth and data wire routes/DTOs remain unchanged from `b76c4621`.
 Its new [signing-key contract](https://github.com/TerraScale/terrascale/blob/76f5d5ce20936f09b484de3084af2c21deb84ea2/docs/auth/signing-keys.md)
 returns `503/no_signing_keys` without keys and requires a separate operator
 provisioning process. Automatic first-party provisioning remains an owning
-producer/Fly-secret qualification gate. The current engine also advances its
+producer/secret-delivery qualification gate. The current engine also advances its
 storage format to version 3; actual deployed migration, CAS, replication and
 backup durability remain unqualified. Public NuGet's
 `TerraScale.DotNet` index returned `404`; candidate digest verification is
@@ -520,8 +526,8 @@ inaccessible deployment currently serves.
 At that checkpoint, the C# consumer expected machine identity at
 `/run/secrets/terrascale/dashboard.json`. The file was absent in the
 07:39 UTC presence-only check; no secret material was read. This historical
-consumer boundary has since been replaced: production runtime secrets are Fly
-secrets on each Fly app, delivered as environment variables. CI secrets are
+consumer boundary has since been replaced: production runtime secrets come from
+OCI Vault via ts-orch using instance principal, delivered as secret files. CI secrets are
 GitHub Actions secrets; the complete inventory lives in terrascale under
 `ops/secrets/`. See [`identity-descriptor.md`](identity-descriptor.md).
 Provisioning and rotation still require live qualification.
@@ -534,7 +540,7 @@ organizations, sessions, credentials and indexes, auth flows/budgets/device
 grants, invitations, notifications, saved queries, PAT indexes and billing
 bindings. Hosted startup now establishes the fixed database and twenty
 collections through the official SDK after receiving an admitted state-project
-identity. Automatic tenant/project authority, Fly-secret delivery, live bootstrap
+identity. Automatic tenant/project authority, OCI Vault delivery, live bootstrap
 qualification and import of existing Go persistent state are still required.
 
 Endpoints use TerraBase's global origin `https://api.terrascale.tech/`
@@ -577,7 +583,7 @@ external client exists.
 
 | Interface | Consumers found | Disposition |
 | --- | --- | --- |
-| `GET /health/ready`, `GET /health/live` | ts-status `src/probe/deployments.ts:9` probes `https://ts-dashboard.fly.dev/health/ready` and reads the commit after `+` in `version` | Ported for GET. Both return `{"status":"ok","version":"<version>+<commit>"}`; ready runs the same check as `/readyz`, and a failure is a 503 HTML page rather than Go's JSON `unavailable` body. HEAD and the `backend` field are not ported. The image build requires the commit as `--build-arg SOURCE_REVISION`. |
+| `GET /health/ready`, `GET /health/live` | ts-status reads the commit after `+` in `version`; its public probe target must use the canonical `https://dash.terrascale.tech/health/ready` | Ported for GET. Both return `{"status":"ok","version":"<version>+<commit>"}`; ready runs the same check as `/readyz`, and a failure is a 503 HTML page rather than Go's JSON `unavailable` body. HEAD and the `backend` field are not ported. The image build requires the commit as `--build-arg SOURCE_REVISION`. |
 | `GET /api/v1/status/live`, `/api/v1/status/ready` | none | Not ported. |
 | `GET /access` (redirect to members) | docs only (terrascale `docs/terrabase/management-api.md:862`) | Not ported. |
 | Platform REST API | docs only (terrascale `docs/auth/platform-contract.md:313`) | Not ported. Whether the contract is still required is a decision for its owner (ts-auth platform contract). |
@@ -585,10 +591,10 @@ external client exists.
 | Sentry/GlitchTip errors and CSP `report-uri` | not an interface; the Go app read `SENTRY_DSN` and `DASHBOARD_CSP_REPORT_URL` | Not ported. The C# app sends no error reports. |
 
 Before deployment, finish native browser journeys, official SDK distribution
-and live Fly-secret/ts-auth/TerraBase checks, auth-budget contention qualification,
+and live secret-delivery/ts-auth/TerraBase checks, auth-budget contention qualification,
 persistent restart/cross-instance checks, and the whole
-account-creation-to-ts-typescript-SDK flow. The Fly image (`Dockerfile`) and
-the `fly.toml` health check (`/readyz`) now target the C# application, and the
+account-creation-to-ts-typescript-SDK flow. The image (`Dockerfile`) and
+ts-orch readiness check (`/readyz`) target the C# application, and the
 Go runtime/tooling was removed. This repository has no CI or release
 workflow yet. Keep `AGENTS.md` and `CLAUDE.md` untouched; the user's C# request supersedes
 their older Go stack instructions.
@@ -596,7 +602,7 @@ their older Go stack instructions.
 ## Identity, administrator and TypeScript qualification audit
 
 The delivery observations below are historical. The current runtime reads
-identity from Fly-secret environment variables, not a descriptor file; see
+identity from OCI Vault secret files delivered by ts-orch; see
 [`identity-descriptor.md`](identity-descriptor.md). CI secrets are GitHub Actions
 secrets. The complete inventory lives in terrascale under `ops/secrets/`.
 
@@ -678,7 +684,7 @@ establishes this live TypeScript lane, which remains unverified.
 
 Fixed database/collection startup is implemented and all thirteen native TUnit
 E2E scenarios pass against an isolated external producer protocol fixture.
-Service-project provisioning, Fly-secret delivery and
+Service-project provisioning, OCI Vault delivery and
 the Go-state import remain incomplete. No production data has been read,
 changed or deleted by this audit.
 The [TS-598 introduction](https://github.com/TerraScale/terrascale/blob/a095400a19bcc432ac27d0afaca4eba042b636a7/docs/auth/platform-contract.md)
@@ -710,7 +716,7 @@ come from an authenticated principal. It is not a documented
 machine-bootstrap grant. A guessed service user, a browser-supplied user ID or
 the unused `ManagementCredential` cannot establish that authority. The
 dashboard must not reuse ts-auth's separately owned storage-signing key.
-Credential acquisition and rotation need the owning producer and Fly-secret
+Credential acquisition and rotation need the owning producer and OCI Vault delivery
 contract; the available SDK operations do not close that prerequisite.
 
 Database/collection startup runs automatically before traffic admission, using

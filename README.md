@@ -5,9 +5,8 @@ persistent state lives in TerraBase through the official ts-dotnet SDK
 (`TerraScale.DotNet`). It is a .NET 10 application using RazorSlices and Datastar.
 
 The C# application is the only implementation; the Go application was removed.
-Production rollout is blocked on identity delivery, ts-auth and discovery: the
-app is not deployed and exits at startup without its identity file. See the
-[runtime integration gates](docs/csharp-migration.md#runtime-integration-gates).
+Production runs on OCI gru under ts-orch; see the
+[OCI deployment contract](docs/oci-deployment.md).
 
 ## Layout
 - `src/TerraScale.Dashboard/`: the application (`Features/`, `Platform/`, `UI/`).
@@ -31,16 +30,11 @@ nice -n 19 make test-slow  # independent, non-blocking Slow journeys
 ## Demo mode
 `DEMO=true` (exactly) makes the one image serve the public synthetic demo: in-memory
 providers instead of TerraBase, ts-auth and Stripe, with admin, MCP and destructive
-routes blocked. CI deploys main to `ts-dashboard` (https://dash.terrascale.tech).
+routes blocked. Production uses ts-orch's persistent service contract.
 
-```sh
-fly secrets set DEMO=true --app ts-dashboard    # serve the demo
-fly secrets unset DEMO --app ts-dashboard       # serve the real application
-```
-
-## Off Fly
-Production off Fly needs `TS_DASHBOARD_TERRABASE_URL` (TerraBase's private listener, e.g. `http://127.0.0.1:8081`) and
-listens on `ASPNETCORE_URLS` (default port 8080); a loopback TLS edge must send `X-Forwarded-Proto` and `X-Forwarded-For`.
+## OCI production
+Production needs `TS_DASHBOARD_TERRABASE_URL` (TerraBase's private listener, `http://127.0.0.1:8081`) and
+listens on `ASPNETCORE_URLS` (`http://127.0.0.1:8085` in the ts-orch service spec); the loopback TLS edge sends `X-Forwarded-Proto` and `X-Forwarded-For`.
 Each secret may instead arrive as a file named by `<NAME>_FILE` (ts-orch delivers OCI Vault secrets that way).
 
 More: [development](docs/development.md), [migration status](docs/csharp-migration.md),

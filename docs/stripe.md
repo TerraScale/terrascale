@@ -16,15 +16,15 @@ one matching enabled endpoint per Stripe account.
 
 ## Read-only Stripe audit
 
-Run the app's audit command in an environment where Fly has delivered the
-dashboard secrets as environment variables:
+Run the app's audit command in an environment where ts-orch has delivered the
+dashboard secrets as OCI Vault files:
 
 ```sh
 nice -n 19 dotnet run --project src/TerraScale.Dashboard -- audit-stripe
 ```
 
 The secret names and formats are in [`identity-descriptor.md`](identity-descriptor.md).
-Production runtime secrets are Fly secrets on each Fly app; CI secrets are
+Production runtime secrets come from OCI Vault via instance principal; CI secrets are
 GitHub Actions secrets. The complete inventory lives in the terrascale repository under
 `ops/secrets/`. This command consumes secrets; it does not provision them.
 See [`csharp-migration.md`](csharp-migration.md) for the open runtime gates.
@@ -42,7 +42,7 @@ matching prices. A second run changes nothing. It refuses live keys.
 nice -n 19 dotnet run --project src/TerraScale.Dashboard -- setup-stripe
 ```
 
-The command takes no options and reads DashboardIdentity from Fly environment variables. It
+The command takes no options and reads DashboardIdentity from ts-orch-delivered secret files. It
 does not accept keys, webhook secrets, origins, API versions or mode settings on
 the command line or from manual audit-specific environment variables. It infers
 test or live mode from the delivered standard (`sk_`) or restricted (`rk_`) secret key prefix. The audit uses Stripe.net
@@ -91,7 +91,7 @@ invoice.marked_uncollectible
 invoice.voided
 ```
 
-Webhook signatures are verified with the endpoint secret in the Fly-delivered
+Webhook signatures are verified with the endpoint secret in the OCI Vault-delivered
 machine identity. Delivery failures remain visible to Stripe for retry. Confirm
 successful delivery attempts in Stripe Workbench when validating an endpoint.
 

@@ -65,13 +65,8 @@ not the token's), `409 conflict` and `503 temporarily_unavailable`.
 
 ## Hosts
 
-Historically the Go deployment of the Fly app served all three hosts, and the
-Go `internal/app` package routed `platform.terrascale.tech` to this API and
-`mcp.terrascale.tech` to the MCP server. The C# application routes only
-`mcp.terrascale.tech`. Their Cloudflare DNS records (TS-599, not proxied)
-point at the app's Fly addresses, and Fly issues their certificates:
-
-| Host | A record | AAAA record |
-| --- | --- | --- |
-| `platform.terrascale.tech` | `fcd121d998f2b3d3fbc15fd3ff132a75` | `cd581edf889b93aeaa13100066230c19` |
-| `mcp.terrascale.tech` | `7c190d17c1fb2a08798d2741ad318389` | `f4399a7c13ed854b17e1dea6fbaad3e7` |
+The removed Go application routed `platform.terrascale.tech` to this API and
+`mcp.terrascale.tech` to MCP. The C# application routes only the MCP host.
+The current ts-orch dashboard service spec registers `dash.terrascale.tech`;
+it does not register either additional host. Do not infer serving availability
+from the historical API contract. See [OCI deployment](oci-deployment.md).

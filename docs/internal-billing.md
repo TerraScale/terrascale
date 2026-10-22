@@ -11,7 +11,7 @@ Internal billing cannot enter Stripe checkout or accept Stripe projections.
 ## Configure the existing organization
 
 Run the command with the dashboard's configured environment credentials,
-delivered through Fly secrets in production. It needs an existing platform
+delivered through ts-orch from OCI Vault using instance principal in production. It needs an existing platform
 admin who is a member of the target organization and the exact organization ID.
 The command prints a `/cli/approve` link
 and user code on `https://dash.terrascale.tech`; the admin named by

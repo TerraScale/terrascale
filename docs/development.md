@@ -6,8 +6,8 @@ Node.js and npm build the Lightning CSS stylesheet and browser assets, and
 nothing else: the npm project is `src/TerraScale.Dashboard/web` (`package.json`,
 `.browserslistrc`, and the scripts in `web/build/`). Tests are C# only.
 It is the only implementation; the Go application was removed on 2026-10-12.
-Production is not deployed. See [migration status](csharp-migration.md) for
-outstanding deployment and persistence gates.
+Production runs on OCI gru under ts-orch. See [OCI deployment](oci-deployment.md)
+for the current contract; [migration status](csharp-migration.md) retains historical qualification evidence.
 
 ## Local development
 
@@ -109,7 +109,7 @@ services fail this test. It covers state readiness; the live account-to-SDK
 flow, authentication and Stripe delivery need their own qualification.
 
 `audit-stripe` runs the read-only Stripe.net report using the Stripe keys from
-the dashboard's Fly secrets ([secrets](identity-descriptor.md)); it accepts no
+the dashboard's OCI Vault secret files ([secrets](identity-descriptor.md)); it accepts no
 configuration options. Run it with:
 
 ```sh
@@ -137,7 +137,7 @@ Brand marks are file-backed SVG assets under `web/static/brand`.
 The application consumes the locked ts-dotnet package, whose source revision
 and digest are recorded in [SDK provenance](../vendor/dotnet/README.md).
 Production state belongs in TerraBase, authorization belongs to ts-auth,
-and secrets arrive only as Fly secrets ([secrets](identity-descriptor.md)). Feature flags,
+and secrets arrive through ts-orch from OCI Vault using instance principal ([secrets](identity-descriptor.md)). Feature flags,
 production demo selection and manual endpoint/secret overrides are prohibited.
 
 Do not deploy until the live SDK, persistence, identity delivery and release
