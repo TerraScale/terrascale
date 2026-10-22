@@ -20,7 +20,7 @@ public sealed class TerraBaseQueryParityTests
             calls.Add((request.Method.Method, request.RequestUri!.AbsolutePath, request.RequestUri.Query,
                 request.Content is null ? null : await request.Content.ReadAsStringAsync(token)));
             return request.Method == HttpMethod.Delete ? new HttpResponseMessage(HttpStatusCode.NoContent)
-                : TerraBaseIntegrationFixture.Json(request.RequestUri.Query.Length > 0 ? "{\"items\":[" + Saved + "],\"next\":\"" + QueryId + "\"}" : Saved);
+                : TerraBaseIntegrationFixture.Json(request.RequestUri.Query.Length > 0 ? "{\"items\":[" + Saved + "],\"next\":\"" + QueryId + "\"}" : Saved, request.Method == HttpMethod.Post ? HttpStatusCode.Created : HttpStatusCode.OK);
         });
         using var http = new HttpClient(handler);
         var project = TerraBaseIntegrationFixture.Client(http).Project(TerraBaseIntegrationFixture.ProjectId);
@@ -82,7 +82,7 @@ public sealed class TerraBaseQueryParityTests
         using var handler = new TerraBaseTestHandler((_, _) =>
         {
             calls++;
-            return Task.FromResult(TerraBaseIntegrationFixture.Json($$"""{"error":{"code":"{{code}}","message":"refused"}}""", (HttpStatusCode)status));
+            return Task.FromResult(TerraBaseIntegrationFixture.Json($$$"""{"error":{"code":"{{{code}}}","message":"refused"}}""", (HttpStatusCode)status));
         });
         using var http = new HttpClient(handler);
         var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
