@@ -6,7 +6,6 @@ mod auth_routing;
 pub mod client;
 pub mod config;
 pub mod error;
-pub mod generated_contract;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 pub mod regions;
@@ -22,4 +21,3 @@ pub use config::{ClientConfig, ClientConfigBuilder, ATLAS_BASE_URL};
 pub use error::{Error, ErrorKind, Result};
 pub use regions::{normalize_base_url, RegionCode};
 pub use transport::{HttpTransport, Method, Request, ReqwestTransport, Response};
-pub const CONTRACT_VERSION: &str = generated_contract::CONTRACT_VERSION;
