@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, "fix/sdk-parity-20261022*"]
 
 permissions:
   contents: read

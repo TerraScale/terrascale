@@ -84,3 +84,10 @@ export { V1SavedQueries } from "./v1/saved-queries.js";
 /** @typedef {import("./v1/catalog.js").V1DatabaseListRequest} V1DatabaseListRequest */
 /** @typedef {import("./v1/catalog.js").V1DatabasePage} V1DatabasePage */
 /** @typedef {import("./v1/catalog.js").V1CollectionSchema} V1CollectionSchema */
+
+export { V1DatabaseSchemaClient } from "./v1/database-schema.js";
+/** @typedef {import("./v1/database-schema.js").V1InferredSchema} V1InferredSchema */
+/** @typedef {import("./v1/database-schema.js").V1DatabaseSchema} V1DatabaseSchema */
+/** @typedef {import("./v1/database-schema.js").V1UniqueSchema} V1UniqueSchema */
+/** @typedef {import("./v1/database-schema.js").V1UniqueSchemaRequest} V1UniqueSchemaRequest */
+/** @typedef {import("./v1/database-schema.js").V1QueryShapes} V1QueryShapes */

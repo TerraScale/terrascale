@@ -1,7 +1,11 @@
-/** @typedef {"createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
+/** @typedef {"getDatabaseSchema" | "inferCollectionSchema" | "declareCollectionSchema" | "listQueryShapes" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
 const saved = "/v1/projects/{project}/saved-queries";
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
+  route("getDatabaseSchema", "GET", "/v1/projects/{project}/databases/{database}/schema"),
+  route("inferCollectionSchema", "GET", "/v1/projects/{project}/databases/{database}/schema/{collection}"),
+  route("declareCollectionSchema", "PUT", "/v1/projects/{project}/databases/{database}/schema/{collection}"),
+  route("listQueryShapes", "GET", "/v1/projects/{project}/databases/{database}/query-shapes"),
   route("createSavedQuery", "POST", saved, 201),
   route("listSavedQueries", "GET", saved),
   route("getSavedQuery", "GET", `${saved}/{query}`),
