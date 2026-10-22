@@ -669,7 +669,19 @@ impl Client {
     /// Sends `req` under the retry policy. Returns 2xx and 304 responses.
     pub(crate) async fn send(&self, mut req: Req<'_>) -> Result<Resp> {
         if self.inner.project.is_some() {
-            if req.segments.get(..2) != Some(&["v1", "databases"][..]) {
+            if req.segments.first() != Some(&"v1")
+                || !matches!(
+                    req.segments.get(1).copied(),
+                    Some(
+                        "databases"
+                            | "saved-queries"
+                            | "backup-destination"
+                            | "usage"
+                            | "analytics"
+                            | "replication"
+                    )
+                )
+            {
                 return Err(Error::InvalidInput(
                     "the legacy dashboard control plane is unavailable for a project client".into(),
                 ));
@@ -688,7 +700,9 @@ impl Client {
             )));
         }
         let project = self.inner.project.as_deref();
-        let database = req.segments.get(2).copied();
+        let database = (req.segments.get(1) == Some(&"databases"))
+            .then(|| req.segments.get(2).copied())
+            .flatten();
         let mut origin = self.inner.base.clone();
         let mut region = self.inner.region_pin.clone();
         if let Some(atlas) = &self.inner.atlas {
