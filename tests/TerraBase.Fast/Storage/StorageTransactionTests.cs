@@ -232,7 +232,8 @@ public sealed class StorageTransactionTests
         await Assert.That(stores[^1].IdleCount).IsEqualTo(1);
         var openFiles = new DirectoryInfo("/proc/self/fd").EnumerateFileSystemInfos()
             .Select(descriptor => descriptor.LinkTarget)
-            .Where(target => target is not null && target.StartsWith(server.DataDirectory + "/", StringComparison.Ordinal) && target.EndsWith(".db", StringComparison.Ordinal))
+            .OfType<string>()
+            .Where(target => target.StartsWith(server.DataDirectory + "/", StringComparison.Ordinal) && target.EndsWith(".db", StringComparison.Ordinal))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         var journal = engine.IntentStore!.FilePath;
