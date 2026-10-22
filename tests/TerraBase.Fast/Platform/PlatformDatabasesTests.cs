@@ -176,22 +176,8 @@ public sealed class PlatformDatabasesTests
     [Test]
     public async Task Global_issuer_project_tokens_resolve_their_seeded_database_without_auth_enrollment()
     {
-        const string ChildFlag = "TERRABASE_TEST_PLATFORM_AUTH_DEFAULTS_CHILD";
-        if (Environment.GetEnvironmentVariable(ChildFlag) != "1")
-        {
-            // Fly identity is process-wide; isolate this server from the parallel suite.
-            await IsolatedTestChild.RunAsync(typeof(PlatformDatabasesTests), nameof(Global_issuer_project_tokens_resolve_their_seeded_database_without_auth_enrollment), ChildFlag);
-            return;
-        }
-
-        Environment.SetEnvironmentVariable("FLY_REGION", "gru");
-        Environment.SetEnvironmentVariable("FLY_MACHINE_ID", "platform-test");
-        Environment.SetEnvironmentVariable("FLY_APP_NAME", "ts-terrabase");
-        var production = TerraBaseOptions.FromValues(new Dictionary<string, string>());
-        // Exercise the parsed production trust pair over real local listeners without requiring Fly's private DNS.
-        Environment.SetEnvironmentVariable("FLY_REGION", null);
-        Environment.SetEnvironmentVariable("FLY_MACHINE_ID", null);
-        Environment.SetEnvironmentVariable("FLY_APP_NAME", null);
+        // Exercise the parsed production trust pair over real local listeners.
+        var production = TerraBaseOptions.FromValues(new Dictionary<string, string>(), production: true);
         await using var api = await ManagementApi.StartAsync(settings =>
         {
             Seeding(settings);

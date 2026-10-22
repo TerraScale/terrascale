@@ -28,9 +28,9 @@ internal sealed class PeerCredential
         var value = Environment.GetEnvironmentVariable(EnvironmentVariable);
         if (string.IsNullOrEmpty(value))
         {
-            if (options.App is not null)
+            if (options.PeersFile is not null)
             {
-                throw new TerraBaseConfigurationException($"{EnvironmentVariable} is required on Fly");
+                throw new TerraBaseConfigurationException($"{EnvironmentVariable} is required in a cluster");
             }
 
             value = null;

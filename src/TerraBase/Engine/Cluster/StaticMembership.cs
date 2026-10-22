@@ -4,7 +4,7 @@ using TerraBase.Configuration;
 namespace TerraBase.Engine.Cluster;
 
 /// <summary>
-/// A cell that never changes: this member alone off Fly, or the members a test lists. Every member is live, this member
+/// A cell that never changes: this member alone outside a cluster, or the members a test lists. Every member is live, this member
 /// always holds its lease, and the view never changes.
 /// </summary>
 internal sealed class StaticMembership(TerraBaseOptions options, ImmutableArray<ClusterMember> others = default) : IMembership

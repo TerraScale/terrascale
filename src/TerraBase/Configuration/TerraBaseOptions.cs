@@ -15,13 +15,13 @@ public sealed class TerraBaseConfigurationException(string message) : Exception(
 /// </summary>
 public sealed record TerraBaseOptions
 {
-    /// <summary>Port of the public listener, behind Fly Proxy.</summary>
+    /// <summary>Port of the public listener, behind the ts-orch edge.</summary>
     public const int DefaultPort = 8080;
 
-    /// <summary>Port of the internal listener on Fly's private network.</summary>
+    /// <summary>Port of the internal listener on the private mesh.</summary>
     public const int DefaultInternalPort = 8081;
 
-    /// <summary>Port of the metrics listener Fly scrapes (<c>[[metrics]]</c> in <c>fly.toml</c>).</summary>
+    /// <summary>Port of the metrics listener.</summary>
     public const int DefaultMetricsPort = 9091;
 
     /// <summary>Default seconds shutdown waits for transactions to return their database connections.</summary>
@@ -64,38 +64,38 @@ public sealed record TerraBaseOptions
         StringComparer.Ordinal, "environment", "applicationName", "contentRoot");
 
     /// <summary>
-    /// Port of the public listener: plain HTTP behind Fly Proxy, which terminates TLS. Only tests change it (<c>0</c> picks a
-    /// free port).
+    /// Port of the public listener: plain HTTP behind the ts-orch edge, which terminates TLS. Tests (<c>0</c> picks a free port)
+    /// and a second service on a shared host change it.
     /// </summary>
     public int Port { get; init; } = DefaultPort;
 
     /// <summary>
-    /// Port of the internal listener: HTTP/2 without TLS on Fly's private network (<c>fly-local-6pn</c>), trusted as the
-    /// platform operator. Only tests change it (<c>0</c> picks a free port).
+    /// Port of the internal listener: HTTP/2 without TLS on the private mesh, peers authenticated by the peer secret. Every
+    /// member of a cell uses the same one. Tests (<c>0</c> picks a free port) and a second service on a shared host change it.
     /// </summary>
     public int InternalPort { get; init; } = DefaultInternalPort;
 
-    /// <summary>Port of the metrics listener; only tests change it (<c>0</c> picks a free port).</summary>
+    /// <summary>Port of the metrics listener; tests (<c>0</c> picks a free port) and a second service on a shared host change it.</summary>
     public int MetricsPort { get; init; } = DefaultMetricsPort;
 
     /// <summary>Directory holding one SQLite file per database.</summary>
     public required string DataDirectory { get; init; }
 
-    /// <summary>This machine's region: <c>FLY_REGION</c>, or <c>local</c> off Fly.</summary>
+    /// <summary>This node's region: <c>TS_REGION</c> from ts-orch, or <c>local</c> outside a cluster.</summary>
     public string Region { get; init; } = LocalIdentity;
 
-    /// <summary>This machine's ID: <c>FLY_MACHINE_ID</c>, or <c>local</c> off Fly. It names the member in the cell.</summary>
+    /// <summary>This node's name: <c>TS_NODE</c> from ts-orch, or <c>local</c> outside a cluster. It names the member in the cell.</summary>
     public string MachineId { get; init; } = LocalIdentity;
 
-    /// <summary>The Fly app this machine belongs to (<c>FLY_APP_NAME</c>), whose internal DNS lists the cell; <see langword="null"/> off Fly.</summary>
-    public string? App { get; init; }
+    /// <summary>The file ts-orch keeps listing the cell's members (<c>TS_PEERS_FILE</c>); <see langword="null"/> outside a cluster.</summary>
+    public string? PeersFile { get; init; }
 
     private const string LocalIdentity = "local";
 
     internal static bool IsRegion([NotNullWhen(true)] string? region) => region is { Length: >= 1 and <= 63 } && region[0] is >= 'a' and <= 'z'
         && region[^1] != '-' && region.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 
-    /// <summary>A Fly machine ID (or a Fly app name): lowercase letters, digits and inner hyphens, at most 63 characters.</summary>
+    /// <summary>A node name: lowercase letters, digits and inner hyphens, at most 63 characters.</summary>
     internal static bool IsMachineId([NotNullWhen(true)] string? id) => id is { Length: >= 1 and <= 63 } && id[0] != '-' && id[^1] != '-'
         && id.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 
@@ -268,7 +268,7 @@ public sealed record TerraBaseOptions
 
     /// <summary>
     /// Validates settings keyed by their argument name. <paramref name="production"/>: the host is not Development, so a node
-    /// off Fly without <c>auth-issuer</c> trusts the platform's tokens, as <c>ts-terrabase</c> does.
+    /// without <c>auth-issuer</c> trusts the platform's tokens.
     /// </summary>
     public static TerraBaseOptions FromValues(IReadOnlyDictionary<string, string> values, bool production = false)
     {
@@ -281,7 +281,7 @@ public sealed record TerraBaseOptions
             }
         }
 
-        var (region, machineId, app) = FlyIdentity();
+        var (region, machineId, peersFile) = ClusterIdentity();
         var dataDirectory = values.GetValueOrDefault("data-directory", DefaultDataDirectory);
         if (string.IsNullOrWhiteSpace(dataDirectory))
         {
@@ -298,17 +298,10 @@ public sealed record TerraBaseOptions
         }
 
         var (authIssuer, authAudiences) = ParseAuth(values);
-        if ((app == ProductionApp || (app is null && production)) && authIssuer is null)
+        if (production && authIssuer is null)
         {
             authIssuer = PlatformAuthIssuer;
             authAudiences = [PlatformAuthAudience];
-        }
-
-        // A regional issuer or audience would turn every platform token away with 401 in production; previews and tests run their own ts-auth.
-        if (app == ProductionApp && authIssuer is not null && (authIssuer != PlatformAuthIssuer || !authAudiences.Contains(PlatformAuthAudience)))
-        {
-            throw new TerraBaseConfigurationException(
-                $"on {ProductionApp}, auth-issuer must be {PlatformAuthIssuer} and auth-audience must include {PlatformAuthAudience}: ts-auth issues every region's platform tokens with that pair");
         }
 
         return new TerraBaseOptions
@@ -319,7 +312,7 @@ public sealed record TerraBaseOptions
             DataDirectory = dataDirectory,
             Region = region,
             MachineId = machineId,
-            App = app,
+            PeersFile = peersFile,
             MemoryBudget = ParseInteger(values, "memory-budget", MinMemoryBudget, long.MaxValue) ?? DefaultMemoryBudget(),
             StorageThreads = (int)(ParseInteger(values, "storage-threads", 1, 1024) ?? Math.Clamp(Environment.ProcessorCount, 1, 1024)),
             StorageQueue = (int)(ParseInteger(values, "storage-queue", 1, 1_000_000) ?? DefaultStorageQueue),
@@ -394,9 +387,6 @@ public sealed record TerraBaseOptions
             : throw new TerraBaseConfigurationException($"readiness-cache-seconds must be an integer between 1 and {MaxReadinessCacheSeconds}");
     }
 
-    // The production app; previews are ts-pr-<n>.
-    private const string ProductionApp = "ts-terrabase";
-
     // ts-auth tokens authenticate Management API users.
     private static (string? Issuer, string[] Audiences) ParseAuth(IReadOnlyDictionary<string, string> values)
     {
@@ -428,23 +418,23 @@ public sealed record TerraBaseOptions
             : (issuer, audiences);
     }
 
-    // Fly sets these on every machine. A process elsewhere (development, tests) is a cell of its own, named local.
-    private static (string Region, string MachineId, string? App) FlyIdentity()
+    // ts-orch sets these on every task. A process elsewhere (development, tests) is a cell of its own, named local.
+    private static (string Region, string MachineId, string? PeersFile) ClusterIdentity()
     {
-        var region = Environment.GetEnvironmentVariable("FLY_REGION");
-        var machineId = Environment.GetEnvironmentVariable("FLY_MACHINE_ID");
-        var app = Environment.GetEnvironmentVariable("FLY_APP_NAME");
-        if (string.IsNullOrEmpty(region) && string.IsNullOrEmpty(machineId) && string.IsNullOrEmpty(app))
+        var region = Environment.GetEnvironmentVariable("TS_REGION");
+        var node = Environment.GetEnvironmentVariable("TS_NODE");
+        var peersFile = Environment.GetEnvironmentVariable("TS_PEERS_FILE");
+        if (string.IsNullOrEmpty(region) && string.IsNullOrEmpty(node) && string.IsNullOrEmpty(peersFile))
         {
             return (LocalIdentity, LocalIdentity, null);
         }
 
-        if (!IsRegion(region) || !IsMachineId(machineId) || !IsMachineId(app))
+        if (!IsRegion(region) || !IsMachineId(node) || string.IsNullOrEmpty(peersFile) || !Path.IsPathFullyQualified(peersFile))
         {
-            throw new TerraBaseConfigurationException("FLY_REGION, FLY_MACHINE_ID and FLY_APP_NAME must name a region, a machine and an app together");
+            throw new TerraBaseConfigurationException("TS_REGION, TS_NODE and TS_PEERS_FILE must name a region, a node and an absolute path together");
         }
 
-        return (region, machineId, app);
+        return (region, node, peersFile);
     }
 
     // An http://host:port origin of another member's internal listener.

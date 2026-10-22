@@ -461,13 +461,13 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     }
 
     // Whether the catalog is behind the head this machine last anchored outside its volume (a restored older copy), or null
-    // while that cannot be told: the anchor unreadable, or no backup bucket on Fly. Off Fly without a bucket (dev servers,
-    // tests) nothing is anchored and nothing is detected.
+    // while that cannot be told: the anchor unreadable, or no backup bucket in a cluster. Outside one without a bucket (dev
+    // servers, tests) nothing is anchored and nothing is detected.
     private async Task<bool?> ReadAnchorAsync(CancellationToken cancellationToken)
     {
         if (_anchors is null)
         {
-            if (_options.App is null)
+            if (_options.PeersFile is null)
             {
                 return false;
             }

@@ -3,7 +3,7 @@ using System.Collections.Immutable;
 namespace TerraBase.Engine.Cluster;
 
 /// <summary>A member of the cell: its machine, its internal listener and where it runs.</summary>
-/// <param name="Name">The member's machine ID (<c>FLY_MACHINE_ID</c>).</param>
+/// <param name="Name">The member's node name (<c>TS_NODE</c>).</param>
 /// <param name="PeerAddress">Its internal listener (<c>http://host:port</c>), or empty when it has none.</param>
 /// <param name="Region">Its region.</param>
 /// <param name="Zone">Its zone within the region, or empty.</param>
@@ -20,15 +20,15 @@ internal sealed record ClusterView(ulong Revision, ImmutableArray<ClusterMember>
 }
 
 /// <summary>
-/// The members of the cell and this member's lease (docs/design/anna-core.md §5): from Fly's internal DNS on Fly, or this
-/// member alone (and the topologies tests register) elsewhere.
+/// The members of the cell and this member's lease (docs/design/anna-core.md §5): from ts-orch's peers file in a cluster, or
+/// this member alone (and the topologies tests register) elsewhere.
 /// </summary>
 internal interface IMembership
 {
     /// <summary>This member.</summary>
     ClusterMember Self { get; }
 
-    /// <summary>Whether members come and go at runtime (Fly); a static cell never changes.</summary>
+    /// <summary>Whether members come and go at runtime (a cluster); a static cell never changes.</summary>
     bool Dynamic { get; }
 
     /// <summary>
@@ -50,9 +50,9 @@ internal interface IMembership
     ValueTask LeaveAsync(CancellationToken cancellationToken);
 }
 
-/// <summary>Where members are listed: every started machine of the app, in every region.</summary>
+/// <summary>Where members are listed: every live node of the service, in every region.</summary>
 internal interface IMemberDirectory
 {
-    /// <summary>The started machines of every region.</summary>
+    /// <summary>The live nodes of every region.</summary>
     Task<ImmutableArray<ClusterMember>> ListAsync(CancellationToken cancellationToken);
 }
