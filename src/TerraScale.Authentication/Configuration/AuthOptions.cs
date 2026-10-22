@@ -399,10 +399,10 @@ public sealed partial record AuthOptions
             var separator = entry.IndexOf(':', StringComparison.Ordinal);
             var id = separator < 0 ? string.Empty : entry[..separator];
             var secret = separator < 0 ? string.Empty : entry[(separator + 1)..];
-            if (!TerraScaleIds.IsValid(id) || id == OidcIssuer.DashboardClientId || !IsClientSecret(secret)
+            if (!TerraScaleIds.IsValid(id) || id is OidcIssuer.DashboardClientId or OidcIssuer.StatusClientId || !IsClientSecret(secret)
                 || clients.Any(client => client.ClientId == id))
             {
-                throw Invalid("TS_AUTH_SERVICE_CLIENTS must hold distinct id:secret pairs: canonical ULIDs other than the dashboard client id, secrets of 32 to 512 characters");
+                throw Invalid("TS_AUTH_SERVICE_CLIENTS must hold distinct id:secret pairs: canonical ULIDs other than the dashboard and status client ids, secrets of 32 to 512 characters");
             }
 
             clients.Add(new ServiceClientOptions(id, secret));
