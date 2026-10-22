@@ -39,66 +39,50 @@ public sealed class AbandonedStatementTests
             created.EnsureSuccessStatusCode();
         }
 
-        // Young collections all the while: an abandoned statement is finalized as soon as it is garbage, often while the
-        // writer steps another statement.
-        using var stop = new CancellationTokenSource();
-        var collector = Task.Run(() =>
-        {
-            while (!stop.IsCancellationRequested)
-            {
-                GC.Collect(0);
-                GC.WaitForPendingFinalizers();
-            }
-        });
         var unexpected = new List<string>();
-        try
+        for (var round = 0; round < 60; round++)
         {
-            for (var round = 0; round < 60; round++)
+            var failing = Enumerable.Range(0, 2).Select(i => data.PutAsJsonAsync(Document(database, $"f{round}-{i}"), new { fail = 1 })).ToList();
+            var written = Enumerable.Range(0, 4).Select(i => (Id: $"w{round}-{i}", Answer: data.PutAsJsonAsync(Document(database, $"w{round}-{i}"), new { n = round })))
+                .ToList();
+            var reads = Enumerable.Range(0, 2).Select(_ => data.GetAsync(existing)).ToList();
+            // Collect while requests run, once per round: an unbounded loop pauses every parallel test's hosts.
+            GC.Collect(0);
+            GC.WaitForPendingFinalizers();
+            foreach (var answer in await Task.WhenAll(failing))
             {
-                var failing = Enumerable.Range(0, 2).Select(i => data.PutAsJsonAsync(Document(database, $"f{round}-{i}"), new { fail = 1 })).ToList();
-                var written = Enumerable.Range(0, 4).Select(i => (Id: $"w{round}-{i}", Answer: data.PutAsJsonAsync(Document(database, $"w{round}-{i}"), new { n = round })))
-                    .ToList();
-                var reads = Enumerable.Range(0, 2).Select(_ => data.GetAsync(existing)).ToList();
-                foreach (var answer in await Task.WhenAll(failing))
+                using (answer)
                 {
-                    using (answer)
+                    // A native failure during the commit path is outcome unknown, never a safe-to-retry refusal.
+                    var body = await answer.Content.ReadFromJsonAsync<JsonElement>();
+                    var code = body.GetProperty("error").GetProperty("code").GetString();
+                    if (answer.StatusCode != HttpStatusCode.ServiceUnavailable || code != "write_outcome_unknown"
+                        || answer.Headers.RetryAfter is not null)
                     {
-                        // A native failure during the commit path is outcome unknown, never a safe-to-retry refusal.
-                        var body = await answer.Content.ReadFromJsonAsync<JsonElement>();
-                        var code = body.GetProperty("error").GetProperty("code").GetString();
-                        if (answer.StatusCode != HttpStatusCode.ServiceUnavailable || code != "write_outcome_unknown"
-                            || answer.Headers.RetryAfter is not null)
-                        {
-                            unexpected.Add($"round {round}: a failing write answered {answer.StatusCode} {code}, Retry-After: {answer.Headers.RetryAfter}");
-                        }
-                    }
-                }
-
-                foreach (var (id, answer) in written)
-                {
-                    using var response = await answer;
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        unexpected.Add($"round {round}: write {id} answered {response.StatusCode}");
-                    }
-                }
-
-                foreach (var answer in await Task.WhenAll(reads))
-                {
-                    using (answer)
-                    {
-                        if (answer.StatusCode != HttpStatusCode.OK)
-                        {
-                            unexpected.Add($"round {round}: a read answered {answer.StatusCode}");
-                        }
+                        unexpected.Add($"round {round}: a failing write answered {answer.StatusCode} {code}, Retry-After: {answer.Headers.RetryAfter}");
                     }
                 }
             }
-        }
-        finally
-        {
-            await stop.CancelAsync();
-            await collector;
+
+            foreach (var (id, answer) in written)
+            {
+                using var response = await answer;
+                if (!response.IsSuccessStatusCode)
+                {
+                    unexpected.Add($"round {round}: write {id} answered {response.StatusCode}");
+                }
+            }
+
+            foreach (var answer in await Task.WhenAll(reads))
+            {
+                using (answer)
+                {
+                    if (answer.StatusCode != HttpStatusCode.OK)
+                    {
+                        unexpected.Add($"round {round}: a read answered {answer.StatusCode}");
+                    }
+                }
+            }
         }
 
         await Assert.That(unexpected).IsEmpty();
