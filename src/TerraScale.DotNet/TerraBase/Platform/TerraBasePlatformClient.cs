@@ -34,7 +34,7 @@ public sealed record TerraBasePlatformClientOptions
     public override string ToString() => $"TerraBase platform client options for {BaseAddress}";
 }
 
-/// <summary>A platform database (<c>platform-auth</c> or <c>platform-dashboard</c>).</summary>
+/// <summary>A platform database (<c>ts-auth</c> or <c>ts-dashboard</c>).</summary>
 /// <param name="Name">Its name.</param>
 /// <param name="Id">Its fixed id.</param>
 /// <param name="HomeRegion">The region it is managed in.</param>
