@@ -32,6 +32,28 @@ public sealed class A6ProductionRebuildTests
     private static readonly string[] SentinelRegions = ["gru"];
 
     [Test]
+    public async Task A_copy_intent_does_not_wait_for_the_catalog_writer()
+    {
+        await using var api = await StartAsync(directory: null);
+        var (database, _) = await CreateDatabaseAsync(api);
+        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+        var system = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
+        Task recording = Task.CompletedTask;
+        try
+        {
+            await using var held = await system.BeginDurableTransactionAsync(CancellationToken.None);
+            recording = engine.Ledger.RecordIntentAsync(store, CancellationToken.None);
+            await recording.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            // Dispose the held writer before waiting for a recorder that the regression blocked.
+            await recording;
+        }
+    }
+
+    [Test]
     public async Task A_copy_fault_record_stays_on_its_node_and_never_reaches_a_peer()
     {
         await using var pair = await Pair.StartAsync();
