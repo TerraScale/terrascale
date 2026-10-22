@@ -32,4 +32,6 @@ Use the same scenario, document count, batch sizes, concurrency and seed.
 After an unchanged build, `bench-repl-run` runs the benchmark without rebuilding.
 Per-node CPU/allocation and wire windows exclude exact listing verification.
 The single/batch phases include low-rate visibility probes; feed phases omit them.
+Probe PUT/GET requests retry HTTP 503 every 100 ms for at most 30 seconds;
+retry time stays in dispatch-to-visible lag, and exhausted retries fail the run.
 Feed admission reports the actual 32-reader database cap when 100 are requested.

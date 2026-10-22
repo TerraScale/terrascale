@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/oklog/ulid/v2"
 	"net/http"
 	"strings"
 	"sync"
-	"terrascale.tech/ts-benchmark/internal/replbench"
 	"time"
+
+	"github.com/oklog/ulid/v2"
+	"terrascale.tech/ts-benchmark/internal/replbench"
 )
 
 func probePause(ctx context.Context, d time.Duration) bool {
@@ -22,6 +23,22 @@ func probePause(ctx context.Context, d time.Duration) bool {
 		return false
 	case <-t.C:
 		return ctx.Err() == nil
+	}
+}
+
+// Keep the original dispatch timestamp across retries so admission stalls remain part of visibility lag.
+// Probe PUTs reuse the same ULID and body; retrying an uncertain 503 cannot create another document.
+func probeRequest(parent context.Context, region *replbench.Region, method, path string, body []byte, contentType string) (replbench.Response, error) {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	defer cancel()
+	for {
+		resp, err := region.Do(ctx, method, path, body, contentType)
+		if err != nil || resp.Status != http.StatusServiceUnavailable {
+			return resp, err
+		}
+		if !probePause(ctx, 100*time.Millisecond) {
+			return resp, ctx.Err()
+		}
 	}
 }
 
@@ -47,7 +64,7 @@ func StartVisibility(ctx context.Context, targets replbench.Targets) (func() (ma
 	}
 	for name, r := range regions {
 		for {
-			resp, err := r.Do(setup, http.MethodGet, "/collections/"+collection, nil, "")
+			resp, err := probeRequest(setup, r, http.MethodGet, "/collections/"+collection, nil, "")
 			if err == nil && resp.Status == http.StatusOK {
 				break
 			}
@@ -129,7 +146,7 @@ func visibilityProbe(parent context.Context, from *replbench.Region, regions map
 			<-dispatch
 			pair := from.Name + "->" + name
 			for {
-				resp, err := to.Do(ctx, http.MethodGet, replbench.DocPath(collection, id), nil, "")
+				resp, err := probeRequest(ctx, to, http.MethodGet, replbench.DocPath(collection, id), nil, "")
 				at := time.Since(began)
 				if err == nil && resp.Status == http.StatusOK {
 					var got struct{ Document json.RawMessage }
@@ -151,7 +168,7 @@ func visibilityProbe(parent context.Context, from *replbench.Region, regions map
 	}
 	began = time.Now()
 	close(dispatch)
-	resp, err := from.Do(ctx, http.MethodPut, replbench.DocPath(collection, id), body, "application/json")
+	resp, err := probeRequest(ctx, from, http.MethodPut, replbench.DocPath(collection, id), body, "application/json")
 	written := err == nil && resp.Status/100 == 2
 	var failures []error
 	if !written {
