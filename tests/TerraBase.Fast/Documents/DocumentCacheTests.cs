@@ -108,7 +108,7 @@ public sealed class DocumentCacheTests
         async Task<string> ReadOldAsync()
         {
             var document = page
-                ? (await cache.QueryAsync(database, query, null, async () =>
+                ? (await cache.QueryAsync(database, store.Incarnation, query, null, async () =>
                 {
                     await using var transaction = await store.BeginTransactionAsync(write: false, deadline.Token);
                     var rows = await transaction.QueryAsync(query, deadline.Token);
@@ -116,7 +116,7 @@ public sealed class DocumentCacheTests
                     await release.Task.WaitAsync(deadline.Token);
                     return new CachedQuery(rows, null);
                 })).Page.Rows[0].Document
-                : (await cache.GetAsync(new DocumentKey(database, "items", StorageFixture.Id("hot")), async () =>
+                : (await cache.GetAsync(new DocumentKey(database, "items", StorageFixture.Id("hot")), store.Incarnation, async () =>
                 {
                     await using var transaction = await store.BeginTransactionAsync(write: false, deadline.Token);
                     var row = await transaction.GetAsync("items", StorageFixture.Id("hot"), deadline.Token);
