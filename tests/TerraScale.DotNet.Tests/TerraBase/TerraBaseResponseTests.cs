@@ -219,7 +219,7 @@ public sealed class TerraBaseResponseTests
     [Arguments("253402300800000")]
     public async Task OutOfRangeCollectionTimestampIsAJsonError(string timestamp)
     {
-        var json = $"{{\"name\":\"items\",\"created_at\":\"{timestamp}\"}}";
+        var json = $"{{\"name\":\"items\",\"created_at\":\"{timestamp}\",\"id\":\"01JA0000000000000000000002\"}}";
         await Assert.That(() => JsonSerializer.Deserialize(json, TerraBaseJsonContext.Wire.TerraBaseCollection)).Throws<JsonException>();
     }
 }
@@ -313,7 +313,7 @@ public sealed class TerraBaseResponseIntegrationTests
         using var handler = Answer(() => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(
-                JsonSerializer.Serialize(new TerraBaseCollection("items", DateTimeOffset.UnixEpoch), TerraBaseJsonContext.Wire.TerraBaseCollection), Encoding.UTF8, "application/json"),
+                JsonSerializer.Serialize(new TerraBaseCollection("items", DateTimeOffset.UnixEpoch, "01JA0000000000000000000002"), TerraBaseJsonContext.Wire.TerraBaseCollection), Encoding.UTF8, "application/json"),
         });
         using var http = new HttpClient(handler);
         using var canceled = new CancellationTokenSource();

@@ -32,6 +32,15 @@ public class TerraBaseException : HttpRequestException
     /// <summary>Server Retry-After when present; no request is automatically retried.</summary>
     public TimeSpan? RetryAfter { get; private set; }
 
+    /// <summary>Machine that accepted an ambiguous write, from error.machine; null for other errors.</summary>
+    public string? Machine { get; private set; }
+
+    /// <summary>Region that accepted an ambiguous write, from error.region; independent of the answering-region header.</summary>
+    public string? OutcomeRegion { get; private set; }
+
+    /// <summary>Bounded JSON Schema validation details, when supplied.</summary>
+    public IReadOnlyList<TerraBaseValidationDetail> Details { get; private set; } = [];
+
     internal static async Task<TerraBaseException> FromResponseAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         var status = response.StatusCode;
@@ -39,6 +48,8 @@ public class TerraBaseException : HttpRequestException
         string? code = null;
         string? message = null;
         int? op = null;
+        string? machine = null, outcomeRegion = null;
+        var details = new List<TerraBaseValidationDetail>();
         try
         {
             using var body = new BoundedHttpBodyStream(MaxErrorBytes, () => new InvalidDataException(), cancellationToken);
@@ -55,6 +66,17 @@ public class TerraBaseException : HttpRequestException
                 {
                     code = error.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
                     message = error.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
+                    machine = error.TryGetProperty("machine", out var host) && host.ValueKind == JsonValueKind.String ? Clean(host.GetString()) : null;
+                    outcomeRegion = error.TryGetProperty("region", out var origin) && origin.ValueKind == JsonValueKind.String && TerraBaseRegion.IsValid(origin.GetString()!) ? origin.GetString() : null;
+                    if (error.TryGetProperty("details", out var issues) && issues.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var issue in issues.EnumerateArray().Take(256))
+                        {
+                            if (issue.ValueKind == JsonValueKind.Object && issue.TryGetProperty("path", out var path) && path.ValueKind == JsonValueKind.String
+                                && issue.TryGetProperty("keyword", out var keyword) && keyword.ValueKind == JsonValueKind.String)
+                                details.Add(new(path.GetString()!, keyword.GetString()!));
+                        }
+                    }
                     op = error.TryGetProperty("op", out var o) && o.ValueKind == JsonValueKind.Number && o.TryGetInt32(out var index) ? index : null;
                 }
             }
@@ -85,6 +107,9 @@ public class TerraBaseException : HttpRequestException
             503 => new TerraBaseUnavailableException(status, text, code, op),
             _ => new TerraBaseException(status, text, code, op),
         };
+        exception.Machine = machine;
+        exception.OutcomeRegion = outcomeRegion;
+        exception.Details = details.AsReadOnly();
         exception.Region = RegionHeader(response, "X-TerraBase-Region");
         exception.RetryAfter = response.Headers.RetryAfter?.Delta
             ?? (response.Headers.RetryAfter?.Date is { } retryAt ? TimeSpan.FromTicks(Math.Max(0, (retryAt - DateTimeOffset.UtcNow).Ticks)) : null);
@@ -212,3 +237,8 @@ public sealed class TerraBaseRateLimitedException : TerraBaseException
     internal TerraBaseRateLimitedException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
         : base(statusCode, message, errorCode, operationIndex) { }
 }
+
+/// <summary>One schema validation failure, without document values.</summary>
+/// <param name="Path">JSON instance path.</param>
+/// <param name="Keyword">Failed schema keyword.</param>
+public sealed record TerraBaseValidationDetail(string Path, string Keyword);
