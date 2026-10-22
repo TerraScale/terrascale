@@ -344,7 +344,7 @@ internal sealed class AntiEntropy : BackgroundService
         }));
         return new StatePage
         {
-            States = UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(list.ToByteArray())),
+            States = UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(list)),
             Incarnation = ByteString.CopyFrom(incarnation.ToByteArray()),
         };
     }

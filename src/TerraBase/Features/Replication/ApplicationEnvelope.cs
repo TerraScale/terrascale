@@ -1,5 +1,7 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Numerics;
+using Google.Protobuf;
 using NativeCompressions;
 
 namespace TerraBase.Features.Replication;
@@ -19,6 +21,26 @@ public static class ApplicationEnvelope
     private const byte Lz4Codec = 1;
 
     private static ReadOnlySpan<byte> Magic => "TBLZ4E01"u8;
+
+    /// <summary>Serializes and compresses a protobuf message without retaining its serialization buffer.</summary>
+    public static ReadOnlyMemory<byte> Encode(IMessage message)
+    {
+        var size = message.CalculateSize();
+        var scratch = size > 1024 ? ArrayPool<byte>.Shared.Rent(size) : null;
+        Span<byte> plain = scratch is null ? stackalloc byte[size] : scratch.AsSpan(0, size);
+        try
+        {
+            message.WriteTo(plain);
+            return Encode(plain);
+        }
+        finally
+        {
+            if (scratch is not null)
+            {
+                ArrayPool<byte>.Shared.Return(scratch);
+            }
+        }
+    }
 
     /// <summary>Compresses <paramref name="plain"/> (at least one byte) into an envelope.</summary>
     public static ReadOnlyMemory<byte> Encode(ReadOnlySpan<byte> plain)
