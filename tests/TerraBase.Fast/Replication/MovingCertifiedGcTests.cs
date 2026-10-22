@@ -13,7 +13,7 @@ namespace TerraBase.Fast.Replication;
 public sealed class MovingCertifiedGcTests
 {
     [Test]
-    public async Task Certified_refill_removes_a_live_key_collected_at_the_source_after_its_first_import()
+    public async Task Certified_refill_keeps_recovery_pending_when_an_imported_live_key_disappears_at_the_source()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         var probe = new ImportProbe();
@@ -53,18 +53,21 @@ public sealed class MovingCertifiedGcTests
 
         await Assert.That(imports).IsEqualTo(1).Because("source collection ran immediately after the live baseline page committed");
         await Assert.That(await source.HasStateAsync("items", collected)).IsFalse();
-        await Assert.That(outcome is RebuildOutcome.Completed).IsTrue().Because(outcome.ToString());
-        await Assert.That(await receiver.ReadAsync(baseline)).IsEqualTo("""{"baseline":true}""");
-        await Assert.That(await receiver.ReadAsync(newer)).IsEqualTo("""{"newer":true}""");
-        await Assert.That(await receiver.ReadAsync(collected)).IsNull();
-        await Assert.That(await receiver.HasStateAsync("items", collected)).IsFalse();
+        await Assert.That(outcome is RebuildOutcome.Refused).IsTrue().Because("the live imported state is retained until deletion provenance is available");
+        await Assert.That(await PendingRecoveryGcTests.ReadHeldAsync(receiver, baseline)).IsEqualTo("""{"baseline":true}""");
+        await Assert.That(await PendingRecoveryGcTests.ReadHeldAsync(receiver, collected)).IsEqualTo("""{"old":true}""");
+        await Assert.That((await receiver.Api.Server.Services.GetRequiredService<IRebuildLedger>()
+            .GetAsync(cluster.Database, token))?.Phase).IsEqualTo(RebuildPhase.Swapped);
+        var storage = receiver.Api.Server.Services.GetRequiredService<IRebuildStorage>();
+        await Assert.That(storage.SideExists(storage.SidePath(cluster.Database, incarnation))).IsTrue();
+        await Assert.That(await PendingRecoveryGcTests.ReadOriginalAsync(receiver, incarnation, newer)).IsEqualTo("""{"newer":true}""");
     }
 
     [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(false, true)]
-    public async Task A_trailing_collection_metadata_gap_preserves_source_present_documents_and_indexes_and_removes_empty_collections(
+    public async Task A_trailing_live_collection_metadata_gap_keeps_recovery_pending_without_erasing_imported_documents(
         bool survivor, bool retainedIndex)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
@@ -127,11 +130,17 @@ public sealed class MovingCertifiedGcTests
 
         await Assert.That(imports).IsEqualTo(1);
         await Assert.That(retries).IsEqualTo(survivor || retainedIndex ? 1 : 0)
-            .Because("a source-present document or index produces a second source page before the trailing metadata gap");
-        await Assert.That(outcome is RebuildOutcome.Completed).IsTrue().Because(outcome.ToString());
+            .Because("source-present documents and indexes are imported before the trailing metadata gap");
+
+        await Assert.That(outcome is RebuildOutcome.Refused).IsTrue().Because("source-missing live metadata is retained rather than inferred deleted");
         await Assert.That(await source.HasStateAsync(DocumentDelta.Collections, "items")).IsFalse();
         var expected = survivor ? """{"survivor":true}""" : null;
         await Assert.That(await source.ReadAsync(Id)).IsEqualTo(expected);
+        if (retainedIndex)
+        {
+            await Assert.That(await source.HasStateAsync(DocumentDelta.Indexes, Index)).IsTrue();
+        }
+
         foreach (var restart in new[] { false, true })
         {
             if (restart)
@@ -140,15 +149,18 @@ public sealed class MovingCertifiedGcTests
                 await receiver.StartAsync();
             }
 
-            await Assert.That(await receiver.HasStateAsync(DocumentDelta.Collections, "items")).IsFalse();
-            await Assert.That(await receiver.ReadAsync(Id)).IsEqualTo(expected);
-            await Assert.That(await receiver.HasStateAsync("items", Id)).IsEqualTo(survivor);
-            await using var read = await (await receiver.StoreAsync()).BeginTransactionAsync(write: false, token);
-            await Assert.That((await read.ListCollectionsAsync(null, 100, token)).Collections.Any(collection => collection.Name == "items"))
-                .IsEqualTo(survivor || retainedIndex);
+            await Assert.That(await PendingRecoveryGcTests.HeldStateAsync(receiver, DocumentDelta.Collections, "items")).IsNotNull();
+            await Assert.That(await PendingRecoveryGcTests.ReadHeldAsync(receiver, Id)).IsEqualTo("""{"survivor":true}""");
+            await using var read = await PendingRecoveryGcTests.HeldTransactionAsync(receiver);
+            await Assert.That((await read.ListCollectionsAsync(null, 100, token)).Collections.Any(collection => collection.Name == "items")).IsTrue();
             await Assert.That((await read.ListIndexesAsync(token)).Any(index => index.Name == Index && index.Collection == "items"))
                 .IsEqualTo(retainedIndex);
         }
+
+        await Assert.That((await receiver.Api.Server.Services.GetRequiredService<IRebuildLedger>()
+            .GetAsync(cluster.Database, token))?.Phase).IsEqualTo(RebuildPhase.Swapped);
+        var storage = receiver.Api.Server.Services.GetRequiredService<IRebuildStorage>();
+        await Assert.That(storage.SideExists(storage.SidePath(cluster.Database, incarnation))).IsTrue();
     }
 
     private static Task<PeerStreamTests.Cluster> StartAsync(ImportProbe probe) =>

@@ -33,7 +33,7 @@ internal sealed partial class SqliteStorageTransaction
     }
 
     // One bounded local page only; the caller disposes its transaction before asking for the next one.
-    internal async ValueTask<(int Forgotten, BucketCursor? Next)> ReconcileRefillAsync(
+    internal async ValueTask<(int Forgotten, BucketCursor? Next)?> ReconcileRefillAsync(
         IReadOnlyList<int> buckets, BucketCursor? after, IReadOnlyList<RepairState> source, Hlc collectedBefore, CancellationToken cancellationToken)
     {
         var (local, next) = await ReadBucketStatesAsync(buckets, after, ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
@@ -51,6 +51,12 @@ internal sealed partial class SqliteStorageTransaction
 
             if (state.State.MaxStamp.Value < collectedBefore.Value && !present.Contains((state.Collection, state.Id)))
             {
+                // Absence alone cannot distinguish collection from a source that never received this live state.
+                if (state.State.Exists)
+                {
+                    return null;
+                }
+
                 absent.Add((state.Collection, state.Id));
             }
 

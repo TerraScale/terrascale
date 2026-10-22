@@ -688,7 +688,12 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
                     return null;
                 }
 
-                var (forgotten, next) = await transaction.ReconcileRefillAsync(buckets, cursor, states, collectedBefore, cancellationToken).ConfigureAwait(false);
+                if (await transaction.ReconcileRefillAsync(buckets, cursor, states, collectedBefore, cancellationToken).ConfigureAwait(false) is not { } reconciled)
+                {
+                    return null;
+                }
+
+                var (forgotten, next) = reconciled;
                 _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 changed += forgotten;
                 if (next is null)
@@ -775,6 +780,12 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
 
             foreach (var state in chunk)
             {
+                // Keep the side copies until every live entry survives without relying on an inferred deletion.
+                if (!await transaction.CanSalvageAsync(state.Collection, state.Id, state.State, cancellationToken).ConfigureAwait(false))
+                {
+                    return null;
+                }
+
                 // Origin 0: a repair (section 9), so the tailer never ships it and it moves no origin's applied stamp.
                 changed += await transaction.JoinAsync(state.Collection, state.Id, state.State, new EntryVersion(state.State.MaxStamp, default), cancellationToken)
                     .ConfigureAwait(false) ? 1 : 0;

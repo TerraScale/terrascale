@@ -20,6 +20,10 @@ internal sealed partial class SqliteStorageTransaction
     internal ValueTask<bool> JoinBaselineAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken) =>
         RunAsync(() => Join(collection, id, state, at, cancellationToken, baseline: true), cancellationToken, mutation: true);
 
+    internal ValueTask<bool> CanSalvageAsync(string collection, string id, DocumentState state, CancellationToken cancellationToken) =>
+        RunAsync(() => !state.Exists || ReadState(collection, id).MaxStamp.Value != 0 || CollectedBefore() is not { Value: > 0 } floor
+            || new DocumentState(CollectedClear(floor), DocumentState.Bottom.Fields).Join(state).Equals(state), cancellationToken);
+
     public async ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken)
     {
         _ = await RunAsync(() =>

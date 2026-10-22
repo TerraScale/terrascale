@@ -12,7 +12,9 @@ namespace TerraBase.Fast.Replication;
 public sealed class CertifiedGcTests
 {
     [Test]
-    public async Task Certified_refill_imports_old_baselines_then_applies_the_source_frontier_to_salvage_and_later_repairs()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Certified_refill_imports_old_baselines_but_keeps_ambiguous_live_salvage_pending(bool ambiguous)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var cluster = await PeerStreamTests.Cluster.StartAsync(cdc: false, clock: null,
@@ -32,7 +34,11 @@ public sealed class CertifiedGcTests
         var newer = EntityIds.New().ToString();
         var old = Put(1000, """{"old":true}""");
         await RepairAsync(source, new("items", deleted, old.Delete(At(2000))), new("items", baseline, Put(500, """{"baseline":true}""")));
-        await RepairAsync(receiver, new("items", deleted, old), new("items", newer, Put(4000, """{"newer":true}""")));
+        await RepairAsync(receiver, new("items", newer, Put(4000, """{"newer":true}""")));
+        if (ambiguous)
+        {
+            await RepairAsync(receiver, new RepairState("items", deleted, old));
+        }
         await RepairAsync(stale, new RepairState("items", deleted, old));
         var engine = source.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
         var sourceStore = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, token))!;
@@ -50,6 +56,18 @@ public sealed class CertifiedGcTests
 
         var outcome = await receiver.Api.Server.Services.GetRequiredService<IReplicaRebuild>()
             .RebuildAsync(cluster.Database, incarnation, token);
+
+        if (ambiguous)
+        {
+            await Assert.That(outcome is RebuildOutcome.Refused).IsTrue().Because("a collected absence does not prove the side copy's live state was deleted");
+            await Assert.That(await PendingRecoveryGcTests.ReadHeldAsync(receiver, baseline)).IsEqualTo("""{"baseline":true}""");
+            await Assert.That(await PendingRecoveryGcTests.ReadHeldAsync(receiver, deleted)).IsNull();
+            var ledger = receiver.Api.Server.Services.GetRequiredService<IRebuildLedger>();
+            await Assert.That((await ledger.GetAsync(cluster.Database, token))?.Phase).IsEqualTo(RebuildPhase.Swapped);
+            var storage = receiver.Api.Server.Services.GetRequiredService<IRebuildStorage>();
+            await Assert.That(storage.SideExists(storage.SidePath(cluster.Database, incarnation))).IsTrue();
+            return;
+        }
 
         await Assert.That(outcome is RebuildOutcome.Completed).IsTrue().Because(outcome.ToString());
         await Assert.That(await receiver.ReadAsync(baseline)).IsEqualTo("""{"baseline":true}""");
