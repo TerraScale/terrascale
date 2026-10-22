@@ -110,7 +110,7 @@ export async function readShapePage(transport, params, request, signal, ifNoneMa
   /** @type {Record<string,string>} */
   const headers = {};
   if (ifNoneMatch !== undefined) {
-    if (typeof ifNoneMatch !== "string" || !/^(?:\*|(?:W\/)?"[\x21\x23-\x7e\x80-\xff]*"(?:[ \t]*,[ \t]*(?:W\/)?"[\x21\x23-\x7e\x80-\xff]*")*)$/u.test(ifNoneMatch))
+    if (typeof ifNoneMatch !== "string" || !/^[ \t]*(?:\*|(?:W\/)?"[\x21\x23-\x7e\x80-\xff]*"(?:[ \t]*,[ \t]*(?:W\/)?"[\x21\x23-\x7e\x80-\xff]*")*)[ \t]*$/u.test(ifNoneMatch))
       throw new TypeError("ifNoneMatch must be * or a list of quoted entity tags.");
     headers["If-None-Match"] = ifNoneMatch;
   }
@@ -162,9 +162,8 @@ export async function decryptSealedShapePage(transport, params, bytes, position,
   const offset = requireShapeOffset(position.offset);
   if (offset === "-1") throw new TypeError("Sealed shapes require a snapshot or log offset.");
   if (typeof position.epoch !== "string" || !/^(?:0|[1-9][0-9]*)$/u.test(position.epoch) || BigInt(position.epoch) > (1n << 64n) - 1n) throw new TypeError("Shape epoch must be a canonical uint64.");
-  if (typeof position.keyId !== "string" || !/^[\x00-\x7f]{26}$/u.test(position.keyId)) throw new TypeError("Shape key id must be 26 ASCII characters.");
   const epoch = position.epoch;
-  const keyId = position.keyId;
+  const keyId = requireId(position.keyId, "Shape key ID");
   signal?.throwIfAborted();
   const cache = currentKeys(transport, params);
   const cacheId = JSON.stringify([handle, epoch, keyId]);

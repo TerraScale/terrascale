@@ -12,7 +12,7 @@ const TOKEN = "fixture.payload.signature";
 const HANDLE = shapeVectors.fixture.handle;
 const OTHER_HANDLE = "h1-0000000000000002";
 const KID = "01ARZ3NDEKTSV4RRFFQ69G5FC0";
-const OTHER_KID = "terrascale-key-2026-rot012";
+const OTHER_KID = "01ARZ3NDEKTSV4RRFFQ69G5FC1";
 const SALT = new Uint8Array(32).fill(7);
 const LAST_FRAME_FLAG = 0x80000000;
 const tbs1 = vectors("tbs1_vectors")[0];
@@ -140,6 +140,14 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+test.each(["terrascale-key-2026-rot012", KID.toLowerCase(), `8${KID.slice(1)}`])("noncanonical key id %s fails before fetching", async keyId => {
+  const sealed = await sealedAt();
+  const { transport, calls } = makeTransport();
+  await expect(open(transport, params, { ...sealed, position: { ...sealed.position, keyId } })).rejects.toThrow(/canonical uppercase Crockford ULID/u);
+  expect(calls.key).toBe(0);
+  expect(calls.shape).toBe(0);
 });
 
 test("repeat decrypts at the current epoch share one no-store key fetch, and an aborted signal still fails before the cache", async () => {

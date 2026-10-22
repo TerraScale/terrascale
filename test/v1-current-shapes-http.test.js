@@ -40,7 +40,7 @@ test.each([{ offset: "3" }, { url: "http://unsafe.invalid" }, { key_id: "prefixe
   const { client } = await fixture((_r, response) => json(response, { handle, objects: [{ ...item, ...patch }] }));
   await expect(client.database("app").collection("users").shapeManifest({ handle, offset: "2" })).rejects.toThrow(TypeError);
 });
-test.each(['"cached"', 'W/"cached", "other"', "*"])("conditional shape read forwards %s and retains 304 cache metadata", async ifNoneMatch => {
+test.each(['"cached"', 'W/"cached", "other"', "*", ' \tW/"cached", "other"\t '])("conditional shape read forwards %s and retains 304 cache metadata", async ifNoneMatch => {
   const { client, requests } = await fixture((_r, response) => response.writeHead(304, {
     etag: '"cached"', "tb-shape-handle": handle, "tb-shape-next-offset": "3", "tb-shape-up-to-date": "true", "tb-shape-cursor": "10",
   }).end());
@@ -51,7 +51,7 @@ test.each(['"cached"', 'W/"cached", "other"', "*"])("conditional shape read forw
   expect(error.headers.get("tb-shape-up-to-date")).toBe("true");
   expect(error.headers.get("tb-shape-cursor")).toBe("10");
   expect(requests).toHaveLength(1);
-  expect(requests[0]?.headers["if-none-match"]).toBe(ifNoneMatch);
+  expect(requests[0]?.headers["if-none-match"]).toBe(ifNoneMatch.trim());
 });
 test("conditional shape bootstrap preserves the validator on its authorized continuation", async () => {
   const { client, requests } = await fixture((request, response) => {
