@@ -31,21 +31,27 @@ This repository (`TerraScale/terrascale`) holds four areas; these rules apply to
 
 ## Platform
 
-- Production is moving to OCI under `ts-orch` (`TerraScale/ts-orchestrator`), starting with `ts-gru-1` in `gru`.
-- Product region tokens stay `gru`, `sjc`, `fra`: OCI `sa-saopaulo-1`, `us-sanjose-1`, `eu-frankfurt-1`.
-- CI is GitHub Actions on GitHub-hosted runners. Images are published to GHCR; ts-orch owns artifact admission and rollout authority.
-- Use ts-orchestrator's [operating contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/zero-configuration.md), [region contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/automatic-regions.md) and [secrets contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/secrets.md). Distinguish required behavior from documented implementation gaps; region membership alone is not serving evidence.
+- Everything runs on Fly.io. Nothing runs on OCI.
+- Fly orgs: `terrascale` (production) and `terrascale-previews` (PR previews). Apps: `ts-terrabase` and `ts-auth` in `terrascale`; one `ts-pr-<number>` app per PR in `terrascale-previews`.
+- CI is GitHub Actions on GitHub-hosted runners: it builds and tests, then `fly deploy` ships the image. Deploy `gru` first, then a live check, then `sjc`. A failed check stops the rollout; fix forward.
+
+## Platform
+
+- Everything runs on Fly.io. Nothing runs on OCI.
+- Fly orgs: `terrascale` (production) and `terrascale-previews` (PR previews). Apps: `ts-terrabase` and `ts-auth` in `terrascale`; one `ts-pr-<number>` app per PR in `terrascale-previews`.
+- CI is GitHub Actions on Blacksmith runners: it builds and tests, then `fly deploy` ships the image.
+- Deploy order: `gru` first, then a live check, then `sjc`. A failed check stops the rollout; fix forward.
 
 ## Rules for every area
 
 ### Zero configuration (user decision 2026-10-09, do not revert)
 
 - Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles or kill switches in code, config or CI. Delete switches and their guarded paths.
-- Every admitted region must serve without a per-region enable step. ts-orch owns OCI placement and private NetBird admission; infer region identity from execution location and discover verified service endpoints through the orchestrator's regional topology. Authorized regions: `gru`, `sjc`, `fra`.
-- OCI Vault is the production secret store. Hosts use instance principals with exact-secret grants; ts-orch delivers workload credentials in memory. Vendor-issued keys are stored once in Vault. Never copy secrets into code, config, logs or operator instructions. Use the orchestrator's private NetBird access path for administration.
+- Every region always serves. Nodes join Fly's private network, discover every region through `.internal` DNS (`<region>.<app>.internal`), infer their region from `FLY_REGION` and serve without a per-region enable step. Current regions: `gru` and `sjc`.
+- Fly secrets are the only secret store. Apps read secrets from their environment; nobody copies them into code or config. Set vendor-issued keys (such as Stripe and Cloudflare) once with `fly secrets set`. Admin access to a running machine is `fly ssh` only.
 - Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
 - CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
-- TerraBase discovers cluster membership and every serving region automatically; production credentials arrive from OCI Vault. Shared libraries must preserve this for consuming production services.
+- TerraBase discovers cluster membership and every serving region automatically; production credentials arrive from fly secrets. Shared libraries must preserve this for consuming production services.
 - Always-on capability does not bypass authentication, customer consent, repository permissions, credential revocation, validation, resource isolation, backups or reviewed recovery. Preserve branch/event identity, quality gates and failure/cleanup conditions in CI.
 
 ### Identifiers, APIs and data
@@ -53,7 +59,7 @@ This repository (`TerraScale/terrascale`) holds four areas; these rules apply to
 - Greenfield: no shims, compatibility layers, or migration paths for old formats, unless a human asks.
 - All public HTTP APIs are versioned under `/v1`. Breaking changes are explicit compatibility decisions, never incidental refactors. Every generated ID is a ULID.
 - Every service keeps all application data in TerraBase databases and collections: one collection per entity type, one document per record. No SQLite, local files, in-memory-only stores, Cloudflare KV/D1 or other databases for application data.
-- Exceptions: ts-status (Cloudflare Worker + D1) and ts-cos (local SQLite). TerraBase's own external persistence (snapshots, logs, backups) goes to Tigris, the only object store. Tigris retains its Fly organization connection, `fly storage create`, storage login through flyctl, `fly.storage.tigris.dev`, and `TIGRIS_*` configuration (user Q-TIGRIS, 2026-10-22).
+- Exceptions: ts-status (Cloudflare Worker + D1) and ts-cos (local SQLite). TerraBase's own external persistence (snapshots, logs, backups) goes to Tigris, the only object store.
 
 ### Service ownership
 
@@ -64,7 +70,7 @@ Each product owns one area. Never duplicate another product's data; call its API
 | ts-auth | Users, organizations, projects, memberships, roles, invitations, SSO, OAuth/OIDC clients, signing keys, API keys (client credentials) |
 | TerraBase | Databases, collections, documents, transactions, queries, backups, indexes, schema, usage metering |
 | ts-dashboard | Platform UI and API, MCP server, plans, subscriptions, billing, spending caps |
-| OCI + ts-orch | Cloud capacity, regional placement, workload orchestration and OCI Vault secret delivery |
+| Fly.io | Regions, placement, scaling, edge, TLS, secrets |
 | SDKs (ts-go, ts-dotnet, ts-js, ts-cli) | Clients for every product API. Services talk to each other only through them |
 
 ### General
@@ -160,4 +166,4 @@ Each service maintains exactly two integration suites:
 
 - ALL benchmark code, datasets, reports and results live in `benchmark/`: Go at the top level, .NET library benchmarks in `benchmark/dotnet/`. Do not add them anywhere else in this repository.
 - Save every result as a `.md` table in `benchmark/bench/` so differences stay comparable from the start. Comparisons and history remain in `benchmark/`.
-- Benchmarks require automatic discovery of verified serving regions from ts-orch topology. OCI Vault delivers production benchmark credentials through instance principals and scoped workload delivery. Fakes and synthetic modes belong only in test binaries. Measurements must name their actual environment; remeasure on OCI before claiming OCI performance.
+- Benchmarks require automatic serving-region discovery through `.internal` DNS. Fly secrets deliver production benchmark credentials. Fakes and synthetic modes belong only in test binaries.
