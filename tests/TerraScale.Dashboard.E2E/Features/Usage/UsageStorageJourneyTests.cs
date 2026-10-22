@@ -87,7 +87,7 @@ public sealed class UsageStorageJourneyTests(DashboardRootFixture fixture)
             await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
         const string payload = "{\"message\":\"known storage\"}";
         using (var document = await HttpJourney.PostFormAsync(first, "/api/v1/dashboard/data/documents", new()
-        { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["collection"] = "events", ["operation"] = "create", ["id"] = "independent-storage", ["document"] = payload }))
+        { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["collection"] = "events", ["operation"] = "create", ["id"] = "01K78D0C000000000000000014", ["document"] = payload }))
             await Assert.That(document.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var known = await UsageAsync(replica, databaseId);
         await AssertUnknownOperationsAsync(known);

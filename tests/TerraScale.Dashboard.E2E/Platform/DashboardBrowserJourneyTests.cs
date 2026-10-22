@@ -72,15 +72,15 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
                 await SubmitAsync("#new-collection form", "Create collection");
                 await page.GetByRole(AriaRole.Button, new() { Name = "Add document", Exact = true }).ClickAsync();
                 await page.Locator("#add-document[open]").WaitForAsync();
-                await page.Locator("#new-document-id").FillAsync("customer-1");
+                await page.Locator("#new-document-id").FillAsync("01K78D0C000000000000000020");
                 await EditorAsync("#new-document-json", """{"name":"Ada","score":7,"nested":{"keep":true,"remove":false}}""");
                 await SubmitAsync("#add-document form", "Add document");
-                await page.GetByRole(AriaRole.Link, new() { Name = "customer-1", Exact = true }).ClickAsync();
+                await page.GetByRole(AriaRole.Link, new() { Name = "01K78D0C000000000000000020", Exact = true }).ClickAsync();
                 await page.Locator("#edit-document[open]").WaitForAsync();
                 await page.Locator("#operation").SelectOptionAsync("patch");
                 await EditorAsync("#document-json", """{"score":9,"nested":{"remove":null}}""");
                 await SubmitAsync("#edit-document form", "Save document");
-                await page.GetByRole(AriaRole.Link, new() { Name = "customer-1", Exact = true }).ClickAsync();
+                await page.GetByRole(AriaRole.Link, new() { Name = "01K78D0C000000000000000020", Exact = true }).ClickAsync();
                 await page.Locator("#edit-document[open]").WaitForAsync();
                 var patched = JsonNode.Parse(await page.Locator("#document-json").InputValueAsync());
                 await Assert.That(JsonNode.DeepEquals(patched, JsonNode.Parse("""{"name":"Ada","score":9,"nested":{"keep":true}}"""))).IsTrue()

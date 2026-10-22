@@ -79,7 +79,7 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         collection = ValidCollection(collection);
         if (operation is not ("create" or "replace" or "patch" or "delete") || operation != "create" && id.Length == 0)
             throw new AccountAccessException("Choose a document and an operation.", 422);
-        if (id.Length > 256 || id.Any(char.IsControl)) throw new AccountAccessException("Document IDs use up to 256 characters without control characters.", 422);
+        if (operation != "create" || id.Length > 0) ValidDocumentId(id);
         JsonElement document = default;
         if (operation != "delete")
         {
@@ -104,7 +104,7 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
     {
         var database = DatabaseService.Database(context, databaseId);
         collection = ValidCollection(collection);
-        if (id.Length is 0 or > 256 || id.Any(char.IsControl)) throw new AccountAccessException("Choose a valid document ID.", 422);
+        ValidDocumentId(id);
         return await documents.GetAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, cancellationToken), database.Name, collection, id, cancellationToken)
             ?? throw new AccountAccessException("Document is unavailable.", 404);
     }
@@ -206,6 +206,11 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         if (collection.Length is 0 or > 128 || collection.Contains('/') || collection.Any(char.IsControl)) throw new AccountAccessException("Enter a collection name without slashes or line breaks.", 422);
         return collection;
     }
+
+    public const string DocumentIdRule = "Document IDs are 26-character uppercase ULIDs (Crockford Base32, first character 0-7), such as 01J9Z3K8M4Q7R2T5V6W8X9Y0ZA.";
+
+    public static string ValidDocumentId(string id) =>
+        TerraScale.DotNet.TerraScaleIds.IsValid(id) ? id : throw new AccountAccessException(DocumentIdRule, 422);
     [GeneratedRegex("^[a-z][a-z0-9_-]{0,62}$", RegexOptions.CultureInvariant)]
     private static partial Regex CollectionPattern();
 }

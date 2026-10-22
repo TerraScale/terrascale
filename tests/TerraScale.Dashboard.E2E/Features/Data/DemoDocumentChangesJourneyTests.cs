@@ -40,9 +40,9 @@ public sealed class DemoDocumentChangesJourneyTests(DashboardRootFixture fixture
         using (var refused = await anonymous.GetAsync(route))
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
 
-        await WriteAsync("items", "create", "first");
-        await WriteAsync("other", "create", "filtered");
-        await WriteAsync("items", "delete", "first");
+        await WriteAsync("items", "create", "01K78D0C000000000000000001");
+        await WriteAsync("other", "create", "01K78D0C000000000000000002");
+        await WriteAsync("items", "delete", "01K78D0C000000000000000001");
         string checkpoint;
         using (var response = await client.GetAsync(route, HttpCompletionOption.ResponseHeadersRead, deadline.Token))
         {
@@ -50,23 +50,23 @@ public sealed class DemoDocumentChangesJourneyTests(DashboardRootFixture fixture
             await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("text/event-stream");
             using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(deadline.Token));
             var (_, first) = await ChangeAsync(reader);
-            await Assert.That(first.GetProperty("id").GetString()).IsEqualTo("first").Because("Retained history replays without a cursor; the other collection is filtered out.");
+            await Assert.That(first.GetProperty("id").GetString()).IsEqualTo("01K78D0C000000000000000001").Because("Retained history replays without a cursor; the other collection is filtered out.");
             await Assert.That(first.GetProperty("document").GetProperty("value").GetInt32()).IsEqualTo(1).Because("History retains the written document even after deletion.");
             var (_, historicalDelete) = await ChangeAsync(reader);
             await Assert.That(historicalDelete.GetProperty("op").GetString()).IsEqualTo("delete");
             // The stream stays open: later writes arrive live, deletes carry no document.
-            await WriteAsync("items", "create", "second");
-            await WriteAsync("items", "delete", "second");
+            await WriteAsync("items", "create", "01K78D0C000000000000000003");
+            await WriteAsync("items", "delete", "01K78D0C000000000000000003");
             var (_, second) = await ChangeAsync(reader);
             await Assert.That(second.GetProperty("op").GetString()).IsEqualTo("upsert");
-            await Assert.That(second.GetProperty("id").GetString()).IsEqualTo("second");
+            await Assert.That(second.GetProperty("id").GetString()).IsEqualTo("01K78D0C000000000000000003");
             await Assert.That(second.GetProperty("document").GetProperty("value").GetInt32()).IsEqualTo(1);
             (checkpoint, var deleted) = await ChangeAsync(reader);
             await Assert.That(deleted.GetProperty("op").GetString()).IsEqualTo("delete");
-            await Assert.That(deleted.GetProperty("id").GetString()).IsEqualTo("second");
+            await Assert.That(deleted.GetProperty("id").GetString()).IsEqualTo("01K78D0C000000000000000003");
             await Assert.That(deleted.GetProperty("document").ValueKind).IsEqualTo(JsonValueKind.Null);
         }
-        await WriteAsync("items", "create", "third");
+        await WriteAsync("items", "create", "01K78D0C000000000000000004");
         using (var request = new HttpRequestMessage(HttpMethod.Get, route))
         {
             request.Headers.Add("Last-Event-ID", checkpoint);
@@ -76,7 +76,7 @@ public sealed class DemoDocumentChangesJourneyTests(DashboardRootFixture fixture
             await Assert.That(state).IsEqualTo("cursor");
             await Assert.That(id).IsEqualTo(checkpoint);
             var (_, third) = await ChangeAsync(reader);
-            await Assert.That(third.GetProperty("id").GetString()).IsEqualTo("third").Because("Last-Event-ID resumes after the delete without replaying it.");
+            await Assert.That(third.GetProperty("id").GetString()).IsEqualTo("01K78D0C000000000000000004").Because("Last-Event-ID resumes after the delete without replaying it.");
         }
 
         async Task WriteAsync(string collection, string operation, string id)

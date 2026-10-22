@@ -328,7 +328,7 @@ public sealed class BackupConfirmationJourneyTests(DashboardRootFixture fixture)
     private static async Task WriteAsync(HttpClient client, string csrf, string id, string operation, int score)
     {
         using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/documents", new()
-        { ["_csrf"] = csrf, ["databaseId"] = id, ["collection"] = "users", ["id"] = "snapshot-row", ["operation"] = operation, ["document"] = JsonSerializer.Serialize(new { score }) });
+        { ["_csrf"] = csrf, ["databaseId"] = id, ["collection"] = "users", ["id"] = "01K78D0C000000000000000011", ["operation"] = operation, ["document"] = JsonSerializer.Serialize(new { score }) });
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await response.Content.ReadAsStringAsync());
     }
     private static async Task<string> BackupAsync(HttpClient client, string csrf, string id)

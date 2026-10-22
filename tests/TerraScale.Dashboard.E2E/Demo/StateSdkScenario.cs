@@ -268,7 +268,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
                 Require(parts.Length == 9 && parts[7] == "documents" && parts[8] == "by-key" && http.Request.Query.Keys.SequenceEqual(new[] { "id" }),
                     "The official state SDK must use the genuine by-key point route and one opaque id parameter.");
                 var id = http.Request.Query["id"].ToString();
-                Require(id.Length > 0, "A state document id is required.");
+                Require(TerraScaleIds.IsValid(id), "State document ids are canonical ULIDs.");
                 if (http.Request.Method == "PUT" && parts[6] == "dashboard_accounts" && documentGate is { } held)
                 { Interlocked.Increment(ref pausedWrites); await held.Task.WaitAsync(http.RequestAborted); }
                 JsonElement? body = null;

@@ -75,21 +75,21 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(collections.GetProperty("collections")[0].GetString()).IsEqualTo("users");
             var docFields = new Dictionary<string, object?> { ["databaseId"] = databaseId, ["collection"] = "users" };
             for (var index = 0; index < 31; index++)
-                await CallAsync(client, "create_document", new(docFields) { ["documentId"] = "customer-" + index.ToString("D2"), ["document"] = new { name = "Customer " + index, score = index, profile = new { city = "GRU", remove = true } } });
+                await CallAsync(client, "create_document", new(docFields) { ["documentId"] = "01K78CVSTMER000000000000" + index.ToString("D2"), ["document"] = new { name = "Customer " + index, score = index, profile = new { city = "GRU", remove = true } } });
             var documents = await CallAsync(replica, "list_documents", new(docFields));
             await Assert.That(documents.GetProperty("documents").GetArrayLength()).IsEqualTo(31);
             var firstDocument = documents.GetProperty("documents")[0];
             await Assert.That(firstDocument.TryGetProperty("value", out _) && !firstDocument.TryGetProperty("version", out _)).IsTrue();
             var page = await CallAsync(replica, "list_documents", new(docFields) { ["limit"] = 3, ["after"] = "3" });
             await Assert.That(page.GetProperty("documents").GetArrayLength()).IsEqualTo(3);
-            await Assert.That(page.GetProperty("documents")[0].GetProperty("id").GetString()).IsEqualTo("customer-03");
+            await Assert.That(page.GetProperty("documents")[0].GetProperty("id").GetString()).IsEqualTo("01K78CVSTMER00000000000003");
             var search = await CallAsync(replica, "list_documents", new(docFields) { ["limit"] = 3, ["after"] = "3", ["search"] = "CUSTOMER 4" });
             await Assert.That(search.GetProperty("documents").GetArrayLength()).IsEqualTo(1);
             await ErrorAsync(replica, "list_documents", new(docFields) { ["limit"] = 101 });
             using (var apiDocuments = await replica.GetAsync("/api/v1/dashboard/data/documents?databaseId=" + databaseId + "&collection=users"))
                 await Assert.That((await ReadJsonAsync(apiDocuments)).GetArrayLength()).IsEqualTo(31);
 
-            var reference = new Dictionary<string, object?>(docFields) { ["documentId"] = "customer-00" };
+            var reference = new Dictionary<string, object?>(docFields) { ["documentId"] = "01K78CVSTMER00000000000000" };
             var original = await CallAsync(replica, "get_document", new(reference) { ["includeVersion"] = true });
             var originalVersion = original.GetProperty("version").GetString()!;
             var patched = await CallAsync(client, "patch_document", new(reference) { ["patch"] = new { profile = new { city = "SFO", remove = (object?)null } } });
@@ -100,10 +100,17 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(latest.TryGetProperty("version", out _)).IsFalse();
             await ErrorAsync(replica, "replace_document", new(reference) { ["document"] = new { name = "Lost update" }, ["version"] = originalVersion });
             await ErrorAsync(replica, "patch_document", new(reference) { ["patch"] = new { name = "Invalid version" }, ["version"] = "" });
-            await ErrorAsync(replica, "get_document", new(reference) { ["id"] = "different-id" });
-            await CallAsync(client, "replace_document", new(docFields) { ["id"] = "customer-00", ["value"] = new { name = "Alias replacement", score = 100 } });
+            await ErrorAsync(replica, "get_document", new(reference) { ["id"] = "01K78CVSTMER00000000000099" });
+            await ErrorAsync(client, "create_document", new(docFields) { ["documentId"] = "customer-00", ["document"] = new { name = "Not a ULID" } });
+            using (var invalidId = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/documents", new()
+            { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["collection"] = "users", ["operation"] = "create", ["id"] = "customer-00", ["document"] = "{}" }))
+            {
+                await Assert.That(invalidId.StatusCode).IsEqualTo((HttpStatusCode)422);
+                await Assert.That(await invalidId.Content.ReadAsStringAsync()).Contains("ULID");
+            }
+            await CallAsync(client, "replace_document", new(docFields) { ["id"] = "01K78CVSTMER00000000000000", ["value"] = new { name = "Alias replacement", score = 100 } });
             using (var nativeWrite = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/documents", new()
-            { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["collection"] = "users", ["operation"] = "replace", ["id"] = "customer-00", ["document"] = "{\"name\":\"Native replacement\",\"score\":101}" }))
+            { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["collection"] = "users", ["operation"] = "replace", ["id"] = "01K78CVSTMER00000000000000", ["document"] = "{\"name\":\"Native replacement\",\"score\":101}" }))
             {
                 await Assert.That(nativeWrite.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 var result = await ReadJsonAsync(nativeWrite);

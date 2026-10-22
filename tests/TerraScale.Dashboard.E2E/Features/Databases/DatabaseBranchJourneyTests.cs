@@ -310,7 +310,7 @@ public sealed class DatabaseBranchJourneyTests(DashboardRootFixture fixture)
     private static async Task WriteAsync(HttpClient client, string csrf, string id, string operation, string value)
     {
         using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/documents", new()
-        { ["_csrf"] = csrf, ["databaseId"] = id, ["collection"] = "users", ["id"] = "customer", ["operation"] = operation, ["document"] = JsonSerializer.Serialize(new { value }) });
+        { ["_csrf"] = csrf, ["databaseId"] = id, ["collection"] = "users", ["id"] = "01K78D0C000000000000000009", ["operation"] = operation, ["document"] = JsonSerializer.Serialize(new { value }) });
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await response.Content.ReadAsStringAsync());
     }
     private static async Task<string> ValueAsync(HttpClient client, string id) =>

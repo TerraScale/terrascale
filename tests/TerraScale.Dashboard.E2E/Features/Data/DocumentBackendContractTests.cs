@@ -19,14 +19,14 @@ public sealed class DocumentBackendContractTests
         var backend = new DocumentBackend(wire, tokens);
         for (var index = 0; index < 2; index++)
         {
-            var document = await backend.GetAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "a", CancellationToken.None);
+            var document = await backend.GetAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "01K78D0C000000000000000099", CancellationToken.None);
             await Assert.That(document).IsNull();
         }
         await Assert.That(tokens.Scopes).IsEquivalentTo(new[] { "documents:read", "documents:read" });
         await Assert.That(wire.Requests).IsEqualTo(2);
         await Assert.That(wire.Bearers).IsEquivalentTo(new[] { "project-1", "project-2" });
         await Assert.That(wire.Path).IsEqualTo("/v1/projects/01JA0000000000000000000001/databases/app/collections/items/documents/by-key");
-        await Assert.That(wire.Query).IsEqualTo("?id=a");
+        await Assert.That(wire.Query).IsEqualTo("?id=01K78D0C000000000000000099");
         await Assert.That(wire.Pin).IsEqualTo("gru");
     }
 
@@ -85,7 +85,7 @@ public sealed class DocumentBackendContractTests
                     "create-collection" => backend.CreateCollectionAsync(scope, region, "app", "items", CancellationToken.None),
                     "query" => backend.DocumentsAsync(scope, region, "app", "items", new TerraBaseQuery(), CancellationToken.None),
                     "list" => backend.ListAsync(scope, region, "app", "items", 10, null, CancellationToken.None),
-                    "get" => backend.GetAsync(scope, region, "app", "items", "a", CancellationToken.None),
+                    "get" => backend.GetAsync(scope, region, "app", "items", "01K78D0C000000000000000099", CancellationToken.None),
                     "schema" => backend.SchemaAsync(scope, region, "app", "items", CancellationToken.None),
                     _ => backend.WriteAsync(scope, region, "app", "items", action, "a", body.RootElement, "", CancellationToken.None)
                 };

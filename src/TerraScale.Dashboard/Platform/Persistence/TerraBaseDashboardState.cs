@@ -1,4 +1,7 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using NUlid;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Platform.Persistence;
@@ -58,14 +61,24 @@ public sealed class TerraBaseDashboardState(IHttpClientFactory http, IHostEnviro
             ValidateCollection(await database.GetCollectionAsync(name, cancellationToken), name)));
     }
 
-    public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
-        Database().GetDocumentAsync(collection, id, cancellationToken);
+    public async Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
+    {
+        var key = DocumentId(collection, id);
+        var document = await Database().GetDocumentAsync(collection, key, cancellationToken);
+        // Callers verify identity against their own key, so a mismatched reply stays mismatched.
+        return document?.Id == key ? document with { Id = id } : document;
+    }
 
     public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken) =>
-        await Database().PutDocumentAsync(collection, id, document, precondition, cancellationToken);
+        await Database().PutDocumentAsync(collection, DocumentId(collection, id), document, precondition, cancellationToken);
 
     public async Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken) =>
-        await Database().DeleteDocumentAsync(collection, id, TerraBasePrecondition.Matches(version), cancellationToken);
+        await Database().DeleteDocumentAsync(collection, DocumentId(collection, id), TerraBasePrecondition.Matches(version), cancellationToken);
+
+    // TerraBase document ids are ULIDs. Callers key state by natural names (hashes, emails, Stripe ids, ULIDs), so
+    // every key becomes a name-based ULID: the first 16 bytes of SHA-256 over "collection\0key". Nothing reads it back.
+    public static string DocumentId(string collection, string key) =>
+        new Ulid(SHA256.HashData(Encoding.UTF8.GetBytes(collection + "\0" + key)).AsSpan(0, 16).ToArray()).ToString();
 
     private TerraBaseDatabase Database() =>
         new TerraBaseDocumentsClient(http.CreateClient(ClientName), new TerraBaseDocumentsClientOptions { BaseAddress = origin })
