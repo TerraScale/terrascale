@@ -1,6 +1,6 @@
 module terrascale.tech/ts-benchmark
 
-go 1.25.0
+go 1.27.3
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.1.2
