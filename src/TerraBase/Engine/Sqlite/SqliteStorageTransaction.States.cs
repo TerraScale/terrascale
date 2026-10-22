@@ -204,6 +204,7 @@ internal sealed partial class SqliteStorageTransaction
     private void WriteState(string collection, string id, DocumentState state, EntryVersion at, byte[]? stored = null)
     {
         var digest = DocumentStateEncoding.Digest(collection, id, state);
+        RemoveMerkleState(collection, id);
         var update = BodyCommand(SqliteStatements.UpdateState, collection, id);
         Bind(update);
         if (update.ExecuteNonQuery() == 0)
@@ -214,6 +215,7 @@ internal sealed partial class SqliteStorageTransaction
             insert.ExecuteNonQuery();
         }
 
+        FoldMerkle(Bucket(collection, id), unchecked((long)(ulong)(digest >> 64)), unchecked((long)(ulong)digest));
         AppendFeed(collection, id, at, state.Exists);
 
         void Bind(SqliteCommand command)

@@ -96,6 +96,7 @@ internal sealed partial class SqliteStorageTransaction
             // stays on this machine (see IStorageTransaction.DeleteCollectionsAsync).
             var to = prefix[..^1] + (char)(prefix[^1] + 1);
             var deleted = 0;
+            RemoveMerkleStates(prefix, to);
             foreach (var sql in (ReadOnlySpan<string>)[SqliteStatements.DeleteCollectionDocuments, SqliteStatements.DeleteCollectionStates, SqliteStatements.DeleteCollectionNames])
             {
                 cancellationToken.ThrowIfCancellationRequested();

@@ -639,7 +639,9 @@ public sealed class ReplicaRebuildTests
             var store = (SqliteDatabaseStore)await StoreAsync();
             _ = await store.WithWriterAsync(session =>
             {
+                using var transaction = session.Connection.BeginTransaction();
                 using var command = session.Connection.CreateCommand();
+                command.Transaction = transaction;
                 command.CommandText = sql;
                 command.Parameters.AddWithValue("$id", id);
                 command.Parameters.AddWithValue("$collection", collection);
@@ -648,7 +650,10 @@ public sealed class ReplicaRebuildTests
                     command.Parameters.AddWithValue("$misplaced", misplaced);
                 }
 
-                return command.ExecuteNonQuery();
+                var changed = command.ExecuteNonQuery();
+                MerkleFixture.Rebuild(session, transaction);
+                transaction.Commit();
+                return changed;
             }, "a test editing rows directly", CancellationToken.None);
             store.ForgetCollections();
         }

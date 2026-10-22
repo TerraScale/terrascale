@@ -236,7 +236,9 @@ public sealed class KeyAwareDigestTests
             var digest = DocumentStateEncoding.Digest(Items, id, state);
             var rows = await store.WithWriterAsync(session =>
             {
+                using var transaction = session.Connection.BeginTransaction();
                 using var row = session.Connection.CreateCommand();
+                row.Transaction = transaction;
                 row.CommandText = "UPDATE _tb_state SET state = $state, stamp = $stamp, h1 = $h1, h2 = $h2 WHERE collection = $collection AND id = $id;";
                 row.Parameters.AddWithValue("$state", stored);
                 row.Parameters.AddWithValue("$stamp", unchecked((long)state.MaxStamp.Value));
@@ -245,10 +247,14 @@ public sealed class KeyAwareDigestTests
                 row.Parameters.AddWithValue("$collection", Items);
                 row.Parameters.AddWithValue("$id", id);
                 using var document = session.Connection.CreateCommand();
+                document.Transaction = transaction;
                 document.CommandText = $"UPDATE \"{Items}\" SET doc = $doc WHERE id = $id;";
                 document.Parameters.AddWithValue("$doc", body);
                 document.Parameters.AddWithValue("$id", id);
-                return row.ExecuteNonQuery() + document.ExecuteNonQuery();
+                var changed = row.ExecuteNonQuery() + document.ExecuteNonQuery();
+                MerkleFixture.Rebuild(session, transaction);
+                transaction.Commit();
+                return changed;
             }, "a test misplacing a state", CancellationToken.None);
             store.ForgetCollections();
             await Assert.That(rows).IsEqualTo(2);
