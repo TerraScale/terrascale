@@ -399,7 +399,8 @@ internal static class OidcResults
     /// <c>email</c> scope. The authentication epoch rides in codes and refresh tokens, so later grants can check it, and
     /// in the access token, so the platform management API (TS-598) refuses it once the user signed out everywhere.
     /// The server-issued authentication time also rides in user access tokens; refresh never renews it. A platform admin's
-    /// access token also carries <see cref="PlatformRoleClaim"/>, read from the stored user at every sign-in and refresh.
+    /// access token also carries <see cref="PlatformRoleClaim"/>, read from the stored user at every sign-in and refresh; the
+    /// platform owner (<see cref="PlatformBootstrap.OwnerEmail"/>) always carries it.
     /// </summary>
     public static IResult SignIn(UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences)
     {
@@ -419,7 +420,9 @@ internal static class OidcResults
             .SetScopes(scopes)
             .SetResources(audiences);
         // Only the platform's own tenant has platform admins; TerraBase's explore API reads the claim (platform-databases.md).
-        if (user.InstanceId == OidcIssuer.InstanceId && user.PlatformRole == PlatformRoleAdmin)
+        // The platform owner is always one, in code, so a wiped and re-bootstrapped store needs no operator write; every
+        // sign-in proves control of the mailbox first.
+        if (user.InstanceId == OidcIssuer.InstanceId && (user.PlatformRole == PlatformRoleAdmin || user.Email == PlatformBootstrap.OwnerEmail))
         {
             identity.SetClaim(PlatformRoleClaim, PlatformRoleAdmin);
         }
