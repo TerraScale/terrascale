@@ -42,6 +42,10 @@ case SignInStep.SignedOut:
 break;
 case SignInStep.Rejected:
 <p class="muted">Start again from the application you were signing in to.</p>
+@if (Model.Detail is { } detail)
+{
+<p class="hint">Error code: @detail</p>
+}
 break;
 }
 @functions {

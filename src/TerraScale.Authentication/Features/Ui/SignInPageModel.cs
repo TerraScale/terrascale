@@ -18,7 +18,7 @@ public enum SignInStep
     /// <summary>Signed out.</summary>
     SignedOut,
 
-    /// <summary>A cross-origin form post was refused.</summary>
+    /// <summary>A cross-origin form post, or an authorization or end-session request that cannot be answered to its client, was refused.</summary>
     Rejected,
 }
 
@@ -28,7 +28,8 @@ public enum SignInStep
 /// <param name="Email">The address entered so far.</param>
 /// <param name="Next">A validated same-origin authorization URL to resume.</param>
 /// <param name="Error">A message about the last attempt.</param>
-public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? Email = null, string? Next = null, string? Error = null)
+/// <param name="Detail">A machine-readable error code shown under a refused request, e.g. <c>invalid_request</c>.</param>
+public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? Email = null, string? Next = null, string? Error = null, string? Detail = null)
 {
     /// <summary>The response's CSP nonce, set by <see cref="Render"/>.</summary>
     public string Nonce { get; init; } = string.Empty;
