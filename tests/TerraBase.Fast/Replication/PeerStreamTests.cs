@@ -1523,6 +1523,7 @@ public sealed class PeerStreamTests
     {
         TerraBase.Engine.Sqlite.SqliteDatabaseStore? store = null;
         var reset = false;
+        ulong resetAfter = 0;
         TenantContext? clusterDatabase = null;
         await using var cluster = await Cluster.StartAsync(cdc: false, clock: null, configure: (region, services) =>
         {
@@ -1532,11 +1533,11 @@ public sealed class PeerStreamTests
                 {
                     if (step == "replication.apply.committed" && store is not null && database == clusterDatabase && !reset)
                     {
-                        reset = true;
                         using var command = store.CurrentWriter()!.Connection.CreateCommand();
-                        command.CommandText = "UPDATE _tb_peers SET applied = 0 WHERE node = $origin;";
+                        command.CommandText = "UPDATE _tb_peers SET applied = 0 WHERE node = $origin AND applied = $applied;";
                         command.Parameters.AddWithValue("$origin", unchecked((long)ReplicaId.Of(1, 7, 0).Value));
-                        _ = command.ExecuteNonQuery();
+                        command.Parameters.AddWithValue("$applied", unchecked((long)resetAfter));
+                        reset = command.ExecuteNonQuery() == 1;
                     }
                 });
             }
@@ -1553,14 +1554,18 @@ public sealed class PeerStreamTests
         var engine = sjc.Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
         store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
         var origin = ReplicaId.Of(1, 7, 0);
+        var first = EntityIds.New().ToString();
         var final = EntityIds.New().ToString();
+        resetAfter = stamp + 1;
         await push.GroupsAsync(cluster.Database,
         [
-            new OriginGroup(1, [.. Enumerable.Range(0, ChangeGroups.MaxDeltas).Select(_ => Put(origin, stamp + 1, EntityIds.New().ToString(), """{"n":1}"""))]),
+            // Idempotent deltas cross the writer count bound without turning this ordering test into a write-load test.
+            new OriginGroup(1, [.. Enumerable.Repeat(Put(origin, stamp + 1, first, """{"n":1}"""), ChangeGroups.MaxDeltas)]),
             new OriginGroup(2, [Put(origin, stamp + 2, final, """{"n":2}""")]),
         ], stamp);
         await Assert.That((await push.AckAsync()) is { Refused: true, RefillRequired: true }).IsTrue();
         await Assert.That(reset).IsTrue();
+        await Assert.That(await sjc.ReadAsync(first)).IsEqualTo("""{"n":1}""");
         await Assert.That(await sjc.ReadAsync(final)).IsNull();
     }
 
