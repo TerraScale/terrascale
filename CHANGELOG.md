@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — ts-auth platform token contract
+
+`createTsAuthClient` sends every call to `apiBaseUrl`. The Atlas auth discovery
+lookup, regional `<region>.auth.terrascale.tech` routing and the
+`useReverseProxy` option are removed: ts-auth has one global issuer per tenant
+(`https://auth.terrascale.tech/terrascale` for the platform). Contract tests
+pin the issuer, the `https://api.terrascale.tech` audience, the four TerraBase
+scopes and distinct 401/403 handling.
+
 ## Unreleased — TS-754
 
 Entity IDs are plain uppercase Crockford ULIDs. `generateId()` uses the maintained

@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import { expect, test } from "vitest";
 import { createTsAuthClient } from "./ts-auth.js";
 const config = {
@@ -58,41 +57,6 @@ test("hosted errors never retain instance keys or arbitrary secret fields", asyn
   expect(JSON.stringify(result)).not.toMatch(
     /sk_test_do_not_echo|opaque-secret|secret-password/u,
   );
-});
-
-test("identity discovery cancels noncooperative fetch and streamed bodies without exposing credentials", async () => {
-  const { TsAuthEndpointDiscovery } = await import("./ts-auth-discovery.js");
-  for (const fetch of [
-    async () => /** @type {Promise<Response>} */ (new Promise(() => undefined)),
-    async () =>
-      new Response(
-        new ReadableStream({
-          pull: () => new Promise(() => undefined),
-        }),
-      ),
-  ]) {
-    const controller = new AbortController();
-    const discovery = new TsAuthEndpointDiscovery(fetch);
-    const pending = discovery.endpoints(controller.signal);
-    controller.abort(new Error("cancel discovery"));
-    await assert.rejects(pending, /cancel discovery/u);
-  }
-  let cancelled = false;
-  const oversized = new TsAuthEndpointDiscovery(
-    async () =>
-      new Response(
-        new ReadableStream({
-          start: (controller) => {
-            controller.enqueue(new Uint8Array(65_537));
-          },
-          cancel: () => {
-            cancelled = true;
-          },
-        }),
-      ),
-  );
-  await assert.rejects(oversized.endpoints(), /too large/u);
-  assert.equal(cancelled, true);
 });
 
 test("the private resource Basic option rejects other routes before fetch", async () => {
