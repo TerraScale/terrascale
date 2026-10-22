@@ -28,7 +28,6 @@ public sealed class ShapeSealPowerLossTests
     [Scenario(Nodes.Processes, Faults.ProcessKill | Faults.FileTampering)]
     public async Task A_power_loss_never_leaves_a_sealed_chunk_naming_a_lost_write(string cut, int seed, int tornBytes)
     {
-        Skip.When(Cluster.FlyRequested, "kills local region processes and edits their files");
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
         await using var regions = await RegionProcesses.StartWithWalFaultsAsync(Origin, Remote);
         await ShapeDurabilityE2ETests.ConnectedAsync(regions);

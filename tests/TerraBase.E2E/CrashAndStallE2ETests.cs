@@ -24,7 +24,6 @@ public sealed class CrashAndStallE2ETests
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Writes_acknowledged_before_a_SIGKILL_survive_the_restart_of_their_node_process()
     {
-        Skip.When(Cluster.FlyRequested, "kills a local node process");
         await using var node = await NodeProcess.StartAsync();
         var database = await node.CreateTenantAsync();
         _ = await Docs.PostAsync(node.Internal, new Uri($"{database}/collections", UriKind.Relative), new JsonObject { ["name"] = "crash" });
@@ -78,7 +77,6 @@ public sealed class CrashAndStallE2ETests
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Writes_acknowledged_before_a_SIGKILL_reach_every_region_once_the_node_is_back()
     {
-        Skip.When(Cluster.FlyRequested, "kills a local node process");
         await Gaps.RunAsync("crash-replicated", async () =>
         {
             await using var gru = await NodeProcess.StartAsync();
@@ -93,7 +91,6 @@ public sealed class CrashAndStallE2ETests
     [Scenario(Nodes.InProcess, Faults.StorageStall)]
     public async Task Writes_through_a_storage_stall_are_either_refused_or_kept_and_writing_resumes_after_it()
     {
-        Skip.When(Cluster.FlyRequested, "locks a local node's database file");
         await Gaps.RunAsync("storage-stall-single", async () =>
         {
             await using var cluster = await Cluster.StartAsync(Cluster.Gru);
@@ -114,7 +111,6 @@ public sealed class CrashAndStallE2ETests
     [Scenario(Nodes.InProcess, Faults.StorageStall)]
     public async Task A_storage_stall_on_one_region_loses_no_acknowledged_write_and_the_regions_converge()
     {
-        Skip.When(Cluster.FlyRequested, "locks a local node's database file");
         await Gaps.RunAsync("storage-stall", async () =>
         {
             await using var cluster = await Cluster.StartAsync(All);
@@ -130,7 +126,6 @@ public sealed class CrashAndStallE2ETests
     [Scenario(Nodes.InProcess, Faults.NetworkFault)]
     public async Task Writes_converge_exactly_over_lossy_peer_links()
     {
-        Skip.When(Cluster.FlyRequested, "Fly has no way to make 6PN lossy; the lossy link runs on the local nodes only");
         await Gaps.RunAsync("lossy-link", async () =>
         {
             await using var cluster = await Cluster.StartAsync(All);

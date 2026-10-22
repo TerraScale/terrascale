@@ -44,8 +44,6 @@ public sealed class ReplicationMatrixTests
     [Arguments(Cluster.Fra)]
     public async Task Each_region_rejoins_with_writes_and_tombstones_from_both_survivors(string offline, CancellationToken cancellationToken)
     {
-        Skip.When(Cluster.FlyRequested,
-            "each parallel outage owns local nodes; remote machine lifecycle control is unavailable");
         await RejoinOwnedAsync(offline, cancellationToken);
     }
 
@@ -99,17 +97,10 @@ public sealed class ReplicationMatrixTests
         {
             await cluster.StopAsync(offline, token);
             // Seed convergence through the stopped region does not prove the survivors can confirm each other's writes.
-            (string Id, string Canonical)[] probes = [];
-            if (Cluster.FlyRequested)
-            {
-                probes = await ProbeSurvivorsAsync(cluster, survivors, token);
-            }
-            else
-            {
-                await Task.WhenAll(survivors.Select(from => Converge.UntilAsync(() => cluster.ReplicationAsync(from, token),
-                    status => status.GetProperty("peers").EnumerateArray().Any(peer => peer.GetProperty("region").GetString() == survivors.Single(to => to != from)),
-                    $"{from} streams to the other survivor while {offline} is down", token)));
-            }
+            await Task.WhenAll(survivors.Select(from => Converge.UntilAsync(() => cluster.ReplicationAsync(from, token),
+                status => status.GetProperty("peers").EnumerateArray().Any(peer => peer.GetProperty("region").GetString() == survivors.Single(to => to != from)),
+                $"{from} streams to the other survivor while {offline} is down", token)));
+            var probes = await ProbeSurvivorsAsync(cluster, survivors, token);
 
             const int count = 40;
             var faker = new Faker();
@@ -167,12 +158,10 @@ public sealed class ReplicationMatrixTests
         }
     }
 
-    // Starts offline again and waits until it serves: the cluster's cleanup checks every machine's identity and deletes the
-    // collection through gru. Bounded by its own clock, never the test's token. A start that fails (the region was never
-    // stopped, or already started) is forgiven only when the region then serves.
+    // Starts offline again and waits until it serves. Bounded by its own clock, never the test's token.
+    // A start that fails (the region was never stopped, or already started) is forgiven only when the region then serves.
     private static async Task RecoverAsync(Cluster cluster, string offline, bool started)
     {
-        // Fly's start waits up to two minutes for the machine to reach stopped, then the region has a convergence deadline.
         using var recovery = new CancellationTokenSource(TimeSpan.FromMinutes(5));
         Exception? start = null;
         if (!started)
@@ -198,7 +187,7 @@ public sealed class ReplicationMatrixTests
         }
     }
 
-    // Fly's internal listener is out of reach. With the third region down, a survivor's write is acknowledged remote_durable
+    // With the third region down, a survivor's write is acknowledged remote_durable
     // only once the other survivor holds a durable copy, which must then serve it. Visibility alone does not prove that
     // durability, so both are checked. Answers the probes for the collection digest.
     private static async Task<(string Id, string Canonical)[]> ProbeSurvivorsAsync(Cluster cluster, string[] survivors, CancellationToken token) =>
@@ -213,8 +202,7 @@ public sealed class ReplicationMatrixTests
             return (id, Docs.Canonical(body));
         }));
 
-    // While a restarted Fly machine boots, the proxy answers for it without TerraBase's identity headers (the pin refuses
-    // that) or the node answers 503: the read is not there yet. Reads only; a write is never sent again this way.
+    // While a restarted node boots, a read may not be available yet. Reads only; a write is never sent again this way.
     private static async Task<T?> BootingAsync<T>(Func<Task<T>> read)
     {
         try
@@ -234,10 +222,6 @@ public sealed class ReplicationMatrixTests
             async () => new Tombstones(await Task.WhenAll(cluster.Regions.Select(async region => (region, await Docs.TombstoneAsync(cluster[region], cluster.Document(id), token))))),
             tombstones => tombstones.Tags.All(tag => tag.Tag is { Length: > 0 }) && tombstones.Tags.Select(tag => tag.Tag).Distinct(StringComparer.Ordinal).Count() == 1,
             $"every region's tombstone ETag for {id}", token);
-        if (Cluster.FlyRequested)
-        {
-            return;
-        }
 
         foreach (var region in All)
         {

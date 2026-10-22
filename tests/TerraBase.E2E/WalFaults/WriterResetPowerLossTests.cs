@@ -21,7 +21,6 @@ public sealed class WriterResetPowerLossTests
     [Scenario(Nodes.Processes, Faults.ProcessKill | Faults.FileTampering)]
     public async Task A_write_answered_after_its_writer_reset_failed_survives_a_power_loss()
     {
-        Skip.When(Cluster.FlyRequested, "kills a local node process and edits its files");
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
         await using var node = await PowerLossNode.StartAsync(nameof(WriterResetFaultHost));
         var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());

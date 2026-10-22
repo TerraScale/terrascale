@@ -12,7 +12,6 @@ public sealed class RegionProcessesTests
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Region_processes_replicate_and_a_killed_region_catches_up_after_its_restart()
     {
-        Skip.When(Cluster.FlyRequested, "runs local node processes");
         await using var regions = await RegionProcesses.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
         var first = regions.Document(EntityIds.New().ToString());
         await Docs.PutAsync(regions[Cluster.Gru], first, new JsonObject { ["step"] = 1 });
@@ -33,7 +32,6 @@ public sealed class RegionProcessesTests
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Writes_are_refused_while_all_placed_peers_are_down_and_resume_after_a_peer_rejoins()
     {
-        Skip.When(Cluster.FlyRequested, "runs local node processes");
         await using var regions = await RegionProcesses.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
         await regions.KillAsync(Cluster.Sjc);
         await regions.KillAsync(Cluster.Fra);

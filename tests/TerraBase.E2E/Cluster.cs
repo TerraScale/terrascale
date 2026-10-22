@@ -122,8 +122,7 @@ public sealed class Cluster : IAsyncDisposable
     public Uri Document(string id) => new($"{DatabasePath}/collections/{Collection}/documents/by-key?id={Uri.EscapeDataString(id)}", UriKind.Relative);
 
     /// <summary>
-    /// Starts <paramref name="regions"/> (gru and sjc when none are named; gru is always the home region) where the
-    /// environment selects: Fly when <c>TERRABASE_E2E_FLY_URL</c> is set, otherwise local nodes.
+    /// Starts this test's local <paramref name="regions"/> (gru and sjc when none are named; gru is always the home region).
     /// </summary>
     public static Task<Cluster> StartAsync(params string[] regions) => StartAsync(regions, skews: null);
 
@@ -154,9 +153,7 @@ public sealed class Cluster : IAsyncDisposable
             throw new ArgumentOutOfRangeException(nameof(regions), string.Join(',', regions), "the regions are gru, sjc and fra");
         }
 
-        return FlyRequested
-            ? skews is { Count: > 0 } ? throw new NotSupportedException("a clock skew needs local nodes") : StartFlyAsync(chosen)
-            : StartLocalAsync(chosen, skews ?? new Dictionary<string, TimeSpan>());
+        return StartLocalAsync(chosen, skews ?? new Dictionary<string, TimeSpan>());
     }
 
     /// <summary>

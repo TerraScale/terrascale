@@ -16,7 +16,6 @@ public sealed class TenantDatabasePowerLossTests
     [Scenario(Nodes.Processes, Faults.ProcessKill | Faults.FileTampering)]
     public async Task A_FULL_tenant_commit_syncs_earlier_NORMAL_frames_as_well_as_its_own_document()
     {
-        Skip.When(Cluster.FlyRequested, "kills a local node process and edits its files");
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
         await using var node = await PowerLossNode.StartAsync(nameof(TenantPowerLossHost));
         var (path, wal) = await CreateTenantAsync(node);
@@ -68,7 +67,6 @@ public sealed class TenantDatabasePowerLossTests
     [Scenario(Nodes.Processes, Faults.ProcessKill | Faults.FileTampering)]
     public async Task A_random_cut_keeps_every_acknowledged_tenant_document_and_discards_the_torn_transaction(int seed, int tornBytes)
     {
-        Skip.When(Cluster.FlyRequested, "kills a local node process and edits its files");
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
         await using var node = await PowerLossNode.StartAsync(nameof(TenantPowerLossHost));
         var (path, wal) = await CreateTenantAsync(node);

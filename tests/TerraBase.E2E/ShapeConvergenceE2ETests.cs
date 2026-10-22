@@ -17,11 +17,9 @@ public sealed class ShapeConvergenceE2ETests
     private static readonly string[] All = [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
 
     [Test]
-    [Category("fly-outage")]
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task Shape_clients_in_every_region_converge_after_a_partition_heals()
     {
-        Skip.When(Cluster.FlyRequested && !Cluster.FlyMachineFaults, "partitions Fly machines: run alone on a pinned disposable app (TERRABASE_E2E_FLY_OUTAGE=1)");
         await using var cluster = await Cluster.StartAsync(All);
         var readers = Readers(cluster);
         var documents = await WriteAsync(cluster, [.. All], 10);
@@ -79,27 +77,18 @@ public sealed class ShapeConvergenceE2ETests
     }
 
     [Test]
-    [Category("fly-outage")]
     [Scenario(Nodes.InProcess, Faults.NodeStop | Faults.FileTampering)]
     public async Task Shape_clients_converge_after_anti_entropy_repairs_a_lost_document()
     {
-        SkipOnFlyUnlessFaultRun();
         await using var cluster = await Cluster.StartAsync(All);
         var readers = Readers(cluster);
         var documents = await WriteAsync(cluster, [.. All], 10);
         _ = await ConvergedAsync(cluster, readers, documents, "before the loss");
         var lost = documents[4].Id;
         var started = Stopwatch.GetTimestamp();
-        if (Cluster.FlyRequested)
-        {
-            Console.WriteLine($"V2 loss on {cluster.Identity(Cluster.Sjc)}: {await cluster.LoseDocumentAsync(Cluster.Sjc, lost)}");
-        }
-        else
-        {
-            await cluster.StopAsync(Cluster.Sjc);
-            await RepairAndContractE2ETests.DeleteRowsAsync(cluster.DatabaseFile(Cluster.Sjc), lost);
-            await cluster.StartAgainAsync(Cluster.Sjc);
-        }
+        await cluster.StopAsync(Cluster.Sjc);
+        await RepairAndContractE2ETests.DeleteRowsAsync(cluster.DatabaseFile(Cluster.Sjc), lost);
+        await cluster.StartAgainAsync(Cluster.Sjc);
 
         var missing = await Docs.ReadAsync(cluster[Cluster.Sjc], cluster.Document(lost)) is null;
         Console.WriteLine($"V2 sjc back after {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0} ms; lost document {lost} absent on sjc: {missing}");
@@ -108,31 +97,14 @@ public sealed class ShapeConvergenceE2ETests
     }
 
     [Test]
-    [Category("fly-outage")]
     [Scenario(Nodes.InProcess, Faults.ClockSkew)]
     [Arguments(Cluster.Sjc, 2000)]
     [Arguments(Cluster.Fra, -2000)]
     public async Task Shape_clients_converge_under_clock_skew(string skewed, int skewMilliseconds)
     {
-        SkipOnFlyUnlessFaultRun();
         var skew = TimeSpan.FromMilliseconds(skewMilliseconds);
-        await using var cluster = Cluster.FlyRequested ? await Cluster.StartAsync(All) : await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [skewed] = skew });
-        if (Cluster.FlyRequested)
-        {
-            Console.WriteLine($"V2 skew {cluster.Identity(skewed)}: {await cluster.StepClockAsync(skewed, skew)}");
-        }
-
-        try
-        {
-            await SkewedAsync(cluster, skewed, skewMilliseconds);
-        }
-        finally
-        {
-            if (Cluster.FlyRequested)
-            {
-                Console.WriteLine($"V2 restore {cluster.Identity(skewed)}: {await cluster.StepClockAsync(skewed, -skew)}");
-            }
-        }
+        await using var cluster = await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [skewed] = skew });
+        await SkewedAsync(cluster, skewed, skewMilliseconds);
     }
 
     private static async Task SkewedAsync(Cluster cluster, string skewed, int skewMilliseconds)
@@ -149,9 +121,6 @@ public sealed class ShapeConvergenceE2ETests
         documents.Add((shared, settled.Value!.AsObject()));
         _ = await ConvergedAsync(cluster, readers, documents, $"clock skew {skewed} {skewMilliseconds:+0;-0} ms");
     }
-
-    private static void SkipOnFlyUnlessFaultRun() =>
-        Skip.When(Cluster.FlyRequested && !Cluster.FlyMachineFaults, "kills or skews Fly machines: run alone on a pinned disposable app (TERRABASE_E2E_FLY_OUTAGE=1)");
 
     private static Dictionary<string, ShapeReader> Readers(Cluster cluster) =>
         cluster.Regions.ToDictionary(region => region, region => new ShapeReader(cluster[region], $"{cluster.DatabasePath}/collections/{cluster.Collection}"), StringComparer.Ordinal);

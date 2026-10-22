@@ -14,7 +14,6 @@ public sealed class ClientWritePowerLossTests
     [Scenario(Nodes.Processes, Faults.ProcessKill | Faults.FileTampering)]
     public async Task A_power_loss_keeps_every_client_write_the_node_answered()
     {
-        Skip.When(Cluster.FlyRequested, "kills a local node process and edits its files");
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
         await using var node = await PowerLossNode.StartAsync();
         var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());

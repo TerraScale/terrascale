@@ -28,7 +28,6 @@ public sealed class RepairAndContractE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop | Faults.FileTampering)]
     public async Task Anti_entropy_repairs_a_document_a_region_lost_after_its_stream_acknowledged_it()
     {
-        Skip.When(Cluster.FlyRequested, "edits a local node's database file");
         await Gaps.RunAsync("anti-entropy-repair", async () =>
         {
             await using var cluster = await Cluster.StartAsync(All);
@@ -52,7 +51,6 @@ public sealed class RepairAndContractE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop | Faults.FileTampering)]
     public async Task A_region_restored_to_an_older_copy_of_its_data_catches_up_without_undoing_later_writes()
     {
-        Skip.When(Cluster.FlyRequested, "restores a local node's data directory");
         await Gaps.RunAsync("restore-older-state", async () =>
         {
             await using var cluster = await Cluster.StartAsync(All);
@@ -91,7 +89,6 @@ public sealed class RepairAndContractE2ETests
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task Unique_writes_made_on_both_sides_of_a_partition_converge_to_the_smaller_id()
     {
-        Skip.When(Cluster.FlyRequested, "Fly has no partition switch");
         await Gaps.RunAsync("unique-under-partition", async () =>
         {
             await using var cluster = await Cluster.StartAsync(All);
@@ -134,10 +131,8 @@ public sealed class RepairAndContractE2ETests
     // database or its documents back anywhere.
     [Test]
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
-    [Category("fly-outage")]
     public async Task A_database_deleted_while_a_region_is_down_does_not_come_back()
     {
-        SkipOnFlyUnlessOutageRun();
         await Gaps.RunAsync("deleted-database-stays-deleted", async () =>
         {
             await using var cluster = await Cluster.StartAsync(All);
@@ -189,14 +184,11 @@ public sealed class RepairAndContractE2ETests
                 var peers = health!["peers"]!.AsArray().Select(peer => peer!["region"]!.GetValue<string>()).Order(StringComparer.Ordinal).ToArray();
                 await Assert.That(peers).IsEquivalentTo(cluster.Regions.Where(other => other != region).Order(StringComparer.Ordinal).ToArray());
                 await Assert.That(health["peers"]!.AsArray().All(peer => peer!["lagSeconds"]?.GetValue<double>() <= 5)).IsTrue();
-                if (!Cluster.FlyRequested)
+                using var metrics = new HttpClient { BaseAddress = cluster.MetricsAddress(region) };
+                var text = await metrics.GetStringAsync(new Uri("/metrics", UriKind.Relative));
+                foreach (var series in ReplicationSeries)
                 {
-                    using var metrics = new HttpClient { BaseAddress = cluster.MetricsAddress(region) };
-                    var text = await metrics.GetStringAsync(new Uri("/metrics", UriKind.Relative));
-                    foreach (var series in ReplicationSeries)
-                    {
-                        await Assert.That(text).Contains(series);
-                    }
+                    await Assert.That(text).Contains(series);
                 }
             }
         });
@@ -213,7 +205,7 @@ public sealed class RepairAndContractE2ETests
         {
             await using var cluster = await Cluster.StartAsync(All);
             var hot = $"hot{Guid.NewGuid():N}"[..20];
-            // The hot database is this test's own: deleted at its home when the test ends, so a Fly run leaves none behind.
+            // The hot database is this test's own: deleted at its home when the test ends.
             await cluster.OwningDatabasesAsync(async created =>
             {
                 created.Add((Cluster.Gru, hot));
@@ -326,8 +318,4 @@ public sealed class RepairAndContractE2ETests
             File.Copy(file, target, overwrite: true);
         }
     }
-
-    private static void SkipOnFlyUnlessOutageRun() =>
-        Skip.When(Cluster.FlyRequested && !Cluster.FlyMachineFaults,
-            "stops a Fly machine: run it alone on a pinned disposable app with a separate disposable run; no dedicated runner exists (docs/terrabase/replication/31-live-outage-proof.md)");
 }
