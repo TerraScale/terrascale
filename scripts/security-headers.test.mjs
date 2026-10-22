@@ -16,3 +16,15 @@ test('CSP allows only exact built inline scripts and precedes every script', () 
   assert.ok(secured.includes("form-action 'none'"));
   assert.throws(() => secureHtml('<body></body>'), /Missing HTML head/);
 });
+
+test('script hashes respect HTML end-tag delimiters and trailing attributes', () => {
+  const source = 'const marker = "</script-example>"; window.ready = true;';
+  const next = 'window.next = true;';
+  for (const closing of ['</script\t\n bar>', '</SCRIPT data-end="yes">', '</script/>']) {
+    const secured = secureHtml(`<html><head><script>${source}${closing}<script>${next}</script></head></html>`);
+    for (const script of [source, next]) {
+      const hash = createHash('sha256').update(script).digest('base64');
+      assert.ok(secured.includes(`'sha256-${hash}'`), closing);
+    }
+  }
+});

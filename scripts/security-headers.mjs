@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 // Per-page hashes keep CSP small across translated pages without allowing arbitrary inline scripts.
 export function secureHtml(html) {
-  const hashes = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)]
+  const hashes = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script(?=[\t\n\f\r />])[^>]*>/gi)]
     .filter(([, attributes, source]) => !/\bsrc\s*=/i.test(attributes) && source.trim())
     .map(([, , source]) => `'sha256-${createHash('sha256').update(source).digest('base64')}'`);
   const policy = [
