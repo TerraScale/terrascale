@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Store;
@@ -111,17 +112,21 @@ public sealed class StorageRecoveryTests
     [Test]
     public async Task A_healthy_idle_terrabase_crash_recovers_auth_with_the_same_key()
     {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var (running, unavailable) = await TerraBaseTestServer.StartAsync();
         await using var terrabase = running ?? throw new InvalidOperationException(unavailable);
         var tenant = await terrabase.CreateTenantAsync();
         var database = terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth");
         await database.CreateAsync();
-        await using var auth = await StartAuthAsync(terrabase, tenant, provision: true);
+        await using var auth = await StartAuthAsync(terrabase, tenant, provision: true, clock: clock);
         await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
+        // Drain startup rotation; the frozen readiness clock prevents another storage pass before the kill.
+        await auth.App.Services.GetRequiredService<SigningKeyRotation>().StopAsync(CancellationToken.None);
         var before = await KeyIdAsync(auth);
         await Assert.That((await database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Count).IsEqualTo(1);
 
         await terrabase.StopAsync();
+        clock.Advance(TimeSpan.FromSeconds(5));
         await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", Recovery)).IsTrue();
         using (var down = await auth.Client.GetAsync("/readyz"))
         {
@@ -129,6 +134,7 @@ public sealed class StorageRecoveryTests
         }
 
         await terrabase.RestartAsync();
+        clock.Advance(TimeSpan.FromSeconds(5));
         await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
         await Assert.That(await KeyIdAsync(auth)).IsEqualTo(before);
         await Assert.That((await database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Count).IsEqualTo(1);
@@ -218,7 +224,9 @@ public sealed class StorageRecoveryTests
             | BinaryPrimitives.ReadUInt16LittleEndian(identity.AsSpan(5));
         await using var tenant = new SqliteConnection(new SqliteConnectionStringBuilder
         {
-            DataSource = Path.Combine(root, organization, project, database + ".db"), Mode = SqliteOpenMode.ReadOnly, Pooling = false,
+            DataSource = Path.Combine(root, organization, project, database + ".db"),
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
         }.ToString());
         await tenant.OpenAsync();
         await using var read = tenant.CreateCommand();
@@ -227,7 +235,9 @@ public sealed class StorageRecoveryTests
 
         await using var journal = new SqliteConnection(new SqliteConnectionStringBuilder
         {
-            DataSource = Path.Combine(root, "_intents.db"), Mode = SqliteOpenMode.ReadWrite, Pooling = false,
+            DataSource = Path.Combine(root, "_intents.db"),
+            Mode = SqliteOpenMode.ReadWrite,
+            Pooling = false,
         }.ToString());
         await journal.OpenAsync();
         await using var write = journal.CreateCommand();
@@ -247,7 +257,7 @@ public sealed class StorageRecoveryTests
         _ = await write.ExecuteNonQueryAsync();
     }
 
-    private static Task<AuthTestServer> StartAuthAsync(TerraBaseTestServer terrabase, TerraBaseTestTenant tenant, string? serviceClients = null, bool provision = false) =>
+    private static Task<AuthTestServer> StartAuthAsync(TerraBaseTestServer terrabase, TerraBaseTestTenant tenant, string? serviceClients = null, bool provision = false, TimeProvider? clock = null) =>
         AuthTestServer.StartAsync(settings: values =>
         {
             if (serviceClients is not null)
@@ -256,6 +266,11 @@ public sealed class StorageRecoveryTests
             }
         }, services: services =>
         {
+            if (clock is not null)
+            {
+                services.AddSingleton(clock);
+            }
+
             services.AddSingleton(terrabase.Http);
             services.AddSingleton(_ => terrabase.InternalDocuments().Database(tenant.Project.Id, "auth"));
         }, beforeStart: provision ? services => SigningKeyProvisioning.ProvisionAsync(services, CancellationToken.None) : null);
