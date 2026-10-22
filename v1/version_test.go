@@ -113,3 +113,43 @@ func TestNewResponseMembers(t *testing.T) {
 		t.Fatalf("unknown state Get = %+v, %v", doc, err)
 	}
 }
+
+func TestWriteOutcomeUnknownIsNeverReplayed(t *testing.T) {
+	for _, conditional := range []bool{false, true} {
+		name := "unconditional"
+		if conditional {
+			name = "conditional"
+		}
+		t.Run(name, func(t *testing.T) {
+			const body = `{"error":{"code":"write_outcome_unknown","message":"no remote acknowledgement"}}`
+			users, _, tr := scriptedUsers(t, scripted{status: http.StatusServiceUnavailable, header: http.Header{"Retry-After": {"0"}}, body: body})
+			var options []v1.WriteOption
+			if conditional {
+				options = append(options, v1.IfMatch("tbv1-current"))
+			}
+			_, err := users.Put(t.Context(), "key", map[string]any{"n": 1}, options...)
+			var apiErr *v1.APIError
+			if !errors.Is(err, v1.ErrWriteOutcomeUnknown) || !errors.Is(err, v1.ErrCommitUncertain) || !errors.As(err, &apiErr) {
+				t.Fatalf("uncertain write error = %v", err)
+			}
+			if apiErr.Code != v1.ErrWriteOutcomeUnknown || string(apiErr.Body) != body || len(tr.requests) != 1 {
+				t.Fatalf("error=%+v requests=%d", apiErr, len(tr.requests))
+			}
+		})
+	}
+}
+
+func TestCurrentDurabilityAcknowledgements(t *testing.T) {
+	users, db, _ := scriptedUsers(t,
+		scripted{status: http.StatusOK, body: `{"id":"key","version":"tbv1-next","offset":"7","durability":"remote_durable"}`},
+		scripted{status: http.StatusOK, body: `{"offset":"7","durability":"unchanged","results":[{"id":"key","asserted":true}]}`},
+	)
+	written, err := users.Put(t.Context(), "key", map[string]any{"n": 1})
+	if err != nil || written.Durability != v1.RemoteDurable {
+		t.Fatalf("write=%+v error=%v", written, err)
+	}
+	asserted, err := db.Tx().AssertAbsent("users", "key").Commit(t.Context())
+	if err != nil || asserted.Durability != v1.Unchanged {
+		t.Fatalf("assertion=%+v error=%v", asserted, err)
+	}
+}

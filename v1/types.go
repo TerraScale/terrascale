@@ -66,6 +66,8 @@ type Durability string
 const (
 	LocalDurable  Durability = "local_durable"
 	ObjectDurable Durability = "object_durable"
+	RemoteDurable Durability = "remote_durable"
+	Unchanged     Durability = "unchanged"
 )
 
 // State is a document's point state.

@@ -367,3 +367,91 @@ func TestPaginationLongAcyclicSequence(t *testing.T) {
 		t.Fatalf("calls=%d pages=%d", calls, n)
 	}
 }
+
+// A commit group checkpoints only its final event; reconnecting partway replays it.
+func TestChangesGroupedCheckpoints(t *testing.T) {
+	const checkpoint = "event: cursor\nid: before\ndata: {\"cursor\":\"before\"}\n\n"
+	change := func(id, cursor string) string {
+		header := "event: change\n"
+		if cursor != "" {
+			header += "id: " + cursor + "\n"
+		}
+		return header + fmt.Sprintf("data: {\"collection\":\"users\",\"id\":%q,\"op\":\"upsert\",\"version\":\"1\",\"origin\":\"0000000000000001\",\"document\":{}}\n\n", id)
+	}
+	for _, interrupted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("interrupted=%t", interrupted), func(t *testing.T) {
+			calls := 0
+			db := changesDB(t, func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				w.Header().Set("Content-Type", "text/event-stream")
+				if calls > 2 {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				if calls == 1 {
+					fmt.Fprint(w, checkpoint+change("a", ""))
+					if interrupted {
+						return
+					}
+				} else {
+					want := "after"
+					if interrupted {
+						want = "before"
+						fmt.Fprint(w, change("a", ""))
+					}
+					if got := r.Header.Get("Last-Event-ID"); got != want {
+						t.Errorf("resume cursor = %q, want %q", got, want)
+					}
+				}
+				fmt.Fprint(w, change("b", "after"))
+			})
+			var events []v1.ChangeEvent
+			for event, err := range db.Changes(t.Context(), v1.ChangesOptions{}) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				events = append(events, event)
+				if calls == 2 && event.ID == "b" {
+					break
+				}
+			}
+			if calls != 2 || len(events) != 4 {
+				t.Fatalf("calls=%d events=%+v", calls, events)
+			}
+			for _, event := range events {
+				if event.ID == "a" && event.Cursor != "" {
+					t.Errorf("uncheckpointed change exposes cursor %q", event.Cursor)
+				}
+				if event.ID == "b" && event.Cursor != "after" {
+					t.Errorf("group end cursor = %q", event.Cursor)
+				}
+			}
+		})
+	}
+}
+
+func TestChangesUncheckpointedEOF(t *testing.T) {
+	calls := 0
+	db := changesDB(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: change\ndata: {\"collection\":\"users\",\"id\":\"a\",\"op\":\"upsert\",\"version\":\"1\",\"origin\":\"0000000000000001\",\"document\":{}}\n\n")
+	})
+	events, failures := 0, 0
+	for event, err := range db.Changes(t.Context(), v1.ChangesOptions{}) {
+		if err != nil {
+			failures++
+			if !strings.Contains(err.Error(), "without a resume cursor") {
+				t.Fatal(err)
+			}
+		} else {
+			events++
+			if event.Cursor != "" {
+				t.Fatalf("unsafe cursor = %q", event.Cursor)
+			}
+		}
+	}
+	if calls != 1 || events != 1 || failures != 1 {
+		t.Fatalf("calls=%d events=%d failures=%d", calls, events, failures)
+	}
+}
