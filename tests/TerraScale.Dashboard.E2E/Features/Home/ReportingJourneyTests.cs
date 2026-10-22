@@ -338,9 +338,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await SigninAsync(anonPage, ownerUser, first);
             await anonPage.GetByRole(AriaRole.Alert).Filter(new() { HasText = "but you are signed in as" }).WaitForAsync();
             // The browser stops on ts-auth's hosted sign-in page (stood in here) instead of the stand-in signing straight back in.
-            await anonPage.RouteAsync("**/__test/oidc?*", route => route.FulfillAsync(new() { ContentType = "text/html", Body = "<!doctype html><title>ts-auth sign-in</title><main><h1>Sign in</h1></main>" }));
             var switched = await flow.SubmitAsync(anonPage, "form[action$=\"/switch-account\"]", "Sign out and switch account");
-            await anonPage.UnrouteAsync("**/__test/oidc?*");
             await Assert.That(switched.Status).IsEqualTo(303);
             await Assert.That((await anonContext.APIRequest.GetAsync(flow.Origin + "/api/v1/auth/me")).Status).IsEqualTo(401).Because("switch-account ends the independently created dashboard session");
             await Assert.That(Text(await flow.MeAsync(ownerContext), "userId")).IsEqualTo(Text(original, "userId")).Because("switch-account leaves the separate owner session usable");

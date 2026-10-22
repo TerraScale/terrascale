@@ -115,10 +115,14 @@ public sealed class DemoEnvironment
         });
         app.MapGet("/__test/checkout", (string id) => Results.Redirect(stripe.Complete(id)));
         // Test-only stand-in for ts-auth's hosted sign-in and sign-up pages: the journey names the
-        // account it signs in as; without one it is the default demo user.
-        app.MapGet("/__test/oidc", (string? state, string? email, string? password, string? signup) => state is { Length: 64 } && state.All(char.IsAsciiHexDigitLower)
-            ? (IResult)Results.Redirect("/login/callback?state=" + Uri.EscapeDataString(state) + "&" + auth.Authorize(email ?? "user@example.com", password, signup == "1"))
-            : Results.BadRequest("Invalid test-only OIDC state."));
+        // account it signs in as. Without one the browser stops on the sign-in page, as it does at
+        // ts-auth after logout, instead of silently signing an account back in.
+        app.MapGet("/__test/oidc", (string? state, string? email, string? password, string? signup) => state is not { Length: 64 } || !state.All(char.IsAsciiHexDigitLower)
+            ? Results.BadRequest("Invalid test-only OIDC state.")
+            : email is null
+                ? Results.Content("<!doctype html><html lang=\"en\"><title>ts-auth sign-in</title><main><h1>Sign in</h1><p>Test-only stand-in for ts-auth's hosted sign-in.</p>" +
+                    "<a href=\"/__test/oidc?state=" + state + "&amp;email=user%40example.com\">Continue as Test User</a></main></html>", "text/html")
+                : Results.Redirect("/login/callback?state=" + Uri.EscapeDataString(state) + "&" + auth.Authorize(email, password, signup == "1")));
         app.MapGet("/__test/portal", () => Results.Content("<h1>Test-only Stripe customer portal</h1><p>The official Stripe SDK issued this portal session.</p><a href='/organization?tab=billing'>Return to billing</a>", "text/html"));
         reporting.MapRoutes(app);
         imports.MapRoutes(app);

@@ -211,16 +211,11 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             if (!await page.Locator("details.ts-account summary").IsVisibleAsync())
                 await page.GetByRole(AriaRole.Button, new() { Name = "Open navigation", Exact = true }).ClickAsync();
             await page.Locator("details.ts-account summary").ClickAsync();
-            await page.RouteAsync("**/__test/oidc?*", route => route.FulfillAsync(new() { ContentType = "text/html", Body = "<!doctype html><title>ts-auth sign-in</title><h1>Sign in</h1>" }));
-            try
-            {
-                var logout = await SubmitAsync(page, "form[action=\"/api/v1/auth/logout\"]", "Sign out", keyboard);
-                await Assert.That(logout.Status).IsEqualTo(303);
-                await Assert.That(logout.Headers.GetValueOrDefault("location")).IsEqualTo("/login").Because("the test host's end-session URL");
-                await Assert.That(new Uri(page.Url).AbsolutePath).IsEqualTo("/__test/oidc");
-                await Assert.That((await page.APIRequest.GetAsync(origin + "/api/v1/auth/me")).Status).IsEqualTo(401);
-            }
-            finally { await page.UnrouteAsync("**/__test/oidc?*"); }
+            var logout = await SubmitAsync(page, "form[action=\"/api/v1/auth/logout\"]", "Sign out", keyboard);
+            await Assert.That(logout.Status).IsEqualTo(303);
+            await Assert.That(logout.Headers.GetValueOrDefault("location")).IsEqualTo("/login").Because("the test host's end-session URL");
+            await Assert.That(new Uri(page.Url).AbsolutePath).IsEqualTo("/__test/oidc");
+            await Assert.That((await page.APIRequest.GetAsync(origin + "/api/v1/auth/me")).Status).IsEqualTo(401);
         }
         async Task FailedCallbackAsync()
         {
