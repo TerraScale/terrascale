@@ -307,15 +307,14 @@ public sealed class Cluster : IAsyncDisposable
             var (project, organization) = await Orch.ClaimsAsync();
             var projectPath = $"/v1/projects/{project}";
             var names = await IdentifyAsync(nodes, revision);
-            var regionOf = names.ToDictionary(name => name.Value, name => name.Key, StringComparer.Ordinal);
-            // Each region's node, behind the local stand-in for Fly's proxy: TerraBase still answers an issuer replay with fly-replay.
+            // Each region's node, behind the local stand-in for the ts-orch edge, which follows ts-replay answers.
             HttpClient Client(string edge, string? served = null)
             {
                 return new(new RegionPin(edge, served)
                 {
-                    InnerHandler = new LocalFlyProxy(edge, target => nodes.TryGetValue(target, out var node)
+                    InnerHandler = new LocalEdge(edge, target => nodes.TryGetValue(target, out var node)
                         ? node
-                        : throw new HttpRequestException($"{target} is not a region of this run", null, HttpStatusCode.ServiceUnavailable), regionOf.GetValueOrDefault),
+                        : throw new HttpRequestException($"{target} is not a region of this run", null, HttpStatusCode.ServiceUnavailable)),
                 })
                 { BaseAddress = new Uri("http://orch.invalid/"), Timeout = Timeout.InfiniteTimeSpan };
             }
