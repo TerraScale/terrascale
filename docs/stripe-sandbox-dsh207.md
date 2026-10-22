@@ -8,14 +8,14 @@ other options; key mode is inferred from the delivered key prefix.
 
 ## Run the read-only audit
 
-Run this from the dashboard checkout in an environment where Fly has
-delivered the dashboard identity as environment variables:
+Run this from the dashboard checkout in an environment where ts-orch has
+delivered the dashboard identity as OCI Vault files:
 
 ```sh
 nice -n 19 dotnet run --project src/TerraScale.Dashboard -- audit-stripe
 ```
 
-Production runtime secrets are Fly secrets on each Fly app; CI secrets are
+Production runtime secrets come from OCI Vault via instance principal; CI secrets are
 GitHub Actions secrets. The complete inventory lives in the terrascale repository
 under `ops/secrets/`. This command consumes the identity; it does not provision
 it. See [`csharp-migration.md`](csharp-migration.md).
@@ -36,15 +36,13 @@ does not exercise signed webhook delivery, checkout completion, card failure,
 upgrades, downgrades, renewal or trial expiry; those require separate verified
 acceptance evidence before a staging gate can be considered complete.
 
-## Fly dev environment
+## OCI runtime
 
-The dev app remains `terrascale-dashboard-dev`. Use the existing Fly app and
-its Fly-secret identity; do not add dotenv files or copy vendor credentials
-into code or config. See
-[`fly-stripe-dev-dsh207.md`](fly-stripe-dev-dsh207.md) for app readiness and
-deploy checks. The fixed audit origin is the canonical production origin even
-when the command runs from a development checkout; the command does not provide
-an origin override.
+Use only a separately authorized sandbox identity; the production dashboard
+runs on OCI gru under ts-orch. This runbook authorizes neither new environments
+nor changes to production credentials. See [OCI deployment](oci-deployment.md).
+The fixed audit origin remains canonical even from a development checkout;
+the audit command has no origin override.
 
 Internal billing is a separate report-only usage estimate and cap. It does not
 create Stripe subscriptions or charges, and does not suspend service. It is not
