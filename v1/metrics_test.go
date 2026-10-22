@@ -192,6 +192,8 @@ func TestMetricsErrorsAndRetries(t *testing.T) {
 			{"forbidden", 403, `{"error":{"code":"forbidden_scope","message":"denied"}}`, 1, 1, tb.ErrForbiddenScope},
 			{"not found", 404, `{"error":{"code":"not_found","message":"absent"}}`, 1, 1, tb.ErrNotFound},
 			{"transient", 503, `{"error":{"code":"capacity","message":"busy"}}`, 1, 2, ""},
+			{"transient confirmation", 503, `{"error":{"code":"confirmation_busy","message":"busy"}}`, 1, 2, ""},
+			{"copy faulted", 503, `{"error":{"code":"copy_faulted","message":"recovering"}}`, 1, 1, tb.ErrCopyFaulted},
 			{"malformed", 200, `{"series":`, -1, 1, ""},
 		} {
 			t.Run(endpoint+"/"+test.name, func(t *testing.T) {
@@ -200,7 +202,7 @@ func TestMetricsErrorsAndRetries(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					n := calls.Add(1)
 					w.Header().Set("Content-Type", "application/json")
-					if test.name == "transient" && n == 2 {
+					if test.wantCalls == 2 && n == 2 {
 						io.WriteString(w, metricsEmptyFixture)
 						return
 					}
@@ -215,7 +217,7 @@ func TestMetricsErrorsAndRetries(t *testing.T) {
 				} else {
 					_, err = u.Replication(t.Context(), metricsProject, tb.MetricsOptions{})
 				}
-				if test.name == "transient" {
+				if test.wantCalls == 2 {
 					if err != nil {
 						t.Fatal(err)
 					}

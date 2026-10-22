@@ -35,6 +35,16 @@ server revision; this file records the current differences.
    exported constants and fake write/transaction decoding coverage. Unknown
    future durability values continue to decode as strings.
 
+5. **Refusal codes (server main `d79bb8d0`):** `Errors/ErrorResponse.cs:23`
+   sends `remote_region_unavailable`, `confirmation_busy` and `catalog_stale`
+   as 503s with Retry-After for requests that executed nothing; replay-safe
+   requests now retry them. `Hosting/BadRequests.cs:63` sends 503
+   `copy_faulted` while a copy awaits certified recovery; it is exported and
+   not retried. `quota_exceeded` (429) and `request_timeout` (408) are
+   exported. If-Match/ETags remain implemented (`Features/Documents/ETags.cs`)
+   and TerraBase errors remain `{error:{…}}`, not RFC 9457, so the SDK keeps
+   both.
+
 ## Limits
 
 This is source comparison and deterministic fake HTTP coverage, with no
