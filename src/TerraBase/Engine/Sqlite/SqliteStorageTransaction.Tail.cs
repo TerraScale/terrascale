@@ -144,7 +144,7 @@ internal sealed partial class SqliteStorageTransaction
                     {
                         if (transaction.Deltas.Count > 0)
                         {
-                            var size = transaction.Deltas.Sum(delta => DocumentStateEncoding.Encode(delta.State).Length);
+                            var size = ChangeGroups.EncodedSize(from, transaction.Deltas);
                             if (groups.Count > 0 && bytes + size > maxBytes)
                             {
                                 return (groups, quiet, first);

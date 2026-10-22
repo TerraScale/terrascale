@@ -240,8 +240,8 @@ internal sealed partial class SqliteStorageTransaction
                     continue;
                 }
 
-                // The image, and its decoded text at two bytes a character.
-                using var admission = store.SchemaMemory?.TryReserve(MemoryLane.Bulk, checked(reader.GetInt64(4) * 3 + 4096), store.Tenant);
+                // The image and numeric proof fields; unused text is validated without materializing it.
+                using var admission = store.SchemaMemory?.TryReserve(MemoryLane.Bulk, checked(reader.GetInt64(4) + 4096), store.Tenant);
                 if (store.SchemaMemory is not null && admission is null)
                 {
                     // Busy: the walk goes on from here on a later pass.
@@ -251,7 +251,7 @@ internal sealed partial class SqliteStorageTransaction
                 if (table == "_tb_state")
                 {
                     // collection, id, bucket, state, stamp, origin, live, h1, h2
-                    if (SqliteRecord.Decode(SqliteSession.Bytes(reader, 3), 6) is not [string, string, _, string, long, long origin])
+                    if (SqliteRecord.Decode(SqliteSession.Bytes(reader, 3), 6, materializeContent: false) is not [string, string, _, string, long, long origin])
                     {
                         throw new InvalidDataException("a captured _tb_state row does not have the state table's columns");
                     }
@@ -280,7 +280,7 @@ internal sealed partial class SqliteStorageTransaction
                 else
                 {
                     // seq, commit_offset, origin, stamp, collection, id, deleted
-                    if (SqliteRecord.Decode(SqliteSession.Bytes(reader, 3), 1) is not [long seq])
+                    if (SqliteRecord.Decode(SqliteSession.Bytes(reader, 3), 1, materializeContent: false) is not [long seq])
                     {
                         throw new InvalidDataException("a captured _tb_feed row does not have the feed table's columns");
                     }

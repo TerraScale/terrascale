@@ -345,7 +345,9 @@ internal sealed class TursoChangeTap : IWalTap
 
             var table = rows.GetString(2);
             var rowid = rows.GetInt64(3);
-            var image = rows.IsDBNull(4) ? null : (byte[])rows.GetValue(4);
+            // IsDBNull materializes blobs in this driver; fetch the image only once.
+            var value = rows.GetValue(4);
+            var image = value is DBNull ? null : (byte[])value;
             if (table == "sqlite_schema")
             {
                 if (!Place(type, rowid, image, schema, buffer))
@@ -840,9 +842,9 @@ internal static class ChangeLog
 
     private static void WriteString(IBufferWriter<byte> buffer, string value)
     {
-        var bytes = StrictUtf8.GetBytes(value);
-        WriteLength(buffer, bytes.Length);
-        buffer.Write(bytes);
+        var length = StrictUtf8.GetByteCount(value);
+        WriteLength(buffer, length);
+        buffer.Advance(StrictUtf8.GetBytes(value, buffer.GetSpan(length)));
     }
 
     private static void WriteInt64(IBufferWriter<byte> buffer, long value)
@@ -905,7 +907,7 @@ internal static class ChangeLog
 internal static class SqliteRecord
 {
     // At most `columns` values: the rest are not decoded.
-    public static object?[] Decode(ReadOnlySpan<byte> record, int columns = int.MaxValue)
+    public static object?[] Decode(ReadOnlySpan<byte> record, int columns = int.MaxValue, bool materializeContent = true)
     {
         var headerSize = Varint(record, out var used);
         if (headerSize < used || headerSize > record.Length)
@@ -939,6 +941,7 @@ internal static class SqliteRecord
 
             var value = body[..size];
             body = body[size..];
+            // Type-only payloads let proof readers validate the record without copying unused content.
             values.Add(type switch
             {
                 0 => null,
@@ -946,8 +949,8 @@ internal static class SqliteRecord
                 9 => 1L,
                 7 => BinaryPrimitives.ReadDoubleBigEndian(value),
                 <= 6 => Integer(value),
-                _ when type % 2 == 0 => value.ToArray(),
-                _ => Encoding.UTF8.GetString(value),
+                _ when type % 2 == 0 => materializeContent ? value.ToArray() : [],
+                _ => materializeContent ? Encoding.UTF8.GetString(value) : string.Empty,
             });
         }
 
