@@ -422,21 +422,28 @@ public sealed class TerraBaseChangesContractTests
     }
 
     [Test]
-    public async Task Empty_421_preserves_region_and_does_not_follow_Fly_replay()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Routing_421_preserves_response_headers_without_following(bool structured)
     {
         var calls = 0;
         using var handler = new TerraBaseTestHandler((_, _) =>
         {
             calls++;
-            var response = new HttpResponseMessage(HttpStatusCode.MisdirectedRequest);
+            var response = structured
+                ? TerraBaseIntegrationFixture.Json("""{"error":{"code":"cursor_elsewhere","message":"the cursor resumes on its issuing machine"}}""", HttpStatusCode.MisdirectedRequest)
+                : new HttpResponseMessage(HttpStatusCode.MisdirectedRequest);
             response.Headers.Add("X-TerraBase-Region", "gru");
-            response.Headers.Add("fly-replay", "region=sjc");
+            response.Headers.Add("fly-replay", "instance=issuer-machine;timeout=2s;fallback=force_self");
+            response.Headers.Add("Cache-Control", "no-store");
             return Task.FromResult(response);
         });
         using var http = new HttpClient(handler);
         var error = await Assert.ThrowsAsync<TerraBaseWrongRegionException>(() => DrainAsync(Database(http).StreamChangesAsync()));
         await Assert.That(error!.Region).IsEqualTo("gru");
-        await Assert.That(error.ErrorCode).IsNull();
+        await Assert.That(error.ErrorCode).IsEqualTo(structured ? "cursor_elsewhere" : null);
+        await Assert.That(error.ResponseHeaders["FLY-REPLAY"].Single()).IsEqualTo("instance=issuer-machine;timeout=2s;fallback=force_self");
+        await Assert.That(error.ResponseHeaders["Cache-Control"].Single()).IsEqualTo("no-store");
         await Assert.That(calls).IsEqualTo(1);
     }
 

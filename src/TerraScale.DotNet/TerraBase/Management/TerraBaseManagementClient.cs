@@ -184,7 +184,7 @@ public sealed class TerraBaseManagementClient
         string userId, string organizationId, string email, TerraBaseRole? role = null, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Post, Organization(organizationId) + "/invitations", userId, organizationId, new RequestBody { Email = email, Role = role }, Json.TerraBaseCreatedInvitation, cancellationToken);
 
-    /// <summary>Lists pending invitations, expired ones included, in creation order. Needs admin.</summary>
+    /// <summary>Lists all invitations with their status, expired ones included, in creation order. Needs admin.</summary>
     public Task<TerraBasePage<TerraBaseInvitation>> ListInvitationsAsync(
         string userId, string organizationId, string? after = null, int? limit = null, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Get, Organization(organizationId) + "/invitations" + Page(after, limit), userId, organizationId, null, Json.TerraBasePageTerraBaseInvitation, cancellationToken);

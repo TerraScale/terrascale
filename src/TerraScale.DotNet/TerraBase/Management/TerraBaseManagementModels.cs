@@ -94,14 +94,15 @@ public sealed record TerraBaseManagedDatabase(string Id, string ProjectId, strin
 /// <param name="JoinedAt">When the user became a member.</param>
 public sealed record TerraBaseMember(string UserId, TerraBaseRole Role, DateTimeOffset JoinedAt);
 
-/// <summary>A pending invitation to join an organization.</summary>
+/// <summary>An invitation to join an organization, including terminal invitations.</summary>
 /// <param name="Id">Opaque id.</param>
 /// <param name="Email">The invited address.</param>
 /// <param name="Role">Role on accepting.</param>
 /// <param name="InvitedBy">User id of the inviter.</param>
 /// <param name="CreatedAt">Creation time.</param>
 /// <param name="ExpiresAt">After this time the invitation can no longer be accepted.</param>
-public sealed record TerraBaseInvitation(string Id, string Email, TerraBaseRole Role, string InvitedBy, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt);
+/// <param name="Status">pending, accepted, declined or revoked; a pending invitation past ExpiresAt is expired.</param>
+public sealed record TerraBaseInvitation(string Id, string Email, TerraBaseRole Role, string InvitedBy, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, string Status);
 
 /// <summary>A new invitation and its acceptance token, which TerraBase returns only once.</summary>
 /// <param name="Invitation">The invitation.</param>

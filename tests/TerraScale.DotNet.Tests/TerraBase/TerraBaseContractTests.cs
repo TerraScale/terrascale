@@ -119,9 +119,9 @@ public sealed class TerraBaseContractTests
 
         static TerraBasePlatformClient P(object client) => (TerraBasePlatformClient)client;
         yield return ("platform", "listPlatformDatabases", client => P(client).ListDatabasesAsync());
-        yield return ("platform", "listPlatformCollections", client => P(client).ListCollectionsAsync("platform-auth"));
-        yield return ("platform", "listPlatformDocuments", client => P(client).ListDocumentsAsync("platform-auth", "users", limit: 10));
-        yield return ("platform", "getPlatformDocument", client => P(client).GetDocumentAsync("platform-auth", "users", "id"));
+        yield return ("platform", "listPlatformCollections", client => P(client).ListCollectionsAsync("ts-auth"));
+        yield return ("platform", "listPlatformDocuments", client => P(client).ListDocumentsAsync("ts-auth", "users", limit: 10));
+        yield return ("platform", "getPlatformDocument", client => P(client).GetDocumentAsync("ts-auth", "users", "id"));
 
         yield return ("management", "createOrganization", client => M(client).CreateOrganizationAsync(User, "Acme"));
         yield return ("management", "listOrganizations", client => M(client).ListOrganizationsAsync(User));
