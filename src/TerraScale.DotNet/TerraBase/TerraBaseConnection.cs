@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 
@@ -22,6 +23,7 @@ internal sealed class TerraBaseConnection
     private const int MaxResponseBytesLimit = 1024 * 1024 * 1024;
     private const int MaxSecretLength = 4096;
     private static readonly TimeSpan MaxRequestTimeout = TimeSpan.FromMinutes(10);
+    private static readonly IPNetwork NetBirdNetwork = IPNetwork.Parse("100.64.0.0/10");
 
     private readonly HttpClient http;
     private readonly ITerraBaseEndpointResolver endpointResolver;
@@ -320,13 +322,14 @@ internal sealed class TerraBaseConnection
             || baseAddress.AbsolutePath != "/")
         {
             throw new ArgumentException(
-                "BaseAddress must be the HTTPS origin of a TerraBase client listener (plain HTTP only for a private .internal or loopback host), without credentials, path, query or fragment.", nameof(baseAddress));
+                "BaseAddress must be the HTTPS origin of a TerraBase client listener (plain HTTP only for NetBird 100.64.0.0/10 addresses or loopback), without credentials, path, query or fragment.", nameof(baseAddress));
         }
 
         return baseAddress;
     }
 
-    // Fly's private network (<app>.internal names, WireGuard between hosts) and loopback never leave a trusted network.
+    // DNS suffixes do not prove private routing; allow only NetBird address literals and loopback.
     private static bool IsPrivate(Uri address) =>
-        address.IsLoopback || address.IdnHost.EndsWith(".internal", StringComparison.OrdinalIgnoreCase);
+        address.IsLoopback || IPAddress.TryParse(address.IdnHost, out var ip)
+            && ip.AddressFamily == AddressFamily.InterNetwork && NetBirdNetwork.Contains(ip);
 }

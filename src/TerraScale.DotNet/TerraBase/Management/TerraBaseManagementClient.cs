@@ -8,7 +8,7 @@ public sealed record TerraBaseManagementClientOptions
 {
     /// <summary>
     /// TerraBase origin: the public HTTPS listener (with <see cref="AccessTokenProvider"/>) or the private plain-HTTP listener
-    /// on Fly's network (<c>http://terrabase.example.internal:8080</c>, no credential).
+    /// on NetBird <c>100.64.0.0/10</c> addresses or loopback (<c>http://100.64.0.1:8081</c>).
     /// </summary>
     public Uri? BaseAddress { get; init; }
 

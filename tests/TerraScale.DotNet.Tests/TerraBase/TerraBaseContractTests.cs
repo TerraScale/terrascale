@@ -14,7 +14,7 @@ public sealed class TerraBaseContractTests
     private const string Project = "01JA0000000000000000000001";
     private const string Organization = "01JA0000000000000000000002";
     private const string User = "01JA0000000000000000000003";
-    private static readonly Uri Private = new("http://top1.nearest.of.ts-terrabase.internal:8081/");
+    private static readonly Uri Private = new("http://100.64.0.1:8081/");
 
     [Test]
     public async Task EveryOperationSendsItsRecordedRouteAndEveryRouteIsUsed()

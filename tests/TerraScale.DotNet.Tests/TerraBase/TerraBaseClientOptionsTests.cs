@@ -6,7 +6,7 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 public sealed class TerraBaseClientOptionsTests
 {
     private static readonly Uri Origin = new("https://terrabase.example.test:8443/");
-    private static readonly Uri Private = new("http://top1.nearest.of.ts-terrabase.internal:8081/");
+    private static readonly Uri Private = new("http://100.64.0.1:8081/");
 
     [Test]
     public async Task RecommendedHandlerDisablesRedirectsAndCookies()
@@ -29,8 +29,13 @@ public sealed class TerraBaseClientOptionsTests
     }
 
     [Test]
-    [Arguments("http://top1.nearest.of.ts-terrabase.internal:8081/")]
+    [Arguments("http://100.64.0.0:8081/")]
+    [Arguments("http://100.64.0.1:8081/")]
+    [Arguments("http://100.100.10.20:8081/")]
+    [Arguments("http://100.127.255.255:8081/")]
+    [Arguments("http://localhost:8081/")]
     [Arguments("http://127.0.0.1:8081/")]
+    [Arguments("http://127.200.3.4:8081/")]
     [Arguments("http://[::1]:8081/")]
     public async Task PrivateListenersAcceptPlainHttp(string address)
     {
@@ -38,6 +43,33 @@ public sealed class TerraBaseClientOptionsTests
         var resolver = new TerraBaseStaticEndpointResolver(new Uri(address));
         await Assert.That(await resolver.ResolveAsync()).IsEqualTo(new Uri(address));
         _ = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri(address) });
+        _ = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = new Uri(address) });
+    }
+
+    [Test]
+    [Arguments("100.63.255.255")]
+    [Arguments("100.128.0.0")]
+    [Arguments("8.8.8.8")]
+    [Arguments("10.0.0.1")]
+    [Arguments("172.16.0.1")]
+    [Arguments("192.168.0.1")]
+    [Arguments("[2001:db8::1]")]
+    [Arguments("[::ffff:100.64.0.1]")]
+    [Arguments("terrabase.example.internal")]
+    [Arguments("100.64.0.1.example.test")]
+    [Arguments("127.0.0.1.example.test")]
+    public async Task OtherOriginsRequireHttps(string host)
+    {
+        using var http = new HttpClient();
+        var insecure = new Uri($"http://{host}:8081/");
+        await Assert.That(() => new TerraBaseStaticEndpointResolver(insecure)).Throws<ArgumentException>();
+        await Assert.That(() => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = insecure, ApiKey = "tb_key" }))
+            .Throws<ArgumentException>();
+        await Assert.That(() => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = insecure }))
+            .Throws<ArgumentException>();
+        var secure = new Uri($"https://{host}:8443/");
+        _ = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = secure, ApiKey = "tb_key" });
+        _ = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = secure, AccessTokenProvider = _ => ValueTask.FromResult("token") });
     }
 
     [Test]
