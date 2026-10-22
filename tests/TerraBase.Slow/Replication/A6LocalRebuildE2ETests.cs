@@ -439,7 +439,10 @@ public sealed class A6LocalRebuildE2ETests
             pair.UntilAsync(async cancellation =>
             {
                 using var content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
-                using var response = await Data.PutAsync(ManagementApi.Uri(ManagementApi.DocumentPath(pair.Managed, "items", id)), content, cancellation);
+                var sending = Data.PutAsync(ManagementApi.Uri(ManagementApi.DocumentPath(pair.Managed, "items", id)), content, cancellation);
+                // Sender retries and the remote-ACK deadline need scheduler ticks while the HTTP request is pending.
+                await pair.UntilAsync(_ => Task.FromResult(sending.IsCompleted), cancellation);
+                using var response = await sending;
                 var text = await response.Content.ReadAsStringAsync(cancellation);
                 if (response.StatusCode == HttpStatusCode.ServiceUnavailable && text.Contains("\"remote_region_unavailable\"", StringComparison.Ordinal))
                 {
