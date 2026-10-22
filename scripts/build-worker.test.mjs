@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { readBuildOutput } from '@cloudflare/build-output-utils';
 import { filesIn } from './public-audit.mjs';
+import { secureHtml } from './security-headers.mjs';
 
 test('cf output is portable and contains exactly the checked site bytes', async () => {
   const { workers, rootConfig } = await readBuildOutput(process.cwd());
@@ -27,14 +28,15 @@ test('preview publication preserves site bytes without claiming a production dom
   const root = await mkdtemp(join(tmpdir(), 'docs-preview-'));
   try {
     await mkdir(`${root}/docs/.vitepress/dist`, { recursive: true });
-    await writeFile(`${root}/docs/.vitepress/dist/index.html`, '<main>Preview</main>');
+    const html = '<!doctype html><html><head><meta charset="utf-8"></head><body><main>Preview</main></body></html>';
+    await writeFile(`${root}/docs/.vitepress/dist/index.html`, html);
     execFileSync(process.execPath, [fileURLToPath(new URL('./build-worker.mjs', import.meta.url))], {
       cwd: root, env: { ...process.env, CLOUDFLARE_PREVIEW_BUILD: 'true' },
     });
     const { rootConfig, workers } = await readBuildOutput(root);
     assert.equal(rootConfig.buildContext.isPreview, true);
     assert.equal(workers.default.config.domains, undefined);
-    assert.equal(await readFile(`${workers.default.assetsDir}/index.html`, 'utf8'), '<main>Preview</main>');
+    assert.equal(await readFile(`${workers.default.assetsDir}/index.html`, 'utf8'), secureHtml(html));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -1,5 +1,12 @@
-import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { secureHtml } from './security-headers.mjs';
 import config from '../cloudflare.config.ts';
+
+for (const entry of await readdir('docs/.vitepress/dist', { recursive: true })) {
+  if (!entry.endsWith('.html')) continue;
+  const file = `docs/.vitepress/dist/${entry}`;
+  await writeFile(file, secureHtml(await readFile(file, 'utf8')));
+}
 
 // cf's v0 Build Output publishes the tested VitePress site without rebuilding it.
 const output = '.cloudflare/output/v0';
