@@ -8,7 +8,7 @@
     if (selectedInterval is not ("monthly" or "annual")) selectedInterval = data.Review?.Interval ?? data.State?.Interval ?? data.Binding?.EffectiveInterval ?? data.Binding?.Interval;
     var interval = selectedInterval == "annual" ? "annual" : "monthly";
     var subscribed = data.Binding?.SubscriptionId is { Length: > 0 } && data.Binding.Status is not ("canceled" or "incomplete_expired");
-    var currentKey = data.State?.PlanKey ?? Model.Plans.FirstOrDefault(plan => plan.Id == Model.Shell.Context.Organization!.PlanId)?.Key ?? "";
+    var currentKey = data.State?.PlanKey ?? (subscribed ? Model.Plans.FirstOrDefault(plan => plan.Id == Model.Shell.Context.Organization!.PlanId)?.Key : null) ?? "";
 }
 @if (owner)
 {

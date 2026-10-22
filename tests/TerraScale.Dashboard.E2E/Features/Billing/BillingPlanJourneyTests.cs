@@ -509,7 +509,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(organizations.Single(org => org.GetProperty("id").GetString() == businessId).GetProperty("planId").GetString()).IsEqualTo("443RCMMF70MNP6S1QMT230NF99");
     }
 
-    internal static async Task SignUpPaidAsync(HttpClient client, string email, string password, string suffix)
+    internal static async Task SignUpPaidAsync(HttpClient client, string email, string password, string suffix, string interval = "monthly")
     {
         var csrf = await HttpJourney.CsrfAsync(client, "/onboarding?plan=starter");
         using var registration = await HttpJourney.PostFormAsync(client, "/onboarding", new()
@@ -523,7 +523,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         { ["_csrf"] = csrf, ["step"] = "account-information", ["displayName"] = "Plan race " + suffix });
         await Assert.That(information.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         using var payment = await HttpJourney.PostFormAsync(client, "/onboarding/step", new()
-        { ["_csrf"] = csrf, ["step"] = "payment-method", ["plan"] = "starter", ["interval"] = "monthly" });
+        { ["_csrf"] = csrf, ["step"] = "payment-method", ["plan"] = "starter", ["interval"] = interval });
         await Assert.That(payment.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         using var completed = await client.GetAsync(payment.Headers.Location);
         await Assert.That(completed.StatusCode).IsEqualTo(HttpStatusCode.Found);

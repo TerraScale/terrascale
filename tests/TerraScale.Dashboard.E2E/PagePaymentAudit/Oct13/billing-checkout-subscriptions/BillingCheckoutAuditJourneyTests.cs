@@ -24,6 +24,9 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         var currentPaidTier = html.Contains("ts-plan-current", StringComparison.Ordinal);
         await RecordAsync("canceled-current-tier", new { summary = "No plan", currentPaidTier });
         await Assert.That(currentPaidTier).IsFalse().Because("A canceled unpaid checkout must not label a paid tier Current.");
+        var chooser = Regex.Match(html, "<dialog id=\"change-billing-plan\".*?</dialog>", RegexOptions.Singleline).Value;
+        await Assert.That(chooser.Length).IsGreaterThan(0);
+        await Assert.That(Regex.IsMatch(chooser, "<input[^>]*name=\"plan\"[^>]*checked")).IsFalse().Because("The chooser must not preselect a plan the organization is not subscribed to.");
     }
 
     [Test]
