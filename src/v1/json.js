@@ -28,9 +28,10 @@ function canonicalDecimal(text) {
   let digits = `${match[2]}${fraction}`.replace(/^0+/u, "");
   let exponent = BigInt(match[4] ?? "0") - BigInt(fraction.length);
   if (digits === "") return { negative: false, digits: "", exponent: 0n };
-  const trimmed = digits.replace(/0+$/u, "");
-  exponent += BigInt(digits.length - trimmed.length);
-  digits = trimmed;
+  let end = digits.length;
+  while (digits[end - 1] === "0") end--;
+  exponent += BigInt(digits.length - end);
+  digits = digits.slice(0, end);
   return { negative: match[1] === "-", digits, exponent };
 }
 
