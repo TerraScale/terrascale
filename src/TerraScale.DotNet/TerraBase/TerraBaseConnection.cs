@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 
@@ -329,5 +330,6 @@ internal sealed class TerraBaseConnection
 
     // DNS suffixes do not prove private routing; allow only NetBird address literals and loopback.
     private static bool IsPrivate(Uri address) =>
-        address.IsLoopback || IPAddress.TryParse(address.IdnHost, out var ip) && NetBirdNetwork.Contains(ip);
+        address.IsLoopback || IPAddress.TryParse(address.IdnHost, out var ip)
+            && ip.AddressFamily == AddressFamily.InterNetwork && NetBirdNetwork.Contains(ip);
 }
