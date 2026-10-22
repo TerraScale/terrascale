@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Memory;
