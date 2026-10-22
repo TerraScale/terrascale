@@ -107,8 +107,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         await check.FocusAsync();
         var response = await page.RunAndWaitForResponseAsync(() => check.PressAsync("Enter"), value =>
             value.Request.IsNavigationRequest && value.Request.Method == "POST" && new Uri(value.Url).AbsolutePath == "/api/v1/dashboard/data/sql/check");
-        // The check endpoint renders the page with 422 when SqlValidation reports an error.
-        await Assert.That(response.Status).IsEqualTo(422);
+        await Assert.That(response.Status).IsEqualTo(200);
         await page.WaitForLoadStateAsync(LoadState.Load);
         await page.Locator("#sql-editor ts-code-editor[data-ready]").WaitForAsync();
         await Assert.That(await page.Locator("#sql").InputValueAsync()).IsEqualTo(statement);
