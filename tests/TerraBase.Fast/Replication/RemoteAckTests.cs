@@ -58,6 +58,8 @@ public sealed class RemoteAckTests
         await api.Server.Services.GetServices<IHostedService>().OfType<RebuildRecovery>().Single().StopAsync(token);
         var tenant = await api.TenantOfAsync();
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, token))!;
+        // Keep a deferred forensic reader admitted before marker failure faults this copy.
+        await using var forensic = await store.BeginTransactionAsync(write: false, token);
         Volatile.Write(ref armed, 1);
         var id = EntityIds.New().ToString();
         var response = await api.PutAsync(id, new { n = 1 });
@@ -65,7 +67,9 @@ public sealed class RemoteAckTests
         await Assert.That(response.Code).IsEqualTo("write_outcome_unknown");
         await Assert.That(response.Json.GetProperty("error").GetProperty("region").GetString()).IsEqualTo("test-region");
         await Assert.That(response.Json.GetProperty("error").GetProperty("machine").GetString()).IsNotNullOrEmpty();
-        await Assert.That((await api.GetAsync(id)).Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await api.GetAsync(id)).Status).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await forensic.GetAsync("items", id, token)).IsNotNull()
+            .Because("the commit landed despite its unknown response; ordinary reads must refuse the faulted copy");
         await Assert.That(await api.Server.Services.GetRequiredService<IReplicaCopyFaults>()
             .RefusedAsync(tenant, store.Incarnation, token)).IsTrue();
         await Assert.That(await api.Server.Services.GetRequiredService<IChangeGroupSource>()
