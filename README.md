@@ -31,7 +31,7 @@ nice -n 19 make test-slow  # independent, non-blocking Slow journeys
 ## Demo mode
 `DEMO=true` (exactly) makes the one image serve the public synthetic demo: in-memory
 providers instead of TerraBase, ts-auth and Stripe, with admin, MCP and destructive
-routes blocked. CI deploys main to `ts-dashboard` (https://dash.terrascale.tech).
+routes blocked. ts-orch deploys main's GHCR image to https://dash.terrascale.tech.
 
 ```sh
 fly secrets set DEMO=true --app ts-dashboard    # serve the demo

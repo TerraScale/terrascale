@@ -1,5 +1,5 @@
 # Public multi-arch image ts-orch runs (REFACTOR.md W10): ghcr.io/terrascale/ts-dashboard:<sha> and :main,
-# linux/amd64 + linux/arm64 (portable publish on the builder's platform). Independent of CI's Fly image;
+# linux/amd64 + linux/arm64 (portable publish on the builder's platform). Reuses CI's layer cache;
 # the digest goes to the job summary.
 name: Images (GHCR)
 
