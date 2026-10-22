@@ -127,7 +127,7 @@ describe("origin free shape reads", () => {
     expect(() => decodeFreeShapePage(body, new Headers())).toThrow(/commit order/u);
   });
   test("bootstrap rejects a redirect past the first snapshot page", async () => {
-    const t = transport(() => new Response(null, { status: 307, headers: { location: `?handle=${handle}&offset=snap.2.MA` } }));
+    const t = transport(() => new Response(null, { status: 307, headers: { location: `?handle=${handle}&offset=snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQTI` } }));
     await expect(readShapePage(t, params, {}, undefined)).rejects.toThrow(/redirect offset/u);
   });
   test("rejects unsorted operations, backwards snapshot pages, and a stalled closed chunk", () => {
@@ -135,8 +135,8 @@ describe("origin free shape reads", () => {
     body.changes[0].ops.reverse();
     expect(() => decodeFreeShapePage(body, new Headers())).toThrow(/document order/u);
     const snapshot = structuredClone(vector("snapshot-first-page").response.body);
-    snapshot.offset = "snap.2.Mg";
-    snapshot.next_offset = "snap.2.MQ";
+    snapshot.offset = "snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQTM";
+    snapshot.next_offset = "snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQTI";
     expect(() => decodeFreeShapePage(snapshot, new Headers())).toThrow(/snapshot progression/u);
     body.changes = []; body.next_offset = body.offset; body.covered_offset = body.offset;
     expect(() => decodeFreeShapePage(body, new Headers())).toThrow(/log coverage/u);

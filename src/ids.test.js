@@ -37,7 +37,7 @@ test("only canonical 128-bit ULIDs pass every entity ID boundary", () => {
   }
 });
 
-test("document response keys enforce bounds and valid UTF-8 rather than entity ULIDs", () => {
+test("document response ids must be canonical ULIDs", () => {
   const version = "opaque-version";
   for (const value of [undefined, null, 1, "", "\u0000", "\u0085", "\ud800", "\udc00", "a".repeat(257)]) {
     expect(() => requireDocumentId(value)).toThrow(TypeError);

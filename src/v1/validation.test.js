@@ -168,10 +168,9 @@ describe("C# v1 pure contract validation", () => {
     expect(v1Route("dropCollection").successStatuses).toEqual([200]);
   });
 
-  it("keeps caller-supplied document keys distinct and rejects invalid UTF-8 or bounds", () => {
-    for (const key of [id, ".", "..", "a/b", "a%2Fb", "%", "%2E", "?", "#", "+", " ", "é", "e\u0301", "😀".repeat(128)])
-      expect(requireDocumentId(key)).toBe(key);
-    for (const bad of [undefined, null, 1, "", "a\nb", "\u007f", "\u0085", "\ud800", "\udc00", "a".repeat(257), "😀".repeat(129)])
+  it("accepts only canonical ULIDs as document ids", () => {
+    expect(requireDocumentId(id)).toBe(id);
+    for (const bad of [undefined, null, 1, "", id.toLowerCase(), "a/b", "a%2Fb", "..", " ", "é", "a".repeat(257), "😀".repeat(129)])
       expect(() => requireDocumentId(bad)).toThrow(TypeError);
   });
 

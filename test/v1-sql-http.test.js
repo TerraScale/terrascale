@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { afterEach, describe, expect, test } from "vitest";
 import { createTerraBaseV1Client } from "../src/index.js";
+import { generateId } from "../src/ids.js";
 import { ExactDecimal } from "../src/v1/json.js";
 import { TerraBaseV1Error } from "../src/v1/errors.js";
 import { runSql, checkSql } from "../src/v1/sql.js";
@@ -10,7 +11,7 @@ import { V1Transport } from "../src/v1/transport.js";
 const project = "01ARZ3NDEKTSV4RRFFQ69G5FA1";
 const token = "fixture.payload.signature";
 const prefix = `/v1/projects/${project}/databases/app/sql`;
-const validResult = { matched: 1, truncated: false, rows: [{ id: "customer/key", value: { name: "Ada", missing: null } }] };
+const validResult = { matched: 1, truncated: false, rows: [{ id: "01ARZ3NDEKTSV4RRFFQ69G5FA2", value: { name: "Ada", missing: null } }] };
 const validCheck = { ok: true, error: null, collection: "people", hasLimit: true, plan: ["SEARCH people USING INDEX people_name"], indexes: ["people_name"], suggestions: [{ field: "age", reason: "field has no leading index" }] };
 const invalidCheck = { ok: false, error: "only SELECT statements are supported", collection: null, hasLimit: false, plan: [], indexes: [], suggestions: [] };
 /** @typedef {{ method: string | undefined; url: URL; headers: import("node:http").IncomingHttpHeaders; body: string }} SqlRequest */
@@ -78,9 +79,9 @@ describe("current C# SQL HTTP contracts", () => {
 
   test("preserves exact integers and decimals in projected SQL rows", async () => {
     const { transport } = await fixture((_request, response) => response.writeHead(200, { "content-type": "application/json" })
-      .end('{"matched":1,"truncated":false,"rows":[{"id":"é/😀","value":{"integer":9007199254740993,"decimal":0.123456789012345678901,"missing":null}}]}'));
+      .end('{"matched":1,"truncated":false,"rows":[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA2","value":{"integer":9007199254740993,"decimal":0.123456789012345678901,"missing":null}}]}'));
     const result = await runSql(transport, "app", "SELECT integer, decimal, missing FROM people");
-    expect(result.rows[0]?.id).toBe("é/😀");
+    expect(result.rows[0]?.id).toBe("01ARZ3NDEKTSV4RRFFQ69G5FA2");
     expect(result.rows[0]?.value.integer).toBeInstanceOf(ExactDecimal);
     expect(String(result.rows[0]?.value.integer)).toBe("9007199254740993");
     expect(String(result.rows[0]?.value.decimal)).toBe("0.123456789012345678901");
@@ -143,10 +144,10 @@ describe("current C# SQL HTTP contracts", () => {
   test.each([
     undefined, null, [], {}, { ...validResult, matched: "1" }, { ...validResult, matched: -1 },
     { ...validResult, matched: 1.5 }, { ...validResult, matched: 0 }, { ...validResult, truncated: null },
-    { ...validResult, rows: [null] }, { ...validResult, rows: [{ id: "key", value: null }] },
+    { ...validResult, rows: [null] }, { ...validResult, rows: [{ id: "01ARZ3NDEKTSV4RRFFQ69G5FA2", value: null }] },
     { ...validResult, rows: [{ id: "", value: {} }] },
     { matched: 2, truncated: false, rows: [validResult.rows[0], validResult.rows[0]] },
-    { matched: 1001, truncated: false, rows: Array.from({ length: 1001 }, (_unused, index) => ({ id: `key${index}`, value: {} })) },
+    { matched: 1001, truncated: false, rows: Array.from({ length: 1001 }, () => ({ id: generateId(), value: {} })) },
   ])("rejects malformed SQL result %#", async value => {
     const { transport } = await fixture((_request, response) => json(response, value));
     await expect(runSql(transport, "app", "SELECT * FROM people")).rejects.toThrow(TypeError);

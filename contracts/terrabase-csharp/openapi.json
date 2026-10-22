@@ -3177,7 +3177,7 @@
           {
             "name": "id",
             "in": "query",
-            "description": "Raw document key, supplied exactly once using UTF-8 query encoding. Decode once; slashes, dot segments and literal percent escapes remain distinct keys. No Unicode normalization. No other query parameters are accepted.",
+            "description": "The document's canonical ULID (26 uppercase Crockford base32 characters), supplied exactly once; any other form answers 400 invalid_document_id. No other query parameters are accepted.",
             "required": true,
             "schema": {
               "maxLength": 256,
@@ -3648,7 +3648,7 @@
           {
             "name": "id",
             "in": "query",
-            "description": "Raw document key, supplied exactly once using UTF-8 query encoding. Decode once; slashes, dot segments and literal percent escapes remain distinct keys. No Unicode normalization. No other query parameters are accepted.",
+            "description": "The document's canonical ULID (26 uppercase Crockford base32 characters), supplied exactly once; any other form answers 400 invalid_document_id. No other query parameters are accepted.",
             "required": true,
             "schema": {
               "maxLength": 256,
@@ -4121,7 +4121,7 @@
           {
             "name": "id",
             "in": "query",
-            "description": "Raw document key, supplied exactly once using UTF-8 query encoding. Decode once; slashes, dot segments and literal percent escapes remain distinct keys. No Unicode normalization. No other query parameters are accepted.",
+            "description": "The document's canonical ULID (26 uppercase Crockford base32 characters), supplied exactly once; any other form answers 400 invalid_document_id. No other query parameters are accepted.",
             "required": true,
             "schema": {
               "maxLength": 256,
@@ -4689,7 +4689,7 @@
           {
             "name": "id",
             "in": "query",
-            "description": "Raw document key, supplied exactly once using UTF-8 query encoding. Decode once; slashes, dot segments and literal percent escapes remain distinct keys. No Unicode normalization. No other query parameters are accepted.",
+            "description": "The document's canonical ULID (26 uppercase Crockford base32 characters), supplied exactly once; any other form answers 400 invalid_document_id. No other query parameters are accepted.",
             "required": true,
             "schema": {
               "maxLength": 256,
@@ -7923,7 +7923,7 @@
           "Transactions"
         ],
         "summary": "Applies document operations atomically",
-        "description": "{\"ops\":[…]} with 1 to 1024 operations across the collections of one database: create (put with if_none_match \"*\"; id is generated as a ULID when omitted), put (document, optional if_match or if_none_match \"*\"), patch (exactly one of merge or ops, optional if_match), delete (optional if_match), assert (filter: the document exists and matches; or absent: true) and assert_count (filter, gte and/or lte; at most 16 per transaction, at most 10000 documents examined). Assertions see the state before this transaction's writes. Two operations may not target the same document. Every failure names the failing operation in error.op. Assertions also need the documents:read scope. Query assertions and counts are interrupted at SQLite progress callbacks after 5 million VM instructions or a 5-second deadline (400 invalid_query, query too expensive). Caller-supplied document keys may be 1 to 256 characters without control characters. Generated ids are canonical uppercase ULIDs.\nCaptured changes contain at most 2 MiB of UTF-8 collection names, ids and JSON. Exceeding this limit returns 503 capacity with the failing error.op, rolling back the entire transaction; split the writes into smaller transactions.\n\nRequired JWT scopes: documents:write.",
+        "description": "{\"ops\":[…]} with 1 to 1024 operations across the collections of one database: create (put with if_none_match \"*\"; id is generated as a ULID when omitted), put (document, optional if_match or if_none_match \"*\"), patch (exactly one of merge or ops, optional if_match), delete (optional if_match), assert (filter: the document exists and matches; or absent: true) and assert_count (filter, gte and/or lte; at most 16 per transaction, at most 10000 documents examined). Assertions see the state before this transaction's writes. Two operations may not target the same document. Every failure names the failing operation in error.op. Assertions also need the documents:read scope. Query assertions and counts are interrupted at SQLite progress callbacks after 5 million VM instructions or a 5-second deadline (400 invalid_query, query too expensive). Every id is a canonical uppercase ULID (400 invalid_document_id otherwise).\nCaptured changes contain at most 2 MiB of UTF-8 collection names, ids and JSON. Exceeding this limit returns 503 capacity with the failing error.op, rolling back the entire transaction; split the writes into smaller transactions.\n\nRequired JWT scopes: documents:write.",
         "operationId": "runTransaction",
         "parameters": [
           {

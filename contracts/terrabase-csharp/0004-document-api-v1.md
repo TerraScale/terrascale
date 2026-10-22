@@ -11,9 +11,8 @@ point reads and writes (`GET`/`PUT`/`POST`/`PATCH`/`DELETE …/documents`), list
 (`POST …/collections/{collection}/query`) and transactions (`POST /v1/projects/{project}/databases/{db}/transactions`),
 with `{"error":{"code",…}}` bodies.
 
-TS-754 carries caller-supplied keys in one UTF-8 query parameter for point operations:
-`GET/PUT/PATCH/DELETE …/documents/by-key?id=<encoded key>`. Keys are decoded exactly once, with no path
-or Unicode normalization. This replaces the path-key routes because Kestrel normalizes dot segments
+TS-754 carries each document's canonical ULID in one query parameter for point operations (26 uppercase Crockford base32 characters, supplied exactly once; any other form answers 400 `invalid_document_id`):
+`GET/PUT/PATCH/DELETE …/documents/by-key?id=<ULID>`. The id is decoded exactly once. This replaces the path-key routes because Kestrel normalizes dot segments
 and aliases escaped slash spellings before route values are exposed. See [the ID contract](../id-contract.md).
 
 - **Fresh schema v11** (`PRAGMA user_version = 11`): new files bootstrap the complete schema in one transaction.

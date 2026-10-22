@@ -42,7 +42,7 @@ async function fixture(handle) {
 const event = (type, data, id) => `event: ${type}\n${id === undefined ? "" : `id: ${id}\n`}data: ${JSON.stringify(data)}\n\n`;
 /** @param {string} value */
 const cursor = value => event("cursor", { cursor: value }, value);
-const change = { collection: "users", id: "a/b", op: "upsert", version: "9007199254740993", origin: "0123456789abcdef", document: { title: "é😀" } };
+const change = { collection: "users", id: "01ARZ3NDEKTSV4RRFFQ69G5FA2", op: "upsert", version: "9007199254740993", origin: "0123456789abcdef", document: { title: "é😀" } };
 /** @param {import("node:http").ServerResponse} response @param {string | Uint8Array} value @param {boolean} [end] */
 function sse(response, value, end = false) {
   response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "x-request-id": "stream-request" });
@@ -51,7 +51,7 @@ function sse(response, value, end = false) {
 
 describe("current database SSE contract", () => {
   test("resumes before an interrupted transaction until its final change issues a cursor", async () => {
-    const finalChange = { ...change, id: "second" };
+    const finalChange = { ...change, id: "01ARZ3NDEKTSV4RRFFQ69G5FA3" };
     const { db, requests } = await fixture((_request, response) => {
       if (requests.length === 1) sse(response, cursor(committedCursor) + event("change", change), true);
       else sse(response, event("change", change) + event("change", finalChange, advancedCursor));
@@ -102,7 +102,7 @@ describe("current database SSE contract", () => {
   });
 
   test("decodes BOM, split UTF-8/CRLF, comments and multiline data through native HTTP", async () => {
-    const text = '\ufeff: keepalive\r\nevent: change\r\nid: opaque\r\nunknown: ignored\r\ndata: {"collection":"users","id":"a/b","op":"upsert",\r\ndata: "version":"9007199254740993","origin":"0123456789abcdef","document":{"title":"é😀"}}\r\n\r\n';
+    const text = '\ufeff: keepalive\r\nevent: change\r\nid: opaque\r\nunknown: ignored\r\ndata: {"collection":"users","id":"01ARZ3NDEKTSV4RRFFQ69G5FA2","op":"upsert",\r\ndata: "version":"9007199254740993","origin":"0123456789abcdef","document":{"title":"é😀"}}\r\n\r\n';
     const { baseUrl, requests } = await fixture((_request, response) => sse(response, text));
     const db = createTerraBaseV1Client({ project, token, baseUrl, fetch: async (input, init) => {
       const response = await globalThis.fetch(input, init);
@@ -120,7 +120,7 @@ describe("current database SSE contract", () => {
   });
 
   test("decodes a document containing an exact integer", async () => {
-    const text = 'event: change\nid: exact\ndata: {"collection":"users","id":"key","op":"upsert","version":"1","origin":"0000000000000001","document":{"counter":9007199254740993}}\n\n';
+    const text = 'event: change\nid: exact\ndata: {"collection":"users","id":"01ARZ3NDEKTSV4RRFFQ69G5FA2","op":"upsert","version":"1","origin":"0000000000000001","document":{"counter":9007199254740993}}\n\n';
     const { db } = await fixture((_request, response) => sse(response, text));
     const iter = db.changes();
     const value = (await iter.next()).value;
