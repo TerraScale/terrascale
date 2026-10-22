@@ -45,3 +45,10 @@ test.each([401, 403, 404])("platform refuses status %i without alternate routes 
   await expect(client.platform.databases()).rejects.toMatchObject({ status: code });
   expect(requests).toHaveLength(1);
 });
+test.each(["database_legacy", entity.toLowerCase(), "8".repeat(26)])("platform rejects noncanonical database ID %s", async id => {
+  const { client, requests } = await fixture((_r, response) => json(response, {
+    items: [{ name: "ts-auth", id, homeRegion: "gru", replicaRegions: [] }],
+  }));
+  await expect(client.platform.databases()).rejects.toThrow(TypeError);
+  expect(requests).toHaveLength(1);
+});
