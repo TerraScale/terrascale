@@ -13,7 +13,7 @@ assert writers == ["${{ github.event_name == 'push' && github.ref == 'refs/heads
 # setup-dotnet saves its NuGet cache after any successful job, pull requests included: no job may enable it.
 assert "cache: true" not in workflow
 assert not re.search(r"uses: actions/cache(?:/save)?@", workflow), "Explicit cache writers need a main-only gate"
-assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow.split("\npermissions:", 1)[0]
+assert "cancel-in-progress: ${{ github.event_name != 'merge_group' }}" in workflow.split("\npermissions:", 1)[0]
 assert "no-cache-filters: test-${{ github.job }}" in workflow
 assert "no-cache-filters: slow-${{ matrix.area }}-run" in workflow
 
@@ -46,4 +46,4 @@ def filtered(change=None):
 baseline = filtered()
 for path in fixtures:
     assert (filtered(path) != baseline) == (path in expected), path
-print(f"cache-policy-test: ok (main-only writers, uninterrupted main, {len(fixtures)} restore invalidation controls)")
+print(f"cache-policy-test: ok (main-only writers, superseded runs cancelled, {len(fixtures)} restore invalidation controls)")
