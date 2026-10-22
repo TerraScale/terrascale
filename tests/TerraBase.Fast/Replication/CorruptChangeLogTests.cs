@@ -331,8 +331,8 @@ public sealed class CorruptChangeLogTests
             await using (var recovered = (SqliteStorageTransaction)await (await restarted.StoreAsync(node.Database))
                 .BeginTransactionAsync(false, CancellationToken.None))
             {
-                var decoded = await recovered.ReadChangeGroupsAsync(0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, donor, CancellationToken.None);
-                deltas = decoded.Groups.SelectMany(group => group.Deltas).ToList();
+                var (groups, _, _) = await recovered.ReadChangeGroupsAsync(0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, donor, CancellationToken.None);
+                deltas = [.. groups.SelectMany(group => group.Deltas)];
             }
             await Assert.That(deltas.Where(delta => delta.Collection == Items).Select(delta => delta.Id)).IsEquivalentTo(["kept"]);
             await Assert.That(Encoded(deltas.Single(delta => delta.Id == "kept"))).IsEqualTo(Encoded(kept));
