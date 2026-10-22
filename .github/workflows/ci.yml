@@ -209,9 +209,10 @@ jobs:
       - name: Every area that ran passed
         run: '! grep -qE "failure|cancelled" <<< "${{ join(needs.*.result, '' '') }}"'
       - *checkout
-      # Production runs on OCI through ts-orch; the bracket keeps this line from matching itself.
+      # Production runs on OCI through ts-orch; only Tigris (its endpoint and `fly storage`) stays. The brackets keep
+      # these lines from matching themselves.
       - name: Workflows name no retired hosting provider
-        run: '! grep -rniI "fl[y]" terrascale/.github/workflows'
+        run: '! grep -rniI "fl[y]" terrascale/.github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"'
       - name: Slow report, cache policy, storage train, e2e summary and e2e credential self-checks
         run: |
           python3 terrascale/scripts/ci/slow-report-test.py
