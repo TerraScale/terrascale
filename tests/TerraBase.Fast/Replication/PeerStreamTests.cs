@@ -2174,13 +2174,20 @@ public sealed class PeerStreamTests
         await Assert.That(await gru.UntilUnlistedAsync(away)).IsTrue();
         await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", deleted, CancellationToken.None));
         await Assert.That(await gru.HasStateAsync("items", deleted)).IsTrue();
+        var states = gru.Api.Server.Services.GetRequiredService<IReplicaStates>();
+        var (page, _) = await states.ReadBucketsAsync(cluster.Database, await gru.IncarnationAsync(),
+            [TerraBase.Engine.Sqlite.SqliteStorageTransaction.Bucket("items", deleted)], null,
+            ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, CancellationToken.None)
+            ?? throw new InvalidOperationException("the deletion fixture refused its source copy");
+        var deletion = page.Single(state => state.Collection == "items" && state.Id == deleted);
         clock.Offset = TimeSpan.FromHours(25);
         await Assert.That(await gru.UntilNoStateAsync("items", deleted)).IsTrue();
 
-        // sjc comes back with its old live copy. Its refill copies rather than merges, and neither side's repairs bring the
-        // document back, whatever the rounds pull from the other.
+        // Missing deletion evidence keeps the returning copy's refill pending; healthy collected copies stay absent.
         await sjc.StartAsync();
-        await Assert.That(await sjc.UntilAbsentAsync(deleted)).IsTrue();
+        await Assert.That(await sjc.AntiEntropy.RefillAsync(cluster.Database, gru.Name,
+            await states.HorizonAsync(cluster.Database, CancellationToken.None), await gru.IncarnationAsync(), CancellationToken.None)).IsNull();
+        await Assert.That(await sjc.ReadAsync(deleted)).IsEqualTo("""{"n":1}""");
         for (var round = 0; round < 3; round++)
         {
             await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
@@ -2189,6 +2196,10 @@ public sealed class PeerStreamTests
 
         await Assert.That(await gru.ReadAsync(deleted)).IsNull();
         await Assert.That(await gru.HasStateAsync("items", deleted)).IsFalse();
+        // A retained tombstone provides actual deletion evidence, so the pending receiver can finish safely.
+        _ = await sjc.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(cluster.Database,
+            await sjc.IncarnationAsync(), [deletion], CancellationToken.None);
+        await Assert.That(await sjc.UntilAbsentAsync(deleted)).IsTrue();
         await Assert.That(await sjc.ReadAsync(deleted)).IsNull();
         await Assert.That(await sjc.ReadAsync(kept)).IsEqualTo("""{"n":2}""");
     }
