@@ -70,7 +70,7 @@ func TestStatusKeys(t *testing.T) {
 
 func TestCredentialsNeedOwnerOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.json")
-	if err := os.WriteFile(path, []byte(`{"api_key":"tsk_test","project":"p1"}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"api_key":"01ARZ3NDEKTSV4RRFFQ69G5FAV_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","project":"p1"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(path, 0o644); err != nil {
@@ -83,7 +83,7 @@ func TestCredentialsNeedOwnerOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	key, project, err := loadCredentials(path)
-	if err != nil || key != "tsk_test" || project != "p1" {
+	if err != nil || key != "01ARZ3NDEKTSV4RRFFQ69G5FAV_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" || project != "p1" {
 		t.Fatalf("loadCredentials = %q %q %v", key, project, err)
 	}
 }

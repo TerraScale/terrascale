@@ -11,12 +11,12 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// benchKeyEnv names the operator-placed file holding {"api_key":"tsk_…","project":"<ULID>"} for the dedicated benchmark project.
+// benchKeyEnv names the operator-placed file holding {"api_key":"<ULID>_<secret>","project":"<ULID>"} for the dedicated benchmark project.
 const benchKeyEnv = "TS_BENCH_KEY_FILE"
 
 var (
-	apiKeyPattern = regexp.MustCompile(`^tsk_[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$`)
-	errBenchKey   = errors.New(benchKeyEnv + " content is invalid: want {\"api_key\":\"tsk_…\",\"project\":\"<ULID>\"}")
+	apiKeyPattern = regexp.MustCompile(`^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$`)
+	errBenchKey   = errors.New(benchKeyEnv + " content is invalid: want {\"api_key\":\"<ULID>_<secret>\",\"project\":\"<ULID>\"}")
 )
 
 type benchKey struct {

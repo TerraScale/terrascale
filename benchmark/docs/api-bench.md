@@ -29,7 +29,7 @@ The runner refuses to run on `mariogk-desktop`.
 The operator writes the key JSON to a 0600 file and sets `TS_BENCH_KEY_FILE` to its path:
 
 ```json
-{"api_key": "tsk_<ULID>_<secret>", "project": "<project ULID>"}
+{"api_key": "<ULID>_<52 base32 secret>", "project": "<project ULID>"}
 ```
 
 ```sh

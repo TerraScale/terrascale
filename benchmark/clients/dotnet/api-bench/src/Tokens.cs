@@ -1,3 +1,4 @@
+using System.Buffers;
 using TerraScale.DotNet;
 
 namespace ApiBench;
@@ -6,6 +7,8 @@ namespace ApiBench;
 internal sealed class Tokens(TerraScaleAuthOidcClient oidc, string apiKey)
 {
     private const int RefreshMarginSeconds = 60;
+
+    private static readonly SearchValues<char> SecretAlphabet = SearchValues.Create("0123456789abcdefghjkmnpqrstvwxyz");
 
     private readonly string clientId = ClientId(apiKey);
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -36,15 +39,15 @@ internal sealed class Tokens(TerraScaleAuthOidcClient oidc, string apiKey)
     internal Task<TerraScaleAuthTokenResponse> ExchangeAsync(CancellationToken cancellationToken) =>
         oidc.RequestClientCredentialsTokenAsync(clientId, apiKey, cancellationToken: cancellationToken);
 
-    /// <summary>The ULID in tsk_&lt;ULID&gt;_&lt;secret&gt; is the OAuth client id; the whole key is the client secret.</summary>
+    /// <summary>The ULID in &lt;ULID&gt;_&lt;52 base32&gt; is the OAuth client id; the whole key is the client secret.</summary>
     internal static string ClientId(string apiKey)
     {
-        if (apiKey.Length <= 31 || !apiKey.StartsWith("tsk_", StringComparison.Ordinal) || apiKey[30] != '_' || !TerraScaleIds.IsValid(apiKey[4..30]))
+        if (apiKey.Length != 79 || apiKey[26] != '_' || !TerraScaleIds.IsValid(apiKey[..26]) || apiKey.AsSpan(27).ContainsAnyExcept(SecretAlphabet))
         {
-            throw new FormatException("api_key must be a tsk_<ULID>_<secret> project key.");
+            throw new FormatException("api_key must be a <ULID>_<52 base32> project key.");
         }
 
-        return apiKey[4..30];
+        return apiKey[..26];
     }
 
     private sealed record Cached(string Token, DateTimeOffset Refresh);
