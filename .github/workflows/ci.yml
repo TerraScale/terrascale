@@ -76,7 +76,7 @@ jobs:
               # The credential entry point and the scripts it runs (make handoff-test).
               - scripts/handoff/**
               - scripts/e2e/**
-              - benchmark/scripts/repl-fly-tenant.sh
+              - benchmark/scripts/repl-*-tenant.sh
             auth:
               - *shared
               - auth.slnf
@@ -209,6 +209,9 @@ jobs:
       - name: Every area that ran passed
         run: '! grep -qE "failure|cancelled" <<< "${{ join(needs.*.result, '' '') }}"'
       - *checkout
+      # Production runs on OCI through ts-orch; the bracket keeps this line from matching itself.
+      - name: Workflows name no retired hosting provider
+        run: '! grep -rniI "fl[y]" terrascale/.github/workflows'
       - name: Slow report, cache policy, storage train, e2e summary and e2e credential self-checks
         run: |
           python3 terrascale/scripts/ci/slow-report-test.py
