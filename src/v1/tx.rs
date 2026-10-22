@@ -265,11 +265,7 @@ impl Tx {
 
     /// Checks that an acknowledgement has one compatible result per op, in
     /// order, naming the submitted document IDs.
-    pub(crate) fn check_results(
-        &self,
-        results: &[OpResult],
-        project: bool,
-    ) -> std::result::Result<(), String> {
+    pub(crate) fn check_results(&self, results: &[OpResult]) -> std::result::Result<(), String> {
         if results.len() != self.ops.len() {
             return Err(format!(
                 "{} results for {} ops",
@@ -281,10 +277,7 @@ impl Tx {
             let ok = match (op.op, res) {
                 ("create" | "put" | "patch" | "delete", OpResult::Write { id, .. }) => {
                     op.id.as_ref().is_none_or(|want| want == id)
-                        && (!project
-                            || op.op != "create"
-                            || op.id.is_some()
-                            || super::ids::valid_entity_id(id))
+                        && (op.op != "create" || op.id.is_some() || super::ids::valid_entity_id(id))
                 }
                 ("assert", OpResult::Asserted { count: None }) => true,
                 ("assert_count", OpResult::Asserted { count: Some(_) }) => true,

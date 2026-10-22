@@ -21,7 +21,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[non_exhaustive]
 pub enum Error {
     /// A project API failure with its complete HTTP diagnostics. The inner
-    /// error retains the decoded code and typed legacy error, when present.
+    /// error retains the decoded code and typed error, when present.
     #[error("{error}")]
     Response {
         /// Actual HTTP status, independent of the response body.
@@ -57,16 +57,9 @@ pub enum Error {
     /// `421 home_region_required`: the write reached a non-home region.
     #[error("terrabase: 421 home_region_required")]
     HomeRegionRequired,
-    /// `503 commit_uncertain`: the outcome is unknown. Retry with the same
-    /// `Idempotency-Key` to learn it.
+    /// `503 commit_uncertain`: read state to reconcile the unknown outcome.
     #[error("terrabase: 503 commit_uncertain")]
     CommitUncertain,
-    /// `409 idempotency_conflict`: the key was used with a different request.
-    #[error("terrabase: 409 idempotency_conflict")]
-    IdempotencyConflict,
-    /// `409 idempotency_expired`: the key's 24 hour replay window passed.
-    #[error("terrabase: 409 idempotency_expired")]
-    IdempotencyExpired,
     /// `429 rate_limited`, after the retry budget was spent.
     #[error("terrabase: 429 rate_limited")]
     RateLimited { retry_after: Option<Duration> },
@@ -76,8 +69,7 @@ pub enum Error {
     /// `401 invalid_key`: unknown, expired or revoked key.
     #[error("terrabase: 401 invalid_key")]
     InvalidKey,
-    /// `500 internal_error`: no effect is guaranteed; retry only with an
-    /// `Idempotency-Key`.
+    /// `500 internal_error`: a mutation may have taken effect.
     #[error("terrabase: 500 internal_error")]
     InternalError,
     /// Any other non-2xx response.
@@ -91,16 +83,8 @@ pub enum Error {
         /// `suggested_index`.
         details: Option<Box<RawValue>>,
     },
-    /// A control-plane operation finished with status `failed`.
-    #[error("terrabase: operation {id} failed: {code}{}", fmt_msg(message))]
-    OperationFailed {
-        id: String,
-        code: String,
-        message: Option<String>,
-    },
     /// The request was not sent or no response was read (connect, TLS,
-    /// timeout, body too large). A mutation without an `Idempotency-Key`
-    /// may or may not have been applied.
+    /// timeout, body too large). A mutation may or may not have been applied.
     #[error("terrabase: transport: {0}")]
     Transport(String),
     /// A response body exceeded the configured
@@ -108,8 +92,7 @@ pub enum Error {
     /// server answered, so it is not retried. `may_have_applied` is true for
     /// a mutation whose status was not a 4xx (a success or a server error such
     /// as `commit_uncertain`): the write may have taken effect, so
-    /// [`Error::is_uncertain`] is true; retry with the same `Idempotency-Key`
-    /// to learn the outcome.
+    /// [`Error::is_uncertain`] is true; reconcile by reading state.
     #[error("terrabase: {status} response exceeds {limit} bytes")]
     ResponseTooLarge {
         limit: usize,
@@ -127,7 +110,7 @@ pub enum Error {
     Decode(String),
     /// A mutation got a 2xx status but its acknowledgement did not match the
     /// contract. The write was accepted, so [`Error::is_uncertain`] is true:
-    /// retry with the same `Idempotency-Key`, or read back, to learn the
+    /// read back state to learn the
     /// outcome.
     #[error("terrabase: {status} acknowledgement could not be decoded: {message}")]
     UndecodableAck { status: u16, message: String },
@@ -154,7 +137,6 @@ impl Error {
             | Self::UndecodableAck { status, .. } => *status,
             Self::PreconditionFailed { .. } => 412,
             Self::UniqueViolation { .. } | Self::ConflictUnresolved { .. } => 409,
-            Self::IdempotencyConflict | Self::IdempotencyExpired => 409,
             Self::NotFound { .. } => 404,
             Self::HomeRegionRequired => 421,
             Self::CommitUncertain => 503,
@@ -163,8 +145,7 @@ impl Error {
             Self::InvalidKey => 401,
             Self::InternalError => 500,
             Self::Api { status, .. } => *status,
-            Self::OperationFailed { .. }
-            | Self::InvalidTxOp { .. }
+            Self::InvalidTxOp { .. }
             | Self::Transport(_)
             | Self::InvalidInput(_)
             | Self::Decode(_) => return None,
@@ -182,13 +163,11 @@ impl Error {
             Self::ConflictUnresolved { .. } => "conflict_unresolved",
             Self::HomeRegionRequired => "home_region_required",
             Self::CommitUncertain => "commit_uncertain",
-            Self::IdempotencyConflict => "idempotency_conflict",
-            Self::IdempotencyExpired => "idempotency_expired",
             Self::RateLimited { .. } => "rate_limited",
             Self::Forbidden { .. } => "forbidden_scope",
             Self::InvalidKey => "invalid_key",
             Self::InternalError => "internal_error",
-            Self::Api { code, .. } | Self::OperationFailed { code, .. } => code,
+            Self::Api { code, .. } => code,
             Self::ResponseTooLarge { .. }
             | Self::InvalidTxOp { .. }
             | Self::Transport(_)
@@ -226,7 +205,7 @@ impl Error {
     }
 
     /// Exact bytes of a project API error response, including unknown problem
-    /// extensions and invalid JSON. Local and legacy client errors have none.
+    /// extensions and invalid JSON. Local client errors have none.
     #[must_use]
     pub fn raw_body(&self) -> Option<&[u8]> {
         match self {
@@ -250,7 +229,7 @@ impl Error {
     /// status outside 4xx, a transport failure, an oversized response to a
     /// mutation that may have been applied, or an undecodable mutation
     /// acknowledgement. Only 4xx responses and local errors are certain
-    /// failures. Retry with the same `Idempotency-Key` to learn the outcome.
+    /// failures. Reconcile an uncertain mutation by reading its effects.
     /// For reads, which have no effect, the flag only means the request may be
     /// retried.
     #[must_use]
@@ -365,8 +344,6 @@ pub(crate) fn from_response(
         (409, "conflict_unresolved") => Error::ConflictUnresolved { op },
         (421, "home_region_required") => Error::HomeRegionRequired,
         (503, "commit_uncertain") => Error::CommitUncertain,
-        (409, "idempotency_conflict") => Error::IdempotencyConflict,
-        (409, "idempotency_expired") => Error::IdempotencyExpired,
         (429, "rate_limited") => Error::RateLimited { retry_after },
         (403, "forbidden_scope") => Error::Forbidden { op },
         (401, "invalid_key") => Error::InvalidKey,

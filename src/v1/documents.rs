@@ -115,7 +115,7 @@ impl Database {
         req.body = Some(body);
         let resp = self.client.send_project(req).await?;
         let out: TxResult = resp.decode_status(&[StatusCode::OK])?;
-        tx.check_results(&out.results, self.client.is_project())
+        tx.check_results(&out.results)
             .map_err(|message| resp.invalid(message))?;
         Ok(out)
     }
@@ -700,8 +700,7 @@ fn write_result(
     allowed: &[StatusCode],
 ) -> Result<WriteResult> {
     let mut out: WriteResult = resp.decode_status(allowed)?;
-    if resp.project
-        && expected_id.is_none()
+    if expected_id.is_none()
         && (resp.status != StatusCode::CREATED || !super::ids::valid_entity_id(&out.id))
     {
         return Err(resp.invalid(

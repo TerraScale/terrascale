@@ -293,7 +293,6 @@ impl ClientBuilder {
                 auth,
                 retry: self.retry,
                 max_response: self.max_response_bytes,
-                current_public: self.project.is_some() || self.access_token,
                 project: self.project,
                 atlas,
                 region_pin: self.region_pin,
@@ -364,7 +363,6 @@ struct Inner {
     retry: RetryPolicy,
     max_response: usize,
     project: Option<String>,
-    current_public: bool,
     atlas: Option<AtlasResolver>,
     region_pin: Option<String>,
     shape_keys: tokio::sync::Mutex<super::shapes::EpochKeys>,
@@ -467,7 +465,6 @@ pub(crate) struct Resp {
     pub body: Vec<u8>,
     /// The request was a mutation, so a 2xx means it was applied.
     pub mutation: bool,
-    pub project: bool,
 }
 
 impl Resp {
@@ -487,22 +484,13 @@ impl Resp {
             let retry_after = self
                 .header("Retry-After")
                 .and_then(|value| parse_retry_after(value, std::time::SystemTime::now()));
-            Err(if self.project {
-                errors::from_project_response(
-                    self.status.as_u16(),
-                    self.header("ETag"),
-                    retry_after,
-                    self.header("X-Request-ID"),
-                    &self.body,
-                )
-            } else {
-                errors::from_response(
-                    self.status.as_u16(),
-                    self.header("ETag"),
-                    retry_after,
-                    &self.body,
-                )
-            })
+            Err(errors::from_project_response(
+                self.status.as_u16(),
+                self.header("ETag"),
+                retry_after,
+                self.header("X-Request-ID"),
+                &self.body,
+            ))
         } else {
             Err(self.invalid(format!("unexpected HTTP status {}", self.status.as_u16())))
         }
@@ -517,15 +505,11 @@ impl Resp {
         } else {
             Error::Decode(message)
         };
-        if self.project {
-            Error::Response {
-                status: self.status.as_u16(),
-                error: Box::new(error),
-                body: self.body.clone(),
-                request_id: self.header("X-Request-ID").map(str::to_owned),
-            }
-        } else {
-            error
+        Error::Response {
+            status: self.status.as_u16(),
+            error: Box::new(error),
+            body: self.body.clone(),
+            request_id: self.header("X-Request-ID").map(str::to_owned),
         }
     }
 
@@ -605,10 +589,6 @@ impl Client {
             .unwrap_or_else(|| backoff(policy, attempt));
         tokio::time::sleep(delay).await;
         true
-    }
-
-    pub(crate) fn is_project(&self) -> bool {
-        self.inner.project.is_some()
     }
 
     pub(crate) async fn send_project(&self, req: Req<'_>) -> Result<Resp> {
@@ -725,7 +705,6 @@ impl Client {
             headers,
             body,
             mutation: false,
-            project: true,
         };
         response.check_status(&[StatusCode::OK])?;
         Err(response
@@ -946,7 +925,6 @@ impl Client {
                 headers,
                 body,
                 mutation: !req.replay_safe,
-                project: self.inner.current_public,
             };
             return Attempt::Failed(
                 response.invalid("TerraBase response region does not match the session pin".into()),
@@ -959,7 +937,6 @@ impl Client {
                 headers,
                 body,
                 mutation: !req.replay_safe,
-                project: self.inner.current_public,
             });
         }
         let retry_after = headers
@@ -967,17 +944,13 @@ impl Client {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()));
         let etag = headers.get(ETAG).and_then(|v| v.to_str().ok());
-        let err = if self.inner.current_public {
-            errors::from_project_response(
-                status.as_u16(),
-                etag,
-                retry_after,
-                headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
-                &body,
-            )
-        } else {
-            errors::from_response(status.as_u16(), etag, retry_after, &body)
-        };
+        let err = errors::from_project_response(
+            status.as_u16(),
+            etag,
+            retry_after,
+            headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
+            &body,
+        );
         Attempt::Failed(err, retry_after)
     }
 
@@ -988,18 +961,14 @@ impl Client {
         headers: &HeaderMap,
         body: Vec<u8>,
     ) -> Error {
-        if self.inner.current_public {
-            Error::Response {
-                status: status.as_u16(),
-                error: Box::new(error),
-                body,
-                request_id: headers
-                    .get("X-Request-ID")
-                    .and_then(|v| v.to_str().ok())
-                    .map(str::to_owned),
-            }
-        } else {
-            error
+        Error::Response {
+            status: status.as_u16(),
+            error: Box::new(error),
+            body,
+            request_id: headers
+                .get("X-Request-ID")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned),
         }
     }
 }

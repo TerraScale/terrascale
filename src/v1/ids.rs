@@ -1,5 +1,4 @@
-//! Names, document IDs, versions and idempotency keys (api-v1.md "Names and
-//! identifiers", "Versions, ETags and offsets" and "Idempotency").
+//! Entity IDs, raw document keys, selectors and version tokens.
 
 use std::fmt;
 use std::str::FromStr;

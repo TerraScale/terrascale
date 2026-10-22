@@ -1,30 +1,24 @@
-//! The name-based TerraBase v1 client.
+//! TerraBase's public v1 project and platform HTTP APIs.
 //!
-//! Project clients implement C# TerraBase's `/v1/projects/{project}` document
-//! contract with bearer credentials and verified Atlas session routing.
-//! `Client::for_project` selects it; an explicit endpoint bypasses Atlas.
+//! Project clients use ts-auth bearer access tokens and verified Atlas routing.
+//! An explicit endpoint bypasses Atlas. Entity IDs are canonical uppercase
+//! ULIDs; database and collection selectors are names. Document keys may be
+//! any valid raw key of 1–256 UTF-16 units without control characters.
 //!
-//! Legacy clients implement the frozen v1 contracts (terrabase `docs/api-v1.md`,
-//! `query-v1.md` and `control-plane-v1.md`): documents, transactions, queries
-//! and the `/v1/dashboard` control plane, over HTTPS with a `tbk1` key.
-//!
-//! Numbers are lossless without serde_json's `arbitrary_precision` feature:
-//! document bodies are generic over `Serialize`/`DeserializeOwned`, the
-//! default body type is [`RawValue`](serde_json::value::RawValue) (exact JSON
-//! text), and [`Number`] keeps exact decimal text. `u64` wire quantities are
-//! decimal strings decoded into `u64`.
+//! Bodies are generic over `Serialize`/`DeserializeOwned`. The default body
+//! type is [`RawValue`](serde_json::value::RawValue), retaining exact JSON text;
+//! [`Number`] preserves decimal text and wire quantities retain full precision.
+//! Mutations are not automatically retried after an uncertain outcome.
 //!
 //! ```no_run
 //! # async fn demo() -> terrascale::v1::Result<()> {
-//! use terrascale::v1::{Client, WriteOptions, uuidv5_for};
-//! let client = Client::builder("https://gru.terrabase.example", "tbk1.…")
-//!     .build()?;
+//! use terrascale::v1::{Client, WriteOptions};
+//! let client = Client::for_project("01ARZ3NDEKTSV4RRFFQ69G5FAV", "access-token").build()?;
 //! let users = client.database("main").collection("users");
-//! let id = uuidv5_for("users", "ana@example.com");
-//! let w = users
-//!     .put(id, &serde_json::json!({"email": "ana@example.com"}), WriteOptions::new().if_none_match_any())
-//!     .await?;
-//! let doc = users.get::<serde_json::Value>(id).await?;
+//! let key = "ana@example.com";
+//! let w = users.put(key, &serde_json::json!({"email": key}),
+//!     WriteOptions::new().if_none_match_any()).await?;
+//! let doc = users.get::<serde_json::Value>(key).await?;
 //! # let _ = (w, doc); Ok(()) }
 //! ```
 
