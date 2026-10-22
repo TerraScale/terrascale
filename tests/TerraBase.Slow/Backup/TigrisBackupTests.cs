@@ -38,6 +38,8 @@ public sealed class TigrisBackupTests
             var database = await api.CreateManagedDatabaseAsync("main");
             using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
             await ManagementApi.CreateCollectionAsync(data, database, "people", cancellationToken);
+            // Discovery must capture the baseline before the requested restore point.
+            await ShippedAsync(api, database, null, cancellationToken);
             var written = Enumerable.Range(0, 50).ToDictionary(i => $"p{i:D3}", _ => faker.Lorem.Paragraph(4));
             foreach (var (id, text) in written)
             {
@@ -47,7 +49,10 @@ public sealed class TigrisBackupTests
             // Turso records commit seconds: separate the writes from the deletes at a whole-second restore boundary.
             var writtenAt = DateTimeOffset.UtcNow;
             var shipped = DateTimeOffset.FromUnixTimeSeconds(writtenAt.ToUnixTimeSeconds() + 1);
-            await Task.Delay(shipped - writtenAt, cancellationToken);
+            while (shipped - DateTimeOffset.UtcNow is { Ticks: > 0 } wait)
+            {
+                await Task.Delay(wait + TimeSpan.FromMilliseconds(1), cancellationToken);
+            }
             foreach (var id in written.Keys)
             {
                 (await data.DeleteAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", id)), cancellationToken)).EnsureSuccessStatusCode();
@@ -116,7 +121,7 @@ public sealed class TigrisBackupTests
     }
 
     // Waits for the background shipper's proven window; an upload timestamp alone cannot place its transactions.
-    private static async Task ShippedAsync(ManagementApi api, ManagedDatabaseRef database, DateTimeOffset at, CancellationToken cancellationToken)
+    private static async Task ShippedAsync(ManagementApi api, ManagedDatabaseRef database, DateTimeOffset? at, CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(ShippingDeadline);
@@ -126,7 +131,7 @@ public sealed class TigrisBackupTests
             if (window.StatusCode != HttpStatusCode.NotFound)
             {
                 window.EnsureSuccessStatusCode();
-                if ((await window.Content.ReadFromJsonAsync<JsonElement>(deadline.Token)).GetProperty("latest").GetDateTimeOffset() >= at)
+                if (at is null || (await window.Content.ReadFromJsonAsync<JsonElement>(deadline.Token)).GetProperty("latest").GetDateTimeOffset() >= at)
                 {
                     return;
                 }
