@@ -28,7 +28,7 @@ alignment requires no stored-data deletion or migration.
 
 The SDK has no regional discovery or failover. Auth calls go to the fixed
 global origin `https://auth.terrascale.tech`, the default API origin is
-`https://api.terrascale.tech`, and Fly anycast handles routing. No region
+`https://api.terrascale.tech`, and ts-orch on OCI handles routing. No region
 activation, endpoint pinning or manual secret copying belongs in setup.
 Customer tenant/project scope and authorized access credentials remain required.
 The examples describe SDK boundaries; deployed issuer trust still requires
@@ -152,7 +152,7 @@ for state, err := range users.Subscribe(ctx, tb.ShapeOptions{Where: tb.Eq("/acti
 ```
 
 The client pages a snapshot, reads sealed chunks, then long-polls with live
-cursor buckets. Fly may change the serving machine under the same global API
+cursor buckets. OCI may change the serving machine under the same global API
 origin: one proven cursor resume retains state; refusal drops it and restarts.
 Repeated events are applied because their materialized value can be newer.
 Snapshot page cursors become usable only after the entire snapshot.
