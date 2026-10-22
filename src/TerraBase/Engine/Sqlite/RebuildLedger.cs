@@ -21,9 +21,10 @@ namespace TerraBase.Engine.Sqlite;
 /// </para>
 /// <para>
 /// The open gap of section 1.3, a crash between a failed sync and its fault record, is closed by write intents: before an
-/// incarnation's first transaction opens in a process, <c>_tb_write_intent</c> records it, with FULL, under this
+/// incarnation's first active storage operation starts, <c>_tb_write_intent</c> records it, with FULL, under this
 /// process's replica id in a separate node-local journal, independent of the catalog writer. A clean stop keeps the replica id; any other ending raises its epoch (<see cref="ReplicaIdentityFile"/>),
-/// so at the next start every intent of another replica id becomes a fault. An uncertified copy that faults (one under
+/// so at the next start every remaining intent of another replica id becomes a fault. Successful cleanup retires the intent
+/// when no operation remains. An uncertified copy that faults (one under
 /// rebuild) is never certified: its record goes back to pending, and the rebuild starts over from the side copy, keeping
 /// that uncertified copy unwritten at its own side path (at most one) for the salvage. Nothing is deleted or overwritten
 /// before a certified rebuild; a second uncertain copy refuses the rebuild and stays in place.
@@ -176,6 +177,7 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
                 store.RebuildRow = row;
             }
 
+            // Explicit fault reports may follow quiescent work: protect the fault-record crash window too.
             await WriteIntentAsync(engine.IntentStore!, key, incarnation, CancellationToken.None).ConfigureAwait(false);
             engine.Checkpoint(Recording, database);
             await WriteAsync(system, [row], [], CancellationToken.None).ConfigureAwait(false);
@@ -245,8 +247,7 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
     }
 
     /// <summary>
-    /// Records, with FULL, that <paramref name="store"/>'s incarnation is used in this process. Runs before a transaction
-    /// rents its session, once per store.
+    /// Records, with FULL, that <paramref name="store"/>'s incarnation has an active storage operation. Runs before native use.
     /// </summary>
     internal async Task RecordIntentAsync(SqliteDatabaseStore store, CancellationToken cancellationToken)
     {
@@ -279,6 +280,34 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
             insert.Parameters.AddWithValue("$replica", unchecked((long)engine.ReplicaId.Value));
             return insert.ExecuteNonQuery();
         }, cancellationToken);
+
+    internal async Task RetireIntentAsync(SqliteDatabaseStore store)
+    {
+        var system = engine.IntentStore ?? throw new InvalidOperationException("the operation intent journal is not open");
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (store.CopyFault is not null || FailedClosed is not null)
+            {
+                return;
+            }
+            _ = await InSystemAsync(system, command =>
+            {
+                using var delete = command("""
+                    DELETE FROM _tb_write_intent WHERE organization = $organization AND project = $project AND database = $database
+                        AND incarnation = $incarnation AND replica = $replica;
+                    """);
+                Key.Of(store.Tenant!).Bind(delete);
+                delete.Parameters.AddWithValue("$incarnation", store.Incarnation.ToString());
+                delete.Parameters.AddWithValue("$replica", unchecked((long)engine.ReplicaId.Value));
+                return delete.ExecuteNonQuery();
+            }, CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 
     /// <summary>
     /// Forgets an explicitly deleted database: its record and its write intent, with FULL, once its store is closed and its
@@ -977,7 +1006,7 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
         await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) == incarnation;
 
     private async ValueTask<SqliteDatabaseStore> SystemAsync(CancellationToken cancellationToken) =>
-        (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        engine.SystemStore ?? (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
 
     private async ValueTask<Row?> ReadRowAsync(SqliteDatabaseStore system, Key key, CancellationToken cancellationToken) =>
         await InSystemAsync(system, command => ReadRow(command, key), cancellationToken, write: false).ConfigureAwait(false);

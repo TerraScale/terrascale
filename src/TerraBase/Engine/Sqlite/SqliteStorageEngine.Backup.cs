@@ -32,7 +32,7 @@ internal sealed partial class SqliteStorageEngine
         Io.Admit();
         try
         {
-            return await TursoChangeTap.OpenAsync(store, Io, HostTime, cancellationToken).ConfigureAwait(false);
+            return await Io.WithAdmissionAsync(async () => await TursoChangeTap.OpenAsync(store, Io, HostTime, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
         }
         finally
         {

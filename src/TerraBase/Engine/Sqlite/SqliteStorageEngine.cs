@@ -414,6 +414,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         ArgumentNullException.ThrowIfNull(recordIntent);
         var (key, path) = Locate(database);
         SqliteDatabaseStore? store = null;
+        SqliteDatabaseStore.CopyOperation? copyOperation = null;
         if (source is not null)
         {
             if (!string.Equals(source.OrganizationId, database.OrganizationId, StringComparison.Ordinal))
@@ -428,8 +429,11 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 return false;
             }
 
-            await store.PrepareCopyAsync(cancellationToken).ConfigureAwait(false);
+            copyOperation = await store.PrepareCopyAsync(cancellationToken).ConfigureAwait(false);
         }
+        await using var sourceOperation = copyOperation;
+        // CopyToAsync awaits source disposal and records native source faults on every exit.
+        copyOperation?.Complete();
 
         Task<SqliteDatabaseStore> initialization;
         await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
@@ -544,7 +548,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             return false;
         }
 
-        await store.PrepareCopyAsync(cancellationToken).ConfigureAwait(false);
+        await using var sourceOperation = await store.PrepareCopyAsync(cancellationToken).ConfigureAwait(false);
+        sourceOperation?.Complete();
         Task<SqliteDatabaseStore> initialization;
         await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -1026,6 +1031,21 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         await _creation.WaitAsync().ConfigureAwait(false);
         try
         {
+            foreach (var store in _stores.Values.Concat(_system is { } closingSystem ? [closingSystem] : []))
+            {
+                try
+                {
+                    _ = await Io.WithAdmissionAsync(async () =>
+                    {
+                        await store.CheckpointOnCloseAsync().ConfigureAwait(false);
+                        return true;
+                    }).ConfigureAwait(false);
+                }
+                catch (Exception error)
+                {
+                    errors.Add(error);
+                }
+            }
             closed = await Io.RunAsync(() =>
             {
                 foreach (var store in _stores.Values.Concat(_system is { } system ? [system] : [])

@@ -80,7 +80,8 @@ internal sealed class TursoChangeTap : IWalTap
     /// <summary>Opens a tap on <paramref name="store"/> that starts at the newest change; the caller holds an admission.</summary>
     public static async Task<TursoChangeTap> OpenAsync(SqliteDatabaseStore store, SqliteIoPool io, TimeProvider time, CancellationToken cancellationToken)
     {
-        var reader = new TursoConnection($"Data Source={store.FilePath}") { CloseRefusal = () => store.CloseRefusal };
+        await using var operation = await store.BeginOperationAsync(cancellationToken).ConfigureAwait(false);
+        var reader = new TursoConnection($"Data Source={store.FilePath}") { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
         try
         {
             await io.RunAsync(() => SqliteSession.OpenExisting(reader, store.FilePath), cancellationToken).ConfigureAwait(false);
@@ -88,11 +89,14 @@ internal sealed class TursoChangeTap : IWalTap
             // Under the writer, so the anchor and the schema map describe the same commit; this also opens the writer, whose
             // capture creates turso_cdc.
             await store.WithWriterAsync(tap.Reset, "the continuous backup's tap", cancellationToken).ConfigureAwait(false);
+            operation?.Complete();
             return tap;
         }
-        catch
+        catch (Exception error)
         {
             await io.RunAsync(reader.Dispose, CancellationToken.None).ConfigureAwait(false);
+            await store.RecordOperationDamageAsync(error).ConfigureAwait(false);
+            operation?.Complete();
             throw;
         }
     }
@@ -214,7 +218,7 @@ internal sealed class TursoChangeTap : IWalTap
     private async Task ReplaceReaderAsync()
     {
         var stale = _reader;
-        _reader = new TursoConnection($"Data Source={_store.FilePath}") { CloseRefusal = () => _store.CloseRefusal };
+        _reader = new TursoConnection($"Data Source={_store.FilePath}") { CloseRefusal = () => _store.CloseRefusal ?? "terminal backup reader close" };
         await _io.RunAsync(() =>
         {
             stale.Dispose();
@@ -233,7 +237,30 @@ internal sealed class TursoChangeTap : IWalTap
         _io.Admit();
         try
         {
-            return await call().ConfigureAwait(false);
+            return await _io.WithAdmissionAsync(async () =>
+            {
+                await using var operation = await _store.BeginOperationAsync(CancellationToken.None).ConfigureAwait(false);
+                try
+                {
+                    var result = await call().ConfigureAwait(false);
+                    operation?.Complete();
+                    return result;
+                }
+                catch (Exception error)
+                {
+                    await _store.RecordOperationDamageAsync(error).ConfigureAwait(false);
+                    if (_store.CopyFault is null)
+                    {
+                        await ReplaceReaderAsync().ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await _io.RunAsync(_reader.Dispose, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    operation?.Complete();
+                    throw;
+                }
+            }).ConfigureAwait(false);
         }
         finally
         {
