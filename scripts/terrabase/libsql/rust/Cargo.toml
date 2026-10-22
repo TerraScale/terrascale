@@ -1,0 +1,9 @@
+[package]
+name = "terrabase-libsql-proof"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+libsql = { version = "=0.10.0", default-features = false, features = ["remote", "tls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
