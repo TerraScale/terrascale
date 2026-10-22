@@ -524,7 +524,7 @@ async fn public_project_client_routes_to_verified_endpoint_with_only_region_pin(
     let error = client
         .database("orders")
         .collection("items")
-        .get::<Value>(Uuid::nil())
+        .get::<Value>(terrascale::v1::DocumentId::nil())
         .await
         .unwrap_err();
     assert!(error.is_not_found(), "{error:?}");
@@ -659,7 +659,7 @@ async fn public_reads_refresh_on_421_and_redirect_but_retry_only_once() {
         let error = client
             .database("orders")
             .collection("items")
-            .get::<Value>(Uuid::nil())
+            .get::<Value>(terrascale::v1::DocumentId::nil())
             .await
             .unwrap_err();
         assert_eq!(
@@ -714,7 +714,7 @@ async fn public_mutations_refresh_on_421_and_redirect_without_replay() {
         let collection = client.database("orders").collection("items");
         let error = collection
             .put(
-                Uuid::nil(),
+                terrascale::v1::DocumentId::nil(),
                 &json!({"value":1}),
                 terrascale::v1::WriteOptions::new(),
             )
@@ -739,7 +739,10 @@ async fn public_mutations_refresh_on_421_and_redirect_without_replay() {
             );
         }
         assert!(target.requests.lock().unwrap().is_empty()); // Mutation never reached the new endpoint.
-        let error = collection.get::<Value>(Uuid::nil()).await.unwrap_err();
+        let error = collection
+            .get::<Value>(terrascale::v1::DocumentId::nil())
+            .await
+            .unwrap_err();
         assert_eq!(error.status(), Some(404));
         let requests = fixture.requests.lock().unwrap();
         assert_eq!(
@@ -780,7 +783,7 @@ async fn public_static_endpoint_bypasses_atlas_entirely() {
             client
                 .database("orders")
                 .collection("items")
-                .get::<Value>(Uuid::nil())
+                .get::<Value>(terrascale::v1::DocumentId::nil())
                 .await
                 .unwrap_err()
                 .status(),

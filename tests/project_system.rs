@@ -42,7 +42,7 @@ async fn public_probes_are_anonymous_unscoped_and_keep_503_status_bodies() {
 async fn platform_routes_accept_user_bearers_and_preserve_redacted_raw_key_documents() {
     let database = r#"{"items":[{"name":"ts-auth","id":"00000000000000000000000003","homeRegion":"gru","replicaRegions":["fra"]}]}"#;
     let collections = r#"{"items":[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAY","name":"users","created_at":"123"}],"next_cursor":null}"#;
-    let doc = r#"{"id":"a/%2F+","version":"tbv1-00000000000000000000000000000000","state":"value","document":{"name":"Ada","password":"[redacted]"}}"#;
+    let doc = r#"{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","version":"tbv1-00000000000000000000000000000000","state":"value","document":{"name":"Ada","password":"[redacted]"}}"#;
     let page = format!(r#"{{"items":[{doc}],"next_cursor":"opaque/+"}}"#);
     let fixture = Fixture::new(vec![
         reply(200, database),
@@ -79,7 +79,11 @@ async fn platform_routes_accept_user_bearers_and_preserve_redacted_raw_key_docum
     );
     assert_eq!(
         client
-            .get_platform_document::<Value>("ts-auth", "users", "a/%2F+")
+            .get_platform_document::<Value>(
+                "ts-auth",
+                "users",
+                "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap()
+            )
             .await
             .unwrap(),
         serde_json::from_str::<Value>(doc).unwrap()
@@ -92,7 +96,7 @@ async fn platform_routes_accept_user_bearers_and_preserve_redacted_raw_key_docum
         "/v1/platform/databases",
         "/v1/platform/databases/ts-auth/collections?limit=2",
         "/v1/platform/databases/ts-auth/collections/users/documents?cursor=opaque%2F%2B",
-        "/v1/platform/databases/ts-auth/collections/users/documents/by-key?id=a%2F%252F%2B",
+        "/v1/platform/databases/ts-auth/collections/users/documents/by-key?id=01ARZ3NDEKTSV4RRFFQ69G5FAV",
     ]
     .iter()
     .enumerate()

@@ -51,17 +51,17 @@ delay-seconds and HTTP-dates. Plain-HTTP and loopback base URLs ignore environme
 
 ```rust
 let users: Collection = db.collection("users");
-users.get::<T>(id: Uuid) -> Result<Document<T>>                     // 404 -> Error::NotFound { etag, .. }
+users.get::<T>(id: DocumentId) -> Result<Document<T>>                     // 404 -> Error::NotFound { etag, .. }
 users.get_if_changed::<T>(id, &Version) -> Result<Option<Document<T>>> // None = 304
 users.put(id, &doc, WriteOptions) -> Result<WriteResult>            // created = 201
-users.create(&doc, WriteOptions) -> Result<WriteResult>             // POST, server UUIDv7
+users.create(&doc, WriteOptions) -> Result<WriteResult>             // POST, server ULID
 users.patch(id, &Patch, WriteOptions) -> Result<WriteResult>
 users.delete(id, WriteOptions) -> Result<WriteResult>
 
 WriteOptions::new().if_match(Version).if_none_match_any().idempotency_key(IdempotencyKey)
 enum Precondition { IfMatch(Version), IfNoneMatchAny }
-struct WriteResult { id: Uuid, version: Version, offset: u64, durability: Durability, created: bool, location: Option<String> }
-struct Document<T = Box<RawValue>> { id: Uuid, version: Version, state: DocumentState<T> }
+struct WriteResult { id: DocumentId, version: Version, offset: u64, durability: Durability, created: bool, location: Option<String> }
+struct Document<T = Box<RawValue>> { id: DocumentId, version: Version, state: DocumentState<T> }
 enum DocumentState<T> { Value(T), Conflict(Vec<Sibling<T>>) }
 struct Sibling<T> { event: Event, deleted: bool, document: Option<T> }
 Patch::merge(&v)? | Patch::ops(vec![PatchOp::set(p,&v)?, PatchOp::unset(p), PatchOp::inc(p, n), PatchOp::append(p,&v)?])
@@ -71,7 +71,7 @@ Patch::merge(&v)? | Patch::ops(vec![PatchOp::set(p,&v)?, PatchOp::unset(p), Patc
 
 ```rust
 let mut tx = Tx::new();
-tx.create(coll, Option<Uuid>, &doc)
+tx.create(coll, Option<DocumentId>, &doc)
   .put(coll, id, &doc, Option<Precondition>)
   .patch(coll, id, Patch, Option<Version>)
   .delete(coll, id, Option<Version>)
@@ -101,7 +101,8 @@ coll.query_all::<T>(Query, max_items) -> Result<Vec<Document<T>>>
 ## IDs
 
 ```rust
-uuidv5_for(collection, key) -> Uuid
+type DocumentId = ulid::Ulid  // canonical uppercase on the wire; non-canonical server ids are rejected
+ulid_for(collection, key) -> DocumentId  // first 16 bytes of SHA-256(collection + "\0" + key)
 Version::new(s)? ; IdempotencyKey::new(s)? | ::random() | ::derive(&[parts])
 is_valid_name(name) -> bool
 ```

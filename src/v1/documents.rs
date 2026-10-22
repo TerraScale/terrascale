@@ -7,7 +7,7 @@ use serde_json::value::RawValue;
 
 use super::client::{Client, Req, Resp};
 use super::errors::{Error, Result};
-use super::ids::{check_document_id, check_name, DocumentId, Version};
+use super::ids::{check_name, DocumentId, Version};
 use super::shapes::Shape;
 use super::tx::{Tx, TxResult};
 use super::types::{u64_string, Durability, Number};
@@ -601,8 +601,8 @@ impl Collection {
 
     /// Reads a document. Absent, deleted and expired documents fail with
     /// [`Error::NotFound`] (with the tombstone version for deleted ones).
-    pub async fn get<T: DeserializeOwned>(&self, id: impl ToString) -> Result<Document<T>> {
-        self.get_inner(id.to_string(), None)
+    pub async fn get<T: DeserializeOwned>(&self, id: DocumentId) -> Result<Document<T>> {
+        self.get_inner(id, None)
             .await?
             .ok_or_else(|| Error::Decode("unexpected 304".into()))
     }
@@ -611,10 +611,10 @@ impl Collection {
     /// means `304 Not Modified`.
     pub async fn get_if_changed<T: DeserializeOwned>(
         &self,
-        id: impl ToString,
+        id: DocumentId,
         version: &Version,
     ) -> Result<Option<Document<T>>> {
-        self.get_inner(id.to_string(), Some(version)).await
+        self.get_inner(id, Some(version)).await
     }
 
     async fn get_inner<T: DeserializeOwned>(
@@ -623,8 +623,7 @@ impl Collection {
         if_none_match: Option<&Version>,
     ) -> Result<Option<Document<T>>> {
         self.check()?;
-        check_document_id(&id)?;
-        let mut req = self.point_request(Method::GET, &id);
+        let mut req = self.point_request(Method::GET, id);
         if let Some(v) = if_none_match {
             req.headers.push(("If-None-Match", v.quoted()));
         }
@@ -647,20 +646,18 @@ impl Collection {
     /// Writes the complete document (`PUT`). `created` reports a `201`.
     pub async fn put<T: Serialize + ?Sized>(
         &self,
-        id: impl ToString,
+        id: DocumentId,
         doc: &T,
         opts: WriteOptions,
     ) -> Result<WriteResult> {
         self.check()?;
         let body = encode_object(doc)?;
-        let id = id.to_string();
-        check_document_id(&id)?;
-        let mut req = self.point_request(Method::PUT, &id);
+        let mut req = self.point_request(Method::PUT, id);
         req.body = Some(body.get().as_bytes().to_vec());
         req.headers = precondition_headers(opts.precondition.as_ref());
         write_result(
             self.client().send(req).await?,
-            Some(&id),
+            Some(id),
             &[StatusCode::OK, StatusCode::CREATED],
         )
     }
@@ -685,7 +682,7 @@ impl Collection {
     /// Patches an existing document (`PATCH`). Only `IfMatch` is accepted.
     pub async fn patch(
         &self,
-        id: impl ToString,
+        id: DocumentId,
         patch: &Patch,
         opts: WriteOptions,
     ) -> Result<WriteResult> {
@@ -696,53 +693,45 @@ impl Collection {
                 "patch does not take IfNoneMatchAny".into(),
             ));
         }
-        let id = id.to_string();
-        check_document_id(&id)?;
-        let mut req = self.point_request(Method::PATCH, &id);
+        let mut req = self.point_request(Method::PATCH, id);
         req.body = Some(patch.body()?);
         req.content_type = Some(patch.content_type());
         req.headers = precondition_headers(opts.precondition.as_ref());
-        write_result(self.client().send(req).await?, Some(&id), &[StatusCode::OK])
+        write_result(self.client().send(req).await?, Some(id), &[StatusCode::OK])
     }
 
     /// Deletes (tombstones) a document. Only `IfMatch` is accepted.
-    pub async fn delete(&self, id: impl ToString, opts: WriteOptions) -> Result<WriteResult> {
+    pub async fn delete(&self, id: DocumentId, opts: WriteOptions) -> Result<WriteResult> {
         self.check()?;
         if opts.precondition == Some(Precondition::IfNoneMatchAny) {
             return Err(Error::InvalidInput(
                 "delete does not take IfNoneMatchAny".into(),
             ));
         }
-        let id = id.to_string();
-        check_document_id(&id)?;
-        let mut req = self.point_request(Method::DELETE, &id);
+        let mut req = self.point_request(Method::DELETE, id);
         req.headers = precondition_headers(opts.precondition.as_ref());
-        write_result(self.client().send(req).await?, Some(&id), &[StatusCode::OK])
+        write_result(self.client().send(req).await?, Some(id), &[StatusCode::OK])
     }
 
     pub(crate) fn query_segments(&self) -> Vec<&str> {
         self.segments(&["query"])
     }
 
-    fn point_request<'a>(&'a self, method: Method, id: &'a str) -> Req<'a> {
+    fn point_request(&self, method: Method, id: DocumentId) -> Req<'_> {
         let mut req = Req::new(method, self.segments(&["documents", "by-key"]));
-        req.query.push(("id", id.to_owned()));
+        req.query.push(("id", id.to_string()));
         req
     }
 }
 
 fn write_result(
     resp: Resp,
-    expected_id: Option<&str>,
+    expected_id: Option<DocumentId>,
     allowed: &[StatusCode],
 ) -> Result<WriteResult> {
     let mut out: WriteResult = resp.decode_status(allowed)?;
-    if expected_id.is_none()
-        && (resp.status != StatusCode::CREATED || !super::ids::valid_entity_id(&out.id))
-    {
-        return Err(resp.invalid(
-            "generated creation requires HTTP 201 and a canonical uppercase ULID".into(),
-        ));
+    if expected_id.is_none() && resp.status != StatusCode::CREATED {
+        return Err(resp.invalid("generated creation requires HTTP 201".into()));
     }
     if expected_id.is_some_and(|id| out.id != id) {
         return Err(resp.invalid(format!(

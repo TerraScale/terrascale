@@ -20,10 +20,10 @@ requires `.project(project_ulid)`. Public platform exploration uses
 selectors; it cannot issue unscoped document or transaction requests.
 
 Entity IDs are canonical uppercase ULIDs. Database and collection selectors are
-names. Raw document keys may contain 1–256 UTF-16 units without control characters;
-UUID-looking keys remain valid strings. Point routes use `/documents/by-key?id=`
-with query encoding applied once. `uuidv5_for` generates an optional stable raw
-key; it does not generate a canonical entity ULID.
+names. Document IDs are `DocumentId` (`ulid::Ulid`), sent in canonical uppercase;
+responses with any other id form are rejected. Point routes use `/documents/by-key?id=`.
+`ulid_for(collection, key)` derives a stable ULID from a natural key (first 16 bytes of
+SHA-256 over `collection`, NUL, `key`).
 
 ## Public operations
 

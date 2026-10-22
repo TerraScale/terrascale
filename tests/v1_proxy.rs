@@ -84,7 +84,7 @@ async fn loopback_http_bypasses_environment_proxies() {
         let err = client
             .database("main")
             .collection("items")
-            .get::<Box<RawValue>>(host)
+            .get::<Box<RawValue>>(terrascale::v1::DocumentId::nil())
             .await
             .unwrap_err();
         assert!(err.is_not_found(), "{host}: {err:?}");

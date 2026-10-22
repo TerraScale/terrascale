@@ -59,7 +59,7 @@ async fn project_https_requires_the_configured_root() {
                 };
                 let service = service_fn(move |request: Request<hyper::body::Incoming>| {
                     seen.fetch_add(1, Ordering::SeqCst);
-                    assert_eq!(request.uri(), "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/main/collections/users/documents/by-key?id=customer-key");
+                    assert_eq!(request.uri(), "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/main/collections/users/documents/by-key?id=00000000000000000000000000");
                     assert_eq!(
                         request.headers()["authorization"],
                         "Bearer fixture-access-token"
@@ -88,7 +88,7 @@ async fn project_https_requires_the_configured_root() {
             .unwrap()
             .database("main")
             .collection("users")
-            .get::<serde_json::Value>("customer-key")
+            .get::<serde_json::Value>(terrascale::v1::DocumentId::nil())
             .await
             .unwrap_err();
         if trusted {

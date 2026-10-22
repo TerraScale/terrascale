@@ -96,6 +96,11 @@ impl From<uuid::Uuid> for Scalar {
         Self::String(v.to_string())
     }
 }
+impl From<ulid::Ulid> for Scalar {
+    fn from(v: ulid::Ulid) -> Self {
+        Self::String(v.to_string())
+    }
+}
 impl<T: Into<Scalar>> From<Option<T>> for Scalar {
     fn from(v: Option<T>) -> Self {
         v.map_or(Self::Null, Into::into)

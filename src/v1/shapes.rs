@@ -20,7 +20,7 @@ use url::Url;
 use super::client::{Client, Resp};
 use super::documents::Collection;
 use super::errors::{Error, Result};
-use super::ids::{check_document_id, DocumentId, Version};
+use super::ids::{parse_document_id, DocumentId, Version};
 use super::query::Filter;
 use super::shape_crypto;
 
@@ -206,8 +206,8 @@ pub struct ShapeState {
 impl ShapeState {
     /// The document with this id, if it is in the shape.
     #[must_use]
-    pub fn get(&self, id: &str) -> Option<&ShapeDocument> {
-        self.documents.get(id)
+    pub fn get(&self, id: DocumentId) -> Option<&ShapeDocument> {
+        self.documents.get(&id)
     }
 
     /// Every document, in id order.
@@ -729,20 +729,18 @@ impl ShapeSync {
             }
             last = Some(at);
             let mut ops = Vec::with_capacity(change.ops.len());
-            let mut previous_id: Option<String> = None;
+            let mut previous_id: Option<DocumentId> = None;
             for op in change.ops {
                 let op = op.into_op(resp)?;
                 let id = match &op {
                     ShapeOp::Upsert { id, .. } | ShapeOp::Delete { id } => id,
                 };
-                if previous_id
-                    .as_ref()
-                    .is_some_and(|previous| !previous.encode_utf16().cmp(id.encode_utf16()).is_lt())
-                {
+                // Canonical ULID text sorts like the ULID value.
+                if previous_id.is_some_and(|previous| previous >= *id) {
                     return Err(resp
                         .invalid("shape operations must have unique ids in ordinal order".into()));
                 }
-                previous_id = Some(id.clone());
+                previous_id = Some(*id);
                 if from_snapshot && !matches!(op, ShapeOp::Upsert { .. }) {
                     return Err(resp.invalid("snapshot pages carry only upserts".into()));
                 }
@@ -764,7 +762,7 @@ impl ShapeSync {
                         document,
                     } => {
                         state.documents.insert(
-                            id.clone(),
+                            *id,
                             ShapeDocument {
                                 version: version.clone(),
                                 document: document.clone(),
@@ -850,7 +848,7 @@ fn position(value: &str) -> Option<Position> {
                 .ok()
                 .filter(|bytes| URL_SAFE_NO_PAD.encode(bytes) == page)
                 .and_then(|bytes| String::from_utf8(bytes).ok())
-                .is_some_and(|id| check_document_id(&id).is_ok());
+                .is_some_and(|id| parse_document_id(&id).is_some());
         return page_valid.then_some(Position::Snapshot { seq });
     }
     decimal(value).map(Position::Commit)
@@ -917,15 +915,16 @@ struct WireOp {
 
 impl WireOp {
     fn into_op(self, resp: &Resp) -> Result<ShapeOp> {
-        check_document_id(&self.id).map_err(|_| resp.invalid("shape op id is invalid".into()))?;
+        let id = parse_document_id(&self.id)
+            .ok_or_else(|| resp.invalid("shape op id is invalid".into()))?;
         match (self.op.as_str(), self.version, self.document) {
             ("upsert", Some(version), Some(document)) => Ok(ShapeOp::Upsert {
-                id: self.id,
+                id,
                 version: Version::new(version)
                     .map_err(|_| resp.invalid("shape op version is invalid".into()))?,
                 document,
             }),
-            ("delete", None, None) => Ok(ShapeOp::Delete { id: self.id }),
+            ("delete", None, None) => Ok(ShapeOp::Delete { id }),
             _ => Err(resp.invalid("shape op is malformed".into())),
         }
     }
@@ -994,7 +993,7 @@ mod tests {
             let state = Arc::make_mut(&mut sync.state);
             for (id, doc) in vector["initial_state"].as_object().unwrap() {
                 state.documents.insert(
-                    id.clone(),
+                    id.parse().unwrap(),
                     ShapeDocument {
                         version: Version::new(doc["version"].as_str().unwrap()).unwrap(),
                         document: serde_json::from_value(doc["document"].clone()).unwrap(),
@@ -1030,7 +1029,7 @@ mod tests {
                     &resp,
                 )
                 .unwrap();
-            let actual:serde_json::Map<String,Value>=update.state.iter().map(|(id,doc)| (id.clone(),json!({"version":doc.version.as_str(),"document":serde_json::from_str::<Value>(doc.document.get()).unwrap()}))).collect();
+            let actual:serde_json::Map<String,Value>=update.state.iter().map(|(id,doc)| (id.to_string(),json!({"version":doc.version.as_str(),"document":serde_json::from_str::<Value>(doc.document.get()).unwrap()}))).collect();
             assert_eq!(
                 Value::Object(actual),
                 vector["expected_state"],

@@ -2,7 +2,7 @@
 use super::{
     client::{Client, Req},
     errors::Result,
-    ids::{check_document_id, check_name},
+    ids::{check_name, DocumentId},
 };
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
@@ -81,14 +81,13 @@ impl Client {
         &self,
         database: &str,
         collection: &str,
-        id: &str,
+        id: DocumentId,
     ) -> Result<T> {
         check_name("database", database)?;
         check_name("collection", collection)?;
-        check_document_id(id)?;
         self.platform(
             &[database, "collections", collection, "documents", "by-key"],
-            &[("id", id.into())],
+            &[("id", id.to_string())],
         )
         .await
     }

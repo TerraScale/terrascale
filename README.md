@@ -1,13 +1,13 @@
 # TerraScale Rust SDK
 
-`terrascale::v1` implements the current C# TerraBase ULID project, raw-key document and HTTP SQL contracts with verified Atlas routing. See the [compatibility audit](docs/compatibility-20261013.md) for exact commits, deterministic test evidence and release gaps. Start with [docs/csharp-api.md](docs/csharp-api.md). The older name-based `/v1/databases` and `/v1/dashboard` client remains available for its original producer ([docs/v1-api.md](docs/v1-api.md)). The native UUID/shard API described below is deprecated and will be removed with those routes.
+`terrascale::v1` implements the current C# TerraBase ULID project, ULID document and HTTP SQL contracts with verified Atlas routing. See the [compatibility audit](docs/compatibility-20261013.md) for exact commits, deterministic test evidence and release gaps. Start with [docs/csharp-api.md](docs/csharp-api.md). The older name-based `/v1/databases` and `/v1/dashboard` client remains available for its original producer ([docs/v1-api.md](docs/v1-api.md)). The native UUID/shard API described below is deprecated and will be removed with those routes.
 
 ```rust,no_run
-use terrascale::v1::Client;
+use terrascale::v1::{ulid_for, Client};
 # async fn example(project: &str, access_token: &str) -> terrascale::v1::Result<()> {
 let client = Client::for_project(project, access_token).build()?;
 let items = client.database("main").collection("items");
-let document = items.get::<serde_json::Value>("customer/a+b").await?;
+let document = items.get::<serde_json::Value>(ulid_for("items", "customer/a+b")).await?;
 # let _ = document;
 # Ok(())
 # }

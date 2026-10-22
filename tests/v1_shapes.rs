@@ -224,8 +224,15 @@ async fn eight_mib_materialized_commit_and_snapshot_singleton_allow_response_env
             stream.next().await.unwrap().unwrap();
         }
         let update = stream.next().await.unwrap().unwrap();
-        let document: Value =
-            serde_json::from_str(update.state.get(ID0).unwrap().document.get()).unwrap();
+        let document: Value = serde_json::from_str(
+            update
+                .state
+                .get(ID0.parse().unwrap())
+                .unwrap()
+                .document
+                .get(),
+        )
+        .unwrap();
         assert_eq!(document["padding"].as_str().unwrap().len(), padding);
         fixture.assert_auth();
     }
@@ -356,10 +363,17 @@ async fn snapshot_chunks_live_buckets_and_immutable_state_follow_vectors() {
     let chunk = stream.next().await.unwrap().unwrap();
     assert_eq!(chunk.offset, "4");
     assert_eq!(chunk.state.len(), 1);
-    assert!(chunk.state.get(ID1).is_none());
+    assert!(chunk.state.get(ID1.parse().unwrap()).is_none());
     assert_eq!(
-        serde_json::from_str::<Value>(chunk.state.get(ID0).unwrap().document.get()).unwrap()
-            ["read"],
+        serde_json::from_str::<Value>(
+            chunk
+                .state
+                .get(ID0.parse().unwrap())
+                .unwrap()
+                .document
+                .get()
+        )
+        .unwrap()["read"],
         true
     );
     assert_eq!(first.state.len(), 1);
@@ -406,12 +420,24 @@ async fn changed_machine_resumes_once_and_applies_newer_repeated_value() {
     let update = stream.next().await.unwrap().unwrap();
     assert_eq!(update.state.len(), 2); // preserve the untouched second document
     assert_eq!(
-        update.state.get(ID0).unwrap().version.as_str(),
+        update
+            .state
+            .get(ID0.parse().unwrap())
+            .unwrap()
+            .version
+            .as_str(),
         "tbv1-b9a54642e86bd83f460ea839d3dc5e51"
     );
     assert_eq!(
-        serde_json::from_str::<Value>(before.state.get(ID0).unwrap().document.get()).unwrap()
-            ["read"],
+        serde_json::from_str::<Value>(
+            before
+                .state
+                .get(ID0.parse().unwrap())
+                .unwrap()
+                .document
+                .get()
+        )
+        .unwrap()["read"],
         false
     );
     assert_eq!(fixture.query(4).get("offset").unwrap(), "-1");
@@ -635,9 +661,23 @@ async fn invalid_response_never_changes_a_previously_yielded_state() {
         if mutate != "snapshot_cursor" && mutate != "fresh_snapshot" {
             before = stream.next().await.unwrap().unwrap();
         }
-        let original = before.state.get(ID0).unwrap().document.get().to_owned();
+        let original = before
+            .state
+            .get(ID0.parse().unwrap())
+            .unwrap()
+            .document
+            .get()
+            .to_owned();
         assert!(stream.next().await.unwrap().is_err(), "{mutate}");
-        assert_eq!(before.state.get(ID0).unwrap().document.get(), original);
+        assert_eq!(
+            before
+                .state
+                .get(ID0.parse().unwrap())
+                .unwrap()
+                .document
+                .get(),
+            original
+        );
         fixture.assert_auth();
     }
 }

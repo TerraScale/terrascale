@@ -2,8 +2,8 @@
 //!
 //! Project clients use ts-auth bearer access tokens and verified Atlas routing.
 //! An explicit endpoint bypasses Atlas. Entity IDs are canonical uppercase
-//! ULIDs; database and collection selectors are names. Document keys may be
-//! any valid raw key of 1–256 UTF-16 units without control characters.
+//! ULIDs; database and collection selectors are names. Document IDs are
+//! [`DocumentId`] ULIDs; [`ulid_for`] derives a stable one from a natural key.
 //!
 //! Bodies are generic over `Serialize`/`DeserializeOwned`. The default body
 //! type is [`RawValue`](serde_json::value::RawValue), retaining exact JSON text;
@@ -12,11 +12,12 @@
 //!
 //! ```no_run
 //! # async fn demo() -> terrascale::v1::Result<()> {
-//! use terrascale::v1::{Client, WriteOptions};
+//! use terrascale::v1::{ulid_for, Client, WriteOptions};
 //! let client = Client::for_project("01ARZ3NDEKTSV4RRFFQ69G5FAV", "access-token").build()?;
 //! let users = client.database("main").collection("users");
-//! let key = "ana@example.com";
-//! let w = users.put(key, &serde_json::json!({"email": key}),
+//! let email = "ana@example.com";
+//! let key = ulid_for("users", email);
+//! let w = users.put(key, &serde_json::json!({"email": email}),
 //!     WriteOptions::new().if_none_match_any()).await?;
 //! let doc = users.get::<serde_json::Value>(key).await?;
 //! # let _ = (w, doc); Ok(()) }
@@ -52,7 +53,7 @@ pub use documents::{
     WriteResult,
 };
 pub use errors::{Error, Result};
-pub use ids::{is_valid_name, uuidv5_for, DocumentId, Version};
+pub use ids::{is_valid_name, ulid_for, DocumentId, Version};
 pub use management::{DatabasePlacement, ManagementPage};
 pub use query::{Count, Filter, Order, Pages, Path, Query, QueryPage, Scalar, SortKey};
 pub use shapes::{Shape, ShapeChange, ShapeDocument, ShapeOp, ShapeState, ShapeUpdate};

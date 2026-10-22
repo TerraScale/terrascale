@@ -25,11 +25,10 @@ let result = database.run_sql::<serde_json::Value>("SELECT * FROM items LIMIT 10
 
 Project IDs must be canonical 26-character uppercase ULIDs. Point document operations use
 `GET/PUT/PATCH/DELETE /v1/projects/{project}/databases/{name}/collections/{name}/documents/by-key?id=…`.
-Keys are raw strings of 1–256 UTF-16 code units without control characters. The SDK query-encodes
-them once, preserving slashes, percent signs, plus signs and distinct Unicode sequences.
-`DocumentId` and response IDs are strings. Caller UUIDs remain valid raw document keys;
-`uuidv5_for` can generate a stable key before the first request. Generated creates return ULIDs.
-`Tx::create` accepts `Option<String>` and `OpResult::id()` borrows `Option<&str>`.
+Document IDs are `DocumentId` (`ulid::Ulid`), sent as canonical uppercase ULIDs; response IDs in
+any other form are rejected. `ulid_for(collection, key)` derives a stable ID from a natural key
+before the first request. Generated creates return ULIDs.
+`Tx::create` accepts `Option<DocumentId>` and `OpResult::id()` returns `Option<DocumentId>`.
 
 The bearer credential is an already exchanged ts-auth project access token. The SDK does not
 mint credentials or grant scopes. The server validates issuer, exact audience, signed token
