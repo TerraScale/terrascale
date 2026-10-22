@@ -37,7 +37,7 @@ export function auditTree(dir) {
     if (/(?:^|\/)(?:node_modules|\.env[^/]*|\.git)(?:\/|$)|\.map$/.test(rel))
       out.push({ file: rel, line: 1, category: 'unexpected bundled file' })
     // Committed, licensed font assets are the only binary public files.
-    if (/^fonts\/[a-z-]+\.woff2$/.test(rel)) continue
+    if (/^fonts\/(?:[a-z-]+|Geist(?:Mono)?-Variable)\.woff2$/.test(rel)) continue
     const bytes = readFileSync(file)
     if (bytes.includes(0)) {
       out.push({ file: rel, line: 1, category: 'unexpected binary asset' })
