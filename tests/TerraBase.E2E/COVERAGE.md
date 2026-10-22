@@ -10,7 +10,7 @@ runs against the new replicated path.
 in the cluster's setup (the collection created in gru never reaches sjc), before its own assertions.
 
 **Release rule.** Release correctness and the 1M-document acceptance stay **BLOCKED** until every row's replacement passes
-against the design-C replicated path at the exact release commit, both locally and on Fly. A row that is missing or an
+against the design-C replicated path at the exact release commit, both locally and on ts-orch. A row that is missing or an
 expected failure blocks. The obsolete binary harness is not coming back: crash and storage-stall scenarios need new
 harness work on the design-C transport (listed under "Missing").
 
@@ -24,10 +24,10 @@ Status words:
   that slice. It is reported as *not supported*, never as an expected failure. Every replicated row is in this state on
   main.
 - **missing**: no replacement yet.
-- No row is skipped on Fly for its credential: every Fly request carries the bound e2e project's ts-auth project token
-  (`databases:*`, `documents:*`, from the GitHub OIDC exchange, docs/auth/github-actions-oidc.md), so an authentication
-  refusal fails the test and is never counted as a gap. Scenarios that stop Fly machines keep their own guard and run only
-  in the pinned disposable outage run.
+- No row is skipped on ts-orch for its credential: every request carries the e2e project's ts-auth project token
+  (`databases:*`, `documents:*`, minted from `TERRABASE_E2E_ORCH_KEY`, docs/terrabase/e2e-ts-orch.md), so an authentication
+  refusal fails the test and is never counted as a gap. Scenarios that stop ts-orch regions keep their own guard and run
+  only in the pinned outage run.
 
 ## Last runs
 
@@ -166,7 +166,7 @@ E2E run (honest gaps f1cfbc0f, run 2 of 2 (delta)), 2026-10-13T04:34Z on delta
 | 5 | Concurrent different-field writes, 3-way | (none) | ThreeRegionE2ETests: `Concurrent_writes_to_different_fields_in_three_regions_all_survive` | setup-blocked (R3) | 94086cd6: not supported (setup-blocked) | |
 | 6 | Delete vs concurrent edit | ReplicationTests: `A_version_read_on_one_member_deletes_the_document_on_the_other`; Slow/ReplicationSlowTests: `Two_nodes_converge_after_many_concurrent_writes_and_deletes` | ReplicationE2ETests: `Delete_in_one_region_and_edit_in_the_other…` (E5); ThreeRegionE2ETests: `Delete_in_one_region_and_edits_in_the_other_two…` | setup-blocked (R3) | 94086cd6: not supported (setup-blocked) | Many concurrent deletes: the benchmark's 1 % deletes |
 | 7 | Partition, then heal | CrossRegionTests: `Partitioned_regions_keep_serving_their_writes_and_converge_after_heal`; Slow/CrossRegion/CrossRegionPartitionTests: `Regions_converge_without_losing_or_corrupting_writes_through_a_lossy_partitioned_link_and_restarts` | ThreeRegionFaultE2ETests: `Partitioned_region_keeps_accepting_writes_and_converges_after_the_partition_heals` | setup-blocked (R3) | 94086cd6: not supported (setup-blocked) | `Cluster.Partition` throws until R4a wires its streams in. Local only; Fly has no partition switch (skipped there, with the reason) |
-| 8 | Region down, then rejoin | Fast/CrossRegion/CrossRegionDeletionTests: `A_restarted_region_removes_…`; (Fly) FlyOutageE2ETests | ThreeRegionFaultE2ETests: `Region_down_then_back_catches_up_on_every_write_made_while_it_was_down`; FlyOutageE2ETests: `Sjc_machine_stopped_then_started…` (E7) | setup-blocked (R3); E7 also needs R6 | 94086cd6: not supported (setup-blocked) | Fly runs only through `make terrabase-e2e-fly-outage` |
+| 8 | Region down, then rejoin | Fast/CrossRegion/CrossRegionDeletionTests: `A_restarted_region_removes_…`; (ts-orch) OrchOutageE2ETests | ThreeRegionFaultE2ETests: `Region_down_then_back_catches_up_on_every_write_made_while_it_was_down`; FlyOutageE2ETests: `Sjc_machine_stopped_then_started…` (E7) | setup-blocked (R3); E7 also needs R6 | 94086cd6: not supported (setup-blocked) | Fly runs only through `make terrabase-e2e-fly-outage` |
 | 9 | Node restart mid-replication (receiver); restore to an older state | ReplicationTests: `A_restarted_node_resumes_after_its_peers_applied_prefix`; Slow/ReceiverRestoreTests: `A_caught_up_sender_repairs_a_restarted_receiver_restored_to_an_older_frontier` | ThreeRegionFaultE2ETests: `Restart_in_the_middle_of_replication_loses_no_write`; RepairAndContractE2ETests: `A_region_restored_to_an_older_copy_of_its_data_catches_up_without_undoing_later_writes` | setup-blocked (R3; restore: R6) | 94086cd6: not supported (setup-blocked) | Restore copies sjc's data directory back to a snapshot taken 100 writes earlier |
 | 10 | Sender restarts with an unsent backlog | Fast/Replication/HintedHandoffTests: `A_restarted_sender_replays_durable_backlog_when_its_peer_returns_without_new_writes` | ThreeRegionFaultE2ETests: `A_restarted_region_replays_its_backlog_to_a_region_that_returns` | setup-blocked (R3) | 94086cd6: not supported (setup-blocked) | New in this change |
 | 11 | Clock skew | Fast/Replication/ReplicatedStampTests: `A_stamp_far_ahead_is_applied_and_counted_but_moves_the_clock_only_the_skew_ahead` | ThreeRegionFaultE2ETests: `Causally_later_write_wins_everywhere_despite_clock_skew` (±2 s), `Concurrent_writes_with_a_clock_2_s_ahead_converge_and_the_writer_ahead_wins` | setup-blocked (R3) | 94086cd6: not supported (setup-blocked) | Missing: the `terrabase.clock.skew_capped` counter assertion (R4a metrics). Local only (skipped on Fly) |
@@ -223,31 +223,30 @@ The candidates on #108 run on them.
 
 | Test | Skipped when | Reason |
 | --- | --- | --- |
-| FlyOutageE2ETests: `Sjc_machine_stopped_then_started…` | locally, or on Fly without `TERRABASE_E2E_FLY_OUTAGE=1` | It stops a machine, so it runs alone through `make terrabase-e2e-fly-outage`, and only on a pinned disposable app (`Cluster.FlyMachineFaults`), never production |
+| OrchOutageE2ETests: `Each_region_stopped_then_started…` | locally, or on ts-orch without `TERRABASE_E2E_ORCH_OUTAGE=1` | It stops regions, so it runs alone through `make terrabase-e2e-orch-outage`, and only in a pinned run (`Cluster.LiveOutage`) of the disposable service `terrabase-e2e`, never production |
 | BenchmarkClusterHost: `Hosts_three_local_regions…` | always, unless `TERRABASE_BENCH_CLUSTER_FILE` is set | It is the benchmark's local cluster host, not a scenario |
 | PitrLabHost: `Runs_the_PitrLab_job…` | always, unless `TERRABASE_PITR_JOB` is set | It is the PitrLab backup/PITR harness host (benchmark/docs/pitr-100m.md), not a scenario |
-| ThreeRegionFaultE2ETests: partition, backlog, both skew tests | on Fly | Fly has no switch for a partition or a clock skew between machines |
-| ThreeRegionFaultE2ETests: region down, restart, ack-then-stop, restarted backlog; RepairAndContractE2ETests: deleted database | on Fly without `TERRABASE_E2E_FLY_OUTAGE=1` | They stop Fly machines |
-| CrashAndStallE2ETests (all but the proxy self-check); RepairAndContractE2ETests: anti-entropy repair, restore, unique under partition | on Fly | They kill local processes, lock or edit local files, or partition; Fly has no such switch |
+| ThreeRegionFaultE2ETests: partition, backlog, both skew tests; WaveAE2ETests and ShapeConvergenceE2ETests partition, loss and skew tests | on ts-orch | ts-orch has no switch for a partition, a file edit or a clock skew between nodes |
+| ThreeRegionFaultE2ETests: region down, restart, ack-then-stop, restarted backlog; RepairAndContractE2ETests: deleted database | on ts-orch without `TERRABASE_E2E_ORCH_OUTAGE=1` | They stop ts-orch regions |
+| CrashAndStallE2ETests (all but the proxy self-check); RepairAndContractE2ETests: anti-entropy repair, restore, unique under partition | on ts-orch | They kill local processes, lock or edit local files, or partition; ts-orch has no such switch |
 
 ## Keeping this current
 
 Update a row in the same PR that changes its status: a slice that lands removes its `Gaps.cs` entries and marks the row
 "pass" with the commit of the run that proved it. Re-run `make terrabase-e2e` locally and `make terrabase-e2e` plus
-`make terrabase-e2e-fly-outage` on Fly at the release commit, and record both in "Last run".
+`make terrabase-e2e-orch-outage` on ts-orch at the release commit, and record both in "Last run".
 
 ## Backup qualification producer (#164)
 
-`BackupQualificationE2ETests` uses a real three-node local cluster or a pinned disposable Fly app. It takes a ready
+`BackupQualificationE2ETests` uses a real three-node local cluster or a pinned ts-orch run. It takes a ready
 manual backup and two shipped PIT cuts, performs actual HTTP restores, and feeds their count, canonical digest,
 versions and source/placement identity to `BackupQualification.Failures`. A pre-window cut must answer exactly
 400 `invalid_request`. Supported-cut refusals fail. The same-body rewrite regression proves version loss fails
 independently of the body digest. This row is not a `Gaps` expected failure.
 
-Local backup storage uses test-only S3 transport; a local result is not Tigris evidence. The Fly producer requires
-a project token with database scopes (`TERRABASE_E2E_FLY_PROJECT_TOKEN`), creates and cleans up its own source and
-restored databases, and fails if unpinned or missing that credential. Target: `ts-terrabase-e2e` in
-`terrascale-previews-515`; PR apps and production apps remain refused. Per-cut details are retained in the run's
+Local backup storage uses test-only S3 transport; a local result is not Tigris evidence. The ts-orch producer uses
+the run's project token (database scopes, from `TERRABASE_E2E_ORCH_KEY`), creates and cleans up its own source and
+restored databases, and fails if unpinned or missing that credential. Target: the disposable service `terrabase-e2e`. Per-cut details are retained in the run's
 `TERRABASE_E2E_RESULTS` JSONL and console log. Exact acknowledgement-time cuts before convergence, shipping faults,
 lease handoff and restored multi-region placement are not qualified by this scenario.
 

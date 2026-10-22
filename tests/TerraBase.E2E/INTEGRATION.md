@@ -442,6 +442,10 @@ machines.
 - **The only open item is the tenant credential.** E2E-LIVE is moving its runs to the internal operator path, which
   needs no credential. If that path cannot cover a scenario, a **user-run key handoff** is listed as pending; agents
   never handle the key.
+- **2026-10-22: E2E-LIVE moved to ts-orch.** Fly live mode is deleted. The live target is the disposable ts-orch
+  service `terrabase-e2e` (gru, sjc, fra), reached per region over NetBird; a region stops by applying the service
+  without it. Credential: one ts-auth project API key of the e2e project (`TERRABASE_E2E_ORCH_KEY`, user-created).
+  The outage proof is `make terrabase-e2e-orch-outage`. See docs/terrabase/e2e-ts-orch.md.
 
 The freeze SHA and all its evidence are recorded here and reported to COS. The local 3+3 E2E repeats under
 `flock -o` and `terrabase --storage-format` are recorded as well.

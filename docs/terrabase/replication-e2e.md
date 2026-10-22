@@ -1,5 +1,7 @@
 # TerraBase replication end-to-end suite
 
+> Superseded 2026-10-22: Fly live mode is deleted. Live runs and the outage proof (`make terrabase-e2e-orch-outage`) now target ts-orch; see [e2e-ts-orch.md](e2e-ts-orch.md).
+
 `tests/TerraBase.E2E` checks leaderless multi-region writes in both directions between `gru` and `sjc`: a write in one
 region is readable in the other, concurrent writes converge to one identical state, deletes converge, and a bulk load
 matches in count and checksum. Each scenario waits for convergence against a deadline and logs its replication latency.

@@ -136,7 +136,7 @@ See [signal definitions and follow-ups](node-pressure.md).
 
 ## Production replication check
 
-The replication end-to-end suite checks both regions on Fly ([replication-e2e.md](replication-e2e.md)).
+The replication end-to-end suite runs against the disposable ts-orch service ([e2e-ts-orch.md](e2e-ts-orch.md)).
 
 ## Layout
 
