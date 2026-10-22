@@ -1,6 +1,6 @@
 # Public multi-arch images ts-orch runs (REFACTOR.md W8): ghcr.io/terrascale/{terrabase,ts-auth}:<sha> and :main,
 # linux/amd64 + linux/arm64 (arm64 cross-published from the amd64 builder, Dockerfile publish-* stages).
-# Independent of CI's Fly images; the digest goes to the job summary.
+# The digest goes to the job summary.
 name: Images (GHCR)
 
 on:
