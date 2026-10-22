@@ -14,9 +14,9 @@ const ownedCommands = [
   "npm test",
 ];
 
-test("pull requests and merges to main run CI on the reviewed Node 22 and 24 runtimes", async () => {
+test("pull requests to main and SDK stack bases plus merges to main run CI on the reviewed Node 22 and 24 runtimes", async () => {
   const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-  assert.match(workflow, /^on:\n  push:\n    branches: \[main\]\n  pull_request:\n    branches: \[main\]\n/mu);
+  assert.match(workflow, /^on:\n  push:\n    branches: \[main\]\n  pull_request:\n    branches: \[main, "fix/sdk-parity-20261022\*"\]\n/mu);
   assert.doesNotMatch(workflow, /^  (?:pull_request_target|workflow_dispatch|schedule):/mu);
   assert.match(workflow, /^permissions:\n  contents: read\n/mu);
   const job = jobDefinition(workflow, "verify");
