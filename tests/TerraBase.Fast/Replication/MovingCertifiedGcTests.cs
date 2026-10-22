@@ -146,7 +146,7 @@ public sealed class MovingCertifiedGcTests
             if (restart)
             {
                 await receiver.StopAsync();
-                await receiver.StartAsync();
+                await receiver.StartAsync(PendingRecoveryGcTests.WithoutRecovery);
             }
 
             await Assert.That(await PendingRecoveryGcTests.HeldStateAsync(receiver, DocumentDelta.Collections, "items")).IsNotNull();

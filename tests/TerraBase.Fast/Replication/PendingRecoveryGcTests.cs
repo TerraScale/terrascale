@@ -20,14 +20,7 @@ public sealed class PendingRecoveryGcTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var cluster = await PeerStreamTests.Cluster.StartAsync(cdc: false, clock: null,
-            configure: (_, services) =>
-            {
-                foreach (var recovery in services.Where(service => service.ServiceType == typeof(IHostedService)
-                    && service.ImplementationType == typeof(RebuildRecovery)).ToArray())
-                {
-                    services.Remove(recovery);
-                }
-            }, "gru", "sjc");
+            configure: (_, services) => WithoutRecovery(services), "gru", "sjc");
         var source = cluster["gru"];
         var receiver = cluster["sjc"];
         var id = EntityIds.New().ToString();
@@ -70,7 +63,7 @@ public sealed class PendingRecoveryGcTests
             .RefusedAsync(cluster.Database, rebuilt, token)).IsTrue();
 
         await receiver.StopAsync();
-        await receiver.StartAsync();
+        await receiver.StartAsync(WithoutRecovery);
         provider = receiver.Api.Server.Services;
         await Assert.That((await provider.GetRequiredService<IRebuildLedger>().GetAsync(cluster.Database, token))?.Phase)
             .IsEqualTo(RebuildPhase.Swapped);
@@ -79,6 +72,15 @@ public sealed class PendingRecoveryGcTests
         await Assert.That(await provider.GetRequiredService<IReplicaRebuild>().RebuildAsync(cluster.Database, original, token)
             is RebuildOutcome.Refused).IsTrue();
         await Assert.That(Hash(side)).IsEqualTo(before).Because("restart and a refused retry preserve the original file and sidecars");
+    }
+
+    internal static void WithoutRecovery(IServiceCollection services)
+    {
+        foreach (var recovery in services.Where(service => service.ServiceType == typeof(IHostedService)
+            && service.ImplementationType == typeof(RebuildRecovery)).ToArray())
+        {
+            services.Remove(recovery);
+        }
     }
 
     internal static async Task<DocumentState?> HeldStateAsync(PeerStreamTests.Machine machine, string collection, string id)
