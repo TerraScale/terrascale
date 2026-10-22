@@ -25,7 +25,7 @@ internal sealed record UniqueClaim(string InstanceId, string Kind, string OwnerI
 /// </summary>
 public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authority, TimeProvider clock)
 {
-    /// <summary>A store whose one copy is both <c>local</c> and <c>authority</c> (a single region, or off Fly).</summary>
+    /// <summary>A store whose one copy is both <c>local</c> and <c>authority</c> (a single region).</summary>
     public AuthStore(TerraBaseDatabase database, TimeProvider clock)
         : this(database, database, clock)
     {

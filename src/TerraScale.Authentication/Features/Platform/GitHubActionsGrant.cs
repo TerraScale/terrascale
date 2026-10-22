@@ -9,7 +9,7 @@ using static OpenIddict.Abstractions.OpenIddictConstants;
 namespace TerraScale.Authentication.Features.Platform;
 
 /// <summary>
-/// The Fly e2e suite's credential without a stored secret: the OIDC token GitHub Actions gives the e2e job of
+/// The e2e suite's credential without a stored secret: the OIDC token GitHub Actions gives the e2e job of
 /// TerraScale/terrascale's <c>ci.yml</c> on a push to <c>main</c>, exchanged at the platform issuer's token endpoint for a
 /// 15-minute project token of the isolated e2e project (<see cref="PlatformGrants.GitHubActionsAsync"/>). It is inert until
 /// an operator binds it (<see cref="GitHubActionsBinding"/>): the binding is the public client <see cref="ClientId"/>,
@@ -76,8 +76,8 @@ public sealed class GitHubActionsKeys(IHttpClientFactory clients)
 }
 
 /// <summary>
-/// The operator commands <c>ts-auth bind-github-actions-e2e</c> and <c>ts-auth unbind-github-actions-e2e</c>, run over
-/// <c>fly ssh console -C</c> like <c>provision-signing-key</c>. Binding is the activation: it creates the public client
+/// The operator commands <c>ts-auth bind-github-actions-e2e</c> and <c>ts-auth unbind-github-actions-e2e</c>, run in the
+/// ts-orch workload like <c>provision-signing-key</c>. Binding is the activation: it creates the public client
 /// with a fresh e2e organization and project id (or reports the existing ones, changing nothing). Unbinding deletes it;
 /// tokens already issued expire within 15 minutes. Both log an audit line.
 /// </summary>

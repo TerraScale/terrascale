@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # CI runs the `test-libs`, `test-auth` and `test-terrabase` stages on pull requests and pushes (.github/workflows/ci.yml);
-# `make docker-test` builds `test`, all three. The `terrabase` and `ts-auth` stages are the images CI deploys to Fly.
+# `make docker-test` builds `test`, all three. The `terrabase` and `ts-auth` stages are the images ts-orch runs on OCI.
 # ts-auth builds ts-dotnet from source (named context `ts-dotnet`, a checkout); its tests start the TerraBase built from
 # this same tree (Makefile TERRABASE_BINARY).
 
@@ -10,7 +10,7 @@ FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.1-resolu
 
 FROM sdk AS base
 # Test hosts retain the eight-CPU .NET budget across runner types.
-# Publish/runtime stages have their own base and retain Fly's automatic CPU discovery.
+# Publish/runtime stages have their own base and retain automatic CPU discovery.
 ARG DOTNET_PROCESSOR_COUNT=8
 ARG DOTNET_GCHeapCount=8
 ENV DOTNET_PROCESSOR_COUNT=$DOTNET_PROCESSOR_COUNT DOTNET_GCHeapCount=$DOTNET_GCHeapCount
@@ -115,10 +115,10 @@ FROM scratch AS test-slow
 COPY --from=slow-auth-run /slow /auth/
 COPY --from=slow-terrabase-run /slow /terrabase/
 
-# Fly images: the self-contained release executables (`make terrabase-publish` / `auth-publish` flags) on the chiseled
+# OCI images: the self-contained release executables (`make terrabase-publish` / `auth-publish` flags) on the chiseled
 # runtime-deps base (6 MB: no shell, no package manager). Every consumer reuses its area's compiled/published build layer.
-# CI deployment needs this same run's `test`. Run admin commands with `fly ssh console -C '/app/<binary> ...'`.
-# root: Fly mounts volumes root-owned.
+# CI deployment needs this same run's `test`.
+# root: ts-orch mounts TerraBase's host data directory at /data.
 # A linux/arm64 target (ghcr images, CI `images` job) republishes for linux-arm64; amd64 keeps the build stage's /out.
 FROM build-terrabase AS publish-terrabase
 ARG TARGETARCH TERRABASE_REVISION
@@ -128,7 +128,7 @@ FROM build-auth AS publish-ts-auth
 ARG TARGETARCH TS_AUTH_REVISION
 RUN if [ "$TARGETARCH" = arm64 ]; then rm -rf /out && make auth-publish RUNTIME=linux-arm64 PUBLISH_DIR=/out; fi
 
-# Fly mounts TerraBase's volume at /data.
+# ts-orch mounts TerraBase's volume at /data.
 FROM mcr.microsoft.com/dotnet/runtime-deps:11.0-resolute-chiseled AS terrabase
 COPY --from=publish-terrabase /out /app
 USER 0
