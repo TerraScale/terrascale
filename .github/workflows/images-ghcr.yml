@@ -1,11 +1,12 @@
 # Public multi-arch image ts-orch runs (REFACTOR.md W10): ghcr.io/terrascale/ts-dashboard:<sha> and :main,
-# linux/amd64 + linux/arm64 (portable publish on the builder's platform). Reuses CI's layer cache;
-# the digest goes to the job summary.
+# linux/amd64 + linux/arm64 (portable publish on the builder's platform). Writes the layer cache CI's
+# pull request image builds read; the digest goes to the job summary.
 name: Images (GHCR)
 
 on:
   push:
     branches: [main]
+    paths-ignore: ["**/*.md"]
   workflow_dispatch:
 
 # Every publish runs to completion in its own group.
@@ -44,8 +45,9 @@ jobs:
             ghcr.io/terrascale/ts-dashboard:${{ github.sha }}
             ${{ github.ref == 'refs/heads/main' && 'ghcr.io/terrascale/ts-dashboard:main' || '' }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          # Reads CI's main layer cache; never writes it.
+          # Only main writes the layer cache; CI's pull request builds read it.
           cache-from: type=gha,scope=dashboard-image
+          cache-to: type=gha,mode=max,scope=dashboard-image
           push: true
       # Index digest plus each platform's child digest (ts-orch specs pin the linux/arm64 child).
       - run: |
