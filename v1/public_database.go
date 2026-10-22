@@ -149,7 +149,8 @@ func (d *Database) CreateIn(ctx context.Context, placement Placement) (*ManagedD
 		Name           string   `json:"name"`
 		HomeRegion     string   `json:"homeRegion,omitempty"`
 		ReplicaRegions []string `json:"replicaRegions"`
-	}{d.name, placement.HomeRegion, placement.ReplicaRegions}
+		AllRegions     bool     `json:"allRegions,omitempty"`
+	}{d.name, placement.HomeRegion, placement.ReplicaRegions, placement.AllRegions}
 	return publicCall[ManagedDatabase](ctx, d.c, req, body)
 }
 
@@ -162,6 +163,12 @@ func (d *Database) SetRegions(ctx context.Context, regions []string) (*ManagedDa
 	return databaseCall[ManagedDatabase](ctx, d, http.MethodPatch, nil, struct {
 		ReplicaRegions []string `json:"replicaRegions"`
 	}{regions})
+}
+
+// SetAllRegions places a full copy of the database in every serving region,
+// including regions that join later. SetRegions turns it off.
+func (d *Database) SetAllRegions(ctx context.Context) (*ManagedDatabase, error) {
+	return databaseCall[ManagedDatabase](ctx, d, http.MethodPatch, nil, allRegionsBody)
 }
 
 // Branch clones this database into a new database of the same project.

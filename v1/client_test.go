@@ -212,12 +212,16 @@ func TestDatabasePlacementRequests(t *testing.T) {
 	u.CreateDatabaseIn(ctx, testOrg, testProject, "orders", v1.Placement{HomeRegion: "gru-1", ReplicaRegions: []string{"sfo-1"}})
 	u.SetDatabaseRegions(ctx, testOrg, testProject, "01ARZ3NDEKTSV4RRFFQ69G5FA5", []string{"sfo-1"})
 	u.SetDatabaseRegions(ctx, testOrg, testProject, "01ARZ3NDEKTSV4RRFFQ69G5FA5", nil)
+	u.CreateDatabaseIn(ctx, testOrg, testProject, "orders", v1.Placement{AllRegions: true})
+	u.SetDatabaseAllRegions(ctx, testOrg, testProject, "01ARZ3NDEKTSV4RRFFQ69G5FA5")
 	const databases = "/v1/management/organizations/" + testOrg + "/projects/" + testProject + "/databases"
 	want := []string{
 		"POST " + databases + ` {"name":"orders"}`,
 		"POST " + databases + ` {"name":"orders","homeRegion":"gru-1","replicaRegions":["sfo-1"]}`,
 		"PATCH " + databases + `/01ARZ3NDEKTSV4RRFFQ69G5FA5 {"replicaRegions":["sfo-1"]}`,
 		"PATCH " + databases + `/01ARZ3NDEKTSV4RRFFQ69G5FA5 {"replicaRegions":[]}`, // nil clears the replicas
+		"POST " + databases + ` {"name":"orders","allRegions":true}`,
+		"PATCH " + databases + `/01ARZ3NDEKTSV4RRFFQ69G5FA5 {"allRegions":true}`,
 	}
 	if !slices.Equal(capture.got, want) {
 		t.Fatalf("sent\n%s\nwant\n%s", strings.Join(capture.got, "\n"), strings.Join(want, "\n"))
