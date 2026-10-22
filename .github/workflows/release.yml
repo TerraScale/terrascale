@@ -110,7 +110,7 @@ jobs:
   # and checks the restored bytes are the released ones: after the push above, and alone before a nuget.org push.
   restore:
     needs: [package, github-packages]
-    if: ${{ !cancelled() && !failure() }}
+    if: ${{ !cancelled() && !failure() && github.ref_type == 'tag' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -179,7 +179,7 @@ jobs:
   nuget-org:
     needs: restore
     # Spelled out: the implicit success() would skip this job, as package and github-packages are skipped on dispatch.
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && needs.restore.result == 'success' }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && github.ref_type == 'tag' && needs.restore.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
