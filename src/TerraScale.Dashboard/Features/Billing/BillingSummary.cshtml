@@ -5,7 +5,6 @@
     var org = Model.Shell.Context.Organization!;
     var binding = Model.Binding;
     var plan = PlanCatalog.For(org);
-    var interval = HttpContext!.Request.Query["interval"] == "annual" ? "annual" : "monthly";
     var owner = Model.CanManage;
     var subscribed = binding?.SubscriptionId is { Length: > 0 } && binding.Status is not ("canceled" or "incomplete_expired");
     var awaiting = org.BillingStatus == "billing_required" && !subscribed;
@@ -13,6 +12,8 @@
     var planName = awaiting || plan is null ? "No plan" : plan.Name;
     var status = org.BillingStatus == "billing_required" ? "Payment required" : binding?.Status == "trialing" ? "Trialing" : org.BillingStatus == "active" ? "Active" : org.BillingStatus;
     var effectiveInterval = binding?.EffectiveInterval is { Length: > 0 } currentInterval ? currentInterval : binding?.Interval;
+    var requestedInterval = HttpContext!.Request.Query["interval"].ToString();
+    var interval = (requestedInterval is "monthly" or "annual" ? requestedInterval : subscribed ? effectiveInterval : null) == "annual" ? "annual" : "monthly";
     var statusClass = binding?.Status == "trialing" ? "ts-badge-info" : awaiting ? "ts-badge-warning" : org.BillingStatus is "" or "active" ? "ts-badge-success" : "ts-badge-neutral";
     var paid = Model.Plans.Where(item => item.PriceCents > 0).ToArray();
 }
