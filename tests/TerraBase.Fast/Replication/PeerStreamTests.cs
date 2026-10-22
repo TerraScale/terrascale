@@ -1664,8 +1664,10 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, await gru.HeadAsync(cluster.Database))).IsTrue();
 
-        // Keep the receiver alive with its failed coverage while the sender's storage is rebuilt without peer rows.
-        await gru.Api.Server.Services.GetRequiredService<PeerStreams>().StopAsync(CancellationToken.None);
+        // Keep both hosts alive while discovery pauses the sender and its storage is rebuilt without peer rows.
+        var member = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "sjc");
+        cluster.Members.Leave(member.Name);
+        await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
         await sjc.LoseAsync("items", lost);
         using (var push = await RawPush.StartAsync(sjc, gru.Name, gru.Node))
         {
@@ -1708,10 +1710,9 @@ public sealed class PeerStreamTests
             return Task.CompletedTask;
         };
         var release = sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var sender = ActivatorUtilities.CreateInstance<PeerStreams>(gru.Api.Server.Services);
         try
         {
-            await sender.StartAsync(CancellationToken.None);
+            cluster.Members.Join(member);
             await digested.Task.WaitAsync(Deadline);
             await sjc.RepairWaits.Task.WaitAsync(Deadline);
             await Assert.That(await sjc.ReadAsync(lost)).IsNull();
@@ -1731,7 +1732,6 @@ public sealed class PeerStreamTests
         finally
         {
             _ = release.TrySetResult();
-            await sender.StopAsync(CancellationToken.None);
         }
     }
 
