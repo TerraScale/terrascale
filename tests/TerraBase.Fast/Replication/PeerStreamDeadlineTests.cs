@@ -271,12 +271,13 @@ public sealed class PeerStreamDeadlineTests
 
         held.Release.SetResult();
         await held.CursorReady.Task.WaitAsync(Deadline);
+        var expected = ChangeGroups.Wire(databases[0], await IncarnationAsync(api, databases[0]));
         PushFrame resumed;
         do
         {
             resumed = await peer.NextAsync();
         }
-        while (resumed.Batch?.Database != ChangeGroups.Wire(databases[0], await IncarnationAsync(api, databases[0])));
+        while (resumed.Batch?.Database.Equals(expected) is not true);
         await source.UntilAckedAsync(databases[0], ReplicaId.Of(1, 9, 0), (long)resumed.Batch.LastChangeId, deadline.Token);
         await Assert.That(peer.Streams).IsEqualTo(1);
     }
@@ -319,7 +320,7 @@ public sealed class PeerStreamDeadlineTests
         release.SetResult();
         for (var index = 32; index < 70; index++)
         {
-            await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[index], await IncarnationAsync(api, databases[index])));
+            await Assert.That((await NextBatchAsync(index)).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[index], await IncarnationAsync(api, databases[index])));
         }
 
         await held.Entered.Task.WaitAsync(Deadline);
@@ -338,10 +339,28 @@ public sealed class PeerStreamDeadlineTests
         await Assert.That(source.AckedBy(databases[^1], ReplicaId.Of(1, 9, 0))).IsEqualTo(0);
 
         held.Release.SetResult();
-        await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[^1], await IncarnationAsync(api, databases[^1])));
+        await Assert.That((await NextBatchAsync(70)).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[^1], await IncarnationAsync(api, databases[^1])));
         using var deadline = new CancellationTokenSource(Deadline);
         await Task.WhenAll(databases.Select(database => source.UntilAckedAsync(database, ReplicaId.Of(1, 9, 0), 1, deadline.Token)));
         await Assert.That(peer.Streams).IsEqualTo(1);
+
+        async Task<PushFrame> NextBatchAsync(int index)
+        {
+            while (true)
+            {
+                var frame = await peer.NextAsync();
+                if (frame.Frontier is not { } frontier)
+                {
+                    await Assert.That(frame.KindCase).IsEqualTo(PushFrame.KindOneofCase.Batch);
+                    return frame;
+                }
+
+                // Independent cold initialization can finish across passes; caught-up databases report their frontier.
+                var database = ChangeGroups.Tenant(frontier.Database);
+                await Assert.That(databases.Take(index).Contains(database)).IsTrue();
+                await Assert.That(frontier.Database).IsEqualTo(ChangeGroups.Wire(database, await IncarnationAsync(api, database)));
+            }
+        }
     }
 
     [Test]
