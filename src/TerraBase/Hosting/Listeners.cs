@@ -167,7 +167,7 @@ public static class Listeners
                     };
                     response.Headers["X-TerraBase-Machine"] = new OpenApiHeader
                     {
-                        Description = "Machine of the serving TerraBase node (FLY_MACHINE_ID; local off Fly; client listener only).",
+                        Description = "Node of the serving TerraBase node (TS_NODE; local outside a cluster; client listener only).",
                         Schema = new OpenApiSchema { Type = JsonSchemaType.String },
                     };
                 }
