@@ -1,7 +1,7 @@
 # Write-throughput floor: OPEN release gate (2026-10-12)
 
 **Status: OPEN, blocking release.** No build measured so far meets the design's floor on the standard stand-in for a
-Fly `shared-cpu-2x` 512 MB machine. Nothing here lowers the floor or claims a Fly number.
+local 2-CPU, 512 MiB machine. Nothing here lowers the floor or claims a cloud number.
 
 ## The floor
 
@@ -43,21 +43,14 @@ For comparability, local runs that stand in for `shared-cpu-2x` 512 MB use:
 Any other shape is labeled with its exact limits. Runs that check correctness under deliberate load are labeled apart
 from quiet benchmark runs.
 
-## Floor check in the 1M run (planned; blocked)
+## Floor check in the 1M run
 
-The Fly 1M run (`benchmark/scripts/repl-fly.sh`, #79) reports created documents/s per region from its timeline. It adds
-a floor run per region with the load above (`--batch 1 --concurrency 16`), so the number compares with the table. Each
-region's result is stated against 500 operations/s, with the machine size and limits as Fly reports them.
-
-Blocked on:
-- the credential handoff (user-run);
-- R3 deployed;
-- the merge and preview-push holds being lifted.
+A cloud floor run is pending a replacement harness and measured host limits.
 
 ## Closing this gate
 
 The gate closes only with a measured run at or above the floor, either:
-- on Fly `shared-cpu-2x` at the release commit; or
+- on a measured cloud host at the release commit; or
 - until then, as a stand-in, on the standard shape above.
 
 The run must follow a fix: a section 22 fallback, or a write-path optimization measured before and after with the same

@@ -27,7 +27,7 @@ Read from the TerraBase server process (not a wrapper or the load generator) at 
 | GC | workstation, concurrent (the project's settings); no `DOTNET_GCHeapHardLimit`: the runtime takes its limit from the cgroup's 512 MiB |
 | Load generator | `benchmark/dotnet/DrainBench` in its own process, `taskset -c 6-9 nice -n 19` (the server inherits nice 19), HTTP/2 to the internal listener |
 
-So this is a real 2-CPU (affinity + quota), 512 MiB limit, not a Fly machine: Fly's shared-cpu vCPUs, disk and network differ.
+So this is a real 2-CPU (affinity + quota), 512 MiB limit, not a cloud measurement: cloud vCPUs, disk and network differ.
 
 ## Method
 

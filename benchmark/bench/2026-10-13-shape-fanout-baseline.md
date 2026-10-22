@@ -95,10 +95,8 @@ writer, measurement and reporting path, without flags.
 
 Two local `BenchmarkClusterHost` regions (`gru,sjc`) share one process because database placement requires two
 serving regions. All client traffic targets gru, over HTTP/1.1 on loopback, with the existing test-only ts-auth stand-in
-and temporary storage. No Fly run, WAN, proxy or TLS is included; sjc is the local replica.
-This local test-binary baseline follows the B2 request to run locally with no Fly runs; serving-region `.internal` DNS
-discovery and Fly-secret credentials are outside this run. The explicit task scope overrides the repository's general
-Fly benchmark requirements.
+and temporary storage. No cloud run, WAN, proxy or TLS is included; sjc is the local replica.
+This local test-binary baseline includes no cloud discovery or production credentials.
 
 For each requested N = 1, 10, 100, 1000, the harness opens followers at 20/s, one at a time, to avoid the fixture's
 independent Hobby QoS admission limit. Only `changes_busy` counts as an expected rejection. After admission, a writer

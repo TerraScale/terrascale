@@ -37,7 +37,7 @@ Connect issuer.
 | `{project id}` | The end users of one customer project | `https://auth.terrascale.tech/{project id}` |
 
 - **Origin.** The issuer is `https://auth.terrascale.tech/{tenant}`: one
-  global origin, served in every region behind Fly Proxy. The issuer never
+  global origin, served through regional ingress. The issuer never
   comes from a request's `Host` header.
 - **Project tenants.** Creating a project creates its tenant, whose slug is the
   project id (a canonical uppercase ULID). Deleting the project deletes the
@@ -443,7 +443,7 @@ without a signed-in user.
 - A user of the `terrascale` tenant can be a platform administrator. Its
   sign-in access tokens and `userinfo` carry `"platform_admin": true`;
   organization, project and API key tokens never do.
-- Only an operator sets and clears it, through `fly ssh` on a ts-auth machine;
+- Only an operator sets and clears it, through the authorized administrative channel on a ts-auth host;
   there is no HTTP route and no operator key. The TS-602 bootstrap makes the
   first user an administrator this way.
 - The flag shows in the next token the user is issued: a refresh or a new
@@ -460,11 +460,11 @@ without a signed-in user.
   this API and suspends a project through section 8.1.
 - **ts-auth's own storage.** ts-auth reaches TerraBase at
   `http://gru.ts-terrabase.internal:8081` for everything but discovery and the JWKS (those at its own region's), TerraBase's internal
-  listener on Fly's private network. Storage requests carry the shared
-  `TERRABASE_PEER_SECRET` supplied through Fly secrets on each app; see
+  listener on the private service network. Storage requests carry the shared
+  `TERRABASE_PEER_SECRET` supplied through OCI Vault on each app; see
   [peer authentication](../terrabase/peer-authentication.md) for rollout and enforcement.
   The separate storage-signing-key design is retired. Signing keys live in
-  TerraBase, sealed under `TS_AUTH_MASTER_KEY`, also supplied through Fly secrets.
+  TerraBase, sealed under `TS_AUTH_MASTER_KEY`, also supplied through OCI Vault.
 
 ## 10. Clients
 

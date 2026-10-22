@@ -3,7 +3,7 @@ root=pathlib.Path.cwd(); case=root/'artifacts/f8'/os.environ.get('F8_LABEL','bef
 def port():
     with socket.socket() as s: s.bind(('127.0.0.1',0)); return s.getsockname()[1]
 def uid(): return '01'+uuid.uuid4().hex[:24].upper().replace('I','A').replace('L','B').replace('O','C').replace('U','D')
-public,internal,metrics=port(),port(),port(); env={k:v for k,v in os.environ.items() if not k.startswith(('FLY_','TERRABASE_','AWS_'))}; env['DOTNET_ENVIRONMENT']='Development'
+public,internal,metrics=port(),port(),port(); env={k:v for k,v in os.environ.items() if not k.startswith(('TERRABASE_','AWS_'))}; env['DOTNET_ENVIRONMENT']='Development'
 log=open(case/'node.log','w'); process=subprocess.Popen(['dotnet',os.environ.get('F8_BINARY',str(root/'src/TerraBase/bin/Debug/net11.0/terrabase.dll')),f'--data-directory={case}/data',f'--port={public}',f'--internal-port={internal}',f'--metrics-port={metrics}'],env=env,stdout=log,stderr=log)
 def request(method,path,body=None):
     cmd=['curl','--silent','--show-error','--max-time','10','--http2-prior-knowledge','-X',method,f'http://127.0.0.1:{internal}'+path,'-H','Content-Type: application/json',]
