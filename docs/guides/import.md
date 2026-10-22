@@ -166,7 +166,7 @@ Write a name bare when it uses only `a-z`, `0-9` and `_` and does not start with
 ## How data maps
 
 - **Collection:** the table name, lowercased. Tables in `public` (PostgreSQL) or `main` (SQLite) drop the schema; others become `schema_table`. Characters outside `a-z`, `0-9`, `_` and `-` become `_`, a name that does not start with a letter gets a `t_` prefix, and names are cut to 63 characters. Two tables that map to one name, or a reserved name such as `collections`, block the import (`collection_name_collision`).
-- **Document ID:** the primary key's canonical text: integer digits, lowercase UUID or the string as is. A composite key joins its parts with `:` after escaping `%` as `%25` and `:` as `%3A`, so key `(1, 2)` becomes `1:2`. A SQLite table without a primary key uses its `rowid` (`idPolicy` `rowid`). IDs are 1 to 256 characters without control characters.
+- **Document ID:** a deterministic ULID, the same on every resume. It derives from the source row's primary key, or from the `rowid` of a SQLite table without one (`idPolicy` `rowid`). Primary key columns stay ordinary document fields.
 - **Document body:** one JSON member per imported column, named exactly as the column.
 - **Constraints are recorded, never enforced.** Primary, unique and foreign keys and `NOT NULL` appear in the preview with `enforced: false`; values are imported unchanged. A foreign key that targets a primary key holds the referenced document's ID. Check constraints, defaults, sequences, indexes, triggers, views, functions, policies, extensions, ownership and grants are skipped.
 - **Import record.** The destination keeps a collection named `terrascale-import` as the import's audit record. Deleting that collection makes the database forget its import.

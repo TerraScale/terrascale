@@ -51,7 +51,7 @@ INSERT INTO orders VALUES
 INSERT INTO audit_log VALUES ('created', '2026-01-01'), ('created', '2026-01-01');
 ```
 
-Expect two blocking issues: `public.orders` column `tags` is an array (`unsupported_type`), and `public.audit_log` has no primary key (`missing_primary_key`). Resolve them with `exclude: ["public.orders.tags"]` and `missingPrimaryKey: "generate"`. The order with key `(1, 2)` becomes document `1:2`, and `9007199254740993` stays exact.
+Expect two blocking issues: `public.orders` column `tags` is an array (`unsupported_type`), and `public.audit_log` has no primary key (`missing_primary_key`). Resolve them with `exclude: ["public.orders.tags"]` and `missingPrimaryKey: "generate"`. The order with key `(1, 2)` gets a deterministic ULID document ID and keeps both key columns as fields, and `9007199254740993` stays exact.
 
 ## 2. Create a read-only role
 

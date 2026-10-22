@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { createTerraScaleClient, Direction, select, type TerraScaleSyncV1Client } from "@terrascale/sdk";
+import { createTerraScaleClient, Direction, generateId, select, type TerraScaleSyncV1Client } from "@terrascale/sdk";
 import { authorId, posts, publishedAt, title } from "../schema";
 import { createStarterCredential, oauthClientId, readOAuthTokens, type Credential, type OAuthTokens } from "../auth";
 
@@ -205,7 +205,7 @@ function LivePosts({ credential }: { credential: Credential }) {
       setError("Retry the unchanged post to resolve the previous write before creating another.");
       return;
     }
-    const operation = pending.current ?? { id: crypto.randomUUID(), title: postTitle, publishedAt: new Date().toISOString() };
+    const operation = pending.current ?? { id: generateId(), title: postTitle, publishedAt: new Date().toISOString() };
     pending.current = operation;
     const controller = new AbortController();
     writeController.current = controller;
