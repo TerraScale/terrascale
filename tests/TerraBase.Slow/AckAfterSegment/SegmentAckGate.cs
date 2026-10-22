@@ -29,7 +29,6 @@ internal enum Ack
 internal sealed class SegmentAckGate : IAsyncDisposable
 {
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(1);
-    private readonly IWalTap _tap;
     private readonly IObjectStore _store;
     private readonly string _prefix;
     private readonly CancellationTokenSource _stop = new();
@@ -44,7 +43,7 @@ internal sealed class SegmentAckGate : IAsyncDisposable
 
     private SegmentAckGate(IWalTap tap, IObjectStore store, string prefix)
     {
-        (_tap, _store, _prefix) = (tap, store, prefix);
+        (Tap, _store, _prefix) = (tap, store, prefix);
     }
 
     /// <summary>Segments stored.</summary>
@@ -62,7 +61,7 @@ internal sealed class SegmentAckGate : IAsyncDisposable
     /// <summary>Size of the generation's snapshot.</summary>
     public long SnapshotBytes { get; private set; }
 
-    internal IWalTap Tap => _tap;
+    internal IWalTap Tap { get; }
 
     /// <summary>From the generation's start to its snapshot being stored: nothing can be acknowledged meanwhile.</summary>
     public TimeSpan SnapshotStall { get; private set; }
@@ -133,7 +132,7 @@ internal sealed class SegmentAckGate : IAsyncDisposable
         {
         }
 
-        await _tap.DisposeAsync().ConfigureAwait(false);
+        await Tap.DisposeAsync().ConfigureAwait(false);
         _stop.Dispose();
         _signal.Dispose();
     }
@@ -166,7 +165,7 @@ internal sealed class SegmentAckGate : IAsyncDisposable
             {
                 try
                 {
-                    read = await _tap.ReadAsync(segment, stop).ConfigureAwait(false);
+                    read = await Tap.ReadAsync(segment, stop).ConfigureAwait(false);
                     break;
                 }
                 catch (StorageBusyException) when (!stop.IsCancellationRequested)
