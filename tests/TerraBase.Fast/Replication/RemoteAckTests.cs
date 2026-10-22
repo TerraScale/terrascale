@@ -1720,7 +1720,7 @@ public sealed class RemoteAckTests
         }
     }
 
-    // Monotonic time advances while timers use real time: a timeout callback can be delayed under thread-pool load.
+    // Hold timeout callbacks while monotonic time advances, as when the runtime delays timer dispatch.
     private sealed class DelayedAckClock : TimeProvider
     {
         private readonly FakeTimeProvider _time = new();
@@ -1730,6 +1730,17 @@ public sealed class RemoteAckTests
         public override long GetTimestamp() => _time.GetTimestamp();
 
         public void Advance(TimeSpan elapsed) => _time.Advance(elapsed);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) => new HeldTimer();
+
+        private sealed class HeldTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose() { }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 
     private sealed class AckGate
