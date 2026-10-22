@@ -372,7 +372,8 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             var buckets = await transaction.ReadDigestsAsync(cancellationToken).ConfigureAwait(false);
             var head = await transaction.GetHeadAsync(cancellationToken).ConfigureAwait(false);
             var feed = opened.IsSystem ? 0 : await transaction.ReadShapeFrontierAsync(remote: false, cancellationToken).ConfigureAwait(false);
-            return new ReplicaDigest(named, head, buckets, feed);
+            var collectedBefore = await transaction.GetCollectedBeforeAsync(cancellationToken).ConfigureAwait(false);
+            return new ReplicaDigest(named, head, buckets, feed) { CollectedBefore = collectedBefore };
         }
     }
 

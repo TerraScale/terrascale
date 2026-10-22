@@ -354,13 +354,14 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         var digest = database == ChangeGroups.System && !_catalogGate.Value.Trusted ? null
             : await _states.DigestAsync(database, expected, context.CancellationToken).ConfigureAwait(false);
         return digest is null
-            ? new DigestReply { Held = false }
+            ? new DigestReply { Held = false, CollectedBefore = 0 }
             : new DigestReply
             {
                 Held = true,
                 Buckets = Google.Protobuf.UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(digest.Buckets)),
                 Incarnation = Google.Protobuf.ByteString.CopyFrom(digest.Incarnation.ToByteArray()),
                 HeadChangeId = checked((ulong)digest.Head),
+                CollectedBefore = digest.CollectedBefore.Value,
             };
     }
 

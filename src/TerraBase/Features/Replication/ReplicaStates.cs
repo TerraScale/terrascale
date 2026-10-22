@@ -14,7 +14,11 @@ public sealed record BucketCursor(int Bucket, string Collection, string Id);
 /// <param name="Head">Its newest change id, or 0, read in the same snapshot as the digests.</param>
 /// <param name="Buckets">4096 × (h1, h2), little-endian: the XOR of each bucket's document digests.</param>
 /// <param name="Feed">Its feed head (<c>seq</c>), or 0, read in the same snapshot.</param>
-public sealed record ReplicaDigest(Ulid Incarnation, long Head, byte[] Buckets, long Feed);
+public sealed record ReplicaDigest(Ulid Incarnation, long Head, byte[] Buckets, long Feed)
+{
+    /// <summary>The durable collected-state frontier, read in the same snapshot as the digests.</summary>
+    public Hlc CollectedBefore { get; init; }
+}
 
 /// <summary>
 /// What anti-entropy reads of this machine's copy of a database (docs/terrabase/multi-region-replication.md section 10):

@@ -611,6 +611,100 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
 
     public async Task WaitAsync(CancellationToken cancellationToken) => _ = await _wake.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
 
+    public async ValueTask<int?> RefillRebuildAsync(
+        TenantContext database, Ulid newIncarnation, IReadOnlyList<int> buckets, BucketCursor? after,
+        IReadOnlyList<RepairState> states, Hlc collectedBefore, CancellationToken cancellationToken)
+    {
+        SqliteStorageTransaction.ValidateRefillPage(database, buckets, after, states);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(collectedBefore.Value, (ulong)long.MaxValue, nameof(collectedBefore));
+        if (database == ChangeGroups.System
+            || await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store
+            || !UnderRebuild(store, newIncarnation) || store.RebuildRow?.Phase != RebuildPhase.Swapped)
+        {
+            return null;
+        }
+
+        var system = await SystemAsync(cancellationToken).ConfigureAwait(false);
+        var key = Key.Of(database);
+        var changed = 0;
+        var cursor = after;
+        if (collectedBefore.Value > 0)
+        {
+            while (true)
+            {
+                // Each local gap page releases its decoded graphs at disposal before the next FULL writer.
+                await using var transaction = await store.BeginRebuildTransactionAsync(cancellationToken).ConfigureAwait(false);
+                if (!await RefillHeldAsync(system, key, store, transaction, newIncarnation, collectedBefore, cancellationToken).ConfigureAwait(false))
+                {
+                    return null;
+                }
+
+                var (forgotten, next) = await transaction.ReconcileRefillAsync(buckets, cursor, states, collectedBefore, cancellationToken).ConfigureAwait(false);
+                _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                changed += forgotten;
+                if (next is null)
+                {
+                    break;
+                }
+
+                cursor = next;
+            }
+        }
+
+        await using var joining = await store.BeginRebuildTransactionAsync(cancellationToken).ConfigureAwait(false);
+        if (!await RefillHeldAsync(system, key, store, joining, newIncarnation, collectedBefore, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        foreach (var state in states)
+        {
+            changed += await joining.JoinBaselineAsync(state.Collection, state.Id, state.State,
+                new EntryVersion(state.State.MaxStamp, default), cancellationToken).ConfigureAwait(false) ? 1 : 0;
+        }
+
+        _ = await joining.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return changed;
+    }
+
+    // Called under each receiver writer, before reconciliation or a baseline join; no source proof survives a partial pass.
+    private async ValueTask<bool> RefillHeldAsync(
+        SqliteDatabaseStore system, Key key, SqliteDatabaseStore store, SqliteStorageTransaction transaction,
+        Ulid incarnation, Hlc collectedBefore, CancellationToken cancellationToken)
+    {
+        // Read before taking the gate: corrupt storage must be able to record its fault through the ledger.
+        if (!UnderRebuild(store, incarnation) || !CurrentCopy(key, store, incarnation)
+            || !await InPlaceAsync(transaction, incarnation, cancellationToken).ConfigureAwait(false)
+            || (await transaction.GetCollectedBeforeAsync(cancellationToken).ConfigureAwait(false)).Value > collectedBefore.Value)
+        {
+            return false;
+        }
+
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (await ReadRowAsync(system, key, cancellationToken).ConfigureAwait(false) is not { Phase: RebuildPhase.Swapped } row
+                || row.New != incarnation || row.Member != engine.ReplicaId.Member
+                || !UnderRebuild(store, incarnation) || !CurrentCopy(key, store, incarnation))
+            {
+                return false;
+            }
+
+            if (row.Refill is not null)
+            {
+                var cleared = row with { Refill = null };
+                await WriteAsync(system, [cleared], [], cancellationToken).ConfigureAwait(false);
+                Committed(key, cleared);
+            }
+
+            return true;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async ValueTask<int?> RepairRebuildAsync(TenantContext database, Ulid newIncarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(states);
@@ -644,11 +738,12 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
     }
 
     public async ValueTask<bool> RecordRefillAsync(
-        TenantContext database, Ulid newIncarnation, string sourceMachine, Ulid sourceIncarnation, long head, CancellationToken cancellationToken)
+        TenantContext database, Ulid newIncarnation, string sourceMachine, Ulid sourceIncarnation, long head, Hlc collectedBefore, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(sourceMachine);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(sourceMachine.Length, MaxMachine, nameof(sourceMachine));
         ArgumentOutOfRangeException.ThrowIfNegative(head);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(collectedBefore.Value, (ulong)long.MaxValue, nameof(collectedBefore));
         var system = await SystemAsync(cancellationToken).ConfigureAwait(false);
         if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store
             || !UnderRebuild(store, newIncarnation))
@@ -661,6 +756,18 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
             || row.New != newIncarnation || row.Member != engine.ReplicaId.Member)
         {
             return false;
+        }
+
+        // Baseline coverage is complete; inherit its absence frontier durably before proof publication or salvage.
+        await using (var transaction = await store.BeginRebuildTransactionAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (!UnderRebuild(store, newIncarnation) || !await InPlaceAsync(transaction, newIncarnation, cancellationToken).ConfigureAwait(false))
+            {
+                return false;
+            }
+
+            await transaction.InheritCollectedBeforeAsync(collectedBefore, cancellationToken).ConfigureAwait(false);
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         var proven = row with { Refill = new Refill(sourceMachine, sourceIncarnation, head) };

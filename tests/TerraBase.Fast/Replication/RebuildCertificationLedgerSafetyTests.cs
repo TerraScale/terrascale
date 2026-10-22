@@ -53,7 +53,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
         };
         var accepted = completing
             ? await fixture.Repair.CompleteRebuildAsync(fixture.Database, fixture.Original, fixture.Rebuilt, deadline.Token)
-            : await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, deadline.Token);
+            : await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, default, deadline.Token);
         fixture.Checkpoint = null;
         await Assert.That(hits).IsEqualTo(1);
         await Assert.That(detected?.SqliteErrorCode).IsEqualTo(11);
@@ -163,7 +163,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
             {
                 var publication = completing
                     ? fixture.Repair.CompleteRebuildAsync(fixture.Database, fixture.Original, fixture.Rebuilt, deadline.Token).AsTask()
-                    : fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, deadline.Token).AsTask();
+                    : fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, default, deadline.Token).AsTask();
                 // Cleanup records damage with CancellationToken.None; a gate/disposal deadlock must still time out.
                 _ = await publication.WaitAsync(TimeSpan.FromSeconds(30));
             });
@@ -190,7 +190,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
         await Assert.That(fixture.Copy.RebuildRow?.Phase).IsEqualTo(RebuildPhase.Pending);
         await Assert.That(fixture.Copy.RebuildRow?.Refill).IsNull();
         await AssertOrdinaryWriteRefusedAsync(fixture.Copy, deadline.Token);
-        await Assert.That(await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, deadline.Token)).IsFalse();
+        await Assert.That(await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, default, deadline.Token)).IsFalse();
         await Assert.That(await fixture.Repair.CompleteRebuildAsync(fixture.Database, fixture.Original, fixture.Rebuilt, deadline.Token)).IsFalse();
         await Assert.That(await fixture.Storage.FinalizeAsync(fixture.Database, fixture.Rebuilt, fixture.Side, deadline.Token)).IsFalse();
         await Assert.That(fixture.Engine.FileExists(fixture.Database)).IsTrue();
@@ -275,7 +275,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
         }, "a test replacing persisted receiver identity", deadline.Token);
         await Assert.That(fixture.Copy.Incarnation).IsEqualTo(fixture.Rebuilt).Because("the open store deliberately still caches the old identity");
         var accepted = operation == "refill"
-            ? await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, deadline.Token)
+            ? await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, default, deadline.Token)
             : await fixture.Repair.CompleteRebuildAsync(fixture.Database, fixture.Original, fixture.Rebuilt, deadline.Token);
         await Assert.That(accepted).IsFalse();
         await Assert.That(await fixture.Storage.FinalizeAsync(fixture.Database, fixture.Rebuilt, fixture.Side, deadline.Token)).IsFalse();
@@ -306,7 +306,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
         {
             accepted = completing
                 ? await fixture.Repair.CompleteRebuildAsync(fixture.Database, fixture.Original, fixture.Rebuilt, deadline.Token)
-                : await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, deadline.Token);
+                : await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, default, deadline.Token);
         }
         finally
         {
@@ -403,7 +403,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
         {
             var publication = completing
                 ? fixture.Repair.CompleteRebuildAsync(fixture.Database, fixture.Original, fixture.Rebuilt, caller.Token).AsTask()
-                : fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, caller.Token).AsTask();
+                : fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, default, caller.Token).AsTask();
             _ = await publication.WaitAsync(TimeSpan.FromSeconds(30));
         }
         try
@@ -443,7 +443,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
         }
         if (!completing)
         {
-            await Assert.That(await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, deadline.Token)).IsTrue();
+            await Assert.That(await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, default, deadline.Token)).IsTrue();
             await fixture.Ledger.SaveAsync(fixture.Expected with { Phase = RebuildPhase.Salvaged }, deadline.Token);
         }
         RebuildPhase? cachedAtPublication = null;
@@ -628,7 +628,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
                 }
                 if (salvaged)
                 {
-                    await Assert.That(await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, CancellationToken.None)).IsTrue();
+                    await Assert.That(await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, default, CancellationToken.None)).IsTrue();
                     await fixture.Ledger.SaveAsync(swapped with { Phase = RebuildPhase.Salvaged }, CancellationToken.None);
                 }
                 fixture.Expected = (await fixture.Ledger.GetAsync(fixture.Database, CancellationToken.None))!;

@@ -71,6 +71,9 @@ internal sealed partial class SqliteDatabaseStore(
         );
         CREATE INDEX _tb_state_bucket ON _tb_state (bucket, collection, id);
         CREATE INDEX _tb_state_dead ON _tb_state (stamp) WHERE live = 0;
+        CREATE TABLE _tb_merkle (bucket INTEGER PRIMARY KEY, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL);
+        CREATE TABLE _tb_gc_floor (id INTEGER PRIMARY KEY CHECK (id = 1), stamp INTEGER NOT NULL);
+        INSERT INTO _tb_gc_floor (id, stamp) VALUES (1, 0);
         CREATE TABLE _tb_peers (
             node INTEGER PRIMARY KEY, applied INTEGER NOT NULL, acked INTEGER NOT NULL, stable INTEGER NOT NULL, seen INTEGER NOT NULL,
             incarnation TEXT NOT NULL DEFAULT ''
@@ -112,6 +115,8 @@ internal sealed partial class SqliteDatabaseStore(
         );
         CREATE INDEX _tb_state_bucket ON _tb_state (bucket, collection, id);
         CREATE INDEX _tb_state_dead ON _tb_state (stamp) WHERE live = 0;
+        CREATE TABLE _tb_gc_floor (id INTEGER PRIMARY KEY CHECK (id = 1), stamp INTEGER NOT NULL);
+        INSERT INTO _tb_gc_floor (id, stamp) VALUES (1, 0);
         CREATE TABLE _tb_peers (
             node INTEGER PRIMARY KEY, applied INTEGER NOT NULL, acked INTEGER NOT NULL, stable INTEGER NOT NULL, seen INTEGER NOT NULL,
             incarnation TEXT NOT NULL DEFAULT ''

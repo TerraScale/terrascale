@@ -310,7 +310,12 @@ public sealed class ReplicaRebuildTests
     // The in-memory orchestration record outlives this fixture's restart; merge refill still crosses the real tenant barrier.
     private sealed class StandIn(Pair pair) : IRebuildCertification, IRebuildRepair
     {
-        private (Ulid Incarnation, long Head)? _refill;
+        private (Ulid Incarnation, long Head, Hlc CollectedBefore)? _refill;
+
+        public ValueTask<int?> RefillRebuildAsync(TenantContext database, Ulid newIncarnation, IReadOnlyList<int> buckets,
+            BucketCursor? after, IReadOnlyList<RepairState> states, Hlc collectedBefore, CancellationToken cancellationToken) =>
+            pair.Sjc.Api.Server.Services.GetRequiredService<IRebuildRepair>()
+                .RefillRebuildAsync(database, newIncarnation, buckets, after, states, collectedBefore, cancellationToken);
 
         public MemoryLedger Ledger { get; } = new();
 
@@ -335,9 +340,9 @@ public sealed class ReplicaRebuildTests
                 : null;
 
         public ValueTask<bool> RecordRefillAsync(
-            TenantContext database, Ulid newIncarnation, string sourceMachine, Ulid sourceIncarnation, long head, CancellationToken cancellationToken) =>
+            TenantContext database, Ulid newIncarnation, string sourceMachine, Ulid sourceIncarnation, long head, Hlc collectedBefore, CancellationToken cancellationToken) =>
             pair.Sjc.Api.Server.Services.GetRequiredService<IRebuildRepair>()
-                .RecordRefillAsync(database, newIncarnation, sourceMachine, sourceIncarnation, head, cancellationToken);
+                .RecordRefillAsync(database, newIncarnation, sourceMachine, sourceIncarnation, head, collectedBefore, cancellationToken);
 
         public ValueTask<bool> CompleteRebuildAsync(TenantContext database, Ulid oldIncarnation, Ulid newIncarnation, CancellationToken cancellationToken) =>
             CompleteAsync(database, oldIncarnation, newIncarnation, cancellationToken);
@@ -359,7 +364,7 @@ public sealed class ReplicaRebuildTests
                 return false;
             }
 
-            _refill = (pinned.Incarnation, pinned.Head);
+            _refill = (pinned.Incarnation, pinned.Head, pinned.CollectedBefore);
             return true;
         }
 
@@ -375,7 +380,7 @@ public sealed class ReplicaRebuildTests
             var durable = services.GetRequiredService<IRebuildLedger>();
             await durable.SaveAsync(record with { Phase = RebuildPhase.Pending, NewIncarnation = null }, cancellationToken);
             await durable.SaveAsync(record with { Phase = RebuildPhase.Swapped }, cancellationToken);
-            if (!await RecordRefillAsync(database, newIncarnation, pair.Gru.Name, proof.Incarnation, proof.Head, cancellationToken))
+            if (!await RecordRefillAsync(database, newIncarnation, pair.Gru.Name, proof.Incarnation, proof.Head, proof.CollectedBefore, cancellationToken))
             {
                 return false;
             }
@@ -639,7 +644,9 @@ public sealed class ReplicaRebuildTests
             var store = (SqliteDatabaseStore)await StoreAsync();
             _ = await store.WithWriterAsync(session =>
             {
+                using var transaction = session.Connection.BeginTransaction();
                 using var command = session.Connection.CreateCommand();
+                command.Transaction = transaction;
                 command.CommandText = sql;
                 command.Parameters.AddWithValue("$id", id);
                 command.Parameters.AddWithValue("$collection", collection);
@@ -648,7 +655,10 @@ public sealed class ReplicaRebuildTests
                     command.Parameters.AddWithValue("$misplaced", misplaced);
                 }
 
-                return command.ExecuteNonQuery();
+                var changed = command.ExecuteNonQuery();
+                MerkleFixture.Rebuild(session, transaction);
+                transaction.Commit();
+                return changed;
             }, "a test editing rows directly", CancellationToken.None);
             store.ForgetCollections();
         }

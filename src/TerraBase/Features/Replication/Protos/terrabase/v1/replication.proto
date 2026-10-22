@@ -143,6 +143,7 @@ message DigestReply {
   bytes buckets = 2;
   bytes incarnation = 3;
   uint64 head_change_id = 4;
+  optional fixed64 collected_before = 5;
 }
 
 // At most 4096 distinct buckets, each 0 to 4095, of the named incarnation: the stream fails with FAILED_PRECONDITION once

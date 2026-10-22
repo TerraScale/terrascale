@@ -992,6 +992,7 @@ internal sealed partial class SqliteStorageTransaction(
             }
 
             Command(SqliteStatements.DropDocuments, name).ExecuteNonQuery();
+            RemoveMerkleStates(name);
             Command(SqliteStatements.DropStates, name).ExecuteNonQuery();
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -1040,6 +1041,7 @@ internal sealed partial class SqliteStorageTransaction(
             _pending.Remove((name, id));
             if (next.Equals(clear))
             {
+                RemoveMerkleState(name, id);
                 var delete = Command("DELETE FROM _tb_state WHERE collection = $collection AND id = $id;", name);
                 delete.Parameters.AddWithValue("$id", id);
                 delete.ExecuteNonQuery();
@@ -1137,6 +1139,7 @@ internal sealed partial class SqliteStorageTransaction(
             table.ExecuteNonQuery();
         }
 
+        RemoveMerkleStates(name);
         Command(SqliteStatements.DropStates, name).ExecuteNonQuery();
         foreach (var key in _pending.Keys.Where(key => key.Collection == name).ToList())
         {

@@ -270,7 +270,7 @@ public sealed class RebuildLifecycleTests
         await Assert.That(await repair.RepairRebuildAsync(database, replacement, await SideStatesAsync(storage, originalSide), CancellationToken.None) ?? 0)
             .IsGreaterThan(0);
         _ = await repair.RepairRebuildAsync(database, replacement, await SideStatesAsync(storage, rebuiltSide), CancellationToken.None);
-        await Assert.That(await repair.RecordRefillAsync(database, replacement, "lifecycle-source", Ulid.NewUlid(), 1, CancellationToken.None)).IsTrue();
+        await Assert.That(await repair.RecordRefillAsync(database, replacement, "lifecycle-source", Ulid.NewUlid(), 1, default, CancellationToken.None)).IsTrue();
         await ledger.SaveAsync(swapped with { Phase = RebuildPhase.Salvaged }, CancellationToken.None);
         await Assert.That(await repair.CompleteRebuildAsync(database, rebuilt, replacement, CancellationToken.None)).IsTrue();
 
@@ -415,7 +415,7 @@ public sealed class RebuildLifecycleTests
         }
 
         // A stand-in source: the proof is what the barrier certifies.
-        if (!await repair.RecordRefillAsync(database, rebuilt, "lifecycle-source", Ulid.NewUlid(), 1, CancellationToken.None))
+        if (!await repair.RecordRefillAsync(database, rebuilt, "lifecycle-source", Ulid.NewUlid(), 1, default, CancellationToken.None))
         {
             throw new InvalidOperationException("the refill proof was refused");
         }
