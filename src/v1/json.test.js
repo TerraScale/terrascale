@@ -1,5 +1,41 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { assertJsonObject, assertJsonValue, ExactDecimal, parseExactJson, stringifyExactJson } from "./json.js";
+
+describe("exact decimal normalization", () => {
+  it("bounds hostile interior zero runs without losing the number text", () => {
+    // A child timeout bounds the regression even if synchronous parsing blocks.
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      import assert from "node:assert/strict";
+      import { ExactDecimal, parseExactJson } from ${JSON.stringify(new URL("./json.js", import.meta.url).href)};
+      const text = "1." + "0".repeat(131072) + "1";
+      const value = parseExactJson(text);
+      assert(value instanceof ExactDecimal);
+      assert.equal(value.toString(), text);
+      assert(value.equals(text + "0"));
+      assert.equal(value.isInteger(), false);
+    `], { encoding: "utf8", timeout: 3000 });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("preserves trailing zeros, exponents, signs and zero equivalence", () => {
+    expect(new ExactDecimal("123.4500").equals("12345e-2")).toBe(true);
+    expect(new ExactDecimal("-123.4500").equals("-12345e-2")).toBe(true);
+    expect(new ExactDecimal("-0.000").equals("0e99")).toBe(true);
+    expect(new ExactDecimal("1000.00e-1").toBigInt()).toBe(100n);
+    expect(new ExactDecimal("1000.01").isInteger()).toBe(false);
+    expect(parseExactJson("1000.00e-1")).toBe(100);
+  });
+
+  it("accepts only JSON whitespace around a number", () => {
+    expect(parseExactJson(" \t\r\n123.4500 \t\r\n")).toBe(123.45);
+    for (const whitespace of ["\u000b", "\u000c", "\u00a0", "\u2028", "\u2029", "\ufeff"]) {
+      expect(() => parseExactJson(`${whitespace}123.4500`)).toThrow(SyntaxError);
+      expect(() => parseExactJson(`123.4500${whitespace}`)).toThrow(SyntaxError);
+    }
+  });
+});
 
 describe("JSON input traversal budgets", () => {
   it("stops a shared binary DAG on its first traversal", () => {
