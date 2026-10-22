@@ -114,27 +114,42 @@ internal sealed partial class EngineManagementService
             return;
         }
 
-        var store = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
-        var recorded = await WriteAsync<bool>(async transaction =>
+        var result = await DeleteRecordedAsync(database, PrepareAsync, cancellationToken).ConfigureAwait(false);
+        if (result is not bool recorded || recorded)
         {
-            if (await transaction.GetVersionAsync(Databases(database.ProjectId!), database.DatabaseId!, cancellationToken).ConfigureAwait(false) is not { Deleted: true })
+            return;
+        }
+
+        // A local reservation can outlive the shared intent a peer cleared while cleaning its own copy.
+        var resumed = await WriteAsync<bool>(transaction => PrepareAsync(transaction, cancellationToken), static _ => false, cancellationToken).ConfigureAwait(false);
+        if (resumed)
+        {
+            _ = await FinishDatabaseCleanupAsync(database, CancellationToken.None).ConfigureAwait(false);
+        }
+
+        async ValueTask<bool> PrepareAsync(IStorageTransaction transaction, CancellationToken token)
+        {
+            if (await transaction.GetVersionAsync(Databases(database.ProjectId!), database.DatabaseId!, token).ConfigureAwait(false) is not { Deleted: true })
             {
                 return false;
             }
 
-            if (await transaction.GetAsync(PendingDatabaseCleanup, database.DatabaseId!, cancellationToken).ConfigureAwait(false) is null)
+            if (await transaction.GetAsync(PendingDatabaseCleanup, database.DatabaseId!, token).ConfigureAwait(false) is not { } pending)
             {
-                await PutAsync(transaction, PendingDatabaseCleanup, database.DatabaseId!, database, TerraBaseJsonContext.Default.TenantContext, cancellationToken).ConfigureAwait(false);
+                await PutAsync(transaction, PendingDatabaseCleanup, database.DatabaseId!, database, TerraBaseJsonContext.Default.TenantContext, token).ConfigureAwait(false);
+            }
+            else
+            {
+                var owner = JsonSerializer.Deserialize(pending.Json.Span, TerraBaseJsonContext.Default.TenantContext);
+                if (owner is null || owner.OrganizationId != database.OrganizationId || owner.ProjectId != database.ProjectId || owner.DatabaseId != database.DatabaseId)
+                {
+                    throw new InvalidOperationException("a database cleanup intent conflicts with the catalog");
+                }
             }
 
             // Purge before clearing the intent, so a failure after file removal still has durable retry work.
-            await transaction.DeleteCollectionsAsync(SystemCatalog.DatabaseState(database.DatabaseId!), cancellationToken).ConfigureAwait(false);
+            await transaction.DeleteCollectionsAsync(SystemCatalog.DatabaseState(database.DatabaseId!), token).ConfigureAwait(false);
             return true;
-        }, static _ => false, cancellationToken).ConfigureAwait(false);
-        if (recorded)
-        {
-            checkpoint("converge.drop", database);
-            _ = await FinishDatabaseCleanupAsync(database, cancellationToken, incarnation: store?.Incarnation).ConfigureAwait(false);
         }
     }
 

@@ -276,6 +276,55 @@ public sealed class CatalogLatticeTests
         await Assert.That(await engine.CreateDatabaseAsync(tenant, CancellationToken.None)).IsTrue();
     }
 
+    [Test]
+    public async Task A_deleted_database_with_an_uncached_corrupt_file_is_cleaned_without_touching_live_or_unknown_files()
+    {
+        var clock = new FakeTimeProvider(TimeProvider.System.GetUtcNow());
+        await using var api = await ManagementApi.StartAsync(time: clock);
+        var database = await api.CreateManagedDatabaseAsync();
+        var live = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "live");
+        var deleted = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
+        var retained = deleted with { DatabaseId = live.Id };
+        var unknown = deleted with { DatabaseId = EntityIds.New().ToString() };
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        await Assert.That(await engine.CreateDatabaseAsync(unknown, CancellationToken.None)).IsTrue();
+        var corrupt = Json("not a database file");
+        foreach (var tenant in new[] { deleted, retained, unknown })
+        {
+            // Remove the cached store before replacing the owned file; cleanup must not need to open its corrupt bytes.
+            await Assert.That(await engine.DeleteDatabaseAsync(tenant, CancellationToken.None)).IsTrue();
+            await File.WriteAllBytesAsync(PathOf(tenant), corrupt);
+        }
+
+        var system = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
+        await using (var write = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            await Assert.That(await write.DeleteAsync($"projects/{database.Project}/databases", database.Id, CancellationToken.None)).IsTrue();
+            _ = await write.CommitAsync(CancellationToken.None);
+        }
+
+        await using (var read = await system.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            await Assert.That(await read.GetVersionAsync($"projects/{database.Project}/databases", database.Id, CancellationToken.None) is { Deleted: true }).IsTrue();
+        }
+
+        await Assert.That(await Until(async () =>
+        {
+            clock.Advance(TimeSpan.FromSeconds(2));
+            await using var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
+            return !File.Exists(PathOf(deleted)) && await read.GetAsync("pending_database_cleanup", database.Id, CancellationToken.None) is null;
+        })).IsTrue();
+        await Assert.That(await File.ReadAllBytesAsync(PathOf(retained))).IsEquivalentTo(corrupt);
+        await Assert.That(await File.ReadAllBytesAsync(PathOf(unknown))).IsEquivalentTo(corrupt);
+        // A completed cleanup also releases its engine reservation when no readable store could be opened.
+        await Assert.That(await engine.CreateDatabaseAsync(deleted, CancellationToken.None)).IsTrue();
+
+        string PathOf(TenantContext tenant)
+        {
+            return Path.Combine(api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId!, tenant.DatabaseId + ".db");
+        }
+    }
+
     private static async Task<bool> Until(Func<Task<bool>> condition)
     {
         var deadline = DateTime.UtcNow + Deadline;

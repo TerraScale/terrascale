@@ -157,7 +157,11 @@ public sealed class CatalogProcessesTests
                 _ = await Converge.UntilAsync(async () =>
                 {
                     using var request = new HttpRequestMessage(HttpMethod.Get,
-                        new Uri($"/v1/management/organizations/{tenant.Organization}/projects/{tenant.Project}", UriKind.Relative));
+                        new Uri($"/v1/management/organizations/{tenant.Organization}/projects/{tenant.Project}", UriKind.Relative))
+                    {
+                        Version = HttpVersion.Version20,
+                        VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+                    };
                     request.Headers.Add("X-TerraBase-User-Id", tenant.User);
                     using var response = await regions[peer].SendAsync(request);
                     return response.StatusCode;

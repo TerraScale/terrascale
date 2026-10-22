@@ -106,7 +106,10 @@ public sealed class DatabaseRecoveryTests
         var reached = false;
         string target;
         string? replacement = null;
-        await using (var api = await state.StartAsync(services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
+        // Preserve the injected crash state until its assertions; restart still uses the real clock.
+        await using (var api = await state.StartAsync(services => services
+            .AddSingleton<TimeProvider>(new FakeTimeProvider(TimeProvider.System.GetUtcNow()))
+            .AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
         {
             if (armed && step == interruption)
             {
@@ -442,7 +445,9 @@ public sealed class DatabaseRecoveryTests
         var injected = new InvalidOperationException("interrupted after cleanup commit");
         var target = string.Empty;
         string replacement;
-        await using (var api = await state.StartAsync(services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, storage) =>
+        await using (var api = await state.StartAsync(services => services
+            .AddSingleton<TimeProvider>(new FakeTimeProvider(TimeProvider.System.GetUtcNow()))
+            .AddSingleton<DatabaseLifecycleCheckpoint>((step, storage) =>
         {
             if (armed && step == "create.intent" && route == "cancelled-create")
             {
@@ -548,7 +553,9 @@ public sealed class DatabaseRecoveryTests
         await using var state = new RecoveryData();
         var armed = false;
         string target;
-        await using (var api = await state.StartAsync(services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
+        await using (var api = await state.StartAsync(services => services
+            .AddSingleton<TimeProvider>(new FakeTimeProvider(TimeProvider.System.GetUtcNow()))
+            .AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
         {
             if (armed && step == "delete.intent")
             {
@@ -1602,7 +1609,9 @@ public sealed class DatabaseRecoveryTests
         TenantContext? captured = null;
         var before = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         string[] externalEntries = [];
-        await using (var api = await state.StartAsync(services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, storage) =>
+        await using (var api = await state.StartAsync(services => services
+            .AddSingleton<TimeProvider>(new FakeTimeProvider(TimeProvider.System.GetUtcNow()))
+            .AddSingleton<DatabaseLifecycleCheckpoint>((step, storage) =>
         {
             if (armed && step == (route == "delete" ? "delete.main_file" : "create.intent"))
             {
