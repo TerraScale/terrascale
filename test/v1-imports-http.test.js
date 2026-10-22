@@ -13,7 +13,7 @@ test("all seven import routes preserve binary chunks, offsets, preview confirmat
   const bytes = new Uint8Array([0, 127, 128, 255]);
   expect(await imports.uploadSource(0n, bytes)).toEqual(job);
   expect(await imports.update({ options: { missingPrimaryKey: "generate", exclude: ["public.secret"] } })).toEqual(job);
-  expect(await imports.start({ previewId: "preview-sha256" })).toEqual(job);
+  expect(await imports.start({ previewId: entity })).toEqual(job);
   expect(await imports.cancel()).toEqual(job);
   expect(await imports.resume()).toEqual(job);
   const base = `${prefix}/databases/app/import`;
@@ -23,7 +23,26 @@ test("all seven import routes preserve binary chunks, offsets, preview confirmat
   expect(requests[2]?.headers["content-type"]).toBe("application/octet-stream");
   expect(requests[2]?.headers["content-length"]).toBe("4");
   expect(requests[2]?.url.search).toBe("?offset=0");
-  expect(requests[4]?.body).toBe('{"previewId":"preview-sha256"}');
+  expect(requests[4]?.body).toBe(JSON.stringify({ previewId: entity }));
+});
+const preview = { id: entity, tables: [], skipped: [], skippedTruncated: false, blocking: 0, warnings: 0 };
+test("import decodes generated preview and confirmed preview ULIDs", async () => {
+  const response = { ...job, preview, confirmedPreviewId: entity };
+  const { client } = await fixture((_r, reply) => json(reply, response));
+  expect(await client.database("app").imports.get()).toEqual(response);
+});
+test.each(["preview-sha256", `preview_${entity}`, entity.toLowerCase(), "8".repeat(26)])("import refuses noncanonical preview ID %s before dispatch", async id => {
+  const { client, requests } = await fixture((_r, response) => json(response, job, 202));
+  await expect(client.database("app").imports.start({ previewId: id })).rejects.toThrow(TypeError);
+  expect(requests).toHaveLength(0);
+});
+test.each([
+  { preview: { ...preview, id: "preview-sha256" }, confirmedPreviewId: null },
+  { preview, confirmedPreviewId: "preview-sha256" },
+])("import rejects invalid preview response identities %j", async fields => {
+  const { client, requests } = await fixture((_r, response) => json(response, { ...job, ...fields }));
+  await expect(client.database("app").imports.get()).rejects.toThrow(TypeError);
+  expect(requests).toHaveLength(1);
 });
 test.each([400, 403, 404, 409, 413, 415, 421, 503])("import failure %i is never replayed", async status => {
   const { client, requests } = await fixture((_r, response) => json(response, { error: { code: "offset_mismatch", message: "Refused" } }, status));
