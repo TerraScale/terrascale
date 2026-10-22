@@ -1,5 +1,7 @@
 # Free replication reads for TerraBase (the ElectricSQL trick)
 
+> OCI adaptation of the upstream proposed contract pinned in `pin.json`; hosting wording is updated, wire semantics are unchanged. Production runs in OCI gru under ts-orch, with GHCR images and OCI Vault secrets delivered via instance principal. This is not deployment qualification.
+
 - **Status:** plan, checked against `main` at `519c9ff9` (2026-10-13). Shape reads remain proposed; merged prerequisites are listed in section 2.
   Decisions are in section 7. No CDN (T2) is selected.
 - **Protocol:** v1. Handle domain `TB-SHAPE-HANDLE-V1`, handle prefix `h1-`, shape id domain `TB-SHAPE-V1`.
@@ -387,7 +389,7 @@ Metrics on `TerraScale.TerraBase`, without tenant labels:
   Tigris. No new store.
 - **Tests.** Integration tests only, through `TerraBaseTestServer`. Every test runs in parallel. Fast covers the
   critical path.
-- **Ownership.** TerraBase owns reads. A CDN (T2) would be an edge component outside Fly, so it needs a human decision.
+- **Ownership.** TerraBase owns reads. A CDN (T2) would be an edge component outside the OCI origin, so it needs a human decision.
 
 ---
 
@@ -462,7 +464,7 @@ Test-time classes. Measured values are cited; everything else is an estimate.
 | Docs only | none | 0 | Haiku |
 | Slow | `make terrabase-test-slow` | unmeasured (the only CI sample, 3 min 48 s, failed) | Opus until measured ≤10 min |
 | E2E (in-process, process-separated, fault shim) | `make terrabase-e2e TEST_ARGS=…` | up to 30 min (CI timeout) | Opus |
-| Benchmarks, live Fly, real Tigris | `benchmark/…`, runbooks | >10 min | Opus |
+| Benchmarks, live OCI, real Tigris | `benchmark/…`, runbooks | >10 min | Opus |
 
 ---
 
@@ -489,7 +491,7 @@ Test-time classes. Measured values are cited; everything else is an estimate.
 | FR-02 | Repairs in the feed (C3) | — | — | — | — | **Done** (#165) |
 | FR-03 | **Done (#221).** Storage (lane B1): `_tb_feed.seq` from a persisted counter row; `_tb_shape_chunk`, `_tb_shape_snapshot`; storage format version bump (greenfield reset) | `Engine/Sqlite/SqliteDatabaseStore.cs` (schema), `Engine/Sqlite/StorageFormat.cs`, `SqliteStorageTransaction.Feed.cs` (`AppendFeed` only) | — (coordinate with #211) | Fast filtered: `Shapes/FeedSequenceTests` (an emptied feed plus a reopen keeps growing) | ~3 min | Haiku |
 | FR-04 | Protocol and vectors (lane B0): `shape-reads.md` as v1, and `shape-vectors.json` | `docs/terrabase/shape-reads.md`, `docs/terrabase/shape-vectors.json` | — | none (docs) | 0 | Haiku |
-| FR-05 | Peer authentication (C1, lane A1): a shared credential from a fly secret on every internal RPC; anything without it is refused | `Features/Replication/*`, `Hosting/Listeners.cs` | — | Fast with 2 nodes, plus process-separated E2E | >10 min | Opus |
+| FR-05 | Peer authentication (C1, lane A1): a shared credential delivered from OCI Vault via instance principal on every internal RPC; anything without it is refused | `Features/Replication/*`, `Hosting/Listeners.cs` | — | Fast with 2 nodes, plus process-separated E2E | >10 min | Opus |
 | FR-06 | **Done (#223).** Fan-out benchmark harness (lane B2): N readers per shape; origin reads, bytes, p99; results as `.md` in `benchmark/bench/` | `benchmark/cmd/shape-bench/` | — | benchmark run | >10 min | Opus |
 | FR-07 | Turso FULL crash and power-loss evidence for tenant databases (lane B3): an acknowledged write survives power loss, and a commit's sync covers earlier frames | `tests/TerraBase.Slow/WalFaults/TenantDatabasePowerLossTests.cs` | — | E2E (fault shim) | >10 min | Opus |
 
@@ -524,7 +526,7 @@ Test-time classes. Measured values are cited; everything else is an estimate.
 | FR-30 | A crash or power loss never leaves a published chunk holding a lost write (lane V1) | FR-07, FR-12 | E2E | >10 min | Opus |
 | FR-31 | 3-region shape clients converge with the replicas under partition, drop/re-create, repair and skew (lane V3) | FR-20, FR-23 | E2E | >10 min | Opus |
 | FR-32 | Load: 10k readers per shape; at most 1 origin storage read per chunk per cache location; report in `benchmark/bench/` | FR-06, FR-24 | benchmark | >10 min | Opus |
-| FR-33 | Real Tigris mirror run (credentials from fly secrets, run by a human) | FR-22 | Slow `TigrisShapeMirrorTests` | unmeasured | Opus |
+| FR-33 | Real Tigris mirror run (credentials delivered from OCI Vault via instance principal, run by a human) | FR-22 | Slow `TigrisShapeMirrorTests` | unmeasured | Opus |
 | FR-34 | Security review: cache keys, tenancy, revocation bound, ciphertext metadata leakage (lane V4) | FR-21, FR-24 | E2E plus review | >10 min | Opus |
 
 ### Wave 5: SDKs (separate repositories; all parallel after FR-04 and FR-21)

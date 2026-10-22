@@ -14,7 +14,6 @@ export const localSqlitePresenceIndicators = /** @type {const} */ ([
   "NETLIFY",
   "CF_PAGES",
   "RENDER",
-  "FLY_APP_NAME",
   "K_SERVICE",
   "CLOUD_RUN_JOB",
   "KUBERNETES_SERVICE_HOST",
