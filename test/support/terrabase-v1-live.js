@@ -1,4 +1,4 @@
-// Tests run only on a real configured C# producer; the isolated binary harness supplies these values.
+// Optional HTTP qualification uses an independently configured service; this repo never starts TerraBase.
 import { createTerraBaseV1Client } from "../../src/index.js";
 import { database } from "./terrabase-v1-fixture.js";
 const names = ["TB_V1_URL", "TB_V1_PROJECT", "TB_V1_DATA_KEY"];

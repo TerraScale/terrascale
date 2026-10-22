@@ -38,7 +38,7 @@ test("released data routes use tb_ keys while the published OpenAPI declares the
 test("vendored contracts and security evidence stay bound to the repository-backed release pin", async () => {
   const fixture = await mkdtemp(path.join(tmpdir(), "terrabase-contract-"));
   try {
-    for (const file of ["scripts/terrabase-contract.mjs", "scripts/terrabase-current-source.mjs", "scripts/ci/contract-digest.mjs", "src/v1/routes.js"]) {
+    for (const file of ["scripts/terrabase-contract.mjs", "scripts/terrabase-current-source.mjs", "scripts/ci/contract-digest.mjs", "src/v1/routes.js", "src/v1/management-routes.js"]) {
       const target = path.join(fixture, file);
       await mkdir(path.dirname(target), { recursive: true });
       await cp(new URL(`../${file}`, import.meta.url), target);

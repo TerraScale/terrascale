@@ -16,7 +16,8 @@ import { BodyTransportError } from "./transport.js";
 /**
  * At-least-once delivery: callers deduplicate by origin, version, collection and id.
  * The document is its current serving value, including null, rather than a historical value.
- * @typedef {{ readonly type: "change"; readonly cursor: string; readonly collection: string; readonly id: string;
+ * Only the last change of an origin/version carries a resumable cursor.
+ * @typedef {{ readonly type: "change"; readonly cursor: string | undefined; readonly collection: string; readonly id: string;
  *   readonly op: "upsert" | "delete"; readonly version: string; readonly origin: string;
  *   readonly document: JsonObject | null }} V1DatabaseChange
  */
@@ -145,12 +146,13 @@ function decodeEvent(event, headers) {
     // Headers have already committed: retain the actual HTTP 200 and the producer's terminal code.
     throw parseV1Error(200, headers, event.data);
   }
-  const cursor = requireCursor(event.id);
   if (event.type === "cursor") {
+    const cursor = requireCursor(event.id);
     if (raw.cursor !== cursor) malformed("changes cursor position");
     return Object.freeze({ type: "cursor", cursor });
   }
   if (event.type !== "change") malformed("changes event kind");
+  const cursor = event.id === undefined ? undefined : requireCursor(event.id);
   if (raw.op !== "upsert" && raw.op !== "delete") malformed("changes operation");
   if (typeof raw.origin !== "string" || !/^[0-9a-f]{16}$/u.test(raw.origin)) malformed("changes origin");
   return Object.freeze({ type: "change", cursor, collection: requireName("collection", raw.collection),
@@ -212,7 +214,7 @@ async function* readChanges(transport, database, request, signal) {
     let count = 0;
     for await (const wire of events(response, signal)) {
       const event = decodeEvent(wire, response.headers);
-      lastEventId = event.cursor;
+      if (event.cursor !== undefined) lastEventId = event.cursor;
       count++;
       yield event;
       signal?.throwIfAborted();

@@ -7,13 +7,20 @@ import { requireId } from "../ids.js";
 import { isJsonPointer, requireFilter, requirePath } from "./filter.js";
 import { requireDocumentId, requireName, requireVersion } from "./ids.js";
 import { assertJsonObject, assertJsonValue, ExactDecimal, stringifyExactJson } from "./json.js";
-import { readShape } from "./shapes.js";
+import { readShapeManifest } from "./shape-manifest.js";
 import { V1ShapeSubscription } from "./shape-subscription.js";
-import { decryptSealedShapePage } from "./shape-reader.js";
+import { decryptSealedShapePage, readShapePage, readShapeKey } from "./shape-reader.js";
 import { runSql, checkSql } from "./sql.js";
 import { streamChanges } from "./changes.js";
 import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema } from "./catalog.js";
 import { V1Transport } from "./transport.js";
+import { V1Health, V1Platform } from "./system.js";
+import { V1Imports } from "./imports.js";
+import { V1Backups, V1BackupDestinationClient } from "./backups.js";
+import { V1ProjectUsageClient, V1DatabaseUsageClient } from "./usage.js";
+import { V1Indexes } from "./indexes.js";
+import { V1DatabaseSchemaClient } from "./database-schema.js";
+import { V1SavedQueries } from "./saved-queries.js";
 /**
  * @import { V1Document, V1Durability, V1WriteResult } from "./decode.js"
  * @import { V1Filter, V1Path } from "./filter.js"
@@ -210,7 +217,7 @@ function encodeQuery(query) {
  * @param {JsonValue | undefined} value
  * @returns {V1QueryPage}
  */
-function decodeQueryPage(value) {
+export function decodeQueryPage(value) {
   const raw = object(value, "query response");
   const next = raw.next_cursor;
   if (next !== null && (typeof next !== "string" || next === "")) malformed("next_cursor");
@@ -441,12 +448,13 @@ export class V1Collection {
   /**
    * Reads one C# shape snapshot page or change-log chunk. Bootstrap defaults to offset -1.
    * Echo handle, nextOffset and cursor on the following read; discard state on must_refetch.
+   * ifNoneMatch sends a complete entity-tag list or *; 304 throws not_modified with cache headers.
    * @param {V1ShapeRequest} [request]
-   * @param {V1RequestOptions} [options]
+   * @param {V1RequestOptions & {readonly ifNoneMatch?: string}} [options]
    * @returns {Promise<V1ShapePage>}
    */
   shape(request = {}, options = {}) {
-    return readShape(this.#transport, this.#params, request, options.signal);
+    return readShapePage(this.#transport, this.#params, request, options.signal, options.ifNoneMatch);
   }
 
   /**
@@ -458,6 +466,12 @@ export class V1Collection {
   subscribeShape(request = {}, options = {}) {
     return new V1ShapeSubscription(this.#transport, this.#params, request, options);
   }
+
+  /** @param {import("./shape-manifest.js").V1ShapeManifestRequest} request @param {V1RequestOptions} [options] */
+  shapeManifest(request, options = {}) { return readShapeManifest(this.#transport, this.#params, request, options.signal); }
+  /** @param {import("./shape-reader.js").V1ShapeKeyRequest} request @param {V1RequestOptions} [options] */
+  shapeKey(request, options = {}) { return readShapeKey(this.#transport, this.#params, request, options.signal); }
+
 
   /**
    * Verify a complete TBS1 object using its authenticated epoch key. Applies no state.
@@ -679,7 +693,7 @@ export class V1Transaction {
 /** @typedef {{ readonly items: readonly V1CollectionInfo[]; readonly nextCursor: string | null }} V1CollectionPage */
 /** @typedef {{ readonly limit?: number | undefined; readonly cursor?: string | undefined }} V1CollectionListOptions */
 /** @param {JsonValue | undefined} value @returns {V1CollectionInfo} */
-function decodeCollection(value) {
+export function decodeCollection(value) {
   const raw = object(value, "collection");
   return Object.freeze({ id: requireId(raw.id), name: requireName("collection", raw.name), createdAt: u64(raw.created_at, "collection created_at") });
 }
@@ -735,6 +749,16 @@ export class V1Collections {
 
 /** A database handle by name. It performs no I/O until an operation runs. */
 export class V1Database {
+  /** @type {V1Imports} */
+  imports;
+  /** @type {V1Backups} */
+  backups;
+  /** @type {V1DatabaseUsageClient} */
+  metrics;
+  /** @type {V1Indexes} */
+  indexes;
+  /** @type {V1DatabaseSchemaClient} */
+  schema;
   /** @type {V1Collections} */
   collections;
   /** @type {V1Transport} */
@@ -750,6 +774,11 @@ export class V1Database {
     this.#transport = transport;
     this.name = requireName("database", name);
     this.collections = new V1Collections(transport, this.name);
+    this.schema = new V1DatabaseSchemaClient(transport, this.name);
+    this.indexes = new V1Indexes(transport, this.name);
+    this.metrics = new V1DatabaseUsageClient(transport, this.name);
+    this.backups = new V1Backups(transport, this.name);
+    this.imports = new V1Imports(transport, this.name);
     Object.freeze(this);
   }
 
@@ -792,6 +821,16 @@ export class V1Database {
  * privately; it is never serialized, logged or forwarded to redirects.
  */
 export class TerraBaseV1Client {
+  /** @type {V1Health} */
+  #health;
+  /** @type {V1Platform} */
+  #platform;
+  /** @type {V1BackupDestinationClient} */
+  #backupDestination;
+  /** @type {V1ProjectUsageClient} */
+  #metrics;
+  /** @type {V1SavedQueries} */
+  #savedQueries;
   /** @type {V1Databases} */
   #databases;
   /** @type {V1Transport} */
@@ -799,8 +838,14 @@ export class TerraBaseV1Client {
 
   /** @param {TerraBaseV1ClientConfig} config */
   constructor(config) {
+    requireId(config.project);
     this.#transport = new V1Transport(config);
     this.#databases = new V1Databases(this.#transport);
+    this.#savedQueries = new V1SavedQueries(this.#transport);
+    this.#metrics = new V1ProjectUsageClient(this.#transport);
+    this.#backupDestination = new V1BackupDestinationClient(this.#transport);
+    this.#health = new V1Health(this.#transport);
+    this.#platform = new V1Platform(this.#transport);
     Object.freeze(this);
   }
 
@@ -814,6 +859,16 @@ export class TerraBaseV1Client {
 
   /** @returns {V1Databases} Project-scoped database catalog. */
   get databases() { return this.#databases; }
+  /** @returns {V1SavedQueries} */
+  get savedQueries() { return this.#savedQueries; }
+  /** @returns {V1ProjectUsageClient} */
+  get metrics() { return this.#metrics; }
+  /** @returns {V1BackupDestinationClient} */
+  get backupDestination() { return this.#backupDestination; }
+  /** @returns {V1Health} */
+  get health() { return this.#health; }
+  /** @returns {V1Platform} */
+  get platform() { return this.#platform; }
 }
 
 /**

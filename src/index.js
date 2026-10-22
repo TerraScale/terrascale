@@ -59,6 +59,10 @@ export { ExactDecimal } from "./v1/json.js";
 
 export { staticBaseUrlResolver } from "./v1/transport.js";
 export { V1Databases } from "./v1/catalog.js";
+export { V1SavedQueries } from "./v1/saved-queries.js";
+/** @typedef {import("./v1/saved-queries.js").V1SavedQuery} V1SavedQuery */
+/** @typedef {import("./v1/saved-queries.js").V1SavedQueryRequest} V1SavedQueryRequest */
+/** @typedef {import("./v1/saved-queries.js").V1SavedQueryPage} V1SavedQueryPage */
 /** @typedef {import("./v1/transport.js").TerraBaseV1ClientConfig} TerraBaseClientConfig */
 /** @typedef {import("./v1/transport.js").V1EndpointContext} V1EndpointContext */
 /** @typedef {import("./v1/transport.js").V1EndpointResolver} V1EndpointResolver */
@@ -80,3 +84,54 @@ export { V1Databases } from "./v1/catalog.js";
 /** @typedef {import("./v1/catalog.js").V1DatabaseListRequest} V1DatabaseListRequest */
 /** @typedef {import("./v1/catalog.js").V1DatabasePage} V1DatabasePage */
 /** @typedef {import("./v1/catalog.js").V1CollectionSchema} V1CollectionSchema */
+
+export { V1DatabaseSchemaClient } from "./v1/database-schema.js";
+/** @typedef {import("./v1/database-schema.js").V1InferredSchema} V1InferredSchema */
+/** @typedef {import("./v1/database-schema.js").V1DatabaseSchema} V1DatabaseSchema */
+/** @typedef {import("./v1/database-schema.js").V1UniqueSchema} V1UniqueSchema */
+/** @typedef {import("./v1/database-schema.js").V1UniqueSchemaRequest} V1UniqueSchemaRequest */
+/** @typedef {import("./v1/database-schema.js").V1QueryShapes} V1QueryShapes */
+
+export { V1Indexes } from "./v1/indexes.js";
+/** @typedef {import("./v1/indexes.js").V1Index} V1Index */
+/** @typedef {import("./v1/indexes.js").V1IndexList} V1IndexList */
+/** @typedef {import("./v1/indexes.js").V1AutoIndexPolicy} V1AutoIndexPolicy */
+/** @typedef {import("./v1/indexes.js").V1IndexRecommendations} V1IndexRecommendations */
+/** @typedef {import("./v1/indexes.js").V1AppliedIndexRecommendation} V1AppliedIndexRecommendation */
+/** @typedef {import("./v1/indexes.js").V1CreateIndexRequest} V1CreateIndexRequest */
+
+export { V1ProjectUsageClient, V1DatabaseUsageClient } from "./v1/usage.js";
+/** @typedef {import("./v1/usage.js").V1DatabaseUsage} V1DatabaseUsage */
+/** @typedef {import("./v1/usage.js").V1ProjectUsage} V1ProjectUsage */
+/** @typedef {import("./v1/usage.js").V1Analytics} V1Analytics */
+/** @typedef {import("./v1/usage.js").V1Replication} V1Replication */
+/** @typedef {import("./v1/usage.js").V1UsageRequest} V1UsageRequest */
+/** @typedef {import("./v1/usage.js").V1AnalyticsRequest} V1AnalyticsRequest */
+
+export { V1Backups, V1BackupDestinationClient } from "./v1/backups.js";
+/** @typedef {import("./v1/backups.js").V1Backup} V1Backup */
+/** @typedef {import("./v1/backups.js").V1BackupPage} V1BackupPage */
+/** @typedef {import("./v1/backups.js").V1BackupPolicy} V1BackupPolicy */
+/** @typedef {import("./v1/backups.js").V1RestoreWindow} V1RestoreWindow */
+/** @typedef {import("./v1/backups.js").V1PointInTimePlan} V1PointInTimePlan */
+/** @typedef {import("./v1/backups.js").V1RestoredDatabase} V1RestoredDatabase */
+/** @typedef {import("./v1/backups.js").V1BackupDestination} V1BackupDestination */
+/** @typedef {import("./v1/backups.js").V1BackupPolicyRequest} V1BackupPolicyRequest */
+/** @typedef {import("./v1/backups.js").V1PointInTimeRequest} V1PointInTimeRequest */
+/** @typedef {import("./v1/backups.js").V1PointInTimeRestoreRequest} V1PointInTimeRestoreRequest */
+/** @typedef {import("./v1/backups.js").V1BackupDestinationRequest} V1BackupDestinationRequest */
+
+export { V1Imports } from "./v1/imports.js";
+/** @typedef {import("./v1/imports.js").V1ImportJob} V1ImportJob */
+/** @typedef {import("./v1/imports.js").V1ImportOptions} V1ImportOptions */
+/** @typedef {import("./v1/imports.js").V1CreateImportRequest} V1CreateImportRequest */
+
+export { createTerraBaseSystemClient, V1Health, V1Platform } from "./v1/system.js";
+/** @typedef {import("./v1/system.js").TerraBaseSystemClientConfig} TerraBaseSystemClientConfig */
+/** @typedef {import("./v1/system.js").V1ProbeStatus} V1ProbeStatus */
+/** @typedef {import("./v1/system.js").V1ReplicationHealth} V1ReplicationHealth */
+/** @typedef {import("./v1/system.js").V1PlatformDatabases} V1PlatformDatabases */
+/** @typedef {import("./v1/shape-manifest.js").V1ShapeManifest} V1ShapeManifest */
+/** @typedef {import("./v1/shape-manifest.js").V1ShapeManifestRequest} V1ShapeManifestRequest */
+/** @typedef {import("./v1/shape-reader.js").V1ShapeKeyRequest} V1ShapeKeyRequest */
+/** @typedef {import("./v1/shape-reader.js").V1ShapeKey} V1ShapeKey */

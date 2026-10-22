@@ -27,7 +27,7 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
     assert.equal(path.basename(filename), filename);
     const tarball = path.join(workspace, filename);
     const listing = (await run("tar", ["-tf", tarball])).stdout;
-    for (const entry of ["src/index.js", "src/v1/terrabase-v1.js", "types/index.d.ts", "sdk-v1-route-manifest.json"])
+    for (const entry of ["src/index.js", "src/v1/terrabase-v1.js", "types/index.d.ts", "sdk-v1-route-manifest.json", "sdk-public-v1-route-manifest.json"])
       assert.ok(listing.includes(`package/${entry}\n`), entry);
     assert.doesNotMatch(listing, /^package\/(?:test|scripts|contracts|node_modules)\/|\.test\.js$/mu);
     await writeFile(path.join(consumer, "package.json"), JSON.stringify({ type: "module" }));

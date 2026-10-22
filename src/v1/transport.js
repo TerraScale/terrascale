@@ -20,7 +20,7 @@ const defaultMaximumResponseBytes = 64 * 1024 * 1024;
 const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|tb_[A-Za-z0-9_-]{43})$/u;
 /**
  * Resolver input contains no credential. A successful URL is cached for this client/database.
- * @typedef {{ readonly project: string; readonly database?: string | undefined; readonly signal?: AbortSignal | undefined }} V1EndpointContext
+ * @typedef {{ readonly project: string | undefined; readonly database?: string | undefined; readonly signal?: AbortSignal | undefined }} V1EndpointContext
  */
 /** @typedef {(context: V1EndpointContext) => string | Promise<string>} V1EndpointResolver */
 /**
@@ -37,7 +37,7 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
 
 /**
  * @typedef {object} V1CallOptions
- * @property {string} [body]
+ * @property {string | Uint8Array} [body]
  * @property {string} [contentType]
  * @property {Readonly<Record<string, string>>} [headers] Contract headers only (If-Match, If-None-Match).
  * @property {URLSearchParams | undefined} [query]
@@ -128,29 +128,29 @@ export class BodyTransportError extends Error {
 
 /** Internal transport bound to one project credential. */
 export class V1Transport {
-  /** @type {string} */
+  /** @type {string | undefined} */
   #project;
   /** @type {V1EndpointResolver} */
   #resolver;
   /** @type {Map<string, { promise: Promise<string>; timer: ReturnType<typeof setTimeout>; waiters: number }>} */
   #bases = new Map();
-  /** @type {string} */
+  /** @type {string | undefined} */
   #token;
   /** @type {FetchLike} */
   #fetch;
   /** @type {number} */
   #maxResponseBytes;
 
-  /** @param {TerraBaseV1ClientConfig} config */
+  /** @param {TerraBaseV1ClientConfig | (import("./system.js").TerraBaseSystemClientConfig & { project?: undefined; endpointResolver?: undefined })} config */
   constructor(config) {
     if (typeof config !== "object" || config === null) throw new TypeError("TerraBase v1 client config is required.");
-    this.#project = requireProject(config.project);
+    this.#project = config.project === undefined ? undefined : requireProject(config.project);
     if ((config.baseUrl === undefined) === (config.endpointResolver === undefined))
       throw new TypeError("Supply exactly one of baseUrl or endpointResolver.");
     if (config.endpointResolver !== undefined && typeof config.endpointResolver !== "function")
       throw new TypeError("endpointResolver must be a function.");
     this.#resolver = config.endpointResolver ?? staticBaseUrlResolver(/** @type {string} */ (config.baseUrl));
-    if (typeof config.token !== "string" || !tokenPattern.test(config.token))
+    if ((config.project !== undefined || config.token !== undefined) && (typeof config.token !== "string" || !tokenPattern.test(config.token)))
       throw new TypeError("token must be a compact access JWT or a legacy C# tb_ API key.");
     if ("autoIdempotencyKey" in config || "maxRetries" in config || "resolver" in config)
       throw new TypeError("Unsupported client configuration member.");
@@ -208,7 +208,8 @@ export class V1Transport {
         });
       });
       signal?.throwIfAborted();
-      return `${resolved}${v1RoutePath(v1Route(operation), { ...params, project: this.#project })}`;
+      if (v1Route(operation).pathTemplate.includes("{project}") && this.#project === undefined) throw new TypeError("This operation requires a project client.");
+      return `${resolved}${v1RoutePath(v1Route(operation), { ...params, ...(this.#project === undefined ? {} : { project: this.#project }) })}`;
     } finally {
       // Keep Node alive only while callers are waiting for this resolution.
       if (--base.waiters === 0 && typeof base.timer === "object") base.timer.unref();
@@ -337,12 +338,13 @@ export class V1Transport {
   /** @param {V1Operation} operation @param {Readonly<Record<string, string>>} params @param {V1CallOptions} options @returns {Promise<Response>} */
   async #send(operation, params, options) {
     const route = v1Route(operation);
-    if (options.body !== undefined && new TextEncoder().encode(options.body).byteLength > maximumRequestBytes)
+    const bytes = typeof options.body === "string" ? new TextEncoder().encode(options.body) : options.body;
+    if (bytes !== undefined && bytes.byteLength > maximumRequestBytes)
       throw new TypeError(`TerraBase request bodies are limited to ${maximumRequestBytes} bytes.`);
     let url = await this.url(operation, params, options.signal);
     if (options.query !== undefined && options.query.size > 0) url += `?${options.query}`;
     const headers = new Headers(options.headers);
-    headers.set("authorization", `Bearer ${this.#token}`);
+    if (route.permission !== "anonymous" && this.#token !== undefined) headers.set("authorization", `Bearer ${this.#token}`);
     if (route.responseMediaType !== "") headers.set("accept", route.responseMediaType);
     if (options.body !== undefined) headers.set("content-type", options.contentType ?? "application/json");
     /** @type {RequestInit & { duplex?: "half" }} */
@@ -350,10 +352,10 @@ export class V1Transport {
     if (options.cache !== undefined) init.cache = options.cache;
     if (route.permission.endsWith(":write") && typeof process !== "undefined" && process.release?.name === "node") {
       // Node fetch replays buffered or absent bodies on 421; use a one-shot stream, including DELETE.
-      const bytes = new TextEncoder().encode(options.body ?? "");
-      init.body = new ReadableStream({ start(controller) { if (bytes.byteLength > 0) controller.enqueue(bytes); controller.close(); } });
+      if (operation === "uploadImportSource" && bytes !== undefined) headers.set("content-length", String(bytes.byteLength));
+      init.body = new ReadableStream({ start(controller) { if (bytes !== undefined && bytes.byteLength > 0) controller.enqueue(bytes); controller.close(); } });
       init.duplex = "half";
-    } else if (options.body !== undefined) init.body = options.body;
+    } else if (options.body !== undefined) init.body = typeof options.body === "string" ? options.body : options.body.slice().buffer;
     if (options.signal !== undefined) init.signal = options.signal;
     const response = await this.#fetch(url, init);
     if (options.signal?.aborted) {

@@ -78,6 +78,7 @@
     "types",
     "!types/integration",
     "sdk-v1-route-manifest.json",
+    "sdk-public-v1-route-manifest.json",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -94,8 +95,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "npm run typecheck",
     "test": "vitest run",
-    "provision:terrabase": "node scripts/ci/provision-terrabase.mjs",
-    "test:integration": "node scripts/ci/run-terrabase-integration.mjs",
     "test:browser": "playwright test",
     "qualify:auth-authority": "node scripts/qualify-auth-authority.js",
     "check:frameworks": "vitest run src/database-view.test.js src/react/core.test.js src/svelte/index.test.js src/tanstack/index.test.js",
