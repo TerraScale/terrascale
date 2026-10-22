@@ -66,6 +66,17 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
         using (var revoked = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/" + keyId + "/revoke", new() { ["_csrf"] = csrf }))
             Check(revoked.StatusCode == HttpStatusCode.NoContent, "Native cleanup revokes the issued key at ts-auth");
         Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0, "The revoked key is gone at its issuer");
+        using (var full = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key", new()
+        { ["_csrf"] = csrf, ["name"] = "Seed script", ["scopes"] = "database:read,database:write,databases:read,databases:write" }))
+        {
+            Check(full.StatusCode == HttpStatusCode.Created, "A Full access key is issued for seed and migration scripts");
+            using var json = JsonDocument.Parse(await full.Content.ReadAsStringAsync());
+            var key = json.RootElement.GetProperty("apiKey");
+            Check(string.Join(',', key.GetProperty("scopes").EnumerateArray().Select(value => value.GetString()).Order(StringComparer.Ordinal)) == "databases:read,databases:write,documents:read,documents:write",
+                "Full access adds database management to documents:*");
+            using var revoked = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/" + key.GetProperty("keyId").GetString() + "/revoke", new() { ["_csrf"] = csrf });
+            Check(revoked.StatusCode == HttpStatusCode.NoContent, "The Full access key is revoked");
+        }
         using (var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new()
         { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["confirmName"] = "customer-sdk" }))
             Check(deleted.StatusCode == HttpStatusCode.NoContent, "Native cleanup deletes the canonical database");
