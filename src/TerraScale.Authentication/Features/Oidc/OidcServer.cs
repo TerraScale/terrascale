@@ -37,6 +37,12 @@ public static class OidcIssuer
     /// <summary>The client id of the ts-dashboard client registered from <c>TS_AUTH_DASHBOARD_*</c>.</summary>
     public const string DashboardClientId = "01M4EQ2FRJ8S8B29E8TQVWNW4J";
 
+    /// <summary>The public authorization-code client for the status administration UI.</summary>
+    public const string StatusClientId = "00000000000000000000000006";
+
+    /// <summary>The status client's only registered authorization callback.</summary>
+    public const string StatusRedirectUri = "https://status.terrascale.tech/admin/callback";
+
     /// <summary>
     /// The user's authentication epoch, in codes, refresh tokens and sign-in access tokens: a grant or a management call
     /// whose epoch is not the user's current one (after sign-out everywhere or a password reset) is refused.
@@ -356,25 +362,21 @@ public sealed class RevokeTheSignIn(IOpenIddictTokenManager tokens) : IOpenIddic
 }
 
 /// <summary>
-/// Registers or updates the ts-dashboard client (<c>TS_AUTH_DASHBOARD_*</c>) and the service clients
+/// Registers or updates the public ts-status client, the ts-dashboard client (<c>TS_AUTH_DASHBOARD_*</c>) and the service clients
 /// (<c>TS_AUTH_SERVICE_CLIENTS</c>). The storage bootstrap (<see cref="SigningKeys.SigningKeyRotation"/>) runs it and retries
 /// until storage answers, so ts-auth starts without TerraBase and stays not ready until they are registered. Concurrent
 /// replicas converge through conditional writes. Clients removed from configuration stay registered.
 /// </summary>
 public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions options)
 {
-    /// <summary>Registers every configured client; a storage failure throws for the bootstrap to retry.</summary>
+    /// <summary>Registers the status client and every configured client; storage failures are retried by bootstrap.</summary>
     public async Task RegisterAllAsync(CancellationToken cancellationToken)
     {
         var descriptors = options.ServiceClients.Select(Service).ToList();
+        descriptors.Add(Status());
         if (options.DashboardClient is { } dashboard)
         {
             descriptors.Add(Dashboard(dashboard));
-        }
-
-        if (descriptors.Count == 0)
-        {
-            return;
         }
 
         foreach (var descriptor in descriptors)
@@ -382,6 +384,23 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
             await this.RegisterAsync(descriptor, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    private static OpenIddictApplicationDescriptor Status() => new()
+    {
+        ClientId = OidcIssuer.StatusClientId,
+        ClientType = ClientTypes.Public,
+        ApplicationType = ApplicationTypes.Web,
+        ConsentType = ConsentTypes.Implicit,
+        DisplayName = "TerraScale Status",
+        RedirectUris = { new Uri(OidcIssuer.StatusRedirectUri) },
+        Permissions =
+        {
+            Permissions.Endpoints.Authorization, Permissions.Endpoints.Token,
+            Permissions.GrantTypes.AuthorizationCode, Permissions.ResponseTypes.Code,
+            Permissions.Scopes.Email, Permissions.Scopes.Profile,
+        },
+        Requirements = { Requirements.Features.ProofKeyForCodeExchange },
+    };
 
     private static OpenIddictApplicationDescriptor Dashboard(DashboardClientOptions dashboard)
     {
