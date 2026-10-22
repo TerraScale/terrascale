@@ -65,7 +65,7 @@ type Config struct {
 	Resolver Resolver
 	// Token is the tb_ API key for Client, or a ts-auth project access token
 	// for the project-management routes (unique keys). For Management it is
-	// empty, or the management service credential (admin listener only, see As).
+	// empty, or the peer credential (internal listener only, see As).
 	Token string
 	// TokenSource supplies a current project access token, for example a
 	// tsauth API key or token exchange source. Set either Token or TokenSource.
@@ -101,12 +101,6 @@ type Client struct {
 	maxRetries  int
 	maxResponse int64
 	shapeKeys   shapeKeyCache
-}
-
-// TokenSource supplies access tokens; TerraBase validates their claims.
-// Sources also implementing Invalidate(string) refresh once on a 401.
-type TokenSource interface {
-	Token(context.Context) (string, error)
 }
 
 // TokenSource supplies access tokens; TerraBase validates their claims.
@@ -327,7 +321,7 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 			continue
 		}
 		apiErr := parseAPIError(resp.status, resp.header, resp.body)
-		if !readOnly && apiErr.Code == ErrCommitUncertain {
+		if !readOnly && errors.Is(apiErr, ErrCommitUncertain) {
 			return resp, apiErr
 		}
 		if delay, ok := retryDelay(apiErr, attempt, req.replaySafe); ok && attempt < c.maxRetries {
@@ -399,7 +393,9 @@ func (c *Client) send(ctx context.Context, req request, target string) (*respons
 	for k, v := range req.header {
 		hr.Header[k] = v
 	}
-	hr.Header.Set("Authorization", "Bearer "+cmp.Or(req.token, c.token))
+	if req.header.Get("X-TerraBase-Peer-Credential") == "" {
+		hr.Header.Set("Authorization", "Bearer "+cmp.Or(req.token, c.token))
+	}
 	hr.Header.Set("Accept", "application/json")
 	if req.body != nil {
 		hr.Header.Set("Content-Type", cmp.Or(req.contentType, "application/json"))

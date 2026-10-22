@@ -18,8 +18,7 @@ import (
 // Management is a client of the TerraBase Management API (/v1/management).
 // Every call acts as one ts-auth user: WithToken presents the user's ts-auth
 // access token on the client listener, and As names the user with the
-// management service credential, which TerraBase accepts only on its loopback
-// admin listener. It is safe for concurrent use.
+// peer credential on the internal listener. It is safe for concurrent use.
 //
 //	m, err := v1.NewManagement(v1.Config{BaseURL: origin})
 //	u := m.WithToken(session.AccessToken)
@@ -27,10 +26,10 @@ import (
 type Management struct{ c *Client }
 
 // NewManagement returns a Management API client. Config.Token is empty, or
-// the management service credential for As: at least 32 characters.
+// the internal peer credential for As: exactly 64 hexadecimal characters.
 func NewManagement(cfg Config) (*Management, error) {
-	if cfg.Token != "" && (len(cfg.Token) < 32 || strings.ContainsFunc(cfg.Token, invalidTokenRune)) {
-		return nil, errors.New("terrabase: Token must be empty or the management service credential: at least 32 characters without whitespace")
+	if cfg.Token != "" && (len(cfg.Token) != 64 || strings.Trim(cfg.Token, "0123456789abcdefABCDEF") != "") {
+		return nil, errors.New("terrabase: Token must be empty or the internal peer credential: exactly 64 hexadecimal characters")
 	}
 	c, err := newClient(cfg)
 	if err != nil {
@@ -51,18 +50,18 @@ func (m *Management) WithToken(accessToken string) *ManagementUser {
 	return u
 }
 
-// As returns a view that acts as the ts-auth user userID with the management
-// service credential (Config.Token), sending X-TerraBase-User-Id on every
-// request. TerraBase accepts the credential only on its loopback admin
-// listener and trusts the user id because the credential authenticated the
-// caller: never take it from browser input.
+// As returns a view that acts as the ts-auth user userID with the internal
+// peer credential (Config.Token), sending X-TerraBase-Peer-Credential and
+// X-TerraBase-User-Id without Authorization on every request. TerraBase accepts
+// the credential only on its internal listener. The authenticated caller may
+// name the user: never take it from browser input.
 func (m *Management) As(userID string) *ManagementUser {
-	u := &ManagementUser{c: m.c, header: http.Header{"X-Terrabase-User-Id": {userID}}}
+	u := &ManagementUser{c: m.c, header: http.Header{"X-Terrabase-User-Id": {userID}, "X-Terrabase-Peer-Credential": {m.c.token}}}
 	if err := checkID(userID); err != nil {
 		u.err = fmt.Errorf("terrabase: user ID: %w", err)
 	}
 	if m.c.token == "" {
-		u.err = errors.Join(u.err, errors.New("terrabase: As needs Config.Token, the management service credential"))
+		u.err = errors.Join(u.err, errors.New("terrabase: As needs Config.Token, the internal peer credential"))
 	}
 	return u
 }

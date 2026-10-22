@@ -27,7 +27,8 @@ type ChangesOptions struct {
 }
 
 // ChangeEvent is a change or cursor SSE event. Cursor is the position after
-// the event. Cursor events have no document fields. Delivery is at least once;
+// the event, or empty until the final change in a commit group. Persist only
+// nonempty cursors. Cursor events have no document fields. Delivery is at least once;
 // deduplicate changes by Origin, Version, Collection and ID. Document is the
 // current value on the serving machine, which may differ from the operation.
 type ChangeEvent struct {
@@ -128,7 +129,9 @@ func (d *Database) Changes(ctx context.Context, options ChangesOptions) iter.Seq
 			stopped := false
 			refreshed = false
 			err = readChanges(res.Body, d.c.maxResponse, res.Header, func(event ChangeEvent) bool {
-				cursor = event.Cursor
+				if event.Cursor != "" {
+					cursor = event.Cursor
+				}
 				if !yield(event, nil) {
 					stopped = true
 					return false
@@ -186,7 +189,7 @@ func readChanges(body io.Reader, limit int64, header http.Header, yield func(Cha
 		if kind != "change" && kind != "cursor" {
 			return false, fmt.Errorf("terrabase: unknown changes event %q", kind)
 		}
-		if id == "" {
+		if kind == "cursor" && id == "" {
 			return false, errors.New("terrabase: changes event has no cursor")
 		}
 		event := ChangeEvent{Type: kind, Cursor: id}

@@ -43,7 +43,8 @@ const (
 	ErrCapacity             ErrorCode = "capacity"
 	ErrStorageUnavailable   ErrorCode = "storage_unavailable"
 	ErrStoredCorruption     ErrorCode = "stored_corruption"
-	ErrCommitUncertain      ErrorCode = "commit_uncertain" // also matches mutation transport failures; the write may have committed
+	ErrCommitUncertain      ErrorCode = "commit_uncertain"      // also matches mutation transport failures; the write may have committed
+	ErrWriteOutcomeUnknown  ErrorCode = "write_outcome_unknown" // 503: the write may have committed without remote confirmation
 	ErrDependenciesUnavail  ErrorCode = "dependencies_unavailable"
 	ErrDatabaseReplicated   ErrorCode = "database_replicated" // 409: delete of a database with replica regions
 	ErrIndexExists          ErrorCode = "index_exists"        // 409: an index with the name, or on the same fields of the collection
@@ -111,10 +112,10 @@ func (e *APIError) Error() string {
 	return b.String()
 }
 
-// Is reports whether target is the ErrorCode carried by e.
+// Is matches the response code; uncertain writes also match ErrCommitUncertain.
 func (e *APIError) Is(target error) bool {
 	code, ok := target.(ErrorCode)
-	return ok && code == e.Code
+	return ok && (code == e.Code || code == ErrCommitUncertain && e.Code == ErrWriteOutcomeUnknown)
 }
 
 // OpIndex returns the failing transaction op index, if the error names one.

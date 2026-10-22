@@ -18,7 +18,7 @@ import (
 
 const (
 	testToken      = "tb_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	testCredential = "dashboard-credential-0123456789abcdef"
+	testCredential = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	testProject    = "01J2KE8Z1VFMQ8Y0014D2PF2DB"
 	testOrg        = "01J2KE8Z1VFMQ8Y00000000060"
 )
@@ -42,8 +42,10 @@ func TestClientConfigValidation(t *testing.T) {
 		{"http non-loopback", false, testToken, "http://tb.example", false},
 		{"credential", true, testCredential, "https://tb.example", true},
 		{"no credential", true, "", "https://tb.example", true},
-		{"short credential", true, strings.Repeat("a", 31), "https://tb.example", false},
-		{"credential with space", true, strings.Repeat("a", 31) + " ", "https://tb.example", false},
+		{"short credential", true, strings.Repeat("a", 63), "https://tb.example", false},
+		{"long credential", true, strings.Repeat("a", 65), "https://tb.example", false},
+		{"nonhex credential", true, strings.Repeat("g", 64), "https://tb.example", false},
+		{"credential with space", true, strings.Repeat("a", 63) + " ", "https://tb.example", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := v1.Config{BaseURL: tc.baseURL, Token: tc.token}
