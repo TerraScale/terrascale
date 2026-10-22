@@ -43,11 +43,41 @@ public sealed class TerraBaseContractTests
     }
 
     [Test]
-    public async Task DocumentKeysTravelInTheQueryAndAreEscapedOnce()
+    public async Task DocumentIdsTravelInTheQuery()
     {
-        var sent = await RecordAsync("documents", client => ((TerraBaseDocumentsClient)client).Database(Project, "app").GetDocumentAsync("users", "a/b c?d"));
+        var sent = await RecordAsync("documents", client => ((TerraBaseDocumentsClient)client).Database(Project, "app").GetDocumentAsync("users", User));
         await Assert.That(sent.Path).IsEqualTo($"/v1/projects/{Project}/databases/app/collections/users/documents/by-key");
-        await Assert.That(sent.Query).IsEqualTo("?id=a%2Fb%20c%3Fd");
+        await Assert.That(sent.Query).IsEqualTo($"?id={User}");
+    }
+
+    [Test]
+    [Arguments("a/b c?d")]
+    [Arguments("01ja0000000000000000000003")]
+    [Arguments("0190f3b2-7c4e-7a1b-9c2d-3e4f5a6b7c8d")]
+    public async Task NonUlidDocumentIdsAreRejectedBeforeAnyRequest(string id)
+    {
+        var requests = 0;
+        using var handler = new TerraBaseTestHandler((_, _) => throw new HttpRequestException($"request {++requests} sent"));
+        using var http = new HttpClient(handler);
+        var origin = new Uri("https://terrabase.example.test/");
+        var db = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" }).Database(Project, "app");
+        var platform = new TerraBasePlatformClient(http, new TerraBasePlatformClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("user-token") });
+        using var document = JsonDocument.Parse("{}");
+        var json = document.RootElement;
+        await Assert.ThrowsAsync<ArgumentException>(() => db.GetDocumentAsync("users", id));
+        await Assert.ThrowsAsync<ArgumentException>(() => db.PutDocumentAsync("users", id, json));
+        await Assert.ThrowsAsync<ArgumentException>(() => db.PatchDocumentAsync("users", id, json));
+        await Assert.ThrowsAsync<ArgumentException>(() => db.PatchDocumentAsync("users", id, [TerraBasePatchOperation.Unset("/a")]));
+        await Assert.ThrowsAsync<ArgumentException>(() => db.DeleteDocumentAsync("users", id));
+        await Assert.ThrowsAsync<ArgumentException>(() => platform.GetDocumentAsync("ts-auth", "users", id));
+        await Assert.That(() => TerraBaseTransactionOperation.Create("users", json, id)).Throws<ArgumentException>();
+        await Assert.That(() => TerraBaseTransactionOperation.Put("users", id, json)).Throws<ArgumentException>();
+        await Assert.That(() => TerraBaseTransactionOperation.Patch("users", id, json)).Throws<ArgumentException>();
+        await Assert.That(() => TerraBaseTransactionOperation.Delete("users", id)).Throws<ArgumentException>();
+        await Assert.That(() => TerraBaseTransactionOperation.Assert("users", id, json)).Throws<ArgumentException>();
+        await Assert.That(() => TerraBaseTransactionOperation.AssertAbsent("users", id)).Throws<ArgumentException>();
+        await Assert.That(TerraBaseTransactionOperation.Create("users", json).Id).IsNull();
+        await Assert.That(requests).IsEqualTo(0);
     }
 
     private static IEnumerable<(string Client, string Operation, Func<object, Task> Call)> Calls(JsonElement json)
@@ -66,15 +96,15 @@ public sealed class TerraBaseContractTests
         yield return ("documents", "getCollectionSchema", client => Db(client).GetSchemaAsync("users"));
         yield return ("documents", "getCollectionSchema", client => Db(client).GetInferredSchemaAsync("users"));
         yield return ("documents", "getDatabaseSchema", client => Db(client).ListCollectionStatsAsync());
-        yield return ("documents", "getDocument", client => Db(client).GetDocumentAsync("users", "id"));
+        yield return ("documents", "getDocument", client => Db(client).GetDocumentAsync("users", User));
         yield return ("documents", "listDocuments", client => Db(client).ListDocumentsAsync("users"));
         yield return ("documents", "createDocument", client => Db(client).CreateDocumentAsync("users", json));
-        yield return ("documents", "putDocument", client => Db(client).PutDocumentAsync("users", "id", json));
-        yield return ("documents", "patchDocument", client => Db(client).PatchDocumentAsync("users", "id", json));
-        yield return ("documents", "patchDocument", client => Db(client).PatchDocumentAsync("users", "id", [TerraBasePatchOperation.Unset("/a")]));
-        yield return ("documents", "deleteDocument", client => Db(client).DeleteDocumentAsync("users", "id"));
+        yield return ("documents", "putDocument", client => Db(client).PutDocumentAsync("users", User, json));
+        yield return ("documents", "patchDocument", client => Db(client).PatchDocumentAsync("users", User, json));
+        yield return ("documents", "patchDocument", client => Db(client).PatchDocumentAsync("users", User, [TerraBasePatchOperation.Unset("/a")]));
+        yield return ("documents", "deleteDocument", client => Db(client).DeleteDocumentAsync("users", User));
         yield return ("documents", "queryDocuments", client => Db(client).QueryAsync("users", new TerraBaseQuery()));
-        yield return ("documents", "runTransaction", client => Db(client).TransactAsync([TerraBaseTransactionOperation.Delete("users", "id")]));
+        yield return ("documents", "runTransaction", client => Db(client).TransactAsync([TerraBaseTransactionOperation.Delete("users", User)]));
         yield return ("documents", "createImport", client => Db(client).CreateImportAsync(TerraBaseImportFormat.Sqlite, 1, new string('0', 64)));
         yield return ("documents", "getImport", client => Db(client).GetImportAsync());
         yield return ("documents", "uploadImportSource", client => Db(client).UploadImportSourceAsync(0, new byte[] { 1 }));
@@ -121,7 +151,7 @@ public sealed class TerraBaseContractTests
         yield return ("platform", "listPlatformDatabases", client => P(client).ListDatabasesAsync());
         yield return ("platform", "listPlatformCollections", client => P(client).ListCollectionsAsync("ts-auth"));
         yield return ("platform", "listPlatformDocuments", client => P(client).ListDocumentsAsync("ts-auth", "users", limit: 10));
-        yield return ("platform", "getPlatformDocument", client => P(client).GetDocumentAsync("ts-auth", "users", "id"));
+        yield return ("platform", "getPlatformDocument", client => P(client).GetDocumentAsync("ts-auth", "users", User));
 
         yield return ("management", "createOrganization", client => M(client).CreateOrganizationAsync(User, "Acme"));
         yield return ("management", "listOrganizations", client => M(client).ListOrganizationsAsync(User));

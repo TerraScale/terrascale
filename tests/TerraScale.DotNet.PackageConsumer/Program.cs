@@ -31,7 +31,7 @@ using var regionalHttp = new HttpClient(new WrongRegionStub());
 var regional = new TerraBaseDocumentsClient(regionalHttp, new TerraBaseDocumentsClientOptions { Region = "sjc", ApiKey = "tb_consumer" }).Database("project", "app");
 try
 {
-    _ = await regional.GetDocumentAsync("items", "a");
+    _ = await regional.GetDocumentAsync("items", "01JA00000000000000000000D1");
     throw new InvalidOperationException("A 421 did not throw.");
 }
 catch (TerraBaseWrongRegionException wrong) when (wrong is { Region: "sjc", HomeRegion: "gru", Regions: ["gru", "fra"] })

@@ -93,7 +93,7 @@ public sealed class TerraBasePlatformClient
     /// <summary>Reads one document, redacted; <see langword="null"/> when it is absent.</summary>
     public async Task<TerraBaseDocument?> GetDocumentAsync(string database, string collection, string id, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrEmpty(id);
+        TerraScaleIds.Validate(id);
         try
         {
             return (await connection.SendAsync(

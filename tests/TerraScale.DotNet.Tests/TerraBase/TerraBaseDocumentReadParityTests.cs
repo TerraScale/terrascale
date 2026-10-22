@@ -14,12 +14,12 @@ public sealed class TerraBaseDocumentReadParityTests
         using var handler = new TerraBaseTestHandler(async (request, _) =>
         {
             calls++;
-            await Assert.That(request.RequestUri!.Query).IsEqualTo("?id=a%2Fb%20%2B%25");
+            await Assert.That(request.RequestUri!.Query).IsEqualTo("?id=01JA00000000000000000000D1");
             await Assert.That(request.Headers.IfMatch.ToString()).IsEqualTo(calls < 3 ? "*" : "");
             await Assert.That(request.Headers.IfNoneMatch.ToString()).IsEqualTo(calls == 1 ? "W/\"old\"" : calls == 2 ? "W/" + etag : "");
             var response = calls switch
             {
-                1 => TerraBaseIntegrationFixture.Json("""{"id":"a/b +%","version":"tbv1-0123456789abcdef0123456789abcdef","state":"value","document":{"title":"hello"}}"""),
+                1 => TerraBaseIntegrationFixture.Json("""{"id":"01JA00000000000000000000D1","version":"tbv1-0123456789abcdef0123456789abcdef","state":"value","document":{"title":"hello"}}"""),
                 2 => new HttpResponseMessage(HttpStatusCode.NotModified),
                 _ => TerraBaseIntegrationFixture.Json("""{"error":{"code":"not_found","message":"the document does not exist"}}""", HttpStatusCode.NotFound),
             };
@@ -28,14 +28,14 @@ public sealed class TerraBaseDocumentReadParityTests
         });
         using var http = new HttpClient(handler);
         var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
-        var live = await db.ReadDocumentAsync("items", "a/b +%", "*", "W/\"old\"");
+        var live = await db.ReadDocumentAsync("items", "01JA00000000000000000000D1", "*", "W/\"old\"");
         await Assert.That(live.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(live.Document!.Document.GetProperty("title").GetString()).IsEqualTo("hello");
-        var cached = await db.ReadDocumentAsync("items", "a/b +%", "*", "W/" + etag);
+        var cached = await db.ReadDocumentAsync("items", "01JA00000000000000000000D1", "*", "W/" + etag);
         await Assert.That(cached.Status).IsEqualTo(HttpStatusCode.NotModified);
         await Assert.That(cached.Document).IsNull();
         await Assert.That(cached.ETag).IsEqualTo(etag);
-        var deleted = await db.ReadDocumentAsync("items", "a/b +%");
+        var deleted = await db.ReadDocumentAsync("items", "01JA00000000000000000000D1");
         await Assert.That(deleted.Status).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(deleted.Document).IsNull();
         await Assert.That(deleted.ETag).IsEqualTo(etag);
@@ -55,9 +55,9 @@ public sealed class TerraBaseDocumentReadParityTests
         });
         using var http = new HttpClient(handler);
         var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
-        var missing = await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => db.ReadDocumentAsync("items", "raw"));
+        var missing = await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => db.ReadDocumentAsync("items", "01JA00000000000000000000D1"));
         await Assert.That(missing!.ErrorCode).IsEqualTo("unknown_database");
-        var failed = await Assert.ThrowsAsync<TerraBasePreconditionFailedException>(() => db.ReadDocumentAsync("items", "raw", "*"));
+        var failed = await Assert.ThrowsAsync<TerraBasePreconditionFailedException>(() => db.ReadDocumentAsync("items", "01JA00000000000000000000D1", "*"));
         await Assert.That(failed!.StatusCode).IsEqualTo(HttpStatusCode.PreconditionFailed);
         await Assert.That(calls).IsEqualTo(2);
     }

@@ -17,8 +17,8 @@ public sealed class TerraBaseDocumentParityTests
             var body = path.EndsWith("/collections", StringComparison.Ordinal)
                 ? """{"name":"items","id":"01JA0000000000000000000002","created_at":"1792627200000"}"""
                 : path.EndsWith("/transactions", StringComparison.Ordinal)
-                    ? """{"offset":"9007199254740993","durability":"remote_durable","results":[{"id":"a/b +%","version":"tbv1-v","document":{"tags":["blue"]}},{"asserted":true,"count":"9007199254740994"}]}"""
-                    : """{"id":"a/b +%","version":"tbv1-v","offset":"9007199254740993","durability":"remote_durable","document":{"tags":["blue"]}}""";
+                    ? """{"offset":"9007199254740993","durability":"remote_durable","results":[{"id":"01JA00000000000000000000D1","version":"tbv1-v","document":{"tags":["blue"]}},{"asserted":true,"count":"9007199254740994"}]}"""
+                    : """{"id":"01JA00000000000000000000D1","version":"tbv1-v","offset":"9007199254740993","durability":"remote_durable","document":{"tags":["blue"]}}""";
             return TerraBaseIntegrationFixture.Json(body, path.EndsWith("/collections", StringComparison.Ordinal) ? HttpStatusCode.Created : HttpStatusCode.OK);
         });
         using var http = new HttpClient(handler);
@@ -26,8 +26,8 @@ public sealed class TerraBaseDocumentParityTests
         var collection = await db.CreateCollectionAsync("items");
         using var scalar = JsonDocument.Parse("\"blue\"");
         var ops = new[] { TerraBasePatchOperation.Add("/tags", scalar.RootElement), TerraBasePatchOperation.Remove("/tags", scalar.RootElement) };
-        var write = await db.PatchDocumentAsync("items", "a/b +%", ops);
-        var tx = await db.TransactAsync([TerraBaseTransactionOperation.Patch("items", "a/b +%", ops), TerraBaseTransactionOperation.AssertCount("items", gte: 9007199254740994L)]);
+        var write = await db.PatchDocumentAsync("items", "01JA00000000000000000000D1", ops);
+        var tx = await db.TransactAsync([TerraBaseTransactionOperation.Patch("items", "01JA00000000000000000000D1", ops), TerraBaseTransactionOperation.AssertCount("items", gte: 9007199254740994L)]);
         await Assert.That(collection.Id).IsEqualTo("01JA0000000000000000000002");
         await Assert.That(write.Offset).IsEqualTo(9007199254740993L);
         await Assert.That(write.Document!.Value.GetProperty("tags")[0].GetString()).IsEqualTo("blue");
@@ -55,11 +55,11 @@ public sealed class TerraBaseDocumentParityTests
         using var http = new HttpClient(handler);
         var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
         using var json = JsonDocument.Parse("{}");
-        var unknown = await Assert.ThrowsAsync<TerraBaseUnavailableException>(() => db.PutDocumentAsync("items", "raw-key", json.RootElement));
+        var unknown = await Assert.ThrowsAsync<TerraBaseUnavailableException>(() => db.PutDocumentAsync("items", "01JA00000000000000000000D1", json.RootElement));
         await Assert.That(unknown!.Machine).IsEqualTo("test-machine");
         await Assert.That(unknown.OutcomeRegion).IsEqualTo("gru");
         await Assert.That(unknown.RetryAfter).IsNull();
-        var invalid = await Assert.ThrowsAsync<TerraBaseValidationException>(() => db.TransactAsync([TerraBaseTransactionOperation.Put("items", "raw-key", json.RootElement)]));
+        var invalid = await Assert.ThrowsAsync<TerraBaseValidationException>(() => db.TransactAsync([TerraBaseTransactionOperation.Put("items", "01JA00000000000000000000D1", json.RootElement)]));
         await Assert.That(invalid!.OperationIndex).IsEqualTo(1);
         await Assert.That(invalid.Details.Single().Path).IsEqualTo("/title");
         await Assert.That(invalid.Details.Single().Keyword).IsEqualTo("type");

@@ -247,10 +247,7 @@ public sealed partial class TerraBaseDatabase
 
     private string UniqueSchemaPath(string collection) => $"{path}/schema/{TerraBaseConnection.Segment(collection, nameof(collection))}";
 
-    // The key travels in the query, so any id (slashes included) addresses exactly one document.
-    private string DocumentPath(string collection, string id)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(id);
-        return CollectionPath(collection) + "/documents/by-key" + TerraBaseConnection.Query(("id", id));
-    }
+    // TerraBase document ids are canonical ULIDs; reject anything else before sending.
+    private string DocumentPath(string collection, string id) =>
+        CollectionPath(collection) + "/documents/by-key" + TerraBaseConnection.Query(("id", TerraScaleIds.Validate(id)));
 }

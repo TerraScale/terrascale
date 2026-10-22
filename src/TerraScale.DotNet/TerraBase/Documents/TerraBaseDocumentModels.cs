@@ -213,7 +213,7 @@ public sealed record TerraBaseTransactionOperation
     /// <summary>Target collection.</summary>
     public string Collection { get; }
 
-    /// <summary>Target document id.</summary>
+    /// <summary>Target document id: a canonical uppercase ULID.</summary>
     public string? Id { get; private init; }
 
     /// <summary>Document of <c>create</c> and <c>put</c>.</summary>
@@ -247,31 +247,31 @@ public sealed record TerraBaseTransactionOperation
 
     /// <summary>Creates a document that must be absent or deleted; TerraBase generates a ULID when <paramref name="id"/> is null.</summary>
     public static TerraBaseTransactionOperation Create(string collection, JsonElement document, string? id = null) =>
-        new("create", collection) { Id = id, Document = document };
+        new("create", collection) { Id = id is null ? null : TerraScaleIds.Validate(id), Document = document };
 
     /// <summary>Inserts or replaces a document, optionally only at version <paramref name="ifMatch"/>.</summary>
     public static TerraBaseTransactionOperation Put(string collection, string id, JsonElement document, string? ifMatch = null) =>
-        new("put", collection) { Id = Required(id), Document = document, IfMatch = ifMatch };
+        new("put", collection) { Id = TerraScaleIds.Validate(id), Document = document, IfMatch = ifMatch };
 
     /// <summary>Applies an RFC 7396 merge patch to an existing document.</summary>
     public static TerraBaseTransactionOperation Patch(string collection, string id, JsonElement merge, string? ifMatch = null) =>
-        new("patch", collection) { Id = Required(id), Merge = merge, IfMatch = ifMatch };
+        new("patch", collection) { Id = TerraScaleIds.Validate(id), Merge = merge, IfMatch = ifMatch };
 
     /// <summary>Applies patch operations to an existing document.</summary>
     public static TerraBaseTransactionOperation Patch(string collection, string id, IReadOnlyList<TerraBasePatchOperation> ops, string? ifMatch = null) =>
-        new("patch", collection) { Id = Required(id), Ops = ops ?? throw new ArgumentNullException(nameof(ops)), IfMatch = ifMatch };
+        new("patch", collection) { Id = TerraScaleIds.Validate(id), Ops = ops ?? throw new ArgumentNullException(nameof(ops)), IfMatch = ifMatch };
 
     /// <summary>Deletes an existing document.</summary>
     public static TerraBaseTransactionOperation Delete(string collection, string id, string? ifMatch = null) =>
-        new("delete", collection) { Id = Required(id), IfMatch = ifMatch };
+        new("delete", collection) { Id = TerraScaleIds.Validate(id), IfMatch = ifMatch };
 
     /// <summary>Asserts that the document exists and matches <paramref name="filter"/>.</summary>
     public static TerraBaseTransactionOperation Assert(string collection, string id, JsonElement filter) =>
-        new("assert", collection) { Id = Required(id), Filter = filter };
+        new("assert", collection) { Id = TerraScaleIds.Validate(id), Filter = filter };
 
     /// <summary>Asserts that the document is absent or deleted.</summary>
     public static TerraBaseTransactionOperation AssertAbsent(string collection, string id) =>
-        new("assert", collection) { Id = Required(id), Absent = true };
+        new("assert", collection) { Id = TerraScaleIds.Validate(id), Absent = true };
 
     /// <summary>Asserts that between <paramref name="gte"/> and <paramref name="lte"/> documents match <paramref name="filter"/> (at least one bound).</summary>
     public static TerraBaseTransactionOperation AssertCount(string collection, JsonElement? filter = null, long? gte = null, long? lte = null) =>
@@ -279,11 +279,6 @@ public sealed record TerraBaseTransactionOperation
             ? throw new ArgumentException("assert_count needs gte, lte or both.", nameof(gte))
             : new("assert_count", collection) { Filter = filter, Gte = gte, Lte = lte };
 
-    private static string Required(string id)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(id);
-        return id;
-    }
 }
 
 /// <summary>The <c>{"ops":[…]}</c> transaction body.</summary>
