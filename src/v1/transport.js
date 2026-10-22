@@ -37,7 +37,7 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
 
 /**
  * @typedef {object} V1CallOptions
- * @property {string} [body]
+ * @property {string | Uint8Array} [body]
  * @property {string} [contentType]
  * @property {Readonly<Record<string, string>>} [headers] Contract headers only (If-Match, If-None-Match).
  * @property {URLSearchParams | undefined} [query]
@@ -337,7 +337,8 @@ export class V1Transport {
   /** @param {V1Operation} operation @param {Readonly<Record<string, string>>} params @param {V1CallOptions} options @returns {Promise<Response>} */
   async #send(operation, params, options) {
     const route = v1Route(operation);
-    if (options.body !== undefined && new TextEncoder().encode(options.body).byteLength > maximumRequestBytes)
+    const bytes = typeof options.body === "string" ? new TextEncoder().encode(options.body) : options.body;
+    if (bytes !== undefined && bytes.byteLength > maximumRequestBytes)
       throw new TypeError(`TerraBase request bodies are limited to ${maximumRequestBytes} bytes.`);
     let url = await this.url(operation, params, options.signal);
     if (options.query !== undefined && options.query.size > 0) url += `?${options.query}`;
@@ -350,10 +351,10 @@ export class V1Transport {
     if (options.cache !== undefined) init.cache = options.cache;
     if (route.permission.endsWith(":write") && typeof process !== "undefined" && process.release?.name === "node") {
       // Node fetch replays buffered or absent bodies on 421; use a one-shot stream, including DELETE.
-      const bytes = new TextEncoder().encode(options.body ?? "");
-      init.body = new ReadableStream({ start(controller) { if (bytes.byteLength > 0) controller.enqueue(bytes); controller.close(); } });
+      if (operation === "uploadImportSource" && bytes !== undefined) headers.set("content-length", String(bytes.byteLength));
+      init.body = new ReadableStream({ start(controller) { if (bytes !== undefined && bytes.byteLength > 0) controller.enqueue(bytes); controller.close(); } });
       init.duplex = "half";
-    } else if (options.body !== undefined) init.body = options.body;
+    } else if (options.body !== undefined) init.body = typeof options.body === "string" ? options.body : options.body.slice().buffer;
     if (options.signal !== undefined) init.signal = options.signal;
     const response = await this.#fetch(url, init);
     if (options.signal?.aborted) {

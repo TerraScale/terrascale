@@ -120,3 +120,8 @@ export { V1Backups, V1BackupDestinationClient } from "./v1/backups.js";
 /** @typedef {import("./v1/backups.js").V1PointInTimeRequest} V1PointInTimeRequest */
 /** @typedef {import("./v1/backups.js").V1PointInTimeRestoreRequest} V1PointInTimeRestoreRequest */
 /** @typedef {import("./v1/backups.js").V1BackupDestinationRequest} V1BackupDestinationRequest */
+
+export { V1Imports } from "./v1/imports.js";
+/** @typedef {import("./v1/imports.js").V1ImportJob} V1ImportJob */
+/** @typedef {import("./v1/imports.js").V1ImportOptions} V1ImportOptions */
+/** @typedef {import("./v1/imports.js").V1CreateImportRequest} V1CreateImportRequest */

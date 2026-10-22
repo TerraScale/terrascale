@@ -1,7 +1,14 @@
-/** @typedef {"createBackup" | "listBackups" | "restoreBackup" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getProjectReplication" | "getDatabaseUsage" | "getDatabaseAnalytics" | "getDatabaseReplication" | "createIndex" | "listIndexes" | "dropIndex" | "getAutoIndexPolicy" | "setAutoIndexPolicy" | "listIndexRecommendations" | "applyIndexRecommendation" | "getDatabaseSchema" | "inferCollectionSchema" | "declareCollectionSchema" | "listQueryShapes" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
+/** @typedef {"createImport" | "getImport" | "uploadImportSource" | "updateImport" | "startImport" | "cancelImport" | "resumeImport" | "createBackup" | "listBackups" | "restoreBackup" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getProjectReplication" | "getDatabaseUsage" | "getDatabaseAnalytics" | "getDatabaseReplication" | "createIndex" | "listIndexes" | "dropIndex" | "getAutoIndexPolicy" | "setAutoIndexPolicy" | "listIndexRecommendations" | "applyIndexRecommendation" | "getDatabaseSchema" | "inferCollectionSchema" | "declareCollectionSchema" | "listQueryShapes" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
 const saved = "/v1/projects/{project}/saved-queries";
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
+  route("createImport", "POST", "/v1/projects/{project}/databases/{database}/import", 201),
+  route("getImport", "GET", "/v1/projects/{project}/databases/{database}/import", 200),
+  route("uploadImportSource", "PUT", "/v1/projects/{project}/databases/{database}/import/source", 200),
+  route("updateImport", "PATCH", "/v1/projects/{project}/databases/{database}/import", 202),
+  route("startImport", "POST", "/v1/projects/{project}/databases/{database}/import/start", 202),
+  route("cancelImport", "POST", "/v1/projects/{project}/databases/{database}/import/cancel", 202),
+  route("resumeImport", "POST", "/v1/projects/{project}/databases/{database}/import/resume", 202),
   route("createBackup", "POST", "/v1/projects/{project}/databases/{database}/backups", 201),
   route("listBackups", "GET", "/v1/projects/{project}/databases/{database}/backups", 200),
   route("restoreBackup", "POST", "/v1/projects/{project}/databases/{database}/backups/{backup}/restore", 201),
@@ -42,8 +49,8 @@ function route(operation, method, pathTemplate, status = 200) {
   const write = method !== "GET" && operation !== "planPointInTime";
   return Object.freeze({ operation, method, pathTemplate,
     permission: write ? "databases:write" : "databases:read",
-    requestMediaTypes: Object.freeze(method === "POST" || method === "PUT" ? ["application/json"] : []),
-    responseMediaType: status === 204 ? "" : "application/json", successStatuses: Object.freeze(operation === "applyIndexRecommendation" ? [200, 201] : [status]),
+    requestMediaTypes: Object.freeze(operation === "uploadImportSource" ? ["application/octet-stream"] : method === "POST" || method === "PUT" || method === "PATCH" ? ["application/json"] : []),
+    responseMediaType: status === 204 ? "" : "application/json", successStatuses: Object.freeze(operation === "applyIndexRecommendation" || operation === "createImport" ? [200, 201] : [status]),
     idempotencyKey: "none", replaySafe: !write, contract: "docs/terrabase/api.md", contractText: Object.freeze([]),
   });
 }

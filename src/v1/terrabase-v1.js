@@ -14,6 +14,7 @@ import { runSql, checkSql } from "./sql.js";
 import { streamChanges } from "./changes.js";
 import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema } from "./catalog.js";
 import { V1Transport } from "./transport.js";
+import { V1Imports } from "./imports.js";
 import { V1Backups, V1BackupDestinationClient } from "./backups.js";
 import { V1ProjectUsageClient, V1DatabaseUsageClient } from "./usage.js";
 import { V1Indexes } from "./indexes.js";
@@ -740,6 +741,8 @@ export class V1Collections {
 
 /** A database handle by name. It performs no I/O until an operation runs. */
 export class V1Database {
+  /** @type {V1Imports} */
+  imports;
   /** @type {V1Backups} */
   backups;
   /** @type {V1DatabaseUsageClient} */
@@ -767,6 +770,7 @@ export class V1Database {
     this.indexes = new V1Indexes(transport, this.name);
     this.metrics = new V1DatabaseUsageClient(transport, this.name);
     this.backups = new V1Backups(transport, this.name);
+    this.imports = new V1Imports(transport, this.name);
     Object.freeze(this);
   }
 
