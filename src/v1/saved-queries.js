@@ -19,8 +19,8 @@ function body(request) {
   members(request, ["name", "sql"]);
   if (typeof request.name !== "string" || request.name.trim().length < 1 || request.name.trim().length > 128 ||
       /[\p{Cc}]/u.test(request.name) || !/[\p{L}\p{N}]/u.test(request.name)) throw new TypeError("name must contain a letter or digit and be 1-128 characters without controls.");
-  if (typeof request.sql !== "string" || request.sql.trim() === "" || new TextEncoder().encode(request.sql).length > 16 * 1024)
-    throw new TypeError("sql must be a non-empty statement of at most 16 KiB.");
+  if (typeof request.sql !== "string" || request.sql.trim() === "" || request.sql.length > 16_384)
+    throw new TypeError("sql must be a non-empty statement of at most 16384 UTF-16 code units.");
   return stringifyExactJson({ name: request.name, sql: request.sql }, "saved query");
 }
 
