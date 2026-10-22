@@ -334,6 +334,11 @@ public sealed class OriginStampOrderTests
             {
                 await RegisterAsync();
             }
+            else
+            {
+                // Startup precedes this fixture's directory publication; finish the trusted pass before issuing keys.
+                await Assert.That(await ((CatalogGate)Api.Server.Services.GetRequiredService<ICatalogGate>()).VerifyAsync(TestContext.Current!.Execution.CancellationToken)).IsTrue();
+            }
         }
 
         public async Task StopAsync()
