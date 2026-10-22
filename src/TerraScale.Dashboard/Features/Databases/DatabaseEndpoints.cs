@@ -116,6 +116,8 @@ public static class DatabaseEndpoints
         {
             foreach (var database in context.Project.Databases.Values)
             {
+                // Explore serves no collection counts.
+                if (PlatformDatabases.IsPlatform(context.Organization?.Id)) { contentsAvailable = false; continue; }
                 try
                 {
                     var reported = await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), database.Id, http.RequestAborted);

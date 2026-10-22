@@ -11,7 +11,7 @@ namespace TerraScale.Dashboard.Shared.Accounts;
 
 // ts-auth decides which organizations and projects exist and the caller's role
 // in them. The dashboard stores only its own state for those IDs.
-public sealed class AccountService(IDashboardState state, TimeProvider time, ITsAuthPlatform platform)
+public sealed class AccountService(IDashboardState state, TimeProvider time, ITsAuthPlatform platform, IPlatformRoleGateway roles, IHttpClientFactory http)
 {
     public const string AccountsCollection = "dashboard_accounts";
     public const string IdentitiesCollection = "dashboard_account_identities";
@@ -136,8 +136,17 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         foreach (var live in await platform.ListOrganizationsAsync(session, cancellationToken))
         {
             if (live.Role is not { Length: > 0 } || !TerraScaleIds.IsValid(live.Id)) continue;
+            // Only a platform admin, checked against the signed access token on every request, sees the platform organization.
+            var platformOrg = PlatformDatabases.IsPlatform(live.Id);
+            if (platformOrg && await roles.PlatformRoleAsync(session, cancellationToken) != "admin") continue;
             var org = await OrganizationStateAsync(live, cancellationToken);
             Hydrate(org, live, await platform.ListProjectsAsync(session, live.Id, cancellationToken), session);
+            if (platformOrg)
+            {
+                try { await PlatformDatabases.HydrateAsync(org, http.CreateClient("platform"), session, cancellationToken); }
+                // Listed without databases while TerraBase does not answer; never cached.
+                catch (Exception error) when (error is HttpRequestException or AccountAccessException or JsonException or KeyNotFoundException or InvalidOperationException) { }
+            }
             if (org.ContainsMember(session.UserId)) organizations.Add(org);
         }
         var active = organizations.FirstOrDefault(item => item.Id == account.ActiveOrganizationId);

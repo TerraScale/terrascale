@@ -171,6 +171,7 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
 
     private async Task<TerraBaseDocumentsClient> ClientAsync(DatabaseScope scope, DatabaseRegion home, string permission, CancellationToken cancellationToken)
     {
+        if (PlatformDatabases.IsPlatform(scope.OrganizationId)) throw PlatformDatabases.ReadOnly();
         var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
         var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, [permission], cancellationToken);
         return new(factory.CreateClient("platform"), new TerraBaseDocumentsClientOptions
