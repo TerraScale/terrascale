@@ -23,7 +23,7 @@ public sealed class ShapeCacheE2ETests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var cluster = await Cluster.StartMirroredAsync();
-        // One machine for the handle's whole lifetime: on Fly a region may run several machines, each with its own shapes.
+        // One node owns the handle and its shapes for the whole lifetime.
         using var origin = await cluster.ViaAsync(region, region);
         var shape = $"{cluster.DatabasePath}/collections/{cluster.Collection}/shape";
         await Docs.PutAsync(origin, cluster.Document(EntityIds.New().ToString()), new JsonObject { ["value"] = "before" }, token);

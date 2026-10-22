@@ -45,12 +45,12 @@ public sealed class Cluster : IAsyncDisposable
 
     private Cluster(
         string projectPath, string databasePath, string collection, Dictionary<string, HttpClient> clients, Local? local, Dictionary<string, string>? identities,
-        Func<Task> release, Func<string, string, Task<HttpClient>> via, Func<string, HttpClient> sql, DisposableTarget.Target? flyTarget = null, string? organization = null)
+        Func<Task> release, Func<string, string, Task<HttpClient>> via, Func<string, HttpClient> sql, DisposableTarget.Target? flyTarget = null)
     {
         _via = via;
         _sql = sql;
         FlyTarget = flyTarget;
-        OrganizationId = local?.OrganizationId ?? organization;
+        OrganizationId = local?.OrganizationId;
         ProjectPath = projectPath;
         DatabasePath = databasePath;
         Collection = collection;
@@ -128,38 +128,22 @@ public sealed class Cluster : IAsyncDisposable
     public static Task<Cluster> StartAsync(params string[] regions) => StartAsync(regions, skews: null);
 
     // Backup qualification owns a whole database: snapshots never include other parallel tests' collections.
-    internal static Task<Cluster> StartBackupAsync()
-    {
-        if (!FlyRequested)
-        {
-            return StartLocalAsync([Gru, Sjc, Fra], new Dictionary<string, TimeSpan>(), new FakeS3());
-        }
+    internal static Task<Cluster> StartBackupAsync() =>
+        StartLocalAsync([Gru, Sjc, Fra], new Dictionary<string, TimeSpan>(), new FakeS3());
 
-        if (!FlyPinned || Environment.GetEnvironmentVariable(DisposableTarget.AppVariable) != DisposableTarget.ApprovedApp
-            || Environment.GetEnvironmentVariable(DisposableTarget.OrgVariable) != DisposableTarget.ApprovedOrg)
-        {
-            throw new InvalidOperationException($"backup qualification on Fly requires pinned {DisposableTarget.ApprovedApp} in {DisposableTarget.ApprovedOrg}");
-        }
-
-        return StartFlyAsync([Gru, Sjc, Fra], backup: true);
-    }
-
-    internal Task ShipBackupAsync(CancellationToken token) => _local is null ? Task.CompletedTask : _local.ShipBackupAsync(token);
+    internal Task ShipBackupAsync(CancellationToken token) => RequireLocal().ShipBackupAsync(token);
 
     /// <summary>
-    /// gru, sjc and fra whose shapes mirror to an object store (FR-22): local nodes share one fake bucket; Fly's machines
-    /// already mirror to the app's Tigris bucket, so on Fly this is an ordinary collection-owning cluster.
+    /// gru, sjc and fra whose shapes mirror to one shared fake object-store bucket (FR-22).
     /// </summary>
     internal static Task<Cluster> StartMirroredAsync() =>
-        FlyRequested ? StartFlyAsync([Gru, Sjc, Fra]) : StartLocalAsync([Gru, Sjc, Fra], new Dictionary<string, TimeSpan>(), new FakeS3());
+        StartLocalAsync([Gru, Sjc, Fra], new Dictionary<string, TimeSpan>(), new FakeS3());
 
     /// <summary>
-    /// A client of the object store behind presigned shape URLs, carrying no TerraBase credential: on Fly the public internet,
-    /// locally the region's route to its fake bucket. The caller disposes it.
+    /// A client of the object store behind presigned shape URLs, carrying no TerraBase credential, through the region's
+    /// route to its fake bucket. The caller disposes it.
     /// </summary>
-    internal HttpClient ObjectClient(string region) => _local is null
-        ? new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = Converge.Deadline }
-        : _local.ObjectClient(region);
+    internal HttpClient ObjectClient(string region) => RequireLocal().ObjectClient(region);
 
     /// <summary>Starts <paramref name="regions"/> with <paramref name="skews"/> setting a local node's clock ahead (positive) or behind its peers.</summary>
     public static Task<Cluster> StartAsync(string[] regions, IReadOnlyDictionary<string, TimeSpan>? skews)
@@ -404,8 +388,7 @@ public sealed class Cluster : IAsyncDisposable
         }
     }
 
-    // Ordinary Fly scenarios own a collection; backup qualification owns and deletes an isolated database.
-    private static async Task<Cluster> StartFlyAsync(string[] regions, bool backup = false)
+    private static async Task<Cluster> StartFlyAsync(string[] regions)
     {
         // With TERRABASE_E2E_FLY_REVISION (a disposable app's run) every request goes to the region's one machine, and each
         // machine must answer as itself, in its region, running exactly that commit, before the first write and after the
@@ -416,10 +399,9 @@ public sealed class Cluster : IAsyncDisposable
         var url = new Uri(Required(FlyUrlVariable), UriKind.Absolute);
         // The documents client's bearer: in CI the bound e2e project's 15-minute ts-auth project token
         // (scripts/e2e/ci-oidc-credential.sh), the same project as /sql's TERRABASE_E2E_FLY_PROJECT_TOKEN.
-        var organization = backup ? Required("TERRABASE_E2E_FLY_ORGANIZATION") : null;
-        var key = Required(backup ? "TERRABASE_E2E_FLY_PROJECT_TOKEN" : "TERRABASE_E2E_FLY_API_KEY");
+        var key = Required("TERRABASE_E2E_FLY_API_KEY");
         var projectPath = $"/v1/projects/{Required("TERRABASE_E2E_FLY_PROJECT")}";
-        var path = backup ? "" : $"{projectPath}/databases/{Required("TERRABASE_E2E_FLY_DATABASE")}";
+        var path = $"{projectPath}/databases/{Required("TERRABASE_E2E_FLY_DATABASE")}";
         if (target is not null)
         {
             using var apps = JsonDocument.Parse(await Flyctl.RunAsync(["apps", "list", "--org", target.Org, "--json"]));
@@ -455,37 +437,15 @@ public sealed class Cluster : IAsyncDisposable
         }
 
         var collection = NewCollection();
-        string? owned = null;
         try
         {
-            if (backup)
-            {
-                owned = $"{projectPath}/databases/e2e-backup-{EntityIds.New().ToString().ToLowerInvariant()}";
-                var database = new
-                {
-                    name = owned.Split('/')[^1],
-                    homeRegion = Gru,
-                    replicaRegions = regions.Where(region => region != Gru).ToArray(),
-                };
-                using var created = await Docs.AdmittedAsync(() => clients[Gru].PostAsJsonAsync(new Uri($"{projectPath}/databases", UriKind.Relative), database));
-                await Docs.EnsureSuccessAsync(created);
-                path = owned;
-            }
-
             await CreateCollectionAsync(clients, path, collection);
         }
         catch (Exception error)
         {
             try
             {
-                if (owned is not null)
-                {
-                    await DeleteDatabaseAsync(region => clients[region], Gru, owned);
-                }
-                else
-                {
-                    await DeleteCollectionAsync(clients[Gru], path, collection);
-                }
+                await DeleteCollectionAsync(clients[Gru], path, collection);
             }
             catch (Exception cleanup)
             {
@@ -517,14 +477,7 @@ public sealed class Cluster : IAsyncDisposable
                 }
                 finally
                 {
-                    if (owned is not null)
-                    {
-                        await DeleteDatabaseAsync(region => clients[region], Gru, owned);
-                    }
-                    else
-                    {
-                        await DeleteCollectionAsync(clients[Gru], path, collection);
-                    }
+                    await DeleteCollectionAsync(clients[Gru], path, collection);
                 }
             }
             finally
@@ -535,7 +488,7 @@ public sealed class Cluster : IAsyncDisposable
                 }
             }
         }, async (edge, served) => FlyClient(url, key, edge, await ViaMachineAsync(edge), served, await ViaMachineAsync(served)),
-            region => FlyClient(url, Required("TERRABASE_E2E_FLY_PROJECT_TOKEN"), region, machines[region]), target, organization);
+            region => FlyClient(url, Required("TERRABASE_E2E_FLY_PROJECT_TOKEN"), region, machines[region]), target);
     }
 
     // Creates the collection in gru and waits until every other region serves it, so every test starts from a replicated database.
