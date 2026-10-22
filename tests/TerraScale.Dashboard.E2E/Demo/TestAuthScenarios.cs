@@ -395,7 +395,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             }
             if (!http.Request.HasFormContentType) return ContractFailure("Missing form-encoded auth operation.");
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
-            if (form["client_id"] == "ts-cli" && !http.Request.Headers.ContainsKey("Authorization") && form["client_secret"].Count == 0)
+            if (form["client_id"] == "00000000000000000000000007" && !http.Request.Headers.ContainsKey("Authorization") && form["client_secret"].Count == 0)
                 return await CliAsync(http, path, form);
             if (!Confidential(http, form)) return ContractFailure("Missing confidential client credentials.");
             if (path == "/terrascale/oauth/revoke")

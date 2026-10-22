@@ -9,7 +9,7 @@ namespace TerraScale.Dashboard.Features.Auth;
 // the grant lives only in the command's memory and is revoked when it finishes.
 public sealed partial class TsAuthGateway
 {
-    private const string CliClient = "ts-cli";
+    private const string CliClient = "00000000000000000000000007"; // ts-auth's built-in ts-cli client
     private const string DeviceGrantType = "urn:ietf:params:oauth:grant-type:device_code";
 
     public async Task<SessionRecord> DeviceSignInAsync(TextWriter output, CancellationToken cancellationToken)
