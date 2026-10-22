@@ -73,6 +73,8 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBaseRestoredDatabase))]
 [JsonSerializable(typeof(TerraBaseBackupDestination))]
 [JsonSerializable(typeof(TerraBaseBackupDestinationRequest))]
+[JsonSerializable(typeof(TerraBaseProjectAnalytics))]
+[JsonSerializable(typeof(TerraBaseProjectReplication))]
 [JsonSerializable(typeof(RequestBody))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext
 {
