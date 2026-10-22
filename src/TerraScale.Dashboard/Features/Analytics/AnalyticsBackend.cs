@@ -53,13 +53,15 @@ public sealed class AnalyticsBackend(IHttpClientFactory factory, IProjectAccessT
             {
                 var databaseId = database.GetProperty("databaseId").GetString() ?? "";
                 var region = database.GetProperty("region").GetString() ?? "";
+                // A database TerraBase knows but this project record does not (just created, or deleted) is left out rather than failing the page.
+                if (selection.DatabaseId.Length == 0 && databaseId.Length > 0 && !project.Databases.ContainsKey(databaseId)) continue;
                 if (!project.Databases.TryGetValue(databaseId, out var record) || record.ProjectId != project.Id || !ValidRegionId(region) ||
                     selection.DatabaseId.Length > 0 && databaseId != selection.DatabaseId ||
                     requestedRegion.Length > 0 && region != requestedRegion)
                     throw new JsonException("Analytics returned measurements outside the selected scope.");
                 var displayRegion = regionCodes.GetValueOrDefault(region) ?? DatabaseRegion.FromId(region)?.Code ?? region;
-                if (!seen.Add((databaseId, region)) || !record.Regions.Contains(displayRegion, StringComparer.OrdinalIgnoreCase))
-                    throw new JsonException("Analytics returned duplicate measurements or a region outside the database placement.");
+                // TerraBase keeps a region's observations after the database leaves it, so a region outside the current placement is valid history.
+                if (!seen.Add((databaseId, region))) throw new JsonException("Analytics returned duplicate measurements.");
                 DateTimeOffset? previousStart = null;
                 foreach (var series in database.GetProperty("series").EnumerateArray())
                 {

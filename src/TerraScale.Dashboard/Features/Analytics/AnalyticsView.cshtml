@@ -1,6 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Analytics.AnalyticsPage>
 @implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
-<main class="ts-page"><h1>Analytics</h1><p class="ts-meta">Requests, latency, bandwidth and storage measured by TerraBase.</p><div class="ts-page-actions"></div>
+<main class="ts-page"><header class="ts-stack-sm"><h1>Analytics</h1><p class="ts-meta">Requests, latency, bandwidth and storage measured by TerraBase.</p></header>
     <form class="ts-filters" method="get" action="/analytics" role="search" aria-label="Filter analytics" data-submit-once>
         <input type="hidden" name="project" value="@Model.Selection.Context.Project!.Id" />
         @if (Model.Totals is null)
@@ -16,7 +16,7 @@
         <button class="ts-btn ts-btn-secondary" type="submit">Apply</button>
     </form>
     <p class="ts-meta ts-measurement-loading" role="status">Loading analytics measurements…</p>
-    <p class="ts-meta">Measured by TerraBase. Time buckets are selected automatically for the range. Request latency percentiles are approximate histogram estimates in microseconds. Storage is shown when sampled. Replication uses its own replication_bytes meter.</p>
+    <p class="ts-meta">Measured by TerraBase. Time buckets are selected automatically for the range. Request latency percentiles are approximate histogram estimates in microseconds. Storage is shown when sampled. Replication uses its own replication_bytes meter. Read operations are the reads on Usage and billing; put, patch and delete operations are the writes. Counters are flushed every 10 seconds, so the newest requests can take that long to appear.</p>
     @(await RenderPartialAsync<TerraScale.Dashboard.Features.Analytics.AnalyticsSummaryView, TerraScale.Dashboard.Features.Analytics.AnalyticsPage>(Model))
     @if (Model.Totals is not null) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Analytics.AnalyticsRegionView, TerraScale.Dashboard.Features.Analytics.AnalyticsPage>(Model)) }
     @if (Model.Totals is not null) { <div class="ts-grid ts-grid-2">@foreach (var chart in Model.Charts) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Analytics.AnalyticsChartView, TerraScale.Dashboard.Features.Analytics.AnalyticsChart>(chart)) }</div> }

@@ -3,10 +3,12 @@
 The Analytics page reads the selected project's time series, optionally scoped
 to a database and region. All four ranges (`1h`, `24h`, `7d`, `30d`) are passed
 to the provider; automatic bucketing belongs to TerraBase. Request and operation
-types remain separate series. Storage sums the database-region gauges in the
-latest bucket. The Overview p95
-card reports the worst measured p95 in that bucket; percentiles are never summed
-or averaged. Latency lines stay separate per database and region, with gaps for
+types remain separate series. The current bucket is partial, so Storage sums the
+database-region gauges in the latest bucket where every database region was
+sampled, and the p95 cards report the worst measured p95 in the latest bucket
+with requests; percentiles are never summed or averaged. Items for a region no
+longer in the database placement are kept as history, as TerraBase documents.
+Read operations are Usage's reads; put, patch and delete are its writes. Latency lines stay separate per database and region, with gaps for
 missing observations. Latency chart values are microseconds; headline latency is displayed in milliseconds.
 
 Database filters restrict the offered regions to that database. Changing the

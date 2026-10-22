@@ -11,11 +11,8 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
     [Test]
     [Arguments("duplicate", "/analytics?range=1h", "Could not load analytics measurements.")]
     [Arguments("duplicate", "/?range=1h", "Analytics measurements could not be loaded.")]
-    [Arguments("foreign-region", "/analytics?range=1h", "Could not load analytics measurements.")]
-    [Arguments("foreign-region", "/?range=1h", "Analytics measurements could not be loaded.")]
-    public async Task ContractProposalRejectsDuplicateRowsAndRegionsOutsideCurrentPlacement(string mode, string route, string expectedError)
+    public async Task DuplicateRowsAreRejected(string mode, string route, string expectedError)
     {
-        // Strict proposed policies: item uniqueness and historical placement are not specified by the current producer contract.
         var producer = new AuditAnalyticsProducer();
         await using var scenario = await AuthProviderScenario.StartReportingAsync(fixture.Root, producer.RespondAsync);
         using var client = scenario.CreateClient();
@@ -29,7 +26,25 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
         await SaveEvidenceAsync(mode + (route.StartsWith("/analytics", StringComparison.Ordinal) ? "-analytics" : "-home"), route, producer, html);
         await Assert.That(producer.Reads).IsGreaterThan(0);
         await Assert.That(html).Contains(expectedError)
-            .Because("An ambiguous duplicate or a region absent from the database placement must not become measured totals.");
+            .Because("An ambiguous duplicate must not become measured totals.");
+    }
+
+    [Test]
+    public async Task HistoryLowercaseRegionLinksAndAPartialLatestBucketStayMeasured()
+    {
+        var producer = new AuditAnalyticsProducer { Mode = "foreign-region" };
+        await using var scenario = await AuthProviderScenario.StartReportingAsync(fixture.Root, producer.RespondAsync);
+        using var client = scenario.CreateClient();
+        producer.DatabaseId = await CreateDatabaseAsync(client);
+        var history = await GetPageAsync(client, "/analytics?range=1h");
+        await Assert.That(history).Contains("<dt class=\"ts-stat-label\">Requests</dt><dd class=\"ts-stat-value\">10</dd>")
+            .Because("TerraBase keeps observations for a region the database has left.");
+        producer.Mode = "latest-partial";
+        var partial = await GetPageAsync(client, "/analytics?range=1h&region=gru");
+        await Assert.That(partial).Contains("value=\"GRU\" selected=\"selected\"").Because("Region cards link with lowercase codes.");
+        await Assert.That(partial).Contains("<dt class=\"ts-stat-label\">Storage</dt><dd class=\"ts-stat-value\">4.0 KiB</dd>");
+        await Assert.That(partial.Contains("<dd class=\"ts-stat-value\">Not measured</dd>", StringComparison.Ordinal)).IsFalse()
+            .Because("An idle, unsampled current minute must not hide the previous minute's storage.");
     }
 
     [Test]
