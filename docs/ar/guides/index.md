@@ -15,6 +15,7 @@ Use the [quickstart](/ar/getting-started/) to establish one working application 
 - [Authentication](/ar/guides/authentication): credential scope and server/browser boundaries.
 - [Queries and pagination](/ar/guides/queries): filters, projection, cursors and version preconditions.
 - [Connect with psql and Postgres drivers](/ar/guides/postgres-clients): SQL over the PostgreSQL wire protocol from psql and standard drivers (pending).
+- [Connect with libSQL clients](/ar/guides/libsql-clients): SQL from the official libSQL clients (pending).
 - [Errors and safe retries](/ar/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/ar/guides/indexes): secondary indexes, recommendations and automatic indexing.
 - [Schema validation](/ar/guides/schema-validation): JSON Schema checks and unique keys per collection.

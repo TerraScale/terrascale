@@ -15,6 +15,7 @@ Use the [quickstart](/zh-cn/getting-started/) to establish one working applicati
 - [Authentication](/zh-cn/guides/authentication): credential scope and server/browser boundaries.
 - [Queries and pagination](/zh-cn/guides/queries): filters, projection, cursors and version preconditions.
 - [Connect with psql and Postgres drivers](/zh-cn/guides/postgres-clients): SQL over the PostgreSQL wire protocol from psql and standard drivers (pending).
+- [Connect with libSQL clients](/zh-cn/guides/libsql-clients): SQL from the official libSQL clients (pending).
 - [Errors and safe retries](/zh-cn/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/zh-cn/guides/indexes): secondary indexes, recommendations and automatic indexing.
 - [Schema validation](/zh-cn/guides/schema-validation): JSON Schema checks and unique keys per collection.
