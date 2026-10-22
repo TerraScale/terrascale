@@ -39,7 +39,7 @@ CREATE TABLE orders (
   PRIMARY KEY (customer_id, order_no)
 ) WITHOUT ROWID;
 
-CREATE TABLE audit_log (message TEXT, logged_at); -- no primary key: IDs come from rowid
+CREATE TABLE audit_log (message TEXT, logged_at); -- no primary key: imports like any other table
 
 INSERT INTO customers VALUES
   (1, 'ada@example.com', 10.25, '2026-01-31T23:59:59Z', 1),
@@ -77,8 +77,6 @@ sqlite3 -readonly local.db "VACUUM INTO 'export.db'"
 
 `VACUUM INTO` reads one consistent snapshot, even while the database is in use. Always pass `-readonly`. Without it, `sqlite3` checkpoints the WAL into the source file when it closes and deletes the `-wal` file, which changes your source or export pair. With it, the `.db` and `-wal` files stay byte-for-byte unchanged; only a `-shm` index file can appear beside them. Do not use `.backup`: its copy keeps the WAL-mode flag and is rejected. Never copy a live database file directly. A copy taken while another process writes can be torn or stale, and no check of the file alone can detect every such copy.
 
-SQLite documents that a vacuum can renumber the `rowid` of tables without an `INTEGER PRIMARY KEY`. Such tables derive their document IDs from the rowids in `export.db`.
-
 Check the journal mode before you upload:
 
 ```bash
@@ -110,7 +108,7 @@ FROM customers
 GROUP BY 1;
 ```
 
-**Tables without a primary key.** A rowid table without a declared primary key uses its `rowid` as the source key for its deterministic document ULID (`idPolicy` `rowid`). A `WITHOUT ROWID` table always has a primary key.
+**Tables without a primary key** import like any other table, and each row still gets its deterministic document ID. A `WITHOUT ROWID` table always has a primary key.
 
 ```sql
 SELECT m.name AS table_name
@@ -152,7 +150,7 @@ Each value maps by its **storage class**, never by the column's declared type.
 
 A column's `mapping` names the non-`NULL` classes it holds, joined by `+` in the order `integer`, `float`, `string`, `base64`, such as `integer` or `integer+string`. It is `null` when every value is `NULL`. `NULL` never makes a column mixed; two or more non-`NULL` classes give a `mixed_storage_classes` warning.
 
-Analysis maps every row, so an invalid value appears in the preview with its row number before anything is written. Two distinct keys that map to one ID, such as `1` and `'1'` in an untyped key column, are found only during the copy, which then fails with `duplicate_document_id`.
+Analysis maps every row, so an invalid value appears in the preview with its row number before anything is written.
 
 What this means for common column conventions:
 

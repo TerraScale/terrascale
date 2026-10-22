@@ -112,14 +112,14 @@ Run these in one shell session from the directory that holds your export.
 4. Review the [preview](#review-the-preview):
 
    ```bash
-   jq '.preview.tables[] | {source, collection, excluded, rows, idPolicy, issues}' job.json
+   jq '.preview.tables[] | {source, collection, excluded, rows, issues}' job.json
    jq '.preview.skipped' job.json
    ```
 
 5. Resolve blocking issues by changing [options](#options) and analyzing again. Skip this step when `blocking` is `0`.
 
    ```bash
-   jq -n '{options: {missingPrimaryKey: "generate", exclude: ["public.orders.tags"]}}' |
+   jq -n '{options: {exclude: ["public.orders.tags"]}}' |
      api -X PATCH -H 'Content-Type: application/json' --data-binary @- "$D/import" | jq .state
    while state=$(job) && [ "$state" = analyzing ]; do sleep 2; done
    ```
@@ -149,7 +149,7 @@ The import runs in the destination's home region. After step 2, `api` pins every
 
 | Field | Meaning |
 | --- | --- |
-| `tables[]` | One plan per source table: `source`, target `collection`, `excluded`, `rows`, `idPolicy`, `primaryKey`, `columns`, `constraints` and `issues`. An unnamed constraint has `name` `null`. |
+| `tables[]` | One plan per source table: `source`, target `collection`, `excluded`, `rows`, `primaryKey`, `columns`, `constraints` and `issues`. An unnamed constraint has `name` `null`. |
 | `columns[].mapping` | How values become JSON; see the [PostgreSQL](/ru/guides/import-postgresql#type-mapping) and [Turso](/ru/guides/import-turso#type-mapping) mappings |
 | `issues[]` | `blocking` issues stop the import; warnings are for you to accept. A value issue carries its `row`. At most 50 per table. |
 | `skipped[]` | Objects that are listed and never imported or run, such as functions, views, indexes, sequences, grants and SQLite internal tables. At most 200 entries; `skippedTruncated` marks more. |
@@ -157,13 +157,10 @@ The import runs in the destination's home region. After step 2, `api` pins every
 
 A preview can cover at most 1000 tables and 1600 columns per table. A preview larger than 512 KiB of JSON is `rejected` with `preview_too_large`; exclude tables or split the export.
 
-One problem appears only during the copy: two distinct source keys that map to the same document ID, such as SQLite `1` and `'1'` in an untyped column. The copy then fails with `duplicate_document_id`.
-
 ### Options
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| `missingPrimaryKey` | `"reject"` | For PostgreSQL tables without a primary key. `"reject"` blocks the table. `"generate"` gives each row a deterministic ID that stays the same on every resume. |
 | `exclude` | `[]` | Up to 1000 `"schema.table"` or `"schema.table.column"` entries to leave out. A SQLite or Turso schema is `main`. |
 
 Write a name bare when it uses only `a-z`, `0-9` and `_` and does not start with a digit. Otherwise double-quote it, doubling any `"` inside, as in SQL: `public."Order Items"."unit.price"`. PostgreSQL names match exactly; SQLite names match without regard to case.
@@ -171,9 +168,9 @@ Write a name bare when it uses only `a-z`, `0-9` and `_` and does not start with
 ## How data maps
 
 - **Collection:** the table name, lowercased. Tables in `public` (PostgreSQL) or `main` (SQLite) drop the schema; others become `schema_table`. Characters outside `a-z`, `0-9`, `_` and `-` become `_`, a name that does not start with a letter gets a `t_` prefix, and names are cut to 63 characters. Two tables that map to one name, or a reserved name such as `collections`, block the import (`collection_name_collision`).
-- **Document ID:** a deterministic ULID, the same on every resume. It derives from the source row's primary key, or from the `rowid` of a SQLite table without one (`idPolicy` `rowid`). Primary key columns stay ordinary document fields.
+- **Document ID:** a deterministic ULID for each row. Its time is the job's creation time, and its randomness is the SHA-256 of the job ID, table and row number, so every resume writes the same IDs. The primary key and `rowid` are not used. Primary key columns stay ordinary document fields.
 - **Document body:** one JSON member per imported column, named exactly as the column.
-- **Constraints are recorded, never enforced.** Primary, unique and foreign keys and `NOT NULL` appear in the preview with `enforced: false`; values are imported unchanged. A foreign key that targets a primary key holds the referenced document's ID. Check constraints, defaults, sequences, indexes, triggers, views, functions, policies, extensions, ownership and grants are skipped.
+- **Constraints are recorded, never enforced.** Primary, unique and foreign keys and `NOT NULL` appear in the preview with `enforced: false`; values are imported unchanged. A foreign key holds the referenced row's primary key field value, not its document ID. Check constraints, defaults, sequences, indexes, triggers, views, functions, policies, extensions, ownership and grants are skipped.
 - **Import record.** The destination keeps a collection named `terrascale-import` as the import's audit record. Deleting that collection makes the database forget its import.
 - **Users, roles and passwords** from the source are never imported. Set up access with [authentication](/ru/guides/authentication).
 
@@ -233,8 +230,8 @@ When the copy finishes, the job compares, for each table:
 | `421 wrong_region` | Set `REGION` to the `X-TerraBase-Database-Home` value and repeat. |
 | `429 tenant_busy`, `429 tenant_memory`, `503 capacity`, `503 unavailable` | Wait, then retry the same call. |
 | `unsupported_source_format`, `wal_mode_source`, `unsupported_statement`, `malformed_source` | Re-export as your source guide describes, then import into a new database. |
-| `unsupported_type`, `missing_primary_key`, `invalid_value`, `invalid_document_id`, `document_too_large` | Change [options](#options): exclude the reported column or table, or set `missingPrimaryKey`. Or fix the source and import a new export into a new database. |
-| `duplicate_document_id`, `destination_modified` | Two source keys map to one ID, or something else wrote to the destination; the message names the cause. Delete the destination, resolve it, then import into a new database. |
+| `unsupported_type`, `invalid_value`, `document_too_large` | Change [options](#options): exclude the reported column or table. Or fix the source and import a new export into a new database. |
+| `destination_modified` | Something else wrote to the destination; the message names the cause. Delete the destination, resolve it, then import into a new database. |
 | `quota_exceeded` | Resume after your plan allows more. |
 | `preview_changed` as the job's error | TerraBase's mapping changed after you confirmed; the job is `analyzing` again. Review the new preview and start with its `preview.id`. |
 | `write_failed` with `retryable: true` | Resume. |
