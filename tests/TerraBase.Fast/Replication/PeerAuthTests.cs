@@ -402,7 +402,15 @@ public sealed class PeerAuthTests
     private static async Task PushHelloAndBatchAsync(ReplicationRpc.ReplicationClient client, WireDatabase invalid)
     {
         using var call = client.Push(cancellationToken: Token);
-        await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = ReplicaId.Of(1, 7, 0).Value, Region = "sjc" } });
+        try
+        {
+            await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = ReplicaId.Of(1, 7, 0).Value, Region = "sjc" } });
+        }
+        catch (RpcException error) when (error.StatusCode == StatusCode.Cancelled)
+        {
+            // Early header rejection can cancel upload; read its authoritative response below.
+        }
+
         _ = await call.ResponseStream.MoveNext(Token);
         await call.RequestStream.WriteAsync(new PushFrame { Batch = new Batch { Database = invalid, LastChangeId = 1, Groups = ByteString.Empty } });
         _ = await call.ResponseStream.MoveNext(Token);
