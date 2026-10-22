@@ -36,7 +36,8 @@ caller-selected response types, preserving all producer fields with `serde_json:
 Recommendation selectors use `collection:field`, not entity IDs.
 
 Restore acknowledgements use `RestoredDatabase` without a serving `region`.
-Nullable `home_region`/`replica_regions` preserve unassigned placement;
+`all_regions` (`allRegions`) asks for a full copy in every serving region, including
+later regions; responses default it to `false` when absent. Nullable `home_region`/`replica_regions` preserve unassigned placement;
 `replicas()` derives an empty slice for null replicas. `placement_version` is
 an exact i64. Serving `ProjectDatabaseInfo` responses require `region`.
 

@@ -23,6 +23,7 @@ async fn canonical_database_routes_preserve_placement_and_management_pagination(
     let placement = DatabasePlacement {
         home_region: Some("gru".into()),
         replica_regions: Some(vec!["fra".into()]),
+        ..Default::default()
     };
     assert_eq!(
         db.create_with_placement(&placement)
@@ -72,6 +73,47 @@ async fn canonical_database_routes_preserve_placement_and_management_pagination(
     assert_eq!(
         serde_json::from_slice::<Value>(&requests[4].body).unwrap(),
         json!({"name":"orders_copy"})
+    );
+}
+
+#[tokio::test]
+async fn all_regions_placement_is_sent_only_when_set_and_read_with_default() {
+    let all = DATABASE.replace(
+        r#""replicaRegions":["fra"]"#,
+        r#""replicaRegions":["fra"],"allRegions":true"#,
+    );
+    let fixture = Fixture::new(vec![
+        reply(201, &all),
+        reply(200, DATABASE),
+        reply(200, DATABASE),
+    ])
+    .await;
+    let client = fixture.client();
+    let db = client.database("orders");
+    assert!(
+        db.create_with_placement(&DatabasePlacement {
+            all_regions: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .all_regions
+    );
+    assert!(!db.get_database().await.unwrap().all_regions);
+    db.update_database(&DatabasePlacement {
+        all_regions: Some(true),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let requests = fixture.requests.lock().unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&requests[0].body).unwrap(),
+        json!({"name":"orders","allRegions":true})
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&requests[2].body).unwrap(),
+        json!({"allRegions":true})
     );
 }
 
