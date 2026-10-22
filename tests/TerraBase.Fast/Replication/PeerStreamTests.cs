@@ -1550,7 +1550,8 @@ public sealed class PeerStreamTests
         using var push = await RawPush.StartAsync(sjc, gru.Name);
         await push.FrontierAsync(cluster.Database, stamp);
         _ = await push.FrameAsync();
-        store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)await sjc.StoreAsync();
+        var engine = sjc.Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+        store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
         var origin = ReplicaId.Of(1, 7, 0);
         var final = EntityIds.New().ToString();
         await push.GroupsAsync(cluster.Database,
