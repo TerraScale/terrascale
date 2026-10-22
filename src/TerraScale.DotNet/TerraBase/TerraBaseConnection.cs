@@ -36,7 +36,7 @@ internal sealed class TerraBaseConnection
     internal TimeProvider TimeProvider => timeProvider;
 
     public TerraBaseConnection(HttpClient http, Uri? baseAddress, ITerraBaseEndpointResolver? endpointResolver, string? secret, string secretName, TimeSpan timeout, int maxResponseBytes,
-        Func<CancellationToken, ValueTask<string>>? accessTokenProvider = null, bool anonymousAllowed = false, string? region = null, TimeProvider? timeProvider = null)
+        Func<CancellationToken, ValueTask<string>>? accessTokenProvider = null, bool anonymousAllowed = false, string? region = null, TimeProvider? timeProvider = null, bool publicAnonymous = false)
     {
         ArgumentNullException.ThrowIfNull(http);
         this.http = http;
@@ -64,8 +64,8 @@ internal sealed class TerraBaseConnection
         }
 
         // Anonymous requests reach only TerraBase's plain-HTTP private (6PN) listener, which trusts its network instead of a credential.
-        anonymous = anonymousAllowed && secret is null && accessTokenProvider is null;
-        if (accessTokenProvider is null && !anonymous) ValidateSecret(secret, secretName);
+        anonymous = anonymousAllowed && !publicAnonymous && secret is null && accessTokenProvider is null;
+        if (accessTokenProvider is null && !anonymous && !publicAnonymous) ValidateSecret(secret, secretName);
         if (anonymous && baseAddress?.Scheme == Uri.UriSchemeHttps) ValidateSecret(secret, secretName);
 
         if (timeout <= TimeSpan.Zero || timeout > MaxRequestTimeout)

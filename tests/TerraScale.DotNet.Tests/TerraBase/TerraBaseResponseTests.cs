@@ -10,6 +10,53 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 public sealed class TerraBaseResponseTests
 {
     [Test]
+    [Arguments(70)]
+    [Arguments(1000)]
+    [Arguments(1009)]
+    public async Task Retained_document_reads_accept_producer_depth_and_reject_excess(int depth)
+    {
+        var document = NestedDocument(depth);
+        var json = """{"id":"a","version":"tbv2-retained","state":"value","document": """ + document + "}";
+        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(TerraBaseIntegrationFixture.Json(json)));
+        using var http = new HttpClient(handler);
+        var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
+        if (depth > 1008)
+        {
+            var error = await Assert.ThrowsAsync<TerraBaseException>(() => db.ReadDocumentAsync("items", "a"));
+            await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");
+            return;
+        }
+
+        var result = await db.ReadDocumentAsync("items", "a");
+        await Assert.That(result.Document!.Document.GetRawText()).IsEqualTo(document);
+    }
+
+    [Test]
+    [Arguments(70)]
+    [Arguments(1000)]
+    [Arguments(1009)]
+    public async Task Shape_responses_accept_retained_document_depth_and_reject_excess(int depth)
+    {
+        var document = NestedDocument(depth);
+        var json = """
+            {"shape_id":"shape","handle":"h1-retained","offset":"0","next_offset":"1","covered_offset":"1",
+             "values_at":"1","up_to_date":true,"cursor_resume":"resume","changes":[{"offset":"1",
+             "ops":[{"op":"upsert","id":"a","version":"tbv2-retained","document":
+            """ + document + """}]}]}""";
+        if (depth > 1008)
+        {
+            await InvalidResponseAsync(json, TerraBaseShapeJsonContext.Default.ShapeBody);
+            return;
+        }
+
+        var result = TerraBaseConnection.ReadResponse(Encoding.UTF8.GetBytes(json), TerraBaseShapeJsonContext.Default.ShapeBody, HttpStatusCode.OK);
+        await Assert.That(result.Changes.Single().Ops.Single().Document!.Value.GetRawText()).IsEqualTo(document);
+    }
+
+    private static string NestedDocument(int depth) =>
+        string.Concat(Enumerable.Repeat("{\"value\":", depth)) + "0" + new string('}', depth);
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task UnreadableErrorStreamsPreserveStatusSpecificExceptions(bool oversized)
@@ -219,7 +266,7 @@ public sealed class TerraBaseResponseTests
     [Arguments("253402300800000")]
     public async Task OutOfRangeCollectionTimestampIsAJsonError(string timestamp)
     {
-        var json = $"{{\"name\":\"items\",\"created_at\":\"{timestamp}\"}}";
+        var json = $"{{\"name\":\"items\",\"created_at\":\"{timestamp}\",\"id\":\"01JA0000000000000000000002\"}}";
         await Assert.That(() => JsonSerializer.Deserialize(json, TerraBaseJsonContext.Wire.TerraBaseCollection)).Throws<JsonException>();
     }
 }
@@ -313,7 +360,7 @@ public sealed class TerraBaseResponseIntegrationTests
         using var handler = Answer(() => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(
-                JsonSerializer.Serialize(new TerraBaseCollection("items", DateTimeOffset.UnixEpoch), TerraBaseJsonContext.Wire.TerraBaseCollection), Encoding.UTF8, "application/json"),
+                JsonSerializer.Serialize(new TerraBaseCollection("items", DateTimeOffset.UnixEpoch, "01JA0000000000000000000002"), TerraBaseJsonContext.Wire.TerraBaseCollection), Encoding.UTF8, "application/json"),
         });
         using var http = new HttpClient(handler);
         using var canceled = new CancellationTokenSource();

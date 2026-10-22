@@ -6,7 +6,7 @@ namespace TerraScale.DotNet.TerraBase;
 /// Canonical project-token database lifecycle and usage. Obtain from <see cref="TerraBaseDocumentsClient.Project"/>.
 /// Requires databases:read for reads and databases:write for mutations. Database route arguments are names, not IDs.
 /// </summary>
-public sealed class TerraBaseProjectClient
+public sealed partial class TerraBaseProjectClient
 {
     private readonly TerraBaseConnection connection;
     private readonly string path;

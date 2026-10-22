@@ -13,9 +13,10 @@ public sealed record TerraBaseDatabaseInfo(string Id, string ProjectId, string N
 /// <summary>A collection. Collections are schemaless.</summary>
 /// <param name="Name">Collection name: <c>^[a-z][a-z0-9_-]{0,62}$</c>.</param>
 /// <param name="CreatedAt">Creation time.</param>
+/// <param name="Id">Canonical uppercase collection ULID; routes still use the name.</param>
 public sealed record TerraBaseCollection(
     string Name,
-    [property: JsonPropertyName("created_at"), JsonConverter(typeof(UnixMillisecondsConverter))] DateTimeOffset CreatedAt);
+    [property: JsonPropertyName("created_at"), JsonConverter(typeof(UnixMillisecondsConverter))] DateTimeOffset CreatedAt, string Id);
 
 /// <summary>One page of collections in name order.</summary>
 /// <param name="Items">Collections of this page.</param>
@@ -59,7 +60,8 @@ public sealed record TerraBaseDocumentPage(
 /// <param name="Version">The new version; for a delete, the tombstone's.</param>
 /// <param name="Offset">The database commit offset of the write.</param>
 /// <param name="Durability">Durability label, for example <c>local_durable</c>; new labels may be added.</param>
-public sealed record TerraBaseWriteResult(string Id, string Version, long Offset, string Durability)
+/// <param name="Document">Stored document after PATCH, including counters and sets; omitted for other writes.</param>
+public sealed record TerraBaseWriteResult(string Id, string Version, long Offset, string Durability, JsonElement? Document = null)
 {
     /// <summary>Whether the write created the document (it was absent or deleted). Set for creates and puts.</summary>
     [JsonIgnore]
@@ -158,7 +160,7 @@ public sealed record TerraBasePatchOperation
         By = by;
     }
 
-    /// <summary><c>set</c>, <c>unset</c>, <c>inc</c> or <c>append</c>.</summary>
+    /// <summary><c>set</c>, <c>unset</c>, <c>inc</c>, <c>append</c>, <c>add</c> or <c>remove</c>.</summary>
     public string Op { get; }
 
     /// <summary>JSON Pointer to object members.</summary>
@@ -176,11 +178,17 @@ public sealed record TerraBasePatchOperation
     /// <summary>Removes <paramref name="path"/>.</summary>
     public static TerraBasePatchOperation Unset(string path) => new("unset", path, null, null);
 
-    /// <summary>Adds the JSON number <paramref name="by"/> to <paramref name="path"/> (missing is 0; exact decimal arithmetic).</summary>
+    /// <summary>Adds a non-zero Int64 to a top-level counter field (missing is 0).</summary>
     public static TerraBasePatchOperation Increment(string path, JsonElement by) => new("inc", path, null, by);
 
     /// <summary>Appends <paramref name="value"/> to the array at <paramref name="path"/>, creating a missing array.</summary>
     public static TerraBasePatchOperation Append(string path, JsonElement value) => new("append", path, value, null);
+
+    /// <summary>Adds a scalar (at most 1 KiB) to a top-level add-wins set.</summary>
+    public static TerraBasePatchOperation Add(string path, JsonElement value) => new("add", path, value, null);
+
+    /// <summary>Removes a scalar (at most 1 KiB) from a top-level add-wins set.</summary>
+    public static TerraBasePatchOperation Remove(string path, JsonElement value) => new("remove", path, value, null);
 }
 
 /// <summary>The <c>{"ops":[…]}</c> patch body.</summary>
@@ -286,7 +294,8 @@ internal sealed record TerraBaseTransaction(IReadOnlyList<TerraBaseTransactionOp
 /// <param name="Version">Written document version.</param>
 /// <param name="Asserted">True for assertions.</param>
 /// <param name="Count">Counted matches of <c>assert_count</c>.</param>
-public sealed record TerraBaseOperationResult(string? Id = null, string? Version = null, bool? Asserted = null, long? Count = null);
+/// <param name="Document">Stored document after a patch, including counters and sorted sets.</param>
+public sealed record TerraBaseOperationResult(string? Id = null, string? Version = null, bool? Asserted = null, long? Count = null, JsonElement? Document = null);
 
 /// <summary>The result of a committed transaction.</summary>
 /// <param name="Offset">The database commit offset.</param>

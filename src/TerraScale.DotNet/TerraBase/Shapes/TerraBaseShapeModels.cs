@@ -72,7 +72,7 @@ internal sealed record ShapeOperation(string Op, string Id, string? Version = nu
 internal sealed record ShapeEpochKey(string Handle, string Epoch, string KeyId, string Key);
 
 /// <summary>Source-generated JSON for the shape wire format (snake_case members; trimming and native AOT safe).</summary>
-[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, MaxDepth = TerraBaseJsonContext.MaxResponseDepth,
     RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true)]
 [JsonSerializable(typeof(ShapeBody))]
 [JsonSerializable(typeof(ShapeEpochKey))]

@@ -10,7 +10,7 @@ namespace TerraScale.DotNet.TerraBase;
 /// camelCase names and read TerraBase's decimal-string numbers; snake_case Documents API members are pinned with
 /// <see cref="JsonPropertyNameAttribute"/>. Null members are omitted: TerraBase rejects explicit nulls in operations.
 /// </summary>
-[JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, MaxDepth = TerraBaseJsonContext.MaxResponseDepth,
     RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true)]
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(TerraBaseDatabaseInfo))]
@@ -54,9 +54,36 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBaseChangeCursor))]
 [JsonSerializable(typeof(TerraBaseStreamError))]
 [JsonSerializable(typeof(TerraBaseImportJob))]
+[JsonSerializable(typeof(TerraBaseSqlCheck))]
+[JsonSerializable(typeof(TerraBaseQueryShapeList))]
+[JsonSerializable(typeof(TerraBaseSavedQuery))]
+[JsonSerializable(typeof(TerraBasePage<TerraBaseSavedQuery>))]
+[JsonSerializable(typeof(TerraBaseSavedQueryRequest))]
+[JsonSerializable(typeof(TerraBaseAutoIndexPolicy))]
+[JsonSerializable(typeof(TerraBaseAutoIndexPolicyRequest))]
+[JsonSerializable(typeof(TerraBaseIndexRecommendationList))]
+[JsonSerializable(typeof(TerraBaseAppliedIndexRecommendation))]
+[JsonSerializable(typeof(TerraBaseBackup))]
+[JsonSerializable(typeof(TerraBasePage<TerraBaseBackup>))]
+[JsonSerializable(typeof(TerraBaseBackupPolicy))]
+[JsonSerializable(typeof(TerraBaseBackupPolicyRequest))]
+[JsonSerializable(typeof(TerraBaseRestoreWindow))]
+[JsonSerializable(typeof(TerraBasePointInTimePlan))]
+[JsonSerializable(typeof(TerraBasePointInTimeRequest))]
+[JsonSerializable(typeof(TerraBaseRestoredDatabase))]
+[JsonSerializable(typeof(TerraBaseBackupDestination))]
+[JsonSerializable(typeof(TerraBaseBackupDestinationRequest))]
+[JsonSerializable(typeof(TerraBaseProjectAnalytics))]
+[JsonSerializable(typeof(TerraBaseProjectReplication))]
+[JsonSerializable(typeof(TerraBaseStatus))]
+[JsonSerializable(typeof(TerraBaseReplicationHealth))]
+[JsonSerializable(typeof(TerraBaseShapeManifest))]
 [JsonSerializable(typeof(RequestBody))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext
 {
+    // The producer reads retained documents up to 1000 levels, plus eight levels for response envelopes.
+    internal const int MaxResponseDepth = 1008;
+
     /// <summary>
     /// The context every client uses. Request bodies are JSON API payloads, never embedded in HTML, so they keep
     /// <c>&lt;</c>, <c>&amp;</c> and non-ASCII text as written: the default encoder escapes them up to 6× larger and
@@ -68,6 +95,7 @@ internal sealed partial class TerraBaseJsonContext : JsonSerializerContext
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         RespectRequiredConstructorParameters = true,
         RespectNullableAnnotations = true,
+        MaxDepth = MaxResponseDepth,
     });
 
     internal static void RequireNonNullItems<T>(IReadOnlyList<T> items)
