@@ -30,7 +30,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"
 
 tokio-postgres = { version = "=0.7.18", optional = true }
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring"], optional = true }
-rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring"], optional = true }
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring"], optional = true }
 
 [[example]]
 name = "postgres_journey"
@@ -40,7 +40,7 @@ required-features = ["postgres"]
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "test-util", "net"] }
 rcgen = "0.14"
-rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring"] }
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring"] }
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto"] }
