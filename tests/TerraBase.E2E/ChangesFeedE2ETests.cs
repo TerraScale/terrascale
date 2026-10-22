@@ -7,14 +7,14 @@ namespace TerraBase.E2E;
 /// <summary>
 /// The changes feed across regions (docs/terrabase/multi-region-replication.md section 14, slice R8): a cursor taken from
 /// sjc's feed resumes through fra with every later write of gru and sjc exactly once and each origin's events in its write
-/// order: answered by sjc, its issuer, while sjc is up (locally and on Fly); answered by fra once sjc is stopped (in-process
-/// nodes, and a pinned disposable app's sjc machine in the fly-outage run) or SIGKILLed (separate OS processes).
+/// order: answered by fra using its own prefix proof, while sjc is up, stopped (in-process nodes) or SIGKILLed
+/// (separate OS processes).
 /// </summary>
 public sealed class ChangesFeedE2ETests
 {
     private const int Writes = 10;
 
-    // sjc, the cursor's issuer, stops: fra's replay to it fails, and fra must serve the resume itself on its own prefix proof.
+    // sjc, the cursor's issuer, stops: fra serves the resume using its own prefix proof.
     // Local nodes only: the deploy run never stops a machine; on Fly this is the fly-outage scenario below.
     [Test]
     [Category("local-only")]
@@ -30,20 +30,16 @@ public sealed class ChangesFeedE2ETests
         await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
         using var fra = await cluster.ViaAsync(Cluster.Fra, Cluster.Fra);
         await ResumeElsewhereAsync(region => cluster[region], fra, cluster.DatabasePath, cluster.Collection, cluster.Document, () => cluster.StopAsync(Cluster.Sjc));
-        Expected.Check(cluster.Replays.Any(replay => replay is { Edge: Cluster.Fra, Target: Cluster.Sjc, FellBack: true } && replay.PathAndQuery.Contains("cursor=", StringComparison.Ordinal)),
-            $"fra replayed the resume to sjc, its issuer, and served it after the replay failed; replays: {string.Join("; ", cluster.Replays)}");
     }
 
-    // sjc, the cursor's issuer, stays up: the resume presented in fra is replayed to sjc (issuer routing), and only sjc's
-    // answer counts. Locally and on Fly.
+    // The issuer stays up, but the destination must answer using its own prefix proof.
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task A_cursor_from_sjc_presented_in_fra_is_replayed_to_sjc_with_every_later_write_once_in_order()
+    public async Task A_cursor_from_sjc_resumes_on_fra_while_sjc_is_up_with_every_later_write_once_in_order()
     {
         await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
-        // The cursor comes from the exact sjc machine the resume must be answered by.
         using var issuer = await cluster.ViaAsync(Cluster.Sjc, Cluster.Sjc);
-        using var resume = await cluster.ViaAsync(Cluster.Fra, Cluster.Sjc);
+        using var resume = await cluster.ViaAsync(Cluster.Fra, Cluster.Fra);
         await ResumeElsewhereAsync(region => cluster[region], resume, cluster.DatabasePath, cluster.Collection, cluster.Document, stopSjc: null, issuer);
     }
 
@@ -102,7 +98,7 @@ public sealed class ChangesFeedE2ETests
         }
 
         var after = await WriteAsync(client, document, Writes, Writes, Cluster.Gru, Cluster.Sjc);
-        foreach (var (id, write) in after)
+        foreach (var (id, write) in before.Concat(after))
         {
             _ = await Converge.UntilAsync(() => Docs.ReadAsync(client(Cluster.Fra), document(id)), body => body?["step"]?.GetValue<int>() == write.Step, $"{write.Region}'s write on fra");
         }

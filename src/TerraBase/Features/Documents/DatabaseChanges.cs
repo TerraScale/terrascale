@@ -95,15 +95,6 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
                 cursor = cursor with { Issued = FeedCursor.At(time.GetUtcNow()) };
             }
 
-            if (cursor?.Machine is { Length: > 0 } machine && machine != options.MachineId
-                && Listeners.ArrivedOn(context) == TerraBaseListener.Client
-                && !context.Request.Headers.ContainsKey("Fly-Replay-Src") && !context.Request.Headers.ContainsKey("fly-replay-failed"))
-            {
-                context.Response.Headers["fly-replay"] = $"instance={machine};timeout=2s;fallback=force_self";
-                context.Response.Headers.CacheControl = "no-store";
-                return new IssuerReplay();
-            }
-
             if (head)
             {
                 if (await HeadAsync(database, stop.Token).ConfigureAwait(false) is not { } stamps)
@@ -391,12 +382,6 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
         {
             context.Abort();
         }
-    }
-
-    private sealed class IssuerReplay : IResult
-    {
-        public Task ExecuteAsync(HttpContext httpContext) =>
-            BadRequests.WriteAsync(httpContext, StatusCodes.Status421MisdirectedRequest, "cursor_elsewhere", "the cursor resumes on its issuing machine", op: null);
     }
 
     private static async Task SendAsync(HttpContext context, ArrayBufferWriter<byte> buffer, CancellationToken cancellationToken)

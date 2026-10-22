@@ -7,29 +7,34 @@ using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Replication;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
 
-/// <summary>Real SSE listeners behind a test proxy following Fly's documented instance replay and fallback headers.</summary>
+/// <summary>Real SSE listeners resume directly on a destination with the same scanned prefix.</summary>
 public sealed class DatabaseChangesReplayTests
 {
     [Test]
-    [Arguments("gru", "sjc", true, false)]
-    [Arguments("gru", "fra", true, false)]
-    [Arguments("sjc", "gru", true, false)]
-    [Arguments("sjc", "fra", true, false)]
-    [Arguments("fra", "gru", true, false)]
-    [Arguments("fra", "sjc", true, false)]
-    [Arguments("fra", "gru", true, true)]
-    [Arguments("fra", "gru", false, false)]
-    [Arguments("fra", "gru", false, true)]
-    public async Task A_resume_replays_to_the_issuer_or_checks_the_fallback_prefix(string from, string to, bool issuerAvailable, bool differentPrefix)
+    [Arguments("gru", "sjc", true, false, false)]
+    [Arguments("gru", "fra", true, false, false)]
+    [Arguments("sjc", "gru", true, false, false)]
+    [Arguments("sjc", "fra", true, false, false)]
+    [Arguments("fra", "gru", true, false, false)]
+    [Arguments("fra", "sjc", true, false, false)]
+    [Arguments("fra", "gru", true, true, false)]
+    [Arguments("fra", "gru", false, false, false)]
+    [Arguments("fra", "gru", false, true, false)]
+    [Arguments("fra", "gru", true, false, true)]
+    [Arguments("fra", "gru", false, false, true)]
+    public async Task A_resume_checks_the_destination_prefix_regardless_of_issuer_availability(string from, string to, bool issuerAvailable, bool differentPrefix, bool missingPrefix)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         // Bootstrap fresh catalogs independently; this fixture copies tenant identity and controls each feed explicitly.
-        await using var source = await StartAsync(from);
-        await using var destination = await StartAsync(to);
+        var sourceMachine = EntityIds.New().ToString().ToLowerInvariant();
+        var destinationMachine = EntityIds.New().ToString().ToLowerInvariant();
+        await using var source = await StartAsync(from, sourceMachine);
+        await using var destination = await StartAsync(to, destinationMachine);
         await Assert.That(source.Server.Services.GetRequiredService<ICatalogGate>().IsOpen).IsTrue();
         await Assert.That(destination.Server.Services.GetRequiredService<ICatalogGate>().IsOpen).IsTrue();
         var tenant = await ReplicationTenant.CreateAsync(source.Server, [DocumentApi.Database], token, replicaRegions: [to]);
@@ -45,7 +50,10 @@ public sealed class DatabaseChangesReplayTests
         var firstStamp = FeedCursor.At(now - TimeSpan.FromMinutes(2));
         var secondStamp = FeedCursor.At(now - TimeSpan.FromMinutes(1));
         await ApplyAsync(source.Server, first, firstStamp, 1);
-        await ApplyAsync(destination.Server, differentPrefix ? DocumentApi.NewId() : first, firstStamp, 1);
+        if (!missingPrefix)
+        {
+            await ApplyAsync(destination.Server, differentPrefix ? DocumentApi.NewId() : first, firstStamp, 1);
+        }
         var path = tenant.Path(DocumentApi.Database) + "/changes?cursor=now";
         string cursor;
         using (var initial = await sourceClient.GetAsync(new Uri(path, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead, token))
@@ -62,20 +70,11 @@ public sealed class DatabaseChangesReplayTests
             await source.Server.DisposeAsync();
         }
 
-        // The URL, scoped credential and Last-Event-ID stay the same across every proxy hop.
-        using var landing = Request();
-        using var replay = await destinationClient.SendAsync(landing, HttpCompletionOption.ResponseHeadersRead, token);
-        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
-        await Assert.That(replay.Headers.GetValues("fly-replay")).IsEquivalentTo([$"instance={from}-machine;timeout=2s;fallback=force_self"]);
-        await Assert.That(replay.Headers.CacheControl!.NoStore).IsTrue();
-        using var routed = Request();
-        routed.Headers.Add(issuerAvailable ? "Fly-Replay-Src" : "fly-replay-failed", issuerAvailable
-            ? $"instance={to}-machine;region={to};t=1"
-            : $"instance={from}-machine;replay_source={to}-machine;reason=no_candidate;elapsed_ms=0");
-        using var response = await (issuerAvailable ? sourceClient : destinationClient).SendAsync(routed, HttpCompletionOption.ResponseHeadersRead, token);
-        await Assert.That(response.Headers.Contains("fly-replay")).IsFalse();
-        await Assert.That(response.Headers.GetValues("X-TerraBase-Machine")).IsEquivalentTo([$"{(issuerAvailable ? from : to)}-machine"]);
-        if (!issuerAvailable && differentPrefix)
+        // Resume directly with the same URL, scoped credential and Last-Event-ID.
+        using var request = Request();
+        using var response = await destinationClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+        await Assert.That(response.Headers.GetValues("X-TerraBase-Machine")).IsEquivalentTo([destinationMachine]);
+        if (differentPrefix || missingPrefix)
         {
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Gone);
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
@@ -84,6 +83,7 @@ public sealed class DatabaseChangesReplayTests
         else
         {
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(response.Headers.CacheControl!.NoStore).IsTrue();
             using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(token));
             _ = await NextAsync(reader, token);
             var (_, data) = await NextAsync(reader, token);
@@ -106,10 +106,10 @@ public sealed class DatabaseChangesReplayTests
         }
     }
 
-    private static Task<ManagementApi> StartAsync(string region) => ManagementApi.StartAsync(settings =>
+    private static Task<ManagementApi> StartAsync(string region, string machine) => ManagementApi.StartAsync(settings =>
     {
         settings["region"] = region;
-        settings["node-name"] = region + "-machine";
+        settings["node-name"] = machine;
     });
 
     private static async Task CopyKeyAsync(TerraBaseTestServer source, TerraBaseTestServer destination, string secret, CancellationToken token)

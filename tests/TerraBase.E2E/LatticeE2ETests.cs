@@ -49,7 +49,7 @@ public sealed class LatticeE2ETests
         });
     }
 
-    // gru, the cursor's issuer, stops: sjc's replay to it fails and sjc must serve the resume itself, from its own copy of
+    // gru, the cursor's issuer, stops: sjc must serve the resume itself, from its own copy of
     // gru's writes (the cross-region proof). Local nodes only: the deploy run never stops a machine; the Fly run with a
     // stopped issuer is ChangesFeedE2ETests' fly-outage scenario.
     [Test]
@@ -75,24 +75,20 @@ public sealed class LatticeE2ETests
             await cluster.StopAsync(Cluster.Gru);
             using var sjc = await cluster.ViaAsync(Cluster.Sjc, Cluster.Sjc);
             await ResumedInOrderAsync(sjc, cluster, cursor, position);
-            Expected.Check(cluster.Replays.Any(replay => replay is { Edge: Cluster.Sjc, Target: Cluster.Gru, FellBack: true } && replay.PathAndQuery.Contains("cursor=", StringComparison.Ordinal)),
-                $"sjc replayed the resume to gru, its issuer, and served it after the replay failed; replays: {string.Join("; ", cluster.Replays)}");
         });
     }
 
-    // gru, the cursor's issuer, stays up: the resume presented in sjc is replayed to gru (issuer routing), and only gru's
-    // answer counts. On Fly too, where no machine stops in the deploy run.
+    // The issuer stays up, but sjc must answer using its own prefix proof.
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E10_feed_cursor_from_gru_presented_in_sjc_is_replayed_to_gru_with_no_missing_event_in_per_origin_order()
+    public async Task E10_feed_cursor_from_gru_resumes_in_sjc_while_gru_is_up_with_no_missing_event_in_per_origin_order()
     {
         await Gaps.RunAsync("E10", async () =>
         {
             await using var cluster = await Cluster.StartAsync();
-            // The cursor comes from the exact gru machine the resume must be answered by.
             using var gru = await cluster.ViaAsync(Cluster.Gru, Cluster.Gru);
             var (cursor, position) = await CursorThenWritesAsync(cluster, gru);
-            using var sjc = await cluster.ViaAsync(Cluster.Sjc, Cluster.Gru);
+            using var sjc = await cluster.ViaAsync(Cluster.Sjc, Cluster.Sjc);
             await ResumedInOrderAsync(sjc, cluster, cursor, position);
         });
     }
@@ -105,6 +101,8 @@ public sealed class LatticeE2ETests
         await Docs.PutAsync(cluster[Cluster.Gru], cluster.Document(first), new JsonObject { ["step"] = 0 });
         var head = await ChangesAsync(issuer, cluster, cursor: null, events => events.Any(change => Id(change) == first));
         var cursor = head.First(change => Id(change.Event) == first).Cursor;
+        _ = await Converge.UntilAsync(() => Docs.ReadAsync(cluster[Cluster.Sjc], cluster.Document(first)),
+            body => body?["step"]?.GetValue<int>() == 0, "the cursor's prefix on sjc before resuming");
         var writes = Enumerable.Range(1, 10).Select(step => (Id: EntityIds.New().ToString(), Region: step % 2 == 0 ? Cluster.Gru : Cluster.Sjc, Step: step)).ToArray();
         foreach (var write in writes)
         {
