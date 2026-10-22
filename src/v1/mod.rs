@@ -39,6 +39,7 @@ mod query;
 mod shape_crypto;
 mod shapes;
 mod sql;
+mod tooling;
 mod tx;
 mod types;
 
