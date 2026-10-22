@@ -365,12 +365,13 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// <param name="afterBootstrap">Optional integration-test hook before a tenant database's baseline is seeded.</param>
     /// <param name="backupTime">The host's UTC clock for snapshot boundaries, independent of query deadlines.</param>
     /// <param name="schemaMemory">Shared process admission for collection schema evaluation.</param>
+    /// <param name="replicaOwner">Trusted node identity; defaults to the host name for direct construction.</param>
     public SqliteStorageEngine(
         string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<SqliteStorageEngine> logger,
         TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
         TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
         Action<SqliteDatabaseStore>? afterBootstrap = null, TimeSpan? queryBudget = null,
-        TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null)
+        TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null, string? replicaOwner = null)
     {
         _dataDirectory = dataDirectory;
         _schemaMemory = schemaMemory;
@@ -390,7 +391,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         _ownership = Own(dataDirectory);
         try
         {
-            ReplicaId = ReplicaIdentityFile.Start(dataDirectory);
+            ReplicaId = ReplicaIdentityFile.Start(dataDirectory, replicaOwner ?? Environment.MachineName);
             // Stamps follow the host's clock: the query deadline's clock may be a test's fake that never moves.
             Member = new LocalReplica(ReplicaId, new MemberClock(HostTime, meter));
             meter.CreateObservableGauge("terrabase.replica.member", () => (long)ReplicaId.Member, description: "This member's number in its replica id.");
