@@ -103,7 +103,7 @@ db_prefix() { echo "v1/$(runjson .organization)/$(runjson .project)/$(runjson .d
 keys_prefix() { echo "v1/keys/$(runjson .organization)/$(runjson .project)/"; }
 acks() { local n; n=$(grep -c '"ev":"ack"' "$RUN/ledger/$1.jsonl" 2>/dev/null) || true; echo "${n:-0}"; } # 0 before the ledger exists
 
-# lab JOB [ENV_FILE]: one PitrLab job; with ENV_FILE only its master key is passed (audit opens objects with it).
+# lab JOB [ENV_FILE]: one PitrLab job with its master key and optional S3 credentials.
 lab() {
 	local job=$1 env=${2:-} out=$BASE/out/$(basename "$1" .json).out
 	(
@@ -375,9 +375,9 @@ cmd_tcuts() {
 }
 
 # audit ROOT LABEL
-# pitrsrc ROOT: an s3 source for Tigris (bucket and credentials from the environment), the emulator's dir otherwise.
+# Only the source root lives on Tigris; downloaded and mutated copies remain local directories.
 pitrsrc() {
-	if [[ $TARGET == tigris ]]; then
+	if [[ $TARGET == tigris && $1 == "$BASE/s3/src-root" ]]; then
 		echo '{"kind":"s3"}'
 	else
 		jq -nc --arg root "$1" '{kind:"dir",root:$root}'
