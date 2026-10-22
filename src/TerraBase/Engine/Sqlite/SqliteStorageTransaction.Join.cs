@@ -49,10 +49,11 @@ internal sealed partial class SqliteStorageTransaction
     {
         ThrowIfReadOnly();
         Member.Clock.Observe(at.Stamp);
-        var state = ReadState(collection, id);
-        if (!baseline && state.MaxStamp.Value == 0 && CollectedBefore() is { Value: > 0 } floor)
+        ClearEntry? collectionDrop = null;
+        if (IsClient && !IsMetadata(collection) && ReadState(DocumentDelta.Collections, collection).Clear is { Deleted: true } dropped)
         {
-            var clear = new DocumentState(CollectedClear(floor), DocumentState.Bottom.Fields);
+            collectionDrop = dropped;
+            var clear = new DocumentState(dropped, DocumentState.Bottom.Fields);
             delta = clear.Join(delta);
             if (delta.Equals(clear))
             {
@@ -60,11 +61,10 @@ internal sealed partial class SqliteStorageTransaction
             }
         }
 
-        ClearEntry? collectionDrop = null;
-        if (IsClient && !IsMetadata(collection) && ReadState(DocumentDelta.Collections, collection).Clear is { Deleted: true } dropped)
+        var state = ReadState(collection, id);
+        if (!baseline && state.MaxStamp.Value == 0 && CollectedBefore() is { Value: > 0 } floor)
         {
-            collectionDrop = dropped;
-            var clear = new DocumentState(dropped, DocumentState.Bottom.Fields);
+            var clear = new DocumentState(CollectedClear(floor), DocumentState.Bottom.Fields);
             delta = clear.Join(delta);
             if (delta.Equals(clear))
             {
