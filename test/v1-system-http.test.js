@@ -26,7 +26,7 @@ test("unscoped system client supports anonymous probes without a project or cred
 });
 test("platform explore preserves read-only routes, redacted documents and raw document keys", async () => {
   const doc = { id: "a/b+é", version: "tbv1-1", state: "value", document: { password: "[redacted]" } };
-  const replies = [{ items: [{ name: "ts-auth", id: entity, homeRegion: "gru", replicaRegions: ["fra"] }] },
+  const replies = [{ items: [{ name: "ts-auth", id: entity, homeRegion: "gru", replicaRegions: ["fra"], allRegions: false }] },
     { items: [{ id: entity, name: "users", created_at: "1" }], next_cursor: null }, { items: [doc], next_cursor: "opaque+cursor" }, doc];
   const { client, requests } = await fixture((_r, response) => json(response, replies[requests.length - 1]));
   expect(await client.platform.databases()).toEqual(replies[0]);
