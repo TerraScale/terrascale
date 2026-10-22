@@ -45,6 +45,9 @@ public sealed class RebuildLedgerRecoveryTests
                 _ = await setup.CommitAsync(CancellationToken.None);
             }
 
+            // Admit before the injected fault; first SELECT still observes the completed commit or rollback.
+            await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+
             var faults = services.GetRequiredService<IReplicaCopyFaults>();
             Task? recording = null;
             atMarker = marked =>
@@ -66,7 +69,6 @@ public sealed class RebuildLedgerRecoveryTests
             await Assert.That(recording).IsNotNull().Because("the fault was observed after native COMMIT, while reading its marker");
             await recording!;
             await Assert.That(await faults.RefusedAsync(database, store.Incarnation, CancellationToken.None)).IsTrue();
-            await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
             await Assert.That(await read.GetAsync("items", "landed", CancellationToken.None)).IsNotNull()
                 .Because("the commit landed, but its damaged copy returned no successful acknowledgement");
         }
@@ -105,6 +107,9 @@ public sealed class RebuildLedgerRecoveryTests
             await Assert.That((await services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None)).Incarnation)
                 .IsEqualTo(incarnation);
 
+            // Admit before the injected fault; first SELECT still observes the completed commit or rollback.
+            await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+
             var sequence = store.CommitSequence;
             await using (var held = await store.BeginDurableTransactionAsync(CancellationToken.None))
             {
@@ -115,7 +120,6 @@ public sealed class RebuildLedgerRecoveryTests
             }
 
             await Assert.That(store.CommitSequence).IsEqualTo(sequence);
-            await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
             await Assert.That(await read.GetAsync("items", "refused", CancellationToken.None)).IsNull();
             await Assert.That(await read.GetAsync("items", "kept", CancellationToken.None)).IsNotNull();
             _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () =>

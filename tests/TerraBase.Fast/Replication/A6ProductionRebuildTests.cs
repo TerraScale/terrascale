@@ -44,6 +44,8 @@ public sealed class A6ProductionRebuildTests
         {
             (database, incarnation) = await CreateDatabaseAsync(first);
             await DurableWriteAsync(first, database);
+            var firstEngine = first.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            _ = await ((SqliteDatabaseStore)(await firstEngine.OpenDatabaseAsync(database, CancellationToken.None))!).BeginOperationAsync(CancellationToken.None);
             running = await File.ReadAllBytesAsync(identity);
         }
         var priorJournal = await File.ReadAllBytesAsync(journal);

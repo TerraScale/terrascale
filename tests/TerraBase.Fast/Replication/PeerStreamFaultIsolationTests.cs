@@ -120,6 +120,8 @@ public sealed class PeerStreamFaultIsolationTests
             }));
         var store = await node.StoreAsync(node.Database);
         var faults = node.Api.Server.Services.GetRequiredService<IReplicaCopyFaults>();
+        // Admit forensic inspection before SYSTEM can fault; BEGIN DEFERRED takes no read snapshot yet.
+        await using var forensic = await (await node.StoreAsync(node.Database)).BeginTransactionAsync(write: false, CancellationToken.None);
         Task? recording = null;
         afterApply = database =>
         {
@@ -158,7 +160,7 @@ public sealed class PeerStreamFaultIsolationTests
 
         await Assert.That(recording).IsNotNull();
         await recording!.WaitAsync(deadline.Token);
-        await Assert.That(await node.HasAsync(node.Database, "landed", deadline.Token)).IsTrue()
+        await Assert.That((await forensic.GetAsync("items", "landed", deadline.Token) is { Deleted: false })).IsTrue()
             .Because("durable apply completed, but its subsequent stable read refused certification");
     }
 
@@ -174,6 +176,8 @@ public sealed class PeerStreamFaultIsolationTests
         });
         var source = node.Api.Server.Services.GetRequiredService<HeldSource>();
         var faults = node.Api.Server.Services.GetRequiredService<IReplicaCopyFaults>();
+        // Admit forensic inspection before SYSTEM can fault; BEGIN DEFERRED takes no read snapshot yet.
+        await using var forensic = await (await node.StoreAsync(node.Database)).BeginTransactionAsync(write: false, CancellationToken.None);
         var native = new SqliteException("a native I/O error during the stable reader reset", 10);
         var armed = 0;
         Task? recording = null;
@@ -213,7 +217,7 @@ public sealed class PeerStreamFaultIsolationTests
             await Assert.That(recording).IsNotNull();
             await recording!.WaitAsync(deadline.Token);
             await Assert.That(await faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, deadline.Token)).IsTrue();
-            await Assert.That(await node.HasAsync(node.Database, "landed-native", deadline.Token)).IsTrue()
+            await Assert.That((await forensic.GetAsync("items", "landed-native", deadline.Token) is { Deleted: false })).IsTrue()
                 .Because("apply committed before stable failed, but neither a positive nor a refused ACK may follow the node fault");
         }
         finally
@@ -231,6 +235,8 @@ public sealed class PeerStreamFaultIsolationTests
         using var deadline = Timeout();
         using var channel = PeerChannel.Create(node.Api.Server.BaseAddress, PeerTls.Credential);
         using var call = await HelloAsync(new Features.Replication.V1.Replication.ReplicationClient(channel), deadline.Token);
+        // Admit forensic inspection before SYSTEM can fault; BEGIN DEFERRED takes no read snapshot yet.
+        await using var forensic = await (await node.StoreAsync(node.Database)).BeginTransactionAsync(write: false, CancellationToken.None);
         await node.FaultAsync(node.Database, nodeFault: true, deadline.Token);
         var frame = batch ? Frame(node.Database, node.Pin(node.Database), 1, "refused") : new PushFrame
         {
@@ -238,7 +244,7 @@ public sealed class PeerStreamFaultIsolationTests
         };
         await call.RequestStream.WriteAsync(frame, deadline.Token);
         _ = await Assert.ThrowsAsync<RpcException>(() => call.ResponseStream.MoveNext(deadline.Token));
-        await Assert.That(await node.HasAsync(node.Database, "refused", deadline.Token)).IsFalse();
+        await Assert.That((await forensic.GetAsync("items", "refused", deadline.Token) is { Deleted: false })).IsFalse();
     }
 
     [Test]
