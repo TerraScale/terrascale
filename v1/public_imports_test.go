@@ -10,14 +10,14 @@ import (
 	tb "terrascale.tech/sdk/v1"
 )
 
-const importFixture = `{"id":"` + parityID + `","project":"` + parityProject + `","database":"main","region":"gru","state":"ready","cancelRequested":false,"options":{"missingPrimaryKey":"reject","exclude":[]},"source":{"format":"sqlite","bytes":9007199254740993,"sha256":"digest","receivedBytes":3,"staged":true,"retainedUntil":null},"preview":{"id":"` + parityID + `","tables":[{"source":"public.users","collection":"users","excluded":false,"rows":2,"idPolicy":"primary_key","primaryKey":["id"],"columns":[{"name":"id","sourceType":"integer","mapping":"integer","nullable":false,"excluded":false}],"constraints":[{"kind":"primary_key","name":null,"columns":["id"],"references":null,"enforced":false}],"issues":[]}],"skipped":[{"kind":"view","name":"summary"}],"skippedTruncated":false,"blocking":0,"warnings":1},"confirmedPreviewId":null,"progress":{"tablesDone":0,"tablesTotal":1,"rowsWritten":0,"rowsTotal":2,"currentTable":null},"validation":{"passed":true,"tables":[{"source":"public.users","collection":"users","sourceRows":2,"documents":2,"sourceChecksum":"a","documentChecksum":"a","match":true}]},"error":null,"createdAt":"2026-10-22T00:00:00Z","updatedAt":"2026-10-22T00:00:00Z","startedAt":null,"finishedAt":null}`
+const importFixture = `{"id":"` + parityID + `","project":"` + parityProject + `","database":"main","region":"gru","state":"ready","cancelRequested":false,"options":{"missingPrimaryKey":"reject","exclude":[]},"source":{"format":"sqlite","bytes":3,"sha256":"0000000000000000000000000000000000000000000000000000000000000000","receivedBytes":3,"staged":true,"retainedUntil":null},"preview":{"id":"` + parityID + `","tables":[{"source":"public.users","collection":"users","excluded":false,"rows":2,"idPolicy":"primary_key","primaryKey":["id"],"columns":[{"name":"id","sourceType":"integer","mapping":"integer","nullable":false,"excluded":false}],"constraints":[{"kind":"primary_key","name":null,"columns":["id"],"references":null,"enforced":false}],"issues":[]}],"skipped":[{"kind":"view","name":"summary"}],"skippedTruncated":false,"blocking":0,"warnings":1},"confirmedPreviewId":null,"progress":{"tablesDone":0,"tablesTotal":1,"rowsWritten":0,"rowsTotal":2,"currentTable":null},"validation":{"passed":true,"tables":[{"source":"public.users","collection":"users","sourceRows":2,"documents":2,"sourceChecksum":"a","documentChecksum":"a","match":true}]},"error":null,"createdAt":"2026-10-22T00:00:00Z","updatedAt":"2026-10-22T00:00:00Z","startedAt":null,"finishedAt":null}`
 
 func checkImportFixture(t *testing.T, out *tb.ImportJob, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.ID != parityID || out.Database != "main" || out.Source.Bytes != 9007199254740993 || out.Source.RetainedUntil != nil || out.Preview == nil || out.Preview.Tables[0].Constraints[0].Enforced || out.Progress.RowsWritten != 0 || !out.Validation.Tables[0].Match || out.Error != nil {
+	if out.ID != parityID || out.Database != "main" || out.Source.Bytes != 3 || out.Source.RetainedUntil != nil || out.Preview == nil || out.Preview.Tables[0].Constraints[0].Enforced || out.Progress.RowsWritten != 0 || !out.Validation.Tables[0].Match || out.Error != nil {
 		t.Fatalf("job = %+v", out)
 	}
 }
@@ -28,7 +28,7 @@ func TestPublicImportContracts(t *testing.T) {
 			method, path, body, status := http.MethodPost, "/import", "", http.StatusAccepted
 			switch endpoint {
 			case "create":
-				body, status = `{"format":"sqlite","sourceBytes":3,"sourceSha256":"digest"}`, http.StatusCreated
+				body, status = `{"format":"sqlite","sourceBytes":3,"sourceSha256":"0000000000000000000000000000000000000000000000000000000000000000"}`, http.StatusCreated
 			case "get":
 				method, status = http.MethodGet, http.StatusOK
 			case "update":
@@ -43,7 +43,7 @@ func TestPublicImportContracts(t *testing.T) {
 			var err error
 			switch endpoint {
 			case "create":
-				out, err = d.CreateImport(t.Context(), tb.CreateImportRequest{Format: "sqlite", SourceBytes: 3, SourceSHA256: "digest"})
+				out, err = d.CreateImport(t.Context(), tb.CreateImportRequest{Format: "sqlite", SourceBytes: 3, SourceSHA256: "0000000000000000000000000000000000000000000000000000000000000000"})
 			case "get":
 				out, err = d.Import(t.Context())
 			case "update":
@@ -65,7 +65,7 @@ func TestPublicImportSourceUsesRawBoundedBytes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		raw, err := io.ReadAll(r.Body)
-		if err != nil || string(raw) != "\x00\xffx" || r.ContentLength != 3 || r.Header.Get("Content-Type") != "application/octet-stream" || r.Header.Get("Authorization") != "Bearer header.project.signature" || r.Method != http.MethodPut || r.URL.Path != parityDatabase+"/import/source" || r.URL.RawQuery != "offset=9007199254740993" {
+		if err != nil || string(raw) != "\x00\xffx" || r.ContentLength != 3 || r.Header.Get("Content-Type") != "application/octet-stream" || r.Header.Get("Authorization") != "Bearer header.project.signature" || r.Method != http.MethodPut || r.URL.Path != parityDatabase+"/import/source" || r.URL.RawQuery != "offset=0" {
 			t.Error("incorrect binary upload request")
 		}
 		io.WriteString(w, importFixture)
@@ -76,7 +76,7 @@ func TestPublicImportSourceUsesRawBoundedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := c.Database(parityProject, "main")
-	out, err := d.UploadImportSource(t.Context(), 9007199254740993, []byte{0, 255, 'x'})
+	out, err := d.UploadImportSource(t.Context(), 0, []byte{0, 255, 'x'})
 	checkImportFixture(t, out, err)
 	for _, part := range [][]byte{nil, make([]byte, (4<<20)+1)} {
 		if _, err := d.UploadImportSource(t.Context(), 0, part); err == nil {

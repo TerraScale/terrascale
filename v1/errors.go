@@ -68,6 +68,12 @@ const (
 	ErrConflict ErrorCode = "conflict"
 )
 
+// ValidationDetail identifies a failed schema keyword without document values.
+type ValidationDetail struct {
+	Path    string `json:"path"`
+	Keyword string `json:"keyword"`
+}
+
 // APIError is a non-2xx TerraBase response.
 type APIError struct {
 	// Status is the HTTP status code.
@@ -92,6 +98,11 @@ type APIError struct {
 	// X-TerraBase-Database-Regions), on a 421 ErrWrongRegion.
 	HomeRegion string
 	Regions    []string
+	// Region and Machine identify the accepting node on write_outcome_unknown.
+	Region  string
+	Machine string
+	// Details contains bounded JSON Schema validation paths and keywords.
+	Details []ValidationDetail
 
 	retryAfterSet bool
 	cause         error
@@ -141,12 +152,17 @@ func parseAPIError(status int, h http.Header, body []byte) *APIError {
 	}
 	if decodeExact(body, &env) == nil && len(env.Error) > 0 {
 		var d struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-			Op      *int   `json:"op"`
+			Code    string             `json:"code"`
+			Message string             `json:"message"`
+			Op      *int               `json:"op"`
+			Region  string             `json:"region"`
+			Machine string             `json:"machine"`
+			Details []ValidationDetail `json:"details"`
 		}
 		if decodeExact(env.Error, &d) == nil {
 			e.Code, e.Message, e.Op = ErrorCode(d.Code), d.Message, d.Op
+			e.Region, e.Machine = d.Region, d.Machine
+			e.Details = d.Details
 		}
 	} else if decodeExact(body, &e.Message) == nil {
 		// Management answers some errors with a bare JSON string.
