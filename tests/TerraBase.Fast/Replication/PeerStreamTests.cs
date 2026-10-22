@@ -494,8 +494,12 @@ public sealed class PeerStreamTests
 
         // Back, sjc cannot get the group from the stream any more: gru tells it to refill, and it joins what differs.
         await sjc.StartAsync();
+        await Assert.That(sjc.Node).IsEqualTo(sjcNode).Because("a clean stop must preserve the peer identity used by its acknowledgements");
         await Assert.That(await sjc.UntilAsync(second, """{"n":2}""")).IsTrue();
-        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.HeadAsync(cluster.Database))).IsTrue();
+        var refillHead = await gru.HeadAsync(cluster.Database);
+        var acknowledged = await gru.UntilAckedAsync(cluster.Database, sjcNode, refillHead);
+        await Assert.That(acknowledged).IsTrue().Because(
+            $"peer={sjcNode}, returned={sjc.Node}, expected head={refillHead}, current head={await gru.HeadAsync(cluster.Database)}, acked={await gru.AckedAsync(cluster.Database, sjcNode)}");
     }
 
     // A replica that only joins another region's writes: its sender has no local group to ack past them, so retention raises

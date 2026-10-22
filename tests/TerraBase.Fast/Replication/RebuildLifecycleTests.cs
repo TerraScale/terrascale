@@ -344,6 +344,10 @@ public sealed class RebuildLifecycleTests
                 await Assert.That(await RefusedWriteAsync(api, database)).IsFalse();
                 var certified = await ledger.GetAsync(database, CancellationToken.None);
 
+                // Leave an explicit operation intent: completed quiescent writes no longer retain one.
+                var engine = services.GetRequiredService<SqliteStorageEngine>();
+                var currentStore = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+                await engine.Ledger.RecordIntentAsync(currentStore, CancellationToken.None);
                 await services.GetRequiredService<IReplicaCopyFaults>().RecordAsync(database, Ulid.NewUlid(), "a third incarnation", CancellationToken.None);
 
                 // One row cannot name a third copy: nothing changes or is deleted, and the node refuses every write.
