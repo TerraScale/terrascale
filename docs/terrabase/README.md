@@ -142,5 +142,7 @@ The replication end-to-end suite runs against the disposable ts-orch service ([e
 
 Optional declared JSON Schema per collection: [attach, validate, and detach](collection-schemas.md).
 
+Relational SQL (tables, joins, transactions) and libSQL clients over Hrana: [design](sql/relational-sql.md).
+
 Feature-sliced: `src/TerraBase/Features/<Feature>/` holds everything
 a slice needs. See `AGENTS.md` for the full structure and rules.
