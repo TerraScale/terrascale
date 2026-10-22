@@ -10,9 +10,10 @@ on:
 permissions:
   contents: read
 
+# A newer push cancels the older run of the same pull request or branch, main included.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
@@ -78,7 +79,7 @@ jobs:
 
   report:
     needs: slow
-    if: always() && needs.slow.result == 'failure'
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.slow.result == 'failure'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

@@ -10,10 +10,10 @@ on:
 permissions:
   contents: read
 
-# A newer push supersedes a pull request's run; each main commit runs in its own group and keeps its result.
+# A newer push cancels the older run of the same pull request or branch, main included.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"

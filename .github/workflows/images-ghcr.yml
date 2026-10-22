@@ -8,14 +8,17 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Every publish runs to completion in its own group.
 concurrency:
   group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
   image:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
