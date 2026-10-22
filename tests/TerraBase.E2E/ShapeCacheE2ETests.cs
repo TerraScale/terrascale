@@ -15,6 +15,7 @@ namespace TerraBase.E2E;
 public sealed class ShapeCacheE2ETests
 {
     [Test]
+    [Category("local-only")]
     [Scenario(Nodes.InProcess)]
     [Arguments(Cluster.Gru)]
     [Arguments(Cluster.Sjc)]
