@@ -29,7 +29,7 @@ public sealed record DatabaseRegion(string Code, string Id, string Name, string 
     public static DatabaseRegion? Resolve(IReadOnlyList<DatabaseRegion> catalog, string? code) =>
         catalog.FirstOrDefault(region => region.Code == code || region.Id == code) ?? FromId(code?.ToLowerInvariant());
 }
-public sealed record ManagedDatabase(string Id, string ProjectId, string Name, DateTimeOffset CreatedAt, string? BranchedFrom = null, string HomeRegion = "", IReadOnlyList<string>? ReplicaRegions = null);
+public sealed record ManagedDatabase(string Id, string ProjectId, string Name, DateTimeOffset CreatedAt, string? BranchedFrom = null, string HomeRegion = "", IReadOnlyList<string>? ReplicaRegions = null, bool AllRegions = false);
 public sealed record CollectionStats(string Name, long Documents, long Bytes);
 public sealed record DatabaseSqlRow(string Id, JsonElement Value);
 public sealed record DatabaseSqlResult(int Matched, bool Truncated, IReadOnlyList<DatabaseSqlRow> Rows);
@@ -49,10 +49,10 @@ public interface IDatabaseBackend
 {
     Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken);
-    Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, CancellationToken cancellationToken);
+    Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken);
     Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
     Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
-    Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, CancellationToken cancellationToken);
+    Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken);
     Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
     Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, CancellationToken cancellationToken);
     Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
@@ -109,11 +109,12 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
         return result;
     }
 
-    public async Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, CancellationToken cancellationToken)
+    public async Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken)
     {
         var sdk = await ClientAsync(scope, placement[0], "databases:write", cancellationToken);
+        // TerraBase refuses allRegions together with any replicaRegions list, even an empty one.
         return Map(await RunAsync(() => sdk.Project(scope.ProjectId).CreateDatabaseAsync(name, placement[0].Id,
-            placement.Skip(1).Select(region => region.Id).ToArray(), cancellationToken)));
+            allRegions ? null : placement.Skip(1).Select(region => region.Id).ToArray(), allRegions ? true : null, cancellationToken)));
     }
 
     public async Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
@@ -129,12 +130,12 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
         await RunAsync(() => sdk.Project(scope.ProjectId).DeleteDatabaseAsync(name, cancellationToken));
     }
 
-    public async Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, CancellationToken cancellationToken)
+    public async Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken)
     {
         var name = await NameAsync(scope, home, databaseId, cancellationToken);
-        var sdk = await ClientAsync(scope, home, "databases:write", cancellationToken);
-        return Map(await RunAsync(() => sdk.Project(scope.ProjectId).SetDatabaseRegionsAsync(name,
-            placement.Skip(1).Select(region => region.Id).ToArray(), cancellationToken)));
+        var project = (await ClientAsync(scope, home, "databases:write", cancellationToken)).Project(scope.ProjectId);
+        return Map(await RunAsync(() => allRegions ? project.SetDatabaseAllRegionsAsync(name, cancellationToken)
+            : project.SetDatabaseRegionsAsync(name, placement.Skip(1).Select(region => region.Id).ToArray(), cancellationToken)));
     }
 
     public async Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
@@ -190,7 +191,7 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
     }
 
     private static ManagedDatabase Map(TerraBaseManagedDatabase item) => new(item.Id, item.ProjectId, item.Name, item.CreatedAt,
-        item.BranchedFrom, item.HomeRegion, item.ReplicaRegions);
+        item.BranchedFrom, item.HomeRegion, item.ReplicaRegions, item.AllRegions);
     private static DatabaseIndex Map(TerraBaseIndex item) => new(item.Name, item.Collection, item.Fields, item.State);
     private static async Task<T> RunAsync<T>(Func<Task<T>> operation)
     {

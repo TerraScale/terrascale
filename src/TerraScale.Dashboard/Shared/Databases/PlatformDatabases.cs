@@ -54,7 +54,8 @@ public static class PlatformDatabases
     {
         using var document = await GetAsync(http, session, $"{Explore}/{Name(database)}/collections", cancellationToken) ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
         return Items(document).Select(item => new TerraBaseCollection(item.GetProperty("name").GetString()!,
-            DateTimeOffset.FromUnixTimeMilliseconds(long.Parse(item.GetProperty("created_at").GetString()!, System.Globalization.CultureInfo.InvariantCulture)))).ToArray();
+            DateTimeOffset.FromUnixTimeMilliseconds(long.Parse(item.GetProperty("created_at").GetString()!, System.Globalization.CultureInfo.InvariantCulture)),
+            item.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "")).ToArray();
     }
 
     // Documents in id order only: explore has no filters or sorts.

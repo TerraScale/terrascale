@@ -145,10 +145,10 @@ internal sealed class ReferenceDatabaseBackend(IDatabaseBackend inner, Reference
     { var contents = await inner.CollectionsAsync(scope, home, id, ct); facts.ValidateMeasurements(scope, home, id, contents); return contents; }
     public Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken ct) => inner.RegionsAsync(ct);
     public Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken ct) => inner.ListAsync(scope, home, ct);
-    public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, CancellationToken ct) => inner.CreateAsync(scope, name, placement, ct);
+    public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken ct) => inner.CreateAsync(scope, name, placement, allRegions, ct);
     public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string id, string name, CancellationToken ct) => inner.BranchAsync(scope, home, id, name, ct);
     public Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct) => inner.DeleteAsync(scope, home, id, ct);
-    public Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string id, IReadOnlyList<DatabaseRegion> placement, CancellationToken ct) => inner.SetRegionsAsync(scope, home, id, placement, ct);
+    public Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string id, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken ct) => inner.SetRegionsAsync(scope, home, id, placement, allRegions, ct);
     public Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string id, string statement, CancellationToken ct) => inner.SqlAsync(scope, home, id, statement, ct);
     public Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct) => inner.IndexesAsync(scope, home, id, ct);
     public Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string id, string collection, IReadOnlyList<string> fields, CancellationToken ct) => inner.CreateIndexAsync(scope, home, id, collection, fields, ct);

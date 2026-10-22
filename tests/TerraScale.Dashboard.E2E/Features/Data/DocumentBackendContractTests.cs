@@ -87,7 +87,7 @@ public sealed class DocumentBackendContractTests
                     "list" => backend.ListAsync(scope, region, "app", "items", 10, null, CancellationToken.None),
                     "get" => backend.GetAsync(scope, region, "app", "items", "01K78D0C000000000000000099", CancellationToken.None),
                     "schema" => backend.SchemaAsync(scope, region, "app", "items", CancellationToken.None),
-                    _ => backend.WriteAsync(scope, region, "app", "items", action, "a", body.RootElement, "", CancellationToken.None)
+                    _ => backend.WriteAsync(scope, region, "app", "items", action, DocumentId, body.RootElement, "", CancellationToken.None)
                 };
                 await request;
             }
@@ -112,19 +112,19 @@ public sealed class DocumentBackendContractTests
         using var body = JsonDocument.Parse("{\"title\":\"kept\"}");
         DocumentWriteOutcomeUnknownException? unknown = null;
         TerraBaseWriteResult? result = null;
-        try { result = await backend.WriteAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "replace", "a", body.RootElement, "", CancellationToken.None); }
+        try { result = await backend.WriteAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "replace", DocumentId, body.RootElement, "", CancellationToken.None); }
         catch (DocumentWriteOutcomeUnknownException error) { unknown = error; }
         await Assert.That(wire.Requests).IsEqualTo(1);
         if (receipt == "valid")
         {
             await Assert.That(unknown).IsNull();
-            await Assert.That(result!.Id).IsEqualTo("a");
+            await Assert.That(result!.Id).IsEqualTo(DocumentId);
         }
         else
         {
             await Assert.That(result).IsNull();
             await Assert.That(unknown).IsNotNull();
-            await Assert.That(unknown!.DocumentId).IsEqualTo("a");
+            await Assert.That(unknown!.DocumentId).IsEqualTo(DocumentId);
             await Assert.That(TerraScaleIds.IsValid(unknown.OperationId)).IsTrue();
         }
     }
@@ -137,12 +137,13 @@ public sealed class DocumentBackendContractTests
         using var wire = new Wire { Failure = status };
         using var body = JsonDocument.Parse("{\"title\":\"kept\"}");
         HttpRequestException? rejected = null;
-        try { await new DocumentBackend(wire, new Tokens()).WriteAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "replace", "a", body.RootElement, "", CancellationToken.None); }
+        try { await new DocumentBackend(wire, new Tokens()).WriteAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "replace", DocumentId, body.RootElement, "", CancellationToken.None); }
         catch (HttpRequestException error) { rejected = error; }
         await Assert.That(rejected?.StatusCode).IsEqualTo((HttpStatusCode)status);
         await Assert.That(wire.Requests).IsEqualTo(1);
     }
 
+    private const string DocumentId = "01K78000000000000000000001";
     private static DatabaseScope Scope() => new("user", "original-user-token", "01JA0000000000000000000002", "org", "01JA0000000000000000000001", "project")
     { Session = new("user", "Synthetic", "synthetic@example.test", "original-user-token", null, DateTimeOffset.UtcNow.AddMinutes(5)) };
 
@@ -191,7 +192,7 @@ public sealed class DocumentBackendContractTests
                 {
                     "malformed" => "{",
                     "missing" => "{}",
-                    _ => JsonSerializer.Serialize(new { id = Receipt == "foreign" ? "other" : "a", version = "v2", offset = 2L, durability = "local_durable" })
+                    _ => JsonSerializer.Serialize(new { id = Receipt == "foreign" ? "01K78000000000000000000009" : DocumentId, version = "v2", offset = 2L, durability = "local_durable" })
                 };
                 return new(HttpStatusCode.OK) { Content = new StringContent(receipt, Encoding.UTF8, "application/json") };
             }

@@ -57,7 +57,7 @@ public static class DatabaseEndpoints
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             try
             {
-                var database = await databases.CreateAsync(context, form["name"].ToString(), form["region"].Select(value => value ?? ""), http.RequestAborted);
+                var database = await databases.CreateAsync(context, form["name"].ToString(), form["region"].Select(value => value ?? ""), form["allRegions"] == "true", http.RequestAborted);
                 return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(database, statusCode: 201);
             }
             catch (Exception error) when (KnownFailure(error))
@@ -84,7 +84,7 @@ public static class DatabaseEndpoints
                             return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : Results.Json(branch, statusCode: 201);
                         }
                         if (action == "regions")
-                            await databases.SetRegionsAsync(context, id, form["region"].Select(value => value ?? ""), http.RequestAborted);
+                            await databases.SetRegionsAsync(context, id, form["region"].Select(value => value ?? ""), form["allRegions"] == "true", http.RequestAborted);
                         else
                             await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
                         return WantsHtml(http) ? HttpRedirects.SeeOther(action == "delete" ? "/databases" : DatabaseService.Path(id, "replication") + "#placement") : Results.NoContent();

@@ -657,8 +657,8 @@ sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
     }
     public Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken) => Task.FromResult(regions);
     public Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ManagedDatabase>>(databases.Values.Where(item => item.ProjectId == scope.ProjectId).ToArray());
-    public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, CancellationToken cancellationToken)
-    { var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: placement[0].Id, ReplicaRegions: placement.Skip(1).Select(item => item.Id).ToArray()); databases[value.Id] = value; return Task.FromResult(value); }
+    public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken)
+    { var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: placement[0].Id, ReplicaRegions: allRegions ? [] : placement.Skip(1).Select(item => item.Id).ToArray(), AllRegions: allRegions); databases[value.Id] = value; return Task.FromResult(value); }
     public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
     {
         var source = Database(scope, databaseId);
@@ -676,7 +676,7 @@ sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
         foreach (var key in indexes.Keys.Where(key => key.StartsWith(databaseId + "/", StringComparison.Ordinal))) indexes.TryRemove(key, out _);
         return Task.CompletedTask;
     }
-    public Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, CancellationToken cancellationToken) { var changed = databases[databaseId] with { ReplicaRegions = placement.Skip(1).Select(item => item.Id).ToArray() }; databases[databaseId] = changed; return Task.FromResult(changed); }
+    public Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken) { var changed = databases[databaseId] with { ReplicaRegions = allRegions ? [] : placement.Skip(1).Select(item => item.Id).ToArray(), AllRegions = allRegions }; databases[databaseId] = changed; return Task.FromResult(changed); }
     public Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken) => Task.FromResult(documents.Statistics(scope, Database(scope, databaseId).Name));
     public Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, CancellationToken cancellationToken) => Task.FromResult(documents.Query(scope, databases[databaseId].Name, statement));
     public Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
@@ -722,7 +722,7 @@ sealed partial class TestDocuments : IDocumentBackend
     public Task<IReadOnlyList<TerraBaseCollection>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, CancellationToken cancellationToken)
     {
         var prefix = scope.ProjectId + "/" + databaseName + "/";
-        lock (collections) return Task.FromResult<IReadOnlyList<TerraBaseCollection>>(collections.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).Select(key => new TerraBaseCollection(key[prefix.Length..], DateTimeOffset.UtcNow)).OrderBy(item => item.Name).ToArray());
+        lock (collections) return Task.FromResult<IReadOnlyList<TerraBaseCollection>>(collections.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).Select(key => new TerraBaseCollection(key[prefix.Length..], DateTimeOffset.UtcNow, "")).OrderBy(item => item.Name).ToArray());
     }
     public Task CreateCollectionAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken)
     { lock (collections) collections.TryAdd(Key(scope, databaseName, collection), []); return Task.CompletedTask; }

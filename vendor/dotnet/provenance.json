@@ -1,16 +1,16 @@
 {
   "package": "TerraScale.DotNet",
-  "version": "0.0.4-dashboard.import.1",
+  "version": "0.0.4-dashboard.import.2",
   "repository": "https://github.com/TerraScale/ts-dotnet",
-  "sourceRevision": "796b450196fbcfdad9f2eff10ec630a1458261fb",
-  "sourceTree": "97717c06a4fec638446c5375f7f0fa9c482f4d93",
-  "sourceArchiveSha256": "1d14d6b6e19413408840d87e0ee853d434ed72f0928c98c7dafa608d0cb5f553",
-  "file": "TerraScale.DotNet.0.0.4-dashboard.import.1.nupkg",
-  "sourceDateEpoch": 1791892146,
-  "sha256": "c08792e9a3369d0249324891861b6bed218117e7cd4c8db724bd2f70f4959f51",
+  "sourceRevision": "12aa33ece40e235168be1bca4fee403706ef7cb3",
+  "sourceTree": "4a7f75506b0a6764de64d5fd4115015b9808d9ba",
+  "sourceArchiveSha256": "220eecf9f1bd31d2d8ee95b752d4d2f8400207a3666dda42c37cfc3662135f28",
+  "file": "TerraScale.DotNet.0.0.4-dashboard.import.2.nupkg",
+  "sourceDateEpoch": 1792711689,
+  "sha256": "5247972c180fbac0df2f6672dfb16ba154b10a8a71d0461658333cf36606bd08",
   "assemblySha256ByFramework": {
-    "net10.0": "59413abab31ff1299a641ad84a5c7ab49a7a0c5839de35b3e1803850b6fd5183",
-    "net11.0": "c20a8a82aa89049417ffed676610bacdd193fca5c1f9becbde07c7397b1be94a"
+    "net10.0": "d8bd67af5990319e7646046dac13ce7bd76762bac8fccd476f5639dadf6ce2ca",
+    "net11.0": "3fecd8b82965fb1b324868143a9e48951683fc2791e06d9adb4c2e6ef0c2873e"
   },
   "contractSha256ByPath": {
     "contracts/auth/README.md": "8b34333c8ac9de52ed8bf5518aed68dec311b502af8b8929a1b16f0cd5c6d4d2",
@@ -22,21 +22,23 @@
     "contracts/auth/provenance.json": "e35f8dd34c84056f68dcc3697d6eed6fc0418fa3516247c9bbfbf0666180cfac",
     "contracts/auth/routes.json": "935e9578a49b22537026bb358373271ed41277c7d73842168aa667ca7a9d26fd",
     "contracts/auth/security.json": "ceb0c04c112509f960577add03743f83cda9876f193e16935c061efa7d7445a7",
-    "contracts/terrabase/README.md": "1178c0af0762ed0ceda629c9d17fc7239e8f448be86658d3070a7850abaa76c8",
+    "contracts/terrabase/README.md": "6e084abb3d50f988db8f1c80d25fef23e1b01b6ec46bc3d95edac8c8efd24335",
     "contracts/terrabase/artifacts/terrabase-e30ffdc-source.tar.gz": "962705b1bc9302ea289b65c90d413c8246c542f23bce6de25d3f979bdf8819f3",
     "contracts/terrabase/artifacts/terrabase-r8-2b95f5ef-source.tar.gz": "13edca03ed374fca0841bcb1734ea6512c5246f1bf9a280da8b068a47d759506",
-    "contracts/terrabase/fixtures/branch.json": "92ca614290e522ccd9795ceaf27513950acf248128bb80b54576c18e335c166b",
+    "contracts/terrabase/current-public-routes.json": "40ff41bd01ca0ed9db1734dc4615c230b7fc5cbf9250b5ef2d1fa75f4b711c96",
+    "contracts/terrabase/fixtures/branch.json": "5ed6bade54e02ca9498de79eb9fa3df1036c7f06880342f425277bc2ca1a5bee",
     "contracts/terrabase/fixtures/changes.sse": "ea3b112e7060ae680d1f40dc66ab5f7d09e713bae06718f3d7ce0774309ade0c",
     "contracts/terrabase/fixtures/collection-stats.json": "a1c92b54ade4bdd9f52a403c02d0e6dd55cb1c02d7cf7d899cda83faebf764b2",
     "contracts/terrabase/fixtures/database-usage.json": "4801cb4912f86a4fd8a5d511f66e4e901f72ae19da1d0f121e5afe4afe8f40b4",
-    "contracts/terrabase/fixtures/database.json": "e02e8a402dbb3921c84f5e7e11f04b675002d5bdc69136d3eb186f8abfb712c7",
-    "contracts/terrabase/fixtures/databases.json": "f0d37356a6152a4f922ddfa791c4b90fecfe72d6ad6c07718cbb6a38e351ec77",
+    "contracts/terrabase/fixtures/database.json": "3fccf75907b3c1b2d2e4a1470a82bda6d7adc9f8b39d554461c4baa1f9cbd9d0",
+    "contracts/terrabase/fixtures/databases.json": "fd949ed4668d7879888ae3783d6e78ae9f5e457ae8bebbf5f3f2195950c9b29b",
     "contracts/terrabase/fixtures/declared-schema.json": "3a7ec23f9d9824ca67e28096e046c7ffea1b3668e87cfd000b96379c85a61779",
     "contracts/terrabase/fixtures/detached-schema.json": "c91602a2d3b2aeee9a9017afb26eea0f2dbdeb65af8f3e22b5de37efe6ff5b3e",
     "contracts/terrabase/fixtures/index.json": "24ac0d881059ab3ed79ab695707889e58e314d3b6b2dc7ac591db0a185b5b8c5",
     "contracts/terrabase/fixtures/indexes.json": "8f308e92a9aef153ff6be01d58a3468273d8ed92b54232a7becc225d5f3c6d4c",
     "contracts/terrabase/fixtures/inferred-schema.json": "246ba14c5bef6577c4a6ae19be8b8053c740fc330ad007dc52f371f92b44d39c",
     "contracts/terrabase/fixtures/project-usage.json": "bf8a39fbc172972181564b5e4d934660116b094c0fe4e36849f8c6e4e622dc3c",
+    "contracts/terrabase/fixtures/shape-vectors.json": "3f0bac7db023f6cec767ff4288df789a449a383d319dfd48aa60405fe7b4c210",
     "contracts/terrabase/fixtures/sql.json": "eb40553d5c530104b98f4a083189811d5dc8b41dd0a4ebe8f3409e927f45f110",
     "contracts/terrabase/fixtures/transaction-changes.sse": "8b5fa257978389b79894585fb7a41171e5b7c906d6ca4422b0b1b60072b5d29f",
     "contracts/terrabase/pending-r8.json": "757de7357ac7404937c2ba85fa46effac54c10e41f3846325e25ed6d821fcaa3",
@@ -82,29 +84,22 @@
     "contracts/terrabase/producer-pending/r8/src/TerraBase/Features/Documents/DatabaseChanges.cs.txt": "a034850809fa5bf3a65f6e7a576d389c204301d8582f060ff68ce851b7a70bcb",
     "contracts/terrabase/producer-pending/r8/src/TerraBase/Features/Documents/GetDatabaseChangesEndpoint.cs.txt": "b6db592550e24b751c952c002e13251037f417388fb014109d3900d15dce3551",
     "contracts/terrabase/provenance.json": "f72e78500d3dd5be4ba5f027bf8b8d69af0da5d36d853971d3378c2af5bd374f",
-    "contracts/terrabase/routes.json": "8513f531f3bf310222d18860b7f030c286a569e6f538aecf2dd9f3895c964f17"
+    "contracts/terrabase/routes.json": "8513f531f3bf310222d18860b7f030c286a569e6f538aecf2dd9f3895c964f17",
+    "contracts/terrabase/shape-provenance.json": "a3e71a3e983031b0e42f815bf86ed1d88aa2ffd92fdcdc2bdf84f05ac2deb815",
+    "contracts/terrabase/shape-routes.json": "163472b9fb6bbb689fd50b15b8859901ae8a914d45be061edfa3438c3e3e27f0"
   },
   "sdk": "11.0.100-rc.1.26425.128",
   "qualification": "Two clean locked builds produced identical package bytes; installed-package HTTP fake consumer passed on net10.0 and net11.0. Locally built, not published or live-service qualified.",
   "targetFramework": "net10.0",
   "composition": {
     "base": {
-      "tag": "v0.0.3",
-      "revision": "ff1d1126087d40d112ca27383fbb3111e320cb4a"
+      "branch": "origin/main",
+      "revision": "846a19e8",
+      "pullRequest": "https://github.com/TerraScale/ts-dotnet/pull/41",
+      "subject": "Add all-regions database placement to the SDK (#41)"
     },
-    "cherryPicked": [
-      {
-        "from": "ed2e3525",
-        "pullRequest": "https://github.com/TerraScale/ts-dotnet/pull/12",
-        "subject": "TerraBase import jobs: typed client for import contract v1 revision 3"
-      },
-      {
-        "from": "314664b4581d5434ec10f0719539aac0796f0098",
-        "subject": "TerraBase import: match the engine's constraint and mapping nullability"
-      }
-    ],
-    "versionCommit": "796b450196fbcfdad9f2eff10ec630a1458261fb",
-    "tests": "383/383 on net10.0 and net11.0; dotnet format clean"
+    "versionCommit": "12aa33ece40e235168be1bca4fee403706ef7cb3",
+    "tests": "547/547 on net10.0 and net11.0"
   },
   "publication": {
     "status": "not published; sourceRevision exists only in a local composition until pushed to ts-dotnet"
