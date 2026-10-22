@@ -10,11 +10,9 @@ TLS. Every change group travels LZ4-compressed in a versioned application envelo
 format and open questions: [0007](decisions/0007-lz4-application-envelope-replication.md).
 
 ## What replicates
-
 - Document puts and deletes committed on client databases: one change group per write
   transaction, applied atomically on the receiver.
-- Full mesh: every node sends the groups it originated to every other machine of its region that Fly's DNS listed when
-  it started ([fly.md](fly.md)).
+- Full mesh: each node sends its originated groups to the other admitted members of its region.
 - Every document is a register ([anna-core](design/anna-core.md), Documents): a local write mints a dot under the
   member's replica id, stamps it with the member's hybrid clock and replaces every value the member knows. A receiver
   joins each delta into the stored register, so delivery order, duplicates and retries cannot change the result. Reads
@@ -143,9 +141,9 @@ catalog is not replicated, so a key or database created on one machine is not vi
 
 ## Automatic replication contract
 
-Nodes join Fly's private network and discover every serving region through
-`.internal` DNS. Fly secrets on each app deliver `TERRABASE_PEER_SECRET` through
-the environment; see [peer authentication](peer-authentication.md). Peer destinations
+Nodes join the private service network and discover every serving region automatically.
+The current OCI discovery and admission transport must be verified during migration.
+OCI Vault delivers `TERRABASE_PEER_SECRET` to its authorized consumers; see [peer authentication](peer-authentication.md). Peer destinations
 and local region are derived automatically. Resource limits have one correct
 setting in code. Preserve registered-database authorization, journal identity
 validation and secret-free startup errors.
@@ -155,7 +153,7 @@ and remain `unknown`; it does not authorize placement or residency.
 
 ## Transport
 
-Members reach each other's internal listener over Fly's private network with HTTP/2 and no TLS (plan decision: no
+Members reach each other's internal listener over the private service network with HTTP/2 and no TLS (plan decision: no
 mTLS; every RPC carries the shared credential from `TERRABASE_PEER_SECRET`, including catalog and repair calls; see [peer-authentication.md](peer-authentication.md)).
 
 ## Sync stream
@@ -287,7 +285,6 @@ through its own `IMeterFactory` plus process-wide ones (runtime), so several hos
 | `terrabase_replication_sender_initialized` | `0` while persisted journal heads are being measured, `1` once all existing databases are initialized |
 | `terrabase_replication_write_wait_seconds{result}` | Histogram of the time client writes waited for their peers' `DurableAck`; `result` is `acknowledged` (every peer acknowledged), `degraded` (answered without a peer whose stream is failing) or `timeout` (answered at `write-wait-ms`) |
 | `terrabase_replication_sender_durable_lag` | Committed groups some peer has not durably acknowledged, summed over peers and databases; `0` means the last validated prefixes acknowledge every group; receiver state loss is discovered by periodic reconciliation. It counts a commit before the commit returns, and a database's older groups before network progress; require `terrabase_replication_sender_initialized = 1` before interpreting zero lag |
-
 
 ## Replication status and alerts
 

@@ -1,7 +1,8 @@
 # 20. Definition of done (e2e)
 
-Run by `tests/TerraBase.E2E` (PR #6) against Fly after every deploy, pinned with `fly-prefer-region` (60 s
-convergence deadline).
+The suite in `tests/TerraBase.E2E` uses a 60 s convergence deadline. Production
+acceptance must verify the actual responding region and node through the current
+runtime; local passes alone establish no OCI rollout evidence.
 
 | Id | Scenario | PR #6 test |
 | --- | --- | --- |

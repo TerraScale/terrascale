@@ -2,7 +2,7 @@
 
 - **Node id** = `ReplicaId` (64 bits: region 16, member 32, epoch 16). The member number is random and lives in
   `.terrabase.replica` on the volume. The epoch rises on every unclean start (kv679 protection, unchanged). The region
-  bits become the Fly region code as base 26 (`a`=0, so `gru` = 6·26² + 17·26 + 20 = 4518; three letters < 17,576).
+  bits become the product region code as base 26 (`a`=0, so `gru` = 6·26² + 17·26 + 20 = 4518; three letters < 17,576).
   A node id is therefore unique per machine, per epoch.
 - **Stamp** = `Hlc` (48-bit Unix ms, 16-bit logical), unchanged. A version is `(stamp, node)`, compared
   lexicographically. Two different events never share a version. A node mints each stamp at most once. A new epoch
@@ -19,9 +19,11 @@
 - **Opening.** Before publishing a system or tenant store, restore the clock's uncapped floor from its largest stored
   state stamp; tenant stores also include retained feed stamps and retention floors. Opening another store can only
   raise the shared member clock. This preserves durable local stamps across a clean restart with the same origin.
-- **Skew bound.** Fly hosts run NTP. We expect skew of a few ms, though nobody has measured it on Fly yet. Within the
-  skew, last-writer-wins between concurrent writes may pick the writer that is slightly earlier in real time. That is
-  the documented behaviour. Past 1 s the metric alerts. Nothing rejects the stamp, because rejecting at one replica
-  and not another would break convergence.
-- **New origins.** A machine accepts writes only after two things: its own id appears in `vms.ts-terrabase.internal`
-  and one heartbeat (5 s) has passed. By then every peer's directory has listed it, so GC holds for it (section 11).
+- **Skew bound.** No OCI host-clock skew measurement is established here. Within clock skew,
+  last-writer-wins between concurrent writes may pick the writer that is slightly earlier in
+  real time. Past 1 s the metric alerts. The stored stamp is not rejected: accepting it at one
+  replica and rejecting it at another would break convergence.
+- **New origins.** Admission requires the node's own identity in the member directory and one
+  heartbeat interval (5 s) before writes. The GC design relies on peers learning the new origin
+  (section 11). Verify that the deployed membership transport supplies this admission contract;
+  a hostname resolving or a node appearing in a peer list alone is not serving evidence.

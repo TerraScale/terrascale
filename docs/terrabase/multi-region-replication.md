@@ -3,10 +3,9 @@
 - Status: design, 2026-10-11; slices land as listed in section 21. Each guarantee holds only once its slice ships
   with integration and e2e evidence.
 - Decision: design C (user, 2026-10-11). Turso is the storage engine, Turso CDC is the change capture, and TerraBase's
-  own Anna-style lattices and gRPC streams do the replication, over Fly 6PN. Turso's sync engine is not used: it
+  own Anna-style lattices and gRPC streams do the replication, over the private service network. Turso's sync engine is not used: it
   resolves by last push and its self-hosted hub is test-only.
-- Inputs: `.cos/fly-migration-plan.md` (Decisions, Product focus), the Turso spike (PR #12,
-  `docs/terrabase/turso-spike.md`), phase 3a (PR #11, `refactor/fly-wan-grpc`), the e2e suite (PR #6), and
+- Inputs: the replication design, phase 3a (PR #11), the e2e suite (PR #6), and
   [Anna core](design/anna-core.md). Where they conflict, this document replaces anna-core §3 to §9 and decisions
   [0009](decisions/0009-catalog-replication.md) and [0010](decisions/0010-write-wait-and-synced-durable-ack.md).
 
@@ -51,4 +50,3 @@ elsewhere ("section 15") are the file number prefixes.
 - [21. Slice plan: Sender ACK bookkeeping as built](replication/21-sender-ack-bookkeeping.md)
 - [22. Slice plan: Receiver database isolation as built](replication/22-receiver-database-isolation.md)
 - [22. Open questions and risks](replication/22-open-questions-and-risks.md)
-- [31. Live outage proof: every region down and back on Fly](replication/31-live-outage-proof.md)

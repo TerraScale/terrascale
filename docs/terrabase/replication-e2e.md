@@ -12,55 +12,7 @@ nice -n 19 make terrabase-e2e
 
 Two in-process nodes, `gru` and `sjc`, joined by the harness's in-memory region bus (`FakeRegionNetwork`). Nothing else is needed.
 
-## Run against Fly
-
-Set these variables, then run the same target:
-
-| Variable | Meaning |
-|---|---|
-| `TERRABASE_E2E_FLY_URL` | Public base URL, for example `https://ts-terrabase.fly.dev`. Its presence selects Fly. |
-| `TERRABASE_E2E_FLY_API_KEY` | The documents client's bearer. In CI it is the 15-minute ts-auth project token of the bound e2e project (`scripts/e2e/ci-oidc-credential.sh`, docs/auth/github-actions-oidc.md), the same value as `TERRABASE_E2E_FLY_PROJECT_TOKEN`, so every request of the run is for one project. A manual run may use a TerraBase API key of a project instead (`documents:read`, `documents:write`); `/sql` and database creation still need the project token. |
-| `TERRABASE_E2E_FLY_PROJECT_TOKEN` | A ts-auth project token of the same project (`databases:*`, `documents:*`), for `/sql`. |
-| `TERRABASE_E2E_FLY_PROJECT` | The project id. |
-| `TERRABASE_E2E_FLY_DATABASE` | The database name. |
-
-Every request is pinned to its region with the `fly-prefer-region` request header. Fly reports the serving region in the
-`fly-region` response header. Any answer from another region, or without that header, fails the test with
-`RegionMismatchException`. Fly would otherwise fall back to the other region and the test would pass without testing it.
-
 Each test creates its own `e2e-<guid>` collection in the shared database and deletes it afterwards.
-
-## Region outage (Fly only, never in a deploy run)
-
-```sh
-nice -n 19 make terrabase-e2e-fly-outage
-```
-
-For gru, sjc and fra in turn, each on a collection of its own: stops the region's single machine of a pinned disposable
-app, writes 40 documents, deletes a seeded document and patches one shared document from both survivors, starts the
-machine and waits until it serves both backlogs, every tombstone (404 with an equal ETag in every region) and the
-settled conflict, and every region lists the same collection digest. Before the outage writes, each survivor's probe
-write must be acknowledged `remote_durable` and then served by the other survivor; only `remote_region_unavailable` and `confirmation_busy` (refused before execution) are
-sent again. It reports six `rejoin <survivor> to <stopped>` latencies. The target fails unless this test is an actual
-pass on Fly. The target selects only `replication-matrix-fly-outage`; the broader `fly-outage` scenarios remain separate
-because they stop the same app's machines. If anything fails or the 30-minute timeout cancels the test while a region may
-be down, that machine is started again on a clock of its own and the failure is reported, with the restart's own failure
-if it has one. It needs `flyctl` logged in. It runs alone because it stops a machine the other tests use. It never targets
-production: without `TERRABASE_E2E_FLY_URL`, `TERRABASE_E2E_FLY_REVISION` and `TERRABASE_E2E_FLY_OUTAGE=1` it is reported
-as skipped, and `TERRABASE_E2E_FLY_APP` must name the disposable app (no default; production and preview apps are refused,
-see `e2e-disposable-app.md`). Its test app is deleted, with every machine and volume, right after a successful run
-(Q-E2E-CAP, 2026-10-14); it is not kept for later runs.
-
-The other `fly-outage` scenarios (region down, restart, ack-then-stop, restarted backlog, deleted database) run with:
-
-```sh
-TERRABASE_E2E_FLY_OUTAGE=1 E2E_LABEL=fly-outage-broad nice -n 19 make terrabase-e2e \
-  TEST_ARGS="--treenode-filter '/*/*/*/*[(Category=fly-outage)&(Category!=replication-matrix-fly-outage)]'"
-```
-
-with the same pinned disposable app variables. Never run it at the same time as `terrabase-e2e-fly-outage`, `terrabase-e2e`
-or another run against the same app: each stops machines the others use. Its scenarios also stop machines in parallel
-with each other, so a failure there is not evidence about the all-regions proof, and a pass there is not that proof.
 
 ## Expected failures
 
@@ -70,19 +22,14 @@ E13 (live move, R11) and E14 (GC, R7 #120: no tombstone of a deleted document is
 passes fails the test with a message to remove its row; one that fails any other way fails it too. Every other scenario,
 `Concurrent_writes_to_different_fields_both_survive` (per-field lattice) included, runs as a plain assertion.
 
-E11's SQL statements go to `/sql`, which takes a ts-auth project token (`databases:read`), never an API key. On Fly it
-uses `TERRABASE_E2E_FLY_PROJECT_TOKEN` and fails without it. A refused token (401/403) fails E11 as an unexpected failure:
+E11's SQL statements go to `/sql`, which takes a ts-auth project token (`databases:read`), never an API key. A refused token (401/403) fails E11 as an unexpected failure:
 only the R9 signature "only SELECT statements are supported" counts as its gap.
 
-## CI
+## Production evidence
 
-Run `make terrabase-e2e` after the deploys with the `TERRABASE_E2E_FLY_*` variables that `scripts/e2e/ci-oidc-credential.sh` exports from the GitHub OIDC exchange (no e2e secret is stored). The deploy job passes
-`--treenode-filter "/*/*/*/*[Category!=local-only]" --minimum-expected-tests 138` (every test case but the local-only
-ones): the `local-only` category (whole-database backups, every node
-stopped, a changes-feed issuer stopped, the proxy and pin harness) runs instead in CI's required `test-terrabase` stage
-with `make terrabase-e2e-local`, which requires all 27 tests to pass with no skip. Replication needs
-both regions live, so a run after the `gru` deploy alone cannot check it. Do not set `TERRABASE_E2E_FLY_OUTAGE` in CI.
-The suite is not part of `make check`.
+Local results do not establish OCI cross-region behavior. A new production
+acceptance run must verify each responding node and commit through the current
+[OCI runtime](../oci.md); retired infrastructure receipts are not acceptance evidence.
 
 ## Local path: what depends on today's region code
 
