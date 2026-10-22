@@ -42,6 +42,9 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: src/TerraScale.Dashboard/web
       - run: make check
+      # Deployment is ts-orch from GHCR; workflows keep no hosting-provider steps (Tigris storage excepted).
+      - name: Workflows reference no retired hosting provider
+        run: '! grep -rniI "fl[y]" .github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
