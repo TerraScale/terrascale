@@ -152,5 +152,8 @@
   "packageManager": "npm@11.18.0",
   "dependencies": {
     "ulid": "3.0.2"
+  },
+  "overrides": {
+    "vite": "8.2.4"
   }
 }
