@@ -20,7 +20,7 @@ if (!key.Contains('_') || !TerraScaleIds.IsValid(key[..key.IndexOf('_')])) { Con
 
 var api = new Uri("https://api.terrascale.tech/");
 using var http = new HttpClient(TerraBaseHttp.CreateHandler());
-var oidc = new TerraScaleAuthOidcClient(new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions { BaseAddress = new Uri("https://auth.terrascale.tech/") }));
+var oidc = new TerraScaleAuthOidcClient(new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions { BaseAddress = new Uri("https://auth.terrascale.tech/"), InstanceSlug = "terrascale" }));
 string? token = null;
 var expires = DateTimeOffset.MinValue;
 async ValueTask<string> Token(CancellationToken ct)
