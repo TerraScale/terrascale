@@ -23,7 +23,7 @@ impl Live {
     fn new() -> Self {
         let url = Self::required("TB_CSHARP_URL");
         let key = Self::required("TB_CSHARP_KEY");
-        let project = Self::required("TB_CSHARP_PROJECT").parse().unwrap();
+        let project = Self::required("TB_CSHARP_PROJECT");
         let region = Self::required("TB_CSHARP_REGION");
         let ca = std::fs::read(Self::required("TB_CSHARP_CA_FILE")).unwrap();
         assert!(key.starts_with("tb_"), "expected real producer legacy key");
