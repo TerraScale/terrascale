@@ -10,10 +10,10 @@ on:
 permissions:
   contents: read
 
-# A newer push supersedes a pull request's run; each main commit runs in its own group and keeps its result.
+# A newer run for the same PR or branch, main included, cancels the older one; merge_group runs keep their own group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
