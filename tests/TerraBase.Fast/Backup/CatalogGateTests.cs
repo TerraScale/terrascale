@@ -193,6 +193,12 @@ public sealed class CatalogGateTests
                 }
             });
             var gate = reopened.Services.GetRequiredService<ICatalogGate>();
+            if (directoryBacked)
+            {
+                // The harness lists a machine only after its listeners start; the gate needs that discovery proof.
+                _ = await ((CatalogGate)gate).VerifyAsync(token);
+            }
+
             await Assert.That(gate.IsOpen).IsTrue();
             await Assert.That(gate.Trusted).IsTrue();
             using var ready = await reopened.Client.GetAsync(ManagementApi.Uri("/readyz"), token);

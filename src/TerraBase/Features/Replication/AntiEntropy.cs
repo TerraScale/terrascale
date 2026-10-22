@@ -163,7 +163,7 @@ internal sealed class AntiEntropy : BackgroundService
     /// </summary>
     internal async ValueTask<HashSet<string>> CatalogHeldWithinAsync(TimeSpan window, CancellationToken cancellationToken)
     {
-        var held = new HashSet<string>(StringComparer.Ordinal);
+        var held = new Dictionary<string, long>(StringComparer.Ordinal);
         var inPlace = new Dictionary<Ulid, bool>();
         foreach (var (peer, proof) in _catalogHeld)
         {
@@ -179,11 +179,12 @@ internal sealed class AntiEntropy : BackgroundService
 
             if (current)
             {
-                _ = held.Add(peer);
+                held[peer] = proof.At;
             }
         }
 
-        return held;
+        // A later incarnation read can outlive a proof already checked above.
+        return held.Where(proof => _time.GetElapsedTime(proof.Value) < window).Select(proof => proof.Key).ToHashSet(StringComparer.Ordinal);
     }
 
     // Monotonic within one local copy: a slow comparison that began earlier never moves a peer's proof back.
