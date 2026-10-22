@@ -29,13 +29,6 @@ impl DatabaseScope {
             shard: DecimalU64(shard),
         }
     }
-
-    pub(crate) fn path(&self) -> String {
-        format!(
-            "/v1/tenants/{}/databases/{}/shards/{}",
-            self.tenant, self.database, self.shard
-        )
-    }
 }
 
 /// The wire protocol discriminator. This is separate from a state token.

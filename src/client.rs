@@ -3,18 +3,13 @@
 use crate::auth_idp::AuthIdpClient;
 use crate::auth_routing::AuthRouter;
 use crate::config::ClientConfig;
-use crate::discovery::{AtlasDiscovery, DiscoveryClock, NativeRequirement};
-use crate::documents::DatabaseScope;
+use crate::discovery::{AtlasDiscovery, DiscoveryClock};
 use crate::error::{Error, ErrorKind, Result};
-use crate::transactions::TransactionsClient;
 use crate::transport::{
     HttpTransport, Method, Request, ReqwestTransport, Response, MAX_JSON_BYTES,
 };
 use serde::de::DeserializeOwned;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 use std::time::Duration;
 
 // Retained only as internal auth credential-isolation markers, never sent.
@@ -31,19 +26,6 @@ pub(crate) fn check_native_deadline(deadline: tokio::time::Instant) -> Result<()
         return Err(Error::transport("Native operation deadline exceeded."));
     }
     Ok(())
-}
-
-/// Per-call witness set only when dispatch polls the native transport future.
-/// It does not prove delivery or commit; errors after this point may be uncertain.
-#[derive(Debug, Default)]
-pub(crate) struct NativeSendPhase(AtomicBool);
-impl NativeSendPhase {
-    fn start(&self) {
-        self.0.store(true, Ordering::Release);
-    }
-    pub(crate) fn has_started(&self) -> bool {
-        self.0.load(Ordering::Acquire)
-    }
 }
 
 #[derive(Debug)]
@@ -77,39 +59,7 @@ impl Shared {
         &self.config
     }
 
-    pub(crate) async fn native_origin(
-        &self,
-        scope: &DatabaseScope,
-        requirement: NativeRequirement,
-        deadline: tokio::time::Instant,
-    ) -> Result<String> {
-        check_native_deadline(deadline)?;
-        if let Some(tenant) = self.config.tenant_id() {
-            if tenant != scope.tenant {
-                return Err(Error::new(
-                    ErrorKind::Authorization,
-                    "scope_mismatch",
-                    "Configured tenant does not match the native request scope.",
-                ));
-            }
-        }
-        match self.config.api_base_url() {
-            Some(origin) => Ok(origin.to_owned()),
-            None => Ok(self
-                .native_router
-                .resolve_until(scope, requirement, deadline)
-                .await?
-                .endpoint
-                .url),
-        }
-    }
-
-    async fn dispatch(
-        &self,
-        mut request: Request,
-        native: Option<(&DatabaseScope, NativeRequirement, tokio::time::Instant)>,
-        send_phase: Option<&NativeSendPhase>,
-    ) -> Result<Response> {
+    async fn dispatch(&self, mut request: Request) -> Result<Response> {
         let auth = request.route_name.starts_with("auth_idp.");
         let skip_auth = request
             .headers
@@ -158,28 +108,12 @@ impl Shared {
         let mut retries = 0;
         loop {
             let mut attempt = request.clone();
-            if let Some((scope, requirement, deadline)) = native {
-                let origin = self.native_origin(scope, requirement, deadline).await?;
-                rebase(&mut attempt, &origin)?;
-                check_native_deadline(deadline)?;
-            }
             if let Some(endpoints) = &endpoints {
                 rebase(&mut attempt, &endpoints[endpoint_index])?;
             }
             // AuthIdpClient owns its public deadline and error code.
-            // Native callers share the same outer deadline across preflight,
-            // resolver wait/fetch, every dispatch and retry delay.
-            let result = if auth || native.is_some() {
-                let mut send = self.transport.send(attempt);
-                if let Some(phase) = send_phase {
-                    std::future::poll_fn(|context| {
-                        phase.start();
-                        std::future::Future::poll(send.as_mut(), context)
-                    })
-                    .await
-                } else {
-                    send.await
-                }
+            let result = if auth {
+                self.transport.send(attempt).await
             } else {
                 tokio::time::timeout(Duration::from_secs(30), self.transport.send(attempt))
                     .await
@@ -191,12 +125,6 @@ impl Shared {
                     return Err(response.invalid_response("JSON response exceeds 4 MiB."));
                 }
                 if (200..300).contains(&response.status) {
-                    if request.route_name.starts_with("native.") && response.status != 200 {
-                        return Err(response.invalid_response(format!(
-                            "Native response requires HTTP 200, received {}.",
-                            response.status
-                        )));
-                    }
                     Ok(response)
                 } else {
                     Err(decode_error(&request.route_name, &response))
@@ -215,11 +143,7 @@ impl Shared {
                         endpoint_index += 1;
                         continue;
                     }
-                    let safe = request.method == Method::Get
-                        || matches!(
-                            request.route_name.as_str(),
-                            "native.query" | "native.subscription" | "native.transaction_status"
-                        );
+                    let safe = request.method == Method::Get;
                     if !safe
                         || retries >= self.config.max_retry_attempts()
                         || !is_retryable(&error)
@@ -244,7 +168,7 @@ impl Shared {
 
     pub(crate) async fn send_typed<T: DeserializeOwned>(&self, request: Request) -> Result<T> {
         let route = request.route_name.clone();
-        self.dispatch(request, None, None)
+        self.dispatch(request)
             .await?
             .json_body()
             .map_err(|mut error| {
@@ -253,43 +177,7 @@ impl Shared {
             })
     }
     pub(crate) async fn send_response(&self, request: Request) -> Result<Response> {
-        self.dispatch(request, None, None).await
-    }
-    pub(crate) async fn send_native_typed<T: DeserializeOwned>(
-        &self,
-        scope: &DatabaseScope,
-        requirement: NativeRequirement,
-        request: Request,
-        deadline: tokio::time::Instant,
-    ) -> Result<T> {
-        self.send_native_typed_with_phase(scope, requirement, request, deadline, None)
-            .await
-    }
-    pub(crate) async fn send_native_typed_with_phase<T: DeserializeOwned>(
-        &self,
-        scope: &DatabaseScope,
-        requirement: NativeRequirement,
-        request: Request,
-        deadline: tokio::time::Instant,
-        send_phase: Option<&NativeSendPhase>,
-    ) -> Result<T> {
-        check_native_deadline(deadline)?;
-        let route = request.route_name.clone();
-        let response = tokio::time::timeout_at(
-            deadline,
-            self.dispatch(request, Some((scope, requirement, deadline)), send_phase),
-        )
-        .await
-        .map_err(|_| Error::transport("Native operation deadline exceeded."))??;
-        // timeout_at polls the inner future first, so a ready response can
-        // arrive on a poll after the deadline. Decoding shares the same budget.
-        check_native_deadline(deadline)?;
-        let decoded = response.json_body().map_err(|mut error| {
-            error.code = format!("{}.invalid_response", route_to_code(&route));
-            error
-        });
-        check_native_deadline(deadline)?;
-        decoded
+        self.dispatch(request).await
     }
 }
 
@@ -445,14 +333,6 @@ impl TerraScaleClient {
     #[must_use]
     pub fn discovery(&self) -> AtlasDiscovery {
         self.shared.native_router.clone()
-    }
-    #[must_use]
-    #[deprecated(
-        since = "0.2.0",
-        note = "the UUID/shard native routes are being removed; use terrascale::v1"
-    )]
-    pub fn transactions(&self) -> TransactionsClient {
-        TransactionsClient::new(self.shared.clone())
     }
     pub fn auth_idp(&self, slug: &str) -> Result<AuthIdpClient> {
         AuthIdpClient::new(self.shared.clone(), slug)

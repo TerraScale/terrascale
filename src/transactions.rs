@@ -1,7 +1,5 @@
 //! Frozen native transaction identity, canonical effect digest, and resolution.
 
-use crate::client::{check_native_deadline, native_deadline, NativeSendPhase, SharedClient};
-use crate::discovery::NativeRequirement;
 use crate::documents::{validate_context, DatabaseScope, Event, Observed, ProtocolVersion};
 use crate::error::{Error, ErrorKind, Result};
 use crate::transport::{Method, Request};
@@ -126,7 +124,6 @@ pub struct PreparedTransaction {
     authority: Authority,
     effect_digest: Digest,
     body: Vec<u8>,
-    requirement: NativeRequirement,
 }
 
 impl std::fmt::Debug for PreparedTransaction {
@@ -157,12 +154,6 @@ impl PreparedTransaction {
                 "Signed durable single-writer admission and commit fencing are not yet qualified.",
             ));
         }
-        let requirement = NativeRequirement::Commit {
-            conditional: writes
-                .iter()
-                .any(|write| !matches!(write.condition, Condition::None {})),
-            atomic: writes.len() > 1,
-        };
         writes.sort_by_key(|w| (w.collection, w.document));
         let effect_digest = canonical_effect_digest(&scope, &authority, &writes)?;
         let request = Request::json(
@@ -183,7 +174,6 @@ impl PreparedTransaction {
             authority,
             effect_digest,
             body: request.body.unwrap_or_default(),
-            requirement,
         })
     }
     #[must_use]
@@ -362,14 +352,6 @@ pub enum CommitOutcome {
     Uncertain(UncertainCommit),
 }
 
-#[derive(Serialize)]
-struct StatusRequest<'a> {
-    version: ProtocolVersion,
-    transaction_id: &'a TransactionId,
-    effect_digest: Digest,
-    authority: &'a Authority,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionState {
@@ -455,104 +437,5 @@ impl TransactionStatus {
     #[must_use]
     pub fn definitively_rejected(&self) -> bool {
         self.state == TransactionState::Rejected
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TransactionsClient {
-    shared: SharedClient,
-}
-
-impl TransactionsClient {
-    pub(crate) fn new(shared: SharedClient) -> Self {
-        Self { shared }
-    }
-    pub async fn commit(&self, operation: &PreparedTransaction) -> Result<CommitOutcome> {
-        let deadline = native_deadline();
-        let origin = self
-            .shared
-            .native_origin(&operation.scope, operation.requirement, deadline)
-            .await?;
-        let request = Request {
-            route_name: "native.commit".into(),
-            method: Method::Post,
-            url: format!("{origin}{}/transactions", operation.scope.path()),
-            headers: vec![("content-type".into(), "application/json".into())],
-            body: Some(operation.body.clone()),
-        };
-        let send_phase = NativeSendPhase::default();
-        let result: Result<Receipt> = self
-            .shared
-            .send_native_typed_with_phase(
-                &operation.scope,
-                operation.requirement,
-                request,
-                deadline,
-                Some(&send_phase),
-            )
-            .await;
-        let result = result.and_then(|receipt| {
-            receipt.validate_for(operation)?;
-            check_native_deadline(deadline)?;
-            Ok(receipt)
-        });
-        match result {
-            Ok(receipt) => Ok(CommitOutcome::Committed(receipt)),
-            Err(cause)
-                if send_phase.has_started()
-                    && (matches!(
-                        cause.kind,
-                        ErrorKind::Transport
-                            | ErrorKind::InvalidResponse
-                            | ErrorKind::Unavailable
-                            | ErrorKind::Server
-                    ) || cause.code == "commit_uncertain"
-                        || cause.status.is_some_and(|status| {
-                            !matches!(status, 400 | 401 | 403 | 404 | 409 | 412)
-                        })) =>
-            {
-                Ok(CommitOutcome::Uncertain(UncertainCommit {
-                    operation: operation.clone(),
-                    cause,
-                }))
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    /// Resolve the original operation; unknown, pending and expired are not aborts.
-    pub async fn status(&self, operation: &PreparedTransaction) -> Result<TransactionStatus> {
-        let deadline = native_deadline();
-        let origin = self
-            .shared
-            .native_origin(
-                &operation.scope,
-                NativeRequirement::TransactionStatus,
-                deadline,
-            )
-            .await?;
-        let request = Request::json(
-            "native.transaction_status",
-            Method::Post,
-            format!("{origin}{}/transactions/status", operation.scope.path()),
-            &StatusRequest {
-                version: ProtocolVersion,
-                transaction_id: &operation.transaction_id,
-                effect_digest: operation.effect_digest,
-                authority: &operation.authority,
-            },
-        )?;
-        let status: TransactionStatus = self
-            .shared
-            .send_native_typed(
-                &operation.scope,
-                NativeRequirement::TransactionStatus,
-                request,
-                deadline,
-            )
-            .await?;
-        status.validate_for(operation)?;
-        check_native_deadline(deadline)?;
-        Ok(status)
     }
 }
