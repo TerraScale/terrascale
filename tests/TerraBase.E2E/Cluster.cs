@@ -349,12 +349,19 @@ public sealed class Cluster : IAsyncDisposable
             throw;
         }
 
-        HttpClient Client(string edge, string? served = null) => new(new RegionPin(edge, served)
+        HttpClient Client(string edge, string? served = null)
         {
-            InnerHandler = new LocalEdge(edge, target => nodes.TryGetValue(target, out var node)
-                ? node
-                : throw new HttpRequestException($"{target} is not a region of this run", null, HttpStatusCode.ServiceUnavailable)),
-        }) { BaseAddress = new Uri("http://orch.invalid/"), Timeout = Timeout.InfiniteTimeSpan };
+            return new HttpClient(new RegionPin(edge, served)
+            {
+                InnerHandler = new LocalEdge(edge, target => nodes.TryGetValue(target, out var node)
+                    ? node
+                    : throw new HttpRequestException($"{target} is not a region of this run", null, HttpStatusCode.ServiceUnavailable)),
+            })
+            {
+                BaseAddress = new Uri("http://orch.invalid/"),
+                Timeout = Timeout.InfiniteTimeSpan,
+            };
+        }
 
         void DisposeClients()
         {

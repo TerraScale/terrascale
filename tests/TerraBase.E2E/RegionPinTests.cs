@@ -21,7 +21,8 @@ public sealed class RegionPinTests
                 headers.AddRange(request.Headers.Select(header => header.Key));
                 return Answer(request, Cluster.Gru);
             }),
-        }) { BaseAddress = new Uri("http://edge.test") };
+        })
+        { BaseAddress = new Uri("http://edge.test") };
 
         using var response = await client.GetAsync(new Uri("/probe?value=region", UriKind.Relative));
 
