@@ -43,7 +43,7 @@ All runs used beta: Linux x86-64, AMD Ryzen 5 PRO 6650H, 12 logical CPUs, SDK `1
 | Local A + R0 | `a4520b6cd4e4045b2e2e689e6fe3b1ac6cb07724`; TerraBase tree `d1f2f2931dd72b7489e0a85329121c2e6af1ffc7` |
 | Local B + R0 | `bfe7d7ccc2edfe566ed4d6d9b5210508cac98804`; TerraBase tree `8471c5cdad65d515cea108eb49821f17874b77c4` |
 | R0 harness | `7a96bf45691df2bf378b5f6061a7b1e6b4af45c1`, cherry-picked only into both local benchmark refs, never into the PRs |
-| Focused harness | `8e15fa475b2386a1c1c2ea1d662192a166c171be`, [PR #383](https://github.com/TerraScale/terrascale/pull/383) |
+| Focused harness | `8e15fa475b2386a1c1c2ea1d662192a166c171be`, [original PR #383, folded into #381](https://github.com/TerraScale/terrascale/pull/381) |
 | A waiter SHA-256 | `7a5af1d7f9e62562c7b4a25630c23359626f87433c5d3061a790308b33801972` |
 | B waiter SHA-256 | `79f3997aea813efa30b1a7ccd7a322b19f962f36dc15815850d2eddd1208475d` |
 | SDK sibling | `ts-dotnet` at `df852e3b4d3a4df324452d46792b20566eea5136` |
@@ -104,6 +104,6 @@ The first sequential pair completed A, but B aborted during repeat 3. One full p
 | First pair / B | 13:46:13–13:47:41 | 4 (single + batch16, repeats 1–2) | `visibility write sjc failed: HTTP 503`; sjc→gru HTTP 0; sjc→fra HTTP 404; no successful samples |
 | Retry / A | 13:49:11–13:50:02 | 2 (single + batch16, repeat 1) | `visibility write fra failed: HTTP 503`; fra→gru HTTP 404; fra→sjc HTTP 0; no successful samples |
 
-R0's native profile is loopback. For WAN simulation, #383 adds a disposable user/network namespace with 25 ms loopback egress delay on **all** traffic (client HTTP, peer streams, metrics and health), approximately 50 ms RTT by configuration. The wrapper does not verify RTT itself and has no external interfaces. A separate five-ping setup check measured 50.053–50.070 ms RTT with no loss (see evidence file). Namespace setup (`r4-netem.sh true`) passed; no R0 WAN measurements ran because the preceding loopback pair aborted. The planned command was `nice -n 19 benchmark/scripts/r4-netem.sh make -f benchmark/repl.mk bench-repl-run SCENARIO=writes N=1000 REPEATS=5 OUT=benchmark/bench/r4-wan-VARIANT`, after builds outside the namespace.
+R0's native profile is loopback. For WAN simulation, #381 includes a disposable user/network namespace with 25 ms loopback egress delay on **all** traffic (client HTTP, peer streams, metrics and health), approximately 50 ms RTT by configuration. The wrapper does not verify RTT itself and has no external interfaces. A separate five-ping setup check measured 50.053–50.070 ms RTT with no loss (see evidence file). Namespace setup (`r4-netem.sh true`) passed; no R0 WAN measurements ran because the preceding loopback pair aborted. The planned command was `nice -n 19 benchmark/scripts/r4-netem.sh make -f benchmark/repl.mk bench-repl-run SCENARIO=writes N=1000 REPEATS=5 OUT=benchmark/bench/r4-wan-VARIANT`, after builds outside the namespace.
 
 Remaining measurement work: resolve the R0 visibility-probe 503 with its owner, then run successful five-repeat A/B loopback and isolated-delay profiles back-to-back on the same host. This report supplies no end-to-end p50/p99 or CPU/alloc comparison until that evidence exists.
