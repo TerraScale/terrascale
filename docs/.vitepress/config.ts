@@ -544,6 +544,12 @@ export default defineConfig({
     'TerraScale developer documentation: TerraBase SDK installation, document CRUD, queries, authentication and service limits.',
   appearance: 'dark',
   vite: {
+    build: {
+      rollupOptions: {
+        // Base64 hashes can resemble internal issue IDs and fail the public audit.
+        output: { hashCharacters: 'hex' },
+      },
+    },
     plugins: [{
       name: 'workers-module-preload',
       transform(source, id) {
