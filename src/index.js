@@ -99,3 +99,11 @@ export { V1Indexes } from "./v1/indexes.js";
 /** @typedef {import("./v1/indexes.js").V1IndexRecommendations} V1IndexRecommendations */
 /** @typedef {import("./v1/indexes.js").V1AppliedIndexRecommendation} V1AppliedIndexRecommendation */
 /** @typedef {import("./v1/indexes.js").V1CreateIndexRequest} V1CreateIndexRequest */
+
+export { V1ProjectUsageClient, V1DatabaseUsageClient } from "./v1/usage.js";
+/** @typedef {import("./v1/usage.js").V1DatabaseUsage} V1DatabaseUsage */
+/** @typedef {import("./v1/usage.js").V1ProjectUsage} V1ProjectUsage */
+/** @typedef {import("./v1/usage.js").V1Analytics} V1Analytics */
+/** @typedef {import("./v1/usage.js").V1Replication} V1Replication */
+/** @typedef {import("./v1/usage.js").V1UsageRequest} V1UsageRequest */
+/** @typedef {import("./v1/usage.js").V1AnalyticsRequest} V1AnalyticsRequest */

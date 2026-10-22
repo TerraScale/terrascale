@@ -1,7 +1,13 @@
-/** @typedef {"createIndex" | "listIndexes" | "dropIndex" | "getAutoIndexPolicy" | "setAutoIndexPolicy" | "listIndexRecommendations" | "applyIndexRecommendation" | "getDatabaseSchema" | "inferCollectionSchema" | "declareCollectionSchema" | "listQueryShapes" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
+/** @typedef {"getProjectUsage" | "getProjectAnalytics" | "getProjectReplication" | "getDatabaseUsage" | "getDatabaseAnalytics" | "getDatabaseReplication" | "createIndex" | "listIndexes" | "dropIndex" | "getAutoIndexPolicy" | "setAutoIndexPolicy" | "listIndexRecommendations" | "applyIndexRecommendation" | "getDatabaseSchema" | "inferCollectionSchema" | "declareCollectionSchema" | "listQueryShapes" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
 const saved = "/v1/projects/{project}/saved-queries";
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
+  route("getProjectUsage", "GET", "/v1/projects/{project}/usage"),
+  route("getProjectAnalytics", "GET", "/v1/projects/{project}/analytics"),
+  route("getProjectReplication", "GET", "/v1/projects/{project}/replication"),
+  route("getDatabaseUsage", "GET", "/v1/projects/{project}/databases/{database}/usage"),
+  route("getDatabaseAnalytics", "GET", "/v1/projects/{project}/databases/{database}/analytics"),
+  route("getDatabaseReplication", "GET", "/v1/projects/{project}/databases/{database}/replication"),
   route("createIndex", "POST", "/v1/projects/{project}/databases/{database}/indexes", 201),
   route("listIndexes", "GET", "/v1/projects/{project}/databases/{database}/indexes", 200),
   route("dropIndex", "DELETE", "/v1/projects/{project}/databases/{database}/indexes/{index}", 204),

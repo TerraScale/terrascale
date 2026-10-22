@@ -14,6 +14,7 @@ import { runSql, checkSql } from "./sql.js";
 import { streamChanges } from "./changes.js";
 import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema } from "./catalog.js";
 import { V1Transport } from "./transport.js";
+import { V1ProjectUsageClient, V1DatabaseUsageClient } from "./usage.js";
 import { V1Indexes } from "./indexes.js";
 import { V1DatabaseSchemaClient } from "./database-schema.js";
 import { V1SavedQueries } from "./saved-queries.js";
@@ -738,6 +739,8 @@ export class V1Collections {
 
 /** A database handle by name. It performs no I/O until an operation runs. */
 export class V1Database {
+  /** @type {V1DatabaseUsageClient} */
+  metrics;
   /** @type {V1Indexes} */
   indexes;
   /** @type {V1DatabaseSchemaClient} */
@@ -759,6 +762,7 @@ export class V1Database {
     this.collections = new V1Collections(transport, this.name);
     this.schema = new V1DatabaseSchemaClient(transport, this.name);
     this.indexes = new V1Indexes(transport, this.name);
+    this.metrics = new V1DatabaseUsageClient(transport, this.name);
     Object.freeze(this);
   }
 
@@ -801,6 +805,8 @@ export class V1Database {
  * privately; it is never serialized, logged or forwarded to redirects.
  */
 export class TerraBaseV1Client {
+  /** @type {V1ProjectUsageClient} */
+  #metrics;
   /** @type {V1SavedQueries} */
   #savedQueries;
   /** @type {V1Databases} */
@@ -813,6 +819,7 @@ export class TerraBaseV1Client {
     this.#transport = new V1Transport(config);
     this.#databases = new V1Databases(this.#transport);
     this.#savedQueries = new V1SavedQueries(this.#transport);
+    this.#metrics = new V1ProjectUsageClient(this.#transport);
     Object.freeze(this);
   }
 
@@ -828,6 +835,8 @@ export class TerraBaseV1Client {
   get databases() { return this.#databases; }
   /** @returns {V1SavedQueries} */
   get savedQueries() { return this.#savedQueries; }
+  /** @returns {V1ProjectUsageClient} */
+  get metrics() { return this.#metrics; }
 }
 
 /**
