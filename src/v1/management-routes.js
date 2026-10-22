@@ -1,7 +1,14 @@
-/** @typedef {"getDatabaseSchema" | "inferCollectionSchema" | "declareCollectionSchema" | "listQueryShapes" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
+/** @typedef {"createIndex" | "listIndexes" | "dropIndex" | "getAutoIndexPolicy" | "setAutoIndexPolicy" | "listIndexRecommendations" | "applyIndexRecommendation" | "getDatabaseSchema" | "inferCollectionSchema" | "declareCollectionSchema" | "listQueryShapes" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
 const saved = "/v1/projects/{project}/saved-queries";
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
+  route("createIndex", "POST", "/v1/projects/{project}/databases/{database}/indexes", 201),
+  route("listIndexes", "GET", "/v1/projects/{project}/databases/{database}/indexes", 200),
+  route("dropIndex", "DELETE", "/v1/projects/{project}/databases/{database}/indexes/{index}", 204),
+  route("getAutoIndexPolicy", "GET", "/v1/projects/{project}/databases/{database}/auto-index/{collection}", 200),
+  route("setAutoIndexPolicy", "PUT", "/v1/projects/{project}/databases/{database}/auto-index/{collection}", 200),
+  route("listIndexRecommendations", "GET", "/v1/projects/{project}/databases/{database}/index-recommendations", 200),
+  route("applyIndexRecommendation", "POST", "/v1/projects/{project}/databases/{database}/index-recommendations/{recommendation}/apply", 201),
   route("getDatabaseSchema", "GET", "/v1/projects/{project}/databases/{database}/schema"),
   route("inferCollectionSchema", "GET", "/v1/projects/{project}/databases/{database}/schema/{collection}"),
   route("declareCollectionSchema", "PUT", "/v1/projects/{project}/databases/{database}/schema/{collection}"),
@@ -19,7 +26,7 @@ function route(operation, method, pathTemplate, status = 200) {
   return Object.freeze({ operation, method, pathTemplate,
     permission: write ? "databases:write" : "databases:read",
     requestMediaTypes: Object.freeze(method === "POST" || method === "PUT" ? ["application/json"] : []),
-    responseMediaType: status === 204 ? "" : "application/json", successStatuses: Object.freeze([status]),
+    responseMediaType: status === 204 ? "" : "application/json", successStatuses: Object.freeze(operation === "applyIndexRecommendation" ? [200, 201] : [status]),
     idempotencyKey: "none", replaySafe: !write, contract: "docs/terrabase/api.md", contractText: Object.freeze([]),
   });
 }

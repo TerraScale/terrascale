@@ -91,3 +91,11 @@ export { V1DatabaseSchemaClient } from "./v1/database-schema.js";
 /** @typedef {import("./v1/database-schema.js").V1UniqueSchema} V1UniqueSchema */
 /** @typedef {import("./v1/database-schema.js").V1UniqueSchemaRequest} V1UniqueSchemaRequest */
 /** @typedef {import("./v1/database-schema.js").V1QueryShapes} V1QueryShapes */
+
+export { V1Indexes } from "./v1/indexes.js";
+/** @typedef {import("./v1/indexes.js").V1Index} V1Index */
+/** @typedef {import("./v1/indexes.js").V1IndexList} V1IndexList */
+/** @typedef {import("./v1/indexes.js").V1AutoIndexPolicy} V1AutoIndexPolicy */
+/** @typedef {import("./v1/indexes.js").V1IndexRecommendations} V1IndexRecommendations */
+/** @typedef {import("./v1/indexes.js").V1AppliedIndexRecommendation} V1AppliedIndexRecommendation */
+/** @typedef {import("./v1/indexes.js").V1CreateIndexRequest} V1CreateIndexRequest */
