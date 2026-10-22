@@ -8,7 +8,6 @@ use crate::regions::normalize_base_url;
 pub struct ClientConfig {
     atlas_base_url: String,
     auth_base_url: Option<String>,
-    auth_reverse_proxy: bool,
     auth_api_key: Option<String>,
     max_retry_attempts: u8,
     retry_delay_ms: u32,
@@ -19,7 +18,6 @@ impl std::fmt::Debug for ClientConfig {
         f.debug_struct("ClientConfig")
             .field("atlas_base_url", &self.atlas_base_url)
             .field("auth_base_url", &self.auth_base_url)
-            .field("auth_reverse_proxy", &self.auth_reverse_proxy)
             .field("auth_api_key", &"[REDACTED]")
             .field("max_retry_attempts", &self.max_retry_attempts)
             .field("retry_delay_ms", &self.retry_delay_ms)
@@ -42,10 +40,6 @@ impl ClientConfig {
         self.auth_base_url.as_deref()
     }
     #[must_use]
-    pub fn auth_reverse_proxy(&self) -> bool {
-        self.auth_reverse_proxy
-    }
-    #[must_use]
     pub fn max_retry_attempts(&self) -> u8 {
         self.max_retry_attempts
     }
@@ -62,7 +56,6 @@ impl ClientConfig {
 pub struct ClientConfigBuilder {
     atlas_base_url: Option<String>,
     auth_base_url: Option<String>,
-    auth_reverse_proxy: bool,
     auth_api_key: Option<String>,
     max_retry_attempts: u8,
     retry_delay_ms: Option<u32>,
@@ -73,7 +66,6 @@ impl std::fmt::Debug for ClientConfigBuilder {
         f.debug_struct("ClientConfigBuilder")
             .field("atlas_base_url", &self.atlas_base_url)
             .field("auth_base_url", &self.auth_base_url)
-            .field("auth_reverse_proxy", &self.auth_reverse_proxy)
             .field("auth_api_key", &"[REDACTED]")
             .field("max_retry_attempts", &self.max_retry_attempts)
             .field("retry_delay_ms", &self.retry_delay_ms)
@@ -90,11 +82,6 @@ impl ClientConfigBuilder {
     #[must_use]
     pub fn auth_base_url(mut self, value: impl Into<String>) -> Self {
         self.auth_base_url = Some(value.into());
-        self
-    }
-    #[must_use]
-    pub fn auth_reverse_proxy(mut self, value: bool) -> Self {
-        self.auth_reverse_proxy = value;
         self
     }
     #[must_use]
@@ -149,7 +136,6 @@ impl ClientConfigBuilder {
         Ok(ClientConfig {
             atlas_base_url,
             auth_base_url,
-            auth_reverse_proxy: self.auth_reverse_proxy,
             auth_api_key,
             max_retry_attempts: self.max_retry_attempts,
             retry_delay_ms,
