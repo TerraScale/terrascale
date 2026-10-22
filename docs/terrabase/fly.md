@@ -58,17 +58,24 @@ listed; there is no region list to maintain.
   `HttpVersion.Version20` with `RequestVersionExact`).
 - `port`, `internal-port` and `metrics-port` exist only so tests can bind ephemeral ports.
 
-## fly-replay
+## ts-replay
 
 A public request a machine cannot serve because it landed in the wrong region still answers its 421, and also sets
-`fly-replay: region=<region>`, so Fly Proxy replays it there and the client gets that region's answer:
+`ts-replay`, so the ts-orch edge replays it to the nearest listed region (by mesh RTT, the next one when a region is
+down) and the client gets that region's answer:
 
-- a database outside this region's placement, or a Management change of a database managed elsewhere: its home region
-  (`421 wrong_region`, [cross-region.md](cross-region.md));
-- a mismatched `X-TerraScale-Region-Pin` naming a single well-formed region: that region.
+- a database outside this region's placement: every region that serves it, home first
+  (`ts-replay: region=<home>,<replica>,...`, `421 wrong_region`, [cross-region.md](cross-region.md));
+- a Management change of a database managed elsewhere (create, update, branch, delete, imports): its home region only
+  (`ts-replay: region=<home>`);
+- a changes-feed resume landing on another machine than its cursor's issuer:
+  `ts-replay: region=<issuer region>;instance=<issuer machine>;fallback=self` (no replay when the issuer is not listed);
+- a mismatched `X-TerraScale-Region-Pin` naming a single well-formed region: `ts-replay: region=<pin>`;
+- a regional host landing in another region: `ts-replay: region=<host region>;fallback=self`.
 
-A request carrying `Fly-Replay-Src` was replayed already and is answered where it landed, without another replay, so a
-disagreement between regions never loops. Requests on the internal listener never get `fly-replay`; Fly Proxy is not in
-front of it.
+The fields are `;`-separated. With `fallback=self`, a replay that reaches no listed region comes back to the first
+machine with `ts-replay-failed: 1`; without it the edge returns the 421. A request carrying `ts-replay-src` was
+replayed already and is answered where it landed, without another replay, so a disagreement between regions never
+loops. Requests on the internal listener never get `ts-replay`; the edge is not in front of it.
 
-Fly replays only bodies below 1 MB.
+The edge replays only bodies up to 1 MiB, and never a websocket upgrade.

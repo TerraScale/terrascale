@@ -3,7 +3,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Replication;
@@ -11,7 +13,7 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
 
-/// <summary>Real SSE listeners behind a test proxy following Fly's documented instance replay and fallback headers.</summary>
+/// <summary>Real SSE listeners behind a test edge following the ts-replay region replay and fallback headers.</summary>
 public sealed class DatabaseChangesReplayTests
 {
     [Test]
@@ -24,12 +26,13 @@ public sealed class DatabaseChangesReplayTests
     [Arguments("fra", "gru", true, true)]
     [Arguments("fra", "gru", false, false)]
     [Arguments("fra", "gru", false, true)]
-    public async Task A_resume_replays_to_the_issuer_or_checks_the_fallback_prefix(string from, string to, bool issuerAvailable, bool differentPrefix)
+    [Arguments("fra", "gru", true, false, false)]
+    public async Task A_resume_replays_to_the_issuer_or_checks_the_fallback_prefix(string from, string to, bool issuerAvailable, bool differentPrefix, bool issuerListed = true)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         // Bootstrap fresh catalogs independently; this fixture copies tenant identity and controls each feed explicitly.
         await using var source = await StartAsync(from);
-        await using var destination = await StartAsync(to);
+        await using var destination = await StartAsync(to, issuerListed ? from : null);
         await Assert.That(source.Server.Services.GetRequiredService<ICatalogGate>().IsOpen).IsTrue();
         await Assert.That(destination.Server.Services.GetRequiredService<ICatalogGate>().IsOpen).IsTrue();
         var tenant = await ReplicationTenant.CreateAsync(source.Server, [DocumentApi.Database], token, replicaRegions: [to]);
@@ -65,17 +68,28 @@ public sealed class DatabaseChangesReplayTests
         // The URL, scoped credential and Last-Event-ID stay the same across every proxy hop.
         using var landing = Request();
         using var replay = await destinationClient.SendAsync(landing, HttpCompletionOption.ResponseHeadersRead, token);
-        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
-        await Assert.That(replay.Headers.GetValues("fly-replay")).IsEquivalentTo([$"instance={from}-machine;timeout=2s;fallback=force_self"]);
-        await Assert.That(replay.Headers.CacheControl!.NoStore).IsTrue();
-        using var routed = Request();
-        routed.Headers.Add(issuerAvailable ? "Fly-Replay-Src" : "fly-replay-failed", issuerAvailable
-            ? $"instance={to}-machine;region={to};t=1"
-            : $"instance={from}-machine;replay_source={to}-machine;reason=no_candidate;elapsed_ms=0");
-        using var response = await (issuerAvailable ? sourceClient : destinationClient).SendAsync(routed, HttpCompletionOption.ResponseHeadersRead, token);
-        await Assert.That(response.Headers.Contains("fly-replay")).IsFalse();
-        await Assert.That(response.Headers.GetValues("X-TerraBase-Machine")).IsEquivalentTo([$"{(issuerAvailable ? from : to)}-machine"]);
-        if (!issuerAvailable && differentPrefix)
+        // An issuer this machine does not list has no region to replay to: the landing machine answers, checking the prefix.
+        var answeredHere = !issuerListed;
+        HttpResponseMessage response;
+        if (answeredHere)
+        {
+            response = replay;
+        }
+        else
+        {
+            await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+            await Assert.That(replay.Headers.GetValues("ts-replay")).IsEquivalentTo([$"region={from};instance={from}-machine;fallback=self"]);
+            await Assert.That(replay.Headers.CacheControl!.NoStore).IsTrue();
+            using var routed = Request();
+            routed.Headers.Add(issuerAvailable ? "ts-replay-src" : "ts-replay-failed", issuerAvailable ? $"region={to}" : "1");
+            response = await (issuerAvailable ? sourceClient : destinationClient).SendAsync(routed, HttpCompletionOption.ResponseHeadersRead, token);
+            answeredHere = !issuerAvailable;
+        }
+
+        using var answered = response;
+        await Assert.That(response.Headers.Contains("ts-replay")).IsFalse();
+        await Assert.That(response.Headers.GetValues("X-TerraBase-Machine")).IsEquivalentTo([$"{(answeredHere ? to : from)}-machine"]);
+        if (answeredHere && differentPrefix)
         {
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Gone);
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
@@ -106,11 +120,31 @@ public sealed class DatabaseChangesReplayTests
         }
     }
 
-    private static Task<ManagementApi> StartAsync(string region) => ManagementApi.StartAsync(settings =>
+    // A machine of region, listing the issuer's machine in its region when one is named, as a cell's membership does.
+    private static Task<ManagementApi> StartAsync(string region, string? issuerRegion = null) => ManagementApi.StartAsync(settings =>
     {
         settings["region"] = region;
         settings["node-name"] = region + "-machine";
-    });
+    }, services => _ = issuerRegion is null ? services : services.AddSingleton<IMembership>(provider => new Listing(provider.GetRequiredService<TerraBaseOptions>(), issuerRegion)));
+
+    // This machine plus the issuer's machine in another region, with no peer address, so nothing replicates through it.
+    private sealed class Listing(TerraBaseOptions options, string issuerRegion) : IMembership
+    {
+        private readonly ClusterView _view = new(1, [new(options.MachineId, string.Empty, options.Region, string.Empty)],
+            [new(issuerRegion + "-machine", string.Empty, issuerRegion, string.Empty)]);
+
+        public ClusterMember Self => _view.Members[0];
+
+        public bool Dynamic => false;
+
+        public bool HoldsLease => true;
+
+        public TimeSpan Fence => TimeSpan.Zero;
+
+        public ValueTask<ClusterView> RefreshAsync(CancellationToken cancellationToken) => ValueTask.FromResult(_view);
+
+        public ValueTask LeaveAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
+    }
 
     private static async Task CopyKeyAsync(TerraBaseTestServer source, TerraBaseTestServer destination, string secret, CancellationToken token)
     {

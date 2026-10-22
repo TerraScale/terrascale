@@ -49,9 +49,12 @@ public static class DatabaseRegions
 
     /// <summary>
     /// <c>421 wrong_region</c>: the database is served in <paramref name="regions"/>, its home <paramref name="home"/> first; clients
-    /// resolve one of them through Atlas and retry there.
+    /// resolve one of them through Atlas and retry there, and the edge replays to the nearest of them.
     /// </summary>
-    internal static IResult WrongRegion(string home, IEnumerable<string> regions) => new Misdirected(home, string.Join(',', regions));
+    internal static IResult WrongRegion(string home, IEnumerable<string> regions) => new Misdirected(home, string.Join(',', regions), homeOnly: false);
+
+    /// <summary><c>421 wrong_region</c> for a request only the home <paramref name="home"/> answers: the edge replays it there.</summary>
+    internal static IResult HomeRegion(string home, IEnumerable<string> regions) => new Misdirected(home, string.Join(',', regions), homeOnly: true);
 
     /// <summary>
     /// <c>421 wrong_region</c> when the Management route's database is managed in another region (its home), or
@@ -64,7 +67,7 @@ public static class DatabaseRegions
             context.RequestAborted).ConfigureAwait(false);
         return database switch
         {
-            ManagedDatabase record when record.Home(region) != region => new Misdirected(record.Home(region), string.Join(',', record.Regions(region))),
+            ManagedDatabase record when record.Home(region) != region => new Misdirected(record.Home(region), string.Join(',', record.Regions(region)), homeOnly: true),
             ManagedDatabase => new Done(),
             NotFound error => error,
             Unavailable error => error,
@@ -138,14 +141,14 @@ public static class DatabaseRegions
         };
     }
 
-    internal sealed class Misdirected(string home, string regions) : IResult
+    internal sealed class Misdirected(string home, string regions, bool homeOnly) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {
             httpContext.Response.Headers.CacheControl = "no-store";
             httpContext.Response.Headers["X-TerraBase-Database-Home"] = home;
             httpContext.Response.Headers["X-TerraBase-Database-Regions"] = regions;
-            Listeners.ReplayIn(httpContext, home);
+            Listeners.ReplayIn(httpContext, homeOnly ? home : regions);
             return BadRequests.WriteAsync(httpContext, StatusCodes.Status421MisdirectedRequest, "wrong_region", $"the database is served in {home}", op: null);
         }
     }

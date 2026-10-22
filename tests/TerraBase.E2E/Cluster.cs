@@ -117,8 +117,8 @@ public sealed class Cluster : IAsyncDisposable
     /// </summary>
     public HttpClient Sql(string region) => _sql(region);
 
-    /// <summary>Local nodes only: every <c>fly-replay</c> the local stand-in for Fly's proxy followed, in order.</summary>
-    internal IReadOnlyCollection<LocalFlyProxy.Replay> Replays => RequireLocal().Replays;
+    /// <summary>Local nodes only: every <c>ts-replay</c> the local stand-in for the edge followed, in order.</summary>
+    internal IReadOnlyCollection<LocalEdge.Replay> Replays => RequireLocal().Replays;
 
     /// <summary>The document with <paramref name="id"/> in this test's collection.</summary>
     public Uri Document(string id) => new($"{DatabasePath}/collections/{Collection}/documents/by-key?id={Uri.EscapeDataString(id)}", UriKind.Relative);
@@ -555,8 +555,8 @@ public sealed class Cluster : IAsyncDisposable
     {
         private readonly FakeMemberStore _machines = new();
         private readonly Dictionary<string, Node> _nodes = [with(StringComparer.Ordinal)];
-        private readonly System.Collections.Concurrent.ConcurrentQueue<LocalFlyProxy.Replay> _replays = new();
-        public IReadOnlyCollection<LocalFlyProxy.Replay> Replays => _replays;
+        private readonly System.Collections.Concurrent.ConcurrentQueue<LocalEdge.Replay> _replays = new();
+        public IReadOnlyCollection<LocalEdge.Replay> Replays => _replays;
         public string OrganizationId { get; } = EntityIds.New().ToString();
         private readonly string _user = EntityIds.New().ToString();
         private readonly string _project = EntityIds.New().ToString();
@@ -717,10 +717,10 @@ public sealed class Cluster : IAsyncDisposable
         public HttpClient Via(string edge, string served) =>
             new(new RegionPin(edge, served) { InnerHandler = Proxy(edge) }) { BaseAddress = new Uri("https://localhost/"), Timeout = Timeout.InfiniteTimeSpan };
 
-        private LocalFlyProxy Proxy(string region) =>
+        private LocalEdge Proxy(string region) =>
             new(region, target => _nodes.TryGetValue(target, out var node) && node.Project is { } project
                 ? project
-                : throw new HttpRequestException($"{target} is down", null, HttpStatusCode.ServiceUnavailable), Region, _replays.Enqueue);
+                : throw new HttpRequestException($"{target} is down", null, HttpStatusCode.ServiceUnavailable), _replays.Enqueue);
 
         public (Uri Address, string Token, string DataDirectory) Endpoint(string region)
         {

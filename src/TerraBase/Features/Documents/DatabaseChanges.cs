@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
@@ -34,7 +35,7 @@ public interface IDatabaseChanges
 /// commit or the 15 s heartbeat. No per-connection queue: a slow client holds back only its own reads, and one that takes
 /// no bytes for 10 s is dropped.
 /// </summary>
-internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memory, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters, TerraBaseOptions options)
+internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memory, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters, TerraBaseOptions options, IMembership membership)
     : IDatabaseChanges
 {
     /// <summary>Open streams per database on one machine.</summary>
@@ -95,11 +96,13 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
                 cursor = cursor with { Issued = FeedCursor.At(time.GetUtcNow()) };
             }
 
+            // The edge replays to the issuer's region; an issuer no longer listed is answered here, verifying the prefix.
             if (cursor?.Machine is { Length: > 0 } machine && machine != options.MachineId
                 && Listeners.ArrivedOn(context) == TerraBaseListener.Client
-                && !context.Request.Headers.ContainsKey("Fly-Replay-Src") && !context.Request.Headers.ContainsKey("fly-replay-failed"))
+                && !context.Request.Headers.ContainsKey("ts-replay-src") && !context.Request.Headers.ContainsKey("ts-replay-failed")
+                && await IssuerRegionAsync(machine, context.RequestAborted).ConfigureAwait(false) is { } issuerRegion)
             {
-                context.Response.Headers["fly-replay"] = $"instance={machine};timeout=2s;fallback=force_self";
+                context.Response.Headers["ts-replay"] = $"region={issuerRegion};instance={machine};fallback=self";
                 context.Response.Headers.CacheControl = "no-store";
                 return new IssuerReplay();
             }
@@ -391,6 +394,12 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
         {
             context.Abort();
         }
+    }
+
+    private async ValueTask<string?> IssuerRegionAsync(string machine, CancellationToken cancellationToken)
+    {
+        var view = await membership.RefreshAsync(cancellationToken).ConfigureAwait(false);
+        return view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).FirstOrDefault(member => member.Name == machine)?.Region;
     }
 
     private sealed class IssuerReplay : IResult

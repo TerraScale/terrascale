@@ -117,17 +117,17 @@ public static class Listeners
     }
 
     /// <summary>
-    /// Asks Fly Proxy to replay a client-listener request in <paramref name="region"/> (<c>fly-replay</c>), unless Fly replayed
-    /// it already: a replayed request is answered where it landed, so a disagreement between regions never loops. Callers
-    /// still write their 421, which a caller outside Fly Proxy receives. With <paramref name="fallback"/> (<c>prefer_self</c>),
-    /// a replay that finds no machine there comes back here with <c>fly-replay-failed</c> instead of a proxy error.
+    /// Asks the edge to replay a client-listener request in the nearest of <paramref name="regions"/> (comma-separated,
+    /// <c>ts-replay</c>), unless the edge replayed it already: a replayed request is answered where it landed, so a
+    /// disagreement between regions never loops. Callers still write their 421, which a caller outside the edge receives.
+    /// With <paramref name="fallbackSelf"/>, a replay that reaches none of them comes back here with <c>ts-replay-failed</c>.
     /// </summary>
-    public static void ReplayIn(HttpContext context, string region, string? fallback = null)
+    public static void ReplayIn(HttpContext context, string regions, bool fallbackSelf = false)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (ArrivedOn(context) == TerraBaseListener.Client && !context.Request.Headers.ContainsKey("Fly-Replay-Src"))
+        if (ArrivedOn(context) == TerraBaseListener.Client && !context.Request.Headers.ContainsKey("ts-replay-src"))
         {
-            context.Response.Headers["fly-replay"] = fallback is null ? $"region={region}" : $"region={region};fallback={fallback}";
+            context.Response.Headers["ts-replay"] = fallbackSelf ? $"region={regions};fallback=self" : $"region={regions}";
         }
     }
 
@@ -145,7 +145,7 @@ public static class Listeners
                 {
                     Name = "X-TerraScale-Region-Pin",
                     In = ParameterLocation.Header,
-                    Description = "Optional single raw region ID. An empty, duplicate or mismatched pin returns 421 before execution; behind Fly Proxy a mismatched pin also answers fly-replay: region=<pin>.",
+                    Description = "Optional single raw region ID. An empty, duplicate or mismatched pin returns 421 before execution; behind the edge a mismatched pin also answers ts-replay: region=<pin>.",
                     Schema = new OpenApiSchema { Type = JsonSchemaType.String },
                 });
                 operation.Responses ??= [];
@@ -302,18 +302,18 @@ public static class Listeners
 
                     if (!string.Equals(host, region, StringComparison.Ordinal))
                     {
-                        // Fly already replayed it (it landed in the wrong region), Fly's replay found no machine there
-                        // (fly-replay-failed), or no machine of the region is started: the region is unavailable.
+                        // The edge already replayed it (it landed in the wrong region), the edge's replay reached no machine
+                        // there (ts-replay-failed), or no machine of the region is started: the region is unavailable.
                         var served = await ServedRegionsAsync(context);
-                        if (context.Request.Headers.ContainsKey("Fly-Replay-Src") || context.Request.Headers.ContainsKey("fly-replay-failed") || !served.Contains(host))
+                        if (context.Request.Headers.ContainsKey("ts-replay-src") || context.Request.Headers.ContainsKey("ts-replay-failed") || !served.Contains(host))
                         {
                             await BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "region_unavailable",
                                 $"region {host} has no machine to answer; the regional hosts are {RegionalHosts(served)}", op: null);
                             return;
                         }
 
-                        // Without a machine there, Fly sends the request back here with fly-replay-failed instead of an error.
-                        ReplayIn(context, host, fallback: "prefer_self");
+                        // Without a machine there, the edge sends the request back here with ts-replay-failed instead of an error.
+                        ReplayIn(context, host, fallbackSelf: true);
                         context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
                         return;
                     }

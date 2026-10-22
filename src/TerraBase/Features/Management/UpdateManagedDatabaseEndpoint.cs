@@ -50,7 +50,7 @@ public sealed class UpdateManagedDatabaseEndpoint(IManagementService management,
         var home = database.Home(options.Region);
         if (home != options.Region)
         {
-            return DatabaseRegions.WrongRegion(home, database.Regions(options.Region));
+            return DatabaseRegions.HomeRegion(home, database.Regions(options.Region));
         }
 
         Valid<IReadOnlyList<string>> checkedRegions = request.Name is not null ? new Validation("a database cannot be renamed")
