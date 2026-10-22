@@ -94,7 +94,7 @@ internal sealed class PlatformStub : HttpMessageHandler
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(
-                """{"items":[{"name":"platform-dashboard","id":"db","homeRegion":"gru","replicaRegions":["iad"]}]}""", Encoding.UTF8, "application/json"),
+                """{"items":[{"name":"platform-dashboard","id":"db","homeRegion":"gru","replicaRegions":["iad"],"allRegions":false}]}""", Encoding.UTF8, "application/json"),
         });
     }
 }

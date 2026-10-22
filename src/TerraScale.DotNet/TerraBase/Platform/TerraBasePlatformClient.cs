@@ -39,7 +39,8 @@ public sealed record TerraBasePlatformClientOptions
 /// <param name="Id">Its fixed id.</param>
 /// <param name="HomeRegion">The region it is managed in.</param>
 /// <param name="ReplicaRegions">The other regions holding a copy.</param>
-public sealed record TerraBasePlatformDatabase(string Name, string Id, string HomeRegion, IReadOnlyList<string> ReplicaRegions);
+/// <param name="AllRegions">Whether every serving region holds a copy, including regions that join later.</param>
+public sealed record TerraBasePlatformDatabase(string Name, string Id, string HomeRegion, IReadOnlyList<string> ReplicaRegions, [property: JsonRequired] bool AllRegions = false);
 
 /// <summary>The platform databases.</summary>
 /// <param name="Items">Every platform database.</param>

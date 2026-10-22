@@ -85,6 +85,10 @@ public sealed record TerraBaseManagedDatabase(string Id, string ProjectId, strin
     [JsonRequired]
     public IReadOnlyList<string> ReplicaRegions { get; init; } = null!;
 
+    /// <summary>Whether every serving region holds a full copy, including regions that join later; then <see cref="ReplicaRegions"/> is empty.</summary>
+    [JsonRequired]
+    public bool AllRegions { get; init; }
+
     void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(ReplicaRegions);
 }
 

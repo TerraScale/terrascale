@@ -11,7 +11,8 @@
       "replicaRegions": [
         "sjc",
         "fra"
-      ]
+      ],
+      "allRegions": false
     }
   ],
   "next": "01JA0000000000000000000004"

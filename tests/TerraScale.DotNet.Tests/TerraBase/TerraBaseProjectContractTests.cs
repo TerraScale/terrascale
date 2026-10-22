@@ -89,6 +89,29 @@ public sealed class TerraBaseProjectContractTests
     }
 
     [Test]
+    public async Task All_regions_placement_is_sent_on_create_and_patch_and_read_back()
+    {
+        const string allRegionsDatabase = """{"id":"01JA0000000000000000000004","projectId":"01JA0000000000000000000001","name":"app","branchedFrom":null,"createdAt":"2026-10-12T00:00:00+00:00","region":"sjc","homeRegion":"gru","replicaRegions":[],"allRegions":true}""";
+        var requests = new List<(string Method, string? Body)>();
+        using var handler = new TerraBaseTestHandler(async (request, token) =>
+        {
+            requests.Add((request.Method.Method, request.Content is null ? null : await request.Content.ReadAsStringAsync(token)));
+            return TerraBaseIntegrationFixture.Json(allRegionsDatabase);
+        });
+        using var http = new HttpClient(handler);
+        var project = TerraBaseIntegrationFixture.Client(http).Project(TerraBaseIntegrationFixture.ProjectId);
+        var created = await project.CreateDatabaseAsync("app", "gru", allRegions: true);
+        var placed = await project.SetDatabaseAllRegionsAsync("app");
+
+        await Assert.That(created.AllRegions).IsTrue();
+        await Assert.That(created.ReplicaRegions).IsEmpty();
+        await Assert.That(placed.AllRegions).IsTrue();
+        await Assert.That(requests.Select(r => r.Method)).IsEquivalentTo(["POST", "PATCH"]);
+        await Assert.That(requests[0].Body).IsEqualTo("{\"name\":\"app\",\"homeRegion\":\"gru\",\"allRegions\":true}");
+        await Assert.That(requests[1].Body).IsEqualTo("{\"allRegions\":true}");
+    }
+
+    [Test]
     public async Task Usage_preserves_int64_totals_periods_and_database_identity_without_manufacturing_billing()
     {
         var queries = new List<string>();

@@ -9,5 +9,6 @@
   "replicaRegions": [
     "sjc",
     "fra"
-  ]
+  ],
+  "allRegions": false
 }
