@@ -144,7 +144,7 @@ public sealed class ChangeLogAgeTests
     [Test]
     public async Task A_peer_gone_past_24_hours_rejoins_by_a_refill()
     {
-        var clock = new ShiftedTime(TimeProvider.System);
+        var clock = TimeProvider.System;
         await using var pair = await Pair.StartAsync(clock);
         var (gru, sjc) = (pair.Gru, pair.Sjc);
         await gru.WriteAsync(async transaction =>
@@ -162,15 +162,21 @@ public sealed class ChangeLogAgeTests
         var missing = await gru.HeadAsync();
         await Assert.That(await gru.RetainsAsync(acked)).IsTrue();
 
-        clock.Offset = TimeSpan.FromHours(25);
+        // Turso timestamps CDC with real UTC: age only the disconnected prefix, never fresh refill bookkeeping.
+        await AgePrefixAsync(await gru.StoreAsync(), missing, TimeSpan.FromHours(25));
         await gru.TrimAsync();
         var retainedAck = await gru.AckedAsync(sjcNode);
         await Assert.That(retainedAck).IsLessThan(missing).Because("quiet rows may advance the cursor, but the missing local group is never acknowledged");
-        await Assert.That(await gru.FloorAsync(clock.GetUtcNow())).IsNull().Because("sjc has been absent past the bound");
+        await Assert.That(await gru.FloorAsync(clock.GetUtcNow() + TimeSpan.FromHours(25))).IsNull().Because("sjc is excluded once its last contact is past the bound");
         await Assert.That(await gru.RetainsAsync(acked)).IsFalse().Because("the 24 h age cut passed the stuck ack");
 
         pair.List();
         await Assert.That(await sjc.UntilAsync("held", """{"n":1}""")).IsTrue().Because("sjc refills the cut write");
+        var resumed = await gru.HeadAsync();
+        await gru.WriteAsync(async transaction => _ = await transaction.PutAsync(Items, "fresh", Json("""{"n":2}"""), CancellationToken.None));
+        await gru.TrimAsync();
+        await Assert.That(await gru.RetainsAsync(resumed)).IsTrue().Because("fresh post-refill changes retain their incremental resume frontier");
+        await Assert.That(await sjc.UntilAsync("fresh", """{"n":2}""")).IsTrue();
         await Assert.That(await gru.UntilAckedAsync(sjcNode, await gru.HeadAsync())).IsTrue();
     }
 
