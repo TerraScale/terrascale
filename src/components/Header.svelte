@@ -68,9 +68,6 @@
         <Icon name={getStartedLink.icon} className="ts-cta__icon" />
       </ExternalLink>
 
-    </div>
-  </div>
-
   <div class="ts-topnav-end">
     <div class="site-nav__desktop">
       <LanguageSelector />
@@ -138,6 +135,8 @@
       <LanguageSelector variant="inline" />
     </div>
   {/if}
+    </div>
+  </div>
 </header>
 
 <style>
