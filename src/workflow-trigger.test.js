@@ -28,6 +28,7 @@ test("main and pull requests use the reviewed Node runtimes in one verify job", 
   assert.match(job, /persist-credentials: false/u);
   assert.match(job, /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/u);
   assert.match(stepNamed(job, "Set up Node 22").body, /if: github\.event_name == 'push'/u);
+  assert.match(stepNamed(job, "Provision the reviewed npm CLI for Node 22").body, /if: github\.event_name == 'push'/u);
   assert.match(stepNamed(job, "Run SDK tests on Node 22").body, /if: github\.event_name == 'push'/u);
 });
 
@@ -45,13 +46,14 @@ test("CI runs exactly the reviewed steps in order", async () => {
     "Check C# route drift",
     "Run SDK tests",
     "Set up Node 22",
+    "Provision the reviewed npm CLI for Node 22",
     "Run SDK tests on Node 22",
   ]);
   const commands = parsed.flatMap((step) => {
     const run = runOf(step);
     return run === undefined || run.startsWith("set -euo") ? [] : [run];
   });
-  assert.deepEqual(commands, [...ownedCommands, "npm test"]);
+  assert.deepEqual(commands, [...ownedCommands, "node scripts/provision-reviewed-npm.js", "npm test"]);
 });
 
 test("CI never invokes or provisions TerraBase, downloads a producer, or lowers CPU priority", async () => {
