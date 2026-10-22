@@ -14,9 +14,6 @@ public class SqliteCommand : DbCommand
     private SqliteConnection? _connection;
     private SqliteTransaction? _transaction;
     private TursoStatementHandle? _statement;
-    private TursoDatabaseHandle? _statementDatabase;
-    private string? _statementSql;
-    private bool _disposed;
     private string _commandText = string.Empty;
     private int _commandTimeout = 30;
     private bool _hasOpenReader;
@@ -62,8 +59,6 @@ public class SqliteCommand : DbCommand
         set
         {
             ThrowIfReaderOpen(nameof(CommandText));
-            if (_commandText != (value ?? string.Empty))
-                ClearStatement();
             _commandText = value ?? string.Empty;
         }
     }
@@ -98,8 +93,6 @@ public class SqliteCommand : DbCommand
         set
         {
             ThrowIfReaderOpen(nameof(Connection));
-            if (!ReferenceEquals(_connection, value))
-                ClearStatement();
             _connection = value;
             if (value is not null)
             {
@@ -174,15 +167,17 @@ public class SqliteCommand : DbCommand
         var statements = SplitStatements(CommandText);
         if (statements.Count != 1)
         {
-            ClearStatement();
+            _statement?.Dispose();
+            _statement = null;
             return;
         }
 
         TursoStatementHandle? preparedStatement = null;
         try
         {
-            preparedStatement = TakeStatement(statements[0]);
-            ReturnStatement(preparedStatement);
+            preparedStatement = PrepareSingleStatement(statements[0]);
+            _statement?.Dispose();
+            _statement = preparedStatement;
             preparedStatement = null;
         }
         catch (TursoException ex)
@@ -264,9 +259,8 @@ public class SqliteCommand : DbCommand
     {
         if (disposing)
         {
-            _disposed = true;
             _activeManagedCommand?.Dispose();
-            ClearStatement();
+            _statement?.Dispose();
         }
 
         base.Dispose(disposing);
@@ -299,10 +293,6 @@ public class SqliteCommand : DbCommand
 
         var recordsAffected = 0;
         var statements = SplitStatements(CommandText);
-        // Public readers keep fresh preparation and lazy execution, including schema metadata and RETURNING.
-        var reusable = statements.Count == 1 && method is "ExecuteScalar" or "ExecuteNonQuery";
-        if (!reusable)
-            ClearStatement();
         try
         {
             for (var i = 0; i < statements.Count; i++)
@@ -310,14 +300,14 @@ public class SqliteCommand : DbCommand
                 if (TryHandleFacadeStatement(statements[i], out var sql))
                     continue;
 
-                var statement = reusable ? TakeStatement(sql) : PrepareSingleStatement(sql);
+                var statement = PrepareSingleStatement(sql);
                 try
                 {
                     if (TursoBindings.GetFieldCount(statement) > 0)
                     {
                         _hasOpenReader = true;
                         Connection?.ReaderOpened();
-                        return new SqliteDataReader(this, statement, statements[i], statements.Skip(i + 1).ToList(), recordsAffected, behavior, CloseReader, reusable);
+                        return new SqliteDataReader(this, statement, statements[i], statements.Skip(i + 1).ToList(), recordsAffected, behavior, CloseReader);
                     }
 
                     while (TursoBindings.Read(statement))
@@ -335,10 +325,7 @@ public class SqliteCommand : DbCommand
                     throw;
                 }
 
-                if (reusable)
-                    ReturnStatement(statement);
-                else
-                    statement.Dispose();
+                statement.Dispose();
             }
         }
         catch (TursoException ex)
@@ -639,60 +626,6 @@ public class SqliteCommand : DbCommand
             CloseReader();
             Dispose();
         };
-    }
-
-    private void ClearStatement()
-    {
-        _statement?.Dispose();
-        _statement = null;
-    }
-
-    private TursoStatementHandle TakeStatement(string sql)
-    {
-        var database = Connection!.DatabaseHandle;
-        var rewritten = RewriteFacadeStatement(sql, Connection);
-        var statement = _statement;
-        _statement = null;
-        var reused = statement is { IsClosed: false, IsInvalid: false }
-            && ReferenceEquals(_statementDatabase, database) && _statementSql == rewritten;
-        if (!reused)
-        {
-            statement?.Dispose();
-            (_statementDatabase, _statementSql) = (database, rewritten);
-            return PrepareSingleStatement(sql);
-        }
-
-        try
-        {
-            BindParameters(statement!);
-            return statement!;
-        }
-        catch
-        {
-            statement!.Dispose();
-            throw;
-        }
-    }
-
-    internal void ReturnStatement(TursoStatementHandle statement)
-    {
-        try
-        {
-            if (_disposed || _statementDatabase is not { IsClosed: false, IsInvalid: false })
-            {
-                statement.Dispose();
-                return;
-            }
-
-            // Native v0.8.2 reset clears bindings too, so idle commands retain no parameter payloads.
-            TursoBindings.ResetStatement(statement);
-            _statement = statement;
-        }
-        catch
-        {
-            statement.Dispose();
-            throw;
-        }
     }
 
     internal TursoStatementHandle PrepareSingleStatement(string sql)

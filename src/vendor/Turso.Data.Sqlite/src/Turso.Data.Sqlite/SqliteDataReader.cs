@@ -26,17 +26,15 @@ public class SqliteDataReader : DbDataReader
     private bool _isClosed;
     private bool _hasCurrentRow;
     private bool _hasPrefetchedRow;
-    private bool _reusable;
     private bool _hadResultSet;
     private bool _currentStatementRowsAffectedCounted;
     private int _managedResultIndex;
     private int _managedRowIndex = -1;
 
-    internal SqliteDataReader(SqliteCommand command, TursoStatementHandle statement, string currentSql, List<string> remainingSql, int recordsAffected, CommandBehavior behavior, Action closeCallback, bool reusable = false)
+    internal SqliteDataReader(SqliteCommand command, TursoStatementHandle statement, string currentSql, List<string> remainingSql, int recordsAffected, CommandBehavior behavior, Action closeCallback)
     {
         _command = command;
         _statement = statement;
-        _reusable = reusable;
         _currentSql = currentSql;
         _hadResultSet = true;
         _remainingSql = remainingSql;
@@ -831,7 +829,6 @@ public class SqliteDataReader : DbDataReader
         }
         catch (TursoException ex)
         {
-            _reusable = false;
             _command.Connection?.CheckTransactionAfterFailure();
             throw SqliteCommand.ToSqliteException(ex);
         }
@@ -923,10 +920,7 @@ public class SqliteDataReader : DbDataReader
 
                 CountCurrentStatementRowsAffected();
 
-                if (_reusable)
-                    _command.ReturnStatement(_statement);
-                else
-                    _statement.Dispose();
+                _statement.Dispose();
                 _statement = null;
                 _hasPrefetchedRow = false;
                 _currentStatementRowsAffectedCounted = false;
