@@ -1,6 +1,6 @@
 namespace TerraBase.E2E;
 
-/// <summary>Where a test's nodes run. On Fly every scenario's nodes are the Fly machines, whatever the local kind.</summary>
+/// <summary>Where a test's owned nodes run.</summary>
 public enum Nodes
 {
     /// <summary>No TerraBase node: a check of the harness itself (a proxy, a pin), not of a feature.</summary>
@@ -28,7 +28,7 @@ public enum Faults
     /// <summary>SIGKILL of a node process.</summary>
     ProcessKill = 4,
 
-    /// <summary>A node stopped cleanly and started again on its data (a Fly machine stop on Fly).</summary>
+    /// <summary>A node stopped cleanly and started again on its data.</summary>
     NodeStop = 8,
 
     /// <summary>A node's storage held so its commits wait.</summary>

@@ -72,6 +72,7 @@ public sealed class WaveAE2ETests
     }
 
     [Test]
+    [Category("local-only")]
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task A_201_survives_the_origin_process_SIGKILL_right_after_it()
     {

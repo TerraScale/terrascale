@@ -44,7 +44,7 @@ internal static class Outcomes
             ["test"] = context.Metadata.DisplayName,
             ["category"] = category,
             ["detail"] = detail,
-            ["nodes"] = scenario is null ? "undeclared" : Cluster.FlyRequested && scenario.Nodes != Nodes.Harness ? "Fly machines" : scenario.Nodes switch
+            ["nodes"] = scenario is null ? "undeclared" : scenario.Nodes switch
             {
                 Nodes.Harness => "no node (harness)",
                 Nodes.InProcess => "in-process nodes",
