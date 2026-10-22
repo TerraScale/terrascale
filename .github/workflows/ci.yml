@@ -3,24 +3,27 @@ name: CI
 on:
   push:
     branches: [main]
+    # Markdown and docs never change what CI checks.
+    paths-ignore: ['**.md', 'docs/**']
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
 
-# A newer run for the same PR or branch, main included, cancels the older one; merge_group runs keep their own group.
+# A newer PR push cancels the older run. Main runs finish (so main's caches get saved); a newer main push replaces only
+# a pending one. merge_group runs keep their own group.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
     runs-on: ubuntu-24.04
+    # Draft PRs run nothing; marking the PR ready runs it.
+    if: ${{ !github.event.pull_request.draft }}
     timeout-minutes: 15
-    strategy:
-      matrix:
-        node: ["22.23.2", "24.21.0"]
     steps:
       - name: Check out the pull request revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -37,7 +40,7 @@ jobs:
       - name: Set up the reviewed Node runtime
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: ${{ matrix.node }}
+          node-version: "24.21.0"
           # ~/.npm keyed on package-lock.json; a PR only saves when it changes the lockfile.
           cache: npm
       - name: Provision the reviewed npm CLI
@@ -51,4 +54,13 @@ jobs:
       - name: Check C# route drift
         run: npm run check:v1-route-manifest
       - name: Run SDK tests
+        run: npm test
+      # engines also allows Node 22: main re-runs the tests on it in this job; PRs test Node 24 only.
+      - name: Set up Node 22
+        if: github.event_name == 'push'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.23.2"
+      - name: Run SDK tests on Node 22
+        if: github.event_name == 'push'
         run: npm test
