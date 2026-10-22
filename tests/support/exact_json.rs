@@ -360,24 +360,6 @@ fn add_mag(a: &[u8], b: &[u8]) -> Vec<u8> {
     out
 }
 
-/// `a - b` for `a >= b`.
-fn sub_mag(a: &[u8], b: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(a.len());
-    let (mut i, mut j, mut borrow) = (a.len(), b.len(), 0i8);
-    while i > 0 {
-        i -= 1;
-        let mut d = a[i] as i8 - borrow;
-        if j > 0 {
-            j -= 1;
-            d -= b[j] as i8;
-        }
-        borrow = if d < 0 { 1 } else { 0 };
-        out.push((d + 10 * borrow) as u8);
-    }
-    out.reverse();
-    out
-}
-
 impl PartialOrd for Dec {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
@@ -413,8 +395,3 @@ impl Ord for Dec {
     }
 }
 
-/// Unicode default case folding (the `lower` transform), as tb-server does
-/// with the `caseless` crate.
-pub fn fold(s: &str) -> String {
-    caseless::default_case_fold_str(s)
-}
