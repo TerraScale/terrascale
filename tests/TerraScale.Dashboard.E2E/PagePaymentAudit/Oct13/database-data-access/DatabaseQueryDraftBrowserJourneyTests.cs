@@ -57,7 +57,8 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         await open.PressAsync("Enter");
         var dialog = page.GetByRole(AriaRole.Dialog, new() { Name = "New project key", Exact = true });
         await dialog.WaitForAsync();
-        await dialog.EvaluateAsync("async el => { await Promise.all(el.getAnimations({subtree:true}).map(animation => animation.finished)); }");
+        // Reopening a native dialog can cancel an earlier animation's finished promise.
+        await dialog.EvaluateAsync("async el => { await Promise.allSettled(el.getAnimations({subtree:true}).map(animation => animation.finished)); }");
         await BrowserAudit.AssertAccessibleAsync(page, "The credential dialog can be inspected without issuing a key.");
         await dialog.GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).ClickAsync();
         await Assert.That(await dialog.IsVisibleAsync()).IsFalse();
@@ -70,7 +71,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         await Assert.That(mutations).IsEmpty();
         await open.ClickAsync();
         await dialog.WaitForAsync();
-        await dialog.EvaluateAsync("async el => { await Promise.all(el.getAnimations({subtree:true}).map(animation => animation.finished)); }");
+        await dialog.EvaluateAsync("async el => { await Promise.allSettled(el.getAnimations({subtree:true}).map(animation => animation.finished)); }");
         var evidence = Path.Combine(fixture.Root, "docs/reviews/2026-10-13/database-data-access/obj/evidence");
         Directory.CreateDirectory(evidence);
         await page.ScreenshotAsync(new() { Path = Path.Combine(evidence, $"api-key-dialog-{width}.png"), FullPage = true });
