@@ -1,4 +1,3 @@
-#![allow(deprecated)] // Exercises the native API kept until v1 replaces it.
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -680,7 +679,6 @@ async fn client_idempotency_key_never_reaches_ts_auth_mutations() {
 #[tokio::test]
 async fn terrabase_headers_do_not_leak_to_ts_auth_requests() {
     let mock = Mock::new();
-    mock.push(empty(503)); // Native TerraBase point attempt
     mock.push(empty(503)); // ts-auth attempt
     let transport: Arc<dyn HttpTransport> = mock.clone();
     let sdk = TerraScaleClient::with_transport(
@@ -696,35 +694,14 @@ async fn terrabase_headers_do_not_leak_to_ts_auth_requests() {
         transport,
     );
 
-    // Native scope is explicit in the path; only the native key reaches TerraBase.
-    let scope = terrascale::DatabaseScope::new(
-        "00000000-0000-0000-0000-000000000001".parse().unwrap(),
-        "00000000-0000-0000-0000-000000000002".parse().unwrap(),
-        0,
-    );
-    let _ = sdk
-        .documents()
-        .get(
-            &scope,
-            "00000000-0000-0000-0000-000000000003".parse().unwrap(),
-            "00000000-0000-0000-0000-000000000004".parse().unwrap(),
-        )
-        .await;
-    let terrabase = mock.request(0);
-    assert!(terrabase.url.contains("/v1/tenants/00000000-0000-0000-0000-000000000001/databases/00000000-0000-0000-0000-000000000002/shards/0/"));
-    assert_eq!(header(&terrabase, "authorization"), ["Bearer ts_test_key"]);
-    assert!(header(&terrabase, "x-terrascale-tenant-id").is_empty());
-    assert!(header(&terrabase, "x-terrascale-project-id").is_empty());
-    assert!(header(&terrabase, "x-terrascale-preferred-region").is_empty());
-
-    // ...and the ts-auth route carries none of them.
     let _ = sdk
         .auth_idp(SLUG)
         .expect("ts-auth client")
         .users()
         .get("user_1")
         .await;
-    let ts_auth = mock.request(1);
+    let ts_auth = mock.request(0);
+    assert_eq!(header(&ts_auth, "authorization"), ["Bearer sk_test_key"]);
     assert!(header(&ts_auth, "x-terrascale-tenant-id").is_empty());
     assert!(header(&ts_auth, "x-terrascale-project-id").is_empty());
     assert!(header(&ts_auth, "x-terrascale-preferred-region").is_empty());

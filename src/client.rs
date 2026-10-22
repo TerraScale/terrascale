@@ -4,7 +4,7 @@ use crate::auth_idp::AuthIdpClient;
 use crate::auth_routing::AuthRouter;
 use crate::config::ClientConfig;
 use crate::discovery::{AtlasDiscovery, DiscoveryClock, NativeRequirement};
-use crate::documents::{DatabaseScope, DocumentsClient};
+use crate::documents::DatabaseScope;
 use crate::error::{Error, ErrorKind, Result};
 use crate::transactions::TransactionsClient;
 use crate::transport::{
@@ -445,14 +445,6 @@ impl TerraScaleClient {
     #[must_use]
     pub fn discovery(&self) -> AtlasDiscovery {
         self.shared.native_router.clone()
-    }
-    #[must_use]
-    #[deprecated(
-        since = "0.2.0",
-        note = "the UUID/shard native routes are being removed; use terrascale::v1"
-    )]
-    pub fn documents(&self) -> DocumentsClient {
-        DocumentsClient::new(self.shared.clone())
     }
     #[must_use]
     #[deprecated(

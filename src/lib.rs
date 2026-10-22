@@ -32,8 +32,8 @@ pub use discovery::{
     ATLAS_BASE_URL,
 };
 pub use documents::{
-    DatabaseScope, DocumentsClient, Event, Observed, Point, PointState, Predicate, ProtocolVersion,
-    Query, QueryPage, QueryRow, Sibling, SiblingValue,
+    DatabaseScope, Event, Observed, Point, PointState, Predicate, ProtocolVersion, Query,
+    QueryPage, QueryRow, Sibling, SiblingValue,
 };
 pub use error::{Error, ErrorKind, Result};
 pub use regions::{normalize_base_url, regional_host, RegionCode};

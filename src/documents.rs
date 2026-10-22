@@ -2,13 +2,10 @@
 
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::client::{check_native_deadline, native_deadline, SharedClient};
-use crate::discovery::NativeRequirement;
 use crate::error::{Error, ErrorKind, Result};
-use crate::transport::{Method, Request};
 use crate::values::{
-    invalid, CollectionId, DatabaseId, DecimalU64, Digest, DocumentId, Fields, Incarnation,
-    ReplicaId, TenantId, Value,
+    invalid, DatabaseId, DecimalU64, Digest, DocumentId, Fields, Incarnation, ReplicaId, TenantId,
+    Value,
 };
 
 pub const MAX_CONTEXT_ENTRIES: usize = 1024;
@@ -38,10 +35,6 @@ impl DatabaseScope {
             "/v1/tenants/{}/databases/{}/shards/{}",
             self.tenant, self.database, self.shard
         )
-    }
-
-    pub(crate) fn collection_path(&self, collection: CollectionId) -> String {
-        format!("{}/collections/{collection}/documents", self.path())
     }
 }
 
@@ -412,95 +405,4 @@ pub struct QueryPage {
         skip_serializing_if = "Option::is_none"
     )]
     pub next_cursor: Option<String>,
-}
-
-pub(crate) fn validate_rows(rows: &[QueryRow], scope: &DatabaseScope, limit: usize) -> Result<()> {
-    if rows.len() > limit {
-        return Err(invalid("Query response exceeds requested limit."));
-    }
-    let mut previous = None;
-    for row in rows {
-        if previous.is_some_and(|p| p >= row.document) {
-            return Err(invalid("Query rows must be ordered and unique."));
-        }
-        previous = Some(row.document);
-        row.point.validate_in(scope)?;
-        if !matches!(row.point.state, PointState::Value | PointState::Conflict) {
-            return Err(invalid(
-                "Query row must preserve a live or conflicted point.",
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[derive(Debug, Clone)]
-pub struct DocumentsClient {
-    shared: SharedClient,
-}
-
-impl DocumentsClient {
-    pub(crate) fn new(shared: SharedClient) -> Self {
-        Self { shared }
-    }
-
-    pub async fn get(
-        &self,
-        scope: &DatabaseScope,
-        collection: CollectionId,
-        document: DocumentId,
-    ) -> Result<Point> {
-        let deadline = native_deadline();
-        let origin = self
-            .shared
-            .native_origin(scope, NativeRequirement::Point, deadline)
-            .await?;
-        let request = Request {
-            route_name: "native.point".into(),
-            method: Method::Get,
-            url: format!("{origin}{}/{document}", scope.collection_path(collection)),
-            headers: vec![],
-            body: None,
-        };
-        let point: Point = self
-            .shared
-            .send_native_typed(scope, NativeRequirement::Point, request, deadline)
-            .await?;
-        point
-            .validate_in(scope)
-            .map_err(|e| Error::invalid_response(e.message))?;
-        check_native_deadline(deadline)?;
-        Ok(point)
-    }
-
-    pub async fn query(
-        &self,
-        scope: &DatabaseScope,
-        collection: CollectionId,
-        query: &Query,
-    ) -> Result<QueryPage> {
-        let deadline = native_deadline();
-        query.validate()?;
-        let origin = self
-            .shared
-            .native_origin(scope, NativeRequirement::Query, deadline)
-            .await?;
-        let request = Request::json(
-            "native.query",
-            Method::Post,
-            format!("{origin}{}/query", scope.collection_path(collection)),
-            query,
-        )?;
-        let page: QueryPage = self
-            .shared
-            .send_native_typed(scope, NativeRequirement::Query, request, deadline)
-            .await?;
-        validate_rows(&page.rows, scope, usize::from(query.limit))
-            .map_err(|e| Error::invalid_response(e.message))?;
-        if let Some(cursor) = &page.next_cursor {
-            validate_cursor(cursor).map_err(|e| Error::invalid_response(e.message))?;
-        }
-        check_native_deadline(deadline)?;
-        Ok(page)
-    }
 }
