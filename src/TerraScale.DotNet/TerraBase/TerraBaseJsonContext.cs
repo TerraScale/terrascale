@@ -63,6 +63,14 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBaseAutoIndexPolicyRequest))]
 [JsonSerializable(typeof(TerraBaseIndexRecommendationList))]
 [JsonSerializable(typeof(TerraBaseAppliedIndexRecommendation))]
+[JsonSerializable(typeof(TerraBaseBackup))]
+[JsonSerializable(typeof(TerraBasePage<TerraBaseBackup>))]
+[JsonSerializable(typeof(TerraBaseBackupPolicy))]
+[JsonSerializable(typeof(TerraBaseBackupPolicyRequest))]
+[JsonSerializable(typeof(TerraBaseRestoreWindow))]
+[JsonSerializable(typeof(TerraBasePointInTimePlan))]
+[JsonSerializable(typeof(TerraBasePointInTimeRequest))]
+[JsonSerializable(typeof(TerraBaseRestoredDatabase))]
 [JsonSerializable(typeof(RequestBody))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext
 {
