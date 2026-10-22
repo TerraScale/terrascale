@@ -64,8 +64,10 @@ public sealed class PeerStreamBlockedFrontierTests
             using var json = JsonDocument.Parse("""{"n":1}""");
             var delta = new ChangeDelta("items", id, stamp, DocumentState.Bottom.Put(version, json.RootElement).DeltaAt(stamp));
             var batch = new Batch { Database = blocked, LastChangeId = 6, Groups = ChangeGroups.Encode([new OriginGroup(6, [delta])]) };
+            var batchRefused = refused.Clone();
+            batchRefused.RefillRequired = !refillInFlight;
             await call.RequestStream.WriteAsync(new PushFrame { Batch = batch });
-            await Assert.That((await ReadAsync(call.ResponseStream)).Ack).IsEqualTo(refused);
+            await Assert.That((await ReadAsync(call.ResponseStream)).Ack).IsEqualTo(batchRefused);
 
             // More than the sender's 32 pending response slots: heartbeats alone cannot release frontier reservations.
             for (var frame = 0; frame < 33; frame++)
@@ -88,7 +90,7 @@ public sealed class PeerStreamBlockedFrontierTests
             await Assert.That(await receiver.ReadAsync(other, id)).IsEqualTo("""{"n":1}""");
 
             await call.RequestStream.WriteAsync(new PushFrame { Batch = batch });
-            await Assert.That((await ReadAsync(call.ResponseStream)).Ack).IsEqualTo(refused);
+            await Assert.That((await ReadAsync(call.ResponseStream)).Ack).IsEqualTo(batchRefused);
             await Assert.That(await receiver.ReadAsync(id)).IsNull();
         }
         finally

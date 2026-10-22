@@ -1212,7 +1212,7 @@ public sealed class PeerStreamTests
             await Assert.That(entered.Count).IsEqualTo(4);
             await Assert.That(sjc.RefillMemory!.Reserved).IsEqualTo(4 * RefillMemory.BytesPerRefill);
             await second.BatchAsync(cluster.Database, 2, EntityIds.New().ToString());
-            await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = await second.WireAsync(cluster.Database), Refused = true });
+            await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = await second.WireAsync(cluster.Database), Refused = true, RefillRequired = true });
 
             held.SetResult();
             for (var index = 0; index < 4; index++)
@@ -1529,7 +1529,7 @@ public sealed class PeerStreamTests
         held.SetException(new IOException("a test fails the repair"));
         await Assert.That(await push.AckAsync()).IsEqualTo(refused);
         await push.BatchAsync(cluster.Database, 2, first);
-        await Assert.That(await push.AckAsync()).IsEqualTo(refused);
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = database, Refused = true, RefillRequired = true });
         await Assert.That(await sjc.ReadAsync(first)).IsNull();
 
         // Asked again, the refill commits before its ack, and only then the database's next batch joins.
@@ -1581,7 +1581,7 @@ public sealed class PeerStreamTests
 
         using var newer = await RawPush.StartAsync(sjc, peer);
         await newer.BatchAsync(cluster.Database, 2, later);
-        await Assert.That(await newer.AckAsync()).IsEqualTo(new Ack { Database = database, Refused = true });
+        await Assert.That(await newer.AckAsync()).IsEqualTo(new Ack { Database = database, Refused = true, RefillRequired = true });
         await Assert.That(await sjc.ReadAsync(later)).IsNull();
 
         sjc.HeldRepairs = null;
@@ -1629,14 +1629,14 @@ public sealed class PeerStreamTests
         await push.RefillAsync(cluster.Database, 5);
         await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database, old), Refused = true });
         await push.BatchAsync(cluster.Database, 6, held);
-        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database, old), Refused = true });
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database, old), Refused = true, RefillRequired = true });
 
         // The sender is now gru's real copy Y, whose change ids restart: its batch is still refused.
         var renewed = await gru.IncarnationAsync();
         push.Pin(cluster.Database, renewed);
         var wire = ChangeGroups.Wire(cluster.Database, renewed);
         await push.BatchAsync(cluster.Database, 2, held);
-        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = wire, Refused = true }).Because("the cut outlives the old incarnation");
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = wire, Refused = true, RefillRequired = true }).Because("the cut outlives the old incarnation");
         await Assert.That(await sjc.ReadAsync(held)).IsNull();
         await Assert.That(await sjc.ReadAsync(lost)).IsNull();
 
@@ -1648,6 +1648,101 @@ public sealed class PeerStreamTests
         var joined = await push.AckAsync();
         await Assert.That((joined.Database, joined.ChangeId, joined.Refused)).IsEqualTo((wire, 2UL, false));
         await Assert.That(await sjc.ReadAsync(held)).IsEqualTo("""{"n":1}""");
+    }
+
+    [Test]
+    public async Task A_rebuilt_sender_without_peer_rows_refills_a_receivers_failed_coverage_before_live_batches()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (lost, pending, live) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", lost, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, await gru.HeadAsync(cluster.Database))).IsTrue();
+
+        // Keep both hosts alive while discovery pauses the sender and its storage is rebuilt without peer rows.
+        var member = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "sjc");
+        cluster.Members.Leave(member.Name);
+        await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        await sjc.LoseAsync("items", lost);
+        using (var push = await RawPush.StartAsync(sjc, gru.Name, gru.Node))
+        {
+            push.Pin(cluster.Database, Ulid.NewUlid());
+            await push.RefillAsync(cluster.Database, 1);
+            await Assert.That((await push.AckAsync()).Refused).IsTrue();
+            await push.CompleteAsync();
+        }
+
+        var sender = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru");
+        cluster.Members.Leave(sender.Name);
+        await Assert.That(await sjc.UntilStreamsAsync([])).IsTrue();
+
+        var storage = gru.Api.Server.Services.GetRequiredService<IRebuildStorage>();
+        var old = await gru.IncarnationAsync();
+        var renewed = await storage.SwapAsync(cluster.Database, old, storage.SidePath(cluster.Database, old), CancellationToken.None);
+        await Assert.That(renewed).IsNotNull();
+        await Assert.That(renewed).IsNotEqualTo(old);
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", lost, Json("""{"n":1}"""), CancellationToken.None);
+            _ = await transaction.PutAsync("items", pending, Json("""{"n":2}"""), CancellationToken.None);
+        });
+        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, renewed!.Value, 0, CancellationToken.None)).IsTrue();
+        var engine = gru.Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+        var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+        var peers = await store.WithWriterAsync(session =>
+        {
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = "SELECT count(*) FROM _tb_peers;";
+            return (long)command.ExecuteScalar()!;
+        }, "a test checking the rebuilt sender has no peer rows", CancellationToken.None);
+        await Assert.That(peers).IsEqualTo(0);
+        await using (var read = (TerraBase.Engine.Sqlite.SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            await Assert.That(await read.GetAckedAsync(sjc.Node, renewed.Value, CancellationToken.None)).IsNull();
+        }
+
+        var digested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gru.BeforeDigest = (database, token) =>
+        {
+            if (database == cluster.Database)
+            {
+                _ = digested.TrySetResult();
+            }
+            return Task.CompletedTask;
+        };
+        var release = sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            cluster.Members.Join(member);
+            cluster.Members.Join(sender);
+            await digested.Task.WaitAsync(Deadline);
+            await sjc.RepairWaits.Task.WaitAsync(Deadline);
+            await Assert.That(await sjc.ReadAsync(lost)).IsNull();
+            await Assert.That(await sjc.ReadAsync(pending)).IsNull().Because("no live batch crosses unfinished coverage");
+            await Assert.That(await gru.Groups.AckedAsync(cluster.Database, sjc.Node, CancellationToken.None))
+                .IsEqualTo(new SourceCursor(renewed.Value, 0)).Because("the sender initialized its missing scope without a persisted refill requirement");
+            await Assert.That(await gru.AckedAsync(cluster.Database, sjc.Node)).IsEqualTo(0);
+
+            sjc.HeldRepairs = null;
+            release.SetResult();
+            await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+            await Assert.That(await sjc.UntilAsync(pending, """{"n":2}""")).IsTrue();
+            await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, await gru.HeadAsync(cluster.Database))).IsTrue();
+            await gru.WriteAsync(async transaction =>
+                _ = await transaction.PutAsync("items", live, Json("""{"n":3}"""), CancellationToken.None));
+            await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, await gru.HeadAsync(cluster.Database))).IsTrue();
+            await Assert.That(await sjc.ReadAsync(live)).IsEqualTo("""{"n":3}""");
+        }
+        finally
+        {
+            _ = release.TrySetResult();
+        }
     }
 
     [Test]
@@ -1715,7 +1810,7 @@ public sealed class PeerStreamTests
             await Assert.That(await middle.WelcomeAsync()).IsFalse().Because("the latest replacement cancels its predecessor before either can join a batch");
             await Assert.That(sjc.RefillMemory!.Reserved).IsEqualTo(0).Because("cancelled predecessor work releases its byte reservation before handover");
             await latest.BatchAsync(cluster.Database, 2, later);
-            await Assert.That(await latest.AckAsync()).IsEqualTo(new Ack { Database = await latest.WireAsync(cluster.Database), Refused = true });
+            await Assert.That(await latest.AckAsync()).IsEqualTo(new Ack { Database = await latest.WireAsync(cluster.Database), Refused = true, RefillRequired = true });
             await Assert.That(await sjc.ReadAsync(later)).IsNull();
 
             sjc.HeldRepairs = null;

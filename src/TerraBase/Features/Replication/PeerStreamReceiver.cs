@@ -296,10 +296,11 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 // Any refill of the database blocks its batches: it is still joining repairs, whichever copy it names. A sender
                 // awaits each batch's ack, so a second batch of a database in progress, or past the bound, is refused too.
                 var busy = applying.TryGetValue(database, out var pending);
-                if (refills.Keys.Any(running => running.Database == database) || cut.Contains(database)
+                var refilling = refills.Keys.Any(running => running.Database == database);
+                if (refilling || cut.Contains(database)
                     || (busy ? pending.Batch : applying.Count >= MaxApplying))
                 {
-                    await RefuseAsync(responseStream, batch.Database, stream.Token).ConfigureAwait(false);
+                    await RefuseAsync(responseStream, batch.Database, stream.Token, cut.Contains(database) && !refilling).ConfigureAwait(false);
                     continue;
                 }
 
@@ -580,8 +581,8 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         }
     }
 
-    private static Task RefuseAsync(IServerStreamWriter<AckFrame> responseStream, V1.Database database, CancellationToken cancellationToken) =>
-        responseStream.WriteAsync(new AckFrame { Ack = new Ack { Database = database, Refused = true } }, cancellationToken);
+    private static Task RefuseAsync(IServerStreamWriter<AckFrame> responseStream, V1.Database database, CancellationToken cancellationToken, bool refillRequired = false) =>
+        responseStream.WriteAsync(new AckFrame { Ack = new Ack { Database = database, Refused = true, RefillRequired = refillRequired } }, cancellationToken);
 
     private static TenantContext Tenant(V1.Database? database)
     {

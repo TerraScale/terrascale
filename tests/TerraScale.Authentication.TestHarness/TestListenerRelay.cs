@@ -23,6 +23,8 @@ internal sealed class TestListenerRelay : IAsyncDisposable
             this.listener.ExclusiveAddressUse = true;
             this.listener.Start(MaximumConnections);
             this.Address = new Uri($"http://127.0.0.1:{((IPEndPoint)this.listener.LocalEndpoint).Port}/");
+            // Resolve Uri's lazy loopback flag before parallel SDK clients validate this shared origin.
+            _ = this.Address.IsLoopback;
             this.accepting = this.AcceptAsync();
         }
         catch
