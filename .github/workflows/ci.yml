@@ -1,5 +1,5 @@
-# Required formatting, build, security, contract/Fast and actual-application packaging. Main pushes the
-# tested image; Deploy rolls it out to three regions. Slow runs independently in slow.yml.
+# Required formatting, build, security, contract/Fast and actual-application packaging (image build and
+# readiness smoke test). images-ghcr.yml publishes main's image for ts-orch; Slow runs independently in slow.yml.
 name: CI
 
 on:
@@ -10,10 +10,10 @@ on:
 permissions:
   contents: read
 
-# A newer push supersedes a pull request's run; each main commit runs in its own group and keeps its result.
+# A newer push cancels the older run of the same pull request or branch, main included.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
@@ -42,6 +42,9 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: src/TerraScale.Dashboard/web
       - run: make check
+      # Deployment is ts-orch from GHCR; workflows keep no hosting-provider steps (Tigris storage excepted).
+      - name: Workflows reference no retired hosting provider
+        run: '! grep -rniI "fl[y]" .github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
@@ -53,12 +56,8 @@ jobs:
     needs: check
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # Main deploys run one at a time; a newer pending main commit replaces an older pending one.
-    concurrency:
-      group: ${{ github.event_name == 'push' && 'ts-dashboard-deploy' || github.run_id }}
-      cancel-in-progress: false
     env:
-      IMAGE: registry.fly.io/ts-dashboard:${{ github.sha }}
+      IMAGE: ts-dashboard:${{ github.sha }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -74,26 +73,10 @@ jobs:
           # Pull requests read main's layer cache; only main writes it (PR-scoped caches are invisible to other PRs).
           cache-from: type=gha,scope=dashboard-image
           cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=dashboard-image' || '' }}
-      # DEMO=true is ready without secrets; the deployed app's mode is its Fly secret (README).
+      # DEMO=true is ready without secrets (README).
       - name: Smoke-test the image's readiness and revision
         run: |
           docker run -d --name app -e DEMO=true -p 127.0.0.1:8080:8080 "$IMAGE"
           for _ in $(seq 60); do curl -fs http://127.0.0.1:8080/health/ready -o ready.json && break; sleep 2; done
           jq -e --arg sha "$GITHUB_SHA" '.status == "ok" and (.version | endswith("+" + $sha))' ready.json \
             || { docker logs app 2>&1 | tail -n 50; exit 1; }
-      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master (node24)
-        if: github.event_name == 'push'
-        with:
-          version: 0.4.117
-      - name: Publish the tested image for regional deployment
-        if: github.event_name == 'push'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Never roll back: a newer main commit deploys itself.
-          if [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" != "$GITHUB_SHA" ]; then
-            echo "main moved past $GITHUB_SHA; not deploying it."; exit 0
-          fi
-          flyctl auth docker
-          docker push "$IMAGE"

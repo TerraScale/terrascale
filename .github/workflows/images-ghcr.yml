@@ -1,5 +1,5 @@
 # Public multi-arch image ts-orch runs (REFACTOR.md W10): ghcr.io/terrascale/ts-dashboard:<sha> and :main,
-# linux/amd64 + linux/arm64 (portable publish on the builder's platform). Independent of CI's Fly image;
+# linux/amd64 + linux/arm64 (portable publish on the builder's platform). Reuses CI's layer cache;
 # the digest goes to the job summary.
 name: Images (GHCR)
 
@@ -8,14 +8,17 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Every publish runs to completion in its own group.
 concurrency:
   group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
   image:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
