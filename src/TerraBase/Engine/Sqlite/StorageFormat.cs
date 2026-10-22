@@ -17,7 +17,8 @@ public static class StorageFormat
     /// 8: <c>_tb_peers.incarnation</c> scopes each peer's ack to the
     /// incarnation of the file whose change log it names (R3). 9: persisted change-feed prefix hashes.
     /// 10: node-local copy faults, write intents and pinned refill certificates (A6).
-    /// 11: FULL operation intents in <c>_intents.db</c> and the node-bound replica identity (R6, batched reset 2026-10-22).
+    /// 11: FULL operation intents in <c>_intents.db</c>, the node-bound replica identity (R6) and maintained SYSTEM
+    /// <c>_tb_merkle</c> bucket digests (R9), batched reset 2026-10-22.
     /// </summary>
     public const int Version = 11;
 
