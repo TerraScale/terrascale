@@ -4,6 +4,7 @@ using System.Text.Json;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Errors;
@@ -35,6 +36,8 @@ public sealed class CatalogGateTests
         {
             services.AddSingleton<TimeProvider>(clock);
             services.AddSingleton<IMemberDirectory>(directory);
+            // Only the catalog gate may signal that its discovery call is waiting for shutdown.
+            services.AddSingleton<IMembership>(provider => new StaticMembership(provider.GetRequiredService<TerraBaseOptions>()));
         });
         var gate = (CatalogGate)server.Services.GetRequiredService<ICatalogGate>();
         try
