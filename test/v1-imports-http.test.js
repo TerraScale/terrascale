@@ -41,7 +41,9 @@ test("import bounds and pre-cancelled calls fail without dispatch", async () => 
   await expect(imports.get({ signal: AbortSignal.abort("stop") })).rejects.toBe("stop");
   expect(requests).toHaveLength(0);
 });
-test.each([{}, { options: null }])("import options can reset to producer defaults with %j", async request => {
+/** @type {{readonly options?: import("../src/v1/imports.js").V1ImportOptions | null}[]} */
+const defaultRequests = [{}, { options: null }];
+test.each(defaultRequests)("import options can reset to producer defaults with %j", async request => {
   const { client, requests } = await fixture((_r, response) => json(response, job, 202));
   expect(await client.database("app").imports.update(request)).toEqual(job);
   expect(requests[0]?.method).toBe("PATCH");
