@@ -11,4 +11,7 @@
     <!-- Genuine pg_dump and sqlite3 outputs (scripts/terrabase/import-fixtures.sh). -->
     <None Include="Import/Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
 </Project>

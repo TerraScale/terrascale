@@ -56,7 +56,7 @@ listed; there is no region list to maintain.
   request to an `Http1AndHttp2` port answers `HTTP_1_1_REQUIRED`). The internal listener serves gRPC, so it is
   HTTP/2 only: its clients send HTTP/2 with prior knowledge (`curl --http2-prior-knowledge`, .NET
   `HttpVersion.Version20` with `RequestVersionExact`).
-- `port`, `internal-port` and `metrics-port` exist only so tests can bind ephemeral ports.
+- `port`, `internal-port`, `metrics-port` and `postgres-port` exist only so tests can bind ephemeral ports.
 
 ## ts-replay
 

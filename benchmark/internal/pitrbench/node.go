@@ -184,6 +184,7 @@ func nodeEnv(r *Run, n *NodeState) ([]string, error) {
 		"TERRABASE_PORT="+strconv.Itoa(n.Port),
 		"TERRABASE_INTERNAL_PORT="+strconv.Itoa(n.InternalPort),
 		"TERRABASE_METRICS_PORT="+strconv.Itoa(n.MetricsPort),
+		"TERRABASE_POSTGRES_PORT=0",
 		"TERRABASE_PEER_SECRET="+n.PeerSecret,
 	), nil
 }

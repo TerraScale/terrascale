@@ -24,6 +24,9 @@ public sealed record TerraBaseOptions
     /// <summary>Port of the metrics listener.</summary>
     public const int DefaultMetricsPort = 9091;
 
+    /// <summary>Port of the PostgreSQL wire listener.</summary>
+    public const int DefaultPostgresPort = 5432;
+
     /// <summary>Default seconds shutdown waits for transactions to return their database connections.</summary>
     public const int DefaultShutdownGraceSeconds = 10;
 
@@ -53,7 +56,7 @@ public sealed record TerraBaseOptions
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["port", "internal-port", "metrics-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys]);
+        ["port", "internal-port", "metrics-port", "postgres-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -77,6 +80,12 @@ public sealed record TerraBaseOptions
 
     /// <summary>Port of the metrics listener; tests (<c>0</c> picks a free port) and a second service on a shared host change it.</summary>
     public int MetricsPort { get; init; } = DefaultMetricsPort;
+
+    /// <summary>
+    /// Port of the PostgreSQL wire listener: plaintext behind the platform edge, which terminates TLS. Tests (<c>0</c> picks a
+    /// free port) and a second service on a shared host change it.
+    /// </summary>
+    public int PostgresPort { get; init; } = DefaultPostgresPort;
 
     /// <summary>Directory holding one SQLite file per database.</summary>
     public required string DataDirectory { get; init; }
@@ -317,6 +326,7 @@ public sealed record TerraBaseOptions
             Port = ParsePort(values, "port") ?? DefaultPort,
             InternalPort = ParsePort(values, "internal-port") ?? DefaultInternalPort,
             MetricsPort = ParsePort(values, "metrics-port") ?? DefaultMetricsPort,
+            PostgresPort = ParsePort(values, "postgres-port") ?? DefaultPostgresPort,
             DataDirectory = dataDirectory,
             Region = region,
             MachineId = machineId,
