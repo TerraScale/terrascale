@@ -54,6 +54,11 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBaseChangeCursor))]
 [JsonSerializable(typeof(TerraBaseStreamError))]
 [JsonSerializable(typeof(TerraBaseImportJob))]
+[JsonSerializable(typeof(TerraBaseSqlCheck))]
+[JsonSerializable(typeof(TerraBaseQueryShapeList))]
+[JsonSerializable(typeof(TerraBaseSavedQuery))]
+[JsonSerializable(typeof(TerraBasePage<TerraBaseSavedQuery>))]
+[JsonSerializable(typeof(TerraBaseSavedQueryRequest))]
 [JsonSerializable(typeof(RequestBody))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext
 {
