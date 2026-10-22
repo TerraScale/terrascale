@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"terrascale.tech/ts-benchmark/internal/replbench"
+	"terrascale.tech/ts-benchmark/internal/repllocal"
 )
 
 func main() {
@@ -66,49 +67,43 @@ func run() (runErr error) {
 		runErr = errors.Join(runErr, r.write(*out))
 	}()
 	for repeat := 1; repeat <= *repeats; repeat++ {
-		log.Printf("repeat %d/%d: starting three processes", repeat, *repeats)
-		c, err := startCluster(ctx, root)
-		if err != nil {
-			return err
-		}
-		err = func() error {
+		measure := func(phase func(*repllocal.Cluster) (sample, error)) (phaseErr error) {
+			log.Printf("repeat %d/%d: starting fresh three-process cluster", repeat, *repeats)
+			c, err := repllocal.StartCluster(ctx, root)
+			if err != nil {
+				return err
+			}
 			defer func() {
-				if e := c.Close(); e != nil {
-					log.Printf("cluster cleanup: %v", e)
-				}
+				phaseErr = errors.Join(phaseErr, c.Close())
 			}()
-			for _, phase := range []struct {
-				name           string
-				batch, readers int
-			}{
-				{"single", 1, 0}, {"batch16", 16, 0}, {"feed1", 16, 1}, {"feed10", 16, 10}, {"feed100", 16, 100},
-			} {
-				if *scenario != "all" && !(*scenario == "writes" && phase.readers == 0) && !(*scenario == "feeds" && phase.readers > 0) {
-					continue
-				}
-				s, err := writePhase(ctx, c, repeat, phase.name, *docs, phase.batch, phase.readers)
-				r.Samples = append(r.Samples, s)
-				if err != nil {
-					return err
-				}
-				if err := r.write(*out); err != nil {
-					return err
-				}
+			s, err := phase(c)
+			r.Samples = append(r.Samples, s)
+			return errors.Join(err, r.write(*out))
+		}
+		for _, phase := range []struct {
+			name           string
+			batch, readers int
+		}{
+			{"single", 1, 0}, {"batch16", 16, 0}, {"feed1", 16, 1}, {"feed10", 16, 10}, {"feed100", 16, 100},
+		} {
+			if *scenario != "all" && !(*scenario == "writes" && phase.readers == 0) && !(*scenario == "feeds" && phase.readers > 0) {
+				continue
 			}
-			for _, recovery := range []string{"catchup", "rebuild"} {
-				if *scenario != "all" && *scenario != recovery {
-					continue
-				}
-				s, err := recoveryPhase(ctx, c, repeat, recovery)
-				r.Samples = append(r.Samples, s)
-				if err != nil {
-					return err
-				}
+			if err := measure(func(c *repllocal.Cluster) (sample, error) {
+				return writePhase(ctx, c, repeat, phase.name, *docs, phase.batch, phase.readers)
+			}); err != nil {
+				return err
 			}
-			return nil
-		}()
-		if err != nil {
-			return err
+		}
+		for _, recovery := range []string{"catchup", "rebuild"} {
+			if *scenario != "all" && *scenario != recovery {
+				continue
+			}
+			if err := measure(func(c *repllocal.Cluster) (sample, error) {
+				return recoveryPhase(ctx, c, repeat, recovery)
+			}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -129,9 +124,9 @@ func newRunner(t replbench.Targets, docs, batch int) (*replbench.Runner, error) 
 		Converge: 30 * time.Minute, Seed: 20261022}, t, log.Printf)
 }
 
-func writePhase(ctx context.Context, c *cluster, repeat int, name string, docs, batch, readers int) (s sample, err error) {
-	s = sample{Repeat: repeat, Phase: name, Metrics: map[string]float64{}, Before: map[string]snapshot{}, After: map[string]snapshot{}}
-	t := c.targets()
+func writePhase(ctx context.Context, c *repllocal.Cluster, repeat int, name string, docs, batch, readers int) (s sample, err error) {
+	s = sample{Repeat: repeat, Phase: name, Metrics: map[string]float64{}, Before: map[string]repllocal.Snapshot{}, After: map[string]repllocal.Snapshot{}}
+	t := c.Targets()
 	runner, err := newRunner(t, docs, batch)
 	if err != nil {
 		return s, err
@@ -139,7 +134,7 @@ func writePhase(ctx context.Context, c *cluster, repeat int, name string, docs, 
 	if err = runner.Setup(ctx); err != nil {
 		return s, err
 	}
-	stopFeeds, admitted, rejected, err := openFeeds(ctx, t, readers)
+	stopFeeds, admitted, rejected, err := repllocal.OpenFeeds(ctx, t, readers)
 	if err != nil {
 		return s, err
 	}
@@ -148,7 +143,7 @@ func writePhase(ctx context.Context, c *cluster, repeat int, name string, docs, 
 	// Feed cost windows omit visibility probes, whose changes would alter the denominator.
 	var stopVisibility func() (map[string]replbench.Summary, error)
 	if readers == 0 {
-		stopVisibility, err = startVisibility(ctx, t)
+		stopVisibility, err = repllocal.StartVisibility(ctx, t)
 		if err != nil {
 			return s, err
 		}
@@ -159,14 +154,14 @@ func writePhase(ctx context.Context, c *cluster, repeat int, name string, docs, 
 			}
 		}()
 	}
-	beforeWire := c.bytes()
-	for region, w := range c.nodes {
-		s.Before[region], err = scrape(ctx, w.target.MetricsURL)
+	beforeWire := c.Bytes()
+	for region, w := range c.Nodes {
+		s.Before[region], err = repllocal.Scrape(ctx, w.Target.MetricsURL)
 		if err != nil {
 			return s, err
 		}
 	}
-	if _, err = c.localAck(ctx); err != nil {
+	if _, err = c.LocalAck(ctx); err != nil {
 		return s, err
 	}
 	stopLoad := startLoadSampler()
@@ -175,9 +170,15 @@ func writePhase(ctx context.Context, c *cluster, repeat int, name string, docs, 
 	if err != nil {
 		return s, err
 	}
-	ack, err := c.localAck(ctx)
+	ack, err := c.LocalAck(ctx)
 	if err != nil {
 		return s, err
+	}
+	if ack["local_ack.count"] < float64((docs+batch-1)/batch) || ack["local_ack.capped"] != 0 {
+		return s, errors.New("local acknowledgement histogram incomplete or capped")
+	}
+	if _, ok := ack["local_ack.p99_ms"]; !ok {
+		return s, errors.New("local acknowledgement histogram has no percentiles")
 	}
 	for key, value := range ack {
 		s.Metrics[key] = value
@@ -192,14 +193,14 @@ func writePhase(ctx context.Context, c *cluster, repeat int, name string, docs, 
 	if err := runner.AwaitReplication(ctx); err != nil {
 		return s, err
 	}
-	for region, w := range c.nodes {
-		s.After[region], err = scrape(ctx, w.target.MetricsURL)
+	for region, w := range c.Nodes {
+		s.After[region], err = repllocal.Scrape(ctx, w.Target.MetricsURL)
 		if err != nil {
 			return s, err
 		}
 	}
 	s.Load = stopLoad()
-	wireBytes := c.bytes() - beforeWire
+	wireBytes := c.Bytes() - beforeWire
 	raw := replbench.Result{Name: name, Kind: t.Kind, Config: map[string]any{"docs": docs, "batch": batch, "origin": "gru", "concurrency": 16, "seed": 20261022}, Host: os.Getenv("TS_HEAVY_HOST")}
 	raw.Convergence, err = runner.Converge(ctx, time.Now())
 	if err != nil {
@@ -207,15 +208,15 @@ func writePhase(ctx context.Context, c *cluster, repeat int, name string, docs, 
 	}
 	runner.Collect(&raw, elapsed.Seconds())
 	s.Result = raw
-	if !raw.Passed() {
-		return s, errors.New("exact convergence failed")
+	if !raw.Passed() || raw.Writes["gru"].Created != int64(docs) || raw.Writes["gru"].Failed != 0 || raw.Convergence.Expected != docs {
+		return s, errors.New("write load incomplete or exact convergence failed")
 	}
 	s.Metrics["throughput.docs_per_second"] = raw.Writes["gru"].DocsPerSec
 	s.Metrics["remote_ack.p50_ms"], s.Metrics["remote_ack.p99_ms"] = raw.Writes["gru"].Create.P50, raw.Writes["gru"].Create.P99
 	s.Metrics["wire.transport_stream_bytes_per_source_doc"] = float64(wireBytes) / float64(docs)
 	for region, b := range s.Before {
 		a := s.After[region]
-		if a.CPUms < b.CPUms || a.Allocated < b.Allocated || a.FeedReads < b.FeedReads {
+		if a.CPUms < b.CPUms || a.Allocated < b.Allocated || a.FeedReads < b.FeedReads || a.MergedGroups < b.MergedGroups {
 			return s, fmt.Errorf("%s metric reset", region)
 		}
 		s.Metrics[region+".cpu_ms_per_source_doc"] = (a.CPUms - b.CPUms) / float64(docs)
@@ -232,12 +233,4 @@ func writePhase(ctx context.Context, c *cluster, repeat int, name string, docs, 
 	}
 	log.Printf("%s repeat %d: %.1f docs/s; ack p50 %.2f ms p99 %.2f ms", name, repeat, s.Metrics["throughput.docs_per_second"], s.Metrics["remote_ack.p50_ms"], s.Metrics["remote_ack.p99_ms"])
 	return s, nil
-}
-
-func (c *cluster) bytes() int64 {
-	var n int64
-	for _, w := range c.nodes {
-		n += w.proxy.Bytes()
-	}
-	return n
 }

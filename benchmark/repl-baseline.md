@@ -15,7 +15,7 @@ services or shared host network settings are changed. The host pin is mandatory.
 For a quick command check, use `SCENARIO=writes N=30 REPEATS=1`. Scenarios are
 `writes`, `feeds`, `catchup`, `rebuild`, or `all` (default). Catch-up always uses
 100,000 writes and empty-copy reconstruction always uses 1,000,000 documents;
-`N` controls the ordinary write/feed phases. `REPEATS` repeats fresh clusters.
+`N` controls the ordinary write/feed phases. Every phase uses a fresh cluster.
 WAN/netem is explicitly unsupported until isolated network namespaces are added.
 
 For A/B, cherry-pick the harness commit onto each branch, push both branches,

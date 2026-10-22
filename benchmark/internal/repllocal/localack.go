@@ -1,4 +1,4 @@
-package main
+package repllocal
 
 import (
 	"context"
@@ -11,11 +11,11 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-func (c *cluster) localAck(ctx context.Context) (map[string]float64, error) {
+func (c *Cluster) LocalAck(ctx context.Context) (map[string]float64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	id := ulid.Make().String()
-	dir := filepath.Join(c.work, "gru")
+	dir := filepath.Join(c.Work, "gru")
 	path := filepath.Join(dir, "sample.request")
 	if err := os.WriteFile(path+".partial", []byte(id), 0o600); err != nil {
 		return nil, err
@@ -33,7 +33,7 @@ func (c *cluster) localAck(ctx context.Context) (map[string]float64, error) {
 			Capped float64  `json:"local_ack_capped_count"`
 		}
 		if b, err := os.ReadFile(filepath.Join(dir, "sample.json")); err == nil && json.Unmarshal(b, &s) == nil && s.ID == id {
-			if s.PID != c.nodes["gru"].target.PID {
+			if s.PID != c.Nodes["gru"].Target.PID {
 				return nil, fmt.Errorf("local acknowledgement process changed")
 			}
 			values := map[string]float64{"local_ack.count": s.Count, "local_ack.capped": s.Capped}
