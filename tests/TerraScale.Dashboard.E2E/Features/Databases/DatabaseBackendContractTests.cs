@@ -15,6 +15,7 @@ public sealed class DatabaseBackendContractTests
     [Arguments("branch", "databases:write", true)]
     [Arguments("delete", "databases:write", true)]
     [Arguments("set-regions", "databases:write", true)]
+    [Arguments("set-all-regions", "databases:write", true)]
     [Arguments("collections", "databases:read", true)]
     [Arguments("sql", "databases:read", true)]
     [Arguments("indexes", "databases:read", true)]
@@ -36,10 +37,11 @@ public sealed class DatabaseBackendContractTests
                     Task request = action switch
                     {
                         "list" => backend.ListAsync(scope, home, CancellationToken.None),
-                        "create" => backend.CreateAsync(scope, "new-app", [home], CancellationToken.None),
+                        "create" => backend.CreateAsync(scope, "new-app", [home], false, CancellationToken.None),
                         "branch" => backend.BranchAsync(scope, home, DatabaseId, "branch", CancellationToken.None),
                         "delete" => backend.DeleteAsync(scope, home, DatabaseId, CancellationToken.None),
-                        "set-regions" => backend.SetRegionsAsync(scope, home, DatabaseId, [home], CancellationToken.None),
+                        "set-regions" => backend.SetRegionsAsync(scope, home, DatabaseId, [home], false, CancellationToken.None),
+                        "set-all-regions" => backend.SetRegionsAsync(scope, home, DatabaseId, [home], true, CancellationToken.None),
                         "collections" => backend.CollectionsAsync(scope, home, DatabaseId, CancellationToken.None),
                         "sql" => backend.SqlAsync(scope, home, DatabaseId, "SELECT * FROM items", CancellationToken.None),
                         "indexes" => backend.IndexesAsync(scope, home, DatabaseId, CancellationToken.None),
@@ -100,7 +102,7 @@ public sealed class DatabaseBackendContractTests
             Resolutions++;
             var body = JsonSerializer.Serialize(new
             {
-                items = new[] { new { id = DatabaseId, projectId = ProjectId, name = "app", branchedFrom = (string?)null, createdAt = DateTimeOffset.UnixEpoch, region = "gru", homeRegion = "gru", replicaRegions = Array.Empty<string>() } },
+                items = new[] { new { id = DatabaseId, projectId = ProjectId, name = "app", branchedFrom = (string?)null, createdAt = DateTimeOffset.UnixEpoch, region = "gru", homeRegion = "gru", replicaRegions = Array.Empty<string>(), allRegions = false } },
                 next = (string?)null
             });
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });

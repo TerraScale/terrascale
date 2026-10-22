@@ -69,7 +69,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
             ?? throw new AccountAccessException("Choose regions listed by TerraScale discovery.", 422);
     }
 
-    public async Task<DatabaseRecord> CreateAsync(AccountContext context, string name, IEnumerable<string> regions, CancellationToken cancellationToken)
+    public async Task<DatabaseRecord> CreateAsync(AccountContext context, string name, IEnumerable<string> regions, bool allRegions, CancellationToken cancellationToken)
     {
         name = ValidName(name);
         context = await CurrentAsync(context, cancellationToken);
@@ -77,10 +77,10 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         DemandProvision(context.Organization!, context.UserId);
         DemandName(context.Project!, name);
         DemandRoom(context.Organization!);
-        var placement = await PlacementAsync(regions, cancellationToken);
+        var placement = await PlacementAsync(AllRegionsPlacement(regions, allRegions, context.Project!.Region), cancellationToken);
         ManagedDatabase remote;
         var recovered = false;
-        try { remote = await backend.CreateAsync(scope, name, placement, cancellationToken); }
+        try { remote = await backend.CreateAsync(scope, name, placement, allRegions, cancellationToken); }
         catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.Conflict)
         {
             // A prior provision whose dashboard commit failed is recovered by name.
@@ -92,7 +92,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         if (recovered && remote.HomeRegion != placement[0].Id)
             throw new AccountAccessException("A database with this name already exists in another home region.", 409);
         var actualPlacement = await RemotePlacementAsync(remote, cancellationToken);
-        if (!recovered && (actualPlacement[0].Id != placement[0].Id || !SameReplicas(actualPlacement, placement)))
+        if (!recovered && (actualPlacement[0].Id != placement[0].Id || !SameReplicas(actualPlacement, placement) || remote.AllRegions != allRegions))
             throw new HttpRequestException("Database provisioning returned a different placement.");
         placement = actualPlacement;
         var record = Record(remote, placement, "ready");
@@ -147,28 +147,43 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         return record;
     }
 
-    public async Task SetRegionsAsync(AccountContext context, string id, IEnumerable<string> regions, CancellationToken cancellationToken)
+    // allRegions replaces the replica choice: regions may then name only the home region, or nothing.
+    public async Task SetRegionsAsync(AccountContext context, string id, IEnumerable<string> regions, bool allRegions, CancellationToken cancellationToken)
     {
         context = await CurrentAsync(context, cancellationToken);
         var database = Database(context, id);
         if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
         var scope = Scope(context);
         var home = await HomeAsync(context, database, cancellationToken);
-        var placement = (await PlacementAsync(regions, cancellationToken, Regions(database))).ToList();
+        var placement = (await PlacementAsync(AllRegionsPlacement(regions, allRegions, home.Code), cancellationToken, Regions(database))).ToList();
         if (!placement.Remove(home)) throw new AccountAccessException("The home region must stay selected.", 422);
         placement.Insert(0, home);
-        var remote = await backend.SetRegionsAsync(scope, home, id, placement, cancellationToken);
+        var remote = await backend.SetRegionsAsync(scope, home, id, placement, allRegions, cancellationToken);
         if (remote.Id != id || remote.ProjectId != scope.ProjectId || remote.Name != database.Name || remote.HomeRegion != home.Id)
             throw new HttpRequestException("The placement update returned an invalid database identity.");
         var actualPlacement = await RemotePlacementAsync(remote, cancellationToken);
-        if (!SameReplicas(actualPlacement, placement)) throw new HttpRequestException("The placement update returned a different replica set.");
+        if (!SameReplicas(actualPlacement, placement) || remote.AllRegions != allRegions) throw new HttpRequestException("The placement update returned a different replica set.");
         await accounts.UpdateOrganizationAsync(context, org =>
         {
             if (!org.CanManage(context.UserId)) throw new AccountAccessException("Organization management access is required.");
             var current = org.Projects.GetValueOrDefault(scope.ProjectId)?.Databases.GetValueOrDefault(id) ?? throw new AccountAccessException("Database is unavailable.", 404);
             current.Region = home.Code;
             current.Regions = placement.Select(region => region.Code).ToList();
+            current.AllRegions = allRegions;
         }, cancellationToken);
+    }
+
+    // All regions keeps one home region (the chosen one, else home) and no replica regions.
+    private static IEnumerable<string> AllRegionsPlacement(IEnumerable<string> regions, bool allRegions, string home)
+    {
+        if (!allRegions) return regions;
+        var chosen = regions.Where(code => !string.IsNullOrWhiteSpace(code)).ToArray();
+        return chosen.Length switch
+        {
+            0 => [home],
+            1 => chosen,
+            _ => throw new AccountAccessException("All regions copies the database to every region automatically; choose either all regions or replica regions, not both.", 422)
+        };
     }
 
     public async Task DeleteAsync(AccountContext context, string id, string confirmation, CancellationToken cancellationToken)
@@ -239,6 +254,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         BranchedFrom = remote.BranchedFrom,
         Region = placement[0].Code,
         Regions = placement.Select(region => region.Code).ToList(),
+        AllRegions = remote.AllRegions,
         Endpoint = placement[0].Api.ToString(),
         Status = status
     };

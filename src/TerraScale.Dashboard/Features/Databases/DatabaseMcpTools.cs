@@ -48,29 +48,29 @@ public sealed class DatabaseMcpTools(IHttpContextAccessor http, AccountService a
         catch (Exception error) when (BackupEndpoints.KnownFailure(error) &&
             (error is not OperationCanceledException || !Cancellation.IsCancellationRequested))
         { unavailable = unavailable is null ? "Backup measurements are unavailable." : unavailable + " Backup measurements are unavailable."; }
-        return new(db.Id, db.Name, db.Status, db.Region, DatabaseService.Regions(db), db.CreatedAt, db.Endpoint,
+        return new(db.Id, db.Name, db.Status, db.Region, DatabaseService.Regions(db), db.CreatedAt, db.AllRegions, db.Endpoint,
             // MCP labels are an existing response contract, independent of page display casing.
             placement.Select(region => region.Code.ToUpperInvariant() switch { "SFO" => "SFO · San Francisco", "GRU" => "GRU · São Paulo", "" => "Not configured", var code => code }).ToArray(), contents?.Count, contents?.Sum(item => item.Documents), contents?.Sum(item => item.Bytes),
             unavailable, backupsEnabled, context.CanManage, db.Status == "ready" && context.CanManage && context.Organization!.CanProvision(context.UserId));
     }
 
-    [McpServerTool(Name = "create_database", Title = "Create database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Provision a new database in a project. Requires an owner or admin role and a plan with database capacity.")]
-    public async Task<McpDatabase> CreateDatabase(string name, string? region = null, string[]? regions = null, string? organizationId = null, string? projectId = null)
+    [McpServerTool(Name = "create_database", Title = "Create database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Provision a new database in a project. Requires an owner or admin role and a plan with database capacity. allRegions copies it to every serving region, including regions that join later; it excludes replica regions, so pass at most the home region with it.")]
+    public async Task<McpDatabase> CreateDatabase(string name, string? region = null, string[]? regions = null, bool allRegions = false, string? organizationId = null, string? projectId = null)
     {
         var context = Scope(organizationId, projectId);
         var placement = regions is { Length: > 0 } ? regions : [string.IsNullOrEmpty(region) ? context.Project!.Region : region];
-        return DatabaseOutput(await databases.CreateAsync(context, name, placement, Cancellation));
+        return DatabaseOutput(await databases.CreateAsync(context, name, placement, allRegions, Cancellation));
     }
 
     [McpServerTool(Name = "branch_database", Title = "Branch database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a new database that copies a ready database's documents, schemas, and indexes.")]
     public async Task<McpDatabase> BranchDatabase(string databaseId, string name = "", string? organizationId = null, string? projectId = null) =>
         DatabaseOutput(await databases.BranchAsync(Scope(organizationId, projectId), databaseId, name, Cancellation));
 
-    [McpServerTool(Name = "set_database_regions", Title = "Set database regions", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Choose where a database lives: its home region alone, or with replica regions that replicate it. The home region never changes. Requires an owner or admin role.")]
-    public async Task<McpDatabase> SetRegions(string databaseId, string[] regions, string? organizationId = null, string? projectId = null)
+    [McpServerTool(Name = "set_database_regions", Title = "Set database regions", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Choose where a database lives: its home region alone, with replica regions that replicate it, or allRegions to copy it to every serving region, including regions that join later. allRegions excludes replica regions; choosing regions turns it off. The home region never changes. Requires an owner or admin role.")]
+    public async Task<McpDatabase> SetRegions(string databaseId, string[]? regions = null, bool allRegions = false, string? organizationId = null, string? projectId = null)
     {
         var context = Scope(organizationId, projectId);
-        await databases.SetRegionsAsync(context, databaseId, regions, Cancellation);
+        await databases.SetRegionsAsync(context, databaseId, regions ?? [], allRegions, Cancellation);
         var fresh = await accounts.GetContextAsync(context.Session, Cancellation);
         var db = fresh.Organizations.First(org => org.Id == context.Organization!.Id).Projects[context.Project!.Id].Databases[databaseId];
         return DatabaseOutput(db);
@@ -86,12 +86,12 @@ public sealed class DatabaseMcpTools(IHttpContextAccessor http, AccountService a
     private AccountContext Scope(string? organizationId, string? projectId) => DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
     private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 
-    private static McpDatabase DatabaseOutput(DatabaseRecord db) => new(db.Id, db.Name, db.Status, db.Region, DatabaseService.Regions(db), db.CreatedAt);
+    private static McpDatabase DatabaseOutput(DatabaseRecord db) => new(db.Id, db.Name, db.Status, db.Region, DatabaseService.Regions(db), db.CreatedAt, db.AllRegions);
 }
 
-public record McpDatabase(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt);
+public record McpDatabase(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions);
 public sealed record McpDatabaseList(IReadOnlyList<McpDatabase> Databases);
-public sealed record McpDatabaseDetail(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt,
+public sealed record McpDatabaseDetail(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt, bool AllRegions,
     string Endpoint, IReadOnlyList<string> Regions,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Collections,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Documents,

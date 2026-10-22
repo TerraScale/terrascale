@@ -80,7 +80,7 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
         if (bytes is < 1 or > MaxSourceBytes) throw new AccountAccessException("Exports must be between 1 byte and 1 GiB.", 422);
         var options = new TerraBaseImportOptions(MissingPrimaryKey(missingPrimaryKey), []);
         var destination = context.Project!.Databases.Values.FirstOrDefault(item => item.Name == database)
-            ?? await databases.CreateAsync(context, database, [context.Project.Region], ct);
+            ?? await databases.CreateAsync(context, database, [context.Project.Region], false, ct);
         var scope = DatabaseService.Scope(context);
         var job = await Import(context, await databases.HomeAsync(context, destination, ct), database, Write)
             .CreateImportAsync(Formats.First(item => Wire(item.Key) == format).Key, bytes, sha256, options, ct);

@@ -120,6 +120,8 @@ public sealed class DatabaseRecord
     public string Name { get; set; } = "";
     public string Region { get; set; } = "";
     public List<string> Regions { get; set; } = [];
+    // Every serving region holds a copy, including regions that join later; Regions then lists only the home.
+    public bool AllRegions { get; set; }
     public string Endpoint { get; set; } = "";
     public string Status { get; set; } = "active";
     public long SpendCapCents { get; set; }

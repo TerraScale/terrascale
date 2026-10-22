@@ -726,16 +726,18 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             {
                 Require(method == "POST", "Canonical database create");
                 var body = await JsonAsync(http);
-                Require(body.EnumerateObject().All(field => field.Name is "name" or "homeRegion" or "replicaRegions"), "Create sends only name and placement");
+                Require(body.EnumerateObject().All(field => field.Name is "name" or "homeRegion" or "replicaRegions" or "allRegions"), "Create sends only name and placement");
                 var name = body.GetProperty("name").GetString()!;
                 var home = body.TryGetProperty("homeRegion", out var named) ? named.GetString()! : answering;
+                var all = body.TryGetProperty("allRegions", out var every) && every.GetBoolean();
+                if (all && body.TryGetProperty("replicaRegions", out _)) return Error(400, "placement_conflict");
                 var replicas = body.TryGetProperty("replicaRegions", out var listed) ? listed.EnumerateArray().Select(value => value.GetString()!).ToArray() : [];
                 if (home != answering) return WrongRegion(http, new(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas));
                 if (createGate is { } paused) { Interlocked.Increment(ref pausedCreates); await paused.Task.WaitAsync(http.RequestAborted); }
                 lock (gate)
                 {
                     if (databases.Values.Any(value => value.ProjectId == project && value.Name == name)) return Error(409, "name_taken");
-                    var database = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas);
+                    var database = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas, AllRegions: all);
                     databases[database.Id] = database;
                     Interlocked.Increment(ref creates);
                     return Results.Json(Wire(database, answering), statusCode: 201);
@@ -756,15 +758,17 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     if (callerRole is not ("owner" or "admin")) return Error(403, "role_too_low");
                     if (!atHome) return WrongRegion(http, current);
                     var body = await JsonAsync(http);
+                    if (body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "allRegions" }) && body.GetProperty("allRegions").GetBoolean())
+                        lock (gate) { var everywhere = current with { ReplicaRegions = [], AllRegions = true }; databases[current.Id] = everywhere; return Results.Json(Wire(everywhere, answering)); }
                     Require(body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "replicaRegions" }),
-                        "Placement updates send only the complete producer replicaRegions list");
+                        "Placement updates send only the complete producer replicaRegions list or allRegions");
                     var replicas = body.GetProperty("replicaRegions").EnumerateArray().Select(value => value.GetString()!).ToArray();
                     Require(replicas.All(value => value is "sfo" or "gru") && !replicas.Contains(current.HomeRegion, StringComparer.Ordinal) &&
                         replicas.Distinct(StringComparer.Ordinal).Count() == replicas.Length, "Placement preserves its home and unique discovered replicas");
-                    lock (gate) { var changed = current with { ReplicaRegions = replicas }; databases[current.Id] = changed; return Results.Json(Wire(changed, answering)); }
+                    lock (gate) { var changed = current with { ReplicaRegions = replicas, AllRegions = false }; databases[current.Id] = changed; return Results.Json(Wire(changed, answering)); }
                 case (5, "DELETE", _):
                     if (!atHome) return WrongRegion(http, current);
-                    if (current.ReplicaRegions is { Count: > 0 }) return Error(409, "database_replicated");
+                    if (current.ReplicaRegions is { Count: > 0 } || current.AllRegions) return Error(409, "database_replicated");
                     lock (gate)
                     {
                         databases.Remove(current.Id);
@@ -978,7 +982,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             createdAt = database.CreatedAt,
             region,
             homeRegion = database.HomeRegion,
-            replicaRegions = database.ReplicaRegions ?? Array.Empty<string>()
+            replicaRegions = database.ReplicaRegions ?? Array.Empty<string>(),
+            allRegions = database.AllRegions
         };
 
         private async Task<IResult> DocumentsAsync(HttpContext http)
@@ -1002,11 +1007,11 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 if (http.Request.Method == "GET")
                 {
                     Require(http.Request.Query["limit"] == "200", "Collection list uses bounded SDK pagination");
-                    lock (gate) return Results.Json(new { items = collections.Keys.Where(name => name.StartsWith(prefix, StringComparison.Ordinal)).Select(name => new { name = name[prefix.Length..], created_at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString() }).ToArray(), next_cursor = (string?)null });
+                    lock (gate) return Results.Json(new { items = collections.Keys.Where(name => name.StartsWith(prefix, StringComparison.Ordinal)).Select(name => new { name = name[prefix.Length..], created_at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(), id = ids.NewId() }).ToArray(), next_cursor = (string?)null });
                 }
                 var body = await JsonAsync(http); var name = body.GetProperty("name").GetString()!;
                 lock (gate) { if (!collections.TryAdd(prefix + name, [])) return Error(409, "name_taken"); }
-                return Results.Json(new { name, created_at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString() }, statusCode: 201);
+                return Results.Json(new { name, created_at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(), id = ids.NewId() }, statusCode: 201);
             }
             Require(parts.Length >= 8 && parts[7] is "documents" or "query", "Official document route");
             var collectionKey = prefix + parts[6];

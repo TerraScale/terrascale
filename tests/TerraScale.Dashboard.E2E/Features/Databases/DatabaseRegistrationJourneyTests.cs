@@ -60,7 +60,8 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardRootFixture fixtur
                     createdAt = DateTimeOffset.UtcNow,
                     region = "gru",
                     homeRegion = fault == "placement-identity" ? "sfo" : "gru",
-                    replicaRegions = Array.Empty<string>()
+                    replicaRegions = Array.Empty<string>(),
+                    allRegions = false
                 }, statusCode: 201));
             }
             var code = status switch { 401 => "unauthorized", 403 => "forbidden_scope", 503 => "unavailable", _ => "not_found" };
