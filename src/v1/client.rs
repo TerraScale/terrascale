@@ -685,6 +685,92 @@ impl Client {
         Ok(url)
     }
 
+    pub(crate) async fn changes_response(
+        &self,
+        database: &str,
+        query: &[(&str, String)],
+        last_event_id: Option<&str>,
+    ) -> Result<reqwest::Response> {
+        let (origin, region) = self.shape_endpoint(database, false).await?;
+        let url = self.url(&origin, &["v1", "databases", database, "changes"], query)?;
+        let mut request = self
+            .inner
+            .http
+            .get(url)
+            .header(AUTHORIZATION, self.inner.auth.clone())
+            .header("Accept", "text/event-stream")
+            // The producer ends streams after 30 minutes; dropping the future/stream cancels it.
+            .timeout(Duration::from_secs(31 * 60));
+        if let Some(region) = &region {
+            request = request.header("X-TerraScale-Region-Pin", region);
+        }
+        if let Some(cursor) = last_event_id {
+            let cursor = HeaderValue::from_str(cursor)
+                .map_err(|_| Error::InvalidInput("Last-Event-ID must be a valid header".into()))?;
+            request = request.header("Last-Event-ID", cursor);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|error| Error::Transport(describe(&error)))?;
+        let status = response.status();
+        let headers = response.headers().clone();
+        let valid_region = region.as_deref().is_none_or(|expected| {
+            let mut values = headers.get_all("X-TerraBase-Region").iter();
+            values.next().and_then(|value| value.to_str().ok()) == Some(expected)
+                && values.next().is_none()
+        });
+        let event_stream = headers
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .split(';')
+                    .next()
+                    .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("text/event-stream"))
+            });
+        if status == StatusCode::OK && valid_region && event_stream {
+            return Ok(response);
+        }
+        let limit = self.inner.max_response.min(64 << 10);
+        let mut body = Vec::new();
+        let mut chunks = response.bytes_stream();
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk.map_err(|error| {
+                self.response_error(
+                    Error::Transport(describe(&error)),
+                    status,
+                    &headers,
+                    body.clone(),
+                )
+            })?;
+            let room = limit.saturating_sub(body.len());
+            body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+            if chunk.len() > room {
+                return Err(self.response_error(
+                    Error::ResponseTooLarge {
+                        limit,
+                        status: status.as_u16(),
+                        may_have_applied: false,
+                    },
+                    status,
+                    &headers,
+                    body,
+                ));
+            }
+        }
+        let response = Resp {
+            status,
+            headers,
+            body,
+            mutation: false,
+            project: true,
+        };
+        response.check_status(&[StatusCode::OK])?;
+        Err(response
+            .invalid("changes requires HTTP 200, text/event-stream and the pinned region".into()))
+    }
+
     pub(crate) async fn probe(&self, segments: Vec<&str>) -> Result<Resp> {
         let mut req = Req::new(Method::GET, segments);
         req.anonymous_probe = true;

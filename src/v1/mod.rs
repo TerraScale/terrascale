@@ -30,6 +30,7 @@
 
 mod atlas;
 mod backups;
+mod changes;
 mod client;
 mod control;
 mod documents;
@@ -48,6 +49,7 @@ mod tx;
 mod types;
 
 pub use backups::RestoredDatabase;
+pub use changes::{ChangeBytes, ChangesOptions};
 pub use client::{
     Client, ClientBuilder, RetryPolicy, DEFAULT_MAX_RESPONSE_BYTES, MAX_REQUEST_BYTES,
 };

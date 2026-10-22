@@ -31,6 +31,9 @@ impl Drop for Fixture {
 }
 impl Fixture {
     pub async fn new(replies: Vec<(u16, String)>) -> Self {
+        Self::with_type(replies, "application/json").await
+    }
+    pub async fn with_type(replies: Vec<(u16, String)>, content_type: &'static str) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -54,7 +57,7 @@ impl Fixture {
                                     received.lock().unwrap().push(Observed { method: parts.method.to_string(), uri: parts.uri.to_string(), headers: parts.headers, body });
                                     let (status, body) = replies.lock().unwrap().pop_front().expect("unexpected request");
                                     Ok::<_, std::convert::Infallible>(Response::builder().status(status)
-                                        .header("content-type", "application/json").header("x-request-id", "parity-fixture")
+                                        .header("content-type", content_type).header("x-request-id", "parity-fixture")
                                         .body(Full::new(Bytes::from(body))).unwrap())
                                 }
                             });
