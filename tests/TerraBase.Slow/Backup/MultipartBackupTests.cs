@@ -360,8 +360,17 @@ public sealed class MultipartBackupTests
             s3.Route(services);
             ManualBackupHosting.Configure(services);
         }, time);
-        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
-        return api;
+        try
+        {
+            await api.VerifyCatalogAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+            Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
+            return api;
+        }
+        catch
+        {
+            await api.DisposeAsync();
+            throw;
+        }
     }
 
     // Documents of incompressible text; only their hashes stay in memory.

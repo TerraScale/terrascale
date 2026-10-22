@@ -19,6 +19,7 @@ public sealed class CustomerBackupRetentionTests
         var s3 = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
+        await api.VerifyCatalogAsync(cancellationToken);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await CreateManagedDatabaseAsync(api, cancellationToken);
         using var data = api.DataClient(await api.Server.IssueAsync(database.Organization, ["documents:read", "documents:write"], cancellationToken));

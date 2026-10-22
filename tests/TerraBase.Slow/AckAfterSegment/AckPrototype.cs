@@ -46,6 +46,7 @@ internal sealed class AckPrototype : IAsyncDisposable
         ServiceProvider? clients = null;
         try
         {
+            await api.VerifyCatalogAsync(cancellationToken);
             var database = await api.CreateManagedDatabaseAsync();
             // The enterprise plan lifts the organization's request budget, so many writers measure the gate, not a limit.
             await api.SetPlanAsync(api.User, database.Organization, "enterprise", cancellationToken);
