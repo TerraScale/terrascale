@@ -98,7 +98,8 @@ internal sealed partial class DatabaseChanges
                     var visible = new List<FeedEvent>();
                     foreach (var change in page.Events)
                     {
-                        if (!policy.Collections.TryGetValue(change.Collection, out var grant))
+                        if (!policy.Collections.TryGetValue(change.Collection, out var grant)
+                            || change.CollectionGeneration is null || change.CollectionGeneration != grant.Collection.Id)
                         {
                             continue;
                         }

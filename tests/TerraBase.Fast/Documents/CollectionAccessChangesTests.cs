@@ -1,12 +1,92 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using static TerraBase.Fast.Documents.CollectionAccessRulesTests;
 
 namespace TerraBase.Fast.Documents;
 
 public sealed class CollectionAccessChangesTests
 {
+    [Test]
+    [Arguments("public")]
+    [Arguments("role")]
+    [Arguments("owner")]
+    public async Task Fresh_feeds_exclude_previous_collection_generations_before_every_read_grant(string grant)
+    {
+        await using var api = await CollectionAccessRulesTests.StartAsync();
+        var actor = DocumentApi.NewId();
+        var deleted = DocumentApi.NewId();
+        var reused = DocumentApi.NewId();
+        // The private generation has no owner rule, so its events have no ownership proofs.
+        (await api.PutAsync(deleted, new { secret = "deleted" })).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.SendAsync(HttpMethod.Delete, api.Document(deleted))).Status.ShouldBe(HttpStatusCode.OK);
+        (await api.PutAsync(reused, new { secret = "old" })).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.SendAsync(HttpMethod.Delete, $"{api.Collections}/items")).Status.ShouldBe(HttpStatusCode.OK);
+        (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "items" })).Status.ShouldBe(HttpStatusCode.Created);
+        var rules = grant == "owner" ? OwnerRules() : new CollectionAccessRules(null,
+            new CollectionAccessPolicy(false, grant == "public", grant == "role" ? ["reader"] : []),
+            new CollectionAccessPolicy(false, false, []));
+        await DeclareAsync(api, rules);
+        (await api.PutAsync(reused, new { owner = actor, value = "current" })).Status.ShouldBe(HttpStatusCode.Created);
+        var current = DocumentApi.NewId();
+        (await api.PutAsync(current, new { owner = actor, value = "current" })).Status.ShouldBe(HttpStatusCode.Created);
+        using var user = Reader(api, actor, "reader");
+        using var stream = await Stream.OpenAsync(user, api.DatabasePath() + "/changes?collections=items");
+        await Assert.That((await stream.NextAsync()).Name).IsEqualTo("cursor");
+        var changes = new List<Event>();
+        Event item;
+        while ((item = await stream.NextAsync()).Name == "change")
+        {
+            changes.Add(item);
+        }
+        await Assert.That(item.Name).IsEqualTo("cursor");
+        await Assert.That(changes.Select(change => change.Data.GetProperty("id").GetString()).ToArray()).IsEquivalentTo(new[] { reused, current });
+        foreach (var change in changes)
+        {
+            await Assert.That(change.Data.GetProperty("collection").GetString()).IsEqualTo("items");
+            await Assert.That(change.Data.GetProperty("op").GetString()).IsEqualTo("upsert");
+            await Assert.That(change.Data.GetProperty("document").GetProperty("value").GetString()).IsEqualTo("current");
+            await Assert.That(change.Data.TryGetProperty("collection_generation", out _)).IsFalse();
+            await Assert.That(change.Data.TryGetProperty("access_before", out _)).IsFalse();
+            await Assert.That(change.Data.TryGetProperty("access_after", out _)).IsFalse();
+        }
+    }
+
+    [Test]
+    public async Task Joined_events_without_collection_metadata_stay_unknown_after_metadata_arrives()
+    {
+        await using var api = await CollectionAccessRulesTests.StartAsync();
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+        var unknown = DocumentApi.NewId();
+        var current = DocumentApi.NewId();
+        var generation = DocumentApi.NewId();
+        var at = new EntryVersion(new Hlc(((ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16) + 1000), ReplicaId.Of(4112, 7, 1));
+        using var body = JsonDocument.Parse("""{"value":"joined"}""");
+        using var metadata = JsonDocument.Parse($$"""{"created_at":0,"entity_id":"{{generation}}","rules":{"read":{"public":true,"owner":false,"roles":[]},"write":{"public":false,"owner":false,"roles":[]}}}""");
+        await using (var write = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            await Assert.That(await write.JoinAsync("incoming", unknown, DocumentState.Bottom.Put(at, body.RootElement), at, CancellationToken.None)).IsTrue();
+            at = at with { Stamp = new Hlc(at.Stamp.Value + 1) };
+            await Assert.That(await write.JoinAsync(DocumentDelta.Collections, "incoming", DocumentState.Bottom.Put(at, metadata.RootElement), at, CancellationToken.None)).IsTrue();
+            at = at with { Stamp = new Hlc(at.Stamp.Value + 1) };
+            await Assert.That(await write.JoinAsync("incoming", current, DocumentState.Bottom.Put(at, body.RootElement), at, CancellationToken.None)).IsTrue();
+            await write.CommitAsync(CancellationToken.None);
+        }
+        await using (var read = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            var page = await read.ReadFeedAsync(null, new HashSet<string>(["incoming"]), 100, 1024 * 1024, CancellationToken.None);
+            await Assert.That(page.Events.Single(change => change.Id == unknown).CollectionGeneration).IsNull();
+            await Assert.That(page.Events.Single(change => change.Id == current).CollectionGeneration).IsEqualTo(generation);
+        }
+        using var user = Reader(api, DocumentApi.NewId());
+        using var stream = await Stream.OpenAsync(user, api.DatabasePath() + "/changes?collections=incoming");
+        await Assert.That((await stream.NextAsync()).Name).IsEqualTo("cursor");
+        await Assert.That((await stream.NextAsync()).Data.GetProperty("id").GetString()).IsEqualTo(current);
+        await Assert.That((await stream.NextAsync()).Name).IsEqualTo("cursor");
+    }
+
     [Test]
     public async Task Owner_streams_never_share_unfiltered_pages_and_delete_ids_require_matching_preimages()
     {

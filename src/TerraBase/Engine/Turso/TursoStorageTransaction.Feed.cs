@@ -3,6 +3,7 @@ using TerraBase.Engine.Lattices;
 using System.Text.Json;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Qos;
+using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Turso;
 
@@ -18,7 +19,12 @@ internal sealed partial class TursoStorageTransaction
     // Rows read per origin and page, before completing the last stamp: a stamp is never split between pages.
     private const int FeedOriginRows = 512;
 
-    private const string InsertFeed = "INSERT INTO _tb_feed (seq, commit_offset, origin, stamp, collection, id, deleted, prefix, access_before, access_after) VALUES ($seq, $commit, $origin, $stamp, $collection, $id, $deleted, $prefix, $access_before, $access_after);";
+    private const string InsertFeed = "INSERT INTO _tb_feed (seq, commit_offset, origin, stamp, collection, id, deleted, prefix, access_before, access_after, collection_generation) VALUES ($seq, $commit, $origin, $stamp, $collection, $id, $deleted, $prefix, $access_before, $access_after, $generation);";
+
+    private const string FeedGeneration = """
+        SELECT c.entity_id FROM collections c JOIN "_collections" m ON m.id = c.name
+        WHERE c.name = $collection AND length(c.entity_id) = 26 AND json_extract(m.doc, '$.entity_id') = c.entity_id;
+        """;
 
     private const string InsertFeedOrigin = "INSERT INTO _tb_feed_floor (origin, stamp, prefix) VALUES ($origin, 0, zeroblob(32));";
 
@@ -177,6 +183,9 @@ internal sealed partial class TursoStorageTransaction
         insert.Parameters.AddWithValue("$prefix", prefix.Hash.ToArray());
         insert.Parameters.AddWithValue("$access_before", beforeProof is null ? DBNull.Value : JsonSerializer.Serialize(beforeProof, CollectionRulesJsonContext.Default.DocumentOwnerProof));
         insert.Parameters.AddWithValue("$access_after", afterProof is null ? DBNull.Value : JsonSerializer.Serialize(afterProof, CollectionRulesJsonContext.Default.DocumentOwnerProof));
+        // A join can precede its collection metadata. Never trust its provisional identity or backfill old events.
+        var generation = Command(FeedGeneration, collection).ExecuteScalar() as string;
+        insert.Parameters.AddWithValue("$generation", generation is not null && EntityIds.IsValid(generation) ? generation : DBNull.Value);
         insert.ExecuteNonQuery();
         RehashFeedAfter(origin, at.Stamp, prefix);
     }
@@ -304,10 +313,11 @@ internal sealed partial class TursoStorageTransaction
             var document = deleted || !includeDocuments ? null : FeedDocumentJson(collection, id, tables);
             bytes += includeDocuments ? document?.Length ?? 0 : (long)Encoding.UTF8.GetByteCount(id) * 6 + 128;
             // Typed as the nullable memory itself: a null byte[] would convert to empty memory, not to an absent document.
-            var proof = Command("SELECT access_before, access_after, coalesce(octet_length(access_before),0), coalesce(octet_length(access_after),0) FROM _tb_feed WHERE rowid = $rowid;");
+            var proof = Command("SELECT access_before, access_after, coalesce(octet_length(access_before),0), coalesce(octet_length(access_after),0), collection_generation FROM _tb_feed WHERE rowid = $rowid;");
             proof.Parameters.AddWithValue("$rowid", rowId);
             DocumentOwnerProof? beforeProof = null;
             DocumentOwnerProof? afterProof = null;
+            string? generation = null;
             using (var reader = proof.ExecuteReader())
             {
                 if (reader.Read())
@@ -320,6 +330,7 @@ internal sealed partial class TursoStorageTransaction
                     QosContext.ReserveResult(8 * (reader.GetInt64(2) + reader.GetInt64(3)));
                     beforeProof = reader.IsDBNull(0) ? null : JsonSerializer.Deserialize(reader.GetString(0), CollectionRulesJsonContext.Default.DocumentOwnerProof);
                     afterProof = reader.IsDBNull(1) ? null : JsonSerializer.Deserialize(reader.GetString(1), CollectionRulesJsonContext.Default.DocumentOwnerProof);
+                    generation = reader.IsDBNull(4) ? null : reader.GetString(4);
                 }
             }
 
@@ -329,6 +340,7 @@ internal sealed partial class TursoStorageTransaction
                 Prefix = prefix,
                 AccessBefore = beforeProof,
                 AccessAfter = afterProof,
+                CollectionGeneration = generation,
             });
         }
 

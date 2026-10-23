@@ -128,7 +128,7 @@ internal sealed partial class TursoDatabaseStore(
         CREATE TABLE _tb_feed (
             seq INTEGER NOT NULL UNIQUE, commit_offset INTEGER NOT NULL, origin INTEGER NOT NULL, stamp INTEGER NOT NULL,
             collection TEXT NOT NULL, id TEXT NOT NULL, deleted INTEGER NOT NULL, prefix BLOB NOT NULL,
-            access_before TEXT, access_after TEXT
+            access_before TEXT, access_after TEXT, collection_generation TEXT
         );
         CREATE INDEX _tb_feed_order ON _tb_feed (origin, stamp);
         CREATE TABLE _tb_feed_sequence (id INTEGER PRIMARY KEY CHECK (id = 1), seq INTEGER NOT NULL);
