@@ -11,7 +11,7 @@
     "preview": "vitepress preview docs",
     "i18n:sync": "node scripts/i18n-sync.mjs",
     "i18n:status": "node scripts/i18n-status.mjs",
-    "test": "node scripts/canonical-data.mjs --check && node scripts/generate-pricing.mjs --check && node scripts/generate-llms.mjs --check && node scripts/i18n-sync.mjs --check && node --test scripts/*.test.mjs && npm ci --prefix examples/terrabase-js --ignore-scripts && node --test examples/terrabase-js/*.test.mjs && npm ci --prefix create-terrascale-app --ignore-scripts && npm test --prefix create-terrascale-app",
+    "test": "node scripts/canonical-data.mjs --check && node scripts/generate-pricing.mjs --check && node scripts/generate-llms.mjs --check && node scripts/i18n-sync.mjs --check && node --test scripts/*.test.mjs && npm ci --prefix examples/terrabase-js --ignore-scripts && node --test examples/terrabase-js/*.test.mjs && npm ci --prefix create-terrascale-app --ignore-scripts && npm test --prefix create-terrascale-app && npm install --prefix examples/browser-todos --ignore-scripts && npm test --prefix examples/browser-todos",
     "deploy:site": "cf deploy --prebuilt"
   },
   "dependencies": {
