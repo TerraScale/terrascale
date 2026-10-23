@@ -142,7 +142,7 @@ export const en = {
   cta: {
     headlineLead: 'Register for the',
     headlineAccent: 'TerraScale Public Alpha.',
-    text: 'Free requires no card. Paid allowances and usage rates remain proposed; usage charges are not yet collected.',
+    text: 'Free requires no card. Paid allowances and usage rates are approved; usage charges are not yet collected.',
     ctaPrimary: 'Register for Public Alpha',
     ctaSecondary: 'Talk to Sales',
     perksAria: 'Plan details',
@@ -209,12 +209,12 @@ export const en = {
       },
       {
         title: 'Allowances then usage',
-        text: 'Paid plans propose included allowances then pay-as-you-go; usage charges are not yet collected',
+        text: 'Paid plans include allowances then pay-as-you-go; usage charges are not yet collected',
       },
     ],
     compare: {
       eyebrow: 'Compare',
-      title: 'Proposed plan allowances.',
+      title: 'Plan allowances.',
       head: 'Allowance',
       projects: 'Projects',
       databases: 'Databases',
@@ -226,9 +226,9 @@ export const en = {
     },
     detailed: {
       eyebrow: 'Detailed Pricing',
-      titleLead: 'Proposed',
+      titleLead: 'Approved',
       titleAccent: 'usage rates',
-      text: 'Paid plans include the proposed allowances, then pay-as-you-go at the rates below. Free has no automatic overages. Usage charges are not yet collected.',
+      text: 'Paid plans include the allowances, then pay-as-you-go at the rates below. Free has no automatic overages. Usage charges are not yet collected.',
       headItem: 'Item',
       headPricing: 'Pricing',
       headDetails: 'Details',
@@ -263,7 +263,7 @@ export const en = {
         },
         {
           q: 'What if I need more operations, storage, or egress?',
-          a: 'Paid plans propose included monthly allowances followed by pay-as-you-go usage. Allowances and rates are pending review; usage charges are not yet collected. Free has no automatic overages.',
+          a: 'Paid plans include monthly allowances followed by pay-as-you-go usage. Allowances and rates are approved; usage charges are not yet collected. Free has no automatic overages.',
         },
         {
           q: 'How are subscriptions billed?',
@@ -289,7 +289,7 @@ export const en = {
       text: 'Start with Free, or confirm paid plan enrollment.',
       cta: 'Register for Public Alpha',
     },
-    status: 'Subscription prices are approved. Allowances and overage rates are proposed and pending review. Usage charges are not yet collected.',
+    status: 'Subscription prices, allowances, and overage rates are approved. Usage charges are not yet collected.',
     cadence: {
       free: 'No card required',
       year: 'Billed {annual}/year only · {monthly}/month equivalent',
@@ -359,7 +359,7 @@ export const en = {
       },
       {
         title: 'Usage-aware billing',
-        text: 'Free requires no card. Paid allowances and usage rates remain proposed; usage charges are not yet collected.',
+        text: 'Free requires no card. Paid allowances and usage rates are approved; usage charges are not yet collected.',
       },
     ],
     pricingPrincipleEyebrow: 'Pricing principle',

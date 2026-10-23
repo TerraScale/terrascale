@@ -8,8 +8,23 @@ import { ptBr } from '../src/lib/i18n/messages/pt-br.ts';
 
 const catalog = JSON.parse(readFileSync(new URL('../static/pricing.json', import.meta.url), 'utf8'));
 const locales = [['en', en], ['es', es], ['pt-BR', ptBr]];
+const usageCaveats = {
+  en: /usage charges are not yet collected/i,
+  es: /aún no se cobran cargos por uso/i,
+  'pt-BR': /cobranças por uso ainda não são coletadas/i,
+};
 
 for (const [locale, messages] of locales) {
+  test(`${locale}: approved pricing preserves the usage collection caveat`, () => {
+    const pricingCopy = JSON.stringify(messages.pricing);
+    assert.doesNotMatch(pricingCopy, /propos|pending review|pendientes de revisión|pendentes de revisão|propõem|proponen/i);
+    assert.match(messages.pricing.status, /approved|aprobados|aprovados/);
+    for (const copy of [messages.pricing.status, messages.pricing.triad[2].text,
+      messages.pricing.detailed.text, messages.pricing.faq.items[1].a, messages.cta.text,
+      messages.about.pillars[2].text]) {
+      assert.match(copy, usageCaveats[locale]);
+    }
+  });
   test(`${locale}: all five plans have coherent prices, cadence, and allowances`, () => {
     assert.deepEqual(Object.keys(messages.pricing.plans), catalog.plans.map((p) => p.id));
     for (const plan of catalog.plans) {

@@ -144,7 +144,7 @@ export const ptBr: Messages = {
   cta: {
     headlineLead: 'Cadastre-se no',
     headlineAccent: 'TerraScale Public Alpha.',
-    text: 'Free não exige cartão. Franquias e tarifas de uso pago continuam propostas; cobranças por uso ainda não são coletadas.',
+    text: 'Free não exige cartão. Franquias e tarifas de uso pago estão aprovadas; cobranças por uso ainda não são coletadas.',
     ctaPrimary: 'Cadastre-se no Public Alpha',
     ctaSecondary: 'Fale com vendas',
     perksAria: 'Detalhes dos planos',
@@ -211,12 +211,12 @@ export const ptBr: Messages = {
       },
       {
         title: 'Franquias e uso adicional',
-        text: 'Planos pagos propõem franquias incluídas e depois pagamento por uso; cobranças por uso ainda não são coletadas',
+        text: 'Planos pagos incluem franquias e depois pagamento por uso; cobranças por uso ainda não são coletadas',
       },
     ],
     compare: {
       eyebrow: 'Comparar',
-      title: 'Franquias propostas por plano.',
+      title: 'Franquias por plano.',
       head: 'Franquia',
       projects: 'Projetos',
       databases: 'Bancos de dados',
@@ -229,8 +229,8 @@ export const ptBr: Messages = {
     detailed: {
       eyebrow: 'Regras de cobrança',
       titleLead: 'Tarifas de uso',
-      titleAccent: 'propostas',
-      text: 'Planos pagos incluem as franquias propostas e depois pagamento por uso às tarifas abaixo. Free não tem excedentes automáticos. Cobranças por uso ainda não são coletadas.',
+      titleAccent: 'aprovadas',
+      text: 'Planos pagos incluem as franquias e depois pagamento por uso às tarifas abaixo. Free não tem excedentes automáticos. Cobranças por uso ainda não são coletadas.',
       headItem: 'Item',
       headPricing: 'Preço',
       headDetails: 'Detalhes',
@@ -265,7 +265,7 @@ export const ptBr: Messages = {
         },
         {
           q: 'E se eu precisar de mais operações, armazenamento ou saída?',
-          a: 'Planos pagos propõem franquias mensais incluídas e depois pagamento por uso. Franquias e tarifas estão pendentes de revisão; cobranças por uso ainda não são coletadas. Free não tem excedentes automáticos.',
+          a: 'Planos pagos incluem franquias mensais e depois pagamento por uso. Franquias e tarifas estão aprovadas; cobranças por uso ainda não são coletadas. Free não tem excedentes automáticos.',
         },
         {
           q: 'Como as assinaturas são cobradas?',
@@ -291,7 +291,7 @@ export const ptBr: Messages = {
       text: 'Comece com Free ou confirme a contratação de um plano pago.',
       cta: 'Cadastre-se no Public Alpha',
     },
-    status: 'Os preços das assinaturas estão aprovados. As franquias e tarifas de excedentes são propostas pendentes de revisão. Cobranças por uso ainda não são coletadas.',
+    status: 'Os preços das assinaturas, as franquias e as tarifas de excedentes estão aprovados. Cobranças por uso ainda não são coletadas.',
     cadence: {
       free: 'Sem cartão de pagamento',
       year: 'Somente {annual}/ano · equivalente a {monthly}/mês',
@@ -361,7 +361,7 @@ export const ptBr: Messages = {
       },
       {
         title: 'Cobrança consciente do uso',
-        text: 'Free não exige cartão. Franquias e tarifas de uso pago continuam propostas; cobranças por uso ainda não são coletadas.',
+        text: 'Free não exige cartão. Franquias e tarifas de uso pago estão aprovadas; cobranças por uso ainda não são coletadas.',
       },
     ],
     pricingPrincipleEyebrow: 'Princípio de preços',

@@ -144,7 +144,7 @@ export const es: Messages = {
   cta: {
     headlineLead: 'Regístrate en',
     headlineAccent: 'TerraScale Public Alpha.',
-    text: 'Free no requiere tarjeta. Las asignaciones y tarifas de uso pagado siguen siendo propuestas; aún no se cobran cargos por uso.',
+    text: 'Free no requiere tarjeta. Las asignaciones y tarifas de uso pagado están aprobadas; aún no se cobran cargos por uso.',
     ctaPrimary: 'Registrarse en Public Alpha',
     ctaSecondary: 'Hablar con ventas',
     perksAria: 'Detalles de planes',
@@ -211,12 +211,12 @@ export const es: Messages = {
       },
       {
         title: 'Asignaciones y uso adicional',
-        text: 'Los planes pagados proponen asignaciones incluidas y luego pago por uso; aún no se cobran cargos por uso',
+        text: 'Los planes pagados incluyen asignaciones y luego pago por uso; aún no se cobran cargos por uso',
       },
     ],
     compare: {
       eyebrow: 'Comparar',
-      title: 'Asignaciones propuestas por plan.',
+      title: 'Asignaciones por plan.',
       head: 'Asignación',
       projects: 'Proyectos',
       databases: 'Bases de datos',
@@ -229,8 +229,8 @@ export const es: Messages = {
     detailed: {
       eyebrow: 'Reglas de facturación',
       titleLead: 'Tarifas de uso',
-      titleAccent: 'propuestas',
-      text: 'Los planes pagados incluyen las asignaciones propuestas y luego pago por uso a estas tarifas. Free no tiene excedentes automáticos. Aún no se cobran cargos por uso.',
+      titleAccent: 'aprobadas',
+      text: 'Los planes pagados incluyen las asignaciones y luego pago por uso a estas tarifas. Free no tiene excedentes automáticos. Aún no se cobran cargos por uso.',
       headItem: 'Item',
       headPricing: 'Precio',
       headDetails: 'Detalles',
@@ -265,7 +265,7 @@ export const es: Messages = {
         },
         {
           q: '¿Qué ocurre si necesito más operaciones, almacenamiento o salida?',
-          a: 'Los planes pagados proponen asignaciones mensuales incluidas y luego pago por uso. Las asignaciones y tarifas están pendientes de revisión; aún no se cobran cargos por uso. Free no tiene excedentes automáticos.',
+          a: 'Los planes pagados incluyen asignaciones mensuales y luego pago por uso. Las asignaciones y tarifas están aprobadas; aún no se cobran cargos por uso. Free no tiene excedentes automáticos.',
         },
         {
           q: '¿Cómo se facturan las suscripciones?',
@@ -291,7 +291,7 @@ export const es: Messages = {
       text: 'Empieza con Free o confirma la inscripción a un plan pagado.',
       cta: 'Registrarse en Public Alpha',
     },
-    status: 'Los precios de suscripción están aprobados. Las asignaciones y tarifas de excedentes son propuestas pendientes de revisión. Aún no se cobran cargos por uso.',
+    status: 'Los precios de suscripción, las asignaciones y las tarifas de excedentes están aprobados. Aún no se cobran cargos por uso.',
     cadence: {
       free: 'Sin tarjeta de pago',
       year: 'Solo {annual}/año · equivalente a {monthly}/mes',
@@ -361,7 +361,7 @@ export const es: Messages = {
       },
       {
         title: 'Facturación consciente del uso',
-        text: 'Free no requiere tarjeta. Las asignaciones y tarifas de uso pagado siguen siendo propuestas; aún no se cobran cargos por uso.',
+        text: 'Free no requiere tarjeta. Las asignaciones y tarifas de uso pagado están aprobadas; aún no se cobran cargos por uso.',
       },
     ],
     pricingPrincipleEyebrow: 'Principio de precios',
