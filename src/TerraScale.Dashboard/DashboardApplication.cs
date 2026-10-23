@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -30,10 +29,6 @@ namespace TerraScale.Dashboard;
 
 public static class DashboardApplication
 {
-    // <version>+<commit>; the image build passes the commit as SourceRevisionId.
-    private static readonly string BuildVersion = typeof(DashboardApplication).Assembly
-        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
-
     // The service override is for isolated test hosts; production has one service graph.
     public static WebApplication Build(string[] args, Action<WebApplicationBuilder>? configureTestHost = null)
     {
@@ -48,6 +43,7 @@ public static class DashboardApplication
         builder.Services.AddSingleton<IDashboardIdentity, DashboardIdentity>();
         builder.Services.AddSingleton<IDashboardState, TerraBaseDashboardState>();
         builder.Services.AddHostedService<DashboardStateInitializer>();
+        builder.Services.AddSingleton<DependencyReadiness>();
         builder.Services.AddSingleton<DashboardSessions>();
         builder.Services.AddAccountFeatures();
         builder.Services.AddAuth();
@@ -156,18 +152,11 @@ public static class DashboardApplication
             }
         });
         app.MapGet("/healthz", () => Results.Text("ok"));
-        app.MapGet("/readyz", async (IDashboardState state, CancellationToken cancellationToken) =>
-        {
-            await state.CheckReadyAsync(cancellationToken);
-            return Results.Text("ok");
-        });
-        // The original probe URLs: ts-status reads the deployed commit from /health/ready's version.
-        app.MapGet("/health/live", () => Results.Json(new { status = "ok", version = BuildVersion }));
-        app.MapGet("/health/ready", async (IDashboardState state, CancellationToken cancellationToken) =>
-        {
-            await state.CheckReadyAsync(cancellationToken);
-            return Results.Json(new { status = "ok", version = BuildVersion });
-        });
+        // ts-orch probes /readyz and ts-status probes /health/ready; both name the failing dependency. Public
+        // bodies never carry the build revision.
+        app.MapGet("/readyz", (DependencyReadiness readiness, CancellationToken cancellationToken) => readiness.CheckAsync(cancellationToken));
+        app.MapGet("/health/ready", (DependencyReadiness readiness, CancellationToken cancellationToken) => readiness.CheckAsync(cancellationToken));
+        app.MapGet("/health/live", (DependencyReadiness readiness) => Results.Json(new { status = "ok", region = readiness.Region }));
         app.MapAuth();
         app.MapAccountFeatures();
         app.MapOnboarding();

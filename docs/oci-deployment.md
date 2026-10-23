@@ -15,8 +15,13 @@ No infrastructure, credentials or billing changes are authorized by this documen
   `X-Forwarded-For`. ASP.NET Core trusts forwarding only from loopback peers.
   Device approval URLs use the resulting public scheme and host.
 - The service owns `dash.terrascale.tech`, one replica, port 8085 and readiness
-  path `/readyz`. This spec supplies no runtime region environment variable;
-  `/health/ready` reports status and source version without region metadata.
+  path `/readyz`. `/readyz` and `/health/ready` answer the same JSON body:
+  `{"status":"ok","region":"gru","dependencies":{"ts-auth":"ok","terrabase":"ok"}}`,
+  or 503 with `"status":"unavailable"` and the failing dependency marked
+  `"unavailable"`. ts-auth is probed at its public `/readyz` (2 s deadline,
+  result shared for 5 s); TerraBase state is reread per probe (2 s deadline).
+  `region` is `TS_REGION` as ts-orch sets it, `null` when unset. Public health
+  bodies never carry the build version or revision.
 
 ## Secrets and state
 

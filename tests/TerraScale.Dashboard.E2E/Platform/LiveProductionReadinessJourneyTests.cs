@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using TUnit.Core;
 using Win32Exception = System.ComponentModel.Win32Exception;
 
@@ -55,19 +56,10 @@ public sealed class LiveProductionReadinessJourneyTests
             using var response = await client.GetAsync("/readyz", HttpCompletionOption.ResponseHeadersRead, readinessDeadline.Token);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK)
                 .Because("The actual production HTTP readiness endpoint must reread every fixed state collection through the official SDK.");
-            // Only the exact public readiness receipt is read. Provider error
-            // pages, machine identity contents and child logs never reach TRX.
-            await using var stream = await response.Content.ReadAsStreamAsync(readinessDeadline.Token);
-            var receipt = new byte[3];
-            var length = 0;
-            while (length < receipt.Length)
-            {
-                var read = await stream.ReadAsync(receipt.AsMemory(length), readinessDeadline.Token);
-                if (read == 0) break;
-                length += read;
-            }
-            await Assert.That(length == 2 && receipt[0] == (byte)'o' && receipt[1] == (byte)'k').IsTrue()
-                .Because("Successful production readiness returns exactly its public ok receipt.");
+            // The public readiness body names only status, region and dependency states; child logs never reach TRX.
+            using var receipt = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(readinessDeadline.Token), cancellationToken: readinessDeadline.Token);
+            await Assert.That(receipt.RootElement.GetProperty("status").GetString()).IsEqualTo("ok")
+                .Because("Successful production readiness returns its public ok receipt.");
             await Assert.That(!process.HasExited).IsTrue()
                 .Because("The genuine production host remains running after its persistent-state readiness reread.");
         }

@@ -25,6 +25,8 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
     public void PauseLists() { Interlocked.Exchange(ref pausedLists, 0); listGate = new(TaskCreationOptions.RunContinuationsAsynchronously); }
     public void ReleaseLists() { listGate?.TrySetResult(); listGate = null; }
     public (Key Key, string Secret)[] Issued() { lock (gate) return keys.Values.ToArray(); }
+    // ts-auth's unauthenticated /readyz; a journey sets false to take ts-auth out of service.
+    public bool Ready { get; set; } = true;
 
     public sealed record Key([property: JsonPropertyName("id")] string Id, [property: JsonPropertyName("name")] string Name,
         [property: JsonPropertyName("organization_id")] string OrganizationId, [property: JsonPropertyName("project_id")] string ProjectId,
@@ -54,6 +56,8 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
         var uri = request.RequestUri!;
         if (uri.Scheme != "https" || uri.Host != "auth.terrascale.tech" || !uri.IsDefaultPort || uri.UserInfo.Length != 0)
             throw new HttpRequestException("Project API keys are issued only by the global ts-auth origin.");
+        if (request.Method == HttpMethod.Get && uri.AbsolutePath == "/readyz")
+            return Ready ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("ok") } : Error(HttpStatusCode.ServiceUnavailable, "not_ready");
         if (request.Headers.Authorization is not { Scheme: "Bearer", Parameter: { } token } || resolveSession(token) is not { } actor)
             return Error(HttpStatusCode.Unauthorized, "invalid_token");
         var match = Route().Match(uri.AbsolutePath);
