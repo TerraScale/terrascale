@@ -594,7 +594,7 @@ public sealed class PeerStreamFaultIsolationTests
         public TenantContext Database { get; } = database;
         public TenantContext Second { get; } = second;
         private readonly Dictionary<TenantContext, Ulid> _pins = [];
-        private bool _nodeFaultExpected;
+        private readonly HashSet<string> _expectedRetentionRefusals = [];
 
         public Ulid Pin(TenantContext database) => _pins[database];
 
@@ -687,10 +687,12 @@ public sealed class PeerStreamFaultIsolationTests
         public async Task FaultAsync(
             TenantContext database, bool nodeFault, CancellationToken cancellationToken, string reason = "a test fault during replication bookkeeping")
         {
-            _nodeFaultExpected |= nodeFault;
             var incarnation = nodeFault ? Ulid.Empty : (await StoreAsync(database, cancellationToken)).Incarnation;
             await Api.Server.Services.GetRequiredService<IReplicaCopyFaults>().RecordAsync(nodeFault ? ChangeGroups.System : database,
                 incarnation, reason, cancellationToken);
+            _ = _expectedRetentionRefusals.Add(nodeFault
+                ? $"storage failed closed: the system database faulted: {reason}"
+                : $"this copy is faulted: {reason}");
         }
 
         public ReplicationDatabaseStatus? Status(TenantContext database) => Api.Server.Services.GetRequiredService<IReplicationStatus>()
@@ -704,10 +706,10 @@ public sealed class PeerStreamFaultIsolationTests
                 await Api.DisposeAsync();
                 await Api.CleanupCompletion;
             }
-            catch (ReplicaCopyFaultedException error) when (_nodeFaultExpected
+            catch (ReplicaCopyFaultedException error) when (_expectedRetentionRefusals.Contains(error.Message)
                 && retention.ExecuteTask?.Exception?.Flatten().InnerExceptions.Contains(error) == true)
             {
-                // Shutdown can cancel retention's retry catch while it observes this fixture's injected node fault.
+                // Shutdown can cancel retention's retry catch while it observes this fixture's injected copy or node fault.
             }
         }
     }
