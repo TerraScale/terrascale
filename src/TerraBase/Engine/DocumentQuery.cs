@@ -118,8 +118,18 @@ public sealed record QueryPosition(IReadOnlyList<object?> Keys, string Id);
 /// <param name="After">Position to continue after; <see langword="null"/> for the first page.</param>
 /// <param name="Limit">Most documents per page.</param>
 /// <param name="MaxBytes">Most JSON bytes per page beyond the first document.</param>
+/// <param name="Near">Vector similarity order instead of <paramref name="Sort"/>; its rows' only key is the distance.</param>
 public sealed record DocumentQuery(
-    string Collection, DocumentFilter? Filter, IReadOnlyList<SortKey> Sort, QueryPosition? After, int Limit, long MaxBytes);
+    string Collection, DocumentFilter? Filter, IReadOnlyList<SortKey> Sort, QueryPosition? After, int Limit, long MaxBytes, NearSort? Near = null);
+
+/// <summary>
+/// Orders documents by ascending distance from <paramref name="Vector"/> to the numeric array at <paramref name="Path"/>,
+/// brute force; documents without an all-numeric array of the same length do not match.
+/// </summary>
+/// <param name="Path">Embedding member.</param>
+/// <param name="Vector">Query vector.</param>
+/// <param name="Euclidean">L2 distance when set, otherwise cosine distance.</param>
+public sealed record NearSort(DocumentPath Path, IReadOnlyList<double> Vector, bool Euclidean);
 
 /// <summary>One matching document with its sort values.</summary>
 /// <param name="Document">The live document.</param>

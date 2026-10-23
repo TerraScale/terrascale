@@ -616,6 +616,24 @@ internal sealed partial class SqliteStorageTransaction(
         using var command = Uncached(query.Collection);
         command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(query.Collection)).Compile(query, observation is not null);
         _queryBudget!.Charge(command.CommandText);
+        if (query.Near is not { } near)
+        {
+            return ReadRows(query, command, cancellationToken);
+        }
+
+        session.Connection.CreateFunction<object?, double>("tb_near", new NearDistance(near).Measure, isDeterministic: false);
+        try
+        {
+            return ReadRows(query, command, cancellationToken);
+        }
+        finally
+        {
+            session.Connection.CreateFunction<object?, double>("tb_near", null);
+        }
+    }
+
+    private QueryPage ReadRows(DocumentQuery query, SqliteCommand command, CancellationToken cancellationToken)
+    {
         var rows = new List<QueryRow>();
         long bytes = 0;
         CountRead("query");
@@ -628,10 +646,17 @@ internal sealed partial class SqliteStorageTransaction(
                 break;
             }
 
+            // Documents without a comparable vector sort last, at +Infinity.
+            if (query.Near is not null && double.IsPositiveInfinity(reader.GetDouble(3)))
+            {
+                break;
+            }
+
             var size = reader.GetInt64(2);
             if (rows.Count == query.Limit || (rows.Count > 0 && bytes + size > query.MaxBytes))
             {
-                return new QueryPage(rows, HasMore: true);
+                // A near query answers its nearest documents in one page.
+                return new QueryPage(rows, HasMore: query.Near is null);
             }
 
             bytes += size;

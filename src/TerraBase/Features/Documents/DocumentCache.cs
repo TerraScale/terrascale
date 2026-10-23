@@ -113,6 +113,9 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
             ["sort"] = new JsonArray([.. query.Sort.Select(key => (JsonNode)new JsonArray(Path(key.Path), JsonValue.Create(key.Descending)))]),
             ["after"] = query.After is { } after ? new JsonArray(
                 JsonValue.Create(after.Id), new JsonArray([.. after.Keys.Select(Scalar)])) : null,
+            ["near"] = query.Near is { } near
+                ? new JsonArray(Path(near.Path), JsonValue.Create(near.Euclidean), new JsonArray([.. near.Vector.Select(value => (JsonNode?)JsonValue.Create(value))]))
+                : null,
             ["limit"] = query.Limit,
             ["maxBytes"] = query.MaxBytes,
             ["countLimit"] = countLimit,
