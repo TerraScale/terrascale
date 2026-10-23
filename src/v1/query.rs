@@ -341,14 +341,72 @@ impl SortKey {
     }
 }
 
+/// Vector distance metric for [`Near`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Metric {
+    #[default]
+    Cosine,
+    L2,
+}
+
+/// A vector nearest-neighbour sort: closest documents first, each result
+/// carrying [`Document::distance`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Near {
+    /// RFC 6901 JSON Pointer to the stored vector.
+    pub path: String,
+    /// 1–4096 finite numbers; not all zeros for cosine.
+    pub vector: Vec<f32>,
+    pub metric: Metric,
+}
+
+impl Near {
+    /// A cosine sort on `path`.
+    #[must_use]
+    pub fn new(path: impl Into<String>, vector: Vec<f32>) -> Self {
+        Self {
+            path: path.into(),
+            vector,
+            metric: Metric::Cosine,
+        }
+    }
+    /// Sets the metric.
+    #[must_use]
+    pub fn metric(mut self, metric: Metric) -> Self {
+        self.metric = metric;
+        self
+    }
+}
+
+fn near_sort<S: Serializer>(near: &Option<Near>, s: S) -> std::result::Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    struct Key<'a> {
+        near: &'a Near,
+    }
+    let mut seq = s.serialize_seq(Some(1))?;
+    seq.serialize_element(&Key {
+        near: near.as_ref().expect("skipped when None"),
+    })?;
+    seq.end()
+}
+
 /// A query-v1 request. Every member is optional.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Query {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<Filter>,
     /// At most 4 keys; results are finally ordered by `$id` ascending.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sort: Vec<SortKey>,
+    /// Vector sort, sent as the only `sort` key. Excludes `sort` and
+    /// `cursor`; `limit` is at most 100 and there is no next page.
+    #[serde(
+        rename = "sort",
+        serialize_with = "near_sort",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub near: Option<Near>,
     /// At most 64 paths, kept with their parent objects.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub project: Vec<String>,
@@ -379,6 +437,12 @@ impl Query {
     #[must_use]
     pub fn sort(mut self, key: SortKey) -> Self {
         self.sort.push(key);
+        self
+    }
+    /// Sorts by vector distance (the only sort key).
+    #[must_use]
+    pub fn near(mut self, near: Near) -> Self {
+        self.near = Some(near);
         self
     }
     /// Sets the projection.
@@ -417,6 +481,20 @@ impl Query {
         }
         if matches!(self.limit, Some(l) if !(1..=1000).contains(&l)) {
             return Err(Error::InvalidInput("limit must be 1-1000".into()));
+        }
+        let Some(n) = &self.near else { return Ok(()) };
+        let bad = |m: &str| Err(Error::InvalidInput(format!("near: {m}")));
+        if !self.sort.is_empty() || self.cursor.is_some() {
+            return bad("near is the only sort key and takes no cursor");
+        }
+        if self.limit.is_some_and(|l| l > 100) {
+            return bad("limit must be 1-100");
+        }
+        if n.vector.is_empty() || n.vector.len() > 4096 || !n.vector.iter().all(|v| v.is_finite()) {
+            return bad("vector needs 1-4096 finite numbers");
+        }
+        if n.metric == Metric::Cosine && n.vector.iter().all(|v| *v == 0.0) {
+            return bad("cosine vector must not be all zeros");
         }
         Ok(())
     }

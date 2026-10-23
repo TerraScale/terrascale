@@ -287,6 +287,8 @@ pub struct Document<T = Box<RawValue>> {
     pub id: DocumentId,
     pub version: Version,
     pub state: DocumentState<T>,
+    /// Vector distance; set only on results of a [`super::Near`] query.
+    pub distance: Option<f64>,
 }
 
 impl<T> Document<T> {
@@ -337,6 +339,8 @@ struct WireDocument<T> {
     document: Option<T>,
     #[serde(default = "none")]
     siblings: Option<Vec<WireSibling<T>>>,
+    #[serde(default)]
+    distance: Option<f64>,
 }
 
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for Document<T> {
@@ -378,6 +382,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Document<T> {
             id: w.id,
             version: w.version,
             state,
+            distance: w.distance,
         })
     }
 }
@@ -573,6 +578,48 @@ impl Collection {
             .send_project(req)
             .await?
             .decode_status(&[StatusCode::OK])
+    }
+
+    /// Expires documents whose member at `path` (an RFC 6901 JSON Pointer,
+    /// 1-16 members) holds a past RFC 3339 UTC time. An hourly sweep deletes
+    /// them, so removal can lag by up to an hour.
+    pub async fn set_ttl(&self, path: &str) -> Result<()> {
+        self.check()?;
+        if !path.starts_with('/') || path.matches('/').count() > 16 {
+            return Err(Error::InvalidInput(
+                "ttl path must be a JSON Pointer with 1-16 members".into(),
+            ));
+        }
+        let req = Req::new(Method::PUT, self.segments(&["ttl"]))
+            .json(&serde_json::json!({ "path": path }))?;
+        self.client()
+            .send_project(req)
+            .await?
+            .check_status(&[StatusCode::OK])
+    }
+
+    /// The TTL path, or `None` when documents do not expire.
+    pub async fn get_ttl(&self) -> Result<Option<String>> {
+        #[derive(Deserialize)]
+        struct Ttl {
+            path: Option<String>,
+        }
+        self.check()?;
+        let ttl: Ttl = self
+            .client()
+            .send_project(Req::new(Method::GET, self.segments(&["ttl"])))
+            .await?
+            .decode_status(&[StatusCode::OK])?;
+        Ok(ttl.path)
+    }
+
+    /// Stops expiring documents.
+    pub async fn clear_ttl(&self) -> Result<()> {
+        self.check()?;
+        self.client()
+            .send_project(Req::new(Method::DELETE, self.segments(&["ttl"])))
+            .await?
+            .check_status(&[StatusCode::OK, StatusCode::NO_CONTENT])
     }
 
     /// The collection name.
