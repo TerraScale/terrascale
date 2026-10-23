@@ -146,5 +146,34 @@ public sealed class HranaStreamTests
         await Assert.That(write.Status).IsEqualTo(HttpStatusCode.Created);
     }
 
+    [Test]
+    public async Task A_stream_belongs_to_one_credential_and_write_right_of_a_user()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await PostAsync(api, CreateT);
+        using var owner = api.Management.As(api.Tenant.User);
+        await api.Management.VerifyProjectBindingAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, owner);
+        string Token(string scope)
+        {
+            return api.Management.Issuer.Mint(api.Tenant.User, token =>
+            {
+                token.Claims["project_id"] = api.Tenant.ProjectId;
+                token.Claims["scope"] = scope;
+            });
+        }
+
+        using var writer = api.Management.WithToken(Token("documents:read documents:write"));
+        using var reader = api.Management.WithToken(Token("documents:read"));
+        var stored = await PostAsync(api, """{"requests":[{"type":"store_sql","sql_id":1,"sql":"INSERT INTO t VALUES (8)"}]}""", client: writer);
+        var stateless = await PostAsync(api, """{"requests":[{"type":"get_autocommit"}]}""", client: writer);
+        var reuse = await PostAsync(api, $$$"""{"baton":"{{{stored.Json.GetProperty("baton").GetString()}}}","requests":[{"type":"execute","stmt":{"sql_id":1}}]}""", client: reader);
+        var fresh = await PostAsync(api, $$$"""{"baton":"{{{stateless.Json.GetProperty("baton").GetString()}}}","requests":[{"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (9)"}},{"type":"close"}]}""", client: reader);
+        var own = await PostAsync(api, $$$"""{"baton":"{{{stored.Json.GetProperty("baton").GetString()}}}","requests":[{"type":"execute","stmt":{"sql_id":1}},{"type":"close"}]}""", client: writer);
+
+        await AssertExpiredAsync(reuse);
+        await Assert.That(fresh.Json.GetProperty("results")[0].GetProperty("error").GetProperty("code").GetString()).IsEqualTo("SQLITE_AUTH");
+        await Assert.That(Response(own.Json, 0).GetProperty("result").GetProperty("affected_row_count").GetInt64()).IsEqualTo(1);
+    }
+
     private static string UseStored(string baton) => $$$"""{"baton":"{{{baton}}}","requests":[{"type":"execute","stmt":{"sql_id":1}},{"type":"close"}]}""";
 }

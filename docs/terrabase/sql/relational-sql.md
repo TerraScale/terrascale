@@ -49,15 +49,7 @@ Only plain and `"…"` names and only `'…'` string literals are accepted (SQ1-
 `N'a''b'` back without escaping, which made SQLite read other text than the validator saw. Literals in expressions are
 numbers, strings, NULL, booleans and parameters. The rendered text must parse back to itself, and the engine refuses a
 program whose text holds more than one statement (Turso runs every statement of a command). `printf`, `format` and
-`replace` are not in the allow-list: nested calls build unbounded strings. Every `a || b` is rendered as
-`tb_sql_concat(a, b)`, SQLite's concatenation and text conversion with results bounded to 1 MiB (`SQLITE_TOOBIG`
-past it; SQ1-e8); `concat` and `concat_ws` are refused. `group_concat` stays: its growth is bounded by stored data and
-the row budget.
-
-Reads apply affinity like SQLite (DECISION, SQ1-e10): a table column reads through its CTE as an expression without
-affinity, and `CAST` in the CTE would corrupt non-numeric text, so the constant side of a comparison (`=`, `<>`, `<`,
-`<=`, `>`, `>=`, `IN (…)`) with a known column takes the column's affinity: literals are rewritten, parameters converted
-when bound. Columns are resolved by name across the statement's tables.
+`replace` are not in the allow-list: nested calls build unbounded strings.
 
 Column types follow SQLite affinity on write (`INTEGER`, `REAL`, `TEXT`, `NUMERIC`, none). `NOT NULL`, literal
 `DEFAULT`, `PRIMARY KEY` and `UNIQUE` (through the unique-constraint service) are enforced; `CHECK` and `FOREIGN KEY`
@@ -123,11 +115,7 @@ WITH "t" AS (SELECT json_extract(doc, '$."c1"') AS "c1", … FROM main."t" WHERE
   `constraint`, `conflict`, `auth`, `too_big`, `interrupt`); `ISqlService.ListTablesAsync` lists tables with their
   columns for front ends (PG1 catalog queries).
 - `ISqlSession.ExecuteScriptAsync` (added for Hrana `sequence`) splits text with the same parser and runs each
-  statement without arguments; `BEGIN READONLY` is not available inside a script. The overload with `maxStatements`
-  refuses a longer script with `SQLITE_TOOBIG` before running anything, and a script's statements share one 5 s
-  deadline, autocommit included (SQ1-e9).
-- The replay log holds one memory reservation per session (IMemoryBudget), replaced by a larger one as the log grows
-  and released at commit, rollback or disposal; `SQLITE_NOMEM` when the budget is exhausted (SQ1-e9).
+  statement without arguments; `BEGIN READONLY` is not available inside a script.
 - `…/sql/execute` wraps its statements in `BEGIN` … `COMMIT` (`BEGIN READONLY` when none writes, so reads never take the
   writer) and refuses transaction statements in the body.
 - Sessions live in memory on the node that opened them, bounded (count and bytes); a restart or an expired baton
@@ -163,8 +151,8 @@ for @libsql/client, which resolves `v2/pipeline` relative to it). `authToken` is
   `describe`, `store_sql`, `close_sql`, `close`, `get_autocommit`.
 - SQL errors are `{"type":"error","error":{"message","code"}}` results inside a 200 response; `code` is always set.
 - Batons are random 128-bit strings, rotated on every response, bound to the API key and database.
-- Wire traps: `last_insert_rowid` always present (`null` or a decimal string); integers as strings; blob base64 without
-  padding out, both forms in; no `Content-Type` requirement on requests; relaxed JSON escaping in responses.
+- Wire traps: `last_insert_rowid` always present (`null` or a decimal string); integers as strings; blob values are refused
+  (an argument fails with `SQLITE_ERROR` "blob values are not supported"; results never hold blobs); no `Content-Type` requirement on requests; relaxed JSON escaping in responses.
 
 ### Scopes and limits
 

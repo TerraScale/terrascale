@@ -55,8 +55,8 @@ internal static class HranaRoute
         var database = await DocumentRoute.CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false) switch
         {
             TenantContext tenant => tenant,
-            Validation error => (object)ErrorResponse.From(error),
-            NotFound error => ErrorResponse.From(error),
+            Validation error => (object)Refuse(StatusCodes.Status400BadRequest, error.Code, error.Message),
+            NotFound error => Refuse(StatusCodes.Status404NotFound, error.Code, error.Message ?? "not found"),
             Unavailable error => ErrorResponse.From(error),
         };
         if (database is not TenantContext found)
@@ -66,9 +66,9 @@ internal static class HranaRoute
 
         return await DocumentRoute.CheckBodyAsync(context, MaxRequestBytes, "invalid_request", cancellationToken).ConfigureAwait(false) switch
         {
-            Validation error => (null, null, ErrorResponse.From(error)),
-            PayloadTooLarge error => (null, null, ErrorResponse.From(error)),
-            UnsupportedMediaType error => (null, null, ErrorResponse.From(error)),
+            Validation error => (null, null, Refuse(StatusCodes.Status400BadRequest, error.Code, error.Message)),
+            PayloadTooLarge error => (null, null, Refuse(StatusCodes.Status413PayloadTooLarge, error.Code, error.Message)),
+            UnsupportedMediaType error => (null, null, Refuse(StatusCodes.Status415UnsupportedMediaType, error.Code, error.Message)),
             byte[] body => Parse<T>(body) is { } parsed
                 ? (found, parsed, null)
                 : (null, null, Refuse(StatusCodes.Status400BadRequest, "PROTOCOL_ERROR", "the body is not a valid Hrana request")),
@@ -95,7 +95,9 @@ internal static class HranaRoute
     /// </summary>
     public static (HranaStream? Stream, IResult? Refusal) Acquire(HttpContext context, IHranaStreams streams, TenantContext database, string? baton)
     {
-        var owner = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
+        // A stream belongs to one credential with one write right: the same user's read-only token cannot reuse a writer's stream.
+        var canWrite = context.User.HasClaim(ApiKeyAuthenticationHandler.ScopeClaim, ApiKeyScopes.DocumentsWrite);
+        var owner = $"{context.User.Identity?.AuthenticationType}\n{context.User.FindFirstValue(ClaimTypes.NameIdentifier)}\n{(canWrite ? "write" : "read")}";
         if (baton is not null)
         {
             if (streams.Take(baton, owner, database) is { } taken)
@@ -109,7 +111,6 @@ internal static class HranaRoute
             }
         }
 
-        var canWrite = context.User.HasClaim(ApiKeyAuthenticationHandler.ScopeClaim, ApiKeyScopes.DocumentsWrite);
         return streams.Open(database, owner, canWrite) switch
         {
             HranaStream opened => (opened, null),

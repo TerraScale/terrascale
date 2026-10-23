@@ -29,7 +29,8 @@ internal sealed class HranaCursorEndpoint(ITenantDirectory tenants, IHranaStream
         Metadata(new RequestBodyMetadata(typeof(HranaCursorRequest), HranaRoute.JsonMediaType));
         Produces<HranaCursorEntry>(StatusCodes.Status200OK, MediaType);
         Produces<HranaErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status413PayloadTooLarge);
+        Produces<HranaErrorBody>(StatusCodes.Status404NotFound);
+        Produces<HranaErrorBody>(StatusCodes.Status413PayloadTooLarge);
         Produces<HranaErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(ListenerMetadata.Client);

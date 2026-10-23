@@ -96,8 +96,8 @@ public sealed class HranaPipelineTests
         await Assert.That(unauthenticated.Status).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That((version.Status, Code(version))).IsEqualTo((HttpStatusCode.NotFound, "NOT_FOUND"));
         await Assert.That((malformed.Status, Code(malformed))).IsEqualTo((HttpStatusCode.BadRequest, "PROTOCOL_ERROR"));
-        await Assert.That(large.Status).IsEqualTo(HttpStatusCode.RequestEntityTooLarge);
-        await Assert.That(unknownDatabase.Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That((large.Status, Code(large))).IsEqualTo((HttpStatusCode.RequestEntityTooLarge, "payload_too_large"));
+        await Assert.That((unknownDatabase.Status, Code(unknownDatabase))).IsEqualTo((HttpStatusCode.NotFound, "unknown_database"));
         await Assert.That((tooMany.Status, Code(tooMany))).IsEqualTo((HttpStatusCode.BadRequest, "PROTOCOL_ERROR"));
         await Assert.That(tooMany.Json.GetProperty("message").GetString()).Contains("256 statements");
         await Assert.That(Response(stillEmpty.Json, 0).GetProperty("result").GetProperty("rows").GetArrayLength()).IsEqualTo(0);

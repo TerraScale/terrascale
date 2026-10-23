@@ -25,7 +25,8 @@ internal sealed class HranaPipelineEndpoint(ITenantDirectory tenants, IHranaStre
         Metadata(new RequestBodyMetadata(typeof(HranaPipelineRequest), HranaRoute.JsonMediaType));
         Produces<HranaPipelineResponse>();
         Produces<HranaErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status413PayloadTooLarge);
+        Produces<HranaErrorBody>(StatusCodes.Status404NotFound);
+        Produces<HranaErrorBody>(StatusCodes.Status413PayloadTooLarge);
         Produces<HranaErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(ListenerMetadata.Client);
