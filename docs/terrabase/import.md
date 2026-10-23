@@ -108,8 +108,8 @@ metered as document writes, and import calls, upload bytes included, as requests
 Replays: a job already attached to the database answers `200` with that job only when the **whole request** is
 identical (format, size, SHA-256 and normalized options; the project and database are the route). Anything else
 answers `409 import_exists`. A database with collections answers `409 destination_not_empty` (a database holding only
-an empty `terrascale-import` collection, left by a create whose first write failed, counts as empty). A database with
-replica regions answers `409 destination_replicated`: add replicas after the import completes.
+an empty `terrascale-import` collection, left by a create whose first write failed, counts as empty). Replica regions
+are allowed (every database has them, decision 0013): the home region runs the import and replicates its writes.
 
 `uploadImportSource`: one part per request, `Content-Type: application/octet-stream`, 1 byte to 4 MiB,
 `offset` = bytes already received. A part at `offset` = `source.receivedBytes` is appended. A part that ends at or
@@ -381,7 +381,6 @@ HTTP (`ErrorBody`):
 | 404 | `unknown_import` | the database has no import |
 | 409 | `destination_not_empty` | `createImport` on a database with collections |
 | 409 | `import_exists` | `createImport` differs from the attached import |
-| 409 | `destination_replicated` | `createImport` on a database with replica regions |
 | 409 | `invalid_state` | transition not allowed from the current state |
 | 409 | `offset_mismatch` | upload part not at `receivedBytes` |
 | 409 | `source_required` | resume needs the source uploaded again |
