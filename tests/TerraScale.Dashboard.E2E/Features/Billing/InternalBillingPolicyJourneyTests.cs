@@ -111,7 +111,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             "The report-only cap alert is visible through the native owner inbox");
         using var card = await browser.GetAsync("/organization?tab=billing");
         var html = await card.Content.ReadAsStringAsync();
-        await CheckAsync(card.StatusCode == HttpStatusCode.OK && new[] { "US$ 50.00", "US$ 74.00", "US$ 0.40", "US$ 124.40", "US$ 1.00 per million", "US$ 0.20 per GiB-month", "$120.00", CapAlert }
+        await CheckAsync(card.StatusCode == HttpStatusCode.OK && new[] { "US$ 20.00", "US$ 104.00", "US$ 0.40", "US$ 124.40", "US$ 1.00 per million", "US$ 0.20 per GiB-month", "$120.00", CapAlert }
             .All(value => html.Contains(value, StringComparison.Ordinal)),
             "The native card retains original US$ prices, overage rates and alert text while the organization cap label keeps its source dollar format");
         await scenario.RestartAsync();
@@ -385,16 +385,16 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         var setup = await PrepareAsync(browser, producer);
         await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         var initial = Organization(await ObserveAsync(producer), setup.Organization);
-        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization, "20000", "200")), setup.Organization);
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization, "30000", "200")), setup.Organization);
         var changed = Organization(await ObserveAsync(producer), setup.Organization);
         await CheckAsync(initial.GetProperty("PlanId").GetString() == changed.GetProperty("PlanId").GetString() &&
             initial.GetProperty("InternalBilling").GetProperty("ConfigurationId").GetString() != changed.GetProperty("InternalBilling").GetProperty("ConfigurationId").GetString(),
             "A real reconfiguration copies the new rates under a new proposal while preserving the one hidden plan identity");
         var result = await RunAsync(scenario, Report(setup.Organization));
         var bill = Json(result);
-        await CheckAsync(result.Exit == 0 && bill.GetProperty("available").GetBoolean() && bill.GetProperty("writeCents").GetInt64() == 14800 &&
-            bill.GetProperty("storageCents").GetInt64() == 40 && bill.GetProperty("totalCents").GetInt64() == 19840 &&
-            bill.GetProperty("spendCapCents").GetInt64() == 20000 && !bill.GetProperty("capReached").GetBoolean(),
+        await CheckAsync(result.Exit == 0 && bill.GetProperty("available").GetBoolean() && bill.GetProperty("writeCents").GetInt64() == 20800 &&
+            bill.GetProperty("storageCents").GetInt64() == 40 && bill.GetProperty("totalCents").GetInt64() == 22840 &&
+            bill.GetProperty("spendCapCents").GetInt64() == 30000 && !bill.GetProperty("capReached").GetBoolean(),
             "The public report uses the current copied contract and exact measured overages instead of stale configuration rates");
         await CheckAsync(Alerts(await ObserveAsync(producer), setup.Organization).Length == 0, "A measured estimate below the current cap creates no cap notification");
         using var billing = await browser.GetAsync("/organization?tab=billing");
@@ -971,9 +971,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await CheckAsync(result.Exit == 0 && result.Error == "" && bill.GetProperty("available").GetBoolean() && bill.GetProperty("reportOnly").GetBoolean() &&
             bill.GetProperty("periodStart").GetDateTimeOffset() == month &&
             bill.GetProperty("periodEnd").GetDateTimeOffset().Offset == TimeSpan.Zero &&
-            bill.GetProperty("reads").GetInt64() == 123_456 && bill.GetProperty("writes").GetInt64() == 174_000_000 &&
-            bill.GetProperty("logicalBytes").GetInt64() == 25_000_000_000L + (2L << 30) &&
-            bill.GetProperty("baseCents").GetInt64() == 5000 && bill.GetProperty("writeCents").GetInt64() == 7400 &&
+            bill.GetProperty("reads").GetInt64() == 123_456 && bill.GetProperty("writes").GetInt64() == 106_000_000 &&
+            bill.GetProperty("logicalBytes").GetInt64() == 10_000_000_000L + (2L << 30) &&
+            bill.GetProperty("baseCents").GetInt64() == 2000 && bill.GetProperty("writeCents").GetInt64() == 10400 &&
             bill.GetProperty("storageCents").GetInt64() == 40 && bill.GetProperty("totalCents").GetInt64() == 12440 &&
             bill.GetProperty("spendCapCents").GetInt64() == 12000 && bill.GetProperty("capReached").GetBoolean() && bill.GetProperty("alert").GetString() == CapAlert,
             "The actual CLI reports exact measured UTC-month counters and copied-plan overage charges without creating a Stripe invoice");
@@ -982,7 +982,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
     private static async Task UnknownMeteringAsync(JsonElement bill) => await CheckAsync(
         bill.GetProperty("periodStart").GetDateTimeOffset() == default && bill.GetProperty("periodEnd").GetDateTimeOffset() == default &&
         bill.GetProperty("reads").GetInt64() == 0 && bill.GetProperty("writes").GetInt64() == 0 && bill.GetProperty("logicalBytes").GetInt64() == 0 &&
-        bill.GetProperty("baseCents").GetInt64() == 5000 && bill.GetProperty("writeCents").GetInt64() == 0 &&
+        bill.GetProperty("baseCents").GetInt64() == 2000 && bill.GetProperty("writeCents").GetInt64() == 0 &&
         bill.GetProperty("storageCents").GetInt64() == 0 && bill.GetProperty("totalCents").GetInt64() == 0 &&
         !bill.TryGetProperty("alert", out _),
         "An incomplete or overflowing metering aggregate publishes no invented period, partial counters, variable charges or alert; the copied base contract remains known");
@@ -991,8 +991,8 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         !bill.GetProperty("available").GetBoolean() && bill.GetProperty("reportOnly").GetBoolean() && !bill.GetProperty("capReached").GetBoolean() &&
         bill.GetProperty("error").GetString() == InvalidAmount && bill.GetProperty("periodStart").GetDateTimeOffset() == month &&
         bill.GetProperty("periodEnd").GetDateTimeOffset() > bill.GetProperty("periodStart").GetDateTimeOffset() &&
-        bill.GetProperty("reads").GetInt64() == 123456 && bill.GetProperty("writes").GetInt64() == 174000000 &&
-        bill.GetProperty("logicalBytes").GetInt64() == 25_000_000_000L + (2L << 30) && bill.GetProperty("baseCents").GetInt64() == 5000 &&
+        bill.GetProperty("reads").GetInt64() == 123456 && bill.GetProperty("writes").GetInt64() == 106000000 &&
+        bill.GetProperty("logicalBytes").GetInt64() == 10_000_000_000L + (2L << 30) && bill.GetProperty("baseCents").GetInt64() == 2000 &&
         bill.GetProperty("writeCents").GetInt64() == 0 && bill.GetProperty("storageCents").GetInt64() == 0 && bill.GetProperty("totalCents").GetInt64() == 0 &&
         bill.GetProperty("writeCentsPerMillion").GetInt64() == long.MaxValue && !bill.TryGetProperty("alert", out _),
         "Pricing overflow preserves the actual coherent UTC-month metering and valid configured rate without publishing an amount or cap alert");
@@ -1002,9 +1002,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         var policy = organization.GetProperty("InternalBilling");
         await CheckAsync(policy.ValueKind == JsonValueKind.Object && organization.GetProperty("PlanId").GetString() == policy.GetProperty("PlanId").GetString() &&
             policy.GetProperty("PlanId").GetString() != "7CNW2H87JE68ATZX224CV2G625" &&
-            policy.GetProperty("Plan").GetProperty("Key").GetString() == "internal" && policy.GetProperty("Plan").GetProperty("PriceCents").GetInt64() == 5000 &&
-            policy.GetProperty("Allowances").GetProperty("MonthlyOperations").GetInt64() == 100_000_000 &&
-            policy.GetProperty("Allowances").GetProperty("StorageBytes").GetInt64() == 25_000_000_000L &&
+            policy.GetProperty("Plan").GetProperty("Key").GetString() == "internal" && policy.GetProperty("Plan").GetProperty("PriceCents").GetInt64() == 2000 &&
+            policy.GetProperty("Allowances").GetProperty("MonthlyOperations").GetInt64() == 2_000_000 &&
+            policy.GetProperty("Allowances").GetProperty("StorageBytes").GetInt64() == 10_000_000_000L &&
             organization.GetProperty("BillingStatus").GetString() == "active" && organization.GetProperty("PaidExcess").GetBoolean() &&
             organization.GetProperty("Projects").EnumerateObject().All(row => row.Value.GetProperty("Status").GetString() == "active"),
             "The running command persists the copied paid contract under its distinct hidden identity while services remain active");

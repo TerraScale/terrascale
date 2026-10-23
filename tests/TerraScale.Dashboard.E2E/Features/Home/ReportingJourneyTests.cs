@@ -592,7 +592,7 @@ file sealed class BrowserFlow(IBrowser browser, Uri origin, string output, float
         await page.GetByRole(AriaRole.Heading, new() { Name = "Review your account information", Exact = true }).WaitForAsync();
         await page.Locator("#displayName").FillAsync(user.Name);
         await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Save and continue");
-        await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue on Hobby");
+        await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue on Free");
         await page.Locator("#projectName").FillAsync(user.Name + " Project");
         await page.Locator("#region").SelectOptionAsync("GRU");
         await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Create project and open Dashboard");

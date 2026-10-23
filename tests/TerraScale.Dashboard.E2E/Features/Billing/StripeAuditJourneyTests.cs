@@ -69,9 +69,9 @@ public sealed class StripeAuditJourneyTests(DashboardRootFixture fixture)
             "Both real SDK subscription pages contribute to the inventory");
         Protocol(scenario, 8);
         Check(scenario.Requests.Count(request => request.Target.StartsWith("/v1/prices?", StringComparison.Ordinal)) == 2 &&
-            scenario.Requests.Count(request => request.Target == "/v1/products/prod_pro_annual") == 1 &&
+            scenario.Requests.Count(request => request.Target == "/v1/products/prod_team_monthly") == 1 &&
             scenario.Requests.Count(request => request.Target.StartsWith("/v1/subscriptions?", StringComparison.Ordinal)) == 2,
-            "The SDK discovers and paginates four published plan prices, resolves an unexpanded product, and follows subscription pagination");
+            "The SDK discovers and paginates three published plan prices, resolves an unexpanded product, and follows subscription pagination");
     }
 
     [Test]
@@ -100,8 +100,8 @@ public sealed class StripeAuditJourneyTests(DashboardRootFixture fixture)
     }
 
     [Test]
-    [Arguments("price-mode", "starter_monthly")]
-    [Arguments("product-mode", "starter_monthly")]
+    [Arguments("price-mode", "starter_annual")]
+    [Arguments("product-mode", "starter_annual")]
     [Arguments("webhook-mode", "webhook_endpoint")]
     [Arguments("portal-mode", "portal_payment_and_invoices")]
     [Arguments("event-mode", "invoice_event_mode")]
@@ -128,10 +128,10 @@ public sealed class StripeAuditJourneyTests(DashboardRootFixture fixture)
     }
 
     [Test]
-    [Arguments("missing-price", "starter_monthly")]
+    [Arguments("missing-price", "starter_annual")]
     [Arguments("duplicate-price", "pro_monthly")]
-    [Arguments("inactive-price", "starter_monthly")]
-    [Arguments("inactive-product", "starter_monthly")]
+    [Arguments("inactive-price", "starter_annual")]
+    [Arguments("inactive-product", "starter_annual")]
     public async Task ActualPublishedPriceRowsRejectMissingDuplicateOrInactivePlanFacts(string fault, string failedCheck)
     {
         await using var scenario = new StripeAuditScenario(fixture.Root, fault: fault);
@@ -143,18 +143,18 @@ public sealed class StripeAuditJourneyTests(DashboardRootFixture fixture)
             !report.RootElement.GetProperty("checks").GetProperty(failedCheck).GetBoolean(),
             "The audit rejects the plan price whose provider facts are missing, ambiguous, or inactive");
         var facts = scenario.PriceFacts;
-        Check(facts.Count == (fault == "missing-price" ? 3 : fault == "duplicate-price" ? 5 : 4),
+        Check(facts.Count == (fault == "missing-price" ? 2 : fault == "duplicate-price" ? 4 : 3),
             "The TLS producer returned the intended actual SDK price records");
         if (fault == "missing-price")
-            Check(facts.All(fact => !fact.StartsWith("price_starter_monthly|", StringComparison.Ordinal)), "The paid starter monthly price is actually absent from provider responses");
+            Check(facts.All(fact => !fact.StartsWith("price_starter_annual|", StringComparison.Ordinal)), "The paid starter annual price is actually absent from provider responses");
         if (fault == "duplicate-price")
-            Check(facts.Count(fact => fact.Contains("|pro|monthly|5000|True|True", StringComparison.Ordinal)) == 2,
+            Check(facts.Count(fact => fact.Contains("|pro|monthly|2000|True|True", StringComparison.Ordinal)) == 2,
                 "Two independently identified active provider prices match the same paid plan and interval");
         if (fault == "inactive-price")
-            Check(facts.Any(fact => fact.StartsWith("price_starter_monthly|", StringComparison.Ordinal) && fact.EndsWith("|False|True", StringComparison.Ordinal)),
+            Check(facts.Any(fact => fact.StartsWith("price_starter_annual|", StringComparison.Ordinal) && fact.EndsWith("|False|True", StringComparison.Ordinal)),
                 "The provider response contains the matching price marked inactive");
         if (fault == "inactive-product")
-            Check(facts.Any(fact => fact.StartsWith("price_starter_monthly|", StringComparison.Ordinal) && fact.EndsWith("|True|False", StringComparison.Ordinal)),
+            Check(facts.Any(fact => fact.StartsWith("price_starter_annual|", StringComparison.Ordinal) && fact.EndsWith("|True|False", StringComparison.Ordinal)),
                 "The provider response contains the matching active price with an inactive product");
         Protocol(scenario, fault == "missing-price" ? 7 : 8);
     }

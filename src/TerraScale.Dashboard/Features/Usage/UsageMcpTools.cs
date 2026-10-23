@@ -121,8 +121,9 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
         var scopeBytes = scope?.LogicalBytes ?? stored.Scope(selection)?.LogicalBytes;
         return new(context.Organization!.Id, context.Project?.Id ?? "", databaseId, plan?.Name ?? "No billing plan",
             [Allowance("Operation units this month", plan?.OperationsAllowance, limits.MonthlyOperations, null),
-             Allowance("Storage across regions", plan?.StorageAllowance, limits.StorageBytes, null)], allowanceError,
-            "Published allowances count 4 KiB operation units and storage across selected regions. These document counters do not measure allowance utilization.",
+             Allowance("Storage across regions", plan?.StorageAllowance, limits.StorageBytes, null),
+             Allowance("Client egress this month", plan?.EgressAllowance, limits.MonthlyEgressBytes, null)], allowanceError,
+            "Published allowances count 4 KiB operation units and storage across selected regions, and client egress. These document counters do not measure allowance utilization.",
             projects, databases,
             new(scope is not null, source, error, range, scope?.Period.Reads, scope?.Period.Writes, scopeBytes, scopeBytes is not null, scope?.Series ?? []),
             context.Project?.Databases.Count ?? 0,

@@ -182,13 +182,12 @@ public sealed class StripeAuditScenario : IAsyncDisposable
                 throw new InvalidDataException("Price discovery must use the official bounded recurring-price list with product expansion.");
             var all = new List<(string Plan, string Interval, int Amount, string Id, bool Active, bool ProductActive)>
             {
-                ("starter", "monthly", 500, "price_starter_monthly", true, true),
-                ("starter", "annual", 5000, "price_starter_annual", true, true),
-                ("pro", "monthly", 5000, "price_pro_monthly", true, true),
-                ("pro", "annual", 50000, "price_pro_annual", true, true)
+                ("starter", "annual", 3000, "price_starter_annual", true, true),
+                ("pro", "monthly", 2000, "price_pro_monthly", true, true),
+                ("team", "monthly", 5000, "price_team_monthly", true, true)
             };
-            if (fault == "missing-price") all.RemoveAll(row => row.Id == "price_starter_monthly");
-            if (fault == "duplicate-price") all.Add(("pro", "monthly", 5000, "price_pro_monthly_duplicate", true, true));
+            if (fault == "missing-price") all.RemoveAll(row => row.Id == "price_starter_annual");
+            if (fault == "duplicate-price") all.Add(("pro", "monthly", 2000, "price_pro_monthly_duplicate", true, true));
             if (fault == "inactive-price")
             {
                 var row = all[0]; all[0] = (row.Plan, row.Interval, row.Amount, row.Id, false, row.ProductActive);
@@ -200,9 +199,9 @@ public sealed class StripeAuditScenario : IAsyncDisposable
             var after = query.GetValueOrDefault("starting_after").ToString();
             var start = after.Length == 0 ? 0 : all.FindIndex(value => value.Id == after) + 1;
             if (after.Length > 0 && start == 0) throw new InvalidDataException("Unknown price cursor.");
-            var rows = all.Skip(start).Take(fault == "duplicate-price" && start > 0 ? 4 : 3).ToArray();
+            var rows = all.Skip(start).Take(2).ToArray();
             foreach (var row in rows) priceFacts.Enqueue($"{row.Id}|{row.Plan}|{row.Interval}|{row.Amount}|{row.Active}|{row.ProductActive}");
-            return JsonSerializer.Serialize(new { @object = "list", url = "/v1/prices", has_more = start + rows.Length < all.Count, data = rows.Select(row => Price(row.Plan, row.Interval, row.Amount, row.Interval == "annual" && row.Plan == "pro", row.Active, row.Id, row.ProductActive)) });
+            return JsonSerializer.Serialize(new { @object = "list", url = "/v1/prices", has_more = start + rows.Length < all.Count, data = rows.Select(row => Price(row.Plan, row.Interval, row.Amount, row.Plan == "team", row.Active, row.Id, row.ProductActive)) });
         }
         if (path.StartsWith("/v1/products/", StringComparison.Ordinal) && target.Query.Length == 0)
         {
@@ -260,12 +259,12 @@ public sealed class StripeAuditScenario : IAsyncDisposable
         id,
         @object = "price",
         active,
-        livemode = fault == "price-mode" && plan == "starter" && interval == "monthly" ? mode != "live" : mode == "live",
+        livemode = fault == "price-mode" && plan == "starter" && interval == "annual" ? mode != "live" : mode == "live",
         currency = "usd",
         unit_amount = amount,
         type = "recurring",
         recurring = new { interval = interval == "monthly" ? "month" : "year", interval_count = 1 },
-        product = unexpanded ? "prod_pro_annual" : Product(plan, fault == "product-mode" ? mode != "live" : mode == "live", active: productActive)
+        product = unexpanded ? "prod_team_monthly" : Product(plan, fault == "product-mode" ? mode != "live" : mode == "live", active: productActive)
     };
     private static object Product(string plan, bool live, string? id = null, bool active = true) => new { id = id ?? "prod_" + plan, @object = "product", active, livemode = live, name = plan, metadata = new { plan } };
     private object Subscription(string id, string status, string customer, bool live) => new { id, @object = "subscription", status, customer, livemode = fault == "subscription-mode" ? !live : live };

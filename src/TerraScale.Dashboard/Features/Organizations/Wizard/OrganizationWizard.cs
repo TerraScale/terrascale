@@ -21,7 +21,7 @@ public static class OrganizationWizard
                 {
                     var org = await accounts.CreateBusinessAsync(context.Session, form["name"].ToString(), http.RequestAborted);
                     context = await accounts.GetContextAsync(context.Session, http.RequestAborted, organizationId: org.Id);
-                    return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?newOrganization=payment&organizationID=" + Uri.EscapeDataString(org.Id), replace: true));
+                    return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?newOrganization=payment&organizationId=" + Uri.EscapeDataString(org.Id), replace: true));
                 }
                 context = await SelectAsync(http, context, accounts, form["organizationID"].ToString());
                 if (context.Organization?.Kind != "business" || context.Role != "owner") throw new AccountAccessException("Business organization ownership is required.");
@@ -29,8 +29,8 @@ public static class OrganizationWizard
                 {
                     var plan = PlanCatalog.For(form["plan"].ToString());
                     if (plan.PriceCents <= 0) throw new OnboardingValidationException("Choose a paid plan for this business organization.");
-                    var returnPath = WorkspaceUrl.For(context, "/organization?newOrganization=project&organizationID=" + Uri.EscapeDataString(context.Organization.Id), replace: true);
-                    return HttpRedirects.SeeOther(await payments.StartCheckoutAsync(context, plan.Key, form["interval"].ToString(), returnPath, http.RequestAborted));
+                    var returnPath = WorkspaceUrl.For(context, "/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(context.Organization.Id), replace: true);
+                    return HttpRedirects.SeeOther(await payments.StartCheckoutAsync(context, plan.Key, form["interval"].Count == 0 ? plan.CheckoutInterval : form["interval"].ToString(), returnPath, http.RequestAborted));
                 }
                 if (form["step"] != "project") throw new AccountAccessException("Choose an organization setup step.", 400);
                 if (!context.Organization.CanProvision(context.UserId)) throw new AccountAccessException("Confirm this organization's billing before creating its first project.", 409);
@@ -49,7 +49,7 @@ public static class OrganizationWizard
     public static async Task<AccountContext> PrepareAsync(HttpContext http, AccountContext context, AccountService accounts)
     {
         if (http.Request.Query["newOrganization"] is not { Count: > 0 }) return context;
-        context = await SelectAsync(http, context, accounts, http.Request.Query["organizationID"].ToString());
+        context = await SelectAsync(http, context, accounts, http.Request.Query["organizationId"].ToString());
         if (http.Request.Query["payment"] == "success" && context.Role == "owner")
         {
             await http.RequestServices.GetRequiredService<StripeBilling>().ConfirmAsync(context, http.RequestAborted);

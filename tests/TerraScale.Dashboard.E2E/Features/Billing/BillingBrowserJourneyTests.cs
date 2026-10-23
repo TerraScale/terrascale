@@ -40,7 +40,7 @@ public sealed class BillingBrowserJourneyTests(DashboardE2EFixture fixture)
 
         await NavigateAsync("/organization?tab=billing");
         await Assert.That(await page.Locator("#billing-summary").InnerTextAsync()).Contains("Starter");
-        await Assert.That(await page.Locator("#billing-summary").InnerTextAsync()).Contains("Trialing");
+        await Assert.That(await page.Locator("#billing-summary").InnerTextAsync()).Contains("Active");
         await Assert.That(await page.Locator(".ts-plan-current").GetByRole(AriaRole.Button, new() { Name = "Current plan", Exact = true }).IsDisabledAsync()).IsTrue();
         await Assert.That(await page.Locator("#recent-invoices tbody tr").CountAsync()).IsEqualTo(10);
         await Assert.That(await page.Locator("#recent-invoices tbody tr").First.Locator("a").CountAsync()).IsEqualTo(0);

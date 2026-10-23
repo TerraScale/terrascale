@@ -30,12 +30,11 @@ public static class BillingEndpoints
         {
             var internalBill = await internalBilling.ReadAsync(shell.Context, cancellationToken);
             var internalControls = await spending.ReadAsync(shell.Context, cancellationToken);
-            var internalCap = internalControls.Projects.FirstOrDefault(project => project.Id == shell.Context.Project?.Id)?.EffectiveCapCents ?? internalControls.OrganizationCapCents;
             return page with
             {
                 InternalBill = internalBill,
                 PlanChanges = new(page.Binding, null, null, ""),
-                History = new([], InvoiceHistory.ForBrowser([], query, now), InvoiceHistory.Summarize([], now), now, "", internalCap)
+                History = new([], InvoiceHistory.ForBrowser([], query, now), InvoiceHistory.Summarize([], now), now, "", internalControls.OrganizationCapCents)
             };
         }
         var changes = await BillingPlanPresentation.ForAsync(page, billing, query, now, cancellationToken);
@@ -51,14 +50,12 @@ public static class BillingEndpoints
         catch (Exception error) when (error is HttpRequestException or IOException or StripeException ||
                                       error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         { errorMessage = "Payment history could not be loaded. Apply the filters to retry."; }
-        var controls = await spending.ReadAsync(shell.Context, cancellationToken);
-        var cap = controls.Projects.FirstOrDefault(project => project.Id == shell.Context.Project?.Id)?.EffectiveCapCents ?? controls.OrganizationCapCents;
         return page with
         {
             PlanChanges = changes,
             PaymentMethod = paymentMethod,
             PaymentMethodUnavailable = paymentMethodUnavailable,
-            History = new(invoices, InvoiceHistory.ForBrowser(invoices, query, now), InvoiceHistory.Summarize(invoices, now), now, errorMessage, cap)
+            History = new(invoices, InvoiceHistory.ForBrowser(invoices, query, now), InvoiceHistory.Summarize(invoices, now), now, errorMessage, 0)
         };
     }
 

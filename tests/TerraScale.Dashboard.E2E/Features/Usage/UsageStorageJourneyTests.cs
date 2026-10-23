@@ -70,8 +70,11 @@ public sealed class UsageStorageJourneyTests(DashboardRootFixture fixture)
         await Assert.That(empty.GetProperty("totals").GetProperty("logicalBytes").GetInt64()).IsEqualTo(0);
         await Assert.That(empty.GetProperty("totals").GetProperty("storageMeasured").GetBoolean()).IsTrue();
         await Assert.That(empty.GetProperty("allowances").EnumerateArray().Single(row => row.GetProperty("name").GetString() == "Storage across regions").GetProperty("used").ValueKind).IsEqualTo(JsonValueKind.Null);
+        var egress = empty.GetProperty("allowances").EnumerateArray().Single(row => row.GetProperty("name").GetString() == "Client egress this month");
+        await Assert.That(egress.GetProperty("used").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(egress.GetProperty("limit").GetInt64()).IsEqualTo(1_000_000_000);
         var emptyBody = WebUtility.HtmlDecode(await replica.GetStringAsync("/usage"));
-        await Assert.That(emptyBody).Contains("Published allowances count 4 KiB operation units and storage across selected regions. These document counters do not measure allowance utilization.");
+        await Assert.That(emptyBody).Contains("Published allowances count 4 KiB operation units and storage across selected regions, and client egress. These document counters do not measure allowance utilization.");
         await Assert.That(emptyBody).Contains("<dd class=\"ts-stat-value\">0 B</dd>");
         await Assert.That(emptyBody).Contains("Replication measurements are unavailable.");
         await Assert.That(emptyBody.Contains("Reads and writes could not be loaded", StringComparison.Ordinal)).IsFalse();

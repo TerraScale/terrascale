@@ -83,7 +83,7 @@ public sealed class ReferenceJourneyTests(DashboardRootFixture fixture)
         var body = await billing.Content.ReadAsStringAsync();
         await Assert.That(body).Contains("14 recorded invoices");
         await Assert.That(WebUtility.HtmlDecode(body)).Contains("Visa •••• 4242, expires 08/28");
-        await Assert.That(body).Contains("US$ 50.00 / monthly");
+        await Assert.That(body).Contains("US$ 20.00 / monthly");
         await Assert.That(body).Contains(">Choose plan</button>");
         await Assert.That(body).Contains("in_01JCA3RH5N7Q9T2W4Y6A8C2EG");
         await Assert.That(body).Contains("USD 41.40");
@@ -104,6 +104,11 @@ public sealed class ReferenceJourneyTests(DashboardRootFixture fixture)
         var plans = planResult.GetProperty("result").GetProperty("structuredContent");
         await Assert.That(plans.GetProperty("currentPlanKey").GetString()).IsEqualTo("pro");
         await Assert.That(plans.GetProperty("currentInterval").GetString()).IsEqualTo("monthly");
+        await Assert.That(plans.GetProperty("plans").GetArrayLength()).IsEqualTo(3);
+        var pro = plans.GetProperty("plans").EnumerateArray().Single(plan => plan.GetProperty("key").GetString() == "pro");
+        await Assert.That(pro.GetProperty("monthlyPriceCents").GetInt64()).IsEqualTo(2000);
+        await Assert.That(pro.GetProperty("annualPriceCents").GetInt64()).IsEqualTo(0);
+        await Assert.That(pro.GetProperty("billingInterval").GetString()).IsEqualTo("month");
         var result = await HttpJourney.McpAsync(client, secret, "tools/call", new { name = "list_invoices", arguments = new { page = 2 } });
         var listing = result.GetProperty("result").GetProperty("structuredContent");
         await Assert.That(listing.GetProperty("total").GetInt32()).IsEqualTo(14);

@@ -30,7 +30,7 @@ public sealed class FreeBillingJourneyTests
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
         using var page = await client.GetAsync("/organization?tab=billing");
         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await page.Content.ReadAsStringAsync()).Contains("Hobby plan. No subscription or payment method is required; no Stripe charges.");
+        await Assert.That(await page.Content.ReadAsStringAsync()).Contains("Free plan. No subscription or payment method is required; no Stripe charges.");
         var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
         foreach (var rejectedPlan in new[] { "free", "business", "enterprise", "unknown" })
         {

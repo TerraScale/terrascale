@@ -17,7 +17,7 @@ public sealed class OnboardingMcpTools(IHttpContextAccessor http, AccountService
         var step = account.OnboardingCompleted ? "" : account.OnboardingStep;
         var plans = await onboarding.PlansAsync(Cancellation);
         return new(account.OnboardingCompleted, step, OnboardingProgress.Steps(step),
-            plans.Select(plan => new OnboardingOfferedPlan(plan.Key, plan.Name, plan.PriceCents, plan.AnnualPriceCents, plan.TrialDays)).ToArray());
+            plans.Select(plan => new OnboardingOfferedPlan(plan.Key, plan.Name, plan.PriceCents, plan.AnnualPriceCents, plan.BillingInterval, plan.Allowances.MonthlyEgressBytes, plan.TrialDays)).ToArray());
     }
 
     [McpServerTool(Name = "save_onboarding_step", Title = "Save onboarding step", OpenWorld = true, Destructive = false, UseStructuredContent = true),
@@ -25,7 +25,7 @@ public sealed class OnboardingMcpTools(IHttpContextAccessor http, AccountService
     public async Task<OnboardingSaved> Save(
         [Description("Step to save: account-information, payment-method, or project.")] string step,
         [Description("account-information: your display name.")] string displayName = "",
-        [Description("payment-method: continue on the Hobby plan without payment.")] bool continueOnFree = false,
+        [Description("payment-method: continue on the Free plan without payment.")] bool continueOnFree = false,
         [Description("payment-method: paid plan key to check out, such as starter or pro.")] string plan = "",
         [Description("payment-method: billing interval, monthly or annual.")] string interval = "",
         [Description("project: project name, up to 100 characters.")] string name = "",
@@ -61,7 +61,7 @@ public sealed record OnboardingStatus(bool Completed,
     [property: Description("Paid plans the payment step offers.")] IReadOnlyList<OnboardingOfferedPlan> Plans);
 public sealed record OnboardingOfferedPlan(string Key, string Name,
     [property: Description("Monthly price in US cents.")] long PriceCents,
-    [property: Description("Annual price in US cents.")] long AnnualPriceCents, int TrialDays);
+    [property: Description("Annual price in US cents.")] long AnnualPriceCents, string BillingInterval, long MonthlyEgressBytes, int TrialDays);
 public sealed record OnboardingSaved(bool Completed,
     [property: Description("Step to complete next, empty once setup is complete.")] string Step,
     [property: Description("URL to open in a browser to finish payment checkout. This tool never confirms or completes payment.")] string? CheckoutUrl = null);

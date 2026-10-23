@@ -155,8 +155,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
                 await GotoAsync(page, "/onboarding?payment=canceled&plan=starter");
                 await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "Payment setup canceled" }).WaitForAsync();
                 await Assert.That(await page.Locator("input[name=plan][value=starter]").IsCheckedAsync()).IsTrue().Because("cancel keeps selected plan");
-                await page.Locator(".ts-segmented label").Filter(new() { HasText = "Annual" }).ClickAsync();
-                await Assert.That(await page.Locator("input[name=interval][value=annual]").IsCheckedAsync()).IsTrue();
+                await Assert.That(await page.Locator("label.ts-onboarding-plan").Filter(new() { Has = page.Locator("input[name=plan][value=starter]") }).InnerTextAsync()).Contains("$30.00 billed yearly");
                 await page.Locator("label.ts-onboarding-plan").Filter(new() { Has = page.Locator("input[name=plan][value=pro]") }).ClickAsync();
                 await Assert.That(await page.Locator("input[name=plan][value=pro]").IsCheckedAsync()).IsTrue();
                 await page.Locator("label.ts-onboarding-plan").Filter(new() { Has = page.Locator("input[name=plan][value=starter]") }).ClickAsync();
@@ -169,7 +168,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             }
             else
             {
-                await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue on Hobby");
+                await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue on Free");
                 checks.Add("free personal onboarding bypass");
             }
             await page.GetByRole(AriaRole.Heading, new() { Name = "Create your first project", Exact = true }).WaitForAsync();
@@ -198,7 +197,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             await ShotAsync(page, "complete-" + size);
             await GotoAsync(page, "/organization?tab=billing");
             var summary = await page.Locator("#billing-summary").InnerTextAsync();
-            await Assert.That(summary).Contains(paid ? "Starter" : "Hobby").Because("confirmed plan is persisted");
+            await Assert.That(summary).Contains(paid ? "Starter" : "Free").Because("confirmed plan is persisted");
             if (paid) await Assert.That(summary).Contains("On file").Because("confirmed Stripe subscription stores payment status");
             if (paid) await Assert.That(summary).Contains("Annual").Because("confirmed subscription retains selected annual interval");
             checks.Add(size + " completed account/project persistence and billing");

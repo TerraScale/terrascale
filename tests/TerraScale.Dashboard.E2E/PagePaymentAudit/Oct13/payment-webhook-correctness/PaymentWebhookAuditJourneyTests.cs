@@ -175,7 +175,7 @@ public sealed class PaymentWebhookAuditJourneyTests
         using var replaced = await CheckoutAsync(owner, csrf, "starter");
         await Assert.That(replaced.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(scenario.Stripe.LastCheckoutKey).IsNotEqualTo(originalKey);
-        await Assert.That(scenario.Stripe.LastTrialDays).IsEqualTo("30");
+        await Assert.That(scenario.Stripe.LastTrialDays).IsEqualTo("");
     }
 
     [Test]
@@ -193,17 +193,17 @@ public sealed class PaymentWebhookAuditJourneyTests
 
     [Test]
     [Category("PaymentAuditExpectation")]
-    public async Task FreeSetupPreservesTheFirstPaidSubscriptionTrial()
+    public async Task FreeSetupDoesNotInventAPaidSubscriptionTrial()
     {
         await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
         using var owner = scenario.CreateClient();
         await CompleteCheckoutAsync(owner, "free");
-        await Assert.That(scenario.State.Billing).IsNull().Because("Free onboarding must not create a Stripe reservation or consume a trial.");
+        await Assert.That(scenario.State.Billing).IsNull().Because("Free onboarding must not create a Stripe reservation.");
         var csrf = await HttpJourney.CsrfAsync(owner, "/organization?tab=billing");
         using var upgrade = await CheckoutAsync(owner, csrf, "starter");
         await Assert.That(upgrade.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        await Assert.That(scenario.Stripe.LastTrialDays).IsEqualTo("30")
-            .Because("A successful Free setup intent must not consume a paid subscription trial.");
+        await Assert.That(scenario.Stripe.LastTrialDays).IsEqualTo("")
+            .Because("The published paid plans do not offer a trial.");
     }
 
     [Test]
@@ -228,7 +228,7 @@ public sealed class PaymentWebhookAuditJourneyTests
 
     private static Task<HttpResponseMessage> CheckoutAsync(HttpClient owner, string csrf, string plan) =>
         HttpJourney.PostFormAsync(owner, "/billing/checkout", new()
-        { ["_csrf"] = csrf, ["plan"] = plan, ["interval"] = "monthly", ["return"] = "/billing" });
+        { ["_csrf"] = csrf, ["plan"] = plan, ["interval"] = plan == "starter" ? "annual" : "monthly", ["return"] = "/billing" });
 
     internal static async Task CompleteCheckoutAsync(HttpClient owner, string plan)
     {

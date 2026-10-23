@@ -132,7 +132,7 @@ public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixt
             await page.GetByRole(AriaRole.Button, new() { Name = "Save and continue" }).ClickAsync();
             await page.GetByRole(AriaRole.Heading, new() { Name = "Choose your plan" }).WaitForAsync();
             await ShotAsync("optional-plan");
-            await page.GetByRole(AriaRole.Button, new() { Name = "Continue on Hobby", Exact = true }).ClickAsync();
+            await page.GetByRole(AriaRole.Button, new() { Name = "Continue on Free", Exact = true }).ClickAsync();
             await page.GetByRole(AriaRole.Heading, new() { Name = "Create your first project" }).WaitForAsync();
             await ShotAsync("first-project");
             var onboardingAccessibility = await page.RunAxe(new AxeRunOptions

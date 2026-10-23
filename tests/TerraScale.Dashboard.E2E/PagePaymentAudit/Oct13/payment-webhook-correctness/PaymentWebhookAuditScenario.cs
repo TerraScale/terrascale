@@ -146,7 +146,7 @@ internal sealed class PaymentWebhookAuditState(IDashboardState underlying) : IDa
 internal sealed class PaymentWebhookAuditTransport(IHttpClientFactory original) : HttpMessageHandler
 {
     private readonly HttpClient fallback = original.CreateClient("platform");
-    public string Status { get; set; } = "trialing";
+    public string Status { get; set; } = "active";
     public string? PriceCurrency { get; set; }
     public bool FractionalPrice { get; set; }
     public long Quantity { get; set; } = 1;

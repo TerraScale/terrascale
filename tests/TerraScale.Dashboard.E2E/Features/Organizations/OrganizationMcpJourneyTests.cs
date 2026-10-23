@@ -54,7 +54,7 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(renamed.GetProperty("name").GetString()).IsEqualTo("Renamed " + suffix);
         await Assert.That(renamed.GetProperty("regions").GetArrayLength()).IsEqualTo(2);
         await Assert.That(renamed.GetProperty("region").GetString()).IsEqualTo("SFO");
-        var checkout = await ToolAsync(owner, secret, "create_checkout", new { organizationId = businessId, plan = "starter", interval = "monthly" });
+        var checkout = await ToolAsync(owner, secret, "create_checkout", new { organizationId = businessId, plan = "starter", interval = "annual" });
         using var vendor = await owner.GetAsync(checkout.GetProperty("checkoutUrl").GetString());
         await Assert.That(vendor.StatusCode).IsEqualTo(HttpStatusCode.Found);
         using var returned = await replica.GetAsync(vendor.Headers.Location);

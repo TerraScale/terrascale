@@ -63,7 +63,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await page.GetByText("Change scheduled", new() { Exact = true }).WaitForAsync();
             await Assert.That(await PlanAsync()).IsEqualTo(Pro).Because("a scheduled downgrade keeps current resources until renewal");
             var schedules = await MutationsAsync(path => path == "/v1/subscription_schedules");
-            await PostAsync("/billing/change", new() { ["plan"] = "starter", ["interval"] = "monthly" });
+            await PostAsync("/billing/change", new() { ["plan"] = "starter", ["interval"] = "annual" });
             await Assert.That(await MutationsAsync(path => path == "/v1/subscription_schedules")).IsEqualTo(schedules);
             await PostAsync("/billing/change", new() { ["plan"] = "pro", ["interval"] = "monthly" }, 409);
             await SubmitAsync(page, "form:is([action=\"/billing/change/undo\"],[action^=\"/billing/change/undo?\"])", "Undo scheduled change");
@@ -71,10 +71,10 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await ChooseAsync("free");
             await ConfirmAsync();
             await page.GetByText("Change scheduled", new() { Exact = true }).WaitForAsync();
-            await Assert.That(await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "Change scheduled" }).InnerTextAsync()).Contains("Hobby");
+            await Assert.That(await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "Change scheduled" }).InnerTextAsync()).Contains("Free");
             await Assert.That(await PlanAsync()).IsEqualTo(Pro);
             await SubmitAsync(page, "form:is([action=\"/billing/change/undo\"],[action^=\"/billing/change/undo?\"])", "Undo scheduled change");
-            checks.Add("pending payment cannot grant a new plan; provider confirmation, scheduled downgrade/replay/undo and Personal Hobby cancellation use real SDK operations");
+            checks.Add("pending payment cannot grant a new plan; provider confirmation, scheduled downgrade/replay/undo and Personal Free cancellation use real SDK operations");
 
             var personal = await SelectedAsync();
             var personalId = personal.GetProperty("id").GetString();
@@ -94,7 +94,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await SubmitAsync(page, "#create-organization form", "Create organization");
             await GotoAsync("/organization?tab=billing");
             await PostAsync("/billing/change", new() { ["plan"] = "free" }, 400);
-            var checkout = CheckoutId(await PostAsync("/billing/checkout", new() { ["plan"] = "starter", ["interval"] = "monthly", ["return"] = "/organization?tab=billing" }));
+            var checkout = CheckoutId(await PostAsync("/billing/checkout", new() { ["plan"] = "starter", ["interval"] = "annual", ["return"] = "/organization?tab=billing" }));
             await Assert.That(checkout).IsNotNull().And.IsNotEmpty();
             await GotoAsync("/organization?tab=billing");
             await SubmitAsync(page, "form:is([action=\"/billing/checkout/cancel\"],[action^=\"/billing/checkout/cancel?\"])", "Cancel checkout");
@@ -110,7 +110,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             checks.Add("cross-customer state is rejected, Business Free is refused, checkout expiration/cancel/replacement stays bound and does not grant resources");
 
             var businessId = (await SelectedAsync()).GetProperty("id").GetString();
-            var originalCheckout = await PostAsync("/billing/checkout", new() { ["plan"] = "starter", ["interval"] = "monthly", ["return"] = "/organization?tab=billing" });
+            var originalCheckout = await PostAsync("/billing/checkout", new() { ["plan"] = "starter", ["interval"] = "annual", ["return"] = "/organization?tab=billing" });
             var originalCheckoutUrl = new Uri(fixture.Origin, originalCheckout.Headers["location"]).ToString();
             var originalCheckoutId = CheckoutId(originalCheckout);
             await Assert.That(originalCheckoutId).IsNotNull().And.IsNotEmpty();
@@ -141,7 +141,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             var email = "plan-member-" + suffix + "@example.test";
             await BrowserAudit.SignInAsync(guestPage, fixture.Origin, "/onboarding", email, password, signUp: true);
             await SubmitAsync(guestPage, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Save and continue", null);
-            await SubmitAsync(guestPage, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue on Hobby", null);
+            await SubmitAsync(guestPage, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue on Free", null);
             await guestPage.Locator("#projectName").FillAsync("Member project " + suffix);
             await guestPage.Locator("#region").SelectOptionAsync("GRU");
             await SubmitAsync(guestPage, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Create project and open Dashboard", null);
@@ -240,12 +240,12 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await Assert.That((await response).Status).IsEqualTo(303);
             await Assert.That((await SelectedAsync()).GetProperty("id").GetString()).IsEqualTo(id);
         }
-        async Task ChooseAsync(string plan, string interval = "monthly")
+        async Task ChooseAsync(string plan)
         {
             await GotoAsync("/organization?tab=billing");
             await page.GetByRole(AriaRole.Button, new() { Name = "Change plan", Exact = true }).ClickAsync();
             await page.Locator("#change-billing-plan[open]").WaitForAsync();
-            foreach (var (name, value) in new[] { ("plan", plan), ("interval", interval) })
+            foreach (var (name, value) in new[] { ("plan", plan) })
             {
                 var selector = "input[name=" + name + "][value=" + value + "]";
                 await page.Locator("#change-billing-plan label").Filter(new() { Has = page.Locator(selector) }).ClickAsync();
@@ -315,13 +315,15 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
                 await Task.Delay(25);
             }
             await Assert.That(waiting).IsTrue().Because("The real second Stripe read must wait after the app persisted its reservation.");
-            using var competing = await HttpJourney.PostFormAsync(first, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "annual" });
+            using var competing = await HttpJourney.PostFormAsync(first, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "team", ["interval"] = "monthly" });
             await Assert.That(competing.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            await Assert.That(await competing.Content.ReadAsStringAsync()).Contains("Another billing change is in progress.");
             using var release = await HttpJourney.PostFormAsync(first, "/__test/billing/plans/scenario", new() { ["_csrf"] = csrf, ["scenario"] = "release-source-race" });
             await Assert.That(release.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
             released = true;
             using var refused = await held;
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            await Assert.That(await refused.Content.ReadAsStringAsync()).Contains("The subscription changed in Stripe.");
             using var beforeRetry = JsonDocument.Parse(await first.GetStringAsync("/__test/billing/plans/probe"));
             await Assert.That(beforeRetry.RootElement.GetProperty("mutations").EnumerateArray().Count(item => item.GetString()!.StartsWith("/v1/subscriptions/", StringComparison.Ordinal))).IsEqualTo(0);
             using var retry = await HttpJourney.PostFormAsync(replica, "/billing/change", new() { ["_csrf"] = replicaCsrf, ["plan"] = "pro", ["interval"] = "monthly" });
@@ -363,7 +365,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             using var lost = await HttpJourney.PostFormAsync(first, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly" });
             await Assert.That(lost.StatusCode).IsEqualTo(HttpStatusCode.BadGateway);
             await Assert.That(await lost.Content.ReadAsStringAsync()).Contains("Stripe could not complete this billing change.");
-            using var conflicting = await HttpJourney.PostFormAsync(replica, "/billing/change", new() { ["_csrf"] = replicaCsrf, ["plan"] = "pro", ["interval"] = "annual" });
+            using var conflicting = await HttpJourney.PostFormAsync(replica, "/billing/change", new() { ["_csrf"] = replicaCsrf, ["plan"] = "team", ["interval"] = "monthly" });
             await Assert.That(conflicting.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
             using var outage = await HttpJourney.PostFormAsync(first, "/__test/billing/plans/scenario", new() { ["_csrf"] = csrf, ["scenario"] = "offline" });
             await Assert.That(outage.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -418,13 +420,13 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(creation.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         using var business = JsonDocument.Parse(await first.GetStringAsync("/api/v1/auth/me"));
         var businessId = business.RootElement.GetProperty("organizationId").GetString()!;
-        var returnPath = "/organization?newOrganization=project&organizationID=" + Uri.EscapeDataString(businessId);
+        var returnPath = "/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(businessId);
         using var login = await HttpJourney.LoginAsync(replica, email, password);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         var replicaCsrf = await HttpJourney.CsrfAsync(replica, "/organization?tab=billing");
         using var armed = await HttpJourney.PostFormAsync(first, "/__test/billing/checkouts/scenario", new() { ["_csrf"] = csrf, ["scenario"] = "missing-index" });
         await Assert.That(armed.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        var checkoutForm = new Dictionary<string, string> { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "monthly", ["return"] = returnPath };
+        var checkoutForm = new Dictionary<string, string> { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "annual", ["return"] = returnPath };
         using var interrupted = await HttpJourney.PostFormAsync(first, "/billing/checkout", checkoutForm);
         await Assert.That(interrupted.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         var interruptedBody = await interrupted.Content.ReadAsStringAsync();
@@ -500,14 +502,14 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         using var business = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
         var businessId = business.RootElement.GetProperty("organizationId").GetString()!;
         using var started = await HttpJourney.PostFormAsync(client, "/billing/checkout", new()
-        { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "monthly", ["return"] = "/organization?tab=billing" });
+        { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "annual", ["return"] = "/organization?tab=billing" });
         await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         // Stripe completes the checkout, but the browser never reaches the return URL.
         using var paid = await client.GetAsync(started.Headers.Location);
         await Assert.That(paid.StatusCode).IsEqualTo(HttpStatusCode.Found);
 
         using var other = new HttpRequestMessage(HttpMethod.Post, "/billing/checkout")
-        { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "annual", ["return"] = "/organization?tab=billing" }) };
+        { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly", ["return"] = "/organization?tab=billing" }) };
         other.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
         other.Headers.Accept.ParseAdd("text/html");
         using var blocked = await client.SendAsync(other);
@@ -525,7 +527,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(cancel.Headers.Location!.OriginalString).Contains("payment=success");
     }
 
-    internal static async Task SignUpPaidAsync(HttpClient client, string email, string password, string suffix, string interval = "monthly")
+    internal static async Task SignUpPaidAsync(HttpClient client, string email, string password, string suffix, string interval = "annual")
     {
         using var verification = await HttpJourney.LoginAsync(client, email, password, "/onboarding?plan=starter", signUp: true);
         await Assert.That(verification.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);

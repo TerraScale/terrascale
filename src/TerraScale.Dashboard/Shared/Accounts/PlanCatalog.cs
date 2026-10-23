@@ -5,18 +5,24 @@ using TerraScale.Dashboard.Shared.Validation;
 namespace TerraScale.Dashboard.Shared.Accounts;
 
 public sealed record BillingPlan(string Id, string Key, string Name, long PriceCents, long AnnualPriceCents, int TrialDays,
-    PlanAllowances Allowances, PlanResourceLimits Resources)
+    PlanAllowances Allowances, PlanResourceLimits Resources, string BillingInterval = "month")
 {
+    public string CheckoutInterval => BillingInterval == "year" ? "annual" : "monthly";
+    public bool SupportsInterval(string interval) => PriceCents > 0 && (BillingInterval is "month" or "year") && interval == CheckoutInterval;
+    public string BillingDescription => BillingInterval == "year" ? AnnualPrice + " billed yearly" : "Billed monthly";
     public string MonthlyPrice => "$" + (PriceCents / 100m).ToString("F2", CultureInfo.InvariantCulture);
     public string AnnualPrice => "$" + (AnnualPriceCents / 100m).ToString("F2", CultureInfo.InvariantCulture);
     public string DatabaseAllowance => Resources.Databases.ToString(CultureInfo.InvariantCulture) + (Resources.Databases == 1 ? " database" : " databases");
     public string StorageAllowance => (Allowances.StorageBytes / 1_000_000_000m).ToString("0.##", CultureInfo.InvariantCulture) + " GB-region storage";
+    public string EgressAllowance => (Allowances.MonthlyEgressBytes / 1_000_000_000m).ToString("0.##", CultureInfo.InvariantCulture) + " GB client egress/month";
     public string MemberAllowance => Resources.Members.ToString(CultureInfo.InvariantCulture) + (Resources.Members == 1 ? " team member" : " team members");
     public string OperationsAllowance => Allowances.MonthlyOperations.ToString("N0", CultureInfo.InvariantCulture) + " " + PlanCatalog.OperationUnitName.ToLowerInvariant() + "s/month (" + (PlanCatalog.OperationUnitBytes / 1024).ToString(CultureInfo.InvariantCulture) + " KiB)";
 }
 
-public sealed record PlanAllowances(long MonthlyOperations, long StorageBytes);
+public sealed record PlanAllowances(long MonthlyOperations, long StorageBytes, long MonthlyEgressBytes = 0);
 public sealed record PlanResourceLimits(int Databases, int Members, int Projects);
+
+public sealed record PlanComparison(string Key, string Name, long PriceCents, string BillingDescription, IReadOnlyList<string> Features);
 
 public static class PlanCatalog
 {
@@ -25,27 +31,46 @@ public static class PlanCatalog
     public static int OperationUnitBytes => catalog.GetProperty("metering").GetProperty("operationUnit").GetProperty("bytes").GetInt32();
     public static string OperationUnitName => catalog.GetProperty("metering").GetProperty("operationUnit").GetProperty("name").GetString()!;
     public static string AllowanceDefinition => catalog.GetProperty("metering").GetProperty("allowances").GetProperty("definition").GetString()!;
+    public static string EnterpriseBilling => catalog.GetProperty("plans").EnumerateArray().Single(plan => plan.GetProperty("id").GetString() == "enterprise").GetProperty("billing").GetString()!;
     public static string OperationUnitDefinition => catalog.GetProperty("metering").GetProperty("operationUnit").GetProperty("definition").GetString()!;
     public static IReadOnlyList<BillingPlan> Plans { get; } = Array.AsReadOnly(catalog.GetProperty("plans").EnumerateArray()
         .Where(plan => plan.GetProperty("available").GetBoolean()).Select(plan =>
         {
             var key = plan.GetProperty("id").GetString()!;
-            // Hobby retains the existing internal key and persisted plan identity.
+            // Free retains its existing internal key and persisted plan identity.
             var id = key switch
             {
-                "hobby" => OrganizationRecord.FreePlanId,
+                "free" => OrganizationRecord.FreePlanId,
                 "starter" => OrganizationRecord.StarterPlanId,
                 "pro" => "7CNW2H87JE68ATZX224CV2G625",
+                "team" => "01K8A00000TEAM0000000000000",
                 _ => throw new IOException("The published plan has no persisted identity.")
             };
             var limits = plan.GetProperty("limits");
-            return new BillingPlan(id, key == "hobby" ? "free" : key, plan.GetProperty("name").GetString()!,
+            return new BillingPlan(id, key, plan.GetProperty("name").GetString()!,
                 checked((long)(plan.GetProperty("priceMonthlyUsd").GetDecimal() * 100)),
-                checked((long)(plan.GetProperty("priceAnnualUsd").GetDecimal() * 100)),
+                plan.GetProperty("priceAnnualUsd").ValueKind == JsonValueKind.Null ? 0 : checked((long)(plan.GetProperty("priceAnnualUsd").GetDecimal() * 100)),
                 plan.GetProperty("trialDays").ValueKind == JsonValueKind.Null ? 0 : plan.GetProperty("trialDays").GetInt32(),
-                new(limits.GetProperty("operationUnitsPerMonth").GetInt64(), checked((long)(limits.GetProperty("storageGb").GetDecimal() * 1_000_000_000))),
-                new(limits.GetProperty("databases").GetInt32(), limits.GetProperty("members").GetInt32(), limits.GetProperty("projects").GetInt32()));
+                new(limits.GetProperty("operationUnitsPerMonth").GetInt64(), checked((long)(limits.GetProperty("storageGb").GetDecimal() * 1_000_000_000)), checked((long)(limits.GetProperty("egressGbPerMonth").GetDecimal() * 1_000_000_000))),
+                new(limits.GetProperty("databases").GetInt32(), limits.GetProperty("members").GetInt32(), limits.GetProperty("projects").GetInt32()), plan.GetProperty("billingInterval").GetString()!);
         }).ToArray());
+
+    // Display-only catalog entries never make contact-only plans selectable.
+    public static IReadOnlyList<PlanComparison> ComparisonPlans { get; } = Array.AsReadOnly(catalog.GetProperty("plans").EnumerateArray().Select(plan =>
+    {
+        var key = plan.GetProperty("id").GetString()!;
+        var limits = plan.GetProperty("limits");
+        var selectable = Plans.FirstOrDefault(candidate => candidate.Key == key);
+        string Resource(string property, string singular, string plural) => limits.GetProperty(property).ValueKind == JsonValueKind.Null
+            ? plural + ": contact sales" : limits.GetProperty(property).GetInt32().ToString(CultureInfo.InvariantCulture) + " " + (limits.GetProperty(property).GetInt32() == 1 ? singular : plural);
+        return new PlanComparison(key, plan.GetProperty("name").GetString()!, checked((long)(plan.GetProperty("priceMonthlyUsd").GetDecimal() * 100)),
+            key == "free" ? "No card required" : selectable?.BillingDescription ?? plan.GetProperty("billing").GetString()!,
+            Array.AsReadOnly(new[] {
+                limits.GetProperty("storageGb").GetDecimal().ToString("0.##", CultureInfo.InvariantCulture) + " GB-region storage",
+                limits.GetProperty("operationUnitsPerMonth").GetInt64().ToString("N0", CultureInfo.InvariantCulture) + " " + OperationUnitName.ToLowerInvariant() + "s/month (" + (OperationUnitBytes / 1024).ToString(CultureInfo.InvariantCulture) + " KiB)",
+                limits.GetProperty("egressGbPerMonth").GetDecimal().ToString("0.##", CultureInfo.InvariantCulture) + " GB client egress/month",
+                Resource("projects", "project", "projects"), Resource("databases", "database", "databases"), Resource("members", "team member", "team members") }));
+    }).ToArray());
 
     private static string ReadPublishedJson()
     {

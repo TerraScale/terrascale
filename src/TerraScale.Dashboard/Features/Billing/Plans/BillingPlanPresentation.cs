@@ -26,6 +26,7 @@ public sealed record BillingPlanPresentation(BillingBinding? Binding, BillingPla
         if (!page.CanManage || query["review"] != "1") return new(binding, state, null, stateError);
         var key = query["plan"].ToString().Trim().ToLowerInvariant(); var interval = query["interval"].ToString().Trim().ToLowerInvariant();
         var plan = page.Plans.FirstOrDefault(plan => plan.Key == key);
+        if (interval.Length == 0 && plan is not null) interval = plan.CheckoutInterval;
         string errorMessage = stateError; var canUndo = false; var price = ""; var effect = ""; var estimate = "";
         if (errorMessage.Length == 0 && state?.PendingPlanKey is { Length: > 0 } pending)
             errorMessage = "Stripe is still confirming the change to " + Name(pending) + ". You can change plans again once it’s confirmed.";
@@ -36,7 +37,7 @@ public sealed record BillingPlanPresentation(BillingBinding? Binding, BillingPla
         if (errorMessage.Length == 0)
         {
             if (plan is null || key == "free" && (context.Organization!.Kind != "personal" || !subscribed)) errorMessage = "Choose an available plan.";
-            else if (key != "free" && interval is not ("monthly" or "annual")) errorMessage = "Choose monthly or annual billing.";
+            else if (key != "free" && !plan.SupportsInterval(interval)) errorMessage = "Choose the published billing interval for this plan.";
             else
             {
                 if (key == "free") interval = "";

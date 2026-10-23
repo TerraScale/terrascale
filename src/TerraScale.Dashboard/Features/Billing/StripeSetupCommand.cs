@@ -8,7 +8,7 @@ using PortalFeatures = Stripe.BillingPortal.ConfigurationFeaturesOptions;
 namespace TerraScale.Dashboard.Features.Billing;
 
 /// <summary>Creates what StripeAuditCommand expects in a TEST account: one product per paid plan, its
-/// monthly and annual prices from PlanCatalog, and the default billing portal. A second run changes nothing.</summary>
+/// approved billing cadence and prices from PlanCatalog, and the default billing portal. A second run changes nothing.</summary>
 public sealed class StripeSetupCommand
 {
     private readonly IDashboardIdentity identity;
@@ -93,7 +93,7 @@ public sealed class StripeSetupCommand
                 changes.Add("product_" + plan.Key + "_activated");
                 foreach (var price in prices.Where(price => price.ProductId == product.Id)) price.Product = product;
             }
-            foreach (var interval in new[] { "monthly", "annual" })
+            foreach (var interval in new[] { plan.CheckoutInterval })
             {
                 var name = plan.Key + "_" + interval;
                 var matches = prices.Where(price => StripeBilling.MatchesPrice(price, plan, interval, requirePublished: true))

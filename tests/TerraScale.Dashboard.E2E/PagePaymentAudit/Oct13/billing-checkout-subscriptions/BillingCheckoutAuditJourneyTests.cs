@@ -46,7 +46,7 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         using var cancelAgain = await HttpJourney.PostFormAsync(client, "/billing/checkout/cancel", new() { ["_csrf"] = csrf });
         await Assert.That(cancel.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(cancelAgain.Headers.Location).IsEqualTo(cancel.Headers.Location);
-        using var replacement = await CheckoutAsync(client, csrf, "pro", "annual");
+        using var replacement = await CheckoutAsync(client, csrf, "pro", "monthly");
         await Assert.That(replacement.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(replacement.Headers.Location).IsNotEqualTo(first.Headers.Location);
         using var canceled = await HttpJourney.PostFormAsync(client, "/billing/checkout/cancel", new() { ["_csrf"] = csrf });
@@ -143,7 +143,7 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         await Assert.That(await page.GetByRole(AriaRole.Button, new() { Name = "Cancel checkout", Exact = true }).CountAsync()).IsEqualTo(0);
         await CaptureAsync(page, "canceled-checkout-390");
         var message = await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "Checkout canceled" }).CountAsync();
-        using var replacement = await CheckoutAsync(client, csrf, "pro", "annual");
+        using var replacement = await CheckoutAsync(client, csrf, "pro", "monthly");
         await Assert.That(replacement.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(replacement.Headers.Location).IsNotEqualTo(checkout.Headers.Location);
         using var cleanup = await HttpJourney.PostFormAsync(client, "/billing/checkout/cancel", new() { ["_csrf"] = csrf });
@@ -155,7 +155,7 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
     [Test, Category("Slow")]
     [Arguments(1440, 900)]
     [Arguments(390, 844)]
-    public async Task AnnualPlanPageKeepsAnnualSelectedWhenChooserOpens(int width, int height)
+    public async Task PlanChooserUsesPublishedCadencesEvenWithAnnualQuery(int width, int height)
     {
         var cookies = new CookieContainer();
         using var client = fixture.CreateClient(cookies);
@@ -167,10 +167,10 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         await page.GotoAsync(new Uri(fixture.Origin, Billing + "&interval=annual").ToString());
         await page.GetByRole(AriaRole.Button, new() { Name = "Choose plan", Exact = true }).ClickAsync();
         await page.Locator("#change-billing-plan[open]").WaitForAsync();
-        var annual = await page.Locator("#change-billing-plan input[name=interval][value=annual]").IsCheckedAsync();
+        var annual = (await page.Locator("#change-billing-plan").InnerTextAsync()).Contains("$30.00 billed yearly", StringComparison.Ordinal);
         await CaptureAsync(page, $"annual-chooser-{width}");
         await RecordAsync($"annual-chooser-{width}", new { route = Billing + "&interval=annual", width, height, annual });
-        await Assert.That(annual).IsTrue().Because("The chooser must preserve the annual interval visibly selected on the billing page.");
+        await Assert.That(annual).IsTrue().Because("The chooser must show Starter’s yearly charge without offering unapproved billing intervals.");
     }
 
     [Test, Category("Slow")]
@@ -199,11 +199,10 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         await Assert.That(await choose.EvaluateAsync<bool>("el => el === document.activeElement")).IsTrue();
         await choose.ClickAsync();
         await page.Locator("#change-billing-plan input[name=plan][value=starter]").PressAsync("Space");
-        await page.Locator("#change-billing-plan input[name=interval][value=annual]").PressAsync("Space");
         await page.GetByRole(AriaRole.Button, new() { Name = "Review change", Exact = true }).PressAsync("Enter");
         await page.Locator("#review-billing-plan[open]").WaitForAsync();
-        await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("US$ 50.00 / year");
-        await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("30-day trial");
+        await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("US$ 30.00 / year");
+        await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("After Stripe confirms checkout");
         await BrowserAudit.AssertAccessibleAsync(page, "The annual review must remain keyboard accessible.");
         await Assert.That(await page.EvaluateAsync<bool>("document.documentElement.scrollWidth <= innerWidth")).IsTrue();
         await CaptureAsync(page, $"keyboard-review-{width}");
@@ -230,8 +229,8 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         return await HttpJourney.CsrfAsync(client, Billing);
     }
 
-    private static Task<HttpResponseMessage> CheckoutAsync(HttpClient client, string csrf, string plan = "starter", string interval = "monthly") =>
-        HttpJourney.PostFormAsync(client, "/billing/checkout", new() { ["_csrf"] = csrf, ["plan"] = plan, ["interval"] = interval, ["return"] = Billing });
+    private static Task<HttpResponseMessage> CheckoutAsync(HttpClient client, string csrf, string plan = "starter", string? interval = null) =>
+        HttpJourney.PostFormAsync(client, "/billing/checkout", new() { ["_csrf"] = csrf, ["plan"] = plan, ["interval"] = interval ?? (plan == "starter" ? "annual" : "monthly"), ["return"] = Billing });
 
     private static async Task InvoiceScenarioAsync(HttpClient client, string csrf, string scenario)
     {
