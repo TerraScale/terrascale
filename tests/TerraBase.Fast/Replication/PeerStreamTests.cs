@@ -2141,6 +2141,9 @@ public sealed class PeerStreamTests
         var (gru, database) = (cluster["gru"], cluster.Database);
         await cluster["sjc"].StopAsync();
         await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await gru.Api.Server.Services.GetRequiredService<IRemoteDurability>()
+                .OtherRegionsAsync(token)).Count == 0, Deadline);
         var (status, body) = await gru.CommitAsync(new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "lonely", id = EntityIds.New().ToString() });
         await Assert.That(status).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(body);
         await Assert.That(body).Contains("remote_region_unavailable");
