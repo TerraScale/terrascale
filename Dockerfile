@@ -20,8 +20,9 @@ ENV DOTNET_PROCESSOR_COUNT=$DOTNET_PROCESSOR_COUNT DOTNET_GCHeapCount=$DOTNET_GC
 # NUGET_SCRATCH holds NuGet's cross-process lock files. It is a shared cache mount, so concurrent builds on one BuildKit
 # (parallel CI jobs) serialize package extraction into the shared packages cache instead of racing.
 ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 ASPNETCORE_HTTP_PORTS= DOTNET_ROOT=/usr/share/dotnet NUGET_SCRATCH=/nuget-scratch
+# The WAL power-loss tests compile their LD_PRELOAD shim with cc and the C library headers.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends make nodejs npm jq \
+    && apt-get install -y --no-install-recommends make nodejs npm jq gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 # Chromium for the ts-auth browser tests: the npm playwright matching Microsoft.Playwright in Directory.Packages.props
 # installs the same browser revision. Redocly (auth-openapi-check) is fetched once here too.
