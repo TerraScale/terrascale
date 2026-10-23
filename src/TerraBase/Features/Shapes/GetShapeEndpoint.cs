@@ -161,7 +161,7 @@ internal sealed class GetShapeEndpoint(
                 Unavailable error => ErrorResponse.From(error),
             },
             SnapshotOffset page => Answer(request, lineage, await snapshots.PageAsync(request.Scope, lineage, page.Snapshot, page.AfterId, cancellationToken)),
-            DecimalOffset at when request.Live => Answer(request, lineage, await live.WaitAsync(request.Scope, lineage, at.Value, request.Cursor, cancellationToken)),
+            DecimalOffset at when request.Live => Answer(request, lineage, await live.WaitAsync(request.Scope, lineage, at.Value, cancellationToken)),
             DecimalOffset at => Answer(request, lineage, await chunks.ReadAsync(request.Scope, lineage, at.Value, cancellationToken)),
             _ => throw new System.Diagnostics.UnreachableException(),
         };

@@ -167,7 +167,7 @@ public sealed class ShapeLiveTests
     }
 
     [Test]
-    public async Task Non_live_requests_read_once_without_probing_or_sealing_and_ignore_the_cursor()
+    public async Task Non_live_requests_read_once_without_probing_or_sealing()
     {
         var sealer = new FakeSealer();
         await using var api = await StartAsync(new FakeTimeProvider(Start), sealer);
@@ -176,9 +176,9 @@ public sealed class ShapeLiveTests
         using var hold = new Latch();
         var shape = new FakeShape(Sealer(api), StaleHead, hold);
 
-        var first = ReadFlightAsync(flights, new ShapeFlightRequest(database, "h-plain", "0", false, 1), shape);
+        var first = ReadFlightAsync(flights, new ShapeFlightRequest(database, "h-plain", "0", false), shape);
         await shape.ReadEntered.WaitAsync(Deadline);
-        var second = ReadFlightAsync(flights, new ShapeFlightRequest(database, "h-plain", "0", false, 2), shape);
+        var second = ReadFlightAsync(flights, new ShapeFlightRequest(database, "h-plain", "0", false), shape);
         hold.Open();
         var answers = (await Task.WhenAll(first, second).WaitAsync(Deadline)).Select(Flight).ToArray();
 
@@ -186,40 +186,7 @@ public sealed class ShapeLiveTests
         {
             await Assert.That(sealer.Calls).IsEqualTo(0);
             await Assert.That(shape.Probes).IsEqualTo(0);
-            await Assert.That(shape.Reads).IsEqualTo(1).Because("a cursor is part of the key only for live requests");
-        }
-        finally
-        {
-            foreach (var answer in answers)
-            {
-                answer.Dispose();
-            }
-        }
-    }
-
-    [Test]
-    public async Task The_live_cursor_is_part_of_the_key()
-    {
-        var sealer = new FakeSealer();
-        await using var api = await StartAsync(new FakeTimeProvider(Start), sealer);
-        var flights = Flights(api);
-        var database = await api.TenantOfAsync();
-        using var hold = new Latch();
-        var moved = new FakeShape(Sealer(api), StaleHead, hold);
-        var same = new FakeShape(Sealer(api), StaleHead, hold);
-
-        // Both pairs are launched while their reads are held, so each join is decided before any read finishes.
-        var movedFirst = ReadFlightAsync(flights, LiveRequest(database, "h-moved", 1), moved);
-        var movedSecond = ReadFlightAsync(flights, LiveRequest(database, "h-moved", 2), moved);
-        var sameFirst = ReadFlightAsync(flights, LiveRequest(database, "h-same", 3), same);
-        var sameSecond = ReadFlightAsync(flights, LiveRequest(database, "h-same", 3), same);
-        hold.Open();
-        var answers = (await Task.WhenAll(movedFirst, movedSecond, sameFirst, sameSecond).WaitAsync(Deadline)).Select(Flight).ToArray();
-
-        try
-        {
-            await Assert.That(moved.Reads).IsEqualTo(2).Because("different cursors never share a flight");
-            await Assert.That(same.Reads).IsEqualTo(1).Because("the same cursor shares one flight");
+            await Assert.That(shape.Reads).IsEqualTo(1).Because("identical requests share one read");
         }
         finally
         {
@@ -302,7 +269,7 @@ public sealed class ShapeLiveTests
     }
 
     [Test]
-    public async Task Two_hundred_fifty_seventh_requester_is_refused_as_shape_busy()
+    public async Task The_requester_past_the_machine_cap_is_refused_as_shape_busy()
     {
         await using var api = await StartAsync(new FakeTimeProvider(Start), new FakeSealer());
         var flights = Flights(api);
@@ -310,7 +277,7 @@ public sealed class ShapeLiveTests
         using var hold = new Latch();
         var shape = new FakeShape(Sealer(api), StaleHead, hold);
 
-        // Four organizations fill the 256 machine requesters, 64 each; the fifth meets the machine cap.
+        // Four organizations fill the machine requesters with their whole shares; the fifth meets the machine cap.
         var joined = Enumerable.Range(0, ShapeFlights<ShapePage>.MaxRequesters)
             .Select(n => ReadFlightAsync(flights, LiveRequest(databases[n / ShapeFlights<ShapePage>.MaxRequestersPerOrganization]), shape))
             .ToArray();
@@ -567,8 +534,8 @@ public sealed class ShapeLiveTests
 
     private static IShapeFlights<ShapePage> Flights(DocumentApi api) => api.Server.Services.GetRequiredService<IShapeFlights<ShapePage>>();
 
-    private static ShapeFlightRequest LiveRequest(TenantContext database, string handle = "h-live", long? cursor = 0) =>
-        new(database, handle, "0", true, cursor);
+    private static ShapeFlightRequest LiveRequest(TenantContext database, string handle = "h-live") =>
+        new(database, handle, "0", true);
 
     private static Task<ShapeFlightResult<ShapePage>> ReadFlightAsync(
         IShapeFlights<ShapePage> flights, ShapeFlightRequest request, FakeShape shape, CancellationToken cancellationToken = default) =>

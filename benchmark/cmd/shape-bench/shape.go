@@ -211,7 +211,7 @@ func waitParked(b *bench, ctx context.Context, m *measure, admitted int64) (int6
 // requester left from an earlier step. Otherwise every admitted follower must have sent its first live poll
 // (m.atHead), and the node's terrabase.shape.requests.waiting gauge, which counts only requesters parked at the head,
 // must hold still for shapeReadySettle at one or more. The gauge is the node's own count and can sit below the admitted
-// count: the server caps live requesters at 256 per machine, and the rest retry on shape_busy. That is reported as
+// count: the server caps live requesters at 1024 per organization, and the rest retry on shape_busy. That is reported as
 // server_at_ready, not waited for. A follower that failed ends the wait. It returns the gauge at readiness. A timeout
 // after admission is a capacityLimit; a timeout before a step is an invalid measurement.
 func awaitParked(ctx context.Context, metricsURL string, m *measure, admitted int64, timeout time.Duration) (int64, error) {

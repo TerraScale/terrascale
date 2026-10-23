@@ -392,6 +392,8 @@ public sealed class ShapeEndToEndTests
     public async Task Parked_live_readers_share_one_seal_and_one_payload_read()
     {
         await using var api = await DocumentApi.StartAsync();
+        // Enterprise has no request-rate plan limit, so the wave's polls measure flights, not QoS.
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
         var client = new ShapeClient(api, query: null);
         var synced = await client.SyncAsync();
@@ -399,12 +401,13 @@ public sealed class ShapeEndToEndTests
 
         // The first wave sets the baseline cost of one shared wake; the second wave repeats the same shape of work.
         var first = await WaveAsync(api, client, synced.NextOffset!, readers: 1, token);
-        var second = await WaveAsync(api, client, first.NextOffset, readers: 8, token);
+        // More readers than an organization's flight share, each on its own live cursor: the cursor never splits a flight.
+        var second = await WaveAsync(api, client, first.NextOffset, readers: 64, token);
 
         await Assert.That(first.Seals).IsEqualTo(1d).Because("one commit wakes one shared flight");
         await Assert.That(first.PayloadReads).IsEqualTo(1d).Because("one stored payload is read for the flight");
-        await Assert.That(second.Seals).IsEqualTo(1d).Because("eight parked readers still share one seal");
-        await Assert.That(second.PayloadReads).IsEqualTo(1d).Because("eight parked readers still share one payload read");
+        await Assert.That(second.Seals).IsEqualTo(1d).Because("64 parked readers still share one seal");
+        await Assert.That(second.PayloadReads).IsEqualTo(1d).Because("64 parked readers still share one payload read");
         await Assert.That(second.Bodies.Distinct().Count()).IsEqualTo(1).Because("every reader receives the same bytes");
     }
 
@@ -530,12 +533,12 @@ public sealed class ShapeEndToEndTests
     {
         var server = api.Server;
         var before = await Scrape(server, token);
-        var readersAt = client.Uri(offset, live: true);
+        var readersAt = client.Uri(offset, live: true).OriginalString;
         List<Task<Reply>> waiting = [];
         for (var index = 0; index < readers; index++)
         {
             // Admit one at a time; every admitted reader remains concurrent until the shared write wakes them all.
-            waiting.Add(client.Get(readersAt));
+            waiting.Add(client.Get($"{readersAt}&cursor={index}"));
             await TerraBaseTestServer.EventuallyAsync(async ct =>
                 waiting.Any(task => task.IsCompleted) || Sample(await Scrape(server, ct), "terrabase_shape_requests_waiting") >= waiting.Count);
             foreach (var completed in waiting.Where(task => task.IsCompleted))

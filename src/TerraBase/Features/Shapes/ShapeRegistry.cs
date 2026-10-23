@@ -493,5 +493,5 @@ internal sealed class ShapeLiveGate(IShapeMetrics metrics)
     }
 }
 
-/// <summary>A live flight's identity from the request: the database, handle, offset and bucket.</summary>
-internal readonly record struct GateKey(string? Organization, string? Project, string? Database, string Handle, long Offset, long? Cursor);
+/// <summary>A live flight's identity from the request: the database, handle and offset.</summary>
+internal readonly record struct GateKey(string? Organization, string? Project, string? Database, string Handle, long Offset);
