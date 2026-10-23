@@ -5,7 +5,7 @@ removes origin work for readers of the same shape.
 
 | Tier | Serves | Origin cost per extra reader |
 | --- | --- | --- |
-| T0 | The origin. Live polls join one flight per `(handle, offset, live)`, whatever their cursor; collections are read from memory | One HTTP response, no storage read |
+| T0 | The origin. Live polls join one flight per `(handle, offset, live)`, whatever their cursor; collections are read from memory; closed chunks are kept in a bounded memory cache (512 chunks, 16 MiB) | One HTTP response and a few metadata reads; one payload read per chunk |
 | T1 | The bucket (Tigris or R2, any S3-compatible store: endpoint, bucket and keys only). The manifest lists presigned TBS1 objects from the mirror's metadata | One manifest response, no storage read once the object is mirrored |
 | T2 | Cloudflare, through the shape edge Worker (`src/TerraBase.ShapeEdge`) at `https://shapes.terrascale.tech` | None for a cached object; one bucket read per Cloudflare location |
 
