@@ -117,9 +117,10 @@ OpenAPI and immutable release qualification remain open gates.
 
 Project, collection catalog, and database catalog IDs are canonical uppercase
 26-character ULIDs. `generateId()`, `isValidId()` and `requireId()` retain that
-entity-ID contract. Document keys independently accept 1–256 UTF-16 code units,
-without controls or lone surrogates; natural keys, slashes and Unicode travel as
-one query parameter. A root payload `id` is ordinary data unless it equals the
+entity-ID contract. Document point operations and transaction writes require canonical
+ULIDs; the producer rejects other forms with `invalid_document_id`. SQL-backed
+collections can still return their stored primary keys in query, stream and export
+results. A root payload `id` is ordinary data unless it equals the
 key; the producer then strips that redundant member.
 Documents return
 `{ id, version, state: "value", document }`; a causal read can answer

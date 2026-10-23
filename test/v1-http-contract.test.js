@@ -56,8 +56,8 @@ const document = (id, document = { value: 1 }) => ({ id, version, state: "value"
 const write = id => ({ id, version, offset: "1", durability: "local_durable" });
 
 describe("current document wire contracts", () => {
-  test.each(["a/b", "a%2Fb", ".", "..", "%2E", "%", "?", "#", "+", " ", "é", "e\u0301", "😀", "a".repeat(256)])(
-    "round-trips key %j exactly once through every point method", async key => {
+  test("round-trips a document ULID exactly once through every point method", async () => {
+      const key = entityId;
       const { db, requests } = await fixture((request, response) => {
         const id = request.url.searchParams.get("id") ?? "";
         json(response, request.method === "GET" ? document(id, { id: "unrelated-data" }) : write(id));
@@ -77,33 +77,32 @@ describe("current document wire contracts", () => {
       }
       expect(JSON.parse(requests[1]?.body ?? "")).toEqual({ id: "unrelated-data" });
       expect(requests[2]?.headers["content-type"]).toBe("application/merge-patch+json");
-    },
-  );
+  });
 
   test("preserves stored PATCH data and exact integers in both response forms", async () => {
     const { db, requests } = await fixture((request, response) => {
       const data = `{"id":"customer-data","counter":9007199254740993}`;
       response.writeHead(200, { "content-type": "application/json" }).end(request.url.pathname.endsWith("/transactions")
-        ? `{"offset":"2","durability":"local_durable","results":[{"id":"a/b","version":"${version}","document":${data}}]}`
-        : `{"id":"a/b","version":"${version}","offset":"1","durability":"local_durable","document":${data}}`);
+        ? `{"offset":"2","durability":"local_durable","results":[{"id":"${entityId}","version":"${version}","document":${data}}]}`
+        : `{"id":"${entityId}","version":"${version}","offset":"1","durability":"local_durable","document":${data}}`);
     });
-    const patched = await db.collection("users").patch("a/b", { ops: [{ op: "set", path: "/id", value: "customer-data" }] });
+    const patched = await db.collection("users").patch(entityId, { ops: [{ op: "set", path: "/id", value: "customer-data" }] });
     expect(patched.document?.id).toBe("customer-data");
     expect(patched.document?.counter).toBeInstanceOf(ExactDecimal);
     expect(String(patched.document?.counter)).toBe("9007199254740993");
-    const result = await db.transaction().patch("users", "a/b", { merge: { id: "customer-data" } }).commit();
+    const result = await db.transaction().patch("users", entityId, { merge: { id: "customer-data" } }).commit();
     const entry = result.results[0];
-    expect(entry).toMatchObject({ id: "a/b", version, document: { id: "customer-data" } });
+    expect(entry).toMatchObject({ id: entityId, version, document: { id: "customer-data" } });
     if (entry === undefined || !("document" in entry)) throw new Error("Missing PATCH transaction result.");
     expect(entry.document?.counter).toBeInstanceOf(ExactDecimal);
     expect(String(entry.document?.counter)).toBe("9007199254740993");
     expect(requests[0]?.headers["content-type"]).toBe("application/vnd.terrabase.ops+json");
-    expect(JSON.parse(requests[1]?.body ?? "").ops[0]).toMatchObject({ id: "a/b", merge: { id: "customer-data" } });
+    expect(JSON.parse(requests[1]?.body ?? "").ops[0]).toMatchObject({ id: entityId, merge: { id: "customer-data" } });
   });
 
   test.each([null, [], "invalid"])("rejects malformed optional PATCH document %j", async value => {
-    const { db } = await fixture((_request, response) => json(response, { ...write("key"), document: value }));
-    await expect(db.collection("users").patch("key", { merge: {} })).rejects.toThrow(TypeError);
+    const { db } = await fixture((_request, response) => json(response, { ...write(entityId), document: value }));
+    await expect(db.collection("users").patch(entityId, { merge: {} })).rejects.toThrow(TypeError);
   });
 
   test("preserves collection identities across all four named operations", async () => {
@@ -128,8 +127,8 @@ describe("current document wire contracts", () => {
 
   test.each([version, "tbv2-token", `tbv1-${"0".repeat(32)}`, "*"])("quotes transaction ETag %j without changing wildcard semantics", async tag => {
     const { db, requests } = await fixture((_request, response) => json(response,
-      { offset: "1", durability: "local_durable", results: [write("key")] }));
-    await db.transaction().put("users", "key", { id: "unrelated-data" }, { ifMatch: tag }).commit();
+      { offset: "1", durability: "local_durable", results: [write(entityId)] }));
+    await db.transaction().put("users", entityId, { id: "unrelated-data" }, { ifMatch: tag }).commit();
     expect(JSON.parse(requests[0]?.body ?? "").ops[0].if_match).toBe(tag === "*" ? "*" : `"${tag}"`);
   });
 
@@ -146,7 +145,7 @@ describe("current document wire contracts", () => {
 describe("pagination termination and cancellation", () => {
   test("follows opaque cursors, sends count once, and stops at null", async () => {
     const { db, requests } = await fixture((_request, response) => json(response,
-      requests.length === 1 ? { items: [document("key")], next_cursor: "next+cursor", count: { value: "1", exact: true } }
+      requests.length === 1 ? { items: [document(entityId)], next_cursor: "next+cursor", count: { value: "1", exact: true } }
         : { items: [], next_cursor: null }));
     const pages = [];
     for await (const page of db.collection("users").pages({ count: true, limit: 1 })) pages.push(page);
@@ -183,11 +182,11 @@ describe("pagination termination and cancellation", () => {
   });
 
   test("abort between buffered items preserves the reason and issues no next request", async () => {
-    const { db, requests } = await fixture((_request, response) => json(response, { items: [document("a"), document("b")], next_cursor: "next" }));
+    const { db, requests } = await fixture((_request, response) => json(response, { items: [document(entityId), document(project)], next_cursor: "next" }));
     const controller = new AbortController();
     const reason = new Error("cancel buffered iteration");
     const iter = db.collection("users").items({}, { signal: controller.signal });
-    expect((await iter.next()).value?.id).toBe("a");
+    expect((await iter.next()).value?.id).toBe(entityId);
     controller.abort(reason);
     await expect(iter.next()).rejects.toBe(reason);
     expect(requests).toHaveLength(1);
@@ -202,7 +201,7 @@ describe("native fetch failures and typed diagnostics", () => {
       response.writeHead(status, { "content-type": "application/json", "x-request-id": "fixture-request", "retry-after": "2",
         "www-authenticate": "Bearer", etag: '"tombstone"' }).end(JSON.stringify(body));
     });
-    const error = await db.collection("users").put("key", {}).catch(error => error);
+    const error = await db.collection("users").put(entityId, {}).catch(error => error);
     expect(error).toBeInstanceOf(TerraBaseV1Error);
     if (status === 401) expect(error).toBeInstanceOf(V1InvalidKeyError);
     if (status === 403) expect(error).toBeInstanceOf(V1ForbiddenScopeError);
@@ -215,7 +214,7 @@ describe("native fetch failures and typed diagnostics", () => {
   test.each(["", "{", "not-json"])("preserves unreadable error text %j and headers", async text => {
     const { db } = await fixture((_request, response) => response.writeHead(403,
       { "content-type": "application/json", "x-request-id": "fixture-request" }).end(text));
-    await expect(db.collection("users").get("key")).rejects.toMatchObject({ status: 403, code: "http_403",
+    await expect(db.collection("users").get(entityId)).rejects.toMatchObject({ status: 403, code: "http_403",
       responseText: text, body: undefined, requestId: "fixture-request" });
   });
 
@@ -223,7 +222,7 @@ describe("native fetch failures and typed diagnostics", () => {
     const body = { type: "about:blank", title: "Denied", status: 403 };
     const { db } = await fixture((_request, response) => response.writeHead(403,
       { "content-type": "application/problem+json" }).end(JSON.stringify(body)));
-    await expect(db.collection("users").get("key")).rejects.toMatchObject({ status: 403, code: "http_403", body, details: undefined });
+    await expect(db.collection("users").get(entityId)).rejects.toMatchObject({ status: 403, code: "http_403", body, details: undefined });
   });
 
   test.each([{ text: "", type: "application/json", error: TypeError }, { text: "{", type: "application/json", error: SyntaxError },
@@ -235,11 +234,11 @@ describe("native fetch failures and typed diagnostics", () => {
   );
 
   test("pre-abort retains the caller's reason with zero requests", async () => {
-    const { db, requests } = await fixture((_request, response) => json(response, document("key")));
+    const { db, requests } = await fixture((_request, response) => json(response, document(entityId)));
     const controller = new AbortController();
     const reason = new Error("pre-aborted");
     controller.abort(reason);
-    await expect(db.collection("users").get("key", { signal: controller.signal })).rejects.toBe(reason);
+    await expect(db.collection("users").get(entityId, { signal: controller.signal })).rejects.toBe(reason);
     expect(requests).toHaveLength(0);
   });
 
@@ -260,7 +259,7 @@ describe("native fetch failures and typed diagnostics", () => {
 
   test("redirects never forward credentials or retry the request", async () => {
     const { db, requests } = await fixture((_request, response) => response.writeHead(307, { location: "/redirect-target" }).end());
-    await expect(db.collection("users").put("key", {})).rejects.toMatchObject({ status: 307, code: "http_307" });
+    await expect(db.collection("users").put(entityId, {})).rejects.toMatchObject({ status: 307, code: "http_307" });
     expect(requests).toHaveLength(1);
   });
 });
@@ -268,13 +267,13 @@ describe("native fetch failures and typed diagnostics", () => {
 describe("current document listing", () => {
   test("uses GET documents with opaque cursor and terminates an empty final page", async () => {
     const { db, requests } = await fixture((request, response) => json(response, {
-      items: request.url.searchParams.has("cursor") ? [] : [document("natural/key")],
+      items: request.url.searchParams.has("cursor") ? [] : [document(entityId)],
       next_cursor: request.url.searchParams.has("cursor") ? null : "opaque+/cursor=",
     }));
     const docs = db.collection("users");
     const first = await docs.list({ limit: 1 });
     const last = await docs.list({ limit: 1, cursor: first.nextCursor ?? "" });
-    expect(first.items[0]?.id).toBe("natural/key");
+    expect(first.items[0]?.id).toBe(entityId);
     expect(last).toMatchObject({ items: [], nextCursor: null });
     expect(requests.map(request => [request.method, request.url.pathname, request.body])).toEqual([
       ["GET", `${prefix}/collections/users/documents`, ""], ["GET", `${prefix}/collections/users/documents`, ""],
@@ -306,7 +305,7 @@ describe("current document listing", () => {
 test.each(["document", "collection", "schema", "database"])("does not replay bodyless %s DELETE after native fetch receives 421", async surface => {
   const { client, db, requests } = await fixture((_request, response) => json(response, { error: { code: "wrong_region" } }, 421));
   const docs = db.collection("users");
-  const deletion = surface === "document" ? docs.delete("key") : surface === "collection" ? db.collections.drop("users") :
+  const deletion = surface === "document" ? docs.delete(entityId) : surface === "collection" ? db.collections.drop("users") :
     surface === "schema" ? docs.deleteSchema() : client.databases.delete("app");
   await expect(deletion).rejects.toMatchObject({ status: 421, code: "wrong_region" });
   expect(requests).toHaveLength(1);

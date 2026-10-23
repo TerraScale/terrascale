@@ -15,7 +15,7 @@ public sealed class DeleteDocumentEndpoint(IDocumentService documents, ITenantDi
         Delete(DocumentRoute.Document);
         Name("deleteDocument");
         Summary("Deletes a JSON document");
-        Description("Optional If-Match. Returns the tombstone's version; deleting an absent or deleted document returns 404 not_found.");
+        Description("Optional If-Match. Returns the tombstone's version; deleting an absent or deleted document returns 404 not_found. " + DocumentRoute.WriteDurabilityDescription);
         Tags("Documents");
         Produces<WriteBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

@@ -1,5 +1,5 @@
 // Typed decoding of TerraBase v1 response bodies.
-import { parseU64, requireDocumentId, requireVersion } from "./ids.js";
+import { parseU64, requireDocumentId, requireStoredId, requireVersion } from "./ids.js";
 import { isJsonObject } from "./json.js";
 /** @import { JsonObject, JsonValue } from "./json.js" */
 
@@ -101,7 +101,7 @@ export function durability(value) {
  */
 export function decodeDocument(value) {
   const raw = object(value, "document");
-  const id = requireDocumentId(raw.id);
+  const id = requireStoredId(raw.id);
   const version = requireVersion(raw.version);
   const state = string(raw.state, "document state");
   const document = documentObject(raw.document);

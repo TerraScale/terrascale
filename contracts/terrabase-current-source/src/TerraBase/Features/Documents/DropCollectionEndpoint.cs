@@ -15,7 +15,7 @@ public sealed class DropCollectionEndpoint(IDocumentService documents, ITenantDi
         Delete(DocumentRoute.Collections + "/{collection}");
         Name("dropCollection");
         Summary("Drops a collection");
-        Description("Deletes the collection and every document in it in one transaction, and returns the dropped collection. A drop exceeding 1024 document states or 2 MiB of change content fails atomically with 503 capacity.");
+        Description("Applies the collection deletion version to its documents in one transaction and returns the dropped collection. Entries newer than the deletion version survive; the collection remains while newer document state exists.");
         Tags("Collections");
         Produces<CollectionBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);

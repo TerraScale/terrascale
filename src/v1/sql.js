@@ -1,5 +1,5 @@
 import { array, boolean, malformed, object, string } from "./decode.js";
-import { requireDocumentId, requireName } from "./ids.js";
+import { requireStoredId, requireName } from "./ids.js";
 /**
  * @import { JsonObject, JsonValue } from "./json.js"
  * @import { V1RequestOptions } from "./terrabase-v1.js"
@@ -41,7 +41,7 @@ function decodeResult(value) {
   const raw = object(value, "SQL result");
   const rows = array(raw.rows, "SQL rows").map(entry => {
     const row = object(entry, "SQL row");
-    return Object.freeze({ id: requireDocumentId(row.id), value: object(row.value, "SQL row value") });
+    return Object.freeze({ id: requireStoredId(row.id), value: object(row.value, "SQL row value") });
   });
   const matched = raw.matched;
   if (typeof matched !== "number" || !Number.isInteger(matched) || matched < 0 || matched > 1000 || matched !== rows.length)

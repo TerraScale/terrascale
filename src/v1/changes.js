@@ -1,6 +1,6 @@
 import { documentObject, malformed, object, u64 } from "./decode.js";
 import { parseV1Error } from "./errors.js";
-import { requireDocumentId, requireName } from "./ids.js";
+import { requireStoredId, requireName } from "./ids.js";
 import { parseExactJson } from "./json.js";
 import { BodyTransportError } from "./transport.js";
 /** @import { JsonObject } from "./json.js" */
@@ -156,7 +156,7 @@ function decodeEvent(event, headers) {
   if (raw.op !== "upsert" && raw.op !== "delete") malformed("changes operation");
   if (typeof raw.origin !== "string" || !/^[0-9a-f]{16}$/u.test(raw.origin)) malformed("changes origin");
   return Object.freeze({ type: "change", cursor, collection: requireName("collection", raw.collection),
-    id: requireDocumentId(raw.id), op: raw.op, version: u64(raw.version, "changes version"), origin: raw.origin,
+    id: requireStoredId(raw.id), op: raw.op, version: u64(raw.version, "changes version"), origin: raw.origin,
     document: raw.document === null ? null : documentObject(raw.document),
   });
 }

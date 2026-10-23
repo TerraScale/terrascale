@@ -16,7 +16,7 @@ public sealed class PutDocumentEndpoint(IDocumentService documents, ITenantDirec
         Put(DocumentRoute.Document);
         Name("putDocument");
         Summary("Inserts or replaces a JSON document");
-        Description("The body is the complete document: a JSON object of at most 1 MiB, 16 levels and 4096 values. Optional If-Match (current version or *) or If-None-Match: * (absent or deleted). Returns 201 when the document was absent or deleted, 200 otherwise; a failed precondition returns 412 precondition_failed.");
+        Description("The body is the complete document: a JSON object of at most 1 MiB, 16 levels and 4096 values. Optional If-Match (current version or *) or If-None-Match: * (absent or deleted). Returns 201 when the document was absent or deleted, 200 otherwise; a failed precondition returns 412 precondition_failed. " + DocumentRoute.WriteDurabilityDescription);
         Tags("Documents");
         Metadata(new RequestBodyMetadata(typeof(JsonElement), DocumentRoute.JsonMediaType));
         Produces<WriteBody>(StatusCodes.Status201Created);

@@ -1,5 +1,5 @@
 import { documentObject, malformed, object } from "./decode.js";
-import { requireDocumentId, requireName } from "./ids.js";
+import { requireStoredId, requireName } from "./ids.js";
 import { parseExactJson } from "./json.js";
 import { BodyTransportError } from "./transport.js";
 /** @import { JsonObject } from "./json.js" */
@@ -22,7 +22,7 @@ function decodeLine(line) {
   try { value = parseExactJson(line); }
   catch { malformed("export line JSON"); }
   const raw = object(value, "export line");
-  return Object.freeze({ collection: requireName("collection", raw.collection), id: requireDocumentId(raw.id), document: documentObject(raw.document) });
+  return Object.freeze({ collection: requireName("collection", raw.collection), id: requireStoredId(raw.id), document: documentObject(raw.document) });
 }
 
 /**
@@ -39,7 +39,7 @@ export async function* exportDocuments(transport, database, options = {}) {
   if (after !== undefined) {
     if (typeof after !== "object" || after === null) throw new TypeError("export after is { collection, id }.");
     query.set("after_collection", requireName("collection", after.collection));
-    query.set("after_id", requireDocumentId(after.id));
+    query.set("after_id", requireStoredId(after.id));
   }
   const response = await transport.openStream("exportDatabase", { database }, { query, signal });
   const body = /** @type {ReadableStream<Uint8Array>} */ (response.body);

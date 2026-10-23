@@ -114,7 +114,7 @@ describe("platform token contract", () => {
       let calls = 0;
       const client = createTerraBaseV1Client({ project, token: "header.payload.signature", baseUrl: "https://api.terrascale.tech",
         fetch: async () => (calls++, Response.json({ error: { code, message: "denied" } }, { status })) });
-      const error = await client.database("app").collection("users").get("key").catch(error => error);
+      const error = await client.database("app").collection("users").get("01ARZ3NDEKTSV4RRFFQ69G5FAV").catch(error => error);
       expect(error).toBeInstanceOf(type);
       expect(error).toMatchObject({ status, code });
       expect(calls).toBe(1);
