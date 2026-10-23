@@ -198,7 +198,7 @@ public sealed partial class OpenApiTests
                     statuses = [];
                     current = (path, method, operation.Groups["id"].Value);
                     contract.Add(current.Value, statuses);
-                    security.Add(current.Value, new(defaultSecurity));
+                    security.Add(current.Value, [.. defaultSecurity]);
                 }
                 else if ((line is "      security:" or "      security: [{}]") && current is { } secured)
                 {

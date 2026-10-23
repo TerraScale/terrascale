@@ -28,7 +28,6 @@ internal sealed partial class TursoStorageTransaction
 
     private const string SetFeedSequence = "UPDATE _tb_feed_sequence SET seq = $seq WHERE id = 1;";
 
-
     private const string FeedFloors = "SELECT origin, stamp FROM _tb_feed_floor;";
 
     private const string FeedAfter = """
