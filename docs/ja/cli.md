@@ -1,6 +1,6 @@
 ---
 title: CLI installation and usage
-description: Build the TerraScale CLI from source, sign in, manage databases, and run SQL.
+description: Install the TerraScale CLI with go install, sign in, and manage databases, collections, documents, SQL and API keys.
 ---
 
 <!-- i18n:fallback:ja -->
@@ -10,18 +10,34 @@ description: Build the TerraScale CLI from source, sign in, manage databases, an
 
 # CLI installation and usage
 
-The `ts` CLI signs you into TerraScale and runs database commands as your user.
+The `ts` CLI signs you into TerraScale and manages databases, collections,
+documents, read-only SQL and project API keys as your user.
 You need a TerraScale account and a project in the [dashboard](https://dash.terrascale.tech).
 
 ::: warning Public release pending
 The CLI source is merged into [ts-go](https://github.com/TerraScale/ts-go/tree/main/cmd/ts),
 but the first public CLI release, hosted installer, and Homebrew tap are still pending.
-Use the source build below today. Installation does not establish hosted service availability.
+Install with `go install` or the source build below today. Installation does not establish hosted service availability.
 :::
 
-## Build from source today
+## Install with Go today
 
-Install [Go](https://go.dev/doc/install) 1.25 or later and Git. In a terminal:
+Install [Go](https://go.dev/doc/install) 1.25 or later. In a terminal:
+
+```sh
+go install terrascale.tech/sdk/cmd/ts@main
+export PATH="$(go env GOPATH)/bin:$PATH"
+ts help
+```
+
+Use `@main`: `@latest` resolves to SDK `v0.0.1`, which predates `cmd/ts` and
+fails with `does not contain package terrascale.tech/sdk/cmd/ts`. On Windows,
+the same command installs `ts.exe` into `%USERPROFILE%\go\bin`; add that
+directory to `PATH`.
+
+## Build from source
+
+Install Go 1.25 or later and Git. In a terminal:
 
 ```sh
 git clone https://github.com/TerraScale/ts-go.git
@@ -32,9 +48,6 @@ go build -o ts ./cmd/ts
 Run `./ts` from this directory, or move the executable to a directory on your `PATH`
 to use `ts` as shown below. On Windows, build with `go build -o ts.exe ./cmd/ts`
 and run `.\ts.exe` from PowerShell, or add its directory to `PATH`.
-
-Do not install the published SDK `v0.0.1` expecting a CLI: it predates `cmd/ts`.
-The source build uses the current `main` branch.
 
 ## Release installation (pending)
 
@@ -72,7 +85,9 @@ The release CLI is expected to report its version with:
 ts --version
 ```
 
-Release builds print `ts 0.0.X`. Source builds with version support print `ts dev`.
+Release builds print `ts 0.0.X`. `go install` and source builds print `ts dev`.
+`ts help` (or `ts --help`) lists every command. Invalid arguments exit with
+status 2 and other failures with status 1.
 
 ## Sign in
 
@@ -82,7 +97,16 @@ ts auth login
 
 Open the URL printed by the CLI in your browser and confirm the displayed code.
 The command waits until sign-in completes and prints `Signed in.`.
-Commands use your project permissions. The CLI stores your sign-in locally and refreshes it when needed.
+Commands use your project permissions. The CLI stores your sign-in in your
+user config directory (`~/.config/terrascale/cli.json` on Linux,
+`~/Library/Application Support/terrascale/cli.json` on macOS,
+`%AppData%\terrascale\cli.json` on Windows), readable only by you (mode 0600),
+and refreshes it when needed.
+
+```sh
+ts whoami     # the signed-in account
+ts projects   # every project you can reach, with its ID and your role
+```
 
 If you have exactly one project, the CLI selects it automatically. With multiple
 projects, put `-project` **before** the command and use a project name or ID:
@@ -91,8 +115,8 @@ projects, put `-project` **before** the command and use a project name or ID:
 ts -project my-project db list
 ```
 
-Use the project ID if names are ambiguous. Create a project in the dashboard if
-the CLI reports `no project`.
+Use the project ID from `ts projects` if names are ambiguous. Create a project
+in the dashboard if the CLI reports `no project`.
 
 ## Manage databases
 
@@ -102,13 +126,46 @@ ts db create example
 ts db branch example example-preview
 ```
 
-`db list` prints database names, IDs, and home regions. `db branch` takes the
+`db list` prints database names, IDs, and home regions, and an empty table
+before the project's first database. `db branch` takes the
 source database name first and the new branch name second.
 
 ::: danger Database deletion
 `ts db delete example-preview` deletes that database immediately, without a
 confirmation prompt. Check the selected project and database name before running it.
 :::
+
+## Collections and documents
+
+```sh
+ts collection create example customers
+ts collection list example
+ts doc put example customers '{"name":"Ana","plan":"pro"}'
+ts doc put example customers 01JZ8Q3Y6W2V4T0R9P7N5M3K1H '{"name":"Bo"}'
+echo '{"name":"Cy"}' | ts doc put example customers -
+ts doc get example customers 01JZ8Q3Y6W2V4T0R9P7N5M3K1H
+ts doc list example customers
+ts doc delete example customers 01JZ8Q3Y6W2V4T0R9P7N5M3K1H
+ts collection drop example customers
+```
+
+`doc put` without an ID creates a document with a new ID and prints it; with
+an ID it creates or replaces that document. Document IDs are canonical
+uppercase ULIDs. Pass `-` instead of the JSON to read the document from
+standard input. `doc get` prints the document with its ID and version.
+
+`doc list` prints every document of the collection as one JSON line each.
+`doc import` puts those lines back, creating the collection if needed, so the
+two copy a collection between databases or projects:
+
+```sh
+ts doc list example customers > customers.jsonl
+ts -project other-project doc import example customers < customers.jsonl
+```
+
+This is a client-side copy, one request per document. For whole-database
+exports and bulk imports see [Export your data](/ja/guides/export) and
+[Import an existing database](/ja/guides/import).
 
 ## Run SQL
 
@@ -127,6 +184,19 @@ The CLI sends the query to the database SQL endpoint and prints each returned ro
 own line. A truncated result produces a warning on standard error; it is not
 an export of all matching rows. SQL is separate from the Documents API's
 [JSON filter queries](/ja/guides/queries).
+
+## API keys
+
+```sh
+ts keys create backend example   # optional database restricts the key
+ts keys list
+ts keys revoke 01JZ8Q5B7C9D1E3F5G7H9J1K3M
+```
+
+`keys create` makes a project key with `databases:read`, `databases:write`,
+`documents:read` and `documents:write`. It prints the key once on standard
+output; store it immediately in your secret manager. Use the key with an SDK's
+API key token exchange, as the [quickstarts](/ja/getting-started) show.
 
 ## Sign out
 
