@@ -50,7 +50,7 @@ func (r *Runner) Converge(ctx context.Context, loadEnd time.Time) (Convergence, 
 	coll := r.collection + "-probe"
 	var markers []string
 	for _, reg := range r.regions {
-		id := "end-" + reg.Name + "-" + ulid.Make().String()
+		id := ulid.Make().String() // the document API takes ULID ids only (#408)
 		if resp, ok, _ := r.call(ctx, reg, http.MethodPut, DocPath(coll, id), []byte(`{"end":true}`), "application/json"); !ok {
 			return out, fmt.Errorf("end marker on %s: HTTP %d", reg.Name, resp.Status)
 		}
