@@ -33,7 +33,7 @@ for flag in ("-mtune=native", "-mcrypto", "-mneon", "-maes"):
     assert f'-        .flag_if_supported("{flag}")' in portable_patch
 assert "#define HAS_HW_AES" in portable_patch
 crypto = (root / "scripts/vendor/check-turso-native-crypto.sh").read_text()
-for proof in ("aegis256_aesni_implementation", "aegis256_neon_aes_implementation", "aegis256_soft_implementation", "aegis256_pick_best_implementation", "objdump -d"):
+for proof in ("libaegis_aegis256_aesni_implementation", "libaegis_aegis256_neon_aes_implementation", "libaegis_aegis256_soft_implementation", "aegis256_pick_best_implementation", "objdump -d"):
     assert proof in crypto
 patch = root / "src/vendor/Turso.Native/patches/0001-preserve-page-authentication-damage.patch"
 assert hashlib.sha256(patch.read_bytes()).hexdigest() == "eadb14ec88ac351c938908443bcb89da324411e4eb8f8d068b3cc755fc0808ae"
@@ -72,7 +72,8 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
     compiler.parent.mkdir(parents=True)
     audit = "cargo:warning=terrascale-aegis compiler=cc -O3\ncargo:warning=terrascale-aegis HAS_HW_AES=undefined; runtime dispatch and portable fallback retained\n"
     compiler.write_text(audit)
-    symbols = "0 d aegis256_soft_implementation\n1 t aegis256_pick_best_implementation\n2 d aegis256_aesni_implementation\n3 d aegis256_neon_aes_implementation\n"
+    # Match the pinned AEGIS implementations.h names, including its libaegis_ prefix.
+    symbols = "0 d libaegis_aegis256_soft_implementation\n1 t aegis256_pick_best_implementation\n2 d libaegis_aegis256_aesni_implementation\n3 d libaegis_aegis256_neon_aes_implementation\n"
     (assets / "crypto-symbols.txt").write_text(symbols)
     for tool, source in (("nm", "crypto-symbols.txt"), ("objdump", "crypto-disassembly.txt")):
         stub = fixture / tool
@@ -82,10 +83,12 @@ with tempfile.TemporaryDirectory(prefix="native-pipeline-") as temporary:
         (assets / "crypto-disassembly.txt").write_text(f"  100: {instruction} v0, v1\n")
         proof = fixture / f"crypto-proof-{rid}"
         run("check-turso-native-crypto.sh", "synthetic.so", rid, proof)
-        hardware = "2 d aegis256_aesni_implementation\n" if rid == "linux-x64" else "3 d aegis256_neon_aes_implementation\n"
-        for missing in ("0 d aegis256_soft_implementation\n", "1 t aegis256_pick_best_implementation\n", hardware):
+        hardware = "2 d libaegis_aegis256_aesni_implementation\n" if rid == "linux-x64" else "3 d libaegis_aegis256_neon_aes_implementation\n"
+        for missing in ("0 d libaegis_aegis256_soft_implementation\n", "1 t aegis256_pick_best_implementation\n", hardware):
             (assets / "crypto-symbols.txt").write_text(symbols.replace(missing, ""))
             run("check-turso-native-crypto.sh", "synthetic.so", rid, proof, succeeds=False)
+        (assets / "crypto-symbols.txt").write_text(symbols.replace("libaegis_", ""))
+        run("check-turso-native-crypto.sh", "synthetic.so", rid, proof, succeeds=False)
         (assets / "crypto-symbols.txt").write_text(symbols)
         (assets / "crypto-disassembly.txt").write_text("  100: nop\n")
         run("check-turso-native-crypto.sh", "synthetic.so", rid, proof, succeeds=False)
