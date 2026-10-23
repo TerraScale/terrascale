@@ -26,7 +26,7 @@ internal sealed class RetryReplicaRecoveryEndpoint(
         Post(ManagementRoute.Database + "/recovery/retry");
         Name("retryReplicaRecovery");
         Summary("Retries an existing certified tenant rebuild");
-        Description("Internal operator only, acting as an existing owner or admin of the exact organization/project/database IDs. Requires an open trusted catalog and peer freshness proofs younger than 30 seconds. faultedIncarnation must match an existing durable rebuild; reason is 1–256 characters with no controls. Never restores SYSTEM, changes freshness, creates a fault or registers a database. 204 after certification; 409 if busy, still pending, mismatched or already completed. Replaying a completed request cannot start another rebuild. Audit logs contain the acting user, target IDs, reason SHA-256 and fixed outcome, never the reason text or credentials.");
+        Description("Internal operator only, acting as an existing owner or admin of the exact organization/project/database IDs. For ts-auth-enrolled projects, also requires that acting user’s current sign-in Bearer token and live ts-auth organization owner/admin authority. Requires an open trusted catalog and peer freshness proofs younger than 30 seconds. faultedIncarnation must match an existing durable rebuild; reason is 1–256 characters with no controls. Never restores SYSTEM, changes freshness, creates a fault or registers a database. 204 after certification; 409 if busy, still pending, mismatched or already completed. Replaying a completed request cannot start another rebuild. Audit logs contain the acting user, target IDs, reason SHA-256 and fixed outcome, never the reason text or credentials.");
         Tags("Administration");
         Produces(StatusCodes.Status204NoContent);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -37,6 +37,7 @@ internal sealed class RetryReplicaRecoveryEndpoint(
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Internal);
+        Metadata(new OperatorAuthorityProof());
     }
 
     public override async ValueTask<IResult> HandleAsync(ReplicaRecoveryRequest request, CancellationToken cancellationToken)
@@ -61,7 +62,7 @@ internal sealed class RetryReplicaRecoveryEndpoint(
                 return ErrorResponse.From(new Unavailable("trusted current catalog required", "catalog_stale"));
             }
 
-            var authorized = await management.GetRecoveryDatabaseTenantAsync(user, organization, project, id, cancellationToken);
+            var authorized = await management.GetRecoveryDatabaseTenantAsync(user, organization, project, id, OperatorAuthorityProof.Read(HttpContext.Request), cancellationToken);
             if (authorized is not TenantContext database)
             {
                 return authorized switch

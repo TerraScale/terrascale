@@ -145,7 +145,7 @@ public interface IManagementService
 {
     /// <summary>The exact live database an existing owner or admin may recover; never creates catalog state.</summary>
     ValueTask<WritableDatabaseTenantResult> GetRecoveryDatabaseTenantAsync(
-        string userId, string organizationId, string projectId, string databaseId, CancellationToken cancellationToken);
+        string userId, string organizationId, string projectId, string databaseId, string? authorityToken, CancellationToken cancellationToken);
 
     /// <summary>Creates an organization with the user as its first member, an <see cref="OrganizationRole.Owner"/>.</summary>
     ValueTask<CreateOrganizationResult> CreateOrganizationAsync(string userId, string name, CancellationToken cancellationToken);

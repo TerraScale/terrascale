@@ -12,7 +12,7 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
 
-public sealed class OperatorRecoveryTests
+public sealed partial class OperatorRecoveryTests
 {
     [Test]
     public async Task Recovery_requires_the_peer_credential_an_existing_admin_and_the_exact_live_tenant()

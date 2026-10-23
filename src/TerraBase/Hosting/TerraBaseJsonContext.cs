@@ -185,5 +185,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(SwitchOrganizationRequest))]
 [JsonSerializable(typeof(TransferRequest))]
 [JsonSerializable(typeof(TsAuthProjectAuthority))]
+[JsonSerializable(typeof(TsAuthOrganizationAuthority))]
+[JsonSerializable(typeof(TsAuthAuthoritySubject))]
 [JsonSerializable(typeof(VersionsBody))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext;
