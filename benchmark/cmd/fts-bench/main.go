@@ -130,7 +130,7 @@ func measure(ctx context.Context, r *replbench.Region, size, repeat int) (result
 			ops = append(ops, map[string]any{"op": "put", "collection": collection, "id": fmt.Sprintf("%026d", n+1), "document": doc})
 		}
 		if _, err := call(ctx, r, "POST", "/transactions", map[string]any{"ops": ops}); err != nil {
-			return row, err
+			return row, fmt.Errorf("seed documents %d–%d: %w", start, min(start+250, size)-1, err)
 		}
 	}
 	started := time.Now()
@@ -239,7 +239,18 @@ func call(ctx context.Context, r *replbench.Region, method, path string, value a
 		return nil, err
 	}
 	if response.Status >= 300 {
-		// Do not put response bodies or private target-file credentials in logs.
+		// Only recognized public codes may leave the private response body.
+		var failure struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(response.Body, &failure) == nil {
+			switch failure.Error.Code {
+			case "capacity", "storage_busy", "copy_faulted", "region_unavailable", "remote_region_unavailable", "confirmation_busy", "catalog_stale", "write_outcome_unknown", "unavailable":
+				return nil, fmt.Errorf("%s %s: HTTP %d (%s)", method, path, response.Status, failure.Error.Code)
+			}
+		}
 		return nil, fmt.Errorf("%s %s: HTTP %d", method, path, response.Status)
 	}
 	return response.Body, nil

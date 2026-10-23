@@ -3,8 +3,13 @@ package main
 import (
 	"encoding/json/v2"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"terrascale.tech/ts-benchmark/internal/replbench"
 )
 
 func TestCorpusAndRankOracle(t *testing.T) {
@@ -58,5 +63,33 @@ func TestWireQuery(t *testing.T) {
 	sort := q["sort"].([]any)[0].(map[string]any)
 	if search[0] != "/article/body" || search[1] != term(0) || sort["path"] != "$score" || sort["order"] != "desc" {
 		t.Fatal("benchmark must use RFC6901 search paths and descending score sort")
+	}
+}
+
+func TestFailureDiagnosticsDoNotExposePrivateResponseFields(t *testing.T) {
+	t.Parallel()
+	for _, code := range []string{"storage_busy", "write_outcome_unknown", "private-credential"} {
+		t.Run(code, func(t *testing.T) {
+			t.Parallel()
+			var requests atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(http.StatusServiceUnavailable)
+				fmt.Fprintf(w, `{"error":{"code":%q,"message":"private-message","machine":"private-machine"}}`, code)
+			}))
+			t.Cleanup(server.Close)
+			region, err := replbench.NewRegion("gru", replbench.Targets{Project: "project", Database: "database", Regions: map[string]replbench.RegionTarget{"gru": {URL: server.URL, Token: "private-token"}}}, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = call(t.Context(), region, "POST", "/transactions", nil)
+			want := "POST /transactions: HTTP 503"
+			if code != "private-credential" {
+				want += " (" + code + ")"
+			}
+			if err == nil || err.Error() != want || requests.Load() != 1 {
+				t.Fatalf("expected one request and sanitized error %q; got %d requests, %v", want, requests.Load(), err)
+			}
+		})
 	}
 }
