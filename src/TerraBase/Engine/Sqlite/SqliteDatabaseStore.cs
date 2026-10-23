@@ -876,6 +876,8 @@ internal sealed partial class SqliteDatabaseStore(
 
     private async Task RunBatchesAsync()
     {
+        // Each batch holds the writer for all its calls: they run on the write lane's thread back to back.
+        WriteLane.Resident();
         List<IBatchedWrite> deferred = [];
         while (true)
         {
