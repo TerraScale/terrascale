@@ -152,7 +152,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         await Assert.That(database.GetProperty("id").GetString()).IsEqualTo(id);
         await Assert.That(database.GetProperty("name").GetString()).IsEqualTo(name);
         await Assert.That(database.GetProperty("region").GetString()).IsEqualTo("GRU");
-        await Assert.That(Regions(database)).IsEqualTo("GRU");
+        await Assert.That(Regions(database)).IsEqualTo("GRU,SFO");
         Volatile.Write(ref invalid, false);
         await DeleteAsync(client, csrf, id, name);
         await Assert.That((await JsonAsync(producer, "/__test/observations")).GetProperty("failures").GetArrayLength()).IsEqualTo(0);
@@ -201,7 +201,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         await Assert.That(string.Join(";", attempts)).IsEqualTo("gru.api.terrascale.tech pin=gru").Because("one pinned request, no retry or redirect");
         var database = (await JsonAsync(client, "/api/v1/dashboard/databases"))[0];
         await Assert.That(database.GetProperty("region").GetString()).IsEqualTo("GRU");
-        await Assert.That(Regions(database)).IsEqualTo("GRU");
+        await Assert.That(Regions(database)).IsEqualTo("GRU,SFO");
         Volatile.Write(ref misdirect, false);
         await DeleteAsync(client, csrf, id, name);
         await Assert.That((await JsonAsync(producer, "/__test/observations")).GetProperty("failures").GetArrayLength()).IsEqualTo(0);

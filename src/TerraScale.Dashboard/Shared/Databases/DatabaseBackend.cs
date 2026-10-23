@@ -126,9 +126,13 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
 
     public async Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
     {
-        var name = await NameAsync(scope, home, databaseId, cancellationToken);
-        var sdk = await ClientAsync(scope, home, "databases:write", cancellationToken);
-        await RunAsync(() => sdk.Project(scope.ProjectId).DeleteDatabaseAsync(name, cancellationToken));
+        var database = (await ListAsync(scope, home, cancellationToken)).SingleOrDefault(item => item.Id == databaseId)
+            ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
+        var project = (await ClientAsync(scope, home, "databases:write", cancellationToken)).Project(scope.ProjectId);
+        // TerraBase deletes only a database without replica regions (409 database_replicated), and every new one has them.
+        if (database.ReplicaRegions is { Count: > 0 } || database.AllRegions)
+            await RunAsync(() => project.SetDatabaseRegionsAsync(database.Name, [], cancellationToken));
+        await RunAsync(() => project.DeleteDatabaseAsync(database.Name, cancellationToken));
     }
 
     public async Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken)
