@@ -321,6 +321,76 @@ public sealed class StorageTransactionTests
         }
     }
 
+    // The feed sequence and the commit offset are read and set under the writer: each feed row takes the next number, a
+    // rolled-back savepoint gives its number back, each commit takes one offset, and an exhausted sequence refuses the write.
+    [Test]
+    public async Task Feed_rows_take_consecutive_numbers_and_an_exhausted_feed_sequence_commits_nothing()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var (_, store) = await OpenAsync(server);
+        static byte[] Json(int n)
+        {
+            return Encoding.UTF8.GetBytes($$"""{"n":{{n}}}""");
+        }
+
+        Task<string> ReadAsync(string sql)
+        {
+            return store.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = sql;
+                return Convert.ToString(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) ?? "";
+            }, "a test reading the feed", CancellationToken.None);
+        }
+
+        var startSeq = long.Parse(await ReadAsync("SELECT seq FROM _tb_feed_sequence WHERE id = 1;"), System.Globalization.CultureInfo.InvariantCulture);
+        var startOffset = long.Parse(await ReadAsync("SELECT value FROM commit_offset WHERE id = 1;"), System.Globalization.CultureInfo.InvariantCulture);
+        await using (var writer = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            writer.Savepoint();
+            _ = await writer.PutAsync("items", "a", Json(1), CancellationToken.None);
+            await writer.FlushStatesAsync();
+            writer.ReleaseSavepoint();
+            writer.Savepoint();
+            _ = await writer.PutAsync("items", "gone", Json(2), CancellationToken.None);
+            await writer.FlushStatesAsync();
+            await writer.RollbackToSavepointAsync();
+            writer.Savepoint();
+            _ = await writer.PutAsync("items", "b", Json(3), CancellationToken.None);
+            await writer.FlushStatesAsync();
+            writer.ReleaseSavepoint();
+            _ = await writer.CommitAsync(CancellationToken.None);
+        }
+
+        await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            _ = await writer.PutAsync("items", "c", Json(4), CancellationToken.None);
+            _ = await writer.CommitAsync(CancellationToken.None);
+        }
+
+        await Assert.That(await ReadAsync("SELECT group_concat(id || ':' || (seq - " + startSeq + "), ',') FROM (SELECT id, seq FROM _tb_feed WHERE collection = 'items' ORDER BY seq);"))
+            .IsEqualTo("a:1,b:2,c:3");
+        await Assert.That(await ReadAsync("SELECT seq FROM _tb_feed_sequence WHERE id = 1;")).IsEqualTo((startSeq + 3).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        await Assert.That(await ReadAsync("SELECT value FROM commit_offset WHERE id = 1;")).IsEqualTo((startOffset + 2).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        await Assert.That(await ReadAsync("SELECT count(DISTINCT commit_offset) FROM _tb_feed WHERE collection = 'items';")).IsEqualTo("2");
+
+        _ = await store.WithWriterAsync(session =>
+        {
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = "UPDATE _tb_feed_sequence SET seq = 9223372036854775807 WHERE id = 1;";
+            return command.ExecuteNonQuery();
+        }, "a test exhausting the feed sequence", CancellationToken.None);
+        await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            _ = await writer.PutAsync("items", "d", Json(5), CancellationToken.None);
+            await Assert.ThrowsAsync<OverflowException>(() => writer.CommitAsync(CancellationToken.None).AsTask());
+        }
+
+        await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        await Assert.That(await reader.GetVersionAsync("items", "d", CancellationToken.None)).IsNull();
+        await Assert.That(await ReadAsync("SELECT value FROM commit_offset WHERE id = 1;")).IsEqualTo((startOffset + 2).ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
     [Test]
     public async Task Retirement_subscribers_can_enter_an_unrelated_database_lifecycle()
     {

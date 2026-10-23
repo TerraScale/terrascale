@@ -20,7 +20,7 @@ public sealed class QueryPlanTests
         ["Version"] = "SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?) | SCAN CONSTANT ROW",
         ["ListFirst"] = "SEARCH d USING INDEX sqlite_autoindex_documents_1 (collection=?) | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
         ["ListAfter"] = "SEARCH d USING INDEX sqlite_autoindex_documents_1 (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
-        ["NextOffset"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
+        ["SetOffset"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         ["CurrentOffset"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         ["Incarnation"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         ["RenewIncarnation"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
