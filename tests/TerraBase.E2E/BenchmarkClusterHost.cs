@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using TerraBase.Testing;
 
 namespace TerraBase.E2E;
 
@@ -9,7 +10,8 @@ namespace TerraBase.E2E;
 /// <c>make benchmark-repl-local</c>). It writes the targets file named by <c>TERRABASE_BENCH_TARGETS</c> once every
 /// region serves the database, and keeps the nodes up until the benchmark deletes that file. Without the variable it
 /// skips: it is a host, not a scenario. <c>TERRABASE_BENCH_LINK_DELAYS</c> (for example <c>gru-sjc=85,gru-fra=94,sjc-fra=69</c>)
-/// gives each named pair of regions a one-way delay in milliseconds on its peer links, as the real routes have.
+/// gives each named pair of regions a one-way delay in milliseconds on its peer links, as the real routes have. With
+/// <c>TERRABASE_BENCH_BUCKET=fake</c> the nodes share one in-process S3 bucket, as production nodes share the platform bucket.
 /// </summary>
 [Category("benchmark-host")]
 public sealed class BenchmarkClusterHost
@@ -42,7 +44,11 @@ public sealed class BenchmarkClusterHost
                     settings["cloudflare-api-token"] = Required("CLOUDFLARE_API_TOKEN");
                 }
             })
-            : await Cluster.StartLocalAsync(chosen);
+            // TERRABASE_BENCH_BUCKET=fake gives every node one shared in-process S3 fake as its platform bucket, as production
+            // nodes share theirs: log chunks ship when cheaper (benchmark/scripts/repl-chunks.sh).
+            : Environment.GetEnvironmentVariable("TERRABASE_BENCH_BUCKET") == "fake"
+                ? await Cluster.StartLocalAsync(chosen, new FakeS3())
+                : await Cluster.StartLocalAsync(chosen);
         foreach (var pair in (Environment.GetEnvironmentVariable("TERRABASE_BENCH_LINK_DELAYS") ?? "")
             .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
         {

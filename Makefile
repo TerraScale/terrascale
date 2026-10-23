@@ -45,7 +45,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 	libs-build libs-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-replication-matrix terrabase-e2e-local terrabase-e2e terrabase-e2e-orch-outage terrabase-check terrabase-run terrabase-publish \
-	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local
+	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local benchmark-repl-chunks
 
 # Global: the whole solution.
 restore:
@@ -243,3 +243,11 @@ benchmark-repl-local:
 	$(MAKE) terrabase-build CONFIGURATION=Release
 	$(MAKE) -C benchmark repl-bench-build
 	benchmark/scripts/repl-local.sh
+
+# Log chunks (RT3b) against the same three local regions: per region, peer-link and object-store bytes and object-store
+# requests for a small-write and a bulk-write load, REPEATS times each (default 3). The source of
+# benchmark/bench/2026-10-23-free-replication.md. Example: nice -n 19 make benchmark-repl-chunks.
+benchmark-repl-chunks:
+	$(MAKE) terrabase-build CONFIGURATION=Release
+	$(MAKE) -C benchmark repl-bench-build
+	benchmark/scripts/repl-chunks.sh
