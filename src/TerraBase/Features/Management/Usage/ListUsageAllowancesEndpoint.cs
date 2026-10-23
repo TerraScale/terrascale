@@ -18,7 +18,7 @@ public sealed class ListUsageAllowancesEndpoint(IUsageService usage) : EndpointW
         Get("/v1/usage/allowances");
         Name("listUsageAllowances");
         Summary("Lists every organization's billed usage this month");
-        Description("Up to 25 organizations after the optional after (an organization id), in id order, with the 4 KiB operation units of every project, region and node this UTC month: what the plan allowance counts. next names the last organization when more follow. logicalBytes is null and storageContract none while storage is not reported.");
+        Description("Up to 25 organizations after the optional after (an organization id), in id order, with the 4 KiB operation units of every project, region and node this UTC month: what the plan allowance counts. next names the last organization when more follow. logicalBytes is null and storageContract none while storage is not reported. periodStart and observedAt are taken before the scan; a scan that crosses into another UTC month, or runs past 30 seconds, answers 503 and should be retried. Responses are never cached.");
         Tags("Usage");
         Produces<AllowanceUsagePage>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -35,6 +35,8 @@ public sealed class ListUsageAllowancesEndpoint(IUsageService usage) : EndpointW
             return ErrorResponse.From(new Validation("after must be a canonical uppercase ULID"));
         }
 
+        // A cached page could report a month's totals after they changed, or in the next month.
+        HttpContext.Response.Headers.CacheControl = "no-store";
         return await usage.ListAllowanceUsageAsync(after.Length > 0 ? after : null, cancellationToken) switch
         {
             AllowanceUsagePage page => TypedResults.Ok(page),

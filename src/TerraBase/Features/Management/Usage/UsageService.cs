@@ -18,6 +18,9 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
 
     private const int AllowancePageSize = 25;
 
+    // One allowance page reads at most this long; a slower one answers 503 and the caller retries.
+    private static readonly TimeSpan AllowanceScanBudget = TimeSpan.FromSeconds(30);
+
     // Databases or projects one catalog read lists.
     private const int PageSize = 10;
 
@@ -206,35 +209,56 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
 
     public async ValueTask<AllowanceUsageResult> ListAllowanceUsageAsync(string? after, CancellationToken cancellationToken)
     {
-        // The catalog keeps one document per organization, named by its id.
-        var listed = await catalog.ReadAsync<OrganizationPage>(async transaction =>
+        // The page is labelled with the month and instant it started in; a scan that ends in another month is refused.
+        var observedAt = time.GetUtcNow();
+        var month = new DateTimeOffset(observedAt.Year, observedAt.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        using var budget = new CancellationTokenSource(AllowanceScanBudget, time);
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, budget.Token);
+        try
         {
-            var page = await transaction.ListAsync("organizations", after, AllowancePageSize, 1024 * 1024, cancellationToken).ConfigureAwait(false);
-            return new OrganizationIds([.. page.Documents.Select(document => document.Id)], page.HasMore);
-        }, static error => error, cancellationToken).ConfigureAwait(false);
-        if (listed is not OrganizationIds organizations)
-        {
-            return listed switch
+            // The catalog keeps one document per organization, named by its id.
+            var listed = await catalog.ReadAsync<OrganizationPage>(async transaction =>
             {
-                Unavailable error => error,
-                OrganizationIds => throw new UnreachableException(),
-            };
-        }
-
-        var items = new List<AllowanceUsage>(organizations.Ids.Count);
-        foreach (var organizationId in organizations.Ids)
-        {
-            if (await meter.GetMonthAsync(organizationId, projectId: null, cancellationToken).ConfigureAwait(false) is not UsageTotals units)
+                var page = await transaction.ListAsync("organizations", after, AllowancePageSize, 1024 * 1024, bounded.Token).ConfigureAwait(false);
+                return new OrganizationIds([.. page.Documents.Select(document => document.Id)], page.HasMore);
+            }, static error => error, bounded.Token).ConfigureAwait(false);
+            if (listed is not OrganizationIds organizations)
             {
-                return new Unavailable("usage accounting is unavailable; retry");
+                return listed switch
+                {
+                    Unavailable error => error,
+                    OrganizationIds => throw new UnreachableException(),
+                };
             }
 
-            items.Add(new AllowanceUsage(organizationId, units.Reads + units.Writes, null));
-        }
+            var items = new List<AllowanceUsage>(organizations.Ids.Count);
+            foreach (var organizationId in organizations.Ids)
+            {
+                if (await meter.GetMonthAsync(organizationId, projectId: null, bounded.Token).ConfigureAwait(false) is not UsageTotals units)
+                {
+                    return new Unavailable("usage accounting is unavailable; retry");
+                }
 
-        var now = time.GetUtcNow();
-        return new AllowanceUsagePage(new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), now, items,
-            organizations.More && items.Count > 0 ? items[^1].OrganizationId : null, OperationsContract, "none");
+                items.Add(new AllowanceUsage(organizationId, checked(units.Reads + units.Writes), null));
+            }
+
+            var ended = time.GetUtcNow();
+            if (ended.Year != month.Year || ended.Month != month.Month)
+            {
+                return new Unavailable("the UTC month changed during the usage scan; retry");
+            }
+
+            return new AllowanceUsagePage(month, observedAt, items,
+                organizations.More && items.Count > 0 ? items[^1].OrganizationId : null, OperationsContract, "none");
+        }
+        catch (OperationCanceledException) when (budget.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            return new Unavailable("the usage scan exceeded its time budget; retry");
+        }
+        catch (OverflowException)
+        {
+            return new Unavailable("an organization's usage exceeds the countable range");
+        }
     }
 
     private static void Count(Budget budget, int listed)

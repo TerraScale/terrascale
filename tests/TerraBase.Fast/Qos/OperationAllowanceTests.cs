@@ -72,7 +72,9 @@ public sealed class OperationAllowanceTests
         string? after = null;
         do
         {
-            var page = await api.Server.Client.GetFromJsonAsync<JsonElement>(ManagementApi.Uri("/v1/usage/allowances" + (after is null ? "" : "?after=" + after)));
+            using var response = await api.Server.Client.GetAsync(ManagementApi.Uri("/v1/usage/allowances" + (after is null ? "" : "?after=" + after)));
+            await Assert.That(response.Headers.CacheControl?.NoStore).IsTrue();
+            var page = await response.Content.ReadFromJsonAsync<JsonElement>();
             await Assert.That((page.GetProperty("operationsContract").GetString(), page.GetProperty("storageContract").GetString()))
                 .IsEqualTo(("operation-units-4kib-global-v1", "none"));
             found ??= page.GetProperty("items").EnumerateArray().Cast<JsonElement?>().FirstOrDefault(item => item!.Value.GetProperty("organizationId").GetString() == api.Tenant.OrganizationId);

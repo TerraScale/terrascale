@@ -50,6 +50,9 @@ credential, the same identity as `PUT /admin/projects/{project}/plan`) pages eve
 logicalBytes}]`, `next`, `operationsContract` (`operation-units-4kib-global-v1`)
 and `storageContract`. `operations` equals `organizationUnits`. Storage is not reported yet:
 `logicalBytes` is null and `storageContract` is `none`.
+`periodStart` and `observedAt` are taken before the scan; a scan that crosses into another UTC
+month or runs past 30 seconds answers `503`, and the caller retries. Responses carry
+`Cache-Control: no-store`.
 
 ## Behavior
 
