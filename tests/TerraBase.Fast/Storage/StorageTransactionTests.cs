@@ -391,6 +391,42 @@ public sealed class StorageTransactionTests
         await Assert.That(await ReadAsync("SELECT value FROM commit_offset WHERE id = 1;")).IsEqualTo((startOffset + 2).ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
+    // A write transaction remembers the collections it found until it drops one or rolls back to a savepoint: a collection
+    // the rolled-back write created, or one the transaction dropped, is looked up again and created anew by the next put.
+    [Test]
+    public async Task A_write_transaction_looks_up_again_a_collection_it_rolled_back_or_dropped()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var (_, store) = await OpenAsync(server);
+        var body = Encoding.UTF8.GetBytes("""{"n":1}""");
+        await using (var seed = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            _ = await seed.PutAsync("kept", "c", body, CancellationToken.None);
+            _ = await seed.CommitAsync(CancellationToken.None);
+        }
+
+        await using (var writer = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            writer.Savepoint();
+            _ = await writer.PutAsync("fresh", "a", body, CancellationToken.None);
+            await writer.FlushStatesAsync();
+            await writer.RollbackToSavepointAsync();
+            await Assert.That(await writer.GetAsync("fresh", "a", CancellationToken.None)).IsNull();
+            _ = await writer.PutAsync("fresh", "b", body, CancellationToken.None);
+            await Assert.That(await writer.GetAsync("kept", "c", CancellationToken.None)).IsNotNull();
+            await Assert.That(await writer.DropCollectionAsync("kept", CancellationToken.None)).IsTrue();
+            await Assert.That(await writer.GetAsync("kept", "c", CancellationToken.None)).IsNull();
+            _ = await writer.PutAsync("kept", "d", body, CancellationToken.None);
+            _ = await writer.CommitAsync(CancellationToken.None);
+        }
+
+        await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        await Assert.That(await reader.GetAsync("fresh", "a", CancellationToken.None)).IsNull();
+        await Assert.That(await reader.GetAsync("fresh", "b", CancellationToken.None)).IsNotNull();
+        await Assert.That(await reader.GetAsync("kept", "c", CancellationToken.None)).IsNull();
+        await Assert.That(await reader.GetAsync("kept", "d", CancellationToken.None)).IsNotNull();
+    }
+
     [Test]
     public async Task Retirement_subscribers_can_enter_an_unrelated_database_lifecycle()
     {

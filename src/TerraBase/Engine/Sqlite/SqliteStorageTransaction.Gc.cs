@@ -267,7 +267,7 @@ internal sealed partial class SqliteStorageTransaction
         }
 
         DropTable(collection);
-        Command(SqliteStatements.DropCollection, collection).ExecuteNonQuery();
+        DropCollectionRow(collection);
         DropUniqueCollection(collection, local: false);
         ChangedReaderState = true;
     }
