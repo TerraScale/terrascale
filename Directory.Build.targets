@@ -21,6 +21,13 @@
     <Error Condition="'@(_NewtonsoftPackage)' != ''" Text="Newtonsoft packages are banned ('@(_NewtonsoftPackage->Distinct())'). Use System.Text.Json; remove the package or the dependency that brings it in." />
   </Target>
 
+  <!-- Project-reference content loses AssetType; .NET's single-file publisher otherwise leaves Turso beside the app. -->
+  <Target Name="ClassifyTursoNativeForSingleFile" BeforeTargets="_ComputeFilesToBundle" Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'libturso_sdk_kit.so'" AssetType="native" />
+    </ItemGroup>
+  </Target>
+
   <!-- Every test project: not packable. -->
   <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
     <IsPackable>false</IsPackable>

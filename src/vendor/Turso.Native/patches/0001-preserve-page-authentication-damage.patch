@@ -1,0 +1,27 @@
+--- a/sdk-kit/src/rsapi.rs
++++ b/sdk-kit/src/rsapi.rs
+@@ -753,6 +753,9 @@
+             LimboError::CommitDependencyAborted => TursoError::BusySnapshot(
+                 "Commit dependency aborted, rollback and retry the whole transaction".to_string(),
+             ),
++            error @ LimboError::CompletionError(
++                turso_core::CompletionError::DecryptionError { .. },
++            ) => TursoError::Corrupt(error.to_string()),
+             LimboError::CompletionError(turso_core::CompletionError::IOError(kind, op)) => {
+                 TursoError::IoError(kind, op)
+             }
+--- a/sdk-kit/src/capi.rs
++++ b/sdk-kit/src/capi.rs
+@@ -17,6 +17,12 @@
+     #![allow(dead_code)]
+ 
+     include!("bindings.rs");
++}
++
++/// TerraScale's versioned native storage-error contract for encrypted databases.
++#[no_mangle]
++pub extern "C" fn turso_terrascale_storage_error_contract() -> u32 {
++    1
+ }
+ 
+ pub static PKG_VERSION_C: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();

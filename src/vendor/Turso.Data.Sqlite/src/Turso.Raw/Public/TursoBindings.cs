@@ -71,6 +71,21 @@ public static class TursoBindings
         }
     }
 
+    /// <summary>Sets additive native FTS work/byte accounting while idle. True aborts; callbacks must not reenter Turso.</summary>
+    public static void SetFtsProgressHandler(TursoDatabaseHandle db, Func<ulong, ulong, bool>? callback)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        db.ThrowIfInvalid();
+        TursoInterop.FtsProgressCallback? native = callback is null ? null : (work, bytes) =>
+        {
+            try { return callback(work, bytes) ? 1 : 0; }
+            catch { return 1; } // Exceptions must never cross the unmanaged callback boundary.
+        };
+        var status = TursoInterop.SetFtsProgressHandler(db, native, out var errorPtr);
+        ThrowIfError(status, errorPtr);
+        db.FtsProgressHandler = native;
+    }
+
     public static TursoStatementHandle PrepareStatement(TursoDatabaseHandle db, string sql)
     {
         db.ThrowIfInvalid();
@@ -382,7 +397,7 @@ public static class TursoBindings
     private static IntPtr NewOpenedDatabase(string path, string? cipher, string? hexkey)
     {
         using var pathString = NativeUtf8String.From(path);
-        using var featuresString = NativeUtf8String.From(cipher is null ? null : "encryption");
+        using var featuresString = NativeUtf8String.From(cipher is null ? "index_method" : "index_method,encryption");
         using var cipherString = NativeUtf8String.From(cipher);
         using var hexkeyString = NativeUtf8String.From(hexkey);
 

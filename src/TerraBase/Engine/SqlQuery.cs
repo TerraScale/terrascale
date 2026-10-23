@@ -128,7 +128,8 @@ public sealed record CollectionStats(string Name, long Documents, long Bytes);
 /// <param name="Name">Index name: a lowercase letter, then lowercase letters, digits or <c>_</c>, at most 63 characters; unique per database.</param>
 /// <param name="Collection">Indexed collection.</param>
 /// <param name="Fields">Key fields in order, 1 to 4.</param>
-public sealed record IndexDefinition(string Name, string Collection, IReadOnlyList<DocumentField> Fields);
+/// <param name="Kind"><c>btree</c> or <c>text</c>.</param>
+public sealed record IndexDefinition(string Name, string Collection, IReadOnlyList<DocumentField> Fields, string Kind = "btree");
 
 /// <summary>How the engine would run a <see cref="SqlQuery"/>.</summary>
 /// <param name="Steps">Engine-specific plan steps, one per line.</param>

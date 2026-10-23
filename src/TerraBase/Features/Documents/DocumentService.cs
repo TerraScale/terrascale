@@ -325,6 +325,10 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         {
             return error.SortBudget ? SortBudget : TooExpensive;
         }
+        catch (QueryValidationException error)
+        {
+            return new Validation(error.Message, "invalid_query");
+        }
     }
 
     public async IAsyncEnumerable<ExportRow> ExportAsync(
@@ -781,6 +785,10 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     {
                         return new DocumentRejected(error.SortBudget ? SortBudget : TooExpensive);
                     }
+                    catch (QueryValidationException error)
+                    {
+                        return new DocumentRejected(new Validation(error.Message, "invalid_query"));
+                    }
                 }
 
             case AssertCountOperation assertCount:
@@ -795,6 +803,10 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     catch (QueryCapacityException)
                     {
                         return new DocumentRejected(TooExpensive);
+                    }
+                    catch (QueryValidationException error)
+                    {
+                        return new DocumentRejected(new Validation(error.Message, "invalid_query"));
                     }
 
                     if (!complete)

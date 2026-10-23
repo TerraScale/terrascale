@@ -85,6 +85,11 @@ internal sealed class ShapeFilter
 
     private static Valid<ShapeFilter> Canonicalized(DocumentFilter filter)
     {
+        if (QueryParser.Searches(filter).Any())
+        {
+            return new Validation("search is supported by document queries, not shape filters", Code);
+        }
+
         var canonical = Emit(Normalize(filter)).Bytes;
         if (canonical.Length > MaxWhereBytes)
         {

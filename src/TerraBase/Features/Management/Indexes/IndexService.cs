@@ -26,7 +26,7 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
         WriteAsync<CreateIndexResult>(database, new NotFound(), async transaction =>
         {
             var indexes = await transaction.ListIndexesAsync(cancellationToken).ConfigureAwait(false);
-            if (indexes.Any(other => other.Name == index.Name || (other.Collection == index.Collection && other.Fields.SequenceEqual(index.Fields)))
+            if (indexes.Any(other => other.Name == index.Name || (other.Kind == index.Kind && other.Collection == index.Collection && other.Fields.SequenceEqual(index.Fields)))
                 || !await transaction.CreateIndexAsync(index, cancellationToken).ConfigureAwait(false))
             {
                 return IndexErrors.Exists;
@@ -55,7 +55,7 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
             };
         }
 
-        var leading = (await ListIndexesAsync(database, cancellationToken).ConfigureAwait(false))
+        var leading = (await ListIndexesAsync(database, cancellationToken).ConfigureAwait(false)).Where(index => index.Kind == "btree")
             .Select(index => (index.Collection, index.Fields[0].Path))
             .ToHashSet();
         return new IndexRecommendationListBody([.. usages
@@ -110,20 +110,20 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
     /// and digits, so <c>_</c> can only mark a boundary. Otherwise every part is escaped (<c>_</c> → <c>_u</c>,
     /// <c>.</c> → <c>_d</c>, <c>-</c> → <c>_h</c>, an upper-case letter → <c>_c</c> and the letter), the parts are joined by
     /// <c>__</c>, which no escaped part contains (so no plain name either), and a hash of the exact definition is appended:
-    /// <c>people_ua__email_…</c> and <c>people__a_uemail_…</c>. Distinct definitions get distinct names; only a name cut to
-    /// 63 characters (the cut keeps room for the fields) relies on the hash alone.
+    /// <c>people_ua__email_…</c> and <c>people__a_uemail_…</c>. The hash includes the kind, distinguishing text and B-tree
+    /// definitions with identical readable names, and names cut to 63 characters (the cut keeps room for the fields).
     /// </summary>
-    internal static string DefaultName(string collection, IEnumerable<DocumentField> fields)
+    internal static string DefaultName(string collection, IEnumerable<DocumentField> fields, string kind = "btree")
     {
         string[] parts = [collection, .. fields.Select(field => field.Path)];
         var joined = string.Join('_', parts);
-        if (!parts.Any(NotNameCharacter().IsMatch) && IsValidName(joined))
+        if (kind == "btree" && !parts.Any(NotNameCharacter().IsMatch) && IsValidName(joined))
         {
             return joined;
         }
 
-        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\0', parts))))[..HashLength];
-        var name = string.Join("__", parts.Select(Escape));
+        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(kind + "\0" + string.Join('\0', parts))))[..HashLength];
+        var name = (kind == "text" ? "text__" : "") + string.Join("__", parts.Select(Escape));
         var readableLength = MaxNameLength - HashLength - 1;
         if (name.Length > readableLength)
         {
@@ -160,7 +160,7 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
 
     // The index of the usage's collection whose first key is the usage's field.
     private static IndexDefinition? Leading(IReadOnlyList<IndexDefinition> indexes, QueryFieldUsage usage) =>
-        indexes.FirstOrDefault(index => index.Collection == usage.Collection && index.Fields[0].Path == usage.Field);
+        indexes.FirstOrDefault(index => index.Kind == "btree" && index.Collection == usage.Collection && index.Fields[0].Path == usage.Field);
 
     private async ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(TenantContext database, CancellationToken cancellationToken)
     {

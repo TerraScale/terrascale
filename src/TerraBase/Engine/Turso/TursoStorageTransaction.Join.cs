@@ -212,6 +212,12 @@ internal sealed partial class TursoStorageTransaction
             return;
         }
 
+        var kind = parsed.RootElement.TryGetProperty("kind", out var type) && type.ValueKind == JsonValueKind.String ? type.GetString() : "btree";
+        if (kind is not ("btree" or "text"))
+        {
+            return;
+        }
+
         List<DocumentField> fields = [];
         foreach (var path in paths.EnumerateArray())
         {
@@ -232,7 +238,7 @@ internal sealed partial class TursoStorageTransaction
 
         if (ReadIndexes(cancellationToken).Find(index => index.Name == name) is { } existing)
         {
-            if (existing.Collection == collection && existing.Fields.SequenceEqual(fields))
+            if (existing.Kind == kind && existing.Collection == collection && existing.Fields.SequenceEqual(fields))
             {
                 return;
             }
@@ -247,7 +253,7 @@ internal sealed partial class TursoStorageTransaction
 
         try
         {
-            _ = CreateIndex(new IndexDefinition(name, collection, fields), cancellationToken);
+            _ = CreateIndex(new IndexDefinition(name, collection, fields, kind), cancellationToken);
         }
         catch (ArgumentException)
         {

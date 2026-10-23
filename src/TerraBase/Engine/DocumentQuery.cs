@@ -94,10 +94,16 @@ public sealed record PrefixFilter(DocumentPath Path, string Prefix) : DocumentFi
 /// <param name="Value">Scalar element.</param>
 public sealed record ContainsFilter(DocumentPath Path, ScalarValue Value) : DocumentFilter;
 
+/// <summary>Native full-text search over an indexed string member.</summary>
+/// <param name="Path">Indexed member.</param>
+/// <param name="Terms">Native search query, at most 4096 UTF-8 bytes.</param>
+public sealed record SearchFilter(DocumentPath Path, string Terms) : DocumentFilter;
+
 /// <summary>One sort key.</summary>
 /// <param name="Path">Sorted value.</param>
 /// <param name="Descending">Whether the order is descending.</param>
-public sealed record SortKey(DocumentPath Path, bool Descending);
+/// <param name="Score">Sort by the sole search predicate's relevance score.</param>
+public sealed record SortKey(DocumentPath Path, bool Descending, bool Score = false);
 
 /// <summary>
 /// A keyset position: the sort values that <see cref="QueryRow.Keys"/> reported for the last row of a

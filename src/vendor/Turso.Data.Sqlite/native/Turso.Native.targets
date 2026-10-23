@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <_TursoNativeRid>$(RuntimeIdentifier)</_TursoNativeRid>
+    <_TursoNativeRid Condition="'$(_TursoNativeRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</_TursoNativeRid>
+    <_TursoNativeFile>$(MSBuildThisFileDirectory)runtimes/$(_TursoNativeRid)/native/libturso_sdk_kit.so</_TursoNativeFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Content propagates through ProjectReference and participates in single-file native extraction. -->
+    <Content Include="$(_TursoNativeFile)" Link="libturso_sdk_kit.so"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="RequireTursoFtsNative" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(_TursoNativeFile)')"
+           Text="Pinned Turso 0.8.2 FTS + contract1 native asset missing for $(_TursoNativeRid). Run scripts/vendor/download-turso-native.sh. No NuGet fallback is permitted." />
+    <Exec Command="bash &quot;$(MSBuildThisFileDirectory)../../../../scripts/vendor/verify-turso-native.sh&quot; &quot;$(MSBuildThisFileDirectory)&quot; &quot;$(_TursoNativeRid)&quot;" />
+  </Target>
+</Project>

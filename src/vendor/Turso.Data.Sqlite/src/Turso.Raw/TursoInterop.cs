@@ -79,6 +79,13 @@ internal static class TursoInterop
     [DllImport(DllName, EntryPoint = "turso_connection_deinit", CallingConvention = CallingConvention.Cdecl)]
     public static extern void ConnectionDeinit(IntPtr connection);
 
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate int FtsProgressCallback(ulong work, ulong bytes);
+
+    [DllImport(DllName, EntryPoint = "turso_connection_set_fts_progress_handler", CallingConvention = CallingConvention.Cdecl)]
+    internal static extern TursoStatusCode SetFtsProgressHandler(
+        TursoDatabaseHandle connection, FtsProgressCallback? callback, out IntPtr errorPtr);
+
     [DllImport(DllName, EntryPoint = "turso_connection_register_scalar_function", CallingConvention = CallingConvention.Cdecl)]
     public static extern TursoStatusCode RegisterScalarFunction(
         TursoDatabaseHandle connection,
