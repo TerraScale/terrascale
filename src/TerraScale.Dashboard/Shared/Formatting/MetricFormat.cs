@@ -4,7 +4,7 @@ namespace TerraScale.Dashboard.Shared.Formatting;
 
 public static class MetricFormat
 {
-    public static string Milliseconds(double? value) => value is null ? "Not reported" : value.Value.ToString("G", CultureInfo.InvariantCulture) + " ms";
+    public static string Milliseconds(double? value) => value is null ? "Not reported" : value.Value.ToString("0.#", CultureInfo.InvariantCulture) + " ms";
 
     public static string Latency(double? value) => value is null ? "Not reported" : value.Value.ToString("F3", CultureInfo.InvariantCulture) + " ms";
 
