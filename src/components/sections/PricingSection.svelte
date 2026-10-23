@@ -4,22 +4,20 @@
   import RouteLink from '@/components/RouteLink.svelte'
   import { dict, locale } from '@/lib/i18n'
   import { localeMeta } from '@/lib/i18n/locales'
-  import { formatPlanLimits } from '@/lib/pricing'
+  import { formatPlanBilling, formatPlanLimits } from '@/lib/pricing'
   import { publicAlphaCatalog, registrationUrl } from '@/lib/site'
 
   export let headingLevel: 1 | 2 = 2
 
-  let billing: 'monthly' | 'annual' = 'monthly'
-
   $: headingTag = headingLevel === 1 ? 'h1' : 'h2'
   $: planTag = headingLevel === 1 ? 'h2' : 'h3'
-  $: suffix = billing === 'annual' ? $dict.pricing.suffixAnnual : $dict.pricing.suffixMonthly
 
   $: plans = publicAlphaCatalog.map((meta) => {
     const copy = $dict.pricing.plans[meta.slug]
     const limitLines = formatPlanLimits(meta.limits, $dict.pricing.limits, localeMeta($locale).bcp47)
     return {
       ...meta,
+      billing: formatPlanBilling(meta, $dict.pricing, localeMeta($locale).bcp47),
       description: copy.description,
       features: 'features' in copy ? [...limitLines, ...copy.features] : limitLines,
       cta: copy.cta,
@@ -36,18 +34,7 @@
         {$dict.pricing.titleLead} {$dict.pricing.titleAccent}
       </svelte:element>
       <p class="pricing-section__subtitle">{$dict.pricing.subtitle}</p>
-    </div>
-
-    <div class="pricing-cycle">
-      <div class="pricing-toggle" role="group" aria-label={$dict.pricing.toggleLabel}>
-        <button type="button" aria-pressed={billing === 'monthly'} on:click={() => (billing = 'monthly')}>
-          {$dict.pricing.monthly}
-        </button>
-        <button type="button" aria-pressed={billing === 'annual'} on:click={() => (billing = 'annual')}>
-          {$dict.pricing.annual}
-        </button>
-      </div>
-      <span class="pricing-cycle__save">{$dict.pricing.annual}: {$dict.pricing.save}</span>
+      <p class="pricing-section__subtitle">{$dict.pricing.status}</p>
     </div>
   </div>
 
@@ -69,15 +56,17 @@
           {#if plan.popular}
             <span class="pricing-card__badge">{$dict.pricing.badge}</span>
           {:else if !plan.available}
-            <span class="pricing-card__badge pricing-card__badge--neutral">{$dict.pricing.plans.enterprise.features[1]}</span>
+            <span class="pricing-card__badge pricing-card__badge--neutral">{$dict.pricing.plans.enterprise.cta}</span>
           {/if}
         </svelte:element>
         <p class="pricing-card__desc">{plan.description}</p>
 
         <p class="pricing-card__price">
-          <strong>${billing === 'annual' && plan.available ? plan.annualPrice : plan.price}</strong>
-          <span>{plan.available ? suffix : $dict.pricing.detailed.rows[2].unit}</span>
+          <strong>{plan.billing.price}</strong>
+          <span>{plan.billing.suffix}</span>
         </p>
+
+        <p class="pricing-card__desc">{plan.billing.cadence}</p>
 
         <ul class="pricing-card__features">
           {#each plan.features as feature (feature)}
@@ -145,63 +134,9 @@
     color: var(--ts-text-muted);
   }
 
-  .pricing-cycle {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--ts-space-3);
-  }
-
-  .pricing-toggle {
-    display: inline-flex;
-    gap: 2px;
-    height: 32px;
-    padding: 2px;
-    border: 1px solid var(--ts-glass-border);
-    border-radius: var(--ts-radius-md);
-    background: var(--ts-bg-surface);
-  }
-
-  .pricing-toggle button {
-    padding: 0 var(--ts-space-3);
-    border: 0;
-    border-radius: var(--ts-radius-sm);
-    background: transparent;
-    color: var(--ts-text-muted);
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition:
-      color var(--ts-transition-fast),
-      background-color var(--ts-transition-fast);
-  }
-
-  .pricing-toggle button:hover,
-  .pricing-toggle button[aria-pressed='true'] {
-    color: var(--ts-text);
-  }
-
-  .pricing-toggle button[aria-pressed='true'] {
-    background: var(--ts-primary);
-    color: #fff;
-  }
-
-  .pricing-toggle button:focus-visible {
-    outline: 2px solid var(--ts-primary-light);
-    outline-offset: 2px;
-  }
-
-  .pricing-cycle__save {
-    padding: 2px var(--ts-space-2);
-    border-radius: var(--ts-radius-pill);
-    background: rgba(var(--ts-secondary-rgb), 0.12);
-    color: color-mix(in oklab, var(--ts-secondary) 70%, white);
-    font-size: 13px;
-  }
-
   .pricing-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: var(--ts-space-4);
     margin-top: var(--ts-space-10);
   }
@@ -279,7 +214,7 @@
     color: #fff;
     font-size: 12px;
     font-weight: 500;
-    white-space: nowrap;
+    line-height: 1.5;
   }
 
   .pricing-card__desc {

@@ -4,14 +4,13 @@
   import { dict, locale } from '@/lib/i18n'
   import { localeMeta } from '@/lib/i18n/locales'
   import { pricingCatalog, publicAlphaCatalog } from '@/lib/site'
-  import type { PublicAlphaPlanSlug } from '@/lib/site'
+  import { formatPlanBilling } from '@/lib/pricing'
 
-  const enterprisePrice = publicAlphaCatalog.find((plan) => plan.slug === 'enterprise')?.price
-  const comparePlans = publicAlphaCatalog.filter((plan) => plan.slug !== 'enterprise')
-  const hasTrial = (slug: PublicAlphaPlanSlug) => (pricingCatalog.plans.find((plan) => plan.id === slug)?.trialDays ?? 0) > 0
+  const comparePlans = publicAlphaCatalog
+  const rates = pricingCatalog.metering.overageRates
 
   $: compare = $dict.pricing.compare
-  $: rowPrices = [compare.included, compare.hardLimit, `$${enterprisePrice}`]
+  $: rowPrices = [rates.operationUnitsPerMillionUsd, rates.storageGbRegionMonthUsd, rates.clientEgressGbUsd]
   $: format = new Intl.NumberFormat(localeMeta($locale).bcp47)
   $: count = (n: number | null) => (n === null ? '—' : format.format(n))
   $: storage = (gb: number | null) => {
@@ -24,19 +23,12 @@
     { label: compare.members, cells: comparePlans.map((plan) => count(plan.limits.members)) },
     { label: compare.storage, cells: comparePlans.map((plan) => storage(plan.limits.storageGb)) },
     { label: compare.operationUnits, cells: comparePlans.map((plan) => count(plan.limits.operationUnitsPerMonth)) },
-    { label: compare.trial, cells: comparePlans.map((plan) => (hasTrial(plan.slug) ? compare.trialIncluded : '—')) },
-    {
-      label: compare.support,
-      cells: comparePlans.map((plan) => {
-        if (plan.slug === 'starter') return compare.supportStarter
-        if (plan.slug === 'pro') return compare.supportPro
-        return '—'
-      }),
-    },
+    { label: compare.egress, cells: comparePlans.map((plan) => storage(plan.limits.egressGbPerMonth)) },
+    { label: compare.billing, cells: comparePlans.map((plan) => formatPlanBilling(plan, $dict.pricing, localeMeta($locale).bcp47).cadence) },
   ]
   $: rules = $dict.pricing.detailed.rows.map((row, i) => ({
     ...row,
-    price: rowPrices[i] ?? '',
+    price: new Intl.NumberFormat(localeMeta($locale).bcp47, { style: 'currency', currency: 'USD' }).format(rowPrices[i]),
   }))
 </script>
 
@@ -44,6 +36,7 @@
   <div class="detailed__intro">
     <span class="ts-eyebrow">{compare.eyebrow}</span>
     <h2 class="detailed__title">{compare.title}</h2>
+    <p class="detailed__text">{$dict.pricing.status}</p>
   </div>
 
   <div class="detailed__wrap">
@@ -60,7 +53,7 @@
       </thead>
       <tbody>
         {#each limitRows as row (row.label)}
-          <tr>
+          <tr class:is-cadence={row.label === compare.billing}>
             <th scope="row">{row.label}</th>
             {#each row.cells as cell, i}
               <td class:is-popular={comparePlans[i].popular}>{cell}</td>
@@ -165,6 +158,10 @@
     font-variant-numeric: tabular-nums;
     color: var(--ts-text);
     white-space: nowrap;
+  }
+
+  .detailed__table tr.is-cadence td {
+    white-space: normal;
   }
 
   .detailed__plan {

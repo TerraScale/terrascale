@@ -40,17 +40,19 @@ export type PlanLimits = {
   members: number | null
   storageGb: number | null
   operationUnitsPerMonth: number | null
+  egressGbPerMonth: number | null
 }
 
-export type PublicAlphaPlanSlug = 'hobby' | 'starter' | 'pro' | 'enterprise'
+export type PublicAlphaPlanSlug = 'free' | 'starter' | 'pro' | 'team' | 'enterprise'
 
 const planPresentation: Record<
   PublicAlphaPlanSlug,
   { icon: AppIconName; popular: boolean }
 > = {
-  hobby: { icon: 'zap', popular: false },
+  free: { icon: 'zap', popular: false },
   starter: { icon: 'star', popular: false },
   pro: { icon: 'trendingUp', popular: true },
+  team: { icon: 'users', popular: false },
   enterprise: { icon: 'shieldCheck', popular: false },
 }
 
@@ -63,6 +65,7 @@ export const publicAlphaCatalog = pricingJson.plans.map((plan) => ({
   available: plan.available,
   price: plan.priceMonthlyUsd,
   annualPrice: plan.priceAnnualUsd,
+  billingInterval: plan.billingInterval as 'free' | 'year' | 'month' | 'contact',
   limits: plan.limits as PlanLimits,
 }))
 
