@@ -17,6 +17,11 @@ public static class NotFoundEndpoints
             page.StatusCode = StatusCodes.Status404NotFound;
             return page;
         }
+        return Page(http, context);
+    }
+
+    internal static IResult Page(HttpContext http, AccountContext context)
+    {
         var shell = NotFoundShell.Create(ShellModel.For(http, context, "Page not found"));
         shell.StatusCode = StatusCodes.Status404NotFound;
         return shell;

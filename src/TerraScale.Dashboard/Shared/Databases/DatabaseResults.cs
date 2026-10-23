@@ -17,4 +17,7 @@ internal static class DatabaseResults
             ["documentId"] = unknown.DocumentId,
             ["outcome"] = "unknown"
         } : null);
+    // Browsers get the HTML not-found page for a database they cannot see; API clients keep problem+json.
+    internal static IResult PageFailure(HttpContext http, AccountContext context, Exception error) =>
+        WantsHtml(http) && Status(error) == 404 ? Features.NotFound.NotFoundEndpoints.Page(http, context) : Failure(error);
 }

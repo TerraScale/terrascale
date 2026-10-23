@@ -118,7 +118,7 @@ public static class DataEndpoints
                 }
                 catch (Exception error) when (DatabaseResults.KnownFailure(error))
                 {
-                    if (!DatabaseResults.WantsHtml(http) || DatabaseResults.Status(error) == 404) return DatabaseResults.Failure(error);
+                    if (!DatabaseResults.WantsHtml(http) || DatabaseResults.Status(error) == 404) return DatabaseResults.PageFailure(http, context, error);
                     var section = action.StartsWith("indexes", StringComparison.Ordinal) ? "indexes" : action.Contains("sql", StringComparison.Ordinal) || action.StartsWith("saved-queries", StringComparison.Ordinal) ? "sql" : "documents";
                     var dialog = action == "collections" ? "new-collection" : action == "saved-queries" ? "save-query" : action == "documents" ? form["operation"] == "create" ? "add-document" : form["operation"] == "delete" ? "delete-document" : "edit-document" : "";
                     var submittedId = error is DocumentWriteOutcomeUnknownException unknown ? unknown.DocumentId : form["id"].ToString();
@@ -134,7 +134,7 @@ public static class DataEndpoints
     {
         DatabaseRecord database;
         try { database = DatabaseService.Database(context, id); }
-        catch (AccountAccessException error) { return DatabaseResults.Failure(error); }
+        catch (AccountAccessException error) { return DatabaseResults.PageFailure(http, context, error); }
         var errorMessage = "";
         IReadOnlyList<TerraBaseCollection> collections = [];
         var browse = new DocumentBrowse([], 0, 1, 1, false);
@@ -194,7 +194,7 @@ public static class DataEndpoints
         catch (Exception error) when (error is HttpRequestException || DatabaseResults.KnownFailure(error))
         {
             errorMessage = DatabaseResults.KnownFailure(error) ? DatabaseResults.Message(error) : "The live data plane is unavailable. Try again shortly.";
-            if (DatabaseResults.KnownFailure(error) && DatabaseResults.Status(error) == 404) return DatabaseResults.Failure(error);
+            if (DatabaseResults.KnownFailure(error) && DatabaseResults.Status(error) == 404) return DatabaseResults.PageFailure(http, context, error);
         }
         var result = DataView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(section)), database, section, collection, collections, browse, search, sort, descending, layout, errorMessage, formError, dialog, documentId, body, version, operation, sql, sqlResult, indexes, schema, queries, queryName, catalog, history, collectionCounts, sqlChecked));
         result.StatusCode = status;
