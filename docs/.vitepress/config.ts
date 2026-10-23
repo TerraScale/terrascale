@@ -8,6 +8,16 @@ import { ZERO_CONFIGURATION_ROUTE } from './routes.mjs'
 
 // Public docs reuse the committed dashboard tokens; see design-reference.md.
 const docsDir = join(dirname(fileURLToPath(import.meta.url)), '..')
+const SITE = 'https://docs.terrascale.tech'
+// Pages marked noindex stay out of the sitemap too.
+const noindexPages = new Set<string>()
+
+const cleanPath = (path: string) => path.replace(/(^|\/)index\.html$/, '$1').replace(/\.html$/, '')
+
+// The Worker serves clean URLs: /guides/mcp and /getting-started/.
+function pageUrl(relativePath: string): string {
+  return `${SITE}/${relativePath.replace(/(^|\/)index\.md$/, '$1').replace(/\.md$/, '')}`
+}
 
 function titleOf(localePrefix: string, link: string): string {
   const rel = link.replace(/\/$/, '/index').replace(/^\//, '')
@@ -577,6 +587,35 @@ export default defineConfig({
   lastUpdated: true,
   srcDir: '.',
   head: [['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }], ['link', { rel: 'preload', href: '/fonts/geist-variable.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }]],
+  sitemap: {
+    hostname: SITE,
+    transformItems: (items) =>
+      items
+        .map((item) => ({
+          ...item,
+          url: cleanPath(item.url),
+          links: item.links?.map((link) => ({ ...link, url: cleanPath(link.url) })),
+        }))
+        .filter((item) => !noindexPages.has(`${SITE}/${item.url}`)),
+  },
+  transformPageData(pageData) {
+    const head = (pageData.frontmatter.head ?? []) as [string, Record<string, string>][]
+    if (head.some(([tag, attrs]) => tag === 'meta' && attrs.name === 'robots' && attrs.content.includes('noindex')))
+      noindexPages.add(pageUrl(pageData.relativePath))
+  },
+  transformHead({ pageData, title, description }) {
+    if (pageData.isNotFound) return
+    const url = pageUrl(pageData.relativePath)
+    return [
+      ['link', { rel: 'canonical', href: url }],
+      ['meta', { property: 'og:type', content: 'website' }],
+      ['meta', { property: 'og:site_name', content: 'TerraScale Docs' }],
+      ['meta', { property: 'og:title', content: title }],
+      ['meta', { property: 'og:description', content: description }],
+      ['meta', { property: 'og:url', content: url }],
+      ['meta', { name: 'twitter:card', content: 'summary' }],
+    ]
+  },
   locales: localesConfig,
   themeConfig: {
     siteTitle: 'Docs',
