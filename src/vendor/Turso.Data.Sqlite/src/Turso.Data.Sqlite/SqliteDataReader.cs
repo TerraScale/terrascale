@@ -664,7 +664,9 @@ public class SqliteDataReader : DbDataReader
         EnsureHasCurrentRow();
         var statement = GetStatement();
         var value = TursoBindings.GetValue(statement, ordinal);
-        if (value.ValueType is TursoValueType.Blob or TursoValueType.Text && IsGuidType(GetDeclaredTypeName(ordinal)))
+        // TerraScale: only a column's own declaration makes it a GUID, as sqlite3_column_decltype has none for an expression;
+        // the SQL-text fallback of GetDeclaredTypeName ran schema queries for every TEXT or BLOB expression value read.
+        if (value.ValueType is TursoValueType.Blob or TursoValueType.Text && IsGuidType(TursoBindings.GetDeclaredTypeName(statement, ordinal)))
             return ToGuid(value);
 
         return value.ValueType switch
