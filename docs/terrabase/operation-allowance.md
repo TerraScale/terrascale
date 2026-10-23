@@ -47,9 +47,12 @@ catalog has replicated. Units of databases deleted since stay in the month.
 `GET /v1/usage/allowances[?after=<organization id>]` on the internal listener (shared peer
 credential, the same identity as `PUT /admin/projects/{project}/plan`) pages every organization,
 25 at a time in id order: `periodStart`, `observedAt`, `items[{organizationId, operations,
-logicalBytes}]`, `next`, `operationsContract` (`operation-units-4kib-selected-regions-global-v1`)
+logicalBytes}]`, `next`, `operationsContract` (`operation-units-4kib-global-v1`)
 and `storageContract`. `operations` equals `organizationUnits`. Storage is not reported yet:
 `logicalBytes` is null and `storageContract` is `none`.
+`periodStart` and `observedAt` are taken before the scan; a scan that crosses into another UTC
+month or runs past 30 seconds answers `503`, and the caller retries. Responses carry
+`Cache-Control: no-store`.
 
 ## Behavior
 
