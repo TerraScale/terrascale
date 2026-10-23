@@ -53,20 +53,23 @@ public sealed class TerraBaseSearchTests
         await Assert.That(TerraBaseFilter.Search("/title", new string('é', 2048)).GetProperty("search")[1].GetString()).IsEqualTo(new string('é', 2048));
         await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("articles", new()
         {
-            Filter = TerraBaseFilter.Search("/title", "database"), Sort = [TerraBaseSort.Score, new("$id")],
+            Filter = TerraBaseFilter.Search("/title", "database"),
+            Sort = [TerraBaseSort.Score, new("$id")],
         }));
         using var multiple = JsonDocument.Parse("""{"or":[{"search":["/title","a"]},{"search":["/body","b"]}]}""");
         await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("articles", new() { Filter = multiple.RootElement, Sort = [TerraBaseSort.Score] }));
         await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("articles", new()
         {
-            Filter = TerraBaseFilter.Search("/title", "database"), Sort = [TerraBaseSort.Near("/embedding", [1f])],
+            Filter = TerraBaseFilter.Search("/title", "database"),
+            Sort = [TerraBaseSort.Near("/embedding", [1f])],
         }));
         await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("articles", new() { Sort = [TerraBaseSort.Score] }));
         foreach (var order in new string?[] { null, "asc" })
         {
             await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("articles", new()
             {
-                Filter = TerraBaseFilter.Search("/title", "database"), Sort = [new("$score", order)],
+                Filter = TerraBaseFilter.Search("/title", "database"),
+                Sort = [new("$score", order)],
             }));
         }
     }
