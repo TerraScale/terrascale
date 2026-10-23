@@ -10,6 +10,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -158,6 +159,7 @@ func accessToken(ctx context.Context, d *tsauth.Device) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("sign-in expired, run ts auth login: %w", err)
 	}
+	t.RefreshToken = cmp.Or(t.RefreshToken, c.RefreshToken) // ts-auth may keep the old one
 	return t.AccessToken, save(t)
 }
 
