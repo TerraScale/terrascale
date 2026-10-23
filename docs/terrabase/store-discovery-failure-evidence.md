@@ -12,6 +12,11 @@ Fix: [PR #463](https://github.com/TerraScale/terrascale/pull/463).
   The [original #299 job](https://github.com/TerraScale/terrascale/actions/runs/38706849238/job/116328296654)
   records busy peer bookkeeping at 2026-10-15 08:43:20 UTC and the same trace's
   growing-change-ID rejection at 08:43:32, before the reported HTTP timeout.
+  A busy bookkeeping failure also imposed a 30-second shipping delay, including
+  when a newer batch prevented reset. Retry contention after one second and
+  preserve newer in-flight work. The regression now requires progress within
+  the existing ten-second confirmation bound and checks the minimum source
+  read position directly; the prior code fails the tighter bound.
 - #400: periodic catalog writes can share the cache's invalidation stripe and
   correctly prevent promotion during a read. Freeze the capacity test's clock
   to preserve its no-intervening-writes premise. All exact eviction assertions
@@ -21,6 +26,21 @@ Fix: [PR #463](https://github.com/TerraScale/terrascale/pull/463).
   [cd16a8a0d](https://github.com/TerraScale/terrascale/commit/cd16a8a0d0eddfff7cf9266768421521065322f4)
   raises the limit to 1024 and adds the 128-connection Fast regression. These
   reports precede that fix; no auth implementation change is needed here.
+
+## Remaining large-drop cause
+
+PR #463 closes #400, #333, #334 and #329. It fixes the growing-change-ID cause
+in #335/#299, but those two reports remain open for a separate progress-frame
+PR. #277 follows afterward in its own PR.
+
+The raw [Slow log on f16831749](https://github.com/TerraScale/terrascale/actions/runs/39983399302/job/120519678313)
+still fails the post-drop PUT. A traced local reproduction passed but showed
+eight no-response ACK timeouts: one collection-clear delta expands into 16,896
+derived document writes in one durable transaction. The fixed 15-second batch
+deadline can cancel that transaction while it is still making progress.
+A GET returning 404 proves the drop committed, not that its ACK arrived.
+No coverage-refused ACK or refill occurred in that trace; this differs from
+#475's coverage-refill backoff. No receiver checks or deadlines were weakened.
 
 ## Five-repeat proof
 
