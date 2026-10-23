@@ -252,6 +252,9 @@ public sealed class ExplainSqlBoundaryTests
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
         await RequestLogMemoryFixture.DrainAsync(api.Server);
+        // Draining commits the catalog; rewarm placement's commit-tagged lookup so only the endpoint's own lookups are counted.
+        _ = await api.Server.Services.GetRequiredService<IManagementService>()
+            .FindDatabaseRecordAsync(database.Organization, database.Project, database.Name, token);
         var reserved = ReservedBytes(api);
         var admission = catalogLookup == 0 ? api.Server.Services.GetRequiredService<MemoryProbe>().Observe() : null;
         ObservedReservation? reservation = null;

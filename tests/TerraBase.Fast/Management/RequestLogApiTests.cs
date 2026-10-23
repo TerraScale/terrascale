@@ -43,9 +43,10 @@ public sealed class RequestLogApiTests
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
-        using var failed = await data.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql"), new { sql = "SELECT * FROM people" });
-        await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+        // POST /sql accepts only project access tokens (TsAuth databases:read); an API key answers 401.
         using var project = Project(api, database.Project, "databases:read");
+        using var failed = await project.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql"), new { sql = "SELECT * FROM people" });
+        await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
         var body = await ReadAsync(project, database, "?status=5xx");
         var failure = body.GetProperty("items").EnumerateArray().Single();
         await Assert.That(failure.GetProperty("status").GetInt32()).IsEqualTo(500);

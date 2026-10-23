@@ -638,11 +638,11 @@ public sealed class DocumentCacheTests
 
         var client = tenant.Data;
         var file = await tenant.FileAsync(server, "oversized");
-        // Leave HTTP/catalog admission and pending usage observation headroom alongside a page's transient result and this
-        // useful cached entry. Each test warms either a point read or a list page.
+        // Leave HTTP/catalog admission, pending usage observation and up to 16 pending 4 KiB request-log records of headroom
+        // alongside a page's transient result and this useful cached entry. Each test warms either a point read or a list page.
         using (var response = await client.PutAsJsonAsync(
             new Uri($"/v1/projects/{tenant.ProjectId}/databases/oversized/collections/small/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative),
-            new { name = "first", padding = new string('x', 960 * 1024) }))
+            new { name = "first", padding = new string('x', 896 * 1024) }))
         {
             response.EnsureSuccessStatusCode();
         }
