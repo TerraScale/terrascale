@@ -38,6 +38,9 @@ type nodeStep struct {
 	CPUPct   float64          `json:"cpu_pct"`       // dotnet.process.cpu.time over the window
 	RSSMB    float64          `json:"rss_mb"`        // dotnet.process.memory.working_set at window end
 	Raw      [2]string        `json:"raw"`           // metric lines before and after the step
+	// Over the write window only, without the readers' bootstrap: the per-change cost.
+	WindowReads  map[string]int64 `json:"window_storage_reads"`
+	WindowSealed int64            `json:"window_sealed"`
 }
 
 // shardStep is one load process's record of one step.
@@ -240,7 +243,20 @@ func nodeDelta(node, before, start, end, after string) (nodeStep, error) {
 		}
 		nd.Reads[p] = int64(r1[p] - r0[p])
 	}
+	w0, err := storageReads(start)
+	if err != nil {
+		return nd, err
+	}
+	w1, err := storageReads(end)
+	if err != nil {
+		return nd, err
+	}
+	nd.WindowReads = map[string]int64{}
+	for p, v := range w1 {
+		nd.WindowReads[p] = int64(v - w0[p])
+	}
 	counter := func(body, base string) float64 { v, _ := promValue(body, base, ""); return v }
+	nd.WindowSealed = int64(counter(end, "terrabase_shape_seals") - counter(start, "terrabase_shape_seals"))
 	nd.Sealed = int64(counter(after, "terrabase_shape_seals") - counter(before, "terrabase_shape_seals"))
 	nd.Mirrored = int64(counter(after, "terrabase_shape_mirror_lag_seconds_count") - counter(before, "terrabase_shape_mirror_lag_seconds_count"))
 	nd.Parked, _ = shapeWaiting(start)
