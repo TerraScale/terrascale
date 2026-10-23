@@ -68,6 +68,9 @@ public sealed class BenchmarkProcessHost
             }
         }
 
+        var extraDatabases = config["extra_databases"]?.AsArray() ?? [];
+        var databaseIds = DatabaseIds(config);
+
         var secret = Environment.GetEnvironmentVariable(PeerTls.TestSecretVariable);
         if (secret is not { Length: 64 } || !secret.All(char.IsAsciiHexDigit))
         {
@@ -95,6 +98,7 @@ public sealed class BenchmarkProcessHost
         await using var ownership = new FileStream(Path.Combine(directory, "worker.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         File.Delete(target);
         File.Delete(listening);
+        File.Delete(Path.Combine(directory, "bootstrap.json"));
         ManagementApi? api = null;
         Task? failedStartCleanup = null;
         var failures = new List<Exception>();
@@ -123,6 +127,14 @@ public sealed class BenchmarkProcessHost
             using var client = api.WithToken(token);
             await WaitForWritesAsync(client, new Uri($"/v1/projects/{Get("project")}/databases/canary/collections", UriKind.Relative),
                 config["readiness_collection"]?.GetValue<string>(), cancellationToken);
+            await Parallel.ForEachAsync(Enumerable.Range(0, extraDatabases.Count),
+                new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
+                async (index, token) =>
+                {
+                    await WaitForWritesAsync(client, new Uri($"/v1/projects/{Get("project")}/databases/idle-{index + 1}/collections", UriKind.Relative),
+                        null, token);
+                });
+            await WaitForBootstrapAsync(api, root, directory, databaseIds, cancellationToken);
             await Assert.That(api.Server.Services.GetRequiredService<IRemoteDurability>().Confirms).IsTrue();
             await WriteAsync(target, new JsonObject
             {
@@ -320,6 +332,22 @@ public sealed class BenchmarkProcessHost
         }, TimeSpan.FromMinutes(2));
     }
 
+    internal static HashSet<string> DatabaseIds(JsonObject config)
+    {
+        var extraDatabases = config["extra_databases"]?.AsArray() ?? [];
+        var databaseIds = new HashSet<string>(StringComparer.Ordinal) { config["database"]!.GetValue<string>() };
+        foreach (var value in extraDatabases)
+        {
+            var id = value?.GetValue<string>();
+            if (id is null || !EntityIds.IsValid(id) || !databaseIds.Add(id))
+            {
+                throw new InvalidOperationException("extra_databases must contain distinct tenant ULIDs");
+            }
+        }
+
+        return databaseIds;
+    }
+
     internal static async Task RegisterAsync(ManagementApi api, JsonObject config, CancellationToken cancellationToken)
     {
         string Get(string name)
@@ -340,6 +368,29 @@ public sealed class BenchmarkProcessHost
                     ["id"] = Get("database"), ["name"] = "canary", ["replica_regions"] = replicas },
             },
         };
+        await SendCommitAsync(api, commit, cancellationToken);
+        var extra = config["extra_databases"]?.AsArray() ?? [];
+        for (var offset = 0; offset < extra.Count; offset += 16)
+        {
+            var operations = new JsonArray();
+            for (var index = offset; index < Math.Min(offset + 16, extra.Count); index++)
+            {
+                operations.Add(new JsonObject
+                {
+                    ["op"] = "create_database",
+                    ["organization"] = organization,
+                    ["project"] = project,
+                    ["id"] = extra[index]!.GetValue<string>(),
+                    ["name"] = $"idle-{index + 1}",
+                    ["replica_regions"] = replicas.DeepClone(),
+                });
+            }
+            await SendCommitAsync(api, new JsonObject { ["id"] = EntityIds.New().ToString(), ["ops"] = operations }, cancellationToken);
+        }
+    }
+
+    private static async Task SendCommitAsync(ManagementApi api, JsonObject commit, CancellationToken cancellationToken)
+    {
         var payload = commit.ToJsonString();
         using var service = api.Service(api.User);
         await TerraBaseTestServer.EventuallyAsync(async cancel =>
@@ -360,6 +411,142 @@ public sealed class BenchmarkProcessHost
 
             return true;
         }, TimeSpan.FromMinutes(2));
+    }
+
+    internal static async Task WaitForBootstrapAsync(ManagementApi api, string root, string directory,
+        HashSet<string> expected, CancellationToken cancellationToken)
+    {
+        var services = api.Server.Services;
+        var engine = services.GetRequiredService<IStorageEngine>();
+        var source = services.GetRequiredService<IChangeGroupSource>();
+        var self = services.GetRequiredService<LocalReplica>().Id;
+        Dictionary<TenantContext, (Ulid Incarnation, long Head)>? bounds = null;
+        Dictionary<(TenantContext Database, ReplicaId Peer), (Ulid Incarnation, long Required)> cutoffs = [];
+        await WriteAsync(Path.Combine(directory, "bootstrap.json"), new JsonObject { ["replica"] = self.Value }.ToJsonString(), cancellationToken);
+        await TerraBaseTestServer.EventuallyAsync(async cancel =>
+        {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancel, cancellationToken);
+            var token = linked.Token;
+            var peers = new List<ReplicaId>();
+            foreach (var region in Regions)
+            {
+                var path = Path.Combine(root, region, "bootstrap.json");
+                if (!File.Exists(path))
+                {
+                    return false;
+                }
+                var peer = new ReplicaId(JsonNode.Parse(await File.ReadAllTextAsync(path, token))!["replica"]!.GetValue<ulong>());
+                if (peer != self)
+                {
+                    peers.Add(peer);
+                }
+            }
+            if (peers.Count != 2 || peers.Distinct().Count() != 2)
+            {
+                throw new InvalidOperationException("bootstrap requires two distinct remote replicas");
+            }
+            var physical = new HashSet<string>(StringComparer.Ordinal);
+            var stores = new List<(TenantContext Database, IDatabaseStore Store)>();
+            await foreach (var database in engine.ListDatabasesAsync(token))
+            {
+                physical.Add(database.DatabaseId!);
+                if (await engine.OpenDatabaseAsync(database, token) is not { } store)
+                {
+                    return false;
+                }
+                stores.Add((database, store));
+            }
+            if (!physical.SetEquals(expected))
+            {
+                return await NotReadyAsync("physical", physical.Count, default, default, 0, 0, token);
+            }
+            stores.Add((ChangeGroups.System, await engine.OpenSystemDatabaseAsync(token)));
+            if (bounds is null)
+            {
+                Dictionary<TenantContext, (Ulid Incarnation, long Head)> snapshot = [];
+                foreach (var (database, store) in stores)
+                {
+                    if (await source.HeadAsync(database, store.Incarnation, token) is not { } head)
+                    {
+                        return await NotReadyAsync("scope", snapshot.Count, default, store.Incarnation, 0, 0, token);
+                    }
+                    snapshot.Add(database, (store.Incarnation, head));
+                }
+                bounds = snapshot;
+            }
+            foreach (var (index, (database, store)) in stores.Index())
+            {
+                var (boundIncarnation, boundHead) = bounds[database];
+                foreach (var peer in peers)
+                {
+                    var position = await source.AckedAsync(database, peer, token);
+                    if (position is null || position.Value.Incarnation != boundIncarnation || store.Incarnation != boundIncarnation)
+                    {
+                        return await NotReadyAsync("scope", index, peer, store.Incarnation, position?.Acked ?? 0, 0, token);
+                    }
+                    if (position.Value.RequiresRefill)
+                    {
+                        return await NotReadyAsync("refill", index, peer, store.Incarnation, position.Value.Acked, 0, token);
+                    }
+                    var key = (database, peer);
+                    if (!cutoffs.TryGetValue(key, out var cutoff))
+                    {
+                        var after = position.Value.Acked;
+                        var required = after;
+                        // Raw heads bound the scan; only actual own-origin group IDs become ACK requirements.
+                        while (after < boundHead)
+                        {
+                            var page = await source.ReadAsync(database, boundIncarnation, after,
+                                ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token);
+                            if (page is null || page.Incarnation != boundIncarnation)
+                            {
+                                return await NotReadyAsync("scope", index, peer, store.Incarnation, position.Value.Acked, required, token);
+                            }
+                            if (page.Groups.Count == 0)
+                            {
+                                break;
+                            }
+                            foreach (var group in page.Groups)
+                            {
+                                if (group.ChangeId <= boundHead)
+                                {
+                                    required = group.ChangeId;
+                                }
+                            }
+                            var next = page.Groups[^1].ChangeId;
+                            if (next <= after)
+                            {
+                                throw new InvalidOperationException("bootstrap own-group scan did not advance");
+                            }
+                            after = next;
+                        }
+                        cutoff = (boundIncarnation, required);
+                        cutoffs.Add(key, cutoff);
+                    }
+                    if (position.Value.Incarnation != cutoff.Incarnation || position.Value.Acked < cutoff.Required)
+                    {
+                        return await NotReadyAsync("own-prefix", index, peer, store.Incarnation, position.Value.Acked, cutoff.Required, token);
+                    }
+                }
+            }
+            return true;
+        }, TimeSpan.FromMinutes(20));
+
+        async Task<bool> NotReadyAsync(string reason, int index, ReplicaId peer, Ulid incarnation, long acknowledged, long required, CancellationToken token)
+        {
+            await WriteAsync(Path.Combine(directory, "bootstrap-progress.json"), new JsonObject
+            {
+                ["reason"] = reason,
+                ["database_index"] = index,
+                ["database_count"] = expected.Count,
+                ["peer"] = peer.Value,
+                ["incarnation"] = incarnation.ToString(),
+                ["acknowledged"] = acknowledged,
+                ["required_own_group"] = required,
+                ["frozen_cutoffs"] = cutoffs.Count,
+            }.ToJsonString(), token);
+            return false;
+        }
     }
 
     private static async Task SmokeAsync(CancellationToken cancellationToken)

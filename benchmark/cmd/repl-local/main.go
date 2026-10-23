@@ -28,6 +28,7 @@ func main() {
 
 func run() (runErr error) {
 	profile := flag.String("profile", "loopback", "loopback (WAN requires isolated network namespaces)")
+	databases := flag.Int("databases", 1, "total tenant databases; writes target canary")
 	docs := flag.Int("docs", 100000, "source documents per write/feed phase")
 	repeats := flag.Int("repeats", 3, "independent cluster repetitions")
 	scenario := flag.String("scenario", "all", "all, writes, feeds, catchup, rebuild")
@@ -36,8 +37,8 @@ func run() (runErr error) {
 	if *profile != "loopback" {
 		return fmt.Errorf("profile %q unsupported: no host-wide tc/netem changes; use loopback", *profile)
 	}
-	if *docs < 1 || *repeats < 1 {
-		return errors.New("docs and repeats must be positive")
+	if *docs < 1 || *repeats < 1 || *databases < 1 {
+		return errors.New("docs, repeats and databases must be positive")
 	}
 	if !strings.Contains("|all|writes|feeds|catchup|rebuild|", "|"+*scenario+"|") {
 		return errors.New("unknown scenario")
@@ -58,7 +59,7 @@ func run() (runErr error) {
 	ctx, deadline := context.WithTimeout(ctx, 12*time.Hour)
 	defer deadline()
 	r := report{Host: host, Commit: gitValue("rev-parse", "HEAD"), SourceTree: gitValue("rev-parse", "HEAD:src/TerraBase"),
-		Profile: *profile, Scenario: *scenario, Docs: *docs, Repeats: *repeats, Started: time.Now().UTC(), HostInfo: hostInfo()}
+		Profile: *profile, Scenario: *scenario, Docs: *docs, Databases: *databases, Repeats: *repeats, Started: time.Now().UTC(), HostInfo: hostInfo()}
 	defer func() {
 		r.Finished = time.Now().UTC()
 		if runErr != nil {
@@ -69,7 +70,7 @@ func run() (runErr error) {
 	for repeat := 1; repeat <= *repeats; repeat++ {
 		measure := func(phase func(*repllocal.Cluster) (sample, error)) (phaseErr error) {
 			log.Printf("repeat %d/%d: starting fresh three-process cluster", repeat, *repeats)
-			c, err := repllocal.StartCluster(ctx, root)
+			c, err := repllocal.StartCluster(ctx, root, *databases)
 			if err != nil {
 				return err
 			}
