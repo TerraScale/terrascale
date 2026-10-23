@@ -82,12 +82,15 @@ def main(directory):
     print('| Direction | Delay | Visible p50 | p95 | p99 | Overhead p50 | p95 | p99 | p50 per run (min-max) | Origin ack p50 | p99 | Probes |')
     print('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |')
     rows = collections.defaultdict(lambda: collections.defaultdict(list))
+    load = []
     for path in sorted(glob.glob(os.path.join(directory, 'probe-*.jsonl'))):
         run, a, b = os.path.basename(path)[len('probe-'):-len('.jsonl')].split('-')
         for line in open(path):
             sample = json.loads(line)
             if 'summary' not in sample:
                 rows[(a, b)][run].append(sample)
+            elif sample.get('load_writers'):
+                load.append(sample['load_writes_per_s'])
     for (a, b), runs in sorted(rows.items()):
         samples = [s for run in runs.values() for s in run]
         visible = [s['visible_ms'] for s in samples]
@@ -97,6 +100,10 @@ def main(directory):
         print(f'| {a} → {b} | {delays[(a, b)]:.1f} | {pct(visible, 50):.1f} | {pct(visible, 95):.1f} | {pct(visible, 99):.1f} '
               f'| {pct(over, 50):.1f} | {pct(over, 95):.1f} | {pct(over, 99):.1f} '
               f'| {statistics.median(per_run):.1f} ({min(per_run):.1f}-{max(per_run):.1f}) | {pct(ack, 50):.1f} | {pct(ack, 99):.1f} | {len(samples)} |')
+
+    if load:
+        print()
+        print(f'Load beside the probes: {statistics.median(load):.1f} writes/s on the origin (median over directions and runs).')
 
     regions = sorted({a for a, _ in rows})
     print()
