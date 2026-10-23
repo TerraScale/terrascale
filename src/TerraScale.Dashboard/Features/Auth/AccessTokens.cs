@@ -122,6 +122,22 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
         await UpdateAsync(userId, set => set.Tokens.RemoveAll(item => item.Token.Id == id), cancellationToken);
     }
 
+    // Account deletion: ts-auth has already revoked every grant, so only the dashboard's records remain.
+    public async Task ForgetAllAsync(string userId, CancellationToken cancellationToken)
+    {
+        var id = AccountService.AccountId(userId);
+        var document = await state.GetAsync(Collection, id, cancellationToken);
+        if (document is null) return;
+        var set = await ReadAsync(userId, cancellationToken);
+        foreach (var token in set.Tokens)
+        {
+            await sessions.DeleteCredentialAsync(token.CredentialId, cancellationToken);
+            if (await state.GetAsync(IndexCollection, token.SecretHash, cancellationToken) is { } index)
+                await state.DeleteAsync(IndexCollection, token.SecretHash, index.Version, cancellationToken);
+        }
+        await state.DeleteAsync(Collection, id, document.Version, cancellationToken);
+    }
+
     public Task<AccountContext?> ResolveAsync(string secret, CancellationToken cancellationToken) =>
         ResolveAsync(secret, cancellationToken, requireFreshPrivilege: false);
 
