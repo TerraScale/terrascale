@@ -207,7 +207,7 @@ export const es: Messages = {
       },
       {
         title: 'Unidades de operación',
-        text: 'Cada 4 KiB iniciados leídos o escritos; las escrituras cuentan en cada región seleccionada',
+        text: 'Cada 4 KiB iniciados leídos o escritos; las escrituras cuentan una vez y la replicación es gratis',
       },
       {
         title: 'Asignaciones y uso adicional',
@@ -238,7 +238,7 @@ export const es: Messages = {
         {
           item: 'Unidades de operación',
           unit: '/millón de unidades',
-          details: 'Cada 4 KiB iniciados de cada lectura o escritura exitosa cuentan por separado. Las escrituras se multiplican por las regiones seleccionadas; las lecturas cuentan en la región que las atiende.',
+          details: 'Cada 4 KiB iniciados de cada lectura o escritura exitosa cuentan por separado. Las escrituras cuentan una vez, independientemente de las regiones seleccionadas; las lecturas cuentan en la región que las atiende. La replicación es gratis.',
         },
         {
           item: 'Almacenamiento entre regiones',
@@ -261,7 +261,7 @@ export const es: Messages = {
       items: [
         {
           q: '¿Qué es una unidad de operación?',
-          a: 'Una unidad de operación es cada 4 KiB (4.096 bytes) iniciados de un objeto lógico leído o escrito correctamente. Las listas, consultas y lotes cuentan cada elemento por separado. Las escrituras cuentan una vez por región seleccionada; las lecturas cuentan solo en la región que las atiende. Las solicitudes fallidas, denegadas, inválidas, limitadas y no encontradas no se facturan.',
+          a: 'Una unidad de operación es cada 4 KiB (4.096 bytes) iniciados de un objeto lógico leído o escrito correctamente. Las listas, consultas y lotes cuentan cada elemento por separado. Las escrituras cuentan una vez, independientemente del número de regiones seleccionadas; las lecturas cuentan solo en la región que las atiende. La replicación entre regiones no se factura. Las solicitudes fallidas, denegadas, inválidas, limitadas y no encontradas no se facturan.',
         },
         {
           q: '¿Qué ocurre si necesito más operaciones, almacenamiento o salida?',
