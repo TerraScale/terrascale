@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -71,5 +72,88 @@ public sealed class WebhookIdleTests
         await using var held = await system.BeginTransactionAsync(write: false, token);
         await Assert.That(await engine.MayHaveSystemCollectionStateAsync(Collection, token)).IsTrue();
         await Assert.That(engine.IoAdmittedCount).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task First_discovery_waits_for_writes_that_notified_before_the_collection_was_probed(bool replicated)
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var server = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            settings["storage-threads"] = "1";
+            settings["storage-queue"] = "2";
+        }, services: services => services.AddSingleton<TimeProvider>(clock));
+        using var health = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative), token);
+        health.EnsureSuccessStatusCode();
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var system = (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(token);
+        // Keep an idle reader available: an unsynchronized probe would rent it and enqueue an older snapshot.
+        await using (var warm = await system.BeginTransactionAsync(write: false, token))
+        {
+            _ = await warm.GetOffsetAsync(token);
+        }
+
+        await using var write = await system.BeginTransactionAsync(write: true, token);
+        const string Collection = "first_presence_probe";
+        using var value = JsonDocument.Parse("""{"value":true}""");
+        if (replicated)
+        {
+            var at = new EntryVersion(FeedCursor.At(DateTimeOffset.UtcNow), ReplicaId.Of(4518, 9, 1));
+            _ = await write.JoinAsync(Collection, EntityIds.New().ToString(), DocumentState.Bottom.Put(at, value.RootElement), at, token);
+        }
+        else
+        {
+            _ = await write.PutAsync(Collection, EntityIds.New().ToString(), """{"value":true}"""u8.ToArray(), token);
+            // Group commit flushes local states before publication, just as Join already does.
+            await ((SqliteStorageTransaction)write).FlushStatesAsync();
+        }
+
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var blocked = engine.Io.RunAsync(() =>
+        {
+            entered.TrySetResult();
+            release.Wait(token);
+        }, token);
+        using var discovery = CancellationTokenSource.CreateLinkedTokenSource(token);
+        Task<bool>? probe = null;
+        try
+        {
+            await entered.Task.WaitAsync(token);
+            probe = engine.MayHaveSystemCollectionStateAsync(Collection, discovery.Token).AsTask();
+            await Assert.That(engine.IoAdmittedCount).IsEqualTo(2);
+            // The first probe waits for the held writer without queuing an older read snapshot.
+            await Assert.That(engine.Io.Queued).IsEqualTo(0);
+            await Assert.That(probe.IsCompleted).IsFalse();
+            release.Set();
+            await blocked;
+            _ = await write.CommitAsync(token);
+            await write.DisposeAsync();
+            await Assert.That(await probe).IsTrue();
+
+            await using var held = await system.BeginTransactionAsync(write: false, token);
+            await Assert.That(await engine.MayHaveSystemCollectionStateAsync(Collection, token)).IsTrue();
+            await Assert.That(engine.IoAdmittedCount).IsEqualTo(1);
+            await Assert.That(await held.GetAsync("catalog", "version", token)).IsNull();
+        }
+        finally
+        {
+            release.Set();
+            await blocked;
+            await discovery.CancelAsync();
+            if (probe is not null)
+            {
+                try
+                {
+                    _ = await probe;
+                }
+                catch (OperationCanceledException) when (discovery.IsCancellationRequested)
+                {
+                }
+            }
+        }
     }
 }

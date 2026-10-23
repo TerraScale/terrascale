@@ -45,8 +45,8 @@ public interface IStorageEngine : IAsyncDisposable
 
     /// <summary>
     /// Conservatively tracks state in at most 16 named system collections, each at most 1024 characters.
-    /// The first inspection reads existing storage without creating it; later calls use memory only. Writes,
-    /// including replicated joins, invalidate absence before publication. Rollbacks and GC may leave a positive hint.
+    /// The first inspection serializes with writers and reads existing storage without creating it; later calls use memory only.
+    /// Writes, including replicated joins, invalidate absence before publication. Rollbacks and GC may leave a positive hint.
     /// </summary>
     ValueTask<bool> MayHaveSystemCollectionStateAsync(string collection, CancellationToken cancellationToken);
 

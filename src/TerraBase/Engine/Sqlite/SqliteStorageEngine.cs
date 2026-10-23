@@ -371,7 +371,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 if (SystemDatabaseExists)
                 {
                     var store = await OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
-                    await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+                    // Earlier writers may have notified before this entry existed: await them before taking its snapshot.
+                    await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
                     exists = await transaction.HasCollectionStateAsync(collection, prefix: false, cancellationToken).ConfigureAwait(false);
                 }
 
