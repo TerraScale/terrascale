@@ -78,6 +78,8 @@ public sealed class CollectionAccessRulesTests
             await Assert.That((await DocumentApi.SendAsync(user, HttpMethod.Patch, api.Document(deniedId), patch)).Status).IsEqualTo(HttpStatusCode.Forbidden);
             await Assert.That((await SendAsync(user, HttpMethod.Delete, api.Document(deniedId))).Status).IsEqualTo(HttpStatusCode.Forbidden);
             await Assert.That((await SendAsync(user, HttpMethod.Post, api.Transactions, new { ops = new[] { new { op = "delete", collection = "items", id = deniedId } } })).Status).IsEqualTo(HttpStatusCode.Forbidden);
+            await Assert.That((await SendAsync(user, HttpMethod.Post, api.Transactions, new { ops = new[] { new { op = "assert", collection = "items", id = deniedId, absent = true } } })).Status).IsEqualTo(HttpStatusCode.Forbidden);
+            await Assert.That((await SendAsync(user, HttpMethod.Post, api.Transactions, new { ops = new[] { new { op = "assert", collection = "items", id = deniedId, filter = new { exists = "/owner" } } } })).Status).IsEqualTo(HttpStatusCode.Forbidden);
         }
         var deniedWrite = await SendAsync(user, HttpMethod.Put, api.Document(id), new { owner = actor });
         await Assert.That(deniedWrite.Code).IsEqualTo("access_denied");
@@ -190,10 +192,63 @@ public sealed class CollectionAccessRulesTests
             },
         });
         await Assert.That(asserted.Status).IsEqualTo(HttpStatusCode.OK);
-        var oracle = await SendAsync(user, HttpMethod.Post, api.Transactions, new { ops = new[] { new { op = "assert", collection = "items", id = otherId, absent = true } } });
-        await Assert.That(oracle.Status).IsEqualTo(HttpStatusCode.Forbidden);
+        var hiddenAbsent = await SendAsync(user, HttpMethod.Post, api.Transactions, new { ops = new[] { new { op = "assert", collection = "items", id = otherId, absent = true } } });
+        await Assert.That(hiddenAbsent.Status).IsEqualTo(HttpStatusCode.OK);
         var deleted = await SendAsync(user, HttpMethod.Post, api.Transactions, new { ops = new[] { new { op = "delete", collection = "items", id = first } } });
         await Assert.That(deleted.Status).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    [Test]
+    public async Task Point_assertions_use_the_authorized_view_without_revealing_hidden_documents()
+    {
+        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await DeclareAsync(api, OwnerRules());
+        var actor = DocumentApi.NewId();
+        var visible = DocumentApi.NewId();
+        var hidden = DocumentApi.NewId();
+        var missing = DocumentApi.NewId();
+        (await api.PutAsync(visible, new { owner = actor, value = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.PutAsync(hidden, new { owner = DocumentApi.NewId(), value = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        using var user = Reader(api, actor);
+        foreach (var id in new[] { hidden, missing })
+        {
+            var absent = await SendAsync(user, HttpMethod.Post, api.Transactions,
+                new { ops = new[] { new { op = "assert", collection = "items", id, absent = true } } });
+            await Assert.That(absent.Status).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var visibleAbsent = await SendAsync(user, HttpMethod.Post, api.Transactions,
+            new { ops = new[] { new { op = "assert", collection = "items", id = visible, absent = true } } });
+        await Assert.That(visibleAbsent.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        var positive = await SendAsync(user, HttpMethod.Post, api.Transactions,
+            new { ops = new[] { new { op = "assert", collection = "items", id = visible, filter = new { eq = new object[] { "/value", 1 } } } } });
+        await Assert.That(positive.Status).IsEqualTo(HttpStatusCode.OK);
+
+        string? hiddenFailure = null;
+        foreach (var id in new[] { hidden, missing })
+        {
+            var rolledBack = DocumentApi.NewId();
+            var rejected = await SendAsync(user, HttpMethod.Post, api.Transactions, new
+            {
+                ops = new object[]
+                {
+                new { op = "put", collection = "items", id = rolledBack, document = new { owner = actor } },
+                new { op = "assert", collection = "items", id, filter = new { eq = new object[] { "/value", 1 } } },
+                },
+            });
+            await Assert.That(rejected.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
+            var failure = rejected.Json.GetRawText();
+            if (hiddenFailure is null)
+            {
+                hiddenFailure = failure;
+            }
+            else
+            {
+                await Assert.That(failure).IsEqualTo(hiddenFailure);
+            }
+
+            await Assert.That((await api.GetAsync(rolledBack)).Status).IsEqualTo(HttpStatusCode.NotFound);
+        }
     }
 
     [Test]

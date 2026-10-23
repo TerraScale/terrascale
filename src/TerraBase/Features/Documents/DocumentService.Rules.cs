@@ -97,7 +97,7 @@ internal sealed partial class DocumentService
             return AccessDenied;
         }
 
-        if (operation is AssertCountOperation)
+        if (operation is AssertOperation or AssertCountOperation)
         {
             return null;
         }
@@ -107,16 +107,9 @@ internal sealed partial class DocumentService
             PutOperation put => put.Id,
             PatchOperation patch => patch.Id,
             DeleteOperation delete => delete.Id,
-            AssertOperation assert => assert.Id,
             _ => throw new InvalidOperationException("unknown operation"),
         };
         var current = await transaction.GetAsync(operation.Collection, id, cancellationToken).ConfigureAwait(false);
-        if (!write)
-        {
-            // Even an absence assertion cannot be used to probe someone else's document.
-            return current is null || CollectionRuleAccess.CanRead(rules, current.Json, access) ? null : AccessDenied;
-        }
-
         var policy = rules!.Write!;
         if (current is not null && !CollectionRuleAccess.CollectionWide(policy, access) && rules.Subject(current.Json) != access.Actor)
         {
