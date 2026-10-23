@@ -7,8 +7,9 @@ using PortalFeatures = Stripe.BillingPortal.ConfigurationFeaturesOptions;
 
 namespace TerraScale.Dashboard.Features.Billing;
 
-/// <summary>Creates what StripeAuditCommand expects in a TEST account: one product per paid plan, its
-/// approved billing cadence and prices from PlanCatalog, and the default billing portal. A second run changes nothing.</summary>
+/// <summary>Creates what StripeAuditCommand expects in the delivered identity's account: one product per paid plan, its
+/// approved billing cadence and prices from PlanCatalog, contact-only Enterprise support, and the default billing portal.
+/// A second run changes nothing.</summary>
 public sealed class StripeSetupCommand
 {
     private readonly IDashboardIdentity identity;
@@ -37,17 +38,11 @@ public sealed class StripeSetupCommand
         try
         {
             var stripe = (await identity.ReadAsync(cancellationToken)).Stripe;
-            // shortcut: test mode only, as the go-live plan requires; drop this guard when live setup is approved.
-            if (stripe.IsLive)
-            {
-                await error.WriteLineAsync("The setup-stripe command only runs against a Stripe test account.");
-                return 1;
-            }
             var client = clientFactory(stripe.SecretKey);
             var changes = new List<string>();
             await SetupPricesAsync(client, changes, cancellationToken);
             await SetupPortalAsync(client, changes, cancellationToken);
-            await output.WriteLineAsync(JsonSerializer.Serialize(new { mode = "test", changes }, new JsonSerializerOptions { WriteIndented = true }));
+            await output.WriteLineAsync(JsonSerializer.Serialize(new { mode = stripe.IsLive ? "live" : "test", changes }, new JsonSerializerOptions { WriteIndented = true }));
             return 0;
         }
         catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -75,7 +70,13 @@ public sealed class StripeSetupCommand
         foreach (var price in prices.Where(price => price.Product is null))
             price.Product = products.FirstOrDefault(product => product.Id == price.ProductId);
 
-        foreach (var plan in PlanCatalog.Plans.Where(plan => plan.PriceCents > 0))
+        var enterprise = PlanCatalog.ComparisonPlans.Single(plan => plan.Key == "enterprise");
+        // Stripe support pricing does not make Enterprise a selectable dashboard plan.
+        var setupPlans = PlanCatalog.Plans.Where(plan => plan.PriceCents > 0)
+            .Select(plan => (plan.Key, plan.Name, Interval: plan.CheckoutInterval,
+                Amount: plan.CheckoutInterval == "annual" ? plan.AnnualPriceCents : plan.PriceCents))
+            .Append((Key: enterprise.Key, Name: enterprise.Name + " support", Interval: "monthly", Amount: enterprise.PriceCents));
+        foreach (var plan in setupPlans)
         {
             var product = products.FirstOrDefault(product => product.Metadata.GetValueOrDefault("plan") == plan.Key);
             if (product is null)
@@ -93,30 +94,31 @@ public sealed class StripeSetupCommand
                 changes.Add("product_" + plan.Key + "_activated");
                 foreach (var price in prices.Where(price => price.ProductId == product.Id)) price.Product = product;
             }
-            foreach (var interval in new[] { plan.CheckoutInterval })
+            var interval = plan.Interval;
+            var name = plan.Key + "_" + interval;
+            var matches = prices.Where(price => price.Active && price.Currency == "usd" && price.UnitAmount == plan.Amount &&
+                    price.Recurring is { UsageType: not "metered", IntervalCount: 1 } recurring && recurring.Interval == (interval == "annual" ? "year" : "month") &&
+                    price.Product is { Active: true } publishedProduct && (publishedProduct.Metadata.GetValueOrDefault("plan") == plan.Key ||
+                        publishedProduct.Name == plan.Name || publishedProduct.Name == "TerraScale " + plan.Name))
+                .OrderByDescending(price => price.ProductId == product.Id).ToArray();
+            if (matches.Length == 0)
             {
-                var name = plan.Key + "_" + interval;
-                var matches = prices.Where(price => StripeBilling.MatchesPrice(price, plan, interval, requirePublished: true))
-                    .OrderByDescending(price => price.ProductId == product.Id).ToArray();
-                if (matches.Length == 0)
+                await client.V1.Prices.CreateAsync(new()
                 {
-                    await client.V1.Prices.CreateAsync(new()
-                    {
-                        Product = product.Id,
-                        Currency = "usd",
-                        UnitAmount = interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents,
-                        Recurring = new() { Interval = interval == "annual" ? "year" : "month", IntervalCount = 1 },
-                        LookupKey = "terrascale_" + name,
-                        TransferLookupKey = true
-                    }, cancellationToken: cancellationToken);
-                    changes.Add("price_" + name + "_created");
-                }
-                // The audit and checkout require exactly one published price per plan and interval.
-                foreach (var duplicate in matches.Skip(1))
-                {
-                    await client.V1.Prices.UpdateAsync(duplicate.Id, new() { Active = false }, cancellationToken: cancellationToken);
-                    changes.Add("price_" + name + "_duplicate_archived");
-                }
+                    Product = product.Id,
+                    Currency = "usd",
+                    UnitAmount = plan.Amount,
+                    Recurring = new() { Interval = interval == "annual" ? "year" : "month", IntervalCount = 1 },
+                    LookupKey = "terrascale_" + name,
+                    TransferLookupKey = true
+                }, cancellationToken: cancellationToken);
+                changes.Add("price_" + name + "_created");
+            }
+            // Keep exactly one published price per plan and interval.
+            foreach (var duplicate in matches.Skip(1))
+            {
+                await client.V1.Prices.UpdateAsync(duplicate.Id, new() { Active = false }, cancellationToken: cancellationToken);
+                changes.Add("price_" + name + "_duplicate_archived");
             }
         }
     }

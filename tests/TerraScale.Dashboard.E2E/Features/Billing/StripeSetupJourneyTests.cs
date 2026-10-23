@@ -12,26 +12,39 @@ namespace TerraScale.Dashboard.E2E.Features.Billing;
 public sealed class StripeSetupJourneyTests
 {
     [Test]
-    public async Task SetupCreatesCatalogPricesAndPortalOnceThenChangesNothing()
+    [Arguments("sk_test_SETUP", false)]
+    [Arguments("rk_test_SETUP", false)]
+    [Arguments("sk_live_SETUP", true)]
+    [Arguments("rk_live_SETUP", true)]
+    public async Task SetupCreatesCatalogPricesAndPortalOnceThenChangesNothing(string key, bool live)
     {
-        var stripe = new FakeStripe();
-        Check(await Run(stripe, "sk_test_SETUP") == (0, "{\"mode\":\"test\",\"changes\":[\"product_starter_created\",\"price_starter_annual_created\",\"product_pro_created\",\"price_pro_monthly_created\",\"product_team_created\",\"price_team_monthly_created\",\"portal_created\"]}"),
-            "The first run creates three products, three prices and the default portal");
+        var stripe = new FakeStripe(live);
+        var mode = live ? "live" : "test";
+        Check(await Run(stripe, key) == (0, "{\"mode\":\"" + mode + "\",\"changes\":[\"product_starter_created\",\"price_starter_annual_created\",\"product_pro_created\",\"price_pro_monthly_created\",\"product_team_created\",\"price_team_monthly_created\",\"product_enterprise_created\",\"price_enterprise_monthly_created\",\"portal_created\"]}"),
+            "The first run creates four products, four prices and the default portal");
         Check(stripe.Prices.Select(price => (string)price["unit_amount"]! + "/" + (string)price["recurring[interval]"]!).Order().SequenceEqual(
-                PlanCatalog.Plans.Where(plan => plan.PriceCents > 0).Select(plan => plan.BillingInterval == "year" ? plan.AnnualPriceCents + "/year" : plan.PriceCents + "/month").Order()),
+                PlanCatalog.Plans.Where(plan => plan.PriceCents > 0).Select(plan => plan.BillingInterval == "year" ? plan.AnnualPriceCents + "/year" : plan.PriceCents + "/month")
+                    .Append(PlanCatalog.ComparisonPlans.Single(plan => plan.Key == "enterprise").PriceCents + "/month").Order()),
             "Price amounts come from PlanCatalog");
+        Check(stripe.Products.Single(product => product["metadata[plan]"] == "enterprise")["name"] == "TerraScale Enterprise support" &&
+            !PlanCatalog.Plans.Any(plan => plan.Key == "enterprise"), "Support pricing leaves Enterprise contact-only without a selectable entitlement");
         var writes = stripe.Writes;
-        Check(await Run(stripe, "sk_test_SETUP") == (0, "{\"mode\":\"test\",\"changes\":[]}") && stripe.Writes == writes, "A second run changes nothing");
-        Check(await Run(stripe, "sk_live_SETUP") == (1, "") && stripe.Writes == writes, "Live keys are refused before Stripe is contacted");
+        Check(await Run(stripe, key) == (0, "{\"mode\":\"" + mode + "\",\"changes\":[]}") && stripe.Writes == writes, "A second run changes nothing");
+        Check(stripe.ApiKeys.Count > 0 && stripe.ApiKeys.All(actual => actual == key), "Every Stripe request uses the delivered identity's key");
     }
 
     [Test]
-    public async Task SetupReplacesLegacyPricesTransfersLookupKeysAndPreservesImmutableHistory()
+    [Arguments("sk_test_SETUP", false)]
+    [Arguments("rk_test_SETUP", false)]
+    [Arguments("sk_live_SETUP", true)]
+    [Arguments("rk_live_SETUP", true)]
+    public async Task SetupReplacesLegacyPricesTransfersLookupKeysAndPreservesImmutableHistory(string key, bool live)
     {
-        var stripe = new FakeStripe();
-        foreach (var plan in new[] { "starter", "pro" })
+        var stripe = new FakeStripe(live);
+        var mode = live ? "live" : "test";
+        foreach (var plan in new[] { "starter", "pro", "enterprise" })
             stripe.Products.Add(new() { ["id"] = "prod_legacy_" + plan, ["active"] = "true", ["name"] = "TerraScale " + plan, ["metadata[plan]"] = plan });
-        foreach (var (plan, interval, amount) in new[] { ("starter", "monthly", "500"), ("starter", "annual", "5000"), ("pro", "monthly", "5000"), ("pro", "annual", "50000") })
+        foreach (var (plan, interval, amount) in new[] { ("starter", "monthly", "500"), ("starter", "annual", "5000"), ("pro", "monthly", "5000"), ("pro", "annual", "50000"), ("enterprise", "monthly", "49900") })
             stripe.Prices.Add(new()
             {
                 ["id"] = "price_legacy_" + plan + "_" + interval,
@@ -44,26 +57,73 @@ public sealed class StripeSetupJourneyTests
                 ["lookup_key"] = "terrascale_" + plan + "_" + interval
             });
         var legacy = stripe.Prices.Select(price => new Dictionary<string, string>(price)).ToArray();
-        Check(await Run(stripe, "sk_test_SETUP") == (0, "{\"mode\":\"test\",\"changes\":[\"price_starter_annual_created\",\"price_pro_monthly_created\",\"product_team_created\",\"price_team_monthly_created\",\"portal_created\"]}"),
+        Check(await Run(stripe, key) == (0, "{\"mode\":\"" + mode + "\",\"changes\":[\"price_starter_annual_created\",\"price_pro_monthly_created\",\"product_team_created\",\"price_team_monthly_created\",\"price_enterprise_monthly_created\",\"portal_created\"]}"),
             "Legacy products are reused and only approved replacement prices are created");
-        Check(stripe.Prices.Count == 7, "Four legacy prices and three new prices remain addressable");
+        Check(stripe.Prices.Count == 9, "Five legacy prices and four new prices remain addressable");
         foreach (var old in legacy)
         {
             var retained = stripe.Prices.Single(price => price["id"] == old["id"]);
             foreach (var field in new[] { "unit_amount", "currency", "product", "recurring[interval]", "recurring[interval_count]" })
                 Check(retained[field] == old[field], "Legacy immutable field is preserved: " + old["id"] + "/" + field);
-            var transferred = old["lookup_key"] is "terrascale_starter_annual" or "terrascale_pro_monthly";
+            var transferred = old["lookup_key"] is "terrascale_starter_annual" or "terrascale_pro_monthly" or "terrascale_enterprise_monthly";
             Check(transferred ? !retained.ContainsKey("lookup_key") : retained["lookup_key"] == old["lookup_key"], "Only approved lookup keys transfer from old prices");
         }
-        foreach (var (key, amount, interval) in new[] { ("terrascale_starter_annual", "3000", "year"), ("terrascale_pro_monthly", "2000", "month"), ("terrascale_team_monthly", "5000", "month") })
+        foreach (var (lookupKey, amount, interval) in new[] { ("terrascale_starter_annual", "3000", "year"), ("terrascale_pro_monthly", "2000", "month"), ("terrascale_team_monthly", "5000", "month"), ("terrascale_enterprise_monthly", "99900", "month") })
         {
-            var price = stripe.Prices.Single(price => price.GetValueOrDefault("lookup_key") == key);
-            Check(!legacy.Any(old => old["id"] == price["id"]), "Approved price gets a new immutable ID: " + key);
-            Check(price["unit_amount"] == amount && price["recurring[interval]"] == interval && price["recurring[interval_count]"] == "1" && price["currency"] == "usd" && price["active"] == "true", "Approved amount and cadence: " + key);
-            Check(stripe.Products.Single(product => product["id"] == price["product"])["metadata[plan]"] == key.Split('_')[1], "Replacement price belongs to the correct plan product");
+            var price = stripe.Prices.Single(price => price.GetValueOrDefault("lookup_key") == lookupKey);
+            Check(!legacy.Any(old => old["id"] == price["id"]), "Approved price gets a new immutable ID: " + lookupKey);
+            Check(price["unit_amount"] == amount && price["recurring[interval]"] == interval && price["recurring[interval_count]"] == "1" && price["currency"] == "usd" && price["active"] == "true", "Approved amount and cadence: " + lookupKey);
+            Check(stripe.Products.Single(product => product["id"] == price["product"])["metadata[plan]"] == lookupKey.Split('_')[1], "Replacement price belongs to the correct plan product");
         }
         var writes = stripe.Writes;
-        Check(await Run(stripe, "sk_test_SETUP") == (0, "{\"mode\":\"test\",\"changes\":[]}") && stripe.Writes == writes, "A rerun after legacy replacement performs zero writes");
+        Check(await Run(stripe, key) == (0, "{\"mode\":\"" + mode + "\",\"changes\":[]}") && stripe.Writes == writes, "A rerun after legacy replacement performs zero writes");
+    }
+
+    [Test]
+    [Arguments("sk_test_SETUP", false)]
+    [Arguments("sk_live_SETUP", true)]
+    public async Task SetupArchivesDuplicateSupportPricesWithoutChangingAmounts(string key, bool live)
+    {
+        var stripe = new FakeStripe(live);
+        Check((await Run(stripe, key)).Item1 == 0, "Seed the approved catalog");
+        var support = stripe.Prices.Single(price => price.GetValueOrDefault("lookup_key") == "terrascale_enterprise_monthly");
+        var duplicate = new Dictionary<string, string>(support) { ["id"] = "price_enterprise_duplicate" };
+        duplicate.Remove("lookup_key");
+        stripe.Prices.Add(duplicate);
+        var writes = stripe.Writes;
+        var mode = live ? "live" : "test";
+        Check(await Run(stripe, key) == (0, "{\"mode\":\"" + mode + "\",\"changes\":[\"price_enterprise_monthly_duplicate_archived\"]}") && stripe.Writes == writes + 1,
+            "Only the duplicate support price is archived");
+        Check(support["active"] == "true" && duplicate["active"] == "false" && support["unit_amount"] == "99900" && duplicate["unit_amount"] == "99900",
+            "Archiving preserves both immutable support prices");
+        writes = stripe.Writes;
+        Check(await Run(stripe, key) == (0, "{\"mode\":\"" + mode + "\",\"changes\":[]}") && stripe.Writes == writes, "Duplicate cleanup also has a zero-write rerun");
+    }
+
+    [Test]
+    [Arguments("--live")]
+    [Arguments("--test")]
+    [Arguments("--help")]
+    public async Task SetupRefusesArgumentsBeforeReadingIdentity(string argument)
+    {
+        var command = new StripeSetupCommand(new DashboardIdentity(_ => throw new InvalidOperationException("Identity must not be read.")),
+            _ => throw new InvalidOperationException("Stripe must not be contacted."), TextWriter.Null, TextWriter.Null);
+        Check(await command.RunAsync([argument]) == 1, "Arguments cannot override the delivered identity's mode");
+    }
+
+    [Test]
+    [Arguments(DashboardIdentity.AuthClientSecretName, "too-short")]
+    [Arguments(DashboardIdentity.SessionEncryptionKeyName, "not-base64")]
+    [Arguments(DashboardIdentity.StripeSecretKeyName, "not-a-stripe-key")]
+    [Arguments(DashboardIdentity.StripeWebhookSecretName, "not-a-webhook-secret")]
+    [Arguments(DashboardIdentity.TerraBasePeerSecretName, "not-a-peer-secret")]
+    public async Task SetupRequiresAValidFullIdentityBeforeContactingStripe(string secretName, string invalidValue)
+    {
+        var stripe = new FakeStripe(true);
+        Check(await Run(stripe, "sk_live_SETUP", secretName) == (2, "") && stripe.ApiKeys.Count == 0 && stripe.Writes == 0,
+            "An incomplete identity is rejected before contacting Stripe");
+        Check(await Run(stripe, "sk_live_SETUP", secretName, invalidValue) == (2, "") && stripe.ApiKeys.Count == 0 && stripe.Writes == 0,
+            "An invalid identity is rejected before contacting Stripe");
     }
 
     [Test]
@@ -83,28 +143,33 @@ public sealed class StripeSetupJourneyTests
         Check(response.StatusCode == HttpStatusCode.BadRequest && stripe.Writes == writes && before.OrderBy(pair => pair.Key).SequenceEqual(stripe.Prices[0].OrderBy(pair => pair.Key)), "Stripe rejects immutable mutations without changing the stored price");
     }
 
-    private static async Task<(int, string)> Run(FakeStripe stripe, string key)
+    private static async Task<(int, string)> Run(FakeStripe stripe, string key, string? invalidSecretName = null, string? invalidValue = null)
     {
         var output = new StringWriter();
-        var identity = new Identity(new DashboardCredentials(new string('a', 32), Convert.ToBase64String(new byte[32]), new(key, "whsec_SETUP"), new string('0', 64)));
+        var identity = new DashboardIdentity(name => name == invalidSecretName ? invalidValue : name switch
+        {
+            DashboardIdentity.AuthClientSecretName => new string('a', 32),
+            DashboardIdentity.SessionEncryptionKeyName => Convert.ToBase64String(new byte[32]),
+            DashboardIdentity.StripeSecretKeyName => key,
+            DashboardIdentity.StripeWebhookSecretName => "whsec_SETUP",
+            DashboardIdentity.TerraBasePeerSecretName => new string('0', 64),
+            _ => null
+        });
         var result = await new StripeSetupCommand(identity, secret => new StripeClient(new StripeClientOptions
         { ApiKey = secret, HttpClient = new SystemNetHttpClient(new HttpClient(stripe), enableTelemetry: false) }), output, TextWriter.Null).RunAsync([]);
         return (result, output.ToString().Replace(" ", "").Replace("\n", "").Replace("\r", ""));
     }
 
-    private sealed class Identity(DashboardCredentials credentials) : IDashboardIdentity
-    {
-        public Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken) => Task.FromResult(credentials);
-    }
-
     // An in-memory Stripe for the endpoints the setup command uses; stored objects keep their raw form fields.
-    private sealed class FakeStripe : HttpMessageHandler
+    private sealed class FakeStripe(bool live = false) : HttpMessageHandler
     {
         public readonly List<Dictionary<string, string>> Products = [], Prices = [], Portals = [];
+        public readonly List<string?> ApiKeys = [];
         public int Writes;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            ApiKeys.Add(request.Headers.Authorization?.Parameter);
             var path = request.RequestUri!.AbsolutePath;
             var form = request.Content is null ? new Dictionary<string, string>() : (await request.Content.ReadAsStringAsync(cancellationToken)).Split('&', StringSplitOptions.RemoveEmptyEntries)
                 .Select(pair => pair.Split('=', 2)).ToDictionary(pair => WebUtility.UrlDecode(pair[0]), pair => WebUtility.UrlDecode(pair[1]));
@@ -154,7 +219,7 @@ public sealed class StripeSetupJourneyTests
         private JsonObject Json(string kind, Dictionary<string, string> item)
         {
             bool On(string name) => item.GetValueOrDefault(name) == "true";
-            var json = new JsonObject { ["id"] = item["id"], ["active"] = On("active"), ["livemode"] = false };
+            var json = new JsonObject { ["id"] = item["id"], ["active"] = On("active"), ["livemode"] = live };
             if (kind == "prod")
             {
                 json["object"] = "product";
