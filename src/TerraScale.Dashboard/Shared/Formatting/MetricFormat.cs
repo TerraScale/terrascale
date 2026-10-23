@@ -6,7 +6,9 @@ public static class MetricFormat
 {
     public static string Milliseconds(double? value) => value is null ? "Not reported" : value.Value.ToString("0.#", CultureInfo.InvariantCulture) + " ms";
 
-    public static string Latency(double? value) => value is null ? "Not reported" : value.Value.ToString("F3", CultureInfo.InvariantCulture) + " ms";
+    // Three significant figures at most: "256 ms", "18.4 ms", "1.75 ms".
+    public static string Latency(double? value) => value is null ? "Not reported" :
+        value.Value.ToString(Math.Abs(value.Value) >= 100 ? "F0" : Math.Abs(value.Value) >= 10 ? "F1" : "F2", CultureInfo.InvariantCulture) + " ms";
 
     public static string Bytes(long value)
     {

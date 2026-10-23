@@ -44,7 +44,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             await flow.GotoAsync(ownerPage, "/analytics?database=" + orders + "&region=GRU&range=24h");
             await Assert.That(await Stat("#analytics-summary", "Requests").InnerTextAsync()).IsEqualTo("10");
             await Assert.That(await Stat("#analytics-summary", "Storage").InnerTextAsync()).IsEqualTo("4.0 KiB");
-            await Assert.That(await Stat("#analytics-summary", "Worst p95 latency").InnerTextAsync()).IsEqualTo("1.750 ms");
+            await Assert.That(await Stat("#analytics-summary", "Worst p95 latency").InnerTextAsync()).IsEqualTo("1.75 ms");
             await Assert.That(await ownerPage.Locator("main .ts-grid-2 > .ts-card").CountAsync()).IsEqualTo(7);
             await flow.ShotAsync(ownerPage, "analytics-desktop");
             var chart = ownerPage.Locator("main .ts-grid-2 .ts-chart").First;
