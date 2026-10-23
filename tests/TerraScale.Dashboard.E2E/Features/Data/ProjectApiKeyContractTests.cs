@@ -65,6 +65,33 @@ public sealed class ProjectApiKeyContractTests
     }
 
     [Test]
+    public async Task RotateVerifiesTheKeyAndSendsTheGracePeriodForTheOldSecret()
+    {
+        using var wire = new Wire();
+        var rotated = await new ApiKeyService(wire, TimeProvider.System).RotateAsync(Context(), KeyId, 3600, CancellationToken.None);
+        await Assert.That(wire.Methods).IsEquivalentTo(new[] { HttpMethod.Get, HttpMethod.Post }, CollectionOrdering.Matching);
+        await Assert.That(wire.Path).IsEqualTo($"/v1/terrascale/organizations/{OrganizationId}/projects/{ProjectId}/api-keys/{KeyId}/rotate");
+        using var request = JsonDocument.Parse(wire.Body!);
+        await Assert.That(request.RootElement.GetProperty("previous_secret_ttl").GetInt32()).IsEqualTo(3600);
+        await Assert.That(rotated.Key.Id).IsEqualTo(KeyId);
+        await Assert.That(rotated.Secret).IsEqualTo(KeyId + "_synthetic-secret");
+    }
+
+    [Test]
+    [Arguments("pending", 0, 409, 2)]
+    [Arguments("", -1, 422, 0)]
+    [Arguments("", 86401, 422, 0)]
+    public async Task RotateRefusesAPendingGraceOrAnOutOfRangeGrace(string failure, int ttl, int status, int requests)
+    {
+        using var wire = new Wire { Failure = failure };
+        AccountAccessException? rejected = null;
+        try { await new ApiKeyService(wire, TimeProvider.System).RotateAsync(Context(), KeyId, ttl, CancellationToken.None); }
+        catch (AccountAccessException error) { rejected = error; }
+        await Assert.That(rejected?.StatusCode).IsEqualTo(status);
+        await Assert.That(wire.Requests).IsEqualTo(requests);
+    }
+
+    [Test]
     [Arguments("foreign")]
     [Arguments("repeated")]
     public async Task ListingRefusesForeignIdentityOrRepeatedPagination(string failure)
@@ -95,6 +122,7 @@ public sealed class ProjectApiKeyContractTests
         public int Requests { get; private set; }
         public string? Body { get; private set; }
         public string? Query { get; private set; }
+        public string? Path { get; private set; }
         public List<HttpMethod> Methods { get; } = [];
         private bool Deleted { get; set; }
         private static HttpResponseMessage Error(HttpStatusCode status, string code) =>
@@ -104,11 +132,12 @@ public sealed class ProjectApiKeyContractTests
         {
             var root = $"/v1/terrascale/organizations/{OrganizationId}/projects/{ProjectId}/api-keys";
             if (request.RequestUri!.Host != "auth.terrascale.tech" || request.Headers.Authorization?.Parameter != "original-user-token" ||
-                request.RequestUri.AbsolutePath != root && request.RequestUri.AbsolutePath != root + "/" + KeyId)
+                request.RequestUri.AbsolutePath != root && request.RequestUri.AbsolutePath != root + "/" + KeyId && request.RequestUri.AbsolutePath != root + "/" + KeyId + "/rotate")
                 throw new InvalidOperationException("Keys must use the original user authority at ts-auth's project boundary.");
             Requests++;
             Methods.Add(request.Method);
             Query = request.RequestUri.Query;
+            Path = request.RequestUri.AbsolutePath;
             Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
             if (Deleted) return Error(HttpStatusCode.NotFound, "api_key_not_found");
             if (request.Method == HttpMethod.Delete)
@@ -117,6 +146,8 @@ public sealed class ProjectApiKeyContractTests
                 Deleted = Failure != "refused";
                 return Failure is "committed" or "refused" ? Error(HttpStatusCode.ServiceUnavailable, "temporarily_unavailable") : new(HttpStatusCode.NoContent);
             }
+            var rotate = Path.EndsWith("/rotate", StringComparison.Ordinal);
+            if (rotate && Failure == "pending") return Error(HttpStatusCode.Conflict, "rotation_pending");
             var key = new
             {
                 id = KeyId,
@@ -134,7 +165,7 @@ public sealed class ProjectApiKeyContractTests
                 ? JsonSerializer.Serialize(new { api_key = key, key = KeyId + "_synthetic-secret" })
                 : request.RequestUri.AbsolutePath == root ? JsonSerializer.Serialize(new { items = new[] { key }, next = Failure == "repeated" ? "opaque+/cursor=" : null })
                 : JsonSerializer.Serialize(key);
-            return new(request.Method == HttpMethod.Post ? HttpStatusCode.Created : HttpStatusCode.OK)
+            return new(request.Method == HttpMethod.Post && !rotate ? HttpStatusCode.Created : HttpStatusCode.OK)
             { Content = new StringContent(response, Encoding.UTF8, "application/json") };
         }
     }

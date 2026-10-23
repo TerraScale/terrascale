@@ -8,7 +8,7 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Demo;
 
-// Test-only ts-auth project API keys, wire per I1 contracts/auth list/create/get/revoke_project_api_key. Only the global
+// Test-only ts-auth project API keys, wire per I1 contracts/auth list/create/get/rotate/revoke_project_api_key. Only the global
 // https://auth.terrascale.tech origin with the caller's original admitted sign-in bearer reaches it: exchanged project
 // tokens, other hosts and regional fanout are refused. One instance per environment; nothing is static.
 sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?> resolveSession, Func<string, string, string, string> role)
@@ -63,6 +63,7 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
         var match = Route().Match(uri.AbsolutePath);
         if (!match.Success) return Error(HttpStatusCode.NotFound, "not_found");
         string organization = match.Groups["organization"].Value, project = match.Groups["project"].Value, keyId = match.Groups["key"].Value;
+        var rotate = match.Groups["rotate"].Success;
         lock (gate) requests.Add((request.Method.Method, uri.AbsolutePath, actor.UserId, token));
         var current = role(actor.UserId, organization, project);
         if (current.Length == 0) return Error(HttpStatusCode.NotFound, "not_found");
@@ -97,9 +98,30 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
             var database = root.TryGetProperty("database", out var named) && named.ValueKind == JsonValueKind.String ? named.GetString() : null;
             DateTimeOffset? expires = root.TryGetProperty("expires_at", out var expiry) && expiry.ValueKind == JsonValueKind.String ? expiry.GetDateTimeOffset() : null;
             var key = new Key(ids.NewId(), keyName, organization, project, database, granted, actor.UserId, DateTimeOffset.UtcNow, expires, null);
-            var secret = key.Id + "_" + string.Concat(Enumerable.Range(0, 52).Select(_ => Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)]));
+            var secret = Secret(key.Id);
             lock (gate) keys[key.Id] = (key, secret);
             return Json(new { api_key = key, key = secret }, HttpStatusCode.Created);
+        }
+        if (rotate)
+        {
+            if (request.Method != HttpMethod.Post) return Error(HttpStatusCode.MethodNotAllowed, "invalid_request");
+            if (!manage) return Error(HttpStatusCode.Forbidden, "access_denied");
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+            var root = body.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Any(field => field.Name != "previous_secret_ttl")) return Error(HttpStatusCode.BadRequest, "invalid_request");
+            var ttl = 0;
+            if (root.TryGetProperty("previous_secret_ttl", out var grace) && grace.ValueKind != JsonValueKind.Null && (!grace.TryGetInt32(out ttl) || ttl is < 0 or > 86400))
+                return Error(HttpStatusCode.BadRequest, "invalid_request");
+            lock (gate)
+            {
+                if (!keys.TryGetValue(keyId, out var stored) || stored.Key.OrganizationId != organization || stored.Key.ProjectId != project)
+                    return Error(HttpStatusCode.NotFound, "api_key_not_found");
+                if (stored.Key.PreviousSecretExpiresAt > DateTimeOffset.UtcNow) return Error(HttpStatusCode.Conflict, "rotation_pending");
+                var key = stored.Key with { PreviousSecretExpiresAt = ttl > 0 ? DateTimeOffset.UtcNow.AddSeconds(ttl) : null };
+                var secret = Secret(key.Id);
+                keys[key.Id] = (key, secret);
+                return Json(new { api_key = key, key = secret });
+            }
         }
         lock (gate)
         {
@@ -113,8 +135,9 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
         }
     }
 
-    [GeneratedRegex("^/v1/terrascale/organizations/(?<organization>[0-9A-HJKMNP-TV-Z]{26})/projects/(?<project>[0-9A-HJKMNP-TV-Z]{26})/api-keys(?:/(?<key>[0-9A-HJKMNP-TV-Z]{26}))?$")]
+    [GeneratedRegex("^/v1/terrascale/organizations/(?<organization>[0-9A-HJKMNP-TV-Z]{26})/projects/(?<project>[0-9A-HJKMNP-TV-Z]{26})/api-keys(?:/(?<key>[0-9A-HJKMNP-TV-Z]{26})(?<rotate>/rotate)?)?$")]
     private static partial Regex Route();
+    private static string Secret(string keyId) => keyId + "_" + string.Concat(Enumerable.Range(0, 52).Select(_ => Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)]));
     private static HttpResponseMessage Json(object value, HttpStatusCode status = HttpStatusCode.OK) =>
         new(status) { Content = new StringContent(JsonSerializer.Serialize(value), new MediaTypeHeaderValue("application/json")) };
     // ts-auth management errors use the nested envelope (TerraScaleAuthErrors).

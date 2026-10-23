@@ -63,6 +63,17 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
             "ts-auth holds exactly the requested restrictions; the dashboard did not broaden them");
         await RunCustomerSdkAsync(fixture.Root, scenario, controls, auth, account, organizationId, projectId, "customer-sdk", secret);
         Console.WriteLine("PROTOCOL E2E: native signup/database/collection, a ts-auth issued key refused as a data bearer, and unchanged official TerraScale.DotNet SDK CRUD under the customer's exchanged documents:* project token, in-process against test-only producers; the key's client-credentials exchange and live qualification remain outstanding.");
+        using (var rotated = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/rotate", new() { ["_csrf"] = csrf, ["keyId"] = keyId, ["previousSecretTtl"] = "60" }))
+        {
+            Check(rotated.StatusCode == HttpStatusCode.OK, "Rotation returns the key's new secret once");
+            using var json = JsonDocument.Parse(await rotated.Content.ReadAsStringAsync());
+            var replacement = json.RootElement.GetProperty("secret").GetString()!;
+            Check(json.RootElement.GetProperty("apiKey").GetProperty("keyId").GetString() == keyId && replacement.StartsWith(keyId + "_", StringComparison.Ordinal) && replacement != secret &&
+                (await ObservationsAsync(controls)).GetProperty("credentials").EnumerateArray().Single().GetProperty("secret").GetString() == replacement,
+                "Rotation keeps the key identity and replaces its secret at ts-auth");
+        }
+        using (var pending = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/rotate", new() { ["_csrf"] = csrf, ["keyId"] = keyId }))
+            Check(pending.StatusCode == HttpStatusCode.Conflict, "A second rotation during the old secret's grace period is refused");
         using (var revoked = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/" + keyId + "/revoke", new() { ["_csrf"] = csrf }))
             Check(revoked.StatusCode == HttpStatusCode.NoContent, "Native cleanup revokes the issued key at ts-auth");
         Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0, "The revoked key is gone at its issuer");

@@ -68,6 +68,29 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         }
     }
 
+    // ts-auth keeps the old secret valid for previousSecretTtl seconds (at most one day) and returns the new secret once.
+    public async Task<CreatedProjectCredential> RotateAsync(AccountContext context, string keyId, int previousSecretTtl, CancellationToken cancellationToken)
+    {
+        if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
+        if (previousSecretTtl is < 0 or > MaxPreviousSecretTtl) throw new AccountAccessException("The old secret's grace period must be between 0 and 86400 seconds.", 422);
+        var scope = DatabaseService.Scope(context);
+        var client = Client();
+        var current = Map(context, await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken));
+        if (current.Id != keyId) throw new HttpRequestException("Credential lookup returned a different key.");
+        TerraScaleAuthPlatformApiKeySecret result;
+        try { result = await client.RotateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, new(previousSecretTtl), cancellationToken); }
+        catch (TerraScaleAuthException error) when (error.ErrorCode == "rotation_pending")
+        {
+            throw new AccountAccessException("This key's previous secret is still in its grace period. Rotate again after it expires.", 409);
+        }
+        var key = Map(context, result.ApiKey);
+        if (key.Id != keyId || key.Name != current.Name || key.DatabaseName != current.DatabaseName || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(current.Scopes.Order(StringComparer.Ordinal)))
+            throw new HttpRequestException("Credential rotation returned different restrictions.");
+        return new(key, result.Key);
+    }
+
+    public const int MaxPreviousSecretTtl = 86400;
+
     // The form's database:* choices are aliases of the documents:* scopes ts-auth mints.
     public static string MintedScope(string scope) => scope switch { "database:read" => "documents:read", "database:write" => "documents:write", _ => scope };
 

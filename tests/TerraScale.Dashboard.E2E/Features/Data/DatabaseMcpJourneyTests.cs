@@ -173,7 +173,14 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(credentials.GetRawText().Contains(keySecret, StringComparison.Ordinal)).IsFalse();
             await Assert.That((await CallAsync(replica, "list_api_keys", new() { ["kind"] = "m2m" })).GetProperty("credentials").GetArrayLength()).IsEqualTo(0);
             await ErrorAsync(replica, "list_api_keys", new() { ["kind"] = "invalid" });
+            var rotated = await CallAsync(replica, "rotate_api_key", new() { ["keyId"] = keyId, ["previousSecretTtlSeconds"] = 3600 });
+            await Assert.That(rotated.GetProperty("apiKey").GetProperty("keyId").GetString()).IsEqualTo(keyId);
+            await Assert.That(rotated.GetProperty("apiKey").GetProperty("databaseName").GetString()).IsEqualTo(databaseName);
+            var rotatedSecret = rotated.GetProperty("secret").GetString()!;
+            await Assert.That(rotatedSecret.StartsWith(keyId + "_", StringComparison.Ordinal) && rotatedSecret != keySecret).IsTrue();
+            // The previous secret is still in its grace period, so ts-auth refuses another rotation.
             await ErrorAsync(replica, "rotate_api_key", new() { ["keyId"] = keyId });
+            await ErrorAsync(replica, "rotate_api_key", new() { ["keyId"] = keyId, ["previousSecretTtlSeconds"] = 86401 });
             await ErrorAsync(replica, "create_m2m_client", new() { ["name"] = "Unavailable", ["scopes"] = new[] { "database:read" } });
             await ErrorAsync(replica, "get_document_history", new(reference));
             await ErrorAsync(replica, "set_collection_schema", new(docFields) { ["schema"] = new { name = "users" } });
