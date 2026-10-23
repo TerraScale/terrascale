@@ -85,7 +85,7 @@ returned exit 0. Runner durations were 92.468, 48.475, 63.643, 52.038 and
 49.441 seconds. This validates the setup correction for this focused filter;
 it does not isolate every earlier timeout stage or establish a complete Fast gate.
 
-## Latest CI failure and pending correction
+## Latest CI failure and focused correction proof
 
 At `d8b9a9d8ab052849240f0f80bbd365637b8dc8a8`, CI run `39973624411` reported
 2,480 TerraBase passes, one failure and one existing skip (2,482 total).
@@ -97,8 +97,17 @@ The fixture overwrote an encrypted byte with `0xFF`, which can already be the
 ciphertext value. Commit `0c98fec1ece51918e88ba6ff60384e8e30925769` instead reads
 the existing byte, rejects EOF, flips bit `0x80`, and flushes the write. All
 native damage and refusal assertions remain unchanged. Independent static
-review found no introduced defect; five-repeat runtime proof remains pending.
-Guaranteed mutation alone does not establish that this explains the CI failure.
+review found no introduced defect.
+
+At that exact commit, all 26 `RebuildCertificationLedgerSafetyTests` variants
+passed five complete repetitions: 130 passed, zero failures/skips, and every
+command exited 0. Runner durations were 17.383, 6.697, 9.769, 12.432 and
+6.597 seconds. The initial build exited nonzero without a compiler diagnostic;
+its cause remains unproven and the failed attempt is retained. After artifact,
+process and journal inspection, one authorized same-commit retry built with
+zero warnings/errors and verified both assemblies' commit identity before tests.
+This is focused proof; exact-head CI and unified-native compatibility remain
+separate gates.
 
 ## Retained evidence
 
@@ -121,6 +130,11 @@ Raw logs are outside Git under
   independently support the counts. Empty original wrapper/aggregate output
   remains preserved; aggregate 0 is calculated from individual exits rather
   than recovered wrapper output. No auth tests were rerun for this recovery.
+- `repair-proof-ledger-0c98-20261023T152355Z/`: guaranteed mutation proof;
+  `report.md` SHA-256
+  `8f0a400d860ad55a2385317a5ba858a6279da9ae1eb88288fb2b0ffa71292c48`.
+  Retry results and exits are under `authorized-retry/`; the original failed
+  build and its nonzero exits are preserved separately.
 
 Reports retain exact commands, commits, SDK/native identity, loads, timings,
 per-command exits, and actual runner totals. Encryption cost measurements remain
