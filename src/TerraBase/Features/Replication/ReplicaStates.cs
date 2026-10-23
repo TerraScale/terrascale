@@ -14,7 +14,11 @@ public sealed record BucketCursor(int Bucket, string Collection, string Id);
 /// <param name="Head">Its newest change id, or 0, read in the same snapshot as the digests.</param>
 /// <param name="Buckets">4096 × (h1, h2), little-endian: the XOR of each bucket's document digests.</param>
 /// <param name="Feed">Its feed head (<c>seq</c>), or 0, read in the same snapshot.</param>
-public sealed record ReplicaDigest(Ulid Incarnation, long Head, byte[] Buckets, long Feed);
+public sealed record ReplicaDigest(Ulid Incarnation, long Head, byte[] Buckets, long Feed)
+{
+    /// <summary>The durable collected-state frontier, read in the same snapshot as the digests.</summary>
+    public Hlc CollectedBefore { get; init; }
+}
 
 /// <summary>
 /// What anti-entropy reads of this machine's copy of a database (docs/terrabase/multi-region-replication.md section 10):
@@ -54,8 +58,8 @@ public interface IReplicaStates
     /// <summary>
     /// A copying refill: forgets each of <paramref name="keys"/> of <paramref name="incarnation"/> whose state lies wholly
     /// below <paramref name="horizon"/>, the horizon of a peer that no longer holds it. Returns how many went; null, with
-    /// nothing forgotten, when this machine does not hold the database or the copy in place is another (checked under the
-    /// writer).
+    /// nothing forgotten, when this machine does not hold the database, the copy in place is another, or a live local
+    /// state lacks deletion evidence (checked under the writer).
     /// </summary>
     ValueTask<int?> ForgetAsync(
         TenantContext database, Ulid incarnation, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken);

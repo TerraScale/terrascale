@@ -88,7 +88,7 @@ internal sealed class RebuildCertification(
         var client = new V1.Replication.ReplicationClient(channel);
         var initial = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(database, null) },
             deadline: TimeProvider.System.GetUtcNow().UtcDateTime + DigestTimeout, cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (!initial.Held)
+        if (!initial.Held || !initial.HasCollectedBefore || initial.CollectedBefore > long.MaxValue)
         {
             return false;
         }
@@ -97,20 +97,19 @@ internal sealed class RebuildCertification(
         _ = Digests(initial);
         var observed = new byte[DigestBytes];
         var requested = Enumerable.Repeat(true, 4096).ToArray();
+        var collectedBefore = new Hlc(initial.CollectedBefore);
         var head = initial.HeadChangeId;
         for (var round = 0; round < MaxRounds; round++)
         {
+            var buckets = Enumerable.Range(0, 4096).Where(bucket => requested[bucket]).ToArray();
             var request = new BucketRequest { Database = ChangeGroups.Wire(database, source) };
-            for (var bucket = 0; bucket < requested.Length; bucket++)
+            foreach (var bucket in buckets)
             {
-                if (requested[bucket])
-                {
-                    request.Buckets.Add((uint)bucket);
-                    observed.AsSpan(bucket * 16, 16).Clear();
-                }
+                request.Buckets.Add((uint)bucket);
+                observed.AsSpan(bucket * 16, 16).Clear();
             }
 
-            (int Bucket, string Collection, string Id)? previous = null;
+            BucketCursor? previous = null;
             using (var call = client.ReadBucket(request, deadline: TimeProvider.System.GetUtcNow().UtcDateTime + RefillTimeout, cancellationToken: cancellationToken))
             {
                 while (true)
@@ -142,6 +141,7 @@ internal sealed class RebuildCertification(
                         ?? throw new QosMemoryException("the node has no memory capacity to decode a rebuild page");
 
                     var page = Decode(database, bytes);
+                    var after = previous;
                     foreach (var state in page)
                     {
                         var bucket = DocumentStateEncoding.Bucket(state.Collection, state.Id);
@@ -158,36 +158,44 @@ internal sealed class RebuildCertification(
                             BinaryPrimitives.ReadUInt64LittleEndian(observed.AsSpan(offset)) ^ (ulong)(digest >> 64));
                         BinaryPrimitives.WriteUInt64LittleEndian(observed.AsSpan(offset + 8),
                             BinaryPrimitives.ReadUInt64LittleEndian(observed.AsSpan(offset + 8)) ^ (ulong)digest);
-                        previous = (bucket, state.Collection, state.Id);
+                        previous = new BucketCursor(bucket, state.Collection, state.Id);
                     }
 
-                    if (await repair.RepairRebuildAsync(database, receiver, page, cancellationToken).ConfigureAwait(false) is null)
+                    if (await repair.RefillRebuildAsync(database, receiver, buckets, after, page, collectedBefore, cancellationToken).ConfigureAwait(false) is null)
                     {
                         return false;
                     }
                 }
             }
 
+            if (await repair.RefillRebuildAsync(database, receiver, buckets, previous, [], collectedBefore, cancellationToken).ConfigureAwait(false) is null)
+            {
+                return false;
+            }
+
             var final = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(database, source) },
                 deadline: TimeProvider.System.GetUtcNow().UtcDateTime + DigestTimeout, cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (!final.Held || Incarnation(final) != source || final.HeadChangeId < head)
+            if (!final.Held || !final.HasCollectedBefore || final.CollectedBefore > long.MaxValue || final.CollectedBefore < collectedBefore.Value
+                || Incarnation(final) != source || final.HeadChangeId < head)
             {
                 return false;
             }
 
             var expected = Digests(final);
-            if (observed.AsSpan().SequenceEqual(expected))
+            if (final.CollectedBefore == collectedBefore.Value && observed.AsSpan().SequenceEqual(expected))
             {
-                return await repair.RecordRefillAsync(database, receiver, peer.Name, source, checked((long)final.HeadChangeId), cancellationToken)
+                return await repair.RecordRefillAsync(database, receiver, peer.Name, source, checked((long)final.HeadChangeId), new Hlc(final.CollectedBefore), cancellationToken)
                     .ConfigureAwait(false);
             }
 
-            // Only buckets whose streamed coverage differs from the current snapshot are retried, under the same pin.
+            // A newer absence frontier requires coverage of all receiver keys, including already matching buckets.
             for (var bucket = 0; bucket < requested.Length; bucket++)
             {
-                requested[bucket] = !observed.AsSpan(bucket * 16, 16).SequenceEqual(expected.AsSpan(bucket * 16, 16));
+                requested[bucket] = final.CollectedBefore != collectedBefore.Value
+                    || !observed.AsSpan(bucket * 16, 16).SequenceEqual(expected.AsSpan(bucket * 16, 16));
             }
 
+            collectedBefore = new Hlc(final.CollectedBefore);
             head = final.HeadChangeId;
         }
 

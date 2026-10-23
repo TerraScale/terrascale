@@ -283,7 +283,7 @@ public sealed class IncarnationContractTests
         var seededRows = await store.WithWriterAsync(session =>
         {
             using var seed = session.Connection.CreateCommand();
-            seed.CommandText = "UPDATE _tb_peers SET acked = $acked, incarnation = $incarnation WHERE node = $node;";
+            seed.CommandText = "UPDATE _tb_peers SET acked = $acked, incarnation = $incarnation, stable = 123 WHERE node = $node;";
             seed.Parameters.AddWithValue("$acked", stale);
             seed.Parameters.AddWithValue("$incarnation", old.ToString());
             seed.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
@@ -302,6 +302,10 @@ public sealed class IncarnationContractTests
         await Assert.That(await groups.AckedAsync(database, peer, CancellationToken.None)).IsEqualTo(new SourceCursor(incarnation, stale))
             .Because("the accepted ack of this incarnation scopes the row to it and clears the refill requirement");
         await Assert.That((await LogAsync(store)).Oldest).IsGreaterThan(before.Oldest).Because("the same ack of this incarnation releases the rows it covers");
+        await Assert.That(await groups.AckAsync(database, incarnation, peer, stale, new Hlc(456), CancellationToken.None)).IsTrue();
+        await Assert.That(await groups.AckedAsync(database, peer, CancellationToken.None))
+            .IsEqualTo(new SourceCursor(incarnation, stale) { Stable = new Hlc(456) })
+            .Because("only stable reports in this source incarnation become receiver coverage expectations");
     }
 
     // Local writes to `collection` of the new file until its own change ids pass `head`.

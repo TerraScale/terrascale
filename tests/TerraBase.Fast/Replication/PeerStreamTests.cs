@@ -232,8 +232,10 @@ public sealed class PeerStreamTests
         // Two minutes on, the next acknowledged group drops everything below its commit: nothing is left to send.
         clock.Offset = TimeSpan.FromMinutes(2);
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", second, Json("""{"m":2}"""), CancellationToken.None));
+        var head = await gru.HeadAsync(cluster.Database);
         await Assert.That(await sjc.UntilAsync(second, """{"m":2}""")).IsTrue();
-        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, groups[0].ChangeId + 1)).IsTrue();
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, head)).IsTrue();
+        await gru.TrimAsync();
         await Assert.That(await gru.GroupsAsync(cluster.Database, 0)).IsEmpty();
     }
 
@@ -480,7 +482,7 @@ public sealed class PeerStreamTests
         var before = await gru.HeadAsync(cluster.Database);
         var stamp = gru.Api.Server.Services.GetRequiredService<LocalReplica>().Clock.Tick();
         await gru.Api.Server.Services.GetRequiredService<IChangeGroupSink>()
-            .RecordFrontierAsync(cluster.Database, sjc.Node, stamp, CancellationToken.None);
+            .RecordFrontierAsync(cluster.Database, sjc.Node, stamp, default, null, CancellationToken.None);
         var head = await gru.HeadAsync(cluster.Database);
         await Assert.That(head).IsGreaterThan(before);
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, head)).IsTrue();
@@ -489,8 +491,7 @@ public sealed class PeerStreamTests
     [Test]
     public async Task A_peer_silent_for_24_hours_stops_holding_change_groups_and_refills_when_it_returns()
     {
-        var clock = new ShiftedTime();
-        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         var (first, second) = (EntityIds.New().ToString(), EntityIds.New().ToString());
         await gru.WriteAsync(async transaction =>
@@ -506,13 +507,20 @@ public sealed class PeerStreamTests
         await sjc.StopAsync();
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", second, Json("""{"n":2}"""), CancellationToken.None));
         await Assert.That(await gru.RetainsAsync(cluster.Database, acked)).IsTrue();
-        clock.Offset = TimeSpan.FromHours(25);
-        var deadline = DateTime.UtcNow + Deadline;
-        while (await gru.RetainsAsync(cluster.Database, acked) && DateTime.UtcNow < deadline)
+        var missing = await gru.HeadAsync(cluster.Database);
+        // Turso timestamps CDC with real UTC; age only the disconnected history, keeping recovery rows fresh.
+        var engine = gru.Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+        var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+        _ = await store.WithWriterAsync(session =>
         {
-            await Task.Delay(200);
-        }
-
+            using var age = session.Connection.CreateCommand();
+            age.CommandText = "UPDATE turso_cdc SET change_time = unixepoch() - 90000 WHERE change_id <= $through; UPDATE _tb_peers SET seen = min(seen, $seen) WHERE node = $peer;";
+            age.Parameters.AddWithValue("$through", missing);
+            age.Parameters.AddWithValue("$seen", DateTimeOffset.UtcNow.AddHours(-25).ToUnixTimeMilliseconds());
+            age.Parameters.AddWithValue("$peer", unchecked((long)sjcNode.Value));
+            return age.ExecuteNonQuery();
+        }, "a test aging the disconnected CDC prefix and peer", CancellationToken.None);
+        await gru.TrimAsync();
         await Assert.That(await gru.RetainsAsync(cluster.Database, acked)).IsFalse();
 
         // Back, sjc cannot get the group from the stream any more: gru tells it to refill, and it joins what differs.
@@ -668,7 +676,7 @@ public sealed class PeerStreamTests
         // The stream acks gru's own last group, never past it: a commit of sjc's frontier can land after that group (as
         // here, recorded as sjc's stream does), and only retention, which this test drives itself, raises the ack over it.
         await gru.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RecordFrontierAsync(
-            cluster.Database, sjcNode, sjc.Api.Server.Services.GetRequiredService<LocalReplica>().Clock.Tick(), CancellationToken.None);
+            cluster.Database, sjcNode, sjc.Api.Server.Services.GetRequiredService<LocalReplica>().Clock.Tick(), default, null, CancellationToken.None);
         var streamAck = (await gru.GroupsAsync(cluster.Database, 0))[^1].ChangeId;
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, streamAck)).IsTrue();
         await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined, Json("""{"n":3}"""), CancellationToken.None));
@@ -1227,7 +1235,13 @@ public sealed class PeerStreamTests
             }
 
             var id = EntityIds.New().ToString();
-            await second.BatchAsync(healthy, 1, id);
+            var stamp = new Hlc(Stamp());
+            // The real sender may reannounce its identity while these streams use synthetic origins.
+            var self = sjc.Api.Server.Services.GetRequiredService<LocalReplica>();
+            self.Presence.Heard(peer, cluster["gru"].Node, self.Clock.Tick().Milliseconds);
+            await Assert.That(await sjc.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RecordFrontierAsync(
+                healthy, cluster["gru"].Node, stamp, default, null, TestContext.Current!.Execution.CancellationToken)).IsNotNull();
+            await second.BatchAsync(healthy, 1, id, stamp.Value);
             foreach (var database in databases.Skip(4).Append(cluster.Database))
             {
                 await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = await second.WireAsync(database), Refused = true })
@@ -1515,6 +1529,126 @@ public sealed class PeerStreamTests
         {
             sjc.HeldRepairs = null;
             blocked.SetResult();
+        }
+    }
+
+    [Test]
+    public async Task Coverage_is_checked_again_inside_every_receiver_writer()
+    {
+        TerraBase.Engine.Sqlite.SqliteDatabaseStore? store = null;
+        var reset = false;
+        ulong resetAfter = 0;
+        TenantContext? clusterDatabase = null;
+        await using var cluster = await Cluster.StartAsync(cdc: false, clock: null, configure: (region, services) =>
+        {
+            if (region == "sjc")
+            {
+                services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
+                {
+                    if (step == "replication.apply.committed" && store is not null && database == clusterDatabase && !reset)
+                    {
+                        using var command = store.CurrentWriter()!.Connection.CreateCommand();
+                        command.CommandText = "UPDATE _tb_peers SET applied = 0 WHERE node = $origin AND applied = $applied;";
+                        command.Parameters.AddWithValue("$origin", unchecked((long)ReplicaId.Of(1, 7, 0).Value));
+                        command.Parameters.AddWithValue("$applied", unchecked((long)resetAfter));
+                        reset = command.ExecuteNonQuery() == 1;
+                    }
+                });
+            }
+        }, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var stamp = Stamp();
+        var seeded = EntityIds.New().ToString();
+        await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, seeded, """{"n":0}"""));
+        await Assert.That(await sjc.UntilAsync(seeded, """{"n":0}""")).IsTrue();
+        clusterDatabase = cluster.Database;
+        using var push = await RawPush.StartAsync(sjc, gru.Name);
+        await push.FrontierAsync(cluster.Database, stamp);
+        _ = await push.FrameAsync();
+        var engine = sjc.Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+        store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+        var origin = ReplicaId.Of(1, 7, 0);
+        var first = EntityIds.New().ToString();
+        var final = EntityIds.New().ToString();
+        resetAfter = stamp + 1;
+        await push.GroupsAsync(cluster.Database,
+        [
+            // Idempotent deltas cross the writer count bound without turning this ordering test into a write-load test.
+            new OriginGroup(1, [.. Enumerable.Repeat(Put(origin, stamp + 1, first, """{"n":1}"""), ChangeGroups.MaxDeltas)]),
+            new OriginGroup(2, [Put(origin, stamp + 2, final, """{"n":2}""")]),
+        ], stamp);
+        await Assert.That((await push.AckAsync()) is { Refused: true, RefillRequired: true }).IsTrue();
+        await Assert.That(reset).IsTrue();
+        await Assert.That(await sjc.ReadAsync(first)).IsEqualTo("""{"n":1}""");
+        await Assert.That(await sjc.ReadAsync(final)).IsNull();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Receiver_rollback_requires_a_refill_before_a_batch_or_idle_frontier_advances(bool idle)
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (lost, pending, live) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        var stamp = Stamp();
+        await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, lost, """{"n":1}"""));
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+        using (var deadline = new CancellationTokenSource(Deadline))
+        {
+            await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, 1, deadline.Token);
+        }
+
+        var origin = gru.Node;
+        if (idle)
+        {
+            await gru.StopAsync();
+        }
+
+        await sjc.LoseAsync("items", lost, origin);
+        var held = sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            if (idle)
+            {
+                await gru.StartAsync();
+            }
+            else
+            {
+                await gru.CommitAsync(Put(gru, stamp + 1, pending, """{"n":2}"""));
+            }
+
+            await sjc.RepairWaits.Task.WaitAsync(Deadline);
+            await Assert.That(await sjc.ReadAsync(lost)).IsNull();
+            await Assert.That(await sjc.ReadAsync(pending)).IsNull().Because("no later group crosses the receiver's missing coverage");
+            await Assert.That(gru.Source.AckedBy(cluster.Database, sjc.Node)).IsEqualTo(1);
+            sjc.HeldRepairs = null;
+            held.SetResult();
+            await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+            if (!idle)
+            {
+                await Assert.That(await sjc.UntilAsync(pending, """{"n":2}""")).IsTrue();
+                using var deadline = new CancellationTokenSource(Deadline);
+                await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, 2, deadline.Token);
+            }
+
+            var blocked = sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                await gru.CommitAsync(Put(gru, stamp + 2, live, """{"n":3}"""));
+                await Assert.That(await sjc.UntilAsync(live, """{"n":3}""")).IsTrue()
+                    .Because("the successful refill durably published coverage, so ordinary batches can resume");
+            }
+            finally
+            {
+                sjc.HeldRepairs = null;
+                blocked.SetResult();
+            }
+        }
+        finally
+        {
+            sjc.HeldRepairs = null;
+            _ = held.TrySetResult();
         }
     }
 
@@ -2021,6 +2155,9 @@ public sealed class PeerStreamTests
         var (gru, database) = (cluster["gru"], cluster.Database);
         await cluster["sjc"].StopAsync();
         await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await gru.Api.Server.Services.GetRequiredService<IRemoteDurability>()
+                .OtherRegionsAsync(token)).Count == 0, Deadline);
         var (status, body) = await gru.CommitAsync(new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "lonely", id = EntityIds.New().ToString() });
         await Assert.That(status).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(body);
         await Assert.That(body).Contains("remote_region_unavailable");
@@ -2053,18 +2190,28 @@ public sealed class PeerStreamTests
         });
         await Assert.That(await sjc.UntilAsync(deleted, """{"n":1}""")).IsTrue();
 
-        // sjc goes away holding the live document; gru deletes it. A day later sjc no longer holds back gru's horizon, so gru
-        // collects the tombstone: nothing on gru remembers the document ever existed.
+        // sjc leaves the directory holding the live document; gru deletes it. A day after observing its absence gru can collect.
+        var away = sjc.Node;
         await sjc.StopAsync();
+        await Assert.That(await gru.UntilUnlistedAsync(away)).IsTrue();
         await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", deleted, CancellationToken.None));
         await Assert.That(await gru.HasStateAsync("items", deleted)).IsTrue();
+        var states = gru.Api.Server.Services.GetRequiredService<IReplicaStates>();
+        var (page, _) = await states.ReadBucketsAsync(cluster.Database, await gru.IncarnationAsync(),
+            [TerraBase.Engine.Sqlite.SqliteStorageTransaction.Bucket("items", deleted)], null,
+            ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, CancellationToken.None)
+            ?? throw new InvalidOperationException("the deletion fixture refused its source copy");
+        var deletion = page.Single(state => state.Collection == "items" && state.Id == deleted);
         clock.Offset = TimeSpan.FromHours(25);
         await Assert.That(await gru.UntilNoStateAsync("items", deleted)).IsTrue();
 
-        // sjc comes back with its old live copy. Its refill copies rather than merges, and neither side's repairs bring the
-        // document back, whatever the rounds pull from the other.
+        // Missing deletion evidence keeps the returning copy's refill pending; healthy collected copies stay absent.
         await sjc.StartAsync();
-        await Assert.That(await sjc.UntilAbsentAsync(deleted)).IsTrue();
+        // Discovery lists the restarted fixture after startup; verify its catalog before driving repairs.
+        await sjc.Api.VerifyCatalogAsync(TestContext.Current!.Execution.CancellationToken);
+        await Assert.That(await sjc.AntiEntropy.RefillAsync(cluster.Database, gru.Name,
+            await states.HorizonAsync(cluster.Database, CancellationToken.None), await gru.IncarnationAsync(), CancellationToken.None)).IsNull();
+        await Assert.That(await sjc.ReadAsync(deleted)).IsEqualTo("""{"n":1}""");
         for (var round = 0; round < 3; round++)
         {
             await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
@@ -2073,6 +2220,10 @@ public sealed class PeerStreamTests
 
         await Assert.That(await gru.ReadAsync(deleted)).IsNull();
         await Assert.That(await gru.HasStateAsync("items", deleted)).IsFalse();
+        // A retained tombstone provides actual deletion evidence, so the pending receiver can finish safely.
+        await Assert.That(await sjc.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(cluster.Database,
+            await sjc.IncarnationAsync(), [deletion], CancellationToken.None)).IsNotNull();
+        await Assert.That(await sjc.UntilAbsentAsync(deleted)).IsTrue();
         await Assert.That(await sjc.ReadAsync(deleted)).IsNull();
         await Assert.That(await sjc.ReadAsync(kept)).IsEqualTo("""{"n":2}""");
     }
@@ -2785,8 +2936,8 @@ public sealed class PeerStreamTests
 
         public AntiEntropy AntiEntropy => Api.Server.Services.GetRequiredService<AntiEntropy>();
 
-        // Deletes the document's rows from the file directly, as a lost apply would leave it: no change group says so.
-        public async Task LoseAsync(string collection, string id)
+        // Deletes rows without a change group; an origin also rolls its persisted applied frontier back.
+        public async Task LoseAsync(string collection, string id, ReplicaId? origin = null)
         {
             var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
             var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
@@ -2795,9 +2946,10 @@ public sealed class PeerStreamTests
                 using var transaction = session.Connection.BeginTransaction();
                 using var command = session.Connection.CreateCommand();
                 command.Transaction = transaction;
-                command.CommandText = $"DELETE FROM \"{collection}\" WHERE id = $id; DELETE FROM _tb_state WHERE collection = $collection AND id = $id;";
+                command.CommandText = $"DELETE FROM \"{collection}\" WHERE id = $id; DELETE FROM _tb_state WHERE collection = $collection AND id = $id; UPDATE _tb_peers SET applied = 0 WHERE node = $origin;";
                 command.Parameters.AddWithValue("$id", id);
                 command.Parameters.AddWithValue("$collection", collection);
+                command.Parameters.AddWithValue("$origin", unchecked((long)(origin?.Value ?? 0)));
                 var changed = command.ExecuteNonQuery();
                 MerkleFixture.Rebuild(session, transaction);
                 transaction.Commit();
@@ -2843,6 +2995,23 @@ public sealed class PeerStreamTests
                 }
 
                 await Task.Delay(200);
+            }
+
+            return true;
+        }
+
+        public async Task<bool> UntilUnlistedAsync(ReplicaId peer)
+        {
+            var presence = Api.Server.Services.GetRequiredService<LocalReplica>().Presence;
+            var deadline = DateTime.UtcNow + Deadline;
+            while (!presence.Absent(peer, long.MaxValue))
+            {
+                if (DateTime.UtcNow >= deadline)
+                {
+                    return false;
+                }
+
+                await Task.Delay(100);
             }
 
             return true;
@@ -3001,13 +3170,13 @@ public sealed class PeerStreamTests
     /// <summary>A machine's sink whose repairs wait while the test holds them.</summary>
     private sealed class HeldSink(IChangeGroupSink sink, Machine machine) : IChangeGroupSink
     {
-        public ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken) =>
-            sink.RecordFrontierAsync(database, origin, frontier, cancellationToken);
+        public ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
+            sink.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
 
-        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken) =>
-            sink.ApplyAsync(database, origin, groups, cancellationToken);
+        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken) =>
+            sink.ApplyAsync(database, origin, groups, expected, cancellationToken);
 
-        public async ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
+        public async ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
         {
             if (machine.HeldRepairs is { } held)
             {
@@ -3023,7 +3192,7 @@ public sealed class PeerStreamTests
                 }
             }
 
-            return machine.RefusesRepairs ? null : await sink.RepairAsync(database, states, cancellationToken);
+            return machine.RefusesRepairs ? null : await sink.RepairAsync(database, incarnation, states, cancellationToken);
         }
     }
 
@@ -3189,9 +3358,9 @@ public sealed class PeerStreamTests
             await _call.RequestStream.WriteAsync(new PushFrame { Refill = new Refill { Database = await WireAsync(database), ChangeId = changeId } });
 
         // One group putting {"n":1} under `id`.
-        public async Task BatchAsync(TenantContext database, ulong changeId, string id)
+        public async Task BatchAsync(TenantContext database, ulong changeId, string id, ulong? stamp = null)
         {
-            LastStamp = Stamp();
+            LastStamp = stamp ?? Stamp();
             await _call.RequestStream.WriteAsync(new PushFrame
             {
                 Batch = new Batch
@@ -3204,10 +3373,10 @@ public sealed class PeerStreamTests
         }
 
         // The groups as one batch at the last one's change id.
-        public async Task GroupsAsync(TenantContext database, IReadOnlyList<OriginGroup> groups) =>
+        public async Task GroupsAsync(TenantContext database, IReadOnlyList<OriginGroup> groups, ulong expected = 0) =>
             await _call.RequestStream.WriteAsync(new PushFrame
             {
-                Batch = new Batch { Database = await WireAsync(database), LastChangeId = (ulong)groups[^1].ChangeId, Groups = ChangeGroups.Encode(groups) },
+                Batch = new Batch { Database = await WireAsync(database), LastChangeId = (ulong)groups[^1].ChangeId, Groups = ChangeGroups.Encode(groups), Expect = expected },
             });
 
         // Whether the next answer is the heartbeat's: an empty frame.

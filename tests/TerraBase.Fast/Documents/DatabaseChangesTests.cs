@@ -473,7 +473,7 @@ public sealed class DatabaseChangesTests
             var id = differentPrefix && api == destination ? DocumentApi.NewId() : first;
             var delta = Group(1, id, firstStamp, origin).Deltas[0];
             _ = await api.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await api.TenantOfAsync(), origin,
-                [new OriginGroup(1, [delta, delta with { Collection = "other", Id = excluded }]), Group(2, second, secondStamp, origin)], CancellationToken.None);
+                [new OriginGroup(1, [delta, delta with { Collection = "other", Id = excluded }]), Group(2, second, secondStamp, origin)], default, CancellationToken.None);
         }
 
         string cursor;
@@ -536,7 +536,7 @@ public sealed class DatabaseChangesTests
         }
 
         _ = await destination.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await destination.TenantOfAsync(), origin,
-            [Group(3, events[2].Id, events[2].Stamp, origin)], CancellationToken.None);
+            [Group(3, events[2].Id, events[2].Stamp, origin)], default, CancellationToken.None);
         cursor = ChangeCursor.Encode(ChangeCursor.Decode(cursor)!, ChangeCursor.Scope(await destination.TenantOfAsync(), null));
         using var resumed = await Sse.OpenAsync(destination.Client, $"{destination.DatabasePath()}/changes?cursor={Uri.EscapeDataString(cursor)}");
         _ = await resumed.NextAsync();
@@ -563,13 +563,13 @@ public sealed class DatabaseChangesTests
         var (p, pStamp) = (DocumentApi.NewId(), Stamp(now - TimeSpan.FromMinutes(1)));
         var sink = (IChangeGroupSink)fra.Server.Services.GetRequiredService<IChangeGroupSink>();
         // gru: o's stream, e then p.
-        _ = await gru.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await gru.TenantOfAsync(), o, [Group(1, e, eStamp, o), Group(2, p, pStamp, o)], CancellationToken.None);
+        _ = await gru.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await gru.TenantOfAsync(), o, [Group(1, e, eStamp, o), Group(2, p, pStamp, o)], default, CancellationToken.None);
         // Refill order: fra repairs e (origin 0, R6's RepairAsync), then o's stream resumes past the cut with p. Lost-apply
         // order (anti-entropy): fra applied p without e, a reader on fra took the cursor after p, then fra repairs e.
         var issued = new List<(string Id, string After, HashSet<string> Got)>();
         if (repairAfterReaderPassedP)
         {
-            _ = await sink.ApplyAsync(await fra.TenantOfAsync(), o, [Group(3, p, pStamp, o)], CancellationToken.None);
+            _ = await sink.ApplyAsync(await fra.TenantOfAsync(), o, [Group(3, p, pStamp, o)], default, CancellationToken.None);
             using var early = await Sse.OpenAsync(fra.Client, $"{fra.DatabasePath()}/changes");
             issued.Add(((await early.NextAsync()).Id, "start(before repair)", []));
             var first = (await early.ChangesAsync(1))[0];
@@ -577,10 +577,11 @@ public sealed class DatabaseChangesTests
             issued.Add((first.Id, "p(before repair)", [p]));
         }
 
-        await Assert.That(await sink.RepairAsync(await fra.TenantOfAsync(), [new RepairState(DocumentApi.Collection, e, Full(eStamp, o))], CancellationToken.None)).IsEqualTo(1);
+        var incarnation = (await fra.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await fra.TenantOfAsync(), CancellationToken.None))!.Incarnation;
+        await Assert.That(await sink.RepairAsync(await fra.TenantOfAsync(), incarnation, [new RepairState(DocumentApi.Collection, e, Full(eStamp, o))], CancellationToken.None)).IsEqualTo(1);
         if (!repairAfterReaderPassedP)
         {
-            _ = await sink.ApplyAsync(await fra.TenantOfAsync(), o, [Group(3, p, pStamp, o)], CancellationToken.None);
+            _ = await sink.ApplyAsync(await fra.TenantOfAsync(), o, [Group(3, p, pStamp, o)], default, CancellationToken.None);
         }
 
         // Each machine's own write last: it bounds every resumed read there.

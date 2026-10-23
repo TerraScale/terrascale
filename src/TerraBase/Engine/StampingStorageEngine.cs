@@ -163,6 +163,9 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
         public Guid Scope => inner.Scope;
 
+        public ValueTask<Ulid> GetIncarnationAsync(CancellationToken cancellationToken) =>
+            RunAsync(() => inner.GetIncarnationAsync(cancellationToken), cancellationToken);
+
 
 
         public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
@@ -192,6 +195,9 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
             collection == DocumentDelta.Collections
                 ? WriteCollectionAsync(() => inner.JoinAsync(collection, id, delta, at, cancellationToken), cancellationToken)
                 : WriteAsync(collection, id, () => inner.JoinAsync(collection, id, delta, at, cancellationToken), cancellationToken);
+
+        public ValueTask RequireAppliedAsync(Lattices.ReplicaId origin, Lattices.Hlc expected, CancellationToken cancellationToken) =>
+            inner.RequireAppliedAsync(origin, expected, cancellationToken);
 
         public async ValueTask RecordAppliedAsync(Lattices.ReplicaId origin, Lattices.Hlc applied, CancellationToken cancellationToken) =>
             _ = await RunAsync(async () =>

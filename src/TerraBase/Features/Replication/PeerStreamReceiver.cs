@@ -112,6 +112,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             throw new RpcException(new Status(StatusCode.InvalidArgument, "a push stream comes from another machine"));
         }
 
+        _self.Presence.Heard(hello.Machine, origin, _self.Clock.Tick().Milliseconds);
         var region = TerraBaseOptions.IsRegion(hello.Region) ? hello.Region : "unknown";
         var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationTokenSource? precedingStop = null;
@@ -201,6 +202,11 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                         continue;
                     }
 
+                    if (response.Ack is { RefillRequired: true } || response.Stable is { RefillRequired: true })
+                    {
+                        _ = cut.Add(answer.Database);
+                    }
+
                     if (response.Ack is { Refused: false } applied)
                     {
                         last[answer.Database] = (answer.Incarnation, applied.ChangeId);
@@ -262,7 +268,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                         // Answer without certifying progress across an unfinished refill.
                         await responseStream.WriteAsync(new AckFrame
                         {
-                            Stable = new StableReport { Database = frontier.Database, Stable = 0 },
+                            Stable = new StableReport { Database = frontier.Database, Stable = 0, RefillRequired = cut.Contains(at) && !refills.Keys.Any(running => running.Database == at) },
                         }, stream.Token).ConfigureAwait(false);
                         continue;
                     }
@@ -293,7 +299,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
                     // Pinned to the copy the refill names: a replaced sender copy refuses it instead of certifying another. It
                     // starts once the database's, and the catalog's, batch or frontier in progress ended.
-                    refills[tenant] = (refill, RefillAsync(After(tenant.Database), tenant.Database, hello.Machine, new Hlc(refill.Horizon), tenant.Incarnation, stream.Token));
+                    refills[tenant] = (refill, RefillAsync(After(tenant.Database), tenant.Database, hello.Machine, new Hlc(refill.Horizon), tenant.Incarnation, origin, new Hlc(refill.Coverage), stream.Token));
                     continue;
                 }
 
@@ -346,6 +352,15 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 await pending.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }
 
+            foreach (var answer in answers.Where(answer => answer.Done.IsCompletedSuccessfully))
+            {
+                if (await answer.Done.ConfigureAwait(false) is { } response
+                    && (response.Ack is { RefillRequired: true } || response.Stable is { RefillRequired: true }))
+                {
+                    _ = cut.Add(answer.Database);
+                }
+            }
+
             cut.UnionWith(refills.Keys.Select(key => key.Database));
             if (cut.Count > 0)
             {
@@ -367,13 +382,14 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         var digest = database == ChangeGroups.System && !_catalogGate.Value.Trusted ? null
             : await _states.DigestAsync(database, expected, context.CancellationToken).ConfigureAwait(false);
         return digest is null
-            ? new DigestReply { Held = false }
+            ? new DigestReply { Held = false, CollectedBefore = 0 }
             : new DigestReply
             {
                 Held = true,
                 Buckets = Google.Protobuf.UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(digest.Buckets)),
                 Incarnation = Google.Protobuf.ByteString.CopyFrom(digest.Incarnation.ToByteArray()),
                 HeadChangeId = checked((ulong)digest.Head),
+                CollectedBefore = digest.CollectedBefore.Value,
             };
     }
 
@@ -433,7 +449,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     }
 
     // A refill that fails (the named machine unreachable, a deadline) refuses the database: the sender asks again later.
-    private async Task<int?> RefillAsync(Task before, TenantContext database, string machine, Hlc horizon, Ulid incarnation, CancellationToken cancellationToken)
+    private async Task<int?> RefillAsync(Task before, TenantContext database, string machine, Hlc horizon, Ulid incarnation, ReplicaId origin, Hlc coverage, CancellationToken cancellationToken)
     {
         try
         {
@@ -456,7 +472,19 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 return null;
             }
 
-            return await _antiEntropy.RefillAsync(database, machine, horizon, incarnation, cancellationToken).ConfigureAwait(false);
+            if (await _sink.RecordFrontierAsync(database, origin, default, default, null, cancellationToken).ConfigureAwait(false) is not { } local)
+            {
+                return null;
+            }
+
+            var repaired = await _antiEntropy.RefillAsync(database, machine, horizon, incarnation, cancellationToken).ConfigureAwait(false);
+            if (repaired is null)
+            {
+                return null;
+            }
+
+            return await _sink.RecordFrontierAsync(database, origin, coverage, default, local, cancellationToken).ConfigureAwait(false) is not null
+                ? repaired : null;
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
@@ -517,11 +545,16 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         Hlc stableAt = default;
         try
         {
-            applied = await _sink.ApplyAsync(database, origin, groups, cancellationToken).ConfigureAwait(false);
+            applied = await _sink.ApplyAsync(database, origin, groups, new Hlc(batch.Expect), cancellationToken).ConfigureAwait(false);
             if (applied is not null)
             {
                 stableAt = await _states.StableAsync(database, cancellationToken).ConfigureAwait(false);
             }
+        }
+        catch (ReceiverCoverageException)
+        {
+            refused.Ack.RefillRequired = true;
+            return refused;
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
@@ -555,8 +588,15 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         Hlc stable;
         try
         {
-            await _sink.RecordFrontierAsync(database, origin, new Hlc(frontier.Hlc), cancellationToken).ConfigureAwait(false);
+            if (await _sink.RecordFrontierAsync(database, origin, new Hlc(frontier.Hlc), new Hlc(frontier.Expect), null, cancellationToken).ConfigureAwait(false) is null)
+            {
+                return null;
+            }
             stable = await _states.StableAsync(database, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ReceiverCoverageException)
+        {
+            return new AckFrame { Stable = new StableReport { Database = frontier.Database, RefillRequired = true } };
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {

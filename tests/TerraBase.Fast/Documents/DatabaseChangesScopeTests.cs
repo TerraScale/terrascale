@@ -53,7 +53,7 @@ public sealed class DatabaseChangesScopeTests
             using var json = JsonDocument.Parse("""{"value":1}""");
             var state = DocumentState.Bottom.Put(new EntryVersion(stamp, origin), json.RootElement);
             _ = await sink.ApplyAsync(database, origin,
-                [new OriginGroup(sequence, [new ChangeDelta(DocumentApi.Collection, id, stamp, state.DeltaAt(stamp))])], token);
+                [new OriginGroup(sequence, [new ChangeDelta(DocumentApi.Collection, id, stamp, state.DeltaAt(stamp))])], default, token);
         }
     }
 
@@ -155,7 +155,7 @@ public sealed class DatabaseChangesScopeTests
             using var json = JsonDocument.Parse("""{"value":1}""");
             var state = DocumentState.Bottom.Put(new EntryVersion(stamps[index], origin), json.RootElement);
             _ = await api.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await api.TenantOfAsync(cancellationToken: token), origin,
-                [new OriginGroup(index + 1, [new ChangeDelta(DocumentApi.Collection, id, stamps[index], state.DeltaAt(stamps[index]))])], token);
+                [new OriginGroup(index + 1, [new ChangeDelta(DocumentApi.Collection, id, stamps[index], state.DeltaAt(stamps[index]))])], default, token);
         }
     }
 

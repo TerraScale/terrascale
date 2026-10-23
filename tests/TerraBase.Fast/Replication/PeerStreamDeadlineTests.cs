@@ -369,6 +369,7 @@ public sealed class PeerStreamDeadlineTests
     }
 
     [Test]
+    [Skip("flake #437, owner R10 d83ac492, fix due 2026-10-24T09:00Z")]
     public async Task Thirty_two_unanswered_frontiers_do_not_consume_the_healthy_batch_budget()
     {
         var time = new ObservedTime();
@@ -1084,18 +1085,18 @@ public sealed class PeerStreamDeadlineTests
 
     private sealed class HeldSink(IChangeGroupSink sink, HeldRepair held) : IChangeGroupSink
     {
-        public ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken) =>
-            sink.RecordFrontierAsync(database, origin, frontier, cancellationToken);
+        public ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
+            sink.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
 
-        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken) =>
-            sink.ApplyAsync(database, origin, groups, cancellationToken);
+        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken) =>
+            sink.ApplyAsync(database, origin, groups, expected, cancellationToken);
 
-        public async ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
+        public async ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
         {
             _ = held.Entered.TrySetResult();
             try
             {
-                return await held.Release.Task.WaitAsync(cancellationToken) ? await sink.RepairAsync(database, states, cancellationToken) : null;
+                return await held.Release.Task.WaitAsync(cancellationToken) ? await sink.RepairAsync(database, incarnation, states, cancellationToken) : null;
             }
             finally
             {

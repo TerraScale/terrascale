@@ -4,7 +4,6 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Sqlite;
-using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -118,8 +117,11 @@ public sealed class StorageJoinTests
 
         // The peer a refill copies from collected the winner; forgetting it here leaves the loser the only holder of the key.
         var held = (SqliteDatabaseStore)(await server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
-        var states = server.Services.GetRequiredService<IReplicaStates>();
-        await Assert.That(await states.ForgetAsync(database, held.Incarnation, [("items", first)], new Hlc(Now + 2), CancellationToken.None)).IsEqualTo(1);
+        await using (var transaction = (SqliteStorageTransaction)await held.BeginDurableTransactionAsync(CancellationToken.None))
+        {
+            await Assert.That(await transaction.ForgetAsync([("items", first)], new Hlc(Now + 2), CancellationToken.None)).IsEqualTo(1);
+            _ = await transaction.CommitAsync(CancellationToken.None);
+        }
 
         await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         await Assert.That(await read.GetAsync("items", first, CancellationToken.None)).IsNull();

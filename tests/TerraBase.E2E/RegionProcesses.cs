@@ -415,14 +415,14 @@ public sealed class RegionProcessHost
     // Refuses the held database's batches and repairs before they apply, as a failed apply is refused: the stream stays.
     private sealed class HeldSink(IChangeGroupSink inner, string hold) : IChangeGroupSink
     {
-        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken) =>
-            Held(database) ? throw new IOException("the harness holds this database's replication") : inner.ApplyAsync(database, origin, groups, cancellationToken);
+        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken) =>
+            Held(database) ? throw new IOException("the harness holds this database's replication") : inner.ApplyAsync(database, origin, groups, expected, cancellationToken);
 
-        public ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
-            Held(database) ? throw new IOException("the harness holds this database's replication") : inner.RepairAsync(database, states, cancellationToken);
+        public ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
+            Held(database) ? throw new IOException("the harness holds this database's replication") : inner.RepairAsync(database, incarnation, states, cancellationToken);
 
-        public ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken) =>
-            Held(database) ? ValueTask.CompletedTask : inner.RecordFrontierAsync(database, origin, frontier, cancellationToken);
+        public ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
+            Held(database) ? ValueTask.FromResult<Ulid?>(null) : inner.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
 
         private bool Held(TenantContext database)
         {

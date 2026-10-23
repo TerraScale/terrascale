@@ -14,7 +14,7 @@ namespace TerraBase.Features.Replication;
 /// </summary>
 internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirectory tenants, DatabaseLifecycleCheckpoint checkpoint) : IChangeGroupSink
 {
-    public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken)
+    public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(groups);
         if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
@@ -34,6 +34,7 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             }
 
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.RequireAppliedAsync(origin, expected, cancellationToken).ConfigureAwait(false);
             for (; next < end; next++)
             {
                 foreach (var delta in groups[next].Deltas)
@@ -45,28 +46,42 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
 
             await transaction.RecordAppliedAsync(origin, applied, cancellationToken).ConfigureAwait(false);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            expected = new Hlc(Math.Max(expected.Value, applied.Value));
             checkpoint("replication.apply.committed", database);
         }
 
         return applied;
     }
 
-    public async ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken)
+    public async ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken)
     {
         if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
-            return;
+            return null;
         }
 
-        await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var current = await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false);
+        if (incarnation is { } pinned && current != pinned)
+        {
+            return null;
+        }
+
+        await transaction.RequireAppliedAsync(origin, expected, cancellationToken).ConfigureAwait(false);
         await transaction.RecordAppliedAsync(origin, frontier, cancellationToken).ConfigureAwait(false);
         _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return current;
     }
 
-    public async ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
+    public async ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(states);
-        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        if (incarnation == Ulid.Empty)
+        {
+            throw new ArgumentException("an incarnation is named", nameof(incarnation));
+        }
+
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store || store.Incarnation != incarnation)
         {
             return null;
         }
@@ -75,6 +90,11 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
         foreach (var chunk in states.Chunk(ChangeGroups.MaxDeltasOf(database)))
         {
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+            if (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != incarnation)
+            {
+                return null;
+            }
+
             foreach (var state in chunk.Where(state => state.State.MaxStamp.Value != 0))
             {
                 // Origin 0: a repair (section 9), so the tailer never ships it and it moves no origin's applied stamp.

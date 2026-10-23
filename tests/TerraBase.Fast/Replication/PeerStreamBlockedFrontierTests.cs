@@ -76,7 +76,7 @@ public sealed class PeerStreamBlockedFrontierTests
                 await call.RequestStream.WriteAsync(new PushFrame { Heartbeat = new Heartbeat() });
                 await Assert.That(await ReadAsync(call.ResponseStream)).IsEqualTo(new AckFrame
                 {
-                    Stable = new StableReport { Database = blocked, Stable = 0 },
+                    Stable = new StableReport { Database = blocked, Stable = 0, RefillRequired = !refillInFlight },
                 });
                 await Assert.That((await ReadAsync(call.ResponseStream)).KindCase).IsEqualTo(AckFrame.KindOneofCase.None);
             }

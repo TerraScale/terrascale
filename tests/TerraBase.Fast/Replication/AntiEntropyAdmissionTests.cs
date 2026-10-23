@@ -28,10 +28,11 @@ public sealed class AntiEntropyAdmissionTests
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<TimeProvider>(new FakeTimeProvider()));
         var services = server.Services;
+        var incarnation = (await services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token)).Incarnation;
         var id = EntityIds.New().ToString();
         using var body = JsonDocument.Parse("""{"value":"kept"}""");
         var original = new RepairState("admission", id, DocumentState.Bottom.Put(new EntryVersion(new Hlc(1_000), ReplicaId.Of(99, 1, 0)), body.RootElement));
-        await Assert.That(await services.GetRequiredService<IChangeGroupSink>().RepairAsync(ChangeGroups.System, [original], token)).IsEqualTo(1);
+        await Assert.That(await services.GetRequiredService<IChangeGroupSink>().RepairAsync(ChangeGroups.System, incarnation, [original], token)).IsEqualTo(1);
         using var replacement = JsonDocument.Parse("""{"value":"replaced"}""");
         var updated = original with { State = original.State.Put(new EntryVersion(new Hlc(2_000), ReplicaId.Of(99, 1, 0)), replacement.RootElement) };
         await using var peer = await AdmissionPeer.StartAsync();

@@ -317,6 +317,8 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
         public Guid Scope => inner.Scope;
 
+        public ValueTask<Ulid> GetIncarnationAsync(CancellationToken cancellationToken) => inner.GetIncarnationAsync(cancellationToken);
+
         public async ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
         {
             hook.BeforeGet?.Invoke(collection);
@@ -342,6 +344,8 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
         public ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken) =>
             inner.RecordAppliedAsync(origin, applied, cancellationToken);
+        public ValueTask RequireAppliedAsync(ReplicaId origin, Hlc expected, CancellationToken cancellationToken) =>
+            inner.RequireAppliedAsync(origin, expected, cancellationToken);
         public ValueTask<FeedPage> ReadFeedAsync(
             FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
             inner.ReadFeedAsync(cursor, collections, maxEvents, maxBytes, cancellationToken);

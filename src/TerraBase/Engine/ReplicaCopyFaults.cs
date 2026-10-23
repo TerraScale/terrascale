@@ -1,3 +1,4 @@
+using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 
@@ -27,6 +28,15 @@ internal interface IReplicaCopyFaults
 internal interface IRebuildRepair
 {
     /// <summary>
+    /// Reconciles one sorted source page against gaps in the requested buckets of exactly the swapped incarnation.
+    /// Removes only source-absent states below its collected frontier; an empty page completes the remaining range.
+    /// Returns changed documents, or null when the copy, phase or source frontier is refused.
+    /// </summary>
+    ValueTask<int?> RefillRebuildAsync(
+        TenantContext database, Ulid newIncarnation, IReadOnlyList<int> buckets, BucketCursor? after,
+        IReadOnlyList<RepairState> states, Hlc collectedBefore, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Joins <paramref name="states"/> as repairs (origin 0) into exactly <paramref name="newIncarnation"/>, in FULL
     /// transactions whose writer checks the file's incarnation, while its rebuild record is swapped or salvaged. The number
     /// of states that changed, or null when that incarnation is not the one under rebuild in place.
@@ -35,11 +45,12 @@ internal interface IRebuildRepair
 
     /// <summary>
     /// Records, with FULL, the certified refill of <paramref name="newIncarnation"/>: the listed member it came from (its
-    /// membership name), that source's incarnation and its head change id. False unless the record is swapped with that
+    /// membership name), that source's incarnation and its head change id; inherits its collected-state frontier before
+    /// publishing the proof. False unless the record is swapped with that
     /// incarnation in place.
     /// </summary>
     ValueTask<bool> RecordRefillAsync(
-        TenantContext database, Ulid newIncarnation, string sourceMachine, Ulid sourceIncarnation, long head, CancellationToken cancellationToken);
+        TenantContext database, Ulid newIncarnation, string sourceMachine, Ulid sourceIncarnation, long head, Hlc collectedBefore, CancellationToken cancellationToken);
 
     /// <summary>
     /// The completion barrier: a FULL write of the refill's certificate row into the rebuilt file (its incarnation checked

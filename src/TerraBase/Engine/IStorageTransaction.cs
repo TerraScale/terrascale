@@ -86,6 +86,9 @@ public interface IStorageTransaction : IAsyncDisposable
     /// </summary>
     Guid Scope { get; }
 
+    /// <summary>Reads this file's persisted incarnation in the transaction, under the writer for write transactions.</summary>
+    ValueTask<Ulid> GetIncarnationAsync(CancellationToken cancellationToken);
+
     /// <summary>Reads one live document, or <see langword="null"/> when it is absent or deleted.</summary>
     ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken);
 
@@ -173,6 +176,9 @@ public interface IStorageTransaction : IAsyncDisposable
 
     /// <summary>Records in <c>_tb_peers</c> that every change of <paramref name="origin"/> up to <paramref name="applied"/> it streamed was joined here.</summary>
     ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken);
+
+    /// <summary>Refuses missing origin coverage under the writer before applying a new batch or frontier.</summary>
+    ValueTask RequireAppliedAsync(ReplicaId origin, Hlc expected, CancellationToken cancellationToken);
 
     /// <summary>
     /// A client database's changes feed after <paramref name="cursor"/> (docs/terrabase/multi-region-replication.md section

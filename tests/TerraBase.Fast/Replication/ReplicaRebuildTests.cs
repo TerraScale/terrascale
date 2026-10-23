@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Memory;
@@ -310,7 +311,12 @@ public sealed class ReplicaRebuildTests
     // The in-memory orchestration record outlives this fixture's restart; merge refill still crosses the real tenant barrier.
     private sealed class StandIn(Pair pair) : IRebuildCertification, IRebuildRepair
     {
-        private (Ulid Incarnation, long Head)? _refill;
+        private (Ulid Incarnation, long Head, Hlc CollectedBefore)? _refill;
+
+        public ValueTask<int?> RefillRebuildAsync(TenantContext database, Ulid newIncarnation, IReadOnlyList<int> buckets,
+            BucketCursor? after, IReadOnlyList<RepairState> states, Hlc collectedBefore, CancellationToken cancellationToken) =>
+            pair.Sjc.Api.Server.Services.GetRequiredService<IRebuildRepair>()
+                .RefillRebuildAsync(database, newIncarnation, buckets, after, states, collectedBefore, cancellationToken);
 
         public MemoryLedger Ledger { get; } = new();
 
@@ -331,13 +337,13 @@ public sealed class ReplicaRebuildTests
 
         public async ValueTask<int?> RepairRebuildAsync(TenantContext database, Ulid newIncarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
             await pair.Sjc.IncarnationAsync() == newIncarnation
-                ? await pair.Sjc.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(database, states, cancellationToken)
+                ? await pair.Sjc.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(database, newIncarnation, states, cancellationToken)
                 : null;
 
         public ValueTask<bool> RecordRefillAsync(
-            TenantContext database, Ulid newIncarnation, string sourceMachine, Ulid sourceIncarnation, long head, CancellationToken cancellationToken) =>
+            TenantContext database, Ulid newIncarnation, string sourceMachine, Ulid sourceIncarnation, long head, Hlc collectedBefore, CancellationToken cancellationToken) =>
             pair.Sjc.Api.Server.Services.GetRequiredService<IRebuildRepair>()
-                .RecordRefillAsync(database, newIncarnation, sourceMachine, sourceIncarnation, head, cancellationToken);
+                .RecordRefillAsync(database, newIncarnation, sourceMachine, sourceIncarnation, head, collectedBefore, cancellationToken);
 
         public ValueTask<bool> CompleteRebuildAsync(TenantContext database, Ulid oldIncarnation, Ulid newIncarnation, CancellationToken cancellationToken) =>
             CompleteAsync(database, oldIncarnation, newIncarnation, cancellationToken);
@@ -359,7 +365,7 @@ public sealed class ReplicaRebuildTests
                 return false;
             }
 
-            _refill = (pinned.Incarnation, pinned.Head);
+            _refill = (pinned.Incarnation, pinned.Head, pinned.CollectedBefore);
             return true;
         }
 
@@ -375,7 +381,7 @@ public sealed class ReplicaRebuildTests
             var durable = services.GetRequiredService<IRebuildLedger>();
             await durable.SaveAsync(record with { Phase = RebuildPhase.Pending, NewIncarnation = null }, cancellationToken);
             await durable.SaveAsync(record with { Phase = RebuildPhase.Swapped }, cancellationToken);
-            if (!await RecordRefillAsync(database, newIncarnation, pair.Gru.Name, proof.Incarnation, proof.Head, cancellationToken))
+            if (!await RecordRefillAsync(database, newIncarnation, pair.Gru.Name, proof.Incarnation, proof.Head, proof.CollectedBefore, cancellationToken))
             {
                 return false;
             }

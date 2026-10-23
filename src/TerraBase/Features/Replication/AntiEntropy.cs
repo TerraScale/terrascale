@@ -280,7 +280,7 @@ internal sealed class AntiEntropy : BackgroundService
         {
             var states = Decode(database, call.ResponseStream.Current, source);
             theirKeys?.UnionWith(states.Select(state => (state.Collection, state.Id)));
-            if (await _sink.RepairAsync(database, states, cancellationToken).ConfigureAwait(false) is not { } repaired)
+            if (await _sink.RepairAsync(database, local.Incarnation, states, cancellationToken).ConfigureAwait(false) is not { } repaired)
             {
                 return null;
             }
