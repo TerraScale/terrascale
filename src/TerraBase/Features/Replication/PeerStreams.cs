@@ -942,7 +942,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             {
                 // Catalog lag only retries; missing coverage requests a pinned refill even without a stored peer scope.
                 cursor.RequiresRefill |= ack.RefillRequired;
-                cursor.RetryAt = _time.GetTimestamp() + (long)(Retry.TotalSeconds * _time.TimestampFrequency);
+                cursor.RetryAt = ack.RefillRequired ? 0 : _time.GetTimestamp() + (long)(Retry.TotalSeconds * _time.TimestampFrequency);
                 link.Work.Enqueue(database);
                 return;
             }
