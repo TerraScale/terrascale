@@ -225,36 +225,42 @@ public sealed class RegionalKeyRingTests(TerraBaseFixture fixture)
         var local = await fixture.CreateCopyAsync(tenant, "auth-local");
         var clock = new SteppingClock(DateTimeOffset.UtcNow);
         await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
-        await using var auth = await StartAsync(tenant, own, clock);
+        using var pending = new PausingTransactions(request => request.RequestUri!.AbsolutePath.Contains("/signing_keys/", StringComparison.Ordinal))
+        {
+            InnerHandler = TerraBaseFixture.NewHandler(),
+        };
+        using var storage = new HttpClient(pending);
+        await using var auth = await StartAsync(tenant, own, clock, storage: storage);
         await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, TimeSpan.FromSeconds(15))).IsTrue();
         await new KeyRing(new AuthStore(local, TimeProvider.System), auth.App.Services.GetRequiredService<AuthOptions>(), TimeProvider.System)
             .ProvisionAsync(OidcIssuer.InstanceId, CancellationToken.None);
         var localId = (await local.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Single().Document.GetProperty("id").GetString();
         clock.Advance(TimeSpan.FromSeconds(61));
 
-        // This region's TerraBase stalls with the JWKS read in flight.
-        own.Hold();
-        var jwks = auth.Client.GetAsync("/terrascale/.well-known/jwks.json");
-        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(own.Held > 0), TimeSpan.FromSeconds(10))).IsTrue();
-        // Readiness sends an independent fresh read even while publication is waiting on the same local backend.
-        var held = own.Held;
+        // Gate one SDK request: multiplexed HTTP/2 streams share a relay's blocked TCP read.
+        var jwks = await pending.HoldNextAsync(() => auth.Client.GetAsync("/terrascale/.well-known/jwks.json"));
         var checking = auth.Client.GetAsync("/__test/check/terrascale");
-        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(own.Held > held), TimeSpan.FromSeconds(5))).IsTrue();
+        var independent = await Task.WhenAny(checking, Task.Delay(TimeSpan.FromSeconds(5))) == checking;
         var stalled = !jwks.IsCompleted;
-        own.Release();
+        using var published = await pending.ReleaseAsync(jwks);
         using var check = await checking;
-        using var published = await jwks;
 
+        await Assert.That(independent).IsTrue();
         await Assert.That(check.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(stalled).IsTrue();
         await Assert.That((await published.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("keys")[0].GetProperty("kid").GetString()).IsEqualTo(localId);
     }
 
-    private static Task<AuthTestServer> StartAsync(TerraBaseTestTenant tenant, TcpRelay own, SteppingClock clock, TimeSpan? refresh = null) =>
+    private static Task<AuthTestServer> StartAsync(TerraBaseTestTenant tenant, TcpRelay own, SteppingClock clock, TimeSpan? refresh = null, HttpClient? storage = null) =>
         AuthTestServer.StartAsync(
             services: services =>
             {
                 TerraBaseFixture.UseRegionalStorage(services, tenant, own.Address, localDatabase: "auth-local");
+                if (storage is not null)
+                {
+                    services.AddSingleton(storage);
+                }
+
                 services.AddSingleton<TimeProvider>(clock);
                 services.AddSingleton(new KeyRingRefresh(refresh ?? TimeSpan.FromMinutes(1)));
             },
