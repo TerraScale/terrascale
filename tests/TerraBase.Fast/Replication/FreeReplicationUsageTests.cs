@@ -41,7 +41,7 @@ public sealed class FreeReplicationUsageTests
         await gru.ConnectedAsync("sjc");
         await sjc.ConnectedAsync("gru");
         using var gruData = await gru.Api.CreateClientAsync(organization, "documents:read", "documents:write");
-        using var sjcData = await sjc.Api.CreateClientAsync(organization, "documents:read", "documents:write");
+        using var sjcData = await ReplicatedClientAsync(sjc, organization);
         await ManagementApi.CreateCollectionAsync(gruData, managed, Collection);
         var before = await SettledAsync(tenant, [gru, sjc]);
 
@@ -108,6 +108,26 @@ public sealed class FreeReplicationUsageTests
             return totals.All(total => total == settled);
         }, timeout: TimeSpan.FromSeconds(30));
         return settled!;
+    }
+
+    // A connected stream does not mean the organization created on gru has reached this machine's catalog yet: a key
+    // issued here is refused (400) until it has.
+    private static async Task<HttpClient> ReplicatedClientAsync(Machine machine, string organization)
+    {
+        HttpClient? client = null;
+        await TerraBaseTestServer.EventuallyAsync(async _ =>
+        {
+            try
+            {
+                client = await machine.Api.CreateClientAsync(organization, "documents:read", "documents:write");
+                return true;
+            }
+            catch (HttpRequestException exception) when (exception.StatusCode == HttpStatusCode.BadRequest)
+            {
+                return false;
+            }
+        }, timeout: TimeSpan.FromSeconds(30));
+        return client!;
     }
 
     private static async Task PutAsync(HttpClient data, ManagedDatabaseRef database, string id)
