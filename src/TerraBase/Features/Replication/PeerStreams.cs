@@ -300,6 +300,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.RequiresRefill, cursor.Refilling, cursor.Live) =
                     (null, null, null, 0, false, false, null);
                 cursor.Confirmed = null;
+                cursor.RetryAt = 0;
             }
         }
 
@@ -591,10 +592,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                                 {
                                     lock (link.Gate)
                                     {
-                                        if (cursor.Incarnation == incarnation)
+                                        if (cursor.Incarnation == incarnation && cursor.InFlight is null)
                                         {
                                             Reset(link, database, cursor, incarnation);
-                                            cursor.RetryAt = _time.GetTimestamp() + (long)(MaxBackoff.TotalSeconds * _time.TimestampFrequency);
+                                            // A busy ACK writer must not hold later writes past their confirmation bound.
+                                            var retry = error is StorageBusyException ? Idle : MaxBackoff;
+                                            cursor.RetryAt = _time.GetTimestamp() + (long)(retry.TotalSeconds * _time.TimestampFrequency);
                                         }
                                     }
                                 }

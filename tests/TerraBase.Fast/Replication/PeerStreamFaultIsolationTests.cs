@@ -437,7 +437,7 @@ public sealed class PeerStreamFaultIsolationTests
             await sender.PutAsync(sender.Database, "after-busy", deadline.Token);
             await TerraBaseTestServer.EventuallyAsync(async token =>
                 sender.Status(sender.Database)?.Acknowledged > confirmed
-                && await receiver.HasAsync(receiver.Database, "after-busy", token), TimeSpan.FromSeconds(60));
+                && await receiver.HasAsync(receiver.Database, "after-busy", token), RemoteAckWaiter.Bound);
             await Assert.That(source.Connections).IsEqualTo(connected)
                 .Because("a tenant's writer contention must not restart the shared connection");
         }
