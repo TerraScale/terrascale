@@ -697,9 +697,8 @@ exchanged (RFC 8693, `AllowTokenExchangeFlow`), each for a token that acts in
 one organization or project. Both are in
 `src/TerraScale.Authentication/Features/Platform/` (`ApiKeys`, `PlatformGrants`).
 
-- **Keys** live in `api_keys`, addressed by id (`tsk_` and 20 base32
-  characters). The key string adds `_` and 52 base32 characters (260 random
-  bits); only SHA-256 digests are stored. Creating, listing, rotating and
+- **Keys** live in `api_keys`, addressed by id (a canonical ULID). The key
+  string adds `_` and 52 base32 characters (260 random bits); only SHA-256 digests are stored. Creating, listing, rotating and
   revoking use the management API's authentication and its role assertions;
   revoking deletes the record, and deleting a project or organization deletes
   its keys after it (every exchange reads the organization and project first,
@@ -711,8 +710,8 @@ one organization or project. Both are in
   grace expiry another rotation is allowed; revocation still deletes both
   digests immediately. No storage migration is needed. Signing-key rollover
   is described under [bootstrap and automatic rotation](#bootstrap-and-automatic-rotation-ts-703).
-- **Client authentication.** `OidcApplicationStore` answers a `tsk_` client id
-  with a client built from the key: confidential, only the token endpoint and
+- **Client authentication.** `OidcApplicationStore` answers a key's ULID client
+  id with a client built from the key: confidential, only the token endpoint and
   the client-credentials grant, every TerraBase scope permission, and a stored
   secret of `tsk-sha256:` and the digests the key string may match (the current
   one, and the previous one during a rotation's grace).
