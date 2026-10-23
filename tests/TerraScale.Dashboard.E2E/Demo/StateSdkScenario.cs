@@ -250,6 +250,15 @@ public sealed class StateSdkScenario : IAsyncDisposable
                 Interlocked.Increment(ref privateRequests);
                 if (Mode == "forbidden" && http.Request.Method != "GET") return Error(403, "forbidden");
                 var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                // TerraBasePlanSync publishes each project's plan on the same private listener.
+                if (parts is ["admin", "projects", var planProject, "plan"])
+                {
+                    using var plan = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
+                    var tier = plan.RootElement.TryGetProperty("plan", out var value) ? value.GetString() : null;
+                    Require(http.Request.Method == "PUT" && TerraScaleIds.IsValid(planProject) && tier is "hobby" or "starter" or "pro" or "enterprise",
+                        "A plan publish is a PUT of a known plan for a canonical project id.");
+                    return Results.Json(new { plan = tier });
+                }
                 Require(parts.Length >= 5 && parts[0] == "v1" && parts[1] == "projects" && parts[2] == Project &&
                     parts[3] == "databases" && parts[4] == "ts-dashboard", "State namespace must use only its delivered canonical project and fixed database.");
                 // TerraBase seeds ts-dashboard itself; the dashboard never creates it.
