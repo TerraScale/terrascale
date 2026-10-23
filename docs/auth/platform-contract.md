@@ -126,6 +126,7 @@ Organization roles, from least to most privileged: `viewer`, `member`,
 | Delete the organization | organization `owner`; `409 not_empty` while it has projects |
 | Change a member's role, remove a member | organization `admin`; `owner` when the member is or becomes an owner |
 | Leave | any organization member or collaborator |
+| Delete your own account (`DELETE /v1/terrascale/account`) | signed in; `409 last_owner` while the last owner of an organization with other members |
 | Invite to the organization | organization `admin`; `owner` to invite an owner |
 | Invite to a project | project `admin` |
 | List and revoke invitations | organization `admin`; project `admin` for its project's invitations |

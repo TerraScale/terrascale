@@ -59,7 +59,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     /// <summary>The issue-limit window, aligned to UTC clock hours.</summary>
     public static readonly TimeSpan IssueWindow = TimeSpan.FromHours(1);
 
-    private const string SignUpKey = "sign-up:";
+    internal const string SignUpKey = "sign-up:";
 
     private readonly byte[] digestKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: "ts-auth passcode digests"u8.ToArray());
 

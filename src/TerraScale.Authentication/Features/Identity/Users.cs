@@ -90,6 +90,34 @@ public sealed class Users(AuthStore store, TimeProvider clock)
         throw ApiException.Unavailable();
     }
 
+    /// <summary>
+    /// Deletes the account and releases its email in one transaction, so the address can sign up again. Every check
+    /// reads the user, so its sessions and tokens stop working at once.
+    /// </summary>
+    public async Task DeleteAsync(string instanceId, string userId, CancellationToken cancellationToken = default)
+    {
+        for (var round = 0; round < 3; round++)
+        {
+            if (await this.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current)
+            {
+                return;
+            }
+
+            List<StoreOperation> operations = [AuthStore.Delete(AuthStore.UserCollection, instanceId, userId, current.Version)];
+            if (await store.FindUniqueAsync(instanceId, EmailKind, current.User.Email, cancellationToken).ConfigureAwait(false) is { } claim && claim.OwnerId == userId)
+            {
+                operations.Add(AuthStore.Release(instanceId, EmailKind, current.User.Email, claim.Version));
+            }
+
+            if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)
+            {
+                return;
+            }
+        }
+
+        throw ApiException.Unavailable();
+    }
+
     internal async Task<(UserRecord User, string Version)?> GetVersionedAsync(string instanceId, string userId, CancellationToken cancellationToken)
     {
         if (!TerraScaleIds.IsValid(userId))

@@ -310,6 +310,55 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
             return new Plan<bool>(operations, true);
         }, cancellationToken);
 
+    /// <summary>
+    /// Takes <paramref name="userId"/> out of every organization before its account is deleted: an organization where it
+    /// is the only member is deleted with its projects, any other one is left. Checks first, so a 409
+    /// <c>last_owner</c> (the last owner of an organization with other members) changes nothing.
+    /// </summary>
+    public async Task LeaveEverywhereAsync(string userId, CancellationToken cancellationToken)
+    {
+        var sole = new HashSet<string>(StringComparer.Ordinal);
+        var memberships = await this.QueryAsync(AuthStore.MembershipCollection, [("/userId", userId)], PlatformJson.Default.MembershipRecord, cancellationToken)
+            .Where(membership => membership.Value.UserId == userId).Select(membership => membership.Value).ToListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var membership in memberships.Where(membership => membership.Role is not null))
+        {
+            var others = await this.QueryAsync(AuthStore.MembershipCollection, [("/organizationId", membership.OrganizationId)], PlatformJson.Default.MembershipRecord, cancellationToken)
+                .AnyAsync(other => other.Value.OrganizationId == membership.OrganizationId && other.Value.UserId != userId && other.Value.Role is not null, cancellationToken).ConfigureAwait(false);
+            if (!others && membership.Role == Roles.Owner)
+            {
+                sole.Add(membership.OrganizationId);
+            }
+            else if (membership.Role == Roles.Owner && await this.OrganizationAsync(membership.OrganizationId, cancellationToken).ConfigureAwait(false) is { Value.Owners: <= 1 })
+            {
+                throw Conflict("last_owner", "Make another member an owner of every organization you share before deleting your account.");
+            }
+        }
+
+        foreach (var membership in memberships)
+        {
+            try
+            {
+                if (sole.Contains(membership.OrganizationId))
+                {
+                    await foreach (var project in this.QueryAsync(AuthStore.ProjectCollection, [("/organizationId", membership.OrganizationId)], PlatformJson.Default.ProjectRecord, cancellationToken).ConfigureAwait(false))
+                    {
+                        await this.DeleteProjectAsync(userId, membership.OrganizationId, project.Value.Id, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    await this.DeleteOrganizationAsync(userId, membership.OrganizationId, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await this.RemoveAsync(userId, membership.OrganizationId, userId, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (ApiException error) when (error.Status == StatusCodes.Status404NotFound)
+            {
+                // Gone meanwhile, or a stale collaborator record that grants nothing.
+            }
+        }
+    }
+
     /// <summary>Creates a project, whose explicit admin becomes the creator; needs the member organization role.</summary>
     public Task<ProjectRecord> CreateProjectAsync(string userId, string organizationId, string name, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
