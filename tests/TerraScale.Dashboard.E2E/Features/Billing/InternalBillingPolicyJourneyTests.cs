@@ -329,11 +329,13 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
         using var replica = CookieClient(scenario, setup.Cookie, true);
+        // Finish the authenticated form read before timing the mutation's persistence barrier.
+        var csrf = await HttpJourney.CsrfAsync(replica);
         await ControlAsync(producer, new { command = "internal-pause-put", collection = "dashboard_billing", id = setup.Organization, kind = "stripe", after = true });
-        var checkout = CheckoutAsync(replica);
+        var checkout = CheckoutAsync(replica, csrf);
         try
         {
-            await PausedAsync(producer);
+            await PausedAsync(producer, checkout: checkout);
             var rejected = await RunAsync(scenario, Configure(setup.Organization));
             await CheckAsync(rejected.Exit == 1 && rejected.Error == "configure-internal-billing: Internal billing cannot replace Stripe billing or checkout state.\n",
                 "The public operator command cannot replace the checkout's already committed Stripe fence");
@@ -601,9 +603,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await ActiveAsync(browser);
     }
 
-    private static async Task<HttpResponseMessage> CheckoutAsync(HttpClient browser)
+    private static async Task<HttpResponseMessage> CheckoutAsync(HttpClient browser, string? csrf = null)
     {
-        var csrf = await HttpJourney.CsrfAsync(browser, "/profile");
+        csrf ??= await HttpJourney.CsrfAsync(browser, "/profile");
         return await HttpJourney.PostFormAsync(browser, "/billing/checkout", new()
         { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly", ["return"] = "/organization?tab=billing" });
     }
@@ -617,12 +619,17 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             "The actual native owner spending form commits the organization cap");
     }
 
-    private static async Task PausedAsync(HttpClient producer, int count = 1, string counter = "pausedWrites")
+    private static async Task PausedAsync(HttpClient producer, int count = 1, string counter = "pausedWrites", Task<HttpResponseMessage>? checkout = null)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         while (!deadline.IsCancellationRequested)
         {
             if ((await ObserveAsync(producer)).GetProperty("billing").GetProperty(counter).GetInt32() >= count) return;
+            if (checkout is { IsCompleted: true })
+            {
+                using var response = await checkout;
+                await CheckAsync(false, $"Checkout returned {(int)response.StatusCode} before reaching its persistence barrier: {await response.Content.ReadAsStringAsync()}");
+            }
             await Task.Delay(20, deadline.Token);
         }
         await CheckAsync(false, "Actual app writes reach the external producer barrier before the race is released");

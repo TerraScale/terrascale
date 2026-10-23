@@ -49,7 +49,8 @@
                         <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" required /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@plan.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price">@plan.MonthlyPrice<span class="ts-meta"> / month</span></span><span class="ts-meta">@plan.BillingDescription</span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.OperationsAllowance · @plan.EgressAllowance</span></label>
                     }
                 </fieldset>
-                <p class="ts-meta">Enterprise: @PlanCatalog.EnterpriseBilling <a href="https://terrascale.tech/contact">Contact sales</a>.</p>
+                <p class="ts-meta">Enterprise: @PlanCatalog.EnterpriseBilling</p>
+                <p><a class="ts-btn ts-btn-secondary" href="https://terrascale.tech/contact">Contact sales</a></p>
                 <p class="ts-meta">Continue to Stripe Checkout or stay on @PlanCatalog.For("free").Name without payment.</p>
                 <div class="ts-onboarding-footer"><button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit" name="bypass" value="1" formnovalidate>Continue on @PlanCatalog.For("free").Name</button><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Continue to checkout <span aria-hidden="true">→</span></button></div>
             </form>

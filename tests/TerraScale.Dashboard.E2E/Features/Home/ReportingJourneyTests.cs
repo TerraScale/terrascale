@@ -377,16 +377,16 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await RequestTransferAsync(ownerPage, guestId);
             await flow.GotoAsync(ownerPage, "/organization?tab=danger");
             await ownerPage.GetByText("Ownership transfer pending", new() { Exact = true }).WaitForAsync();
-            await flow.SubmitAsync(ownerPage, "form[action$=\"/ownership/cancel\"]", "Cancel transfer");
+            await flow.SubmitAsync(ownerPage, "form:is([action=\"/api/v1/dashboard/organization/members/ownership/cancel\"],[action^=\"/api/v1/dashboard/organization/members/ownership/cancel?\"])", "Cancel transfer");
             await RequestTransferAsync(ownerPage, guestId);
             await flow.GotoAsync(guestPage, "/organization?tab=danger");
-            await flow.SubmitAsync(guestPage, "form[action$=\"/ownership/confirm\"]", "Accept ownership");
+            await flow.SubmitAsync(guestPage, "form:is([action=\"/api/v1/dashboard/organization/members/ownership/confirm\"],[action^=\"/api/v1/dashboard/organization/members/ownership/confirm?\"])", "Accept ownership");
             await Assert.That(Text(await flow.MeAsync(guestContext), "role")).IsEqualTo("owner");
             await Assert.That(Text(await flow.MeAsync(ownerContext), "role")).IsEqualTo("admin");
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/organization/members/ownership", new() { ["userID"] = guestId }, 403);
             await RequestTransferAsync(guestPage, Text(original, "userId")!);
             await flow.GotoAsync(ownerPage, "/organization?tab=danger");
-            await flow.SubmitAsync(ownerPage, "form[action$=\"/ownership/confirm\"]", "Accept ownership");
+            await flow.SubmitAsync(ownerPage, "form:is([action=\"/api/v1/dashboard/organization/members/ownership/confirm\"],[action^=\"/api/v1/dashboard/organization/members/ownership/confirm?\"])", "Accept ownership");
             await Assert.That(Text(await flow.MeAsync(ownerContext), "role")).IsEqualTo("owner");
             await Assert.That(Text(await flow.MeAsync(guestContext), "role")).IsEqualTo("admin");
             flow.Checks.Add("native ownership start/cancel/recipient confirmation and reverse transfer with fresh role authorization");
@@ -610,6 +610,8 @@ file sealed class BrowserFlow(IBrowser browser, Uri origin, string output, float
         }
         catch (Exception error)
         {
+            await ReportAsync(false, error.ToString());
+            Console.Error.WriteLine(error);
             if (active is { IsClosed: false } page)
             {
                 if (probe is not null) await File.WriteAllTextAsync(Path.Combine(output, "failure-provider.json"), await (await page.Context.APIRequest.GetAsync(Origin + probe)).TextAsync());
@@ -617,7 +619,6 @@ file sealed class BrowserFlow(IBrowser browser, Uri origin, string output, float
                 await File.WriteAllTextAsync(Path.Combine(output, "failure.html"), await page.ContentAsync());
                 Console.Error.WriteLine("Failed at " + page.Url);
             }
-            await ReportAsync(false, error.ToString());
             throw;
         }
     }
