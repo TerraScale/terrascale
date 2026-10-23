@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — database export
+
+`db.export({ after, signal })` streams TerraBase's
+`GET /v1/projects/{project}/databases/{database}/export` NDJSON as an async
+iterable of `{ collection, id, document }`. `after: { collection, id }` resumes
+after that document. Error answers raise the usual `TerraBaseV1Error`.
+
 ## 0.0.4
 
 Publishes current main, including `db.sql`, `db.changes`, backups, indexes and

@@ -12,6 +12,7 @@ import { V1ShapeSubscription } from "./shape-subscription.js";
 import { decryptSealedShapePage, readShapePage, readShapeKey } from "./shape-reader.js";
 import { runSql, checkSql } from "./sql.js";
 import { streamChanges } from "./changes.js";
+import { exportDocuments } from "./export.js";
 import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema } from "./catalog.js";
 import { V1Transport } from "./transport.js";
 import { V1Health, V1Platform } from "./system.js";
@@ -813,6 +814,14 @@ export class V1Database {
   /** @param {import("./changes.js").V1ChangeStreamRequest} [request] @param {V1RequestOptions} [options] */
   changes(request = {}, options = {}) {
     return streamChanges(this.#transport, this.name, request, options.signal);
+  }
+
+  /**
+   * Streams every live document as `{ collection, id, document }`, in collection then id order, from one snapshot.
+   * @param {import("./export.js").V1ExportOptions} [options]
+   */
+  export(options = {}) {
+    return exportDocuments(this.#transport, this.name, options);
   }
 }
 

@@ -77,6 +77,8 @@ export { V1SavedQueries } from "./v1/saved-queries.js";
 /** @typedef {import("./v1/changes.js").V1ChangeStreamRequest} V1ChangeStreamRequest */
 /** @typedef {import("./v1/changes.js").V1DatabaseChange} V1DatabaseChange */
 /** @typedef {import("./v1/changes.js").V1DatabaseChangeCursor} V1DatabaseChangeCursor */
+/** @typedef {import("./v1/export.js").V1ExportOptions} V1ExportOptions */
+/** @typedef {import("./v1/export.js").V1ExportedDocument} V1ExportedDocument */
 /** @typedef {import("./v1/catalog.js").V1ManagedDatabase} V1ManagedDatabase */
 /** @typedef {import("./v1/catalog.js").V1DatabaseCreateRequest} V1DatabaseCreateRequest */
 /** @typedef {import("./v1/catalog.js").V1DatabaseUpdateRequest} V1DatabaseUpdateRequest */

@@ -320,7 +320,7 @@ export class V1Transport {
   }
 
   /**
-   * @param {"streamDatabaseChanges"} operation
+   * @param {"streamDatabaseChanges" | "exportDatabase"} operation
    * @param {Readonly<Record<string, string>>} params
    * @param {V1CallOptions} [options]
    * @returns {Promise<Response>}
@@ -328,9 +328,10 @@ export class V1Transport {
   async openStream(operation, params, options = {}) {
     const response = await this.#send(operation, params, options);
     const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-    if (mediaType !== "text/event-stream" || response.body === null) {
+    const expected = v1Route(operation).responseMediaType;
+    if (mediaType !== expected || response.body === null) {
       void response.body?.cancel().catch(() => undefined);
-      throw new TypeError("TerraBase changes require a text/event-stream response body.");
+      throw new TypeError(`TerraBase ${operation} requires a ${expected} response body.`);
     }
     return response;
   }
