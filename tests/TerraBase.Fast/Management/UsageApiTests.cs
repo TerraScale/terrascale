@@ -1093,7 +1093,7 @@ public sealed class UsageApiTests
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            ids.Add(reader.GetString(0));
+            ids.Add(reader.GetString(0).Split('@')[0]);
         }
 
         return ids;
@@ -1115,7 +1115,7 @@ public sealed class UsageApiTests
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT body FROM documents WHERE collection = $collection AND id = 'ops';";
+        command.CommandText = "SELECT body FROM documents WHERE collection = $collection AND id LIKE 'ops@%';";
         command.Parameters.AddWithValue("$collection", $"databases/{databaseId}/usage");
         return await command.ExecuteScalarAsync() as string;
     }

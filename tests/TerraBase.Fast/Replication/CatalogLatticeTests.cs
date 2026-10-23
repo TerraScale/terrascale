@@ -8,6 +8,7 @@ using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
@@ -165,6 +166,42 @@ public sealed class CatalogLatticeTests
         }
 
         await Assert.That(File.Exists(gru.FileOf(tenant))).IsFalse();
+    }
+
+    [Test]
+    public async Task Usage_two_regions_flush_for_one_database_without_seeing_each_other_adds_up_in_both()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (organization, project, database) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(gru.Api.User,
+            new { op = "create_organization", id = organization, name = "Metered" },
+            new { op = "create_project", organization, id = project, name = "p" },
+            new { op = "create_database", organization, project, name = "main", id = database, replica_regions = Sjc });
+        await Assert.That(await sjc.UntilAsync($"projects/{project}/databases", database, json => json is not null)).IsTrue();
+        var tenant = new TenantContext(organization, PlanTier.Hobby, project, database);
+
+        // Each region saves its own observations of the database while the other's flush has not reached it: a flush must
+        // never replace the other region's counts.
+        var members = await cluster.SeparateAsync();
+        foreach (var (region, writes) in new[] { (gru, 3), (sjc, 2) })
+        {
+            var meter = region.Api.Server.Services.GetRequiredService<UsageMeter>();
+            meter.RecordWrites(tenant, writes);
+            meter.RecordOperation(tenant, "put", writes);
+            await meter.FlushAsync(CancellationToken.None);
+            await Assert.That(meter.PendingDatabases).IsEqualTo(0).Because(region.Name);
+        }
+
+        cluster.Rejoin(members);
+        foreach (var region in cluster.Regions)
+        {
+            var meter = region.Api.Server.Services.GetRequiredService<UsageMeter>();
+            await Assert.That(await Until(async () => await meter.GetObservationsAsync(tenant, new UsageWindow(UsageWindow.Hour, 0, 1), CancellationToken.None) is UsageCounts
+            {
+                Lifetime: { Writes: 5, Meters: { } meters },
+            } && meters.Values.Where(reading => reading.Dimension is { Meter: "ops", Kind: "put" }).Sum(reading => reading.Count) == 5)).IsTrue().Because(region.Name);
+        }
     }
 
     [Test]

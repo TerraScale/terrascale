@@ -152,9 +152,12 @@ is the latest completed observed catch-up in milliseconds.
 The existing usage meter flushes observations into the database's catalog state
 every ten seconds and at clean shutdown. Minutes roll into the same lifetime,
 hourly and daily totals as existing usage. Minute buckets retain 120 minutes,
-hours 35 days, and days 400 days. Each machine saves its own observations in its
-local catalog. Catalogs are not replicated until R10a, so these totals are per machine
-([multi-region-replication.md](multi-region-replication.md) section 15).
+hours 35 days, and days 400 days. The catalog replicates to every region with the
+last writer winning, so each machine adds its observations only to documents of its
+own (`ops@<machine>`, `<bucket>@<machine>`) and reads sum every machine's: a region
+that also observes a database never replaces the counts another region saved
+([multi-region-replication.md](multi-region-replication.md) section 15). Documents
+without a machine suffix predate this and are read as one more machine's.
 
 These are best-effort dashboard observations. A crash can lose counts since the
 last successful flush; memory pressure can omit observations. Pending records
