@@ -24,6 +24,13 @@ preserving the existing cancellation, tap-return, and directory-reopen tests.
 No durability claim is added: unshipped data stays in local storage and is
 included in a later snapshot.
 
+The cached-customer-deadlines test previously performed a full PITR restore
+while shutdown was blocked. That fixture incorrectly relied on its frozen
+clock to keep the production shipping budget open during verification. It
+still asserts that healthy WAL is stored before the first customer lookup and
+that all three configuration deadlines and cleanup complete; the identical
+restore assertion now runs after shutdown, under the test cancellation token.
+
 ## Ten reports already fixed on main
 
 [PR #347](https://github.com/TerraScale/terrascale/pull/347), merged as

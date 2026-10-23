@@ -167,7 +167,6 @@ public sealed class BackupShutdownTests
             var finalAt = BackupLayout.ParseSegment(finalWal)!.At;
             await Assert.That(finalAt).IsGreaterThan(snapshot.LastShippedAt!.Value);
             await Assert.That(s3.Objects.Keys.Count(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsEqualTo(1);
-            await AssertRestoredAsync(api, healthyData, healthy, finalAt, "final-config-wal", committed, shutdown.Token);
             await Assert.That(shutdown.IsCancellationRequested).IsFalse();
             await Assert.That(elapsed.Elapsed).IsLessThan(budget);
 
@@ -191,6 +190,8 @@ public sealed class BackupShutdownTests
             await Assert.That(backup.Status.Files).IsEmpty();
             await Assert.That(Directory.EnumerateFiles(Path.Combine(directory, ".backup"))).IsEmpty();
             await Assert.That(s3.BadSignatures).IsEqualTo(0);
+            // The WAL was stored before the first customer lookup; restoring it must not spend the shutdown budget.
+            await AssertRestoredAsync(api, healthyData, healthy, finalAt, "final-config-wal", committed, token);
         }
         finally
         {
