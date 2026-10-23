@@ -163,6 +163,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
                 .Take(10).Select(pair => new TenantPressure(pair.Key, pair.Value.Count / seconds, pair.Value.Plan switch
                 {
                     PlanTier.Hobby => "hobby",
+                    PlanTier.Starter => "starter",
                     PlanTier.Pro => "pro",
                     PlanTier.Enterprise => "enterprise",
                     _ => null,

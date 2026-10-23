@@ -114,7 +114,7 @@ public sealed class ProjectTokenTests
             }
 
             await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{project}/plan"), new { plan = "unlimited" }),
-                HttpStatusCode.BadRequest, "invalid_request", "plan must be hobby, pro or enterprise");
+                HttpStatusCode.BadRequest, "invalid_request", "plan must be hobby, starter, pro or enterprise");
             using (var set = await api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{project}/plan"), new { plan = "enterprise" }))
             {
                 await Assert.That(set.StatusCode).IsEqualTo(HttpStatusCode.OK);

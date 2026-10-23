@@ -842,6 +842,7 @@ internal sealed partial class EngineManagementService
     // The plan of a set_plan operation, validated by the endpoint.
     private static PlanTier Plan(string plan) => plan switch
     {
+        "starter" => PlanTier.Starter,
         "pro" => PlanTier.Pro,
         "enterprise" => PlanTier.Enterprise,
         _ => PlanTier.Hobby,

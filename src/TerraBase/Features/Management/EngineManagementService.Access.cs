@@ -903,6 +903,7 @@ internal sealed partial class EngineManagementService : IAccessService
     {
         PlanTier.Enterprise => "enterprise",
         PlanTier.Pro => "pro",
+        PlanTier.Starter => "starter",
         _ => "hobby",
     };
 
