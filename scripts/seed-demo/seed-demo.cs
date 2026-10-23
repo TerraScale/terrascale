@@ -164,7 +164,8 @@ var plan = new (string Database, (string Collection, IReadOnlyList<(string Id, J
 var clock = Stopwatch.StartNew();
 foreach (var (name, collections) in plan)
 {
-    try { await project.CreateDatabaseAsync(name, region, []); Console.WriteLine($"{name}: created in {region}"); }
+    // No replica list: TerraBase places the database in every other serving region (a database needs two).
+    try { var created = await project.CreateDatabaseAsync(name, region, null!); Console.WriteLine($"{name}: created in {created.HomeRegion} + {string.Join(",", created.ReplicaRegions ?? [])}"); }
     catch (TerraBaseConflictException) { Console.WriteLine($"{name}: exists"); }
     var database = client.Database(projectId, name);
     foreach (var (collection, rows, indexes) in collections)
