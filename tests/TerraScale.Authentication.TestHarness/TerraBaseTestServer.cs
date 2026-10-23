@@ -27,7 +27,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     private readonly ConcurrentQueue<string> output = new();
     private readonly string directory;
-    private readonly byte[] masterKey = RandomNumberGenerator.GetBytes(32);
+    private readonly byte[] masterKey;
     private TestListenerRelay? publicFront;
     private TestListenerRelay? internalFront;
     private (int Internal, int Public, int Metrics) backendPorts;
@@ -41,6 +41,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         this.directory = directory;
         this.production = production;
         this.node = node;
+        this.masterKey = node is null ? RandomNumberGenerator.GetBytes(32) : Convert.FromBase64String(node.MasterKey);
     }
 
     internal (int Internal, int Public, int Metrics) BackendPorts => this.backendPorts;
