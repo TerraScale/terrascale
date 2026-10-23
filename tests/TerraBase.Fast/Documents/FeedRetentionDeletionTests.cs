@@ -66,15 +66,16 @@ public sealed class FeedRetentionDeletionTests
         var pass = retention.TrimAsync(token);
         try
         {
-            await paused.Task.WaitAsync(token);
+            await Assert.That(await Task.WhenAny(paused.Task, pass).WaitAsync(token)).IsSameReferenceAs(paused.Task);
             // What backup retention's sweep runs for an expired snapshot.
             await Assert.That(await turso.DeleteDatabaseAsync(victimDatabase, token)).IsTrue();
         }
         finally
         {
             resume.Set();
+            // Join our manually driven pass before the server disposes its engine, including on assertion failure.
+            await pass;
         }
-        await pass.WaitAsync(token);
 
         // Only the deleted database failed, once, on its closed store; whichever came first, the survivor was trimmed.
         await Assert.That(warnings.Errors.Single()).IsTypeOf<ObjectDisposedException>();
