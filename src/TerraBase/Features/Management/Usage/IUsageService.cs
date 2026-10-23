@@ -64,6 +64,25 @@ public readonly union DatabaseUsageResult(DatabaseUsage, NotFound, Validation, U
 /// <summary>The usage of a project, or why there is none.</summary>
 public readonly union ProjectUsageResult(ProjectUsage, NotFound, Validation, Unavailable);
 
+/// <summary>One organization's billed usage this UTC month.</summary>
+/// <param name="OrganizationId">The organization.</param>
+/// <param name="Operations">Read plus write operation units of every project, region and node: what the allowance counts.</param>
+/// <param name="LogicalBytes">Not reported yet: null.</param>
+public sealed record AllowanceUsage(string OrganizationId, long? Operations, long? LogicalBytes);
+
+/// <summary>A page of organizations' billed usage this UTC month, in organization id order.</summary>
+/// <param name="PeriodStart">The first instant of the UTC month.</param>
+/// <param name="ObservedAt">When the page was read.</param>
+/// <param name="Items">Up to 25 organizations after the requested one.</param>
+/// <param name="Next">The last organization of the page when more follow; pass it as <c>after</c>.</param>
+/// <param name="OperationsContract">What <see cref="AllowanceUsage.Operations"/> counts.</param>
+/// <param name="StorageContract">What <see cref="AllowanceUsage.LogicalBytes"/> counts; <c>none</c> while it is not reported.</param>
+public sealed record AllowanceUsagePage(
+    DateTimeOffset PeriodStart, DateTimeOffset ObservedAt, IReadOnlyList<AllowanceUsage> Items, string? Next, string OperationsContract, string StorageContract);
+
+/// <summary>A page of billed usage, or why there is none.</summary>
+public readonly union AllowanceUsageResult(AllowanceUsagePage, Unavailable);
+
 /// <summary>Storage and operation usage of managed databases.</summary>
 public interface IUsageService
 {
@@ -72,4 +91,7 @@ public interface IUsageService
 
     /// <summary>Sums the usage of every database of a project; <see cref="NotFound"/> when the project does not exist.</summary>
     ValueTask<ProjectUsageResult> GetProjectUsageAsync(string userId, string organizationId, string projectId, UsageWindow window, CancellationToken cancellationToken);
+
+    /// <summary>Every organization's billed usage this month, 25 at a time after <paramref name="after"/>.</summary>
+    ValueTask<AllowanceUsageResult> ListAllowanceUsageAsync(string? after, CancellationToken cancellationToken);
 }
