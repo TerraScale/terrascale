@@ -32,22 +32,12 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
             await auth.RevokeAsync(fresh, cancellationToken);
             throw new AccountAccessException("Identity does not match this account.", 401);
         }
-        var now = time.GetUtcNow();
-        var secret = "tspat_" + WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
-        var token = new ProfileToken(Guid.CreateVersion7().ToString(), name, secret[^4..], now, now.AddDays(expiresInDays));
+        var expiresAt = time.GetUtcNow().AddDays(expiresInDays);
         string? credential = null;
         try
         {
-            credential = await sessions.CreateCredentialAsync(fresh, token.ExpiresAt, cancellationToken);
-            var stored = new StoredToken(token, Hash(secret), credential);
-            // The index alone cannot authenticate: the account's CAS-protected
-            // token set must still contain the token on every request.
-            await state.PutAsync(IndexCollection, stored.SecretHash, JsonSerializer.SerializeToElement(new TokenOwner(context.UserId, token.Id)), TerraBasePrecondition.Absent, cancellationToken);
-            await UpdateAsync(context.UserId, set =>
-            {
-                if (set.Tokens.Count(item => item.RevokedAt is null && item.Token.ExpiresAt > time.GetUtcNow()) >= 25) throw new AccountAccessException("You can have up to 25 live personal access tokens.", 409);
-                set.Tokens.Add(stored);
-            }, cancellationToken);
+            credential = await sessions.CreateCredentialAsync(fresh, expiresAt, cancellationToken);
+            return await StoreAsync(context.UserId, name, expiresAt, credential, cancellationToken);
         }
         catch
         {
@@ -56,6 +46,40 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
             finally { await auth.RevokeAsync(fresh, cleanup.Token); }
             throw;
         }
+    }
+
+    // An MCP OAuth client's token: its fresh grant was stored as a credential when
+    // the client's own ts-auth authorization round trip finished.
+    public async Task<CreatedProfileToken> IssueGrantedAsync(string userId, string name, DateTimeOffset expiresAt, string credentialId, CancellationToken cancellationToken)
+    {
+        try { return await StoreAsync(userId, name, expiresAt, credentialId, cancellationToken); }
+        catch
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await ForgetGrantAsync(credentialId, cleanup.Token);
+            throw;
+        }
+    }
+
+    public async Task ForgetGrantAsync(string credentialId, CancellationToken cancellationToken)
+    {
+        if (await sessions.ReadCredentialAsync(credentialId, cancellationToken) is { } grant) await auth.RevokeAsync(grant, cancellationToken);
+        await sessions.DeleteCredentialAsync(credentialId, cancellationToken);
+    }
+
+    private async Task<CreatedProfileToken> StoreAsync(string userId, string name, DateTimeOffset expiresAt, string credential, CancellationToken cancellationToken)
+    {
+        var secret = "tspat_" + WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+        var token = new ProfileToken(Guid.CreateVersion7().ToString(), name, secret[^4..], time.GetUtcNow(), expiresAt);
+        var stored = new StoredToken(token, Hash(secret), credential);
+        // The index alone cannot authenticate: the account's CAS-protected
+        // token set must still contain the token on every request.
+        await state.PutAsync(IndexCollection, stored.SecretHash, JsonSerializer.SerializeToElement(new TokenOwner(userId, token.Id)), TerraBasePrecondition.Absent, cancellationToken);
+        await UpdateAsync(userId, set =>
+        {
+            if (set.Tokens.Count(item => item.RevokedAt is null && item.Token.ExpiresAt > time.GetUtcNow()) >= 25) throw new AccountAccessException("You can have up to 25 live personal access tokens.", 409);
+            set.Tokens.Add(stored);
+        }, cancellationToken);
         return new(token, secret);
     }
 

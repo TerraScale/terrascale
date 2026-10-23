@@ -13,10 +13,10 @@ public sealed class AuthFlows(IDashboardState state, IDashboardIdentity identity
     private const string Collection = "auth-flows";
     private const string OidcCookie = "ts-dashboard-oidc";
 
-    public async Task<OidcFlow> StartOidcAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0)
+    public async Task<OidcFlow> StartOidcAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0, TerraScale.Dashboard.Platform.Mcp.McpAuthorization? mcp = null)
     {
         var flow = new OidcFlow(Random(), Random(), Random(), Csrf.LocalRedirect(returnTo),
-            $"{context.Request.Scheme}://{context.Request.Host}/login/callback", time.GetUtcNow().AddMinutes(10), tokenName, tokenDays);
+            $"{context.Request.Scheme}://{context.Request.Host}/login/callback", time.GetUtcNow().AddMinutes(10), tokenName, tokenDays, mcp);
         await EndAsync(context, OidcCookie);
         await StoreAsync(context, OidcCookie, flow, flow.ExpiresAt);
         return flow;

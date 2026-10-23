@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Profile;
+using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Auth;
@@ -38,11 +39,11 @@ public static class AuthEndpoints
         return await AuthorizeAsync(context, returnTo, signUp: context.Request.Query["signup"] == "1");
     }
 
-    public static async Task<IResult> AuthorizeAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0, bool signUp = false)
+    public static async Task<IResult> AuthorizeAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0, bool signUp = false, TerraScale.Dashboard.Platform.Mcp.McpAuthorization? mcp = null)
     {
         try
         {
-            var flow = await context.RequestServices.GetRequiredService<AuthFlows>().StartOidcAsync(context, returnTo, tokenName, tokenDays);
+            var flow = await context.RequestServices.GetRequiredService<AuthFlows>().StartOidcAsync(context, returnTo, tokenName, tokenDays, mcp);
             var authorize = await context.RequestServices.GetRequiredService<IAuthOidcGateway>().AuthorizationUrlAsync(flow, context.RequestAborted);
             return Results.Redirect(signUp ? HostedSignUp(authorize) : authorize);
         }
@@ -67,11 +68,16 @@ public static class AuthEndpoints
         if (flow is null || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(state), Encoding.UTF8.GetBytes(flow.State)))
             return Failure(context, "/", "This sign-in link expired or was started in another browser. Sign in again.", 400);
         if (context.Request.Query["error"].Count != 0)
-            return Failure(context, flow.ReturnTo, "ts-auth did not sign you in. Sign in again.", 401);
+            return flow.Mcp is not null ? McpOAuth.Denied(flow.Mcp) : Failure(context, flow.ReturnTo, "ts-auth did not sign you in. Sign in again.", 401);
         try
         {
             var session = await auth.ExchangeAsync(context.Request.Query["code"].ToString(), flow, context.RequestAborted);
             if (flow.TokenName.Length != 0) return await AccessTokenEndpoints.IssueAsync(context, flow, session);
+            if (flow.Mcp is not null)
+            {
+                await EnsureAccountAsync(context, session);
+                return await McpOAuth.GrantAsync(context, flow.Mcp, session);
+            }
             var account = await EnsureAccountAsync(context, session);
             await sessions.StartAsync(context, session);
             return HttpRedirects.SeeOther(flow.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : flow.ReturnTo);

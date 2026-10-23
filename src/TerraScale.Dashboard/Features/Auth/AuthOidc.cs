@@ -14,9 +14,10 @@ public interface IAuthLogoutGateway
 }
 
 // TokenName is set when the flow mints a personal access token from a fresh,
-// independent ts-auth grant instead of starting a browser session.
+// independent ts-auth grant instead of starting a browser session; Mcp when the
+// grant answers an MCP client's OAuth authorization request.
 public sealed record OidcFlow(string State, string Nonce, string Verifier, string ReturnTo, string RedirectUri, DateTimeOffset ExpiresAt,
-    string TokenName = "", int TokenDays = 0)
+    string TokenName = "", int TokenDays = 0, TerraScale.Dashboard.Platform.Mcp.McpAuthorization? Mcp = null)
 {
     public override string ToString() => "Dashboard OIDC flow [REDACTED]";
 }
