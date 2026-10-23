@@ -11,7 +11,7 @@ internal readonly union HranaCommand(SqlCommand, HranaError);
 /// <summary>Runs one HTTP request's stream requests against its stream, bounding the response it builds.</summary>
 internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory)
 {
-    /// <summary>Statements (requests, batch steps and sequence statements) per HTTP request.</summary>
+    /// <summary>Statements (requests and batch steps) per HTTP request; the core bounds a sequence's statements.</summary>
     public const int MaxStatements = 1000;
 
     /// <summary>Estimated bytes of results per HTTP request.</summary>
@@ -32,6 +32,27 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory)
                     HranaStmtResult result => HranaResult.Ok(new HranaResponse("execute", result)),
                     HranaError error => HranaResult.Failed(error),
                 };
+            case "batch" when request.Batch is { } batch:
+                return await BatchAsync(batch, cancellationToken).ConfigureAwait(false) is { } steps
+                    ? HranaResult.Ok(new HranaResponse("batch", steps))
+                    : HranaResult.Failed(Protocol);
+            case "sequence":
+                return await SequenceAsync(request, cancellationToken).ConfigureAwait(false) is { } failure
+                    ? HranaResult.Failed(failure)
+                    : HranaResult.Ok(new HranaResponse("sequence"));
+            case "describe":
+                return Command(new HranaStmt(request.Sql, request.SqlId)) switch
+                {
+                    HranaError error => HranaResult.Failed(error),
+                    SqlCommand command => await stream.Session.DescribeAsync(command, cancellationToken).ConfigureAwait(false) switch
+                    {
+                        SqlError error => HranaResult.Failed(HranaError.From(error)),
+                        SqlDescription description => HranaResult.Ok(new HranaResponse("describe", new HranaDescribeResult(
+                            [.. description.Params.Select(name => new HranaParam(name))],
+                            [.. description.Columns.Select(column => new HranaCol(column.Name, column.DeclType))],
+                            description.IsExplain, description.IsReadOnly))),
+                    },
+                };
             case "store_sql" when request is { SqlId: { } id, Sql: { } sql }:
                 return stream.Store(id, sql, memory) is { } refused ? HranaResult.Failed(refused) : HranaResult.Ok(new HranaResponse("store_sql"));
             case "close_sql" when request.SqlId is { } id:
@@ -46,8 +67,64 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory)
         }
     }
 
-    /// <summary>Statements one request runs.</summary>
-    public static int Statements(IReadOnlyList<HranaRequest> requests) => requests.Count;
+    /// <summary>Statements one request runs: each request counts once, each batch step and sequence once more.</summary>
+    public static int Statements(IReadOnlyList<HranaRequest> requests) =>
+        requests.Sum(request => 1 + (request?.Batch?.Steps?.Count ?? 0));
+
+    /// <summary>Runs a batch; null when its steps or conditions are malformed (nothing ran).</summary>
+    public async ValueTask<HranaBatchResult?> BatchAsync(HranaBatch batch, CancellationToken cancellationToken)
+    {
+        if (!IsValid(batch))
+        {
+            return null;
+        }
+
+        var results = new HranaStmtResult?[batch.Steps.Count];
+        var errors = new HranaError?[batch.Steps.Count];
+        for (var step = 0; step < batch.Steps.Count; step++)
+        {
+            if (batch.Steps[step].Condition is { } condition && !Holds(condition, results, errors))
+            {
+                continue;
+            }
+
+            switch (await ExecuteAsync(batch.Steps[step].Stmt, cancellationToken).ConfigureAwait(false))
+            {
+                case HranaStmtResult result:
+                    results[step] = result;
+                    break;
+                case HranaError error:
+                    errors[step] = error;
+                    break;
+            }
+        }
+
+        return new HranaBatchResult(results, errors);
+    }
+
+    /// <summary>Whether every step has a statement and every condition names only earlier steps.</summary>
+    public static bool IsValid(HranaBatch batch) =>
+        batch.Steps is not null && batch.Steps.Select((step, index) => step?.Stmt is not null && (step.Condition is null || IsValid(step.Condition, index))).All(valid => valid);
+
+    private static bool IsValid(HranaCondition condition, int step) => condition.Type switch
+    {
+        "ok" or "error" => condition.Step is { } target && target >= 0 && target < step,
+        "not" => condition.Cond is { } inner && IsValid(inner, step),
+        "and" or "or" => condition.Conds is { } all && all.All(inner => inner is not null && IsValid(inner, step)),
+        "is_autocommit" => true,
+        _ => false,
+    };
+
+    /// <summary>Evaluates a validated condition against the steps run so far.</summary>
+    public bool Holds(HranaCondition condition, IReadOnlyList<HranaStmtResult?> results, IReadOnlyList<HranaError?> errors) => condition.Type switch
+    {
+        "ok" => results[condition.Step!.Value] is not null,
+        "error" => errors[condition.Step!.Value] is not null,
+        "not" => !Holds(condition.Cond!, results, errors),
+        "and" => condition.Conds!.All(inner => Holds(inner, results, errors)),
+        "or" => condition.Conds!.Any(inner => Holds(inner, results, errors)),
+        _ => stream.Session.IsAutocommit,
+    };
 
     /// <summary>Runs one statement into a wire result, refusing results past the response bound.</summary>
     public async ValueTask<HranaStmtOutcome> ExecuteAsync(HranaStmt stmt, CancellationToken cancellationToken) => Command(stmt) switch
@@ -67,6 +144,27 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory)
         return _responseBytes > MaxResponseBytes
             ? new HranaError($"the response exceeds {MaxResponseBytes / 1024 / 1024} MiB", "SQLITE_TOOBIG")
             : HranaStmtResult.From(result, wantRows);
+    }
+
+    // The core splits the text and runs its statements in order, stopping at the first failure.
+    private async ValueTask<HranaError?> SequenceAsync(HranaRequest request, CancellationToken cancellationToken)
+    {
+        var text = request switch
+        {
+            { Sql: { } sql, SqlId: null } => sql,
+            { Sql: null, SqlId: { } id } => stream.Sql(id),
+            _ => null,
+        };
+        if (text is null)
+        {
+            return request.SqlId is null ? Protocol : UnknownSql;
+        }
+
+        return await stream.Session.ExecuteScriptAsync(text, cancellationToken).ConfigureAwait(false) switch
+        {
+            SqlError error => HranaError.From(error),
+            SqlResult => null,
+        };
     }
 
     private static readonly HranaError UnknownSql = new("sql_id does not name a stored statement", "SQL_NOT_FOUND");

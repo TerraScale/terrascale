@@ -9,9 +9,10 @@ namespace TerraBase.Features.Hrana;
 internal sealed record HranaPipelineRequest(string? Baton, IReadOnlyList<HranaRequest> Requests);
 
 /// <summary>
-/// One stream request, flat: <c>type</c> selects which members apply (<c>execute</c>: stmt; <c>store_sql</c>: sql_id and sql; <c>close_sql</c>: sql_id).
+/// One stream request, flat: <c>type</c> selects which members apply (<c>execute</c>: stmt; <c>batch</c>: batch;
+/// <c>sequence</c> and <c>describe</c>: sql or sql_id; <c>store_sql</c>: sql_id and sql; <c>close_sql</c>: sql_id).
 /// </summary>
-internal sealed record HranaRequest(string Type, HranaStmt? Stmt = null, string? Sql = null, int? SqlId = null);
+internal sealed record HranaRequest(string Type, HranaStmt? Stmt = null, HranaBatch? Batch = null, string? Sql = null, int? SqlId = null);
 
 /// <summary>A statement: its text or a stored sql_id, with positional and named arguments.</summary>
 internal sealed record HranaStmt(
@@ -22,6 +23,15 @@ internal sealed record HranaNamedArg(string Name, HranaValue Value);
 
 /// <summary>A wire value: <c>null</c>, <c>integer</c> (decimal string), <c>float</c> (number), <c>text</c> or <c>blob</c> (base64).</summary>
 internal sealed record HranaValue(string Type, JsonElement? Value = null, string? Base64 = null);
+
+/// <summary>Batch steps, each optionally guarded by a condition on earlier steps.</summary>
+internal sealed record HranaBatch(IReadOnlyList<HranaBatchStep> Steps);
+
+/// <summary>One batch step.</summary>
+internal sealed record HranaBatchStep(HranaStmt Stmt, HranaCondition? Condition = null);
+
+/// <summary>A step condition: <c>ok</c>/<c>error</c> (step), <c>not</c> (cond), <c>and</c>/<c>or</c> (conds), <c>is_autocommit</c>.</summary>
+internal sealed record HranaCondition(string Type, int? Step = null, HranaCondition? Cond = null, IReadOnlyList<HranaCondition>? Conds = null);
 
 /// <summary>The pipeline answer: the next baton (null once closed), no base URL, one result per request.</summary>
 internal sealed record HranaPipelineResponse(string? Baton, string? BaseUrl, IReadOnlyList<HranaResult> Results);
@@ -37,7 +47,7 @@ internal sealed record HranaResult(
     public static HranaResult Failed(HranaError error) => new("error", Error: error);
 }
 
-/// <summary>A response of the request's type; <c>result</c> holds the request type's result.</summary>
+/// <summary>A response of the request's type; <c>result</c> holds a <see cref="HranaStmtResult"/>, <see cref="HranaBatchResult"/> or <see cref="HranaDescribeResult"/>.</summary>
 internal sealed record HranaResponse(
     string Type,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] object? Result = null,
@@ -55,6 +65,15 @@ internal sealed record HranaStmtResult(IReadOnlyList<HranaCol> Cols, IReadOnlyLi
 
 /// <summary>A result column.</summary>
 internal sealed record HranaCol(string? Name, string? Decltype);
+
+/// <summary>One entry per step in both lists; a skipped step is null in both.</summary>
+internal sealed record HranaBatchResult(IReadOnlyList<HranaStmtResult?> StepResults, IReadOnlyList<HranaError?> StepErrors);
+
+/// <summary>A statement's parameters and columns.</summary>
+internal sealed record HranaDescribeResult(IReadOnlyList<HranaParam> Params, IReadOnlyList<HranaCol> Cols, bool IsExplain, bool IsReadonly);
+
+/// <summary>A parameter name with its prefix, or null for <c>?</c>.</summary>
+internal sealed record HranaParam(string? Name);
 
 /// <summary>A Hrana error; <c>code</c> is always set.</summary>
 internal sealed record HranaError(string Message, string Code)
@@ -118,5 +137,7 @@ internal sealed class HranaValueConverter : JsonConverter<SqlValue>
 [JsonSerializable(typeof(HranaPipelineRequest))]
 [JsonSerializable(typeof(HranaPipelineResponse))]
 [JsonSerializable(typeof(HranaStmtResult))]
+[JsonSerializable(typeof(HranaBatchResult))]
+[JsonSerializable(typeof(HranaDescribeResult))]
 [JsonSerializable(typeof(HranaErrorBody))]
 internal sealed partial class HranaJsonContext : JsonSerializerContext;
