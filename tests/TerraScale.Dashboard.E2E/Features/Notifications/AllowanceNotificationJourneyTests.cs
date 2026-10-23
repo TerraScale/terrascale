@@ -33,30 +33,38 @@ public sealed class AllowanceNotificationJourneyTests(DashboardRootFixture fixtu
     }
 
     [Test]
-    public async Task BothAllowancesCrossBothThresholdsOnceAndResetNextUtcMonth()
+    public async Task OperationThresholdsIgnoreStorageAndResetNextUtcMonth()
     {
         await using var scenario = new AllowanceNotificationScenario(fixture.Root);
         await scenario.StartAsync();
+        await CycleAsync(scenario, new() { ["operations"] = "79", ["storage"] = "100" });
+        await Assert.That((await SnapshotAsync(scenario)).GetProperty("sent").GetInt32()).IsEqualTo(0);
+        await AssertInboxAsync(scenario, 0, "No notifications in this scope.");
+        await CycleAsync(scenario, new() { ["operations"] = "80", ["storage"] = "100" });
+        await Assert.That((await SnapshotAsync(scenario)).GetProperty("sent").GetInt32()).IsEqualTo(1);
+        await AssertInboxAsync(scenario, 1, "Operations allowance: 80% reached");
         await CycleAsync(scenario, new() { ["operations"] = "100", ["storage"] = "100" });
         await CycleAsync(scenario, new() { ["operations"] = "100", ["storage"] = "100" });
         var initial = await SnapshotAsync(scenario);
-        await Assert.That(initial.GetProperty("sent").GetInt32()).IsEqualTo(4);
+        await Assert.That(initial.GetProperty("sent").GetInt32()).IsEqualTo(2);
         var oldIds = initial.GetProperty("alerts").EnumerateArray().Select(alert => alert.GetProperty("id").GetString()).ToArray();
         var oldMonth = initial.GetProperty("alerts")[0].GetProperty("billingMonth").GetString();
-        await AssertInboxAsync(scenario, 4, "Storage allowance: 100% reached");
-        foreach (var metric in new[] { "Operations", "Storage" })
-            foreach (var threshold in new[] { 80, 100 })
-                await Assert.That(await scenario.Client.GetStringAsync("/notifications")).Contains($"{metric} allowance: {threshold}% reached");
+        await AssertInboxAsync(scenario, 2, "Operations allowance: 100% reached");
+        var inbox = await scenario.Client.GetStringAsync("/notifications");
+        foreach (var threshold in new[] { 80, 100 })
+            await Assert.That(inbox).Contains($"Operations allowance: {threshold}% reached");
+        await Assert.That(inbox.Contains("Storage allowance:", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(initial.GetProperty("alerts").EnumerateArray().All(alert => alert.GetProperty("metric").GetString() == "operations")).IsTrue();
         await CycleAsync(scenario, new() { ["operations"] = "100", ["storage"] = "100", ["nextMonth"] = "true" });
         var next = await SnapshotAsync(scenario);
-        await Assert.That(next.GetProperty("attempts").GetInt32()).IsEqualTo(8);
-        await Assert.That(next.GetProperty("sent").GetInt32()).IsEqualTo(8);
+        await Assert.That(next.GetProperty("attempts").GetInt32()).IsEqualTo(4);
+        await Assert.That(next.GetProperty("sent").GetInt32()).IsEqualTo(4);
         var alerts = next.GetProperty("alerts").EnumerateArray().ToArray();
-        await Assert.That(alerts.Length).IsEqualTo(4);
+        await Assert.That(alerts.Length).IsEqualTo(2);
         await Assert.That(alerts.All(alert => alert.GetProperty("billingMonth").GetString() != oldMonth &&
             !oldIds.Contains(alert.GetProperty("id").GetString()))).IsTrue();
-        await Assert.That(alerts.Select(alert => (alert.GetProperty("metric").GetString(), alert.GetProperty("threshold").GetInt32())).Distinct().Count()).IsEqualTo(4);
-        await AssertInboxAsync(scenario, 8, "Storage allowance: 100% reached");
+        await Assert.That(alerts.Select(alert => (alert.GetProperty("metric").GetString(), alert.GetProperty("threshold").GetInt32())).Distinct().Count()).IsEqualTo(2);
+        await AssertInboxAsync(scenario, 4, "Operations allowance: 100% reached");
         await HttpJourney.CsrfAsync(scenario.Client);
     }
 

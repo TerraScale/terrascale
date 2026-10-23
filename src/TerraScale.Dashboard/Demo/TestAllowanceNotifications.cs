@@ -10,7 +10,8 @@ sealed class TestAllowanceNotifications(TimeProvider clock) : IAllowanceNotifica
     private readonly SemaphoreSlim reads = new(0);
     private AllowanceUsageObservation? observation;
     private string operationsContract = AllowanceNotifications.OperationsContract;
-    private string storageContract = AllowanceNotifications.StorageContract;
+    // A claimed storage contract must never enable storage notices before authoritative metering exists.
+    private string storageContract = "storage-bytes-regions-global-v1";
     private string outcome = "accepted";
     private bool deliveryConfigured;
     public ConcurrentQueue<AllowanceAlert> Attempts { get; } = new();
@@ -24,7 +25,7 @@ sealed class TestAllowanceNotifications(TimeProvider clock) : IAllowanceNotifica
             deliveryConfigured = value is not null;
             outcome = delivery;
             operationsContract = operationContract ?? (supported ? AllowanceNotifications.OperationsContract : "document-operations-node-v1");
-            storageContract = supported ? AllowanceNotifications.StorageContract : "logical-bytes-node-v1";
+            storageContract = supported ? "storage-bytes-regions-global-v1" : "logical-bytes-node-v1";
         }
     }
 

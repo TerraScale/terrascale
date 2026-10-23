@@ -38,7 +38,6 @@ public sealed class AllowanceNotifications(IDashboardState state, IAllowanceNoti
 {
     public const string Collection = "dashboard_allowance_alerts";
     public const string OperationsContract = "operation-units-4kib-global-v1";
-    public const string StorageContract = "storage-bytes-regions-global-v1";
 
     public async Task RunOnceAsync(CancellationToken cancellationToken)
     {
@@ -48,9 +47,8 @@ public sealed class AllowanceNotifications(IDashboardState state, IAllowanceNoti
             var page = await backend.ReadAsync(after, cancellationToken);
             var now = clock.GetUtcNow();
             var operationsSupported = page.OperationsContract == OperationsContract;
-            var storageSupported = page.StorageContract == StorageContract;
-            if (page.Items.Count > 0 && !operationsSupported && !storageSupported)
-                throw new IOException("Allowance metering does not report global 4 KiB operation units or storage bytes across selected regions.");
+            if (page.Items.Count > 0 && !operationsSupported)
+                throw new IOException("Allowance metering does not report authoritative global 4 KiB operation units.");
             var month = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
             if (page.PeriodStart != month || page.ObservedAt < month || page.ObservedAt > now || now - page.ObservedAt > TimeSpan.FromMinutes(5) ||
                 page.Items.Count > 25 || page.Items.Any(item => !TerraScaleIds.IsValid(item.OrganizationId) || item.Operations < 0 || item.LogicalBytes < 0) ||
@@ -60,7 +58,7 @@ public sealed class AllowanceNotifications(IDashboardState state, IAllowanceNoti
                 throw new IOException("Allowance producer returned an invalid billing period or page.");
             foreach (var item in page.Items)
             {
-                try { await ObserveAsync(item with { Operations = operationsSupported ? item.Operations : null, LogicalBytes = storageSupported ? item.LogicalBytes : null }, month, cancellationToken); }
+                try { await ObserveAsync(item, month, cancellationToken); }
                 catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 {
                     logger.LogWarning("An allowance notification could not be processed ({ErrorType}); other organizations continue.", error.GetType().Name);
@@ -85,13 +83,12 @@ public sealed class AllowanceNotifications(IDashboardState state, IAllowanceNoti
             var document = await state.GetAsync(Collection, item.OrganizationId, cancellationToken);
             var current = document is null ? new AllowanceNotificationState(item.OrganizationId, []) : Read(document, item.OrganizationId);
             current.Alerts.RemoveAll(alert => string.CompareOrdinal(alert.BillingMonth, billingMonth) < 0);
-            foreach (var (metric, used, allowance) in new[] { ("operations", item.Operations, limits.MonthlyOperations), ("storage", item.LogicalBytes, limits.StorageBytes) })
+            if (item.Operations is { } used && limits.MonthlyOperations is > 0 and < long.MaxValue)
             {
-                if (used is null || allowance <= 0 || allowance == long.MaxValue) continue;
                 foreach (var threshold in new[] { 80, 100 })
                 {
-                    if ((decimal)used.Value * 100 < (decimal)allowance * threshold || current.Alerts.Any(alert => alert.BillingMonth == billingMonth && alert.Metric == metric && alert.Threshold == threshold)) continue;
-                    current.Alerts.Add(new(AccountService.NewId(), item.OrganizationId, billingMonth, metric, threshold, used.Value, allowance, clock.GetUtcNow()));
+                    if ((decimal)used * 100 < (decimal)limits.MonthlyOperations * threshold || current.Alerts.Any(alert => alert.BillingMonth == billingMonth && alert.Metric == "operations" && alert.Threshold == threshold)) continue;
+                    current.Alerts.Add(new(AccountService.NewId(), item.OrganizationId, billingMonth, "operations", threshold, used, limits.MonthlyOperations, clock.GetUtcNow()));
                 }
             }
             try
@@ -105,7 +102,7 @@ public sealed class AllowanceNotifications(IDashboardState state, IAllowanceNoti
         }
         if (saved is null) throw new IOException("Allowance alert reservation failed.");
         foreach (var alert in saved.Alerts.Where(alert => alert.BillingMonth == billingMonth && alert.EmailStatus == "pending" &&
-            (alert.Metric == "operations" ? item.Operations is not null : item.LogicalBytes is not null)))
+            alert.Metric == "operations" && item.Operations is not null))
         {
             // ts-auth owns the send claim, so a crash after its response can safely repeat this call.
             var outcome = await backend.SendAsync(alert, cancellationToken);
