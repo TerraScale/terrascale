@@ -186,6 +186,12 @@ internal sealed class GetShapeEndpoint(
             HttpContext.Response.RegisterForDispose(lease);
         }
 
+        if (body.Shared)
+        {
+            // Shared answers are free reads: only origin work spends the organization's request budget.
+            HttpContext.Features.Get<QosRequestLease>()?.Lease.Refund();
+        }
+
         var digest = Convert.ToHexStringLower(SHA256.HashData(body.Json.Span).AsSpan(0, 8));
         var tag = $"{lineage.ShapeId}:{lineage.Handle}:{request.OffsetText}:{body.NextOffset}:{digest}";
         if (CheckNotModified(tag) is not bool notModified)

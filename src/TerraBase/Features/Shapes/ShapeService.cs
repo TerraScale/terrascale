@@ -507,7 +507,7 @@ internal sealed class ShapeService(
                 return Busy;
             }
 
-            return new ShapeBody(body.Json.ToArray(), body.NextOffset, body.UpToDate);
+            return new ShapeBody(body.Json.ToArray(), body.NextOffset, body.UpToDate, Shared: body.Shared);
         }
     }
 
@@ -520,7 +520,7 @@ internal sealed class ShapeService(
             return flight.Value;
         }
 
-        return new ShapeBody(body.Json, body.NextOffset, body.UpToDate, flight);
+        return new ShapeBody(body.Json, body.NextOffset, body.UpToDate, flight, body.Shared || flight.Joined);
     }
 
     // A non-live flight never probes or waits.
@@ -657,7 +657,7 @@ internal sealed class ClosedChunks(IMemoryBudget memory)
     {
         lock (_gate)
         {
-            return _entries.TryGetValue((handle, offset), out var entry) ? new ShapeBody(entry.Json, entry.NextOffset, false) : null;
+            return _entries.TryGetValue((handle, offset), out var entry) ? new ShapeBody(entry.Json, entry.NextOffset, false, Shared: true) : null;
         }
     }
 

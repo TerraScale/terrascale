@@ -8,11 +8,11 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
 {
     private const int MaxTenants = 4096;
     private readonly Lock _gate = new();
-    private readonly Dictionary<string, Lane> _lanes = [];
+    private readonly Dictionary<(string Organization, bool Read), Lane> _lanes = [];
     private readonly Counter<long> _rejected = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.qos.rejected");
     private readonly Histogram<double> _duration = meters.Create(Telemetry.MeterName).CreateHistogram<double>("terrabase.qos.request.duration", "s");
 
-    public IDisposable? TryEnter(TenantContext tenant, out int retryAfter)
+    public IQosLease? TryEnter(TenantContext tenant, out int retryAfter, bool read = false)
     {
         ArgumentNullException.ThrowIfNull(tenant);
         var policy = QosPolicy.For(tenant.Plan);
@@ -20,7 +20,7 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
         lock (_gate)
         {
             var now = time.GetTimestamp();
-            if (!_lanes.TryGetValue(tenant.OrganizationId, out var lane))
+            if (!_lanes.TryGetValue((tenant.OrganizationId, read), out var lane))
             {
                 if (_lanes.Count == MaxTenants)
                 {
@@ -44,7 +44,7 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
                 }
 
                 lane = new Lane { Tokens = policy.Burst, LastSeen = now, Plan = tenant.Plan };
-                _lanes.Add(tenant.OrganizationId, lane);
+                _lanes.Add((tenant.OrganizationId, read), lane);
             }
 
             lane.Tokens = Math.Min(policy.Burst, lane.Tokens + Math.Max(0, time.GetElapsedTime(lane.LastSeen, now).TotalSeconds) * policy.RequestsPerSecond);
@@ -76,7 +76,7 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
             }
 
             lane.Active++;
-            return new Lease(this, lane, tenant, now);
+            return new Lease(this, lane, tenant, now, policy.RequestsPerSecond > 0);
         }
     }
 
@@ -106,9 +106,23 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
         public PlanTier Plan { get; set; }
     }
 
-    private sealed class Lease(QosAdmission admission, Lane lane, TenantContext tenant, long started) : IDisposable
+    private sealed class Lease(QosAdmission admission, Lane lane, TenantContext tenant, long started, bool spent) : IQosLease
     {
         private int _disposed;
+        private int _refunded;
+
+        public void Refund()
+        {
+            if (!spent || Interlocked.Exchange(ref _refunded, 1) != 0)
+            {
+                return;
+            }
+
+            lock (admission._gate)
+            {
+                lane.Tokens = Math.Min(QosPolicy.For(lane.Plan).Burst, lane.Tokens + 1);
+            }
+        }
 
         public void Dispose()
         {

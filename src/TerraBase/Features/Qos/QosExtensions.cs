@@ -80,7 +80,9 @@ public static class QosExtensions
 
         var retryAfter = 1;
         using var lease = tenant is not null
-            ? context.RequestServices.GetRequiredService<IQosAdmission>().TryEnter(tenant, out retryAfter) : null;
+            ? context.RequestServices.GetRequiredService<IQosAdmission>().TryEnter(
+                tenant, out retryAfter, read: HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method))
+            : null;
         if (tenant is not null && lease is null)
         {
             context.Response.Headers.RetryAfter = retryAfter.ToString(CultureInfo.InvariantCulture);

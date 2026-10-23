@@ -9,8 +9,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Shapes;
 using TerraBase.Fast.Documents;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Shapes;
@@ -472,6 +474,151 @@ public sealed class ShapeEndToEndTests
     }
 
     [Test]
+    public async Task Closed_chunk_cache_hits_give_back_their_request_token_and_origin_page_reads_keep_it()
+    {
+        // The request bucket never refills: every Hobby token spent stays spent unless a shared answer gives it back.
+        await using var api = await DocumentApi.StartAsync(services: collection => collection.AddSingleton<TimeProvider>(new StoppedClock()));
+        await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
+        var client = new ShapeClient(api, query: null);
+        var bootstrap = await client.Get($"{api.Collections}/{DocumentApi.Collection}/shape?offset=-1");
+        await client.SyncAsync();
+        var closedAt = client.NextOffset!;
+        await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
+        await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
+        await Assert.That((await client.Get(client.Uri(closedAt, live: false))).Status).IsEqualTo(HttpStatusCode.OK);
+
+        var burst = QosPolicy.For(PlanTier.Hobby).Burst;
+        for (var reader = 0; reader < burst + 50; reader++)
+        {
+            var answer = await client.Get(client.Uri(closedAt, live: false));
+            await Assert.That(answer.Status).IsEqualTo(HttpStatusCode.OK).Because($"cached read {reader} cost no storage read and no token");
+        }
+
+        // Snapshot pages are not cached: each sequential read is a flight of its own, so each spends a token.
+        var paid = 0;
+        Reply page;
+        while ((page = await client.Get(bootstrap.Location!.OriginalString)).Status == HttpStatusCode.OK)
+        {
+            paid++;
+            await Assert.That(paid).IsLessThanOrEqualTo(burst);
+        }
+
+        await Assert.That(page.Status).IsEqualTo(HttpStatusCode.TooManyRequests);
+        await Assert.That(page.Code).IsEqualTo("tenant_busy");
+        await Assert.That(paid).IsGreaterThan(0);
+    }
+
+    [Test]
+    public async Task Parked_readers_that_join_a_flight_give_back_their_request_token()
+    {
+        await using var api = await DocumentApi.StartAsync(services: collection => collection.AddSingleton<TimeProvider>(new StoppedClock()));
+        await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
+        var client = new ShapeClient(api, query: null);
+        var offset = (await client.SyncAsync()).NextOffset!;
+        var token = TestContext.Current!.Execution.CancellationToken;
+
+        // Three waves of 64 polls spend 192 tokens of a Hobby burst of 100 that never refills, unless only the flight's
+        // starter pays: then each wave costs one.
+        for (var wave = 0; wave < 3; wave++)
+        {
+            offset = (await WaveAsync(api, client, offset, readers: 64, token)).NextOffset;
+        }
+    }
+
+    [Test]
+    public async Task A_hobby_writer_is_not_refused_while_a_thousand_readers_are_parked()
+    {
+        const int Readers = 1000;
+        var clock = new StoppedClock();
+        // Each held poll reserves request memory under Hobby's 1/16 share; 1 GiB keeps the share above a thousand of them.
+        await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "1073741824",
+            collection => collection.AddSingleton<TimeProvider>(clock));
+        await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
+        var client = new ShapeClient(api, query: null);
+        var offset = (await client.SyncAsync()).NextOffset!;
+
+        // A reader refused by the plan waits for the next refill, or with `eager` retries at once, contending with the writer.
+        var refill = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refused = 0;
+        var stopped = false;
+        async Task<Reply> ReadAsync(string at, int index, bool eager)
+        {
+            while (true)
+            {
+                var signal = Volatile.Read(ref refill);
+                var answer = await client.Get($"{at}&cursor={index}");
+                if (answer.Code != "tenant_busy" || Volatile.Read(ref stopped))
+                {
+                    return answer;
+                }
+
+                Interlocked.Increment(ref refused);
+                await (eager ? Task.CompletedTask : signal.Task);
+                Interlocked.Decrement(ref refused);
+            }
+        }
+
+        Task<Reply>[] Poll(string at, bool eager)
+        {
+            return [.. Enumerable.Range(0, Readers).Select(index => ReadAsync(client.Uri(at, live: true).OriginalString, index, eager))];
+        }
+
+        void Refill()
+        {
+            Interlocked.Exchange(ref refill, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).SetResult();
+        }
+
+        async Task<double> SettleAsync(Task<Reply>[] readers)
+        {
+            var parked = 0d;
+            await TerraBaseTestServer.EventuallyAsync(async ct =>
+            {
+                parked = Sample(await Scrape(api.Server, ct), "terrabase_shape_requests_waiting");
+                return parked + Volatile.Read(ref refused) >= Readers || readers.Any(reader => reader.IsCompleted);
+            });
+            await Assert.That(readers.Any(reader => reader.IsCompleted)).IsFalse().Because("every reader parks until a write");
+            return parked;
+        }
+
+        // A thousand readers park; two seconds of the stopped clock refill the whole Hobby burst between rounds.
+        var first = Poll(offset, eager: false);
+        while (await SettleAsync(first) < Readers)
+        {
+            clock.Advance(TimeSpan.FromSeconds(2));
+            Refill();
+        }
+
+        var woken = DocumentApi.NewId();
+        await Assert.That((await PutAsync(api, woken, new { status = "open" })).Status).IsEqualTo(HttpStatusCode.Created);
+        foreach (var answer in await Task.WhenAll(first))
+        {
+            await Assert.That(answer.Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(Ops(answer).Select(op => op.GetProperty("id").GetString())).Contains(woken);
+            offset = answer.NextOffset!;
+        }
+
+        // Every reader polls again at once, as after each wake, and keeps retrying: the bucket never refills, so the readers
+        // spend every read token they can get while the writer writes.
+        var again = Poll(offset, eager: true);
+        try
+        {
+            await TerraBaseTestServer.EventuallyAsync(async ct => Sample(await Scrape(api.Server, ct), "terrabase_shape_requests_waiting") >= 1);
+            for (var write = 0; write < 20; write++)
+            {
+                await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { status = "open" })).Status).IsEqualTo(HttpStatusCode.Created)
+                    .Because("writes have their own lane");
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref stopped, true);
+        }
+
+        var answers = await Task.WhenAll(again);
+        await Assert.That(answers.Count(answer => answer.Status == HttpStatusCode.OK)).IsGreaterThan(0);
+    }
+
+    [Test]
     public async Task A_reader_fan_out_after_a_catalog_commit_reads_the_catalog_once_instead_of_once_per_reader()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -650,6 +797,18 @@ public sealed class ShapeEndToEndTests
         server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), token);
 
     private static byte[] Base64UrlDecode(string token) => System.Buffers.Text.Base64Url.DecodeFromChars(token);
+
+    /// <summary>Timestamps move only when the test advances them, so a QoS bucket refills only then; wall time and timers are real.</summary>
+    private sealed class StoppedClock : TimeProvider
+    {
+        private long _timestamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp() => Interlocked.Read(ref _timestamp);
+
+        public void Advance(TimeSpan elapsed) => Interlocked.Add(ref _timestamp, elapsed.Ticks);
+    }
 
     private sealed record PutResult(HttpStatusCode Status, string Version);
 

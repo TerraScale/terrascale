@@ -144,13 +144,15 @@ public sealed class AdmissionRetryTests
         await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo(body);
     }
 
-    // Every concurrency slot of the tenant's hobby organization, so its next request answers 429 tenant_busy.
+    private static readonly bool[] Lanes = [false, true];
+
+    // Every concurrency slot of the tenant's hobby organization in both lanes, so its next read or write answers 429 tenant_busy.
     private static List<IDisposable> Hold(ManagementApi api, Tenant tenant)
     {
         var admission = api.Server.Services.GetRequiredService<IQosAdmission>();
         var organization = new TenantContext(tenant.OrganizationId, PlanTier.Hobby);
-        return [.. Enumerable.Range(0, QosPolicy.For(PlanTier.Hobby).Concurrency)
-            .Select(_ => admission.TryEnter(organization, out _) ?? throw new InvalidOperationException("fixture admission failed"))];
+        return [.. Enumerable.Range(0, QosPolicy.For(PlanTier.Hobby).Concurrency).SelectMany(_ => Lanes)
+            .Select(read => admission.TryEnter(organization, out _, read) ?? throw new InvalidOperationException("fixture admission failed"))];
     }
 
     private static void Release(List<IDisposable> held)

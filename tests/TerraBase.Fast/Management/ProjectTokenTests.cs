@@ -82,6 +82,7 @@ public sealed class ProjectTokenTests
         await Assert.That(preserved.GetProperty("document").GetProperty("name").GetString()).IsEqualTo("Preserved");
     }
 
+    // An enrolled project's organization has no owner to set its plan; the internal listener's operator sizes it, and
     [Test]
     public async Task Project_token_requests_reuse_the_project_lookup_while_the_catalog_is_unchanged()
     {
@@ -112,7 +113,6 @@ public sealed class ProjectTokenTests
             .Where(line => line.StartsWith("terrabase_storage_reads_total{", StringComparison.Ordinal) && line.Contains("path=\"point\"", StringComparison.Ordinal))
             .Sum(line => double.Parse(line.Split(' ')[^1], System.Globalization.CultureInfo.InvariantCulture));
 
-    // An enrolled project's organization has no owner to set its plan; the internal listener's operator sizes it, and
     // admission applies the new plan at once. Projects bound to an owned organization keep the owner route.
     [Test]
     public async Task The_operator_sets_an_enrolled_projects_plan_and_admission_applies_it()
@@ -133,7 +133,7 @@ public sealed class ProjectTokenTests
         var admission = api.Server.Services.GetRequiredService<IQosAdmission>();
         var hobby = new TenantContext(organization, PlanTier.Hobby);
         List<IDisposable> held = [.. Enumerable.Range(0, QosPolicy.For(PlanTier.Hobby).Concurrency)
-            .Select(_ => admission.TryEnter(hobby, out _) ?? throw new InvalidOperationException("fixture admission failed"))];
+            .Select(_ => admission.TryEnter(hobby, out _, read: true) ?? throw new InvalidOperationException("fixture admission failed"))];
         try
         {
             var collections = Uri($"/v1/projects/{project}/databases/main/collections");

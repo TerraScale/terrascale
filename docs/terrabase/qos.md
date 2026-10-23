@@ -18,6 +18,11 @@ plan ceiling, but retain process-wide safety limits.
 | Candidate document rows/JSON bytes | 10,000 / 16 MiB | 100,000 / 128 MiB | No plan ceiling |
 | Live document JSON storage | 1 GiB | 100 GiB | No plan ceiling |
 
+Reads (`GET` and `HEAD`) and every other request (writes, queries, commits) each get their own lane with the
+full rate, burst and concurrency above, so readers can never starve the organization's writes. A shape answer that
+cost no storage read (it joined another request's flight, or came from the closed-chunk cache) gives its request
+token back; origin work keeps its token, and every request keeps its concurrency slot.
+
 These are enforcement defaults, not billing prices or a subscription authority. Rate/concurrency and
 memory refusals return HTTP 429 with `Retry-After`. Saturation of the global storage admission remains
 HTTP 503. Query refusals retain the existing query error contract. Enterprise still observes document,
