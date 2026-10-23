@@ -937,7 +937,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
             incarnation = pinned;
             // Capture the original batch kind before clearing it: stored positions and uncertified refills never confirm.
-            live = !cursor.Refilling && link.Peer.Region != _options.Region && link.Placements.GetValueOrDefault(database).Placed;
+            var refilling = cursor.Refilling;
+            live = !refilling && link.Peer.Region != _options.Region && link.Placements.GetValueOrDefault(database).Placed;
             from = cursor.Live is { } run && run.Incarnation == incarnation ? run.From : cursor.Acked ?? inFlight;
             (cursor.InFlight, cursor.InFlightGroups, cursor.Refilling) = (null, 0, false);
             if (cursor.Retired)
@@ -950,7 +951,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             {
                 // Catalog lag only retries; missing coverage requests a pinned refill even without a stored peer scope.
                 cursor.RequiresRefill |= ack.RefillRequired;
-                cursor.RetryAt = _time.GetTimestamp() + (long)(Retry.TotalSeconds * _time.TimestampFrequency);
+                cursor.RetryAt = ack.RefillRequired && !refilling ? 0 : _time.GetTimestamp() + (long)(Retry.TotalSeconds * _time.TimestampFrequency);
                 link.Work.Enqueue(database);
                 return;
             }
