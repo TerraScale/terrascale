@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Globalization;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
@@ -96,65 +95,113 @@ public sealed class BackupBacklogRecoveryTests
         var engine = (WatchedBackup)host.Api.Server.Services.GetRequiredService<IWalBackup>();
         engine.Watch(host.Database.Id);
         await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
-        // Finish initial retention before the backlog, so shutdown's budget measures draining it.
+        // Finish initial retention before the backlog.
         await host.ShipAsync(TimeSpan.Zero, cancellationToken);
         var generation = host.Status().Generation!;
-        await WriteBacklogAsync(host, cancellationToken);
+        host.Time.Advance(TimeSpan.FromSeconds(1));
+        var texts = await WriteBacklogAsync(host, cancellationToken);
+        // Read the real encrypted log outside shutdown's deadline; Stop still seals and uploads every original chunk.
+        var reads = await engine.StageAsync(cancellationToken);
+        await Assert.That(reads.Length).IsEqualTo(2);
+        await Assert.That(reads[0].Bytes).IsGreaterThanOrEqualTo(ReadBudget);
+        await Assert.That(reads[0].Remaining).IsTrue();
+        await Assert.That(reads[1].Remaining).IsFalse();
+        await Assert.That(reads.All(read => read.Continuous && read.Bytes > 0)).IsTrue();
+        await Assert.That(host.Segments(generation)).IsEmpty();
 
-        var trace = new ShutdownTrace();
-        var status = host.Status();
-        var tenantPrefix = host.File + "/";
-        trace.Record("pre_stop", cancellationToken, string.Create(CultureInfo.InvariantCulture,
-            $"generation_present={status.Generation is not null} shipping={status.Shipping} log_bytes={status.LogBytes} pending_bytes={status.PendingBytes} lag_seconds={status.LagSeconds:F3} error_present={status.LastError is not null} previous_read_bytes={engine.LastRead.Bytes} previous_read_remaining={engine.LastRead.Remaining}"));
-        engine.Trace = trace;
-        host.S3.BeforePut = (key, token) => Request("put.enter", key, token);
-        host.S3.BeforePart = (key, part, token) => Request("part.enter", key, token, part);
-        host.S3.BeforeList = (prefix, token) => Request("list.enter", prefix, token);
-        try
+        await ((IHostedService)host.Api.Server.Services.GetRequiredService<IContinuousBackup>()).StopAsync(cancellationToken);
+
+        var segments = host.Segments(generation);
+        await Assert.That(engine.DeliveredReads).IsEqualTo(reads.Length);
+        await Assert.That(engine.LastRead.Remaining).IsFalse();
+        await Assert.That(segments.Count).IsEqualTo(reads.Length);
+        await BackupShippingHost.AssertContiguousAsync(segments);
+        await Assert.That(segments[1].Start).IsEqualTo(reads[0].Bytes);
+        await AssertRestoredAsync(host, segments[^1].At, "after-shutdown", texts, cancellationToken);
+    }
+
+    [Test]
+    public async Task Shutdown_deadline_keeps_the_acknowledged_segment_restorable_and_cancels_the_next_upload(CancellationToken cancellationToken)
+    {
+        await using var host = await BackupShippingHost.StartAsync();
+        await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        await host.ShipAsync(TimeSpan.Zero, cancellationToken);
+        var generation = host.Status().Generation!;
+        var prefix = $"{host.File}/wal/{generation}/";
+        var text = new Faker().Lorem.Sentence();
+        await host.PutAsync("people", "acknowledged", text, cancellationToken);
+        // Retain a genuine marked segment for Stop to retry before reading the next write.
+        host.S3.FailPut = key => key.StartsWith(prefix, StringComparison.Ordinal);
+        await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+        await Assert.That(host.Status().LastError).IsNotNull();
+        await Assert.That(host.Segments(generation)).IsEmpty();
+        host.S3.FailPut = _ => false;
+        await host.PutAsync("people", "unacknowledged", new Faker().Lorem.Sentence(), cancellationToken);
+        host.Time.Advance(TimeSpan.FromSeconds(2));
+        var now = host.Time.GetUtcNow();
+        var backup = host.Api.Server.Services.GetRequiredService<IContinuousBackup>();
+        var blocked = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        string? acknowledged = null;
+        byte[]? stored = null;
+        Task? stop = null;
+        host.S3.BeforePut = async (key, token) =>
         {
-            var started = Stopwatch.GetTimestamp();
-            trace.Record("stop.enter", cancellationToken);
+            if (!key.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (acknowledged is null)
+            {
+                acknowledged = key;
+                return;
+            }
+
+            stored = host.S3.Objects[acknowledged].ToArray();
+            blocked.TrySetResult(key);
             try
             {
-                await ((IHostedService)host.Api.Server.Services.GetRequiredService<IContinuousBackup>()).StopAsync(cancellationToken);
+                await release.Task.WaitAsync(token);
             }
-            catch (Exception error)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
-                trace.Record("stop.exception", cancellationToken, $"exception_type={error.GetType().Name}");
+                cancelled.TrySetResult();
                 throw;
             }
-            finally
-            {
-                trace.Record("stop.exit", cancellationToken, string.Create(CultureInfo.InvariantCulture,
-                    $"duration_ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F3}"));
-            }
-
-            // The last read before shutdown found nothing left, and every read went into a stored segment.
-            var segments = host.Segments(generation);
-            trace.Record("post_stop", cancellationToken, string.Create(CultureInfo.InvariantCulture,
-                $"segments={segments.Count} last_read_bytes={engine.LastRead.Bytes} last_read_continuous={engine.LastRead.Continuous} last_read_remaining={engine.LastRead.Remaining}"));
-            var diagnostics = trace.Report();
-            await Assert.That(engine.LastRead.Remaining).IsFalse().Because(diagnostics);
-            await Assert.That(segments.Count).IsGreaterThanOrEqualTo(2).Because(diagnostics);
-            await BackupShippingHost.AssertContiguousAsync(segments);
+        };
+        try
+        {
+            stop = ((IHostedService)backup).StopAsync(shutdown.Token);
+            // This watchdog is not the shipping budget: only production's real four-second timer can release the upload.
+            await stop.WaitAsync(TimeSpan.FromSeconds(8), cancellationToken);
+            await Assert.That(blocked.Task.IsCompletedSuccessfully).IsTrue();
+            await Assert.That(cancelled.Task.IsCompletedSuccessfully).IsTrue();
+            await Assert.That(release.Task.IsCompleted).IsFalse();
+            await Assert.That(shutdown.IsCancellationRequested).IsFalse();
+            await Assert.That(host.Time.GetUtcNow()).IsEqualTo(now);
+            await Assert.That(backup.Status.Files).IsEmpty();
+            await Assert.That(Directory.EnumerateFiles(Path.Combine(host.Api.Server.DataDirectory, ".backup"))).IsEmpty();
+            await Assert.That(host.S3.Objects.ContainsKey(await blocked.Task)).IsFalse();
+            var segment = host.Segments(generation).Single();
+            await Assert.That(segment.Key).IsEqualTo(acknowledged);
+            await Assert.That(host.S3.Objects[segment.Key].AsSpan().SequenceEqual(stored)).IsTrue();
+            await host.RestoreAsync(segment.At, "deadline-acknowledged", cancellationToken);
+            await Assert.That(await host.ReadAsync("deadline-acknowledged", "people", "acknowledged", cancellationToken)).IsEqualTo(text);
+            await Assert.That(await host.ReadAsync("deadline-acknowledged", "people", "unacknowledged", cancellationToken)).IsNull();
         }
         finally
         {
-            engine.Trace = null;
-            host.S3.BeforePut = null;
-            host.S3.BeforePart = null;
-            host.S3.BeforeList = null;
-            TUnit.Core.TestContext.Current!.OutputWriter.WriteLine(trace.Report());
-        }
+            await shutdown.CancelAsync();
+            release.TrySetResult();
+            if (stop is not null)
+            {
+                await stop.WaitAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
 
-        Task Request(string operation, string key, CancellationToken token, int? part = null)
-        {
-            var scope = key.StartsWith(tenantPrefix, StringComparison.Ordinal) ? "tenant"
-                : key.StartsWith("v1/_system/", StringComparison.Ordinal) ? "system" : "other";
-            var kind = key.Contains("/wal/", StringComparison.Ordinal) ? "segment"
-                : key.Contains("/snapshots/", StringComparison.Ordinal) ? "snapshot" : "other";
-            trace.Record("s3." + operation, token, string.Create(CultureInfo.InvariantCulture, $"scope={scope} kind={kind} part={part}"));
-            return Task.CompletedTask;
+            host.S3.BeforePut = null;
         }
     }
 
@@ -279,40 +326,19 @@ public sealed class BackupBacklogRecoveryTests
         }
     }
 
-    private sealed class ShutdownTrace
-    {
-        private const int Limit = 96;
-        private readonly long _started = Stopwatch.GetTimestamp();
-        private readonly ConcurrentQueue<(int Sequence, string Text)> _events = new();
-        private int _observed;
-
-        public void Record(string phase, CancellationToken token, string details = "")
-        {
-            var sequence = Interlocked.Increment(ref _observed);
-            if (sequence <= Limit)
-            {
-                _events.Enqueue((sequence, string.Create(CultureInfo.InvariantCulture,
-                    $"{sequence:D2} utc={DateTimeOffset.UtcNow:O} elapsed_ms={Stopwatch.GetElapsedTime(_started).TotalMilliseconds:F3} phase={phase} cancelled={token.IsCancellationRequested} {details}")));
-            }
-        }
-
-        public string Report() => "Shutdown backlog diagnostics (before_trim.return ends the hook, not cleanup; S3 markers are request entry only)\n"
-            + string.Join('\n', _events.OrderBy(item => item.Sequence).Select(item => item.Text))
-            + string.Create(CultureInfo.InvariantCulture, $"\ndropped_events={Math.Max(0, Volatile.Read(ref _observed) - Limit)}");
-    }
-
     // Watches one database's tap: its reads and snapshot reads, and fails its change-log cleanup once when asked.
     private sealed class WatchedBackup(IWalBackup engine) : IWalBackup
     {
         private string? _watched;
         private int _failTrim;
         private int _trimFailures;
+        private WatchedTap? _tap;
 
         public ConcurrentQueue<long> SnapshotReads { get; } = new();
 
         public int TrimFailures => Volatile.Read(ref _trimFailures);
 
-        public ShutdownTrace? Trace { get; set; }
+        public int DeliveredReads { get; set; }
 
         // Written by the file's job; the test reads it only after shipping has stopped.
         public WalRead LastRead { get; set; }
@@ -320,6 +346,9 @@ public sealed class BackupBacklogRecoveryTests
         public void Watch(string database) => Volatile.Write(ref _watched, database);
 
         public void FailNextTrim() => Volatile.Write(ref _failTrim, 1);
+
+        public Task<WalRead[]> StageAsync(CancellationToken cancellationToken) =>
+            (_tap ?? throw new InvalidOperationException("the watched tap is not open")).StageAsync(cancellationToken);
 
         public async ValueTask<IWalTap?> OpenTapAsync(TenantContext? database, CancellationToken cancellationToken)
         {
@@ -333,21 +362,17 @@ public sealed class BackupBacklogRecoveryTests
             {
                 turso.BeforeTrim = token =>
                 {
-                    var trace = Trace;
-                    trace?.Record("tenant.before_trim.enter", token);
                     if (Interlocked.Exchange(ref _failTrim, 0) == 1)
                     {
                         Interlocked.Increment(ref _trimFailures);
-                        trace?.Record("tenant.before_trim.exception", token, "injected_io_failure=true");
                         throw new IOException("the change log cleanup failed");
                     }
 
-                    trace?.Record("tenant.before_trim.return", token);
                     return Task.CompletedTask;
                 };
             }
 
-            return new WatchedTap(tap, this);
+            return _tap = new WatchedTap(tap, this);
         }
 
         public ValueTask<bool> RollForwardAsync(string file, IAsyncEnumerable<Stream> segments, CancellationToken cancellationToken) =>
@@ -365,42 +390,83 @@ public sealed class BackupBacklogRecoveryTests
 
     private sealed class WatchedTap(IWalTap tap, WatchedBackup owner) : IWalTap
     {
-        public async ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken)
+        private readonly Queue<(MemoryStream Content, WalRead Read)> _staged = new();
+
+        // Manual hosting joins every pass before staging; this is the same tap, never a second CDC consumer.
+        public async Task<WalRead[]> StageAsync(CancellationToken cancellationToken)
         {
-            if (owner.Trace is not { } trace)
+            if (_staged.Count != 0 || owner.DeliveredReads != 0)
             {
-                var read = await tap.ReadAsync(destination, cancellationToken);
-                owner.LastRead = read;
-                return read;
+                throw new InvalidOperationException("the fixture stages its backlog only once");
             }
 
-            var started = Stopwatch.GetTimestamp();
-            var appended = destination.Length;
-            trace.Record("tenant.read.enter", cancellationToken);
-            using var cancellation = cancellationToken.Register(() => trace.Record("tenant.read.token_cancelled", cancellationToken));
-            try
+            var reads = new List<WalRead>(2);
+            for (var index = 0; index < 2; index++)
             {
-                var read = await tap.ReadAsync(destination, cancellationToken);
-                owner.LastRead = read;
-                trace.Record("tenant.read.return", cancellationToken, string.Create(CultureInfo.InvariantCulture,
-                    $"duration_ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F3} appended_bytes={destination.Length - appended} read_bytes={read.Bytes} continuous={read.Continuous} remaining={read.Remaining}"));
-                return read;
+                // Two non-growing buffers bound this fixture to 80 MiB; no plaintext spill files or pooled payloads.
+                var content = new MemoryStream(new byte[40 << 20], writable: true);
+                try
+                {
+                    content.SetLength(0);
+                    var read = await tap.ReadAsync(content, cancellationToken);
+                    await Assert.That(content.Length).IsEqualTo(read.Bytes);
+                    _staged.Enqueue((content, read));
+                    reads.Add(read);
+                }
+                catch
+                {
+                    content.Dispose();
+                    throw;
+                }
+
+                if (!reads[^1].Remaining)
+                {
+                    return reads.ToArray();
+                }
             }
-            catch (Exception error)
+
+            throw new InvalidOperationException("the fixture backlog exceeded two real reads");
+        }
+
+        public async ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken)
+        {
+            if (_staged.TryPeek(out var staged))
             {
-                trace.Record("tenant.read.exception", cancellationToken, string.Create(CultureInfo.InvariantCulture,
-                    $"duration_ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F3} appended_bytes={destination.Length - appended} exception_type={error.GetType().Name}"));
-                throw;
+                // A failed copy retains the chunk: the caller truncates its partial append and retries this same read.
+                staged.Content.Position = 0;
+                await staged.Content.CopyToAsync(destination, cancellationToken);
+                _staged.Dequeue();
+                staged.Content.Dispose();
+                owner.DeliveredReads++;
+                owner.LastRead = staged.Read;
+                return staged.Read;
             }
+
+            var read = await tap.ReadAsync(destination, cancellationToken);
+            owner.LastRead = read;
+            return read;
         }
 
         public async ValueTask<WalSnapshot> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken)
         {
+            if (_staged.Count != 0)
+            {
+                throw new InvalidOperationException("a snapshot cannot pass staged log chunks");
+            }
+
             var snapshot = await tap.SnapshotAsync(destination, snapshotPath, cancellationToken);
             owner.SnapshotReads.Enqueue(snapshot.Read.Bytes);
             return snapshot;
         }
 
-        public ValueTask DisposeAsync() => tap.DisposeAsync();
+        public ValueTask DisposeAsync()
+        {
+            while (_staged.TryDequeue(out var staged))
+            {
+                staged.Content.Dispose();
+            }
+
+            return tap.DisposeAsync();
+        }
     }
 }
