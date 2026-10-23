@@ -133,9 +133,16 @@ public sealed class RandomizedReplicationFaultTests
             var resumedId = FaultSoakChecks.Id(seed, 900);
             var resumedBody = new JsonObject { ["afterRestart"] = seed };
             attempted[resumedId] = resumedBody;
-            FaultSoakChecks.Check(await SendAsync(regions[0], resumedId, "put", () =>
-                cluster[regions[0]].PutAsJsonAsync(cluster.Document(resumedId), resumedBody, token)),
-                "the single post-restart write must acknowledge without replay");
+            await FaultSoakChecks.UntilAsync(async () =>
+            {
+                var notExecuted = false;
+                var confirmed = await SendAsync(regions[0], resumedId, "put", () =>
+                    cluster[regions[0]].PutAsJsonAsync(cluster.Document(resumedId), resumedBody, token),
+                    code => notExecuted = code == "remote_region_unavailable");
+                // Only admission refusals execute nothing; an unknown outcome must never replay the write.
+                FaultSoakChecks.Check(confirmed || notExecuted, "the admitted post-restart write must acknowledge without replay");
+                return confirmed;
+            }, "one admitted post-restart write acknowledges", token);
             expected[resumedId] = resumedBody;
             await FaultSoakChecks.UntilAsync(CopiesMatchAsync, "post-restart write converges", token);
             foreach (var region in regions)
@@ -217,7 +224,7 @@ public sealed class RandomizedReplicationFaultTests
                 return round == 2 ? victim : null;
             }
 
-            async Task<bool> SendAsync(string region, string id, string operation, Func<Task<HttpResponseMessage>> send)
+            async Task<bool> SendAsync(string region, string id, string operation, Func<Task<HttpResponseMessage>> send, Action<string?>? refused = null)
             {
                 using var answer = await send();
                 var body = await answer.Content.ReadAsStringAsync(token);
@@ -225,6 +232,7 @@ public sealed class RandomizedReplicationFaultTests
                 if (!answer.IsSuccessStatusCode)
                 {
                     await FaultSoakChecks.RefusedAsync(answer, token);
+                    refused?.Invoke(JsonNode.Parse(body)?["error"]?["code"]?.GetValue<string>());
                     if (operation == "delete" && JsonNode.Parse(body)?["error"]?["code"]?.GetValue<string>() == "write_outcome_unknown")
                     {
                         // An uncertain delete may have committed; neither presence nor absence proves a lost write.
