@@ -909,7 +909,15 @@ public sealed class FakeS3
 
     private sealed class Handler(FakeS3 s3) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            s3.RespondAsync(request, cancellationToken);
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            // The shape edge forwards https://<edge>/<bucket host>/<path>?<query> to the bucket unchanged; so does the fake.
+            if (request.RequestUri is { } uri && uri.Host == TerraBase.Features.Shapes.ShapeObjectStore.Edge.Host)
+            {
+                request.RequestUri = new Uri("https://" + uri.PathAndQuery.TrimStart('/'));
+            }
+
+            return s3.RespondAsync(request, cancellationToken);
+        }
     }
 }

@@ -1,0 +1,8 @@
+{
+  // The shape edge (worker.js). Deploy from this directory: npx -y wrangler@4.152.0 deploy
+  "name": "terrabase-shape-edge",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "routes": [{ "pattern": "shapes.terrascale.tech", "custom_domain": true }],
+}
