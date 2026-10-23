@@ -224,7 +224,7 @@ The candidates on #108 run on them.
 | Test | Skipped when | Reason |
 | --- | --- | --- |
 | OrchOutageE2ETests: `Each_region_stopped_then_started…` | locally, or on ts-orch without `TERRABASE_E2E_ORCH_OUTAGE=1` | It stops regions, so it runs alone through `make terrabase-e2e-orch-outage`, and only in a pinned run (`Cluster.LiveOutage`) of the disposable service `terrabase-e2e`, never production |
-| BenchmarkClusterHost: `Hosts_three_local_regions…` | always, unless `TERRABASE_BENCH_CLUSTER_FILE` is set | It is the benchmark's local cluster host, not a scenario |
+| BenchmarkClusterHost: `Hosts_three_local_regions…` | always, unless `TERRABASE_BENCH_TARGETS` is set | It is the benchmark's local cluster host, not a scenario |
 | PitrLabHost: `Runs_the_PitrLab_job…` | always, unless `TERRABASE_PITR_JOB` is set | It is the PitrLab backup/PITR harness host (benchmark/docs/pitr-100m.md), not a scenario |
 | ThreeRegionFaultE2ETests: partition, backlog, both skew tests; WaveAE2ETests and ShapeConvergenceE2ETests partition, loss and skew tests | on ts-orch | ts-orch has no switch for a partition, a file edit or a clock skew between nodes |
 | ThreeRegionFaultE2ETests: region down, restart, ack-then-stop, restarted backlog; RepairAndContractE2ETests: deleted database | on ts-orch without `TERRABASE_E2E_ORCH_OUTAGE=1` | They stop ts-orch regions |
