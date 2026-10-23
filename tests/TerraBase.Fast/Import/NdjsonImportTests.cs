@@ -10,7 +10,7 @@ namespace TerraBase.Fast.Import;
 public sealed class NdjsonImportTests
 {
     [Test]
-    public async Task A_10k_line_mongoexport_file_imports_every_line_with_oids_kept_and_ulids_generated()
+    public async Task A_10k_line_mongoexport_file_imports_every_line_under_generated_ulids_with_oids_kept_as_fields()
     {
         await using var client = await ImportClient.StartAsync();
         var import = await client.CreateDestinationAsync();
@@ -32,7 +32,6 @@ public sealed class NdjsonImportTests
         await Assert.That(ready.GetProperty("state").GetString()).IsEqualTo("ready").Because(ready.GetRawText());
         var table = ready.GetProperty("preview").GetProperty("tables")[0];
         await Assert.That(table.GetProperty("collection").GetString()).IsEqualTo("users");
-        await Assert.That(table.GetProperty("idPolicy").GetString()).IsEqualTo("document");
         await Assert.That(table.GetProperty("rows").GetInt64()).IsEqualTo(10_000);
 
         var (started, _) = await client.StartAsync(import, ready.GetProperty("preview").GetProperty("id").GetString());
@@ -44,10 +43,12 @@ public sealed class NdjsonImportTests
 
         var ids = await client.IdsAsync(import, "users");
         await Assert.That(ids.Count).IsEqualTo(10_000);
-        await Assert.That(ids.Count(id => Ulid.TryParse(id, out _))).IsEqualTo(1_000);
-        var kept = await client.DocumentAsync(import, "users", $"{7:x24}");
-        await Assert.That(kept.GetProperty("n").GetInt32()).IsEqualTo(7);
-        await Assert.That(kept.TryGetProperty("_id", out _)).IsFalse();
+        await Assert.That(ids.All(ImportClient.IsUlid)).IsTrue();
+        await Assert.That(ids.Distinct().Count()).IsEqualTo(10_000);
+        var kept = await client.DocumentAsync(import, "users", ("n", "7"));
+        await Assert.That(kept.GetProperty("_id").GetProperty("$oid").GetString()).IsEqualTo($"{7:x24}");
+        var bare = await client.DocumentAsync(import, "users", ("n", "10"));
+        await Assert.That(bare.TryGetProperty("_id", out _)).IsFalse();
     }
 
     [Test]
