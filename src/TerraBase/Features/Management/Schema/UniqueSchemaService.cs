@@ -31,7 +31,7 @@ internal sealed class UniqueSchemaService(IStorageEngine engine) : IUniqueSchema
 
             try
             {
-                await transaction.SetUniqueConstraintsAsync(collection, constraints, cancellationToken).ConfigureAwait(false);
+                await transaction.SetUniqueConstraintsAsync(collection, constraints, reindex: false, cancellationToken).ConfigureAwait(false);
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (UniqueConstraintException)

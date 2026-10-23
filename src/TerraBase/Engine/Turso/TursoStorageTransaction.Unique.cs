@@ -33,6 +33,12 @@ internal sealed partial class TursoStorageTransaction
         WHERE mine.collection = $collection AND mine.id = $id AND other.id < mine.id
         UNION ALL SELECT 1 FROM _tb_unique_invalid WHERE collection = $collection AND id = $id LIMIT 1;
         """;
+    // A duplicate key, a document whose keys do not fit, or a hidden loser: a reindexed declaration does not hold.
+    private const string UniqueReindexRefused = """
+        SELECT 1 FROM _tb_unique_keys WHERE collection = $collection GROUP BY constraint_name, value HAVING count(*) > 1
+        UNION ALL SELECT 1 FROM _tb_unique_invalid WHERE collection = $collection
+        UNION ALL SELECT 1 FROM _tb_unique_conflicts WHERE collection = $collection LIMIT 1;
+        """;
     private const string UniqueDeleteKeys = "DELETE FROM _tb_unique_keys WHERE collection = $collection AND id = $id;";
     private const string UniqueDeleteConflict = "DELETE FROM _tb_unique_conflicts WHERE collection = $collection AND id = $id;";
 
@@ -57,7 +63,7 @@ internal sealed partial class TursoStorageTransaction
             : throw new InvalidDataException("invalid unique schema");
     }
 
-    public ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, CancellationToken cancellationToken) =>
+    public ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, bool reindex, CancellationToken cancellationToken) =>
         new(RunAsync(() =>
         {
             ThrowIfReadOnly();
@@ -74,14 +80,25 @@ internal sealed partial class TursoStorageTransaction
             }
 
             // Declarations belong to a collection without live documents, a retained uniqueness loser included; consumers
-            // must drop and recreate it for a changed schema.
-            if (HasTable(collection) && TableCommand(UniqueLiveDocument, collection).ExecuteScalar() is not null)
+            // must drop and recreate it for a changed schema, unless they ask for a reindex of the documents.
+            var live = HasTable(collection) && TableCommand(UniqueLiveDocument, collection).ExecuteScalar() is not null;
+            if (live && !reindex)
             {
                 throw new UniqueConstraintException();
             }
 
             Reserve(collection, Encoding.UTF8.GetByteCount(body));
             WriteMetadata(DocumentDelta.Unique, collection, body);
+            if (live)
+            {
+                // The projection a replica runs for this declaration (ReprojectUnique); the caller rolls back on a throw.
+                ReprojectUnique(collection, cancellationToken);
+                if (Command(UniqueReindexRefused, collection).ExecuteScalar() is not null)
+                {
+                    throw new UniqueConstraintException();
+                }
+            }
+
             return true;
         }, cancellationToken, mutation: true).AsTask());
 

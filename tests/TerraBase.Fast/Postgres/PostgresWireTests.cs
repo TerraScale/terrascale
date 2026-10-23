@@ -84,6 +84,27 @@ public sealed class PostgresWireTests
     }
 
     [Test]
+    public async Task Index_statements_run_and_a_unique_index_answers_unique_violation()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var source = Source(api, key, database.Name);
+        await using var connection = await source.OpenConnectionAsync();
+        await ExecuteAsync(connection, People);
+
+        await ExecuteAsync(connection, "CREATE INDEX people_team ON people (team)");
+        await ExecuteAsync(connection, "CREATE UNIQUE INDEX people_name ON people (name)");
+        await ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", "ada");
+        var duplicate = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", "ada"));
+        await ExecuteAsync(connection, "DROP INDEX people_name");
+        await ExecuteAsync(connection, "DROP INDEX IF EXISTS people_team");
+        await ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", "ada");
+
+        await Assert.That(duplicate!.SqlState).IsEqualTo("23505");
+        await Assert.That((await ReadAsync(connection, "SELECT count(*) FROM people"))[0][0]).IsEqualTo("2");
+    }
+
+    [Test]
     public async Task Read_only_keys_cannot_write()
     {
         await using var api = await ManagementApi.StartAsync();

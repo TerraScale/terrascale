@@ -95,13 +95,15 @@ internal sealed class SqlSession(
     private SqlKeys _keys = new();
     private bool? _readOnly;
     private Request? _request;
+    private string? _parsedSql;
+    private SqlParseResult _parsed;
 
     public bool IsAutocommit => _readOnly is null;
 
     public async ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        switch (SqlParse.Parse(command.Sql))
+        switch (Parse(command.Sql))
         {
             case SqlError error:
                 return error;
@@ -183,7 +185,7 @@ internal sealed class SqlSession(
     public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return SqlParse.Parse(command.Sql) switch
+        return Parse(command.Sql) switch
         {
             SqlError error => error,
             // Columns come from the statement run with no rows: names and declared types exactly as execution reports them.
@@ -207,6 +209,18 @@ internal sealed class SqlSession(
     }
 
     public ValueTask DisposeAsync() => AbortAsync();
+
+    // Batches repeat one statement with new arguments: its last parse is reused (parsed statements are immutable).
+    private SqlParseResult Parse(string sql)
+    {
+        if (!string.Equals(sql, _parsedSql, StringComparison.Ordinal))
+        {
+            _parsed = SqlParse.Parse(sql);
+            _parsedSql = sql;
+        }
+
+        return _parsed;
+    }
 
     // A statement of the open transaction: run in this request's storage transaction, which first replays the log.
     private async ValueTask<SqlOutcome> InTransactionAsync(ParsedSql statement, SqlCommand command, CancellationToken cancellationToken)
@@ -271,7 +285,7 @@ internal sealed class SqlSession(
         _keys.Rewind();
         foreach (var (command, hash) in _log)
         {
-            var replayed = SqlParse.Parse(command.Sql) is ParsedSql statement
+            var replayed = Parse(command.Sql) is ParsedSql statement
                 ? await RunAsync(request, statement, command, _keys, cancellationToken).ConfigureAwait(false)
                 : SqlErrors.Error("the statement no longer parses");
             if (replayed is not SqlResult result || !Hash(result).AsSpan().SequenceEqual(hash))

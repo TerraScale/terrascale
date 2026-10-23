@@ -333,8 +333,12 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <summary>Reads the unique keys declared for a collection.</summary>
     ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken);
 
-    /// <summary>Declares unique keys for an empty collection; an unchanged declaration is idempotent.</summary>
-    ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, CancellationToken cancellationToken);
+    /// <summary>
+    /// Declares unique keys for an empty collection; an unchanged declaration is idempotent. With <paramref name="reindex"/>, a
+    /// collection with live documents is reindexed instead, and refused with <see cref="UniqueConstraintException"/> only when
+    /// its documents hold a duplicate key (or a uniqueness loser is kept aside).
+    /// </summary>
+    ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, bool reindex, CancellationToken cancellationToken);
 
     /// <summary>
     /// Makes every change of this transaction visible atomically and returns its offset and own client replication marker.
