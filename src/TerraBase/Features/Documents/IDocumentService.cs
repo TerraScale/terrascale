@@ -123,6 +123,11 @@ public readonly union WriteOutcome(WriteResult, DocumentRejected);
 /// <summary>One applied operation, or why it was refused.</summary>
 public readonly union ApplyOutcome(OperationResult, DocumentRejected);
 
+/// <summary>One exported document and the collection it belongs to.</summary>
+/// <param name="Collection">Collection name.</param>
+/// <param name="Document">The live document.</param>
+public sealed record ExportRow(string Collection, StoredDocument Document);
+
 /// <summary>JSON document operations for the client API, over <see cref="IStorageEngine"/>, with Documents API v1 failures.</summary>
 public interface IDocumentService
 {
@@ -152,6 +157,12 @@ public interface IDocumentService
     /// documents (<c>Complete</c> is <see langword="false"/> when more exist).
     /// </summary>
     ValueTask<QueryResult> QueryAsync(TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Streams every live document in collection then id order from one read snapshot, after document
+    /// <paramref name="afterId"/> of collection <paramref name="afterCollection"/> when both are set.
+    /// </summary>
+    IAsyncEnumerable<ExportRow> ExportAsync(TenantContext database, string? afterCollection, string? afterId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Applies <paramref name="operations"/> atomically: assertions first, against the state before
