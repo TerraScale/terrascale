@@ -3,7 +3,8 @@
 // the signed-in user. Run ts help for every command.
 //
 // Project commands act in the user's only project; -project <name or id>
-// picks one when the user reaches several.
+// picks one when the user reaches several, and -org <name or id> picks the
+// organization of projects create.
 package main
 
 import (
@@ -31,13 +32,18 @@ import (
 
 var version = "dev" // Set by release builds with -ldflags.
 
-const usage = `usage: ts [-project <name or id>] <command>
+const usage = `usage: ts [-project <name or id>] [-org <name or id>] <command>
 
   version                                 print the CLI version
   help                                    print this help
   auth login | logout                     sign in with your browser, or sign out
   whoami                                  print the signed-in account
   projects                                list the projects you can reach
+  projects create <name>                  create a project (and an organization
+                                          when you have none)
+  usage [<db>]                            print the project's or a database's
+                                          usage as JSON
+  completion bash | zsh | fish            print a shell completion script
 
   db list | create <db> | delete <db>     manage the project's databases
   db branch <source> <db>                 copy a database into a new one
@@ -47,6 +53,10 @@ const usage = `usage: ts [-project <name or id>] <command>
                                           remove every replica
   backup list | create <db>               list or take a database's backups
   backup restore <db> <backup id> <new db> restore a backup into a new database
+  backup restore-at <db> <time> <new db>  restore the database as of an RFC 3339
+                                          time into a new database
+  db changes <db> [<collection>...]       print committed changes as JSON lines
+                                          until interrupted
   collection list <db>                    list a database's collections
   collection create | drop <db> <name>    create or drop a collection
   doc list <db> <collection>              print every document as JSON lines
@@ -56,6 +66,17 @@ const usage = `usage: ts [-project <name or id>] <command>
   doc delete <db> <collection> <id>       delete a document
   doc import <db> <collection>            put the JSON lines doc list prints,
                                           read from stdin, creating the collection
+  schema get | delete <db> <collection>   print or remove a collection's schema
+  schema set <db> <collection> <json>     declare a JSON Schema; - reads stdin
+  ttl get | delete <db> <collection>      print or remove a collection's TTL
+  ttl set <db> <collection> <pointer>     expire documents whose member at the
+                                          JSON Pointer (/expiresAt) is past
+  index list <db> [<collection>]          list secondary indexes
+  index create <db> <collection> <field>... index 1 to 4 dotted member paths
+  index drop <db> <name>                  drop an index
+  import <db> <format> <file>             import a postgres_plain, sqlite or
+                                          ndjson file into a new database
+  import status | cancel <db>             print or cancel the database's import
   sql <db> <query>                        run a read-only SQL query
   keys list                               list the project's API keys
   keys create <name> [<db>]               create a read/write API key, shown once
@@ -85,6 +106,23 @@ var commands = map[string][]int{
 	"auth logout":       {0},
 	"whoami":            {0},
 	"projects":          {0},
+	"projects create":   {1},
+	"usage":             {0, 1},
+	"completion":        {1},
+	"db changes":        {1, 2, 3, 4, 5},
+	"backup restore-at": {3},
+	"schema get":        {2},
+	"schema set":        {3},
+	"schema delete":     {2},
+	"ttl get":           {2},
+	"ttl set":           {3},
+	"ttl delete":        {2},
+	"index list":        {1, 2},
+	"index create":      {3, 4, 5, 6},
+	"index drop":        {2},
+	"import":            {3},
+	"import status":     {1},
+	"import cancel":     {1},
 	"db list":           {0},
 	"db create":         {1},
 	"db delete":         {1},
@@ -122,6 +160,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("ts", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	project := fs.String("project", "", "project name or id")
+	org := fs.String("org", "", "organization name or id")
 	if fs.Parse(args) != nil {
 		return errUsage
 	}
@@ -134,6 +173,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if !slices.Contains(commands[name], len(operands)) {
 		return errUsage
+	}
+	if name == "completion" {
+		return completion(operands[0], out)
 	}
 	device, err := tsauth.NewDevice(tsauth.DeviceConfig{})
 	if err != nil {
@@ -159,6 +201,8 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		return whoami(ctx, u, token, out)
 	case "projects":
 		return listProjects(ctx, u, out)
+	case "projects create":
+		return createProject(ctx, u, *org, operands[0], out)
 	}
 	s, err := open(ctx, u, token, *project)
 	if err != nil {
@@ -484,6 +528,109 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		}
 		fmt.Fprintf(out, "Restored %s into %s (%s)\n", args[1], m.Name, m.ID)
 		return nil
+	case "backup restore-at":
+		at, err := time.Parse(time.RFC3339, args[1])
+		if err != nil {
+			return fmt.Errorf("time %q is not RFC 3339, such as 2026-10-23T12:00:00Z", args[1])
+		}
+		m, err := db.RestorePointInTime(ctx, v1.PointInTimeRequest{PointInTime: at, Name: args[2]})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Restored %s as of %s into %s (%s)\n", args[0], at.Format(time.RFC3339), m.Name, m.ID)
+		return nil
+	case "db changes":
+		return tailChanges(ctx, db, args[1:], out)
+	case "usage":
+		var u *v1.Usage
+		var err error
+		if db != nil {
+			u, err = db.Usage(ctx, v1.UsageOptions{})
+		} else {
+			u, err = s.tb.ProjectUsage(ctx, s.project, v1.UsageOptions{})
+		}
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(u)
+	case "schema get", "schema set", "schema delete":
+		col := db.Collection(args[1])
+		var schema *v1.DeclaredCollectionSchema
+		var err error
+		switch name {
+		case "schema get":
+			schema, err = col.Schema(ctx)
+		case "schema delete":
+			schema, err = col.DeleteSchema(ctx)
+		default:
+			var body []byte
+			if body, err = jsonOperand(args[2]); err == nil {
+				schema, err = col.SetSchema(ctx, json.RawMessage(body))
+			}
+		}
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(schema)
+	case "ttl get":
+		path, err := db.Collection(args[1]).TTL(ctx)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(out, cmp.Or(path, "none"))
+		return err
+	case "ttl set":
+		if err := db.Collection(args[1]).SetTTL(ctx, args[2]); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "%s expires documents at %s\n", args[1], args[2])
+		return nil
+	case "ttl delete":
+		if err := db.Collection(args[1]).DeleteTTL(ctx); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "%s no longer expires documents\n", args[1])
+		return nil
+	case "index list":
+		var opts []v1.IndexListOptions
+		if len(args) == 2 {
+			opts = append(opts, v1.IndexListOptions{Collection: args[1]})
+		}
+		indexes, err := db.Indexes(ctx, opts...)
+		if err != nil {
+			return err
+		}
+		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "NAME\tCOLLECTION\tFIELDS\tSTATE")
+		for _, ix := range indexes {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", ix.Name, ix.Collection, strings.Join(ix.Fields, ","), ix.State)
+		}
+		return w.Flush()
+	case "index create":
+		ix, err := db.CreateIndex(ctx, v1.IndexRequest{Collection: args[1], Fields: args[2:]})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Created index %s\n", ix.Name)
+		return nil
+	case "index drop":
+		if err := db.DropIndex(ctx, args[1]); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Dropped index %s\n", args[1])
+		return nil
+	case "import":
+		return importFile(ctx, db, args[1], args[2], out)
+	case "import status", "import cancel":
+		read := db.Import
+		if name == "import cancel" {
+			read = db.CancelImport
+		}
+		job, err := read(ctx)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(job)
 	case "collection list":
 		for cursor := ""; ; {
 			page, err := db.Collections(ctx, v1.ListOptions{Limit: 200, Cursor: cursor})
@@ -532,20 +679,12 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		}
 		return json.NewEncoder(out).Encode(d)
 	case "doc put":
-		body := args[len(args)-1]
-		if body == "-" {
-			data, err := io.ReadAll(os.Stdin)
-			if err != nil {
-				return err
-			}
-			body = string(data)
-		}
-		if !json.Valid([]byte(body)) {
-			return errors.New("document is not valid JSON")
+		body, err := jsonOperand(args[len(args)-1])
+		if err != nil {
+			return err
 		}
 		col := db.Collection(args[1])
 		var res *v1.WriteResult
-		var err error
 		if len(args) == 4 {
 			res, err = col.Put(ctx, args[2], json.RawMessage(body))
 		} else {
@@ -605,6 +744,21 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		return nil
 	}
 	return errUsage
+}
+
+// jsonOperand returns a JSON operand, read from stdin when it is -.
+func jsonOperand(arg string) ([]byte, error) {
+	body := []byte(arg)
+	if arg == "-" {
+		var err error
+		if body, err = io.ReadAll(os.Stdin); err != nil {
+			return nil, err
+		}
+	}
+	if !json.Valid(body) {
+		return nil, errors.New("operand is not valid JSON")
+	}
+	return body, nil
 }
 
 // importDocuments puts each JSON line of in, in the shape doc list prints:

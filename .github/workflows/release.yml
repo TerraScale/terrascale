@@ -59,29 +59,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  homebrew:
-    if: github.event_name == 'push'
-    needs: release
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Validate release tag
-        run: '[[ "$GITHUB_REF_NAME" =~ ^v0\.0\.(0|[1-9][0-9]*)$ ]]'
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          repository: TerraScale/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-      - name: Publish generated formula
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          RELEASE_VERSION=${GITHUB_REF_NAME#v}
-          gh release download "v$RELEASE_VERSION" --repo TerraScale/ts-go --pattern ts.rb --dir "$RUNNER_TEMP"
-          mkdir -p Formula
-          cp "$RUNNER_TEMP/ts.rb" Formula/ts.rb
-          git config user.name 'TerraScale'
-          git config user.email 'releases@terrascale.tech'
-          git add Formula/ts.rb
-          git diff --cached --quiet && exit 0
-          git commit -m "Update ts to $RELEASE_VERSION"
-          git push
