@@ -14,6 +14,11 @@ public class SqliteCommand : DbCommand
     private SqliteConnection? _connection;
     private SqliteTransaction? _transaction;
     private TursoStatementHandle? _statement;
+    // TerraScale: with ReuseStatement, Execute keeps its single statement's native program across executions (reset, then
+    // rebound) instead of preparing it every time: the SQL it was prepared from, and whether a reader is running it.
+    private bool _reuseStatement;
+    private string? _statementSql;
+    private bool _statementBusy;
     private string _commandText = string.Empty;
     private int _commandTimeout = 30;
     private bool _hasOpenReader;
@@ -21,6 +26,18 @@ public class SqliteCommand : DbCommand
 
     public SqliteCommand()
     {
+    }
+
+    /// <summary>
+    /// TerraScale: keeps a single-statement command's prepared statement across executions, reset when each one finishes
+    /// and finalized on failure or when the command is disposed. Only for a command its owner disposes before closing the
+    /// connection. Inside an explicit transaction Turso cannot run a statement prepared against an older schema than the
+    /// transaction's snapshot ("Database schema changed"): the owner drops kept statements when the schema changes.
+    /// </summary>
+    public bool ReuseStatement
+    {
+        get => _reuseStatement;
+        set => _reuseStatement = value;
     }
 
     public SqliteCommand(string? commandText)
@@ -178,6 +195,7 @@ public class SqliteCommand : DbCommand
             preparedStatement = PrepareSingleStatement(statements[0]);
             _statement?.Dispose();
             _statement = preparedStatement;
+            _statementSql = null;
             preparedStatement = null;
         }
         catch (TursoException ex)
@@ -261,6 +279,7 @@ public class SqliteCommand : DbCommand
         {
             _activeManagedCommand?.Dispose();
             _statement?.Dispose();
+            _statement = null;
         }
 
         base.Dispose(disposing);
@@ -300,7 +319,7 @@ public class SqliteCommand : DbCommand
                 if (TryHandleFacadeStatement(statements[i], out var sql))
                     continue;
 
-                var statement = PrepareSingleStatement(sql);
+                var statement = statements.Count == 1 ? Statement(sql) : PrepareSingleStatement(sql);
                 try
                 {
                     if (TursoBindings.GetFieldCount(statement) > 0)
@@ -321,11 +340,11 @@ public class SqliteCommand : DbCommand
                 {
                     // TerraScale: finalize a failed statement here, not on the finalizer thread, which would use the
                     // connection while its owner does ("concurrent use forbidden").
-                    statement.Dispose();
+                    ReleaseStatement(statement, failed: true);
                     throw;
                 }
 
-                statement.Dispose();
+                ReleaseStatement(statement, failed: false);
             }
         }
         catch (TursoException ex)
@@ -626,6 +645,54 @@ public class SqliteCommand : DbCommand
             CloseReader();
             Dispose();
         };
+    }
+
+    // TerraScale: the statement that runs sql: with ReuseStatement, the kept one, rebound, unless a reader still runs it.
+    private TursoStatementHandle Statement(string sql)
+    {
+        if (!_reuseStatement || _statementBusy)
+            return PrepareSingleStatement(sql);
+
+        if (_statement is null || _statementSql != sql)
+        {
+            var statement = PrepareSingleStatement(sql);
+            _statement?.Dispose();
+            _statement = statement;
+            _statementSql = sql;
+        }
+        else
+        {
+            BindParameters(_statement);
+        }
+
+        _statementBusy = true;
+        return _statement;
+    }
+
+    // TerraScale: a statement that finished running. The kept one is reset for its next execution unless it failed; any
+    // other is finalized here, never on the finalizer thread.
+    internal void ReleaseStatement(TursoStatementHandle statement, bool failed)
+    {
+        if (ReferenceEquals(statement, _statement))
+        {
+            _statementBusy = false;
+            if (!failed)
+            {
+                try
+                {
+                    TursoBindings.ResetStatement(statement);
+                    return;
+                }
+                catch (TursoException)
+                {
+                }
+            }
+
+            _statement = null;
+            _statementSql = null;
+        }
+
+        statement.Dispose();
     }
 
     internal TursoStatementHandle PrepareSingleStatement(string sql)
