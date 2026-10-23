@@ -13,6 +13,7 @@ public sealed class ClientCorsTests
     [Arguments("/transactions", "POST")]
     [Arguments("/changes", "GET")]
     [Arguments("/collections/todos/shape", "GET")]
+    [Arguments("/COLLECTIONS/todos/query", "POST")]
     public async Task Client_data_preflight_accepts_bearer_headers_without_credentials(string route, string method)
     {
         await using var server = await TerraBaseTestServer.StartAsync();

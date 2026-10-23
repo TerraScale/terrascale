@@ -22,8 +22,13 @@ internal static class ClientCors
     private static bool IsDataPath(PathString path)
     {
         var segments = path.Value?.Split('/');
-        return segments is ["", "v1", "projects", { Length: > 0 }, "databases", { Length: > 0 }, ..]
-            && segments.Length >= 7
-            && segments[6] is "collections" or "transactions" or "changes";
+        return segments is { Length: >= 7 } && segments[0].Length == 0
+            && segments[3].Length > 0 && segments[5].Length > 0
+            && string.Equals(segments[1], "v1", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(segments[2], "projects", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(segments[4], "databases", StringComparison.OrdinalIgnoreCase)
+            && (string.Equals(segments[6], "collections", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(segments[6], "transactions", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(segments[6], "changes", StringComparison.OrdinalIgnoreCase));
     }
 }
