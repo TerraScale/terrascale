@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.Dashboard.E2E.Features.Databases;
@@ -32,6 +33,7 @@ public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixt
         using var client = scenario.CreateClient();
         using var producer = scenario.CreateProviderClient();
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        await AdmitSecondProjectAsync(client, producer);
         var before = await JsonAsync(producer, "/__test/observations");
         using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/projects", new()
         {
@@ -62,7 +64,7 @@ public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixt
         var defaultId = initial.GetProperty("selection").GetProperty("projectId").GetString()!;
         var originalName = initial.GetProperty("organizations").EnumerateArray().SelectMany(org => org.GetProperty("projects").EnumerateObject())
             .Single(project => project.Name == defaultId).Value.GetProperty("name").GetString();
-        await CreateProjectAsync(client, "Other selected project");
+        await CreateProjectAsync(client, producer, "Other selected project");
         var context = await JsonAsync(client, "/api/v1/dashboard/context");
         var otherId = context.GetProperty("organizations").EnumerateArray().SelectMany(org => org.GetProperty("projects").EnumerateObject())
             .Single(project => project.Value.GetProperty("name").GetString() == "Other selected project").Name;
@@ -105,7 +107,7 @@ public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixt
         using var database = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
         var oldPath = "/databases/" + database.RootElement.GetProperty("id").GetString() + "?created=1";
         using (var detail = await client.GetAsync(oldPath)) await Assert.That(detail.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await CreateProjectAsync(client, "Empty destination");
+        await CreateProjectAsync(client, producer, "Empty destination");
         var context = await JsonAsync(client, "/api/v1/dashboard/context");
         var newId = context.GetProperty("organizations").EnumerateArray().SelectMany(org => org.GetProperty("projects").EnumerateObject())
             .Single(project => project.Value.GetProperty("name").GetString() == "Empty destination").Name;
@@ -192,11 +194,20 @@ public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixt
         await SaveStepAsync(client, new() { ["step"] = "payment-method", ["bypass"] = "1" });
     }
 
-    private static async Task CreateProjectAsync(HttpClient client, string name)
+    private static async Task CreateProjectAsync(HttpClient client, HttpClient producer, string name)
     {
+        await AdmitSecondProjectAsync(client, producer);
         using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/projects", new()
         { ["_csrf"] = await HttpJourney.CsrfAsync(client, "/organization?tab=projects"), ["name"] = name, ["region"] = "GRU", ["regions"] = "GRU" });
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+    }
+
+    // Test admission permits a second project; it does not simulate a paid checkout.
+    private static async Task AdmitSecondProjectAsync(HttpClient client, HttpClient producer)
+    {
+        var organizationId = (await JsonAsync(client, "/api/v1/auth/me")).GetProperty("organizationId").GetString();
+        using var admission = await producer.PostAsJsonAsync("/__test/control", new { command = "plan", organizationId, value = OrganizationRecord.StarterPlanId });
+        await Assert.That(admission.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
     }
 
     private static async Task SwitchProjectAsync(HttpClient client, string projectId, string returnUrl)

@@ -44,6 +44,7 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
             // ts-auth already lists the new project; its dashboard settings start here.
             Owner(org, context.UserId);
             if (!org.CanProvision(context.UserId)) throw new AccountAccessException("Active billing is required to create projects.", 409);
+            DemandProjectRoom(org);
             Duplicate(org, name, project.Id);
             org.Projects[project.Id] = project;
             org.AuditEvents.Add(Event(context, "project.created", name, "project"));
@@ -148,7 +149,21 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
     private static void CanCreate(OrganizationRecord org, string userId, string name)
     {
         if (!org.CanProvision(userId)) throw new AccountAccessException("Active billing is required to create projects.", 409);
+        DemandProjectRoom(org);
         Duplicate(org, name);
+    }
+
+    // Mirrors DatabaseService.DatabaseLimit: an internal policy without a project limit is unlimited.
+    public static int ProjectLimit(OrganizationRecord org) => org.InternalBilling is not null
+        ? PlanCatalog.ResourceLimits(org).Projects is > 0 and var limit ? limit : int.MaxValue
+        : PlanCatalog.Plans.Any(plan => plan.Id == org.PlanId) ? PlanCatalog.ResourceLimits(org.PlanId).Projects
+        : throw new AccountAccessException("The organization plan is unavailable.", 503);
+
+    internal static void DemandProjectRoom(OrganizationRecord org)
+    {
+        var limit = ProjectLimit(org);
+        if (org.Projects.Count >= limit)
+            throw new AccountAccessException($"Your organization has reached its plan's project limit ({limit} {(limit == 1 ? "project" : "projects")}). Upgrade the plan on the organization's Billing tab or delete a project.", 409);
     }
 
     private static void Duplicate(OrganizationRecord org, string name, string? except = null)

@@ -54,6 +54,8 @@ public sealed class WorkspaceRecoveryJourneyTests(DashboardRootFixture fixture)
             await Assert.That(protectedProject.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         var name = "Interrupted SDK project " + Guid.NewGuid().ToString("N")[..12];
         var before = await ObservationsAsync(producer);
+        // Test admission permits a second project; it does not simulate a paid checkout.
+        await ControlAsync(producer, new { command = "plan", organizationId, value = OrganizationRecord.StarterPlanId });
         await ControlAsync(producer, new { command = "fail-project-metadata", organizationId, name });
         var form = new Dictionary<string, string> { ["_csrf"] = csrf, ["name"] = name, ["region"] = "GRU", ["regions"] = "GRU" };
         using (var interrupted = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/organization/projects", form))

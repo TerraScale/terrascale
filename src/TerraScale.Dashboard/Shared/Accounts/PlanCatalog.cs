@@ -11,7 +11,7 @@ public sealed record BillingPlan(string Id, string Key, string Name, long PriceC
 }
 
 public sealed record PlanAllowances(long MonthlyReads, long MonthlyWrites, long StorageBytes);
-public sealed record PlanResourceLimits(int Databases, int Members);
+public sealed record PlanResourceLimits(int Databases, int Members, int Projects);
 
 public static class PlanCatalog
 {
@@ -63,10 +63,10 @@ public static class PlanCatalog
 
     public static PlanResourceLimits ResourceLimits(string id) => Plans.SingleOrDefault(plan => plan.Id == id || plan.Key == id)?.Key switch
     {
-        "free" => new(1, 0),
-        "starter" => new(5, 5),
-        "pro" => new(25, 25),
-        "business" => new(100, 100),
-        _ => new(0, 0)
+        "free" => new(1, 0, 1),
+        "starter" => new(5, 5, 5),
+        "pro" => new(25, 25, 25),
+        "business" => new(100, 100, 100),
+        _ => new(0, 0, 0)
     };
 }
