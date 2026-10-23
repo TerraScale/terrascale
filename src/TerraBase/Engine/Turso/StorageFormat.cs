@@ -23,8 +23,9 @@ public static class StorageFormat
     /// 13: regional auth credential ancestry and authentication-state stamps, batch 5 reset 2026-10-23.
     /// 14: persisted full-text indexes and derived text tables, batch 5 reset 2026-10-23.
     /// 15: maintained per-collection document counts and bytes (<c>_tb_collection_stats</c>).
+    /// 16: collection access proofs and collection generations in the persisted change feed.
     /// </summary>
-    public const int Version = 15;
+    public const int Version = 16;
 
     /// <summary>The format this build writes, for example <c>2-3f1a09c4e7b2</c>.</summary>
     public static string Id { get; } = $"{Version}-{Convert.ToHexStringLower(TursoDatabaseStore.FormatDigest)[..12]}";
