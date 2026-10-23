@@ -535,6 +535,20 @@ details[open] > .ts-account-trigger {
   padding: var(--ts-s2);
 }
 
+/* The search icon sits inside the field, ahead of the query. */
+#ts-search-dialog .ts-input-group > svg {
+  position: absolute;
+  top: 50%;
+  left: var(--ts-s3);
+  translate: 0 -50%;
+  color: var(--ts-ink-3);
+  pointer-events: none;
+}
+
+#ts-search-dialog .ts-input-group > .ts-input {
+  padding-left: 34px;
+}
+
 /* Page area. */
 .ts-inset {
   display: flex;
