@@ -72,7 +72,7 @@ func main() {
 	origins := map[string]string{} // origin hex -> region
 	markers := map[string]string{} // marker id -> region
 	for _, name := range names {
-		id := "marker-" + name + "-" + ulid.Make().String()
+		id := ulid.Make().String() // the document API takes ULID ids only (#408)
 		if err := put(ctx, regions[name], *collection, id, "marker"); err != nil {
 			log.Fatal(err)
 		}
