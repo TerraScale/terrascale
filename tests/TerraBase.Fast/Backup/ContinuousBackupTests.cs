@@ -265,9 +265,12 @@ public sealed class ContinuousBackupTests
         await PassAsync();
         var stopped = Status(members[holder], file);
         var waiting = Status(members[other], file);
-        // Fly stops the cut-off machine and drops it from the DNS: the other takes over at its next read.
+        // The successor waits a full fence after observing the predecessor leave.
         store.Leave(holder);
         time.Advance(TimeSpan.FromSeconds(5));
+        await PassAsync();
+        await Assert.That(Status(members[other], file).Shipping).IsFalse();
+        time.Advance(TimeSpan.FromSeconds(10));
         await PassAsync();
         var taken = Status(members[other], file);
 

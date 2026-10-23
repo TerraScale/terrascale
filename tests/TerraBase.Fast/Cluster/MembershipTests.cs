@@ -42,14 +42,14 @@ public sealed class MembershipTests
             var cutOff = await StepsAsync(10);
             await Assert.That(cutOff.All(shippers => shippers.Count <= 1 && !shippers.Contains("member-b"))).IsTrue();
 
-            // member-b and member-c stop: Fly drops them from the DNS, and member-a takes every database over at the next heartbeat.
+            // member-b and member-c stop: member-a observes their departure and waits its fence before taking over.
             foreach (var name in (string[])["member-b", "member-c"])
             {
                 await members[name].DisposeAsync();
                 _ = members.Remove(name);
             }
 
-            var left = await StepsAsync(1);
+            var left = await StepsAsync(3);
             await Assert.That(left.All(shippers => shippers.SetEquals(["member-a"]))).IsTrue();
         }
         finally

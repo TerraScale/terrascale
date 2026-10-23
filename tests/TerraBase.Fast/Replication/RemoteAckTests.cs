@@ -141,6 +141,34 @@ public sealed class RemoteAckTests
     }
 
     [Test]
+    public async Task An_ack_after_the_deadline_cannot_confirm_when_the_timeout_callback_is_delayed()
+    {
+        var time = new DelayedAckClock();
+        await using var pair = await Pair.StartAsync(ackTime: time);
+        var id = EntityIds.New().ToString();
+        using var held = pair.PeerAck.Hold(id);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
+        try
+        {
+            await held.Applied.Task.WaitAsync(pair.Token);
+            _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            time.Advance(RemoteAckWaiter.Bound + TimeSpan.FromSeconds(1));
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("error").GetProperty("code").GetString())
+                .IsEqualTo("write_outcome_unknown");
+            using var remote = await pair.PeerClient.GetAsync(pair.Document(id), pair.Token);
+            await Assert.That(remote.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+        }
+    }
+
+    [Test]
     public async Task Cancelling_the_response_wait_keeps_the_commit_replicating()
     {
         await using var pair = await Pair.StartAsync();
@@ -1598,12 +1626,12 @@ public sealed class RemoteAckTests
 
         public ReplicaId OriginNode => _origin!.Server.Services.GetRequiredService<LocalReplica>().Id;
 
-        public static async Task<Pair> StartAsync(string peerRegion = "sjc", PlanTier plan = PlanTier.Hobby)
+        public static async Task<Pair> StartAsync(string peerRegion = "sjc", PlanTier plan = PlanTier.Hobby, TimeProvider? ackTime = null)
         {
             var pair = new Pair();
             try
             {
-                pair._origin = await pair.StartMachineAsync("gru");
+                pair._origin = await pair.StartMachineAsync("gru", ackTime: ackTime);
                 pair._peer = await pair.StartMachineAsync(peerRegion, pair.PeerAck);
                 pair._tenant = await ReplicationTenant.CreateAsync(pair._origin.Server, ["db"], pair.Token, ["sjc"]);
                 await pair._tenant.BindAsync(pair._peer.Server);
@@ -1636,13 +1664,18 @@ public sealed class RemoteAckTests
             }
         }
 
-        private Task<ManagementApi> StartMachineAsync(string region, AckGate? ack = null) => ManagementApi.StartAsync(settings =>
+        private Task<ManagementApi> StartMachineAsync(string region, AckGate? ack = null, TimeProvider? ackTime = null) => ManagementApi.StartAsync(settings =>
         {
             settings["region"] = region;
             settings["node-name"] = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
         }, services =>
         {
             services.AddSingleton<IMemberDirectory>(_members);
+            if (ackTime is not null)
+            {
+                services.AddSingleton(new RemoteAckWaiter(ackTime));
+            }
+
             if (ack is not null)
             {
                 services.AddSingleton<IChangeGroupSink>(provider => new HeldSink(ActivatorUtilities.CreateInstance<StorageChangeGroupSink>(provider), ack));
@@ -1684,6 +1717,29 @@ public sealed class RemoteAckTests
             }
 
             _deadline.Dispose();
+        }
+    }
+
+    // Hold timeout callbacks while monotonic time advances, as when the runtime delays timer dispatch.
+    private sealed class DelayedAckClock : TimeProvider
+    {
+        private readonly FakeTimeProvider _time = new();
+
+        public override long TimestampFrequency => _time.TimestampFrequency;
+
+        public override long GetTimestamp() => _time.GetTimestamp();
+
+        public void Advance(TimeSpan elapsed) => _time.Advance(elapsed);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) => new HeldTimer();
+
+        private sealed class HeldTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose() { }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
     }
 
