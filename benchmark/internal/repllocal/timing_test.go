@@ -18,6 +18,7 @@ func timingFixture() (CommitTiming, CommitTiming) {
 }
 
 func TestCommitLagPairsMarkersAndWeightsEveryDocument(t *testing.T) {
+	t.Parallel()
 	s, r := timingFixture()
 	m, err := CommitLag(s, r, "load", 101)
 	if err != nil {
@@ -33,8 +34,10 @@ func TestCommitLagPairsMarkersAndWeightsEveryDocument(t *testing.T) {
 }
 
 func TestCommitLagRejectsIncompleteOrInvalidEvidence(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"clock", "namespace", "origin", "missing-marker", "duplicate-marker", "duplicate-apply", "duplicate-doc", "negative", "native-missing", "native-after-return", "dropped", "incomplete"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			s, r := timingFixture()
 			switch name {
 			case "clock":
@@ -70,6 +73,7 @@ func TestCommitLagRejectsIncompleteOrInvalidEvidence(t *testing.T) {
 }
 
 func TestCommitLagAllowsMarkerIdentificationToOverlapReceiver(t *testing.T) {
+	t.Parallel()
 	s, r := timingFixture()
 	s.Commits[0].Identified = r.Applies[0].Entered + 1e6
 	m, err := CommitLag(s, r, "load", 101)
