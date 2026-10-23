@@ -106,7 +106,7 @@ public sealed class AllowanceNotificationJourneyTests(DashboardRootFixture fixtu
 
     [Test]
     [Arguments("document-operations-node-v1")]
-    [Arguments("operation-units-4kib-selected-regions-global-v1")]
+    [Arguments("operation-units-4kib-node-v1")]
     public async Task UnsupportedOperationsAndNodeLocalStorageFailClosedBehindTheHostedWorker(string unsupportedOperations)
     {
         await using var scenario = new AllowanceNotificationScenario(fixture.Root);
@@ -116,10 +116,10 @@ public sealed class AllowanceNotificationJourneyTests(DashboardRootFixture fixtu
         await Assert.That(invalid.GetProperty("attempts").GetInt32()).IsEqualTo(0);
         await Assert.That(invalid.GetProperty("ledgerExists").GetBoolean()).IsFalse();
         await AssertInboxAsync(scenario, 0, "No notifications in this scope.");
-        await CycleAsync(scenario, new() { ["operations"] = "81", ["storage"] = "100", ["unsupported"] = "true", ["operationsContract"] = "operation-units-4kib-global-v1" });
+        await CycleAsync(scenario, new() { ["operations"] = "81", ["storage"] = "100", ["unsupported"] = "true", ["operationsContract"] = "operation-units-4kib-selected-regions-global-v1" });
         await AssertInboxAsync(scenario, 1, "Operations allowance: 80% reached");
         await Assert.That((await SnapshotAsync(scenario)).GetProperty("sent").GetInt32()).IsEqualTo(1);
-        await CycleAsync(scenario, new() { ["operations"] = "100", ["storage"] = "100", ["unsupported"] = "true", ["operationsContract"] = "operation-units-4kib-global-v1" });
+        await CycleAsync(scenario, new() { ["operations"] = "100", ["storage"] = "100", ["unsupported"] = "true", ["operationsContract"] = "operation-units-4kib-selected-regions-global-v1" });
         await AssertInboxAsync(scenario, 2, "Operations allowance: 100% reached");
         await Assert.That((await SnapshotAsync(scenario)).GetProperty("sent").GetInt32()).IsEqualTo(2);
     }

@@ -37,7 +37,8 @@ public interface IAllowanceNotificationBackend
 public sealed class AllowanceNotifications(IDashboardState state, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger)
 {
     public const string Collection = "dashboard_allowance_alerts";
-    public const string OperationsContract = "operation-units-4kib-global-v1";
+    // Historical wire name: writes count once in the serving region; replication is not billed.
+    public const string OperationsContract = "operation-units-4kib-selected-regions-global-v1";
     public const string StorageContract = "storage-bytes-regions-global-v1";
 
     public async Task RunOnceAsync(CancellationToken cancellationToken)
