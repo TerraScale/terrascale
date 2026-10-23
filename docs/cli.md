@@ -43,6 +43,7 @@ The release target is macOS and Linux on Intel/AMD 64-bit (`amd64`) and ARM64 (`
 
 ```sh
 curl -fsSL https://terrascale.tech/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Homebrew installation is planned through the TerraScale tap:
@@ -53,7 +54,10 @@ brew install terrascale/tap/ts
 
 ### Windows
 
-Use the source build for now. A native Windows release installer is not currently available.
+Use the source build for now. Tagged releases will provide `amd64` and `arm64`
+ZIP archives on the [releases page](https://github.com/TerraScale/ts-go/releases).
+Verify the archive's SHA-256 against `checksums.txt` before extracting `ts.exe`
+into a user-owned directory on `PATH`.
 
 ### Check the installed version
 
@@ -63,8 +67,7 @@ The release CLI is expected to report its version with:
 ts --version
 ```
 
-The current source CLI does not implement `--version`; it returns an invalid-arguments
-error and prints usage instead. This is a pending release feature, not a failed source build.
+Release builds print `ts 0.0.X`. Source builds with version support print `ts dev`.
 
 ## Sign in
 
