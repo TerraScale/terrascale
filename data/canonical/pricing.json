@@ -9,7 +9,7 @@
       "definition": "One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written.",
       "rules": [
         "Lists, queries, and batches count each item independently.",
-        "Writes count once per selected region; reads count only in the serving region.",
+        "Writes count once regardless of the number of selected regions; reads count only in the serving region. Replication between regions is not billed.",
         "Failed, denied, invalid, throttled, and not-found requests are not billed."
       ]
     },
