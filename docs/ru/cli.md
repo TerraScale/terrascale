@@ -126,8 +126,25 @@ ts db create example
 ts db branch example example-preview
 ```
 
-`db list` prints database names, IDs, and home regions, and an empty table
-before the project's first database. `db branch` takes the
+`db list` prints database names, IDs, home regions and replica regions, and an
+empty table before the project's first database. `db info` prints one
+database's metadata as JSON.
+
+## Regions and backups
+
+```sh
+ts db regions example sjc fra   # replicate to sjc and fra besides the home region
+ts db regions example none      # remove every replica
+ts backup create example
+ts backup list example
+ts backup restore example 01JZ8Q7D9F1G3H5J7K9M1N3P5Q example-restored
+```
+
+`db regions` replaces the replica list; the home region never changes. Serving
+regions are `gru`, `sjc` and `fra`. `backup restore` creates a new, independent
+database from the backup and leaves the source untouched. See
+[Backups and restore](/ru/guides/backups-and-restore) and
+[Replication and durability](/ru/concepts/replication). `db branch` takes the
 source database name first and the new branch name second.
 
 ::: danger Database deletion
