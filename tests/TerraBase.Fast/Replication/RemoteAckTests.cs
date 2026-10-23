@@ -2209,7 +2209,7 @@ public sealed class RemoteAckTests
             }
 
             var start = await inner.RetainedAfterAsync(database, incarnation, through, head, cancellationToken);
-            if (ReferenceEquals(refill, pair.Refill) && start is { } found)
+            if (ReferenceEquals(refill, pair.Refill) && (database with { Plan = PlanTier.Hobby }) == pair.Database && start is { } found)
             {
                 pair.ReplayStart?.TrySetResult(found);
             }
