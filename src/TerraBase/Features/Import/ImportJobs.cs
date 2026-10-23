@@ -62,7 +62,7 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
 
     internal static readonly NotFound UnknownImport = new("the database has no import", "unknown_import");
 
-    private static readonly Validation BadFormat = new("format must be postgres_plain or sqlite");
+    private static readonly Validation BadFormat = new("format must be postgres_plain, sqlite or ndjson");
     // One lock per destination that ever had an import on this node.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.Ordinal);
 
@@ -71,7 +71,7 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
 
     public async ValueTask<CreateImportResult> CreateAsync(TenantContext database, string name, CreateImportRequest request, CancellationToken cancellationToken)
     {
-        if (request.Format is not (ImportFormats.PostgresPlain or ImportFormats.Sqlite))
+        if (request.Format is not (ImportFormats.PostgresPlain or ImportFormats.Sqlite or ImportFormats.Ndjson))
         {
             return BadFormat;
         }
@@ -105,7 +105,7 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
 
         var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\0',
             [database.ProjectId!, database.DatabaseId!, request.Format, bytes.ToString(System.Globalization.CultureInfo.InvariantCulture), sha,
-            normalized.MissingPrimaryKey!, .. normalized.Exclude!]))));
+            normalized.MissingPrimaryKey!, normalized.Collection ?? "", .. normalized.Exclude!]))));
         var gate = Lock(database);
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -514,7 +514,13 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
             canonical.Add(string.Join('.', parts.Select(ImportNames.Quote)));
         }
 
-        return new ImportOptionsBody(missing, [.. canonical]);
+        var collection = requested?.Collection;
+        if (collection is not null && (DocumentRoute.CheckCollectionName(collection) is Validation || ImportNames.Reserved(collection)))
+        {
+            return new Validation("options.collection must be a lowercase, unreserved collection name of at most 63 characters");
+        }
+
+        return new ImportOptionsBody(missing, [.. canonical], collection);
     }
 
     /// <summary>A decision of <see cref="ChangeAsync"/>.</summary>
