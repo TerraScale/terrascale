@@ -1,5 +1,73 @@
 # Local database encryption comparison (TS-861)
 
+## Shutdown regression: matched baseline and one-Stop profile
+
+**Performance qualification remains open.** The original 48-document (~43 MB)
+shutdown workload must pass all 18 executions with median `StopAsync` at most
+1.5 times matched main. The existing baseline median is 1,060.487 ms, giving a
+1,590.731 ms ceiling. The split multi-read durability and deadline tests remain
+separate coverage; passing those tests does not satisfy this performance gate.
+
+Three alternating matched pairs used the same six-case fixture and native
+library. Main `7b80cacbe` carried only the diagnostic fixture patch; encryption
+`12bb92320` was clean. All observations, including failures, are retained.
+
+| Original workload | Stop samples ms | Median ms | Passed / failed / skipped |
+| --- | --- | ---: | --- |
+| Fixture-patched main | 1104.992 / 793.136 / 1060.487 | 1060.487 | 18 / 0 / 0 |
+| Encryption before correction | 5745.727 / 5041.421 / 3079.548 | 5041.421 | 16 / 2 / 0 |
+
+This is a real encryption-branch regression. It is a whole-branch comparison
+under competing host workloads, rather than an isolated cipher benchmark.
+Both arms loaded native SHA-256
+`efd5916aa9ee1eeaa04784813b08e250912ae25d89f8a92499a216c2711f3e8b`.
+The complete baseline, fixture identity and evidence hashes are in
+[the matched comparison](2026-10-23-encryption-shutdown.md).
+
+A subsequent **single profiled original Stop** on a dirty, instrumented
+`12bb92320` build took **2,859 ms** and passed all six class cases. It retained
+the original four-second deadline and parallelism 16. This sample locates
+costs; it is neither an after-fix result nor stability qualification.
+
+| Target-tenant phase | Wall ms | Thread CPU ms |
+| --- | ---: | ---: |
+| Early reader/command disposal, including native statement finalize | 1403.9 | about 1400 |
+| Retention DELETE (two calls) | 804.3 | 280.7 |
+| Native reader stepping | 272.9 | 261.4 |
+| Destination writes / log serialization / blob copies | 27.8 / 24.1 / 15.1 | not separately measured |
+| Queues, writer semaphore and resumption combined | at most 6 | not separately measured |
+
+The tap reads at most 4 MiB per page from a SELECT limited to 1,024 rows. Native
+statement finalization runs a partially consumed SELECT to completion. The
+first read's eight disposal intervals were 386 / 260 / 227 / 175 / 169 / 84 /
+60 / 46 ms; they shrink as the unread tail shrinks. This identifies redundant
+execution during early statement close as the dominant measured cost. No key
+file reads, unwraps or connection opens occurred inside Stop. The retained
+writer session was reused for both cleanup calls.
+
+The DELETE spent about 523 ms off CPU, with only 0.85 ms of scheduler runqueue
+wait. No syscall trace isolated fsync, and no native stack sample isolated
+cipher cost. Native `run_io` was not called: synchronous step and finalize
+include their I/O and decryption. S3 completion and about 250 ms of other gaps
+were not separately timed.
+
+Static disassembly of the actual pinned library independently confirms that
+its AEGIS-256 path calls software AES. The SDK defaults enable
+`pure-rust-crypto`; locked AEGIS 0.9.8 chooses hardware AES only when the build
+enables the AES target feature, which the release flags omit. This confirms
+the selected implementation; the profile does not assign a measured fraction
+of Stop to that implementation. Changes to the shared native artifact remain
+with its existing owner.
+
+Profile evidence:
+`~/.t3/test-artifacts/database-encryption/stop-profile-12bb-20261023T193019Z/`.
+The dirty instrumentation patch SHA-256 is
+`9ea02cc3b6dc1910007f4c5eab723fa539851978631426d89207bd639b9c8f88`;
+`report.md` SHA-256 is
+`5f8fb0fa4a9a318126a3672fa753b1ae3fdc5237a2f158e099f947626b9503e9`.
+One Release build and one six-case invocation passed; SDK, sibling and native
+identities match the retained baseline. No failed run was discarded.
+
 ## Shared FTS/encryption native measurement — pushed commit 1c3b609f6
 
 Measured 2026-10-23 on `delta`, exact pushed commit `1c3b609f65588ed712b41a81dfb1d807b00f44a4`, Release, SDK `11.0.100-rc.1.26425.128` through `/home/mariogk/.local/share/mise/dotnet-root/dotnet`; runtime `11.0.0`. SDK sibling: `bcd20603f11f3aa54dc54cec6e410b4fe9e24151`. The admitted disposable checkout and sibling were clean at completion.
