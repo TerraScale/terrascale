@@ -171,8 +171,93 @@ func TestWireProxyTargetValidationAndDialError(t *testing.T) {
 	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
 		t.Fatalf("unavailable target read: %v", err)
 	}
+	p.Suspend()
 	if err := p.Close(); err == nil || !strings.Contains(err.Error(), "peer dial") {
 		t.Fatalf("dial failure was not retained: %v", err)
+	}
+}
+
+func TestWireProxySuspendAndResume(t *testing.T) {
+	t.Parallel()
+	p, err := StartWireProxy(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { p.Close() })
+	accepted := make(chan struct{})
+	peer := wireTestPeer(t, func(conn net.Conn) error {
+		close(accepted)
+		_, err := io.Copy(io.Discard, conn)
+		return err
+	})
+	if err := p.Target("http://" + peer.Addr().String()); err != nil {
+		t.Fatal(err)
+	}
+	conn := wireTestDial(t, p)
+	select {
+	case <-accepted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("proxy did not connect to peer")
+	}
+	p.Suspend()
+	peer.Close()
+	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("suspended stream read: %v", err)
+	}
+	conn = wireTestDial(t, p)
+	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("suspended target read: %v", err)
+	}
+	restarted := wireTestPeer(t, func(conn net.Conn) error {
+		_, err := conn.Write([]byte("ready"))
+		return err
+	})
+	if err := p.Target("http://" + restarted.Addr().String()); err != nil {
+		t.Fatal(err)
+	}
+	conn = wireTestDial(t, p)
+	got, err := io.ReadAll(conn)
+	if err != nil || string(got) != "ready" {
+		t.Fatalf("resumed response %q: %v", got, err)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWireProxySuspendedClientKeepsItsGeneration(t *testing.T) {
+	t.Parallel()
+	p, err := StartWireProxy(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { p.Close() })
+	peer := wireTestPeer(t, func(conn net.Conn) error {
+		_, err := conn.Write([]byte("ready"))
+		return err
+	})
+	if err := p.Target("http://" + peer.Addr().String()); err != nil {
+		t.Fatal(err)
+	}
+	oldTarget := p.target.Load()
+	client, remote := net.Pipe()
+	t.Cleanup(func() { remote.Close() })
+	if !p.track(client) {
+		t.Fatal("client was not tracked")
+	}
+	p.Suspend()
+	if err := p.Target("http://" + peer.Addr().String()); err != nil {
+		t.Fatal(err)
+	}
+	// Delay forwarding until after resume: the closed client must retain its old generation.
+	p.forward(client, oldTarget)
+	conn := wireTestDial(t, p)
+	got, err := io.ReadAll(conn)
+	if err != nil || string(got) != "ready" {
+		t.Fatalf("resumed response %q: %v", got, err)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -180,6 +180,7 @@ func (c *Cluster) Targets() replbench.Targets {
 }
 
 func (c *Cluster) Stop(w *Worker) error {
+	w.Proxy.Suspend()
 	if w.exited == nil {
 		return nil
 	}
@@ -203,10 +204,12 @@ func (c *Cluster) Close() error {
 	c.closed = true
 	var errs []error
 	for _, w := range c.Nodes {
-		if err := c.Stop(w); err != nil {
+		if err := w.Proxy.Close(); err != nil {
 			errs = append(errs, err)
 		}
-		if err := w.Proxy.Close(); err != nil {
+	}
+	for _, w := range c.Nodes {
+		if err := c.Stop(w); err != nil {
 			errs = append(errs, err)
 		}
 	}

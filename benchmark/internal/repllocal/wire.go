@@ -51,8 +51,9 @@ func StartWireProxy(ctx context.Context) (*WireProxy, error) {
 				cancel()
 				return
 			}
+			target := p.target.Load()
 			if p.track(conn) {
-				p.wg.Go(func() { p.forward(conn) })
+				p.wg.Go(func() { p.forward(conn, target) })
 			}
 		}
 	})
@@ -78,8 +79,21 @@ func (p *WireProxy) Target(rawURL string) error {
 		return errors.New("invalid peer target port")
 	}
 	addr := net.JoinHostPort(u.Hostname(), port)
+	if current := p.target.Load(); current != nil && *current == addr {
+		return nil
+	}
 	p.target.Store(&addr)
 	return nil
+}
+
+// Suspend disconnects an intentionally stopped worker; Target resumes forwarding after restart.
+func (p *WireProxy) Suspend() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.target.Store(nil)
+	for conn := range p.active {
+		conn.Close()
+	}
 }
 
 // Bytes counts transport stream bytes, including HTTP/2 control traffic, without TCP/IP headers.
@@ -122,21 +136,30 @@ func (p *WireProxy) release(conn net.Conn) {
 	p.mu.Unlock()
 }
 
-func (p *WireProxy) forward(client net.Conn) {
+func (p *WireProxy) forward(client net.Conn, target *string) {
 	defer p.release(client)
-	target := p.target.Load()
-	if target == nil {
+	if target == nil || p.target.Load() != target {
 		return // The directory can advertise the proxy before its worker is ready.
+	}
+	record := func(err error) {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if err != nil && p.ctx.Err() == nil && p.target.Load() == target && p.err == nil {
+			p.err = err
+		}
 	}
 	peer, err := (&net.Dialer{}).DialContext(p.ctx, "tcp", *target)
 	if err != nil {
-		p.record(fmt.Errorf("peer dial: %w", err))
+		record(fmt.Errorf("peer dial: %w", err))
 		return
 	}
 	if !p.track(peer) {
 		return
 	}
 	defer p.release(peer)
+	if p.target.Load() != target {
+		return
+	}
 	var streams sync.WaitGroup
 	copyStream := func(dst, src net.Conn, count *atomic.Int64) {
 		// Hide TCP's ReaderFrom/WriterTo methods to keep buffers and accounting explicit.
@@ -149,7 +172,7 @@ func (p *WireProxy) forward(client net.Conn) {
 			}
 		}
 		if err != nil {
-			p.record(fmt.Errorf("peer stream: %w", err))
+			record(fmt.Errorf("peer stream: %w", err))
 			client.Close()
 			peer.Close()
 		}
