@@ -380,7 +380,11 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                         if (link.Cursors.GetValueOrDefault(database) is { } cursor && cursor.Incarnation == incarnation)
                         {
                             cursor.RequiresRefill |= report.RefillRequired;
-                            if (!report.RefillRequired)
+                            if (report.RefillRequired)
+                            {
+                                work.Enqueue(database);
+                            }
+                            else
                             {
                                 cursor.Stable = new Hlc(Math.Max(cursor.Stable.Value, report.Stable));
                             }
