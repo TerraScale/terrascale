@@ -24,7 +24,7 @@ namespace TerraScale.Authentication.Features.Platform;
 /// <c>at+jwt</c> for the configured audiences, live at most 5 minutes and carry <c>org_id</c>, <c>project_id</c>,
 /// <c>database</c> and <c>scope</c>; no refresh or identity token comes with them, and no token entry is stored.
 /// </summary>
-public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Users users, TotpCredentials mfa, AttemptLimiter limiter, AuthOptions options, TimeProvider clock,
+public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, TotpCredentials mfa, AttemptLimiter limiter, AuthOptions options, TimeProvider clock,
     AuthStore store, GitHubActionsKeys gitHubActions, ILogger<PlatformGrants> logger)
 {
     /// <summary>The organization a token acts in.</summary>
@@ -101,16 +101,13 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
         if (subject is null || !subject.GetAudiences().Contains(issuer, StringComparer.Ordinal)
             || request.ClientId is not { } clientId || !subject.GetPresenters().Contains(clientId, StringComparer.Ordinal)
             || subject.GetClaim(Claims.Subject) is not { } userId
-            || await users.GetAsync(PlatformDirectory.Instance, userId, cancellationToken) is not { } user
-            || subject.GetClaim(OidcIssuer.EpochClaim) != user.AuthEpoch.ToString(CultureInfo.InvariantCulture)
-            || subject.GetClaim(OidcIssuer.StateClaim) != user.AuthStamp
             || subject.GetExpirationDate() is not { } expires || expires <= clock.GetUtcNow()
             || request.SubjectToken is not { } encoded
             || !new JsonWebToken(encoded).TryGetPayloadValue<object>(Claims.AuthenticationTime, out var rawAuthenticationTime)
             || rawAuthenticationTime is not (int or long)
             || !long.TryParse(subject.GetClaim(Claims.AuthenticationTime), NumberStyles.None, CultureInfo.InvariantCulture, out var authenticatedAt)
             || authenticatedAt > clock.GetUtcNow().Add(AuthenticationTimeClockSkew).ToUnixTimeSeconds()
-            || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
+            || await mfa.PrimaryUserAsync(PlatformDirectory.Instance, userId, subject.GetClaim(OidcIssuer.EpochClaim), subject.GetClaim(OidcIssuer.StateClaim), cancellationToken) is not { } user)
         {
             return OidcResults.Forbid(Errors.InvalidGrant, "The subject token is not a live sign-in token of this client.");
         }
