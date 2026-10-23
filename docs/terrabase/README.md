@@ -123,6 +123,8 @@ Requests authenticated with project JWTs or document credentials share their org
 query costs, memory/cache shares and live-document storage quotas. The platform publishes the
 resource plan using the trusted platform operator; public user tokens cannot grant
 Enterprise admission. Rate, concurrency and memory refusals include `Retry-After`.
+Monthly [operation allowances](operation-allowance.md) stop new puts and patches at the plan's
+hard allowance; reads and deletes remain available.
 
 ## Node pressure
 

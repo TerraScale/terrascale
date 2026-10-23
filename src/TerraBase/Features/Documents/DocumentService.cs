@@ -21,7 +21,7 @@ using ZLogger;
 namespace TerraBase.Features.Documents;
 
 internal sealed partial class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage,
-    IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters, IStorageQuota quota, IDatabaseStats stats,
+    IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters, IStorageQuota quota, IOperationAllowance allowance, IDatabaseStats stats,
     IRemoteDurability durability, TerraBaseOptions options, ILogger<DocumentService> logger, IReplicaCopyFaults faults)
     : IDocumentService, ISystemDocumentReader
 {
@@ -500,6 +500,18 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return (new DocumentRejected(DocumentRoute.UnknownDatabase), null);
+        }
+
+        // New billable work stops at the plan allowance; deletes and assertions still run.
+        if (operations.Any(operation => operation is PutOperation or PatchOperation)
+            && await allowance.CheckAsync(database, cancellationToken).ConfigureAwait(false) is var allowed && allowed is not Done)
+        {
+            return (allowed switch
+            {
+                QuotaExceeded error => new DocumentRejected(error),
+                Unavailable error => new DocumentRejected(error),
+                Done => throw new UnreachableException(),
+            }, null);
         }
 
         var entered = await quota.EnterAsync(database, store, cancellationToken).ConfigureAwait(false);

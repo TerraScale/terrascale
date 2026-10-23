@@ -132,6 +132,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     public void RecordRead(TenantContext database)
     {
         Add(new(DatabaseOwner.Of(database), CurrentHour()), Read);
+        CountMonth(database, 1);
         RecordOperation(database, "read", 1);
         stats.Read(database);
     }
@@ -139,6 +140,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     public void RecordWrites(TenantContext database, int writes)
     {
         Add(new(DatabaseOwner.Of(database), CurrentHour()), new OpCounts(0, writes));
+        CountMonth(database, writes);
         stats.Wrote(database, writes);
     }
 
