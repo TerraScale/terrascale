@@ -1045,7 +1045,7 @@
     "securitySchemes": {
       "dashboardSession": {
         "type": "apiKey",
-        "description": "Server-managed HttpOnly session cookie. Obtain through the native login flow.",
+        "description": "Server-managed HttpOnly session cookie. Obtain by signing in through ts-auth's hosted pages (GET /login).",
         "name": "ts-dashboard-session",
         "in": "cookie"
       }

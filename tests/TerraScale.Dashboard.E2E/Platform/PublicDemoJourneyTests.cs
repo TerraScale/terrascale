@@ -31,7 +31,6 @@ public sealed class PublicDemoJourneyTests
     {
         await using var demo = await StartAsync();
         using var client = demo.Client();
-        await AssertUnlabelledAsync(client, "/login");
         using (var login = await HttpJourney.LoginAsync(client))
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         foreach (var path in new[] { "/", "/databases", "/profile", "/organization" })
@@ -49,7 +48,7 @@ public sealed class PublicDemoJourneyTests
         {
             (HttpMethod.Get, "/admin"), (HttpMethod.Get, "/admin/users"), (HttpMethod.Post, "/api/v1/admin/plans"),
             (HttpMethod.Post, "/api/v1/admin/plans/p/delete"), (HttpMethod.Post, "/api/v1/auth-management/clients"),
-            (HttpMethod.Post, "/mcp"), (HttpMethod.Get, "/reset-password"), (HttpMethod.Post, "/reset-password/complete"),
+            (HttpMethod.Post, "/mcp"),
             (HttpMethod.Post, "/api/v1/dashboard/organization/projects/p/delete"), (HttpMethod.Post, "/api/v1/dashboard/organization/leave"),
             (HttpMethod.Post, "/api/v1/dashboard/credentials/revoke"), (HttpMethod.Post, "/api/v1/dashboard/profile/access-tokens/t/revoke"),
             (HttpMethod.Post, "/api/v1/access/members/m/revoke"), (HttpMethod.Delete, "/api/v1/dashboard/databases/d"),

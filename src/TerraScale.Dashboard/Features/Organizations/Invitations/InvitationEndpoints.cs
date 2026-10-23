@@ -31,12 +31,13 @@ public static class InvitationEndpoints
             catch (TerraScale.Dashboard.Shared.Accounts.AccountAccessException error)
             { return await PageAsync(http, sessions, invitations, token, error.Message, error.StatusCode); }
         });
-        endpoints.MapPost("/invitations/{token}/switch-account", async (HttpContext http, DashboardSessions sessions, string token) =>
+        // ts-auth answers prompt=login with login_required, so switching accounts signs out of ts-auth too;
+        // the invitee then signs in with the invited email and opens the link again.
+        endpoints.MapPost("/invitations/{token}/switch-account", async (HttpContext http, string token) =>
         {
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
-            await sessions.EndAsync(http);
-            return HttpRedirects.SeeOther("/login?returnTo=" + Uri.EscapeDataString("/invitations/" + Uri.EscapeDataString(token)));
+            return await Features.Auth.AuthEndpoints.SignOutAsync(http);
         });
         return endpoints;
     }

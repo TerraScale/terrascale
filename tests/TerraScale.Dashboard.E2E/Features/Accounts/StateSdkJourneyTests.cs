@@ -86,7 +86,7 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         var beforePrivateReads = (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32();
         await ReadyAsync(coldClient);
         Check((await MeAsync(coldReplica)).GetProperty("email").GetString() == account.Email &&
-            (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32() >= beforePrivateReads + 18,
+            (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32() >= beforePrivateReads + 15,
             "Readiness and encrypted account/session reads use the private listener without a durable API key or public data bearer.");
         using (var deleted = await HttpJourney.PostFormAsync(coldReplica, "/api/v1/dashboard/data/saved-queries/delete", new()
         { ["_csrf"] = localeCsrf, ["id"] = queryId }))
@@ -102,7 +102,7 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         await ControlAsync(controls, new { command = "mode", value = "interrupted" });
         Check(!await scenario.StartHostsAsync(), "A producer outage during creation prevents the actual app from admitting traffic.");
         var partial = await ObserveAsync(controls);
-        Check(partial.GetProperty("collections").GetArrayLength() is > 0 and < 18, "The interrupted cold start leaves real, partial producer metadata.");
+        Check(partial.GetProperty("collections").GetArrayLength() is > 0 and < 15, "The interrupted cold start leaves real, partial producer metadata.");
         await ControlAsync(controls, new { command = "mode", value = "" });
         Check(await scenario.StartHostsAsync(), "The next actual app startup resumes existing collections and establishes the remainder.");
         var recovered = await ObserveAsync(controls);
@@ -115,10 +115,10 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         }
         using var client = scenario.CreateClient();
         await ReadyAsync(client);
-        await ControlAsync(controls, new { command = "drop-collection", name = "login_throttle" });
+        await ControlAsync(controls, new { command = "drop-collection", name = "auth-flows" });
         var missing = await ObserveAsync(controls);
-        using (var readiness = await client.GetAsync("/readyz")) Check(readiness.StatusCode == HttpStatusCode.ServiceUnavailable, "One missing required collection fails readiness even while the other17 exist.");
-        using (var login = await HttpJourney.LoginAsync(client)) Check(login.StatusCode == HttpStatusCode.ServiceUnavailable, "A genuine schema404 propagates as a dependency503 instead of a misleading sign-in rate-limit429.");
+        using (var readiness = await client.GetAsync("/readyz")) Check(readiness.StatusCode == HttpStatusCode.ServiceUnavailable, "One missing required collection fails readiness even while the other14 exist.");
+        using (var login = await HttpJourney.LoginAsync(client)) Check(login.StatusCode == HttpStatusCode.ServiceUnavailable, "A genuine schema404 propagates as a dependency503 before any redirect to ts-auth.");
         var checkedSchema = await ObserveAsync(controls);
         Check(checkedSchema.GetProperty("collectionPosts").GetInt32() == missing.GetProperty("collectionPosts").GetInt32() &&
             checkedSchema.GetProperty("documentWrites").GetInt32() == missing.GetProperty("documentWrites").GetInt32(),
@@ -189,16 +189,8 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
     {
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var email = "state-sdk-" + suffix + "@example.test"; var password = "State-SDK-" + suffix;
-        var csrf = await HttpJourney.CsrfAsync(client, "/onboarding");
-        using (var registered = await HttpJourney.PostFormAsync(client, "/onboarding", new()
-        { ["_csrf"] = csrf, ["displayName"] = "State SDK", ["email"] = email, ["password"] = password, ["confirmPassword"] = password, ["terms"] = "true" }))
-        {
-            Check(registered.StatusCode == HttpStatusCode.OK, "Native signup stores its pending verification through real remote state.");
-            csrf = Token(await registered.Content.ReadAsStringAsync());
-        }
-        using (var verified = await HttpJourney.PostFormAsync(client, "/login/code/verify", new()
-        { ["_csrf"] = csrf, ["email"] = email, ["code"] = "123456", ["signUp"] = "1", ["redirectTo"] = "/onboarding" }))
-            Check(verified.StatusCode == HttpStatusCode.SeeOther, "Native email verification creates the persistent account/session records.");
+        using (var verified = await HttpJourney.LoginAsync(client, email, password, "/onboarding", signUp: true))
+            Check(verified.StatusCode == HttpStatusCode.SeeOther, "Hosted sign-up creates the persistent account/session records.");
         await StepAsync(new() { ["step"] = "account-information", ["displayName"] = "State SDK" });
         await StepAsync(new() { ["step"] = "payment-method", ["bypass"] = "1" });
         await StepAsync(new() { ["step"] = "project", ["name"] = "State SDK project", ["region"] = "GRU" });
@@ -227,9 +219,9 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
     private static int Count(JsonElement observation, string name) => observation.GetProperty("collections").EnumerateArray().Single(collection => collection.GetProperty("name").GetString() == name).GetProperty("documents").GetInt32();
     private static void CheckSchema(JsonElement observation)
     {
-        var expected = new[] { "sessions", "auth_credentials", "session_indexes", "login_throttle", "device_grants", "auth-flows", "auth-mail-budgets", "dashboard_accounts", "dashboard_account_identities", "dashboard_organizations", "dashboard_access_tokens", "dashboard_access_token_hashes", "dashboard_saved_queries", "dashboard_billing", "dashboard_internal_billing", "dashboard_stripe_customers", "dashboard_billing_changes", "dashboard_stripe_checkouts" };
+        var expected = new[] { "sessions", "auth_credentials", "session_indexes", "auth-flows", "dashboard_accounts", "dashboard_account_identities", "dashboard_organizations", "dashboard_access_tokens", "dashboard_access_token_hashes", "dashboard_saved_queries", "dashboard_billing", "dashboard_internal_billing", "dashboard_stripe_customers", "dashboard_billing_changes", "dashboard_stripe_checkouts" };
         Check(observation.GetProperty("collections").EnumerateArray().Select(collection => collection.GetProperty("name").GetString()).Order(StringComparer.Ordinal)
-            .SequenceEqual(expected.Order(StringComparer.Ordinal)), "The external producer contains exactly all18 fixed production collections, including internal billing, account identity and checkout binding indexes.");
+            .SequenceEqual(expected.Order(StringComparer.Ordinal)), "The external producer contains exactly all15 fixed production collections, including internal billing, account identity and checkout binding indexes.");
     }
     private static string Token(string html)
     { var token = Regex.Match(html, "name=\"_csrf\" value=\"([^\"]+)\"").Groups[1].Value; Check(token.Length > 0, "The native form publishes a CSRF token."); return WebUtility.HtmlDecode(token); }

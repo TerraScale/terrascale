@@ -24,7 +24,7 @@ public static partial class PublicDemo
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
         await using var app = environment.CreateHost(AppContext.BaseDirectory, port, StripeBilling.Origin, Configure);
-        Console.WriteLine($"DEMO (synthetic data) on port {port}; user@example.com / test-password; code 123456");
+        Console.WriteLine($"DEMO (synthetic data) on port {port}; signs in as user@example.com");
         await app.RunAsync();
         return 0;
     }
@@ -66,7 +66,6 @@ public static partial class PublicDemo
                path.StartsWith("/api/v1/admin", StringComparison.OrdinalIgnoreCase) ||
                path.StartsWith("/api/v1/auth-management", StringComparison.OrdinalIgnoreCase) ||
                path.StartsWith("/mcp", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWith("/reset-password", StringComparison.OrdinalIgnoreCase) ||
                // The demo UI needs only the fake Stripe checkout/portal and OIDC redirects; scenarios and probes stay test-only.
                path.StartsWith("/__test", StringComparison.OrdinalIgnoreCase) &&
                !path.Equals("/__test/checkout", StringComparison.OrdinalIgnoreCase) &&

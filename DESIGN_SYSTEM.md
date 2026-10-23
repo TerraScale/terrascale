@@ -64,8 +64,6 @@ Abridged from `Features/Databases/DatabasesView.cshtml`:
 | Alert | Markup only: `ts-alert ts-alert-info/-success/-warning/-danger` with `ts-alert-title` and `ts-alert-body` |
 | Badge | Markup only: `ts-badge-neutral/-info/-success/-warning/-danger/-violet`, or `ts-badge-tone` with `data-tone` |
 | Field | Markup only: `div.ts-field` with `ts-label`, the control and a hint or error |
-| Password input | `UI/Slices/PasswordInput.cshtml` with `UI/PasswordField.cs`: Datastar reveal toggle |
-| Email code | `UI/Slices/EmailCodeInput.cshtml` with `UI/EmailCodeBehaviors.cs` |
 | Region map | `UI/Slices/RegionMap.cshtml` (decorative) and `UI/Slices/RegionPicker.cshtml` with `UI/RegionMapField.cs` (highlights hubs chosen in a select or checkbox group) |
 | Icons | `UI/Icons.cs` (`Icons.Render`) and `UI/Slices/ShellIcons.cs` |
 

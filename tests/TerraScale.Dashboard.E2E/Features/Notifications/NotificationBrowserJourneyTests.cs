@@ -39,10 +39,7 @@ public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture
         var organizationId = selected.GetProperty("organizationId").GetString()!;
         var projectId = selected.GetProperty("projectId").GetString()!;
 
-        await NavigateAsync("/login");
-        await page.Locator("#email").FillAsync(persona.Email);
-        await page.Locator("#password").FillAsync(persona.Password);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await BrowserAudit.SignInAsync(page, scenario.Origin, email: persona.Email, password: persona.Password);
         await page.WaitForURLAsync(scenario.Origin.ToString());
         await NavigateAsync("/notifications?status=unread");
         await Assert.That(await page.Locator("main .ts-notification-unread").CountAsync()).IsEqualTo(2);

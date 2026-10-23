@@ -19,10 +19,7 @@ public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
         var errors = new ConcurrentQueue<string>();
         page.PageError += (_, error) => errors.Enqueue(error);
         var persona = scenario.Personas.Seeded;
-        await page.GotoAsync(new Uri(scenario.Origin, "/login").ToString());
-        await page.Locator("#email").FillAsync(persona.Email);
-        await page.Locator("#password").FillAsync(persona.Password);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await BrowserAudit.SignInAsync(page, scenario.Origin, email: persona.Email, password: persona.Password);
         await page.WaitForURLAsync(scenario.Origin.ToString());
         await page.Locator("#ts-nav-toggle").ClickAsync();
         await page.WaitForFunctionAsync("() => document.activeElement?.id === 'ts-nav-close'");
@@ -81,10 +78,7 @@ public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
         page.PageError += (_, error) => errors.Enqueue(error);
 
         var persona = scenario.Personas.Seeded;
-        await NavigateAsync("/login");
-        await page.Locator("#email").FillAsync(persona.Email);
-        await page.Locator("#password").FillAsync(persona.Password);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+        await BrowserAudit.SignInAsync(page, scenario.Origin, email: persona.Email, password: persona.Password);
         await page.WaitForURLAsync(scenario.Origin.ToString());
 
         var toggle = page.Locator("#ts-nav-toggle");
@@ -211,12 +205,6 @@ public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
         await Assert.That(await page.Locator(".ts-skip-link").GetAttributeAsync("inert")).IsNull();
         await page.WaitForFunctionAsync("() => document.activeElement?.id === 'ts-navigation'");
         await Assert.That(errors.ToArray()).IsEmpty();
-
-        async Task NavigateAsync(string path)
-        {
-            var response = await page.GotoAsync(new Uri(scenario.Origin, path).ToString(), new() { WaitUntil = WaitUntilState.DOMContentLoaded });
-            await Assert.That(response!.Status).IsEqualTo(200);
-        }
 
         async Task WaitForDrawerAsync(bool open)
         {

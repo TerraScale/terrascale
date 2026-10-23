@@ -186,19 +186,7 @@ public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixt
     {
         const string email = "onboarding-selection-audit@example.test";
         const string password = "Audit-local-password-123";
-        using var registered = await HttpJourney.PostFormAsync(client, "/onboarding", new()
-        {
-            ["_csrf"] = await HttpJourney.CsrfAsync(client, "/onboarding"),
-            ["displayName"] = "Audit setup",
-            ["email"] = email,
-            ["password"] = password,
-            ["confirmPassword"] = password,
-            ["terms"] = "true"
-        });
-        await Assert.That(registered.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var token = WebUtility.HtmlDecode(Regex.Match(await registered.Content.ReadAsStringAsync(), "name=\"_csrf\" value=\"([^\"]+)\"").Groups[1].Value);
-        using var verified = await HttpJourney.PostFormAsync(client, "/login/code/verify", new()
-        { ["_csrf"] = token, ["email"] = email, ["code"] = "123456", ["signUp"] = "1", ["redirectTo"] = "/onboarding" });
+        using var verified = await HttpJourney.LoginAsync(client, email, password, "/onboarding", signUp: true);
         await Assert.That(verified.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await SaveStepAsync(client, new() { ["step"] = "account-information", ["displayName"] = "Audit setup" });
         await SaveStepAsync(client, new() { ["step"] = "payment-method", ["bypass"] = "1" });

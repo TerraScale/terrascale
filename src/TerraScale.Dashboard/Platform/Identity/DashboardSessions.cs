@@ -83,29 +83,6 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
     public Task<SessionRecord?> ReadCredentialAsync(string id, CancellationToken cancellationToken) =>
         id is { Length: 64 } && id.All(char.IsAsciiHexDigitLower) ? ResolveAsync("auth_credentials", id, cancellationToken) : Task.FromResult<SessionRecord?>(null);
 
-    public async Task<SessionRecord?> ReadCredentialForPrivilegeAsync(string id, CancellationToken cancellationToken)
-    {
-        if (id is not { Length: 64 } || !id.All(char.IsAsciiHexDigitLower)) return null;
-        var current = await ResolveAsync("auth_credentials", id, cancellationToken);
-        if (current is null) return null;
-        var record = await ResolveAsync("auth_credentials", id, cancellationToken, forceRefresh: true, initialAccessToken: current.AccessToken);
-        if (record is not null && (record.UserId != current.UserId || record.Email != current.Email))
-            throw new IOException("Privileged credential identity changed.");
-        return record;
-    }
-
-    public async Task<string?> BindBrowserAsync(HttpContext context, SessionRecord session)
-    {
-        var token = context.Request.Cookies[Cookie];
-        if (token is not { Length: 64 } || !token.All(char.IsAsciiHexDigitLower)) return null;
-        var id = Key(token);
-        var current = await ResolveAsync("sessions", id, context.RequestAborted);
-        return current?.UserId == session.UserId && current.Email == session.Email ? id : null;
-    }
-
-    public Task<SessionRecord?> ReadBoundAsync(string id, CancellationToken cancellationToken) =>
-        id is { Length: 64 } && id.All(char.IsAsciiHexDigitLower) ? ResolveAsync("sessions", id, cancellationToken) : Task.FromResult<SessionRecord?>(null);
-
     public async Task DeleteCredentialAsync(string id, CancellationToken cancellationToken)
     {
         if (id is not { Length: 64 } || !id.All(char.IsAsciiHexDigitLower)) return;
@@ -388,7 +365,7 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
 }
 
 public sealed record SessionRecord(string UserId, string Name, string Email, string AccessToken, string? RefreshToken, DateTimeOffset ExpiresAt,
-    DateTimeOffset? SessionExpiresAt = null, string RefreshLease = "", DateTimeOffset? RefreshLeaseUntil = null)
+    DateTimeOffset? SessionExpiresAt = null, string RefreshLease = "", DateTimeOffset? RefreshLeaseUntil = null, string? IdToken = null)
 {
     public override string ToString() => "Dashboard session [REDACTED]";
 }

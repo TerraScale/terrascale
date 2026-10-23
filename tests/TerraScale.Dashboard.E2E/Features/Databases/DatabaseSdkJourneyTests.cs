@@ -282,23 +282,9 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var email = "sdk-signup-" + suffix + "@example.test";
         var password = "SDK-signup-" + suffix;
-        var csrf = await HttpJourney.CsrfAsync(client, "/onboarding");
-        using (var registered = await HttpJourney.PostFormAsync(client, "/onboarding", new()
-        {
-            ["_csrf"] = csrf,
-            ["displayName"] = "Customer SDK " + suffix,
-            ["email"] = email,
-            ["password"] = password,
-            ["confirmPassword"] = password,
-            ["terms"] = "true"
-        }))
-        {
-            Check(registered.StatusCode == HttpStatusCode.OK, "Native signup creates a pending email verification");
-            csrf = Token(await registered.Content.ReadAsStringAsync());
-        }
-        using (var verified = await HttpJourney.PostFormAsync(client, "/login/code/verify", new()
-        { ["_csrf"] = csrf, ["email"] = email, ["code"] = "123456", ["signUp"] = "1", ["redirectTo"] = "/onboarding" }))
-            Check(verified.StatusCode == HttpStatusCode.SeeOther, "Email verification bootstraps canonical producer organization/project IDs through the official management SDK");
+        // Accounts are created on ts-auth's hosted sign-up; the callback starts the dashboard session.
+        using (var verified = await HttpJourney.LoginAsync(client, email, password, "/onboarding", signUp: true))
+            Check(verified.StatusCode == HttpStatusCode.SeeOther, "Hosted sign-up bootstraps canonical producer organization/project IDs through the official management SDK");
         await StepAsync(new() { ["step"] = "account-information", ["displayName"] = "Customer SDK " + suffix });
         await StepAsync(new() { ["step"] = "payment-method", ["bypass"] = "1" });
         await StepAsync(new() { ["step"] = "project", ["name"] = "Customer SDK project", ["region"] = "GRU" });
@@ -343,7 +329,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
                     "The canonical data API answers 401 unauthorized to the raw ts-auth key");
             }
         }
-        var session = await auth.PasswordAsync(account.Email, account.Password, "127.0.0.1", deadline.Token);
+        var session = await auth.ExchangeAsync(auth.Authorize(account.Email, account.Password, false)["code=".Length..], null!, deadline.Token);
         var token = await auth.GetAsync(session, organizationId, projectId, ["documents:read", "documents:write"], deadline.Token);
         var readOnly = await auth.GetAsync(session, organizationId, projectId, ["documents:read"], deadline.Token);
         Check(auth.ResolveProjectToken(token) is { } grant && grant.OrganizationId == organizationId && grant.ProjectId == projectId &&

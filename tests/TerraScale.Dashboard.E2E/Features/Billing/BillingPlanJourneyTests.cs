@@ -29,16 +29,9 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         var suffix = Guid.NewGuid().ToString()[..8];
         try
         {
-            await GotoAsync("/onboarding?plan=starter");
-            await page.Locator("#displayName").FillAsync("Plan owner " + suffix);
-            await page.Locator("#email").FillAsync("plan-owner-" + suffix + "@example.test");
             var password = "E2E-plan-" + Guid.NewGuid();
-            await page.Locator("#password").FillAsync(password);
-            await page.Locator("#confirmPassword").FillAsync(password);
-            await page.Locator("#terms").CheckAsync();
-            await SubmitAsync(page, "form[action=\"/onboarding\"]", "Create account", 200);
-            await page.Locator("#code").FillAsync("123456");
-            await SubmitAsync(page, "form[action=\"/login/code/verify\"]", "Continue");
+            var signedUp = await BrowserAudit.SignInAsync(page, fixture.Origin, "/onboarding?plan=starter", "plan-owner-" + suffix + "@example.test", password, signUp: true);
+            await Assert.That(signedUp!.Status).IsEqualTo(200);
             await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Save and continue");
             var starter = page.Locator("input[name=plan][value=starter]");
             await page.Locator("label").Filter(new() { Has = starter }).ClickAsync();
@@ -153,15 +146,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             guestPage.SetDefaultTimeout(20000);
             guestPage.PageError += (_, error) => errors.Enqueue(error);
             var email = "plan-member-" + suffix + "@example.test";
-            await guestPage.GotoAsync(origin + "/onboarding", new() { WaitUntil = WaitUntilState.DOMContentLoaded });
-            await guestPage.Locator("#displayName").FillAsync("Plan member " + suffix);
-            await guestPage.Locator("#email").FillAsync(email);
-            await guestPage.Locator("#password").FillAsync(password);
-            await guestPage.Locator("#confirmPassword").FillAsync(password);
-            await guestPage.Locator("#terms").CheckAsync();
-            await SubmitAsync(guestPage, "form[action=\"/onboarding\"]", "Create account", null);
-            await guestPage.Locator("#code").FillAsync("123456");
-            await SubmitAsync(guestPage, "form[action=\"/login/code/verify\"]", "Continue", null);
+            await BrowserAudit.SignInAsync(guestPage, fixture.Origin, "/onboarding", email, password, signUp: true);
             await SubmitAsync(guestPage, "form[action=\"/onboarding/step\"]", "Save and continue", null);
             await SubmitAsync(guestPage, "form[action=\"/onboarding/step\"]", "Continue on Free", null);
             await guestPage.Locator("#projectName").FillAsync("Member project " + suffix);
@@ -549,14 +534,9 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
 
     internal static async Task SignUpPaidAsync(HttpClient client, string email, string password, string suffix, string interval = "monthly")
     {
-        var csrf = await HttpJourney.CsrfAsync(client, "/onboarding?plan=starter");
-        using var registration = await HttpJourney.PostFormAsync(client, "/onboarding", new()
-        { ["_csrf"] = csrf, ["displayName"] = "Plan race " + suffix, ["email"] = email, ["password"] = password, ["confirmPassword"] = password, ["terms"] = "true", ["plan"] = "starter" });
-        await Assert.That(registration.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        using var verification = await HttpJourney.PostFormAsync(client, "/login/code/verify", new()
-        { ["_csrf"] = csrf, ["email"] = email, ["code"] = "123456", ["signUp"] = "1" });
+        using var verification = await HttpJourney.LoginAsync(client, email, password, "/onboarding?plan=starter", signUp: true);
         await Assert.That(verification.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        csrf = await HttpJourney.CsrfAsync(client, "/onboarding?plan=starter");
+        var csrf = await HttpJourney.CsrfAsync(client, "/onboarding?plan=starter");
         using var information = await HttpJourney.PostFormAsync(client, "/onboarding/step", new()
         { ["_csrf"] = csrf, ["step"] = "account-information", ["displayName"] = "Plan race " + suffix });
         await Assert.That(information.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);

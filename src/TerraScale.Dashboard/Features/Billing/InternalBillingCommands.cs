@@ -1,7 +1,5 @@
-using System.Net;
 using System.Numerics;
 using System.Text.Json;
-using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -14,19 +12,8 @@ namespace TerraScale.Dashboard.Features.Billing;
 // E2E fixtures replace its whole host factory, never individual job functions.
 public static class InternalBillingCommands
 {
-    private const string DeviceClient = "dashboard-cli";
     private const string Configure = "configure-internal-billing";
     private const string Report = "report-internal-billing";
-
-    public static IServiceCollection AddInternalBillingCommands(this IServiceCollection services)
-    {
-        services.AddHttpClient(DeviceClient, client =>
-        {
-            client.BaseAddress = new(StripeBilling.Origin);
-            client.Timeout = TimeSpan.FromSeconds(30);
-        }).ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler);
-        return services;
-    }
 
     public static async Task<int> RunAsync(string[] args, Func<string[], WebApplication>? buildApplication = null,
         TextWriter? output = null, TextWriter? error = null, CancellationToken cancellationToken = default)
@@ -49,7 +36,7 @@ public static class InternalBillingCommands
             return 1;
         }
 
-        string secret = "";
+        SessionRecord? grant = null;
         string? failure = null;
         WebApplication? application = null;
         try
@@ -58,18 +45,21 @@ public static class InternalBillingCommands
             // Commands receive exactly the same automatic persistent-schema
             // initialization as the hosted application's admission boundary.
             await application.Services.GetRequiredService<IDashboardState>().InitializeAsync(cancellationToken);
-            using var client = application.Services.GetRequiredService<IHttpClientFactory>().CreateClient(DeviceClient);
-            secret = await AcquireAsync(client, output, cancellationToken);
-            var context = await application.Services.GetRequiredService<AccessTokens>().ResolveForPrivilegeAsync(secret, cancellationToken)
-                ?? throw new AccountAccessException("Authorization has expired.", 401);
+            var auth = application.Services.GetRequiredService<TsAuthGateway>();
+            var accounts = application.Services.GetRequiredService<AccountService>();
+            grant = await auth.DeviceSignInAsync(output, cancellationToken);
+            var context = await accounts.GetContextAsync(grant, cancellationToken);
             if (!context.Session.Email.Equals(options.AdminEmail, StringComparison.OrdinalIgnoreCase))
                 throw new AccountAccessException("Approved account does not match --admin-email.");
             if (await application.Services.GetRequiredService<IPlatformRoleGateway>().PlatformRoleAsync(context.Session, cancellationToken) != "admin")
                 throw new AccountAccessException("Platform administrator authorization is required.");
             var internalBilling = application.Services.GetRequiredService<InternalBillingService>();
-            async Task<AccountContext> RefreshAuthorityAsync(CancellationToken token) =>
-                await application.Services.GetRequiredService<AccessTokens>().ResolveForPrivilegeAsync(secret, token)
-                    ?? throw new AccountAccessException("Authorization has expired.", 401);
+            async Task<AccountContext> RefreshAuthorityAsync(CancellationToken token)
+            {
+                try { grant = await auth.DeviceRefreshAsync(grant!, token); }
+                catch (SignInRejectedException) { throw new AccountAccessException("Authorization has expired.", 401); }
+                return await accounts.GetContextAsync(grant, token);
+            }
             if (options.Command == Configure)
             {
                 await internalBilling.ConfigureAsync(context, new(options.OrganizationId, options.BasePlanKey,
@@ -93,17 +83,18 @@ public static class InternalBillingCommands
         catch (AccountAccessException rejected) { failure = rejected.Message; }
         catch (OnboardingValidationException rejected) { failure = rejected.Message; }
         catch (CommandRejectedException rejected) { failure = rejected.Message; }
+        catch (DeviceSignInException rejected) { failure = rejected.Message; }
+        catch (SignInRejectedException) { failure = "CLI authorization was rejected."; }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { failure = "Command canceled."; }
         catch (Exception) when (application is null) { failure = "Internal billing dependencies are unavailable."; }
         finally
         {
-            // Device approval creates an independent encrypted rotating family.
-            // Its secret is never printed, cached or copied into a browser grant.
-            if (secret.Length > 0 && application is not null)
+            // The device grant is never printed, cached or copied into a browser session.
+            if (grant is not null && application is not null)
             {
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                try { await application.Services.GetRequiredService<AccessTokens>().RevokeSecretAsync(secret, cleanup.Token); }
-                catch (Exception dependency) when (DependencyFailure(dependency, CancellationToken.None) || dependency is AccountAccessException)
+                try { await application.Services.GetRequiredService<TsAuthGateway>().DeviceRevokeAsync(grant, cleanup.Token); }
+                catch (Exception dependency) when (DependencyFailure(dependency, CancellationToken.None))
                 { failure ??= "Internal billing dependencies are unavailable."; }
             }
             if (application is not null)
@@ -116,77 +107,6 @@ public static class InternalBillingCommands
             return 1;
         }
         return 0;
-    }
-
-    private static async Task<string> AcquireAsync(HttpClient client, TextWriter output, CancellationToken cancellationToken)
-    {
-        var origin = client.BaseAddress;
-        if (origin is null || origin.Scheme is not ("http" or "https") || origin.UserInfo.Length != 0 ||
-            origin.AbsolutePath != "/" || origin.Query.Length != 0 || origin.Fragment.Length != 0)
-            throw new IOException("CLI approval origin is invalid.");
-        using var issued = await client.PostAsync("/api/v1/dashboard/cli/device-authorization",
-            new FormUrlEncodedContent(new Dictionary<string, string> { ["client_id"] = "terrascale-cli" }), cancellationToken);
-        if (issued.StatusCode != HttpStatusCode.OK) throw new HttpRequestException("CLI device authorization failed.");
-        using var issue = await PlatformJson.ReadAsync(issued.Content, cancellationToken);
-        var row = issue.RootElement;
-        var device = row.GetProperty("device_code").GetString() ?? "";
-        var code = row.GetProperty("user_code").GetString() ?? "";
-        var complete = row.GetProperty("verification_uri_complete").GetString() ?? "";
-        var verification = row.GetProperty("verification_uri").GetString() ?? "";
-        var expires = row.GetProperty("expires_in").GetInt32();
-        var interval = row.GetProperty("interval").GetInt32();
-        if (device.Length != 43 || device.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('-' or '_')) ||
-            DeviceAuthorization.Normalize(code) is null || expires is <= 0 or > 600 || interval is < 5 or > 600 ||
-            !ApprovalUri(verification, origin, false, code) || !ApprovalUri(complete, origin, true, code))
-            throw new JsonException("CLI approval response is invalid.");
-        await output.WriteLineAsync("Approve CLI access: " + complete);
-        await output.WriteLineAsync("User code: " + code);
-        await output.FlushAsync(cancellationToken);
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(expires));
-        try
-        {
-            while (true)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(interval), deadline.Token);
-                using var response = await client.PostAsync("/api/v1/dashboard/cli/token", new FormUrlEncodedContent(new Dictionary<string, string>
-                {
-                    ["client_id"] = "terrascale-cli",
-                    ["grant_type"] = DeviceAuthorization.GrantType,
-                    ["device_code"] = device
-                }), deadline.Token);
-                using var answer = await PlatformJson.ReadAsync(response.Content, deadline.Token);
-                if (response.StatusCode == HttpStatusCode.OK)
-                {
-                    var token = answer.RootElement.GetProperty("access_token").GetString() ?? "";
-                    if (token.Length != 49 || !token.StartsWith("tspat_", StringComparison.Ordinal) ||
-                        answer.RootElement.GetProperty("token_type").GetString() != "Bearer" ||
-                        answer.RootElement.GetProperty("expires_in").GetInt32() <= 0)
-                        throw new JsonException("CLI bearer response is invalid.");
-                    return token;
-                }
-                if (response.StatusCode != HttpStatusCode.BadRequest) throw new HttpRequestException("CLI token polling failed.");
-                switch (answer.RootElement.GetProperty("error").GetString())
-                {
-                    case "authorization_pending": break;
-                    case "slow_down": interval = checked(interval + 5); break;
-                    case "access_denied": throw new CommandRejectedException("CLI authorization was denied.");
-                    case "expired_token": throw new CommandRejectedException("CLI authorization expired. Start the command again.");
-                    default: throw new HttpRequestException("CLI token response was rejected.");
-                }
-            }
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
-        { throw new CommandRejectedException("CLI authorization expired. Start the command again."); }
-    }
-
-    private static bool ApprovalUri(string value, Uri origin, bool complete, string code)
-    {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != origin.Scheme || uri.Authority != origin.Authority ||
-            uri.UserInfo.Length != 0 || uri.AbsolutePath != "/cli/approve" || uri.Fragment.Length != 0) return false;
-        if (!complete) return uri.Query.Length == 0;
-        var query = QueryHelpers.ParseQuery(uri.Query);
-        return query.Count == 1 && query["user_code"].Count == 1 && query["user_code"][0] == code;
     }
 
     private static Arguments Parse(string[] args)

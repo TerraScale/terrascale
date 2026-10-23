@@ -65,15 +65,15 @@ public sealed class HotReloadJourneyTests(DashboardRootFixture fixture)
 
     private async Task AssertHotReloadAsync(string origin)
     {
-        var source = Path.Combine(fixture.Root, "src/TerraScale.Dashboard/Features/Auth/AuthPage.cs");
+        var source = Path.Combine(fixture.Root, "src/TerraScale.Dashboard/Features/Auth/AuthEndpoints.cs");
         var css = Path.Combine(fixture.Root, "src/TerraScale.Dashboard/Features/Auth/auth.css");
         var originalSource = await File.ReadAllTextAsync(source);
         var originalCss = await File.ReadAllTextAsync(css);
-        const string originalCopy = "Access your databases and cloud operations.";
+        const string originalCopy = "This sign-in link expired or was started in another browser. Sign in again.";
         const string changedCopy = originalCopy + " Hot reload check.";
         await Assert.That(originalSource).Contains(originalCopy);
         var changedSource = originalSource.Replace(originalCopy, changedCopy);
-        var changedCss = originalCss + "\n.ts-login-logo { opacity: 0.99; }\n";
+        var changedCss = originalCss + "\n.ts-login-brand { opacity: 0.99; }\n";
         var sourceChanged = false;
         var cssChanged = false;
         using var playwright = await Playwright.CreateAsync();
@@ -83,7 +83,8 @@ public sealed class HotReloadJourneyTests(DashboardRootFixture fixture)
             var page = await browser.NewPageAsync();
             page.SetDefaultTimeout(45000);
             var ready = page.Locator("#ts-dev-updates[data-dev-ready=\"true\"]");
-            await page.GotoAsync(origin + "/login");
+            // The sign-in failure page is the one auth page the dashboard still renders itself.
+            await page.GotoAsync(origin + "/login/callback?state=hot-reload");
             await ready.WaitForAsync(new() { State = WaitForSelectorState.Attached });
             await File.WriteAllTextAsync(source, changedSource);
             sourceChanged = true;
@@ -93,14 +94,14 @@ public sealed class HotReloadJourneyTests(DashboardRootFixture fixture)
             sourceChanged = false;
             await page.GetByText(originalCopy, new() { Exact = true }).WaitForAsync();
             await ready.WaitForAsync(new() { State = WaitForSelectorState.Attached });
-            var opacity = await page.Locator(".ts-login-logo").EvaluateAsync<string>("element => getComputedStyle(element).opacity");
+            var opacity = await page.Locator(".ts-login-brand").EvaluateAsync<string>("element => getComputedStyle(element).opacity");
             await File.WriteAllTextAsync(css, changedCss);
             cssChanged = true;
-            await page.WaitForFunctionAsync("() => getComputedStyle(document.querySelector('.ts-login-logo')).opacity === '0.99'");
+            await page.WaitForFunctionAsync("() => getComputedStyle(document.querySelector('.ts-login-brand')).opacity === '0.99'");
             await Assert.That(await File.ReadAllTextAsync(css)).IsEqualTo(changedCss).Because("No concurrent edit to the CSS fixture");
             await File.WriteAllTextAsync(css, originalCss);
             cssChanged = false;
-            await page.WaitForFunctionAsync("value => getComputedStyle(document.querySelector('.ts-login-logo')).opacity === value", opacity);
+            await page.WaitForFunctionAsync("value => getComputedStyle(document.querySelector('.ts-login-brand')).opacity === value", opacity);
             Console.WriteLine("PASS: C# hot reload and CSS updates reached the open browser over the Tailscale origin; source fixtures restored");
         }
         finally

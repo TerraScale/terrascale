@@ -19,36 +19,17 @@ public sealed class AccountIdentityJourneyTests(DashboardRootFixture fixture)
         var seed = await Control(producer, new { command = "seed-account", accountId = ImportedId });
         using var password = scenario.CreateClient();
         using (var login = await HttpJourney.LoginAsync(password, returnTo: "/api/v1/auth/me"))
-            Check(login.StatusCode == HttpStatusCode.SeeOther, "An imported, indexed source account admits its owning signed password grant");
+            Check(login.StatusCode == HttpStatusCode.SeeOther, "An imported, indexed source account admits its owning hosted sign-in");
         var user = await User(password);
         CheckIdentity(user, seed);
 
-        using var emailCode = scenario.CreateClient(replica: true);
-        var codeCsrf = await HttpJourney.CsrfAsync(emailCode, "/login/code");
-        using (var started = await HttpJourney.PostFormAsync(emailCode, "/login/code", new()
-        { ["_csrf"] = codeCsrf, ["email"] = "user@example.com", ["redirectTo"] = "/api/v1/auth/me" }))
-            Check(started.StatusCode == HttpStatusCode.OK, "The native code form reaches the external producer");
-        using (var verified = await HttpJourney.PostFormAsync(emailCode, "/login/code/verify", new()
-        { ["_csrf"] = codeCsrf, ["email"] = "user@example.com", ["code"] = "123456", ["redirectTo"] = "/api/v1/auth/me" }))
-            Check(verified.StatusCode == HttpStatusCode.SeeOther, "The second running replica verifies the owning email grant");
-        CheckIdentity(await User(emailCode), seed);
+        using var replica = scenario.CreateClient(replica: true);
+        using (var login = await HttpJourney.LoginAsync(replica, returnTo: "/api/v1/auth/me"))
+            Check(login.StatusCode == HttpStatusCode.SeeOther, "The second running replica completes its own hosted sign-in for the same account");
+        CheckIdentity(await User(replica), seed);
 
-        using var sso = scenario.CreateClient();
-        using (var started = await sso.GetAsync("/login/sso?returnTo=%2Fapi%2Fv1%2Fauth%2Fme"))
-        {
-            Check(started.StatusCode == HttpStatusCode.SeeOther && started.Headers.Location is { Scheme: "https", Host: "auth.terrascale.tech" },
-                "Native SSO discovers the trusted producer");
-            using var authorization = new HttpRequestMessage(HttpMethod.Get, started.Headers.Location!.PathAndQuery);
-            authorization.Headers.Host = started.Headers.Location.Authority;
-            using var authorized = await producer.SendAsync(authorization);
-            Check(authorized.StatusCode == HttpStatusCode.Redirect, "The producer admits the original nonce, state, redirect and PKCE");
-            using var callback = await sso.GetAsync(authorized.Headers.Location);
-            Check(callback.StatusCode == HttpStatusCode.SeeOther, "Signed SSO preserves the imported public account identity");
-        }
-        CheckIdentity(await User(sso), seed);
-
-        var csrf = await HttpJourney.CsrfAsync(emailCode, "/profile");
-        using (var saved = await HttpJourney.PostFormAsync(emailCode, "/api/v1/dashboard/profile", new()
+        var csrf = await HttpJourney.CsrfAsync(replica, "/profile");
+        using (var saved = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/profile", new()
         {
             ["_csrf"] = csrf,
             ["name"] = "Imported profile updated",
@@ -62,7 +43,7 @@ public sealed class AccountIdentityJourneyTests(DashboardRootFixture fixture)
         CheckIdentity(updated, seed);
         Check(updated.GetProperty("name").GetString() == "Imported profile updated", "A separate browser rereads the profile mutation from persistent state");
         var secret = await HttpJourney.CreatePatAsync(password, "Imported account E2E");
-        var profile = await HttpJourney.McpAsync(emailCode, secret, "tools/call", new { name = "get_profile", arguments = new { } });
+        var profile = await HttpJourney.McpAsync(replica, secret, "tools/call", new { name = "get_profile", arguments = new { } });
         var profileContent = profile.GetProperty("result").GetProperty("structuredContent");
         Check(profileContent.GetProperty("accountId").GetString() == ImportedId &&
             profileContent.GetProperty("userId").GetString() == seed.GetProperty("subject").GetString() &&
@@ -74,7 +55,7 @@ public sealed class AccountIdentityJourneyTests(DashboardRootFixture fixture)
         Check(profileContent.GetProperty("accessTokens").EnumerateArray().Any(token => token.GetProperty("name").GetString() == "Imported account E2E"),
             "The profile reports actual native-created PAT metadata without its secret");
         Check(!profileContent.GetRawText().Contains(secret, StringComparison.Ordinal), "The read-only profile never returns a PAT secret");
-        var context = await HttpJourney.McpAsync(emailCode, secret, "tools/call", new { name = "get_context", arguments = new { } });
+        var context = await HttpJourney.McpAsync(replica, secret, "tools/call", new { name = "get_context", arguments = new { } });
         var content = context.GetProperty("result").GetProperty("structuredContent");
         Check(content.GetProperty("user").GetProperty("id").GetString() == seed.GetProperty("subject").GetString() &&
             content.GetProperty("selection").GetProperty("organizationId").GetString() == updated.GetProperty("organizationId").GetString() &&
@@ -85,39 +66,39 @@ public sealed class AccountIdentityJourneyTests(DashboardRootFixture fixture)
         var scopedOrganization = content.GetProperty("organizations")[0];
         Check(scopedOrganization.GetProperty("projects")[0].GetProperty("isDefault").GetBoolean() &&
             scopedOrganization.GetProperty("canManage").GetBoolean(), "Context exposes the actual provider-backed default project and caller capabilities");
-        var discovery = await HttpJourney.McpAsync(emailCode, secret, "tools/list", new { });
+        var discovery = await HttpJourney.McpAsync(replica, secret, "tools/list", new { });
         foreach (var name in new[] { "get_profile", "get_context" })
         {
             var tool = discovery.GetProperty("result").GetProperty("tools").EnumerateArray().Single(item => item.GetProperty("name").GetString() == name);
             Check(tool.GetProperty("outputSchema").GetProperty("type").GetString() == "object", "Typed identity tools advertise their actual structured object schema");
         }
-        var savedPhone = await Tool(emailCode, secret, "update_profile", new { phone = "+5511888880000" });
+        var savedPhone = await Tool(replica, secret, "update_profile", new { phone = "+5511888880000" });
         Check(savedPhone.GetProperty("saved").GetBoolean() && savedPhone.EnumerateObject().Count() == 1,
             "The original update_profile accepts the optional phone field and returns only its saved receipt");
-        var savedLanguage = await Tool(emailCode, secret, "set_language", new { locale = "pt-BR" });
+        var savedLanguage = await Tool(replica, secret, "set_language", new { locale = "pt-BR" });
         Check(savedLanguage.GetProperty("saved").GetBoolean() && savedLanguage.EnumerateObject().Count() == 1,
             "The original set_language returns its saved receipt instead of echoing a divergent profile payload");
-        var changedProfile = await Tool(emailCode, secret, "get_profile", new { });
+        var changedProfile = await Tool(replica, secret, "get_profile", new { });
         Check(changedProfile.GetProperty("accountId").GetString() == ImportedId && changedProfile.GetProperty("phone").GetString() == "+5511888880000" &&
             changedProfile.GetProperty("name").GetString() == "Imported profile updated" && changedProfile.GetProperty("locale").GetString() == "pt-BR",
             "Optional profile mutation preserves the omitted display name, indexed source identity and current provider subject across replicas");
         var revocable = await HttpJourney.CreatePatAsync(password, "Imported account revocation E2E");
-        var listed = await Tool(emailCode, secret, "list_access_tokens", new { });
+        var listed = await Tool(replica, secret, "list_access_tokens", new { });
         var tokenId = listed.GetProperty("accessTokens").EnumerateArray().Single(token => token.GetProperty("name").GetString() == "Imported account revocation E2E")
             .GetProperty("id").GetString()!;
         Check(listed.GetProperty("accessTokens").EnumerateArray().All(token => token.GetProperty("lastFour").GetString()!.Length == 4) &&
             !listed.GetRawText().Contains(secret, StringComparison.Ordinal) && !listed.GetRawText().Contains(revocable, StringComparison.Ordinal),
             "The original list_access_tokens wraps actual safe token metadata without either token secret");
-        var revoked = await Tool(emailCode, secret, "revoke_access_token", new { tokenId });
+        var revoked = await Tool(replica, secret, "revoke_access_token", new { tokenId });
         Check(revoked.GetProperty("revoked").GetBoolean() && revoked.EnumerateObject().Count() == 1,
             "The original revoke_access_token accepts tokenId and returns only the revocation receipt");
         using (var request = new HttpRequestMessage(HttpMethod.Get, "/mcp"))
         {
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", revocable);
-            using var rejected = await emailCode.SendAsync(request);
+            using var rejected = await replica.SendAsync(request);
             Check(rejected.StatusCode == HttpStatusCode.Unauthorized, "A different running replica rejects the revoked PAT immediately");
         }
-        var remaining = await Tool(emailCode, secret, "list_access_tokens", new { });
+        var remaining = await Tool(replica, secret, "list_access_tokens", new { });
         Check(!remaining.GetProperty("accessTokens").EnumerateArray().Any(token => token.GetProperty("id").GetString() == tokenId),
             "Revocation removes only the chosen token; the original independent PAT remains authorized");
         CheckBindings(await Observations(producer), seed.GetProperty("storageKey").GetString()!, ImportedId);

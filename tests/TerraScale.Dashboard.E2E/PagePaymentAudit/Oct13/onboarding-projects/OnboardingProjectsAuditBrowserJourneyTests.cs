@@ -38,17 +38,8 @@ public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixt
                   }
                 }, {once:true});
                 """);
-            var loginPage = await context.APIRequest.GetAsync(origin + "/login");
-            var csrf = Regex.Match(await loginPage.TextAsync(), "name=\"_csrf\" value=\"([^\"]+)\"").Groups[1].Value;
-            var login = await context.APIRequest.PostAsync(origin + "/login", new()
-            {
-                MaxRedirects = 0,
-                Headers = new Dictionary<string, string> { ["Origin"] = origin },
-                Form = context.APIRequest.CreateFormData().Set("_csrf", csrf).Set("email", "user@example.com")
-                    .Set("password", "test-password").Set("returnTo", "/organization?tab=projects")
-            });
-            await Assert.That(login.Status).IsEqualTo(303);
             var page = await context.NewPageAsync();
+            await BrowserAudit.SignInAsync(page, new Uri(origin), "/organization?tab=projects");
             var postCount = 0;
             page.Request += (_, request) => { if (request.Method == "POST" && new Uri(request.Url).AbsolutePath == "/api/v1/dashboard/organization/projects") Interlocked.Increment(ref postCount); };
             await page.GotoAsync(origin + "/organization?tab=projects");
@@ -135,30 +126,8 @@ public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixt
             await ShotAsync("retry-success");
             await Assert.That(Volatile.Read(ref postCount)).IsEqualTo(3);
             await context.ClearCookiesAsync();
-            await page.GotoAsync(origin + "/onboarding");
-            await ShotAsync("registration-empty");
-            var registration = await context.APIRequest.GetAsync(origin + "/onboarding");
-            var signupCsrf = Regex.Match(await registration.TextAsync(), "name=\"_csrf\" value=\"([^\"]+)\"").Groups[1].Value;
-            var email = "audit-browser-" + size + "@example.test";
-            const string password = "Audit-browser-password-123";
-            var signup = await context.APIRequest.PostAsync(origin + "/onboarding", new()
-            {
-                MaxRedirects = 0,
-                Headers = new Dictionary<string, string> { ["Origin"] = origin },
-                Form = context.APIRequest.CreateFormData().Set("_csrf", signupCsrf).Set("displayName", "Browser setup")
-                    .Set("email", email).Set("password", password).Set("confirmPassword", password).Set("terms", "true")
-            });
-            await Assert.That(signup.Status).IsEqualTo(200);
-            signupCsrf = Regex.Match(await signup.TextAsync(), "name=\"_csrf\" value=\"([^\"]+)\"").Groups[1].Value;
-            var verified = await context.APIRequest.PostAsync(origin + "/login/code/verify", new()
-            {
-                MaxRedirects = 0,
-                Headers = new Dictionary<string, string> { ["Origin"] = origin },
-                Form = context.APIRequest.CreateFormData().Set("_csrf", signupCsrf).Set("email", email)
-                    .Set("code", "123456").Set("signUp", "1").Set("redirectTo", "/onboarding")
-            });
-            await Assert.That(verified.Status).IsEqualTo(303);
-            await page.GotoAsync(origin + "/onboarding");
+            var signedUp = await BrowserAudit.SignInAsync(page, new Uri(origin), "/onboarding", "audit-browser-" + size + "@example.test", "Audit-browser-password-123", signUp: true);
+            await Assert.That(signedUp!.Status).IsEqualTo(200);
             await page.GetByRole(AriaRole.Button, new() { Name = "Save and continue" }).ClickAsync();
             await page.GetByRole(AriaRole.Heading, new() { Name = "Choose your plan" }).WaitForAsync();
             await ShotAsync("optional-plan");

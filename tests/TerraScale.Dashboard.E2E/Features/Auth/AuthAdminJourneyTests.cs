@@ -6,7 +6,6 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Playwright;
-using TUnit.Assertions.Enums;
 using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Auth;
@@ -42,7 +41,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
     ];
 
     [Test]
-    public async Task DesktopAndMobileAuthOnboardingAndCliBrowserJourneys()
+    public async Task DesktopAndMobileHostedSignUpOnboardingAndLogoutBrowserJourneys()
     {
         var output = BrowserAudit.Output(fixture.Root, "auth-journey");
         var origin = fixture.Origin.ToString().TrimEnd('/');
@@ -54,31 +53,31 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
         try
         {
-            await AutofocusAsync();
             foreach (var (size, width, height, paid) in new[] { ("desktop", 1440, 900, false), ("mobile", 390, 844, true) })
             {
                 var (context, page) = await NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
                 var key = Guid.NewGuid().ToString();
                 var user = new BrowserUser("Browser " + size + " User", "browser-" + key + "@example.com", "signup-" + key);
-                await SignupAsync(page, user, !paid, !paid);
-                Console.WriteLine("PASS: " + size + " signup and verification");
+                await SignupAsync(page, user);
+                Console.WriteLine("PASS: " + size + " hosted sign-up");
                 await OnboardingAsync(context, page, user, paid, size);
                 Console.WriteLine("PASS: " + size + (paid ? " paid annual" : " Free") + " onboarding and persisted billing");
                 if (!paid)
                 {
-                    await ResetAsync(context, page, user);
-                    await CliAsync(page, user);
-                    Console.WriteLine("PASS: reset and full CLI lifecycle");
                     var (_, native) = await NewContextAsync(new() { JavaScriptEnabled = false });
-                    await Assert.That((await LoginAsync(native, user)).Status).IsEqualTo(303);
-                    await native.WaitForURLAsync(origin + "/api/v1/auth/me");
+                    var rejected = await BrowserAudit.SignInAsync(native, fixture.Origin, "/api/v1/auth/me", user.Email, "wrong-password");
+                    await Assert.That(rejected!.Status).IsEqualTo(401).Because("ts-auth refusing the sign-in renders the failure page");
+                    await native.GetByRole(AriaRole.Status).Filter(new() { HasText = "ts-auth did not sign you in." }).WaitForAsync();
+                    await Assert.That((await native.APIRequest.GetAsync(origin + "/api/v1/auth/me")).Status).IsEqualTo(401);
+                    await Assert.That((await BrowserAudit.SignInAsync(native, fixture.Origin, "/api/v1/auth/me", user.Email, user.Password))!.Status).IsEqualTo(200);
+                    await Assert.That(native.Url).IsEqualTo(origin + "/api/v1/auth/me");
                     await LogoutAsync(native, keyboard: true);
-                    checks.Add("new-account login/logout work with JavaScript disabled");
-                    Console.WriteLine("PASS: JavaScript-disabled native login and keyboard logout");
+                    checks.Add("rejected hosted sign-in, new-account sign-in and logout work with JavaScript disabled");
+                    Console.WriteLine("PASS: JavaScript-disabled hosted sign-in and keyboard logout");
                 }
                 await LogoutAsync(page);
             }
-            await SsoAsync();
+            await FailedCallbackAsync();
             await Assert.That(errors).IsEmpty().Because("no browser script errors");
             await File.WriteAllTextAsync(Path.Combine(output, "report.json"), JsonSerializer.Serialize(new { passed = true, @base = origin, suite = "all", checks }, json));
             Console.WriteLine("PASS: " + string.Join("; ", checks));
@@ -129,103 +128,16 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             await page.EvaluateAsync("() => document.fonts.ready");
             await page.ScreenshotAsync(new() { Path = Path.Combine(output, name + ".png"), FullPage = true, Caret = ScreenshotCaret.Hide });
         }
-        async Task AutofocusAsync()
+        // ts-auth's hosted page creates the account; the dashboard continues to account setup.
+        async Task SignupAsync(IPage page, BrowserUser user)
         {
-            var evidence = new List<object>();
-            foreach (var (key, path, expected) in new[] { ("login", "/login", Array.Empty<string>()), ("code", "/login/code", ["email"]), ("reset", "/reset-password", []), ("login-rejected", "/login", ["password"]) })
-            {
-                var (context, page) = await NewContextAsync();
-                var response = (await page.GotoAsync(origin + path))!;
-                if (key == "login-rejected")
-                {
-                    await page.Locator("#email").FillAsync("unregistered-focus@example.com");
-                    await page.Locator("#password").FillAsync("wrong-password");
-                    response = await SubmitAsync(page, "form[action=\"/login\"]", "Sign in");
-                    await Assert.That(response.Status).IsEqualTo(401);
-                }
-                var raw = Regex.Matches(await response.TextAsync(), "<input\\b[^>]*\\bautofocus(?:\\s|=|/|>)[^>]*>").Select(match => match.Value).ToArray();
-                var rawIds = raw.Select(input => Regex.Match(input, "\\bid=\"([^\"]+)\"") is { Success: true } id ? id.Groups[1].Value : null).ToArray();
-                await Assert.That(rawIds).IsEquivalentTo((string?[])expected, CollectionOrdering.Matching).Because(key + " raw HTML autofocus");
-                await Assert.That(await page.Locator("input[autofocus]").EvaluateAllAsync<string[]>("inputs => inputs.map(input => input.id)"))
-                    .IsEquivalentTo(expected, CollectionOrdering.Matching).Because(key + " DOM autofocus");
-                await page.WaitForFunctionAsync("id => (document.activeElement?.id || document.activeElement?.tagName.toLowerCase()) === id", expected.FirstOrDefault() ?? "body");
-                var activeElement = await page.EvaluateAsync<string>("() => document.activeElement.id || document.activeElement.tagName.toLowerCase()");
-                evidence.Add(new { key, rawInputs = raw, autofocus = rawIds, activeElement });
-                await context.CloseAsync();
-            }
-            await File.WriteAllTextAsync(Path.Combine(output, "autofocus.json"), JsonSerializer.Serialize(evidence, json));
-            checks.Add("raw HTML and browser focus match Go login/code/reset/rejected-login rules");
-            Console.WriteLine("PASS: login/code/reset/rejected-login raw autofocus and activeElement");
-        }
-        async Task FillSignupAsync(IPage page, BrowserUser user, string? name = null, string? email = null, string? password = null, string? confirm = null, bool terms = true)
-        {
-            await page.Locator("#displayName").FillAsync(name ?? user.Name);
-            await page.Locator("#email").FillAsync(email ?? user.Email);
-            await page.Locator("#password").FillAsync(password ?? user.Password);
-            await page.Locator("#confirmPassword").FillAsync(confirm ?? user.Password);
-            await page.Locator("#terms").SetCheckedAsync(terms);
-        }
-        async Task SignupAsync(IPage page, BrowserUser user, bool validate, bool resend)
-        {
-            await GotoAsync(page, "/onboarding?plan=starter");
-            await BrowserAudit.AssertAccessibleAsync(page, "signup accessibility");
-            if (validate)
-            {
-                await FillSignupAsync(page, user, name: "");
-                await page.GetByRole(AriaRole.Button, new() { Name = "Create account", Exact = false }).ClickAsync();
-                await Assert.That(await page.Locator("#displayName").EvaluateAsync<bool>("input => input.validity.valueMissing")).IsTrue()
-                    .Because("native required field blocks empty signup");
-                foreach (var (name, email, password, confirm, terms, field, text) in new (string?, string?, string?, string?, bool, string, string)[]
-                {
-                    ("", null, null, null, true, "displayName", "Enter your full name."),
-                    (null, "invalid", null, null, true, "email", "Enter a valid email address"),
-                    (null, null, "short", "short", true, "password", "Use a password with at least 12 characters."),
-                    (null, null, null, "different-password", true, "confirmPassword", "Passwords do not match."),
-                    (null, null, null, null, false, "terms", "Accept the Terms of Service")
-                })
-                {
-                    await FillSignupAsync(page, user, name, email, password, confirm, terms);
-                    await page.Locator("form[action=\"/onboarding\"]").EvaluateAsync("form => { form.noValidate = true; }");
-                    var rejected = await SubmitAsync(page, "form[action=\"/onboarding\"]", "Create account →");
-                    await Assert.That(rejected.Status).IsEqualTo(422).Because(field + " rejects before provider enrollment");
-                    await Assert.That(await page.Locator("#" + field + "-error").InnerTextAsync()).Contains(text);
-                    await Assert.That(await page.Locator("#" + field).GetAttributeAsync("aria-invalid")).IsEqualTo("true");
-                    await Assert.That(await page.Locator("#password").InputValueAsync()).IsEqualTo("").Because("rejected signup does not echo password");
-                }
-                checks.Add("native signup validation and all five server field errors");
-            }
-            await FillSignupAsync(page, user);
-            await Assert.That((await SubmitAsync(page, "form[action=\"/onboarding\"]", "Create account →")).Status).IsEqualTo(200);
-            await page.GetByRole(AriaRole.Heading, new() { Name = "Verify your email", Exact = true }).WaitForAsync();
-            await Assert.That(await page.Locator("input[name=email]").InputValueAsync()).IsEqualTo(user.Email);
-            await Assert.That(await page.Locator("form[action=\"/login/code/verify\"] input[name=signUp]").InputValueAsync()).IsEqualTo("1");
-            await page.GetByRole(AriaRole.Textbox, new() { Name = "Six-digit code", Exact = true }).FillAsync("000000");
-            await Assert.That((await SubmitAsync(page, "form[action=\"/login/code/verify\"]", "Continue")).Status).IsEqualTo(401);
-            await page.Locator("#code-error").WaitForAsync();
-            await BrowserAudit.AssertAccessibleAsync(page, "rejected signup verification accessibility");
-            if (resend)
-            {
-                var button = page.Locator("form[action=\"/login/code/resend\"] button");
-                await Assert.That(await button.IsDisabledAsync()).IsTrue().Because("resend countdown is enforced by native button state");
-                var csrf = await page.Locator("form[action=\"/login/code/resend\"] input[name=_csrf]").InputValueAsync();
-                var form = page.APIRequest.CreateFormData();
-                form.Set("_csrf", csrf);
-                var tooSoon = await page.APIRequest.PostAsync(origin + "/login/code/resend", new() { Form = form });
-                await Assert.That(tooSoon.Status).IsEqualTo(429).Because("server also refuses early resend");
-                await Assert.That(int.TryParse(tooSoon.Headers.GetValueOrDefault("retry-after"), out var retryAfter) && retryAfter > 0).IsTrue();
-                Console.WriteLine("Waiting for the real signup resend cooldown…");
-                await button.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-                await page.WaitForFunctionAsync("() => !document.querySelector('form[action=\"/login/code/resend\"] button').disabled", null, new() { Timeout = 65000 });
-                await Assert.That((await SubmitAsync(page, "form[action=\"/login/code/resend\"]", "Resend code")).Status).IsEqualTo(200);
-                await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "Check your email for a new code." }).WaitForAsync();
-                checks.Add("signup resend countdown, server cooldown and successful resend");
-            }
-            await page.GetByRole(AriaRole.Textbox, new() { Name = "Six-digit code", Exact = true }).FillAsync("123456");
-            await Assert.That((await SubmitAsync(page, "form[action=\"/login/code/verify\"]", "Continue")).Status).IsEqualTo(303);
+            active = page;
+            var landed = await BrowserAudit.SignInAsync(page, fixture.Origin, "/onboarding?plan=starter", user.Email, user.Password, signUp: true);
+            await Assert.That(landed!.Status).IsEqualTo(200);
             await page.GetByRole(AriaRole.Heading, new() { Name = "Review your account information", Exact = true }).WaitForAsync();
-            await Assert.That(await page.Locator("#displayName").InputValueAsync()).IsEqualTo(user.Name).Because("registered name is persisted after verification");
             await Assert.That(await page.Locator("#accountEmail").InputValueAsync()).IsEqualTo(user.Email);
-            checks.Add("signup wrong-code rejection and successful verification");
+            await BrowserAudit.AssertAccessibleAsync(page, "account review accessibility");
+            checks.Add("hosted sign-up lands on account review with the signed-up email");
         }
         async Task OnboardingAsync(IBrowserContext context, IPage page, BrowserUser user, bool paid, string size)
         {
@@ -291,153 +203,38 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             if (paid) await Assert.That(summary).Contains("Annual").Because("confirmed subscription retains selected annual interval");
             checks.Add(size + " completed account/project persistence and billing");
         }
-        async Task<IResponse> LoginAsync(IPage page, BrowserUser user, string? password = null)
-        {
-            await GotoAsync(page, "/login?returnTo=%2Fapi%2Fv1%2Fauth%2Fme");
-            await page.Locator("#email").FillAsync(user.Email);
-            await page.Locator("#password").FillAsync(password ?? user.Password);
-            return await SubmitAsync(page, "form[action=\"/login\"]", "Sign in");
-        }
+        // Logout ends the session at ts-auth; its hosted sign-in page (stood in here) is where the browser lands.
         async Task LogoutAsync(IPage page, bool keyboard = false)
         {
             await GotoAsync(page, "/");
             if (!await page.Locator("details.ts-account summary").IsVisibleAsync())
                 await page.GetByRole(AriaRole.Button, new() { Name = "Open navigation", Exact = true }).ClickAsync();
             await page.Locator("details.ts-account summary").ClickAsync();
-            await Assert.That((await SubmitAsync(page, "form[action=\"/api/v1/auth/logout\"]", "Sign out", keyboard)).Status).IsEqualTo(303);
-            await Assert.That(new Uri(page.Url).AbsolutePath).IsEqualTo("/login");
+            var logout = await SubmitAsync(page, "form[action=\"/api/v1/auth/logout\"]", "Sign out", keyboard);
+            await Assert.That(logout.Status).IsEqualTo(303);
+            await Assert.That(logout.Headers.GetValueOrDefault("location")).IsEqualTo("/login").Because("the test host's end-session URL");
+            await Assert.That(new Uri(page.Url).AbsolutePath).IsEqualTo("/__test/oidc");
             await Assert.That((await page.APIRequest.GetAsync(origin + "/api/v1/auth/me")).Status).IsEqualTo(401);
         }
-        async Task ResetAsync(IBrowserContext context, IPage page, BrowserUser user)
-        {
-            var old = user.Password;
-            var changed = "reset-" + Guid.NewGuid();
-            await GotoAsync(page, "/reset-password");
-            await page.Locator("#email").FillAsync(user.Email);
-            await SubmitAsync(page, "form[action=\"/reset-password\"]", "Email me a code");
-            foreach (var (code, confirm, status, error) in new[] { ("000000", changed, 401, "#code-error"), ("123456", "mismatching-password", 422, "#confirmPassword-error"), ("123456", changed, 303, "") })
-            {
-                await page.Locator("#code").FillAsync(code);
-                await page.Locator("#password").FillAsync(changed);
-                await page.Locator("#confirmPassword").FillAsync(confirm);
-                await Assert.That((await SubmitAsync(page, "form[action=\"/reset-password/complete\"]", "Change password")).Status).IsEqualTo(status);
-                if (error.Length > 0) await page.Locator(error).WaitForAsync();
-            }
-            await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "Your password was changed." }).WaitForAsync();
-            await Assert.That((await context.APIRequest.GetAsync(origin + "/api/v1/auth/me")).Status).IsEqualTo(401).Because("password reset invalidates earlier browser grant");
-            await Assert.That((await LoginAsync(page, user, old)).Status).IsEqualTo(401).Because("old password cannot sign in");
-            user.Password = changed;
-            await Assert.That((await LoginAsync(page, user)).Status).IsEqualTo(303);
-            await page.WaitForURLAsync(origin + "/api/v1/auth/me");
-            checks.Add("reset wrong-code/mismatch rejection, success, old-grant invalidation and new-password login");
-        }
-        async Task CliAsync(IPage page, BrowserUser user)
-        {
-            var publicContext = await browser.NewContextAsync();
-            var client = publicContext.APIRequest;
-            async Task<JsonElement> IssueAsync()
-            {
-                var form = client.CreateFormData();
-                form.Set("client_id", "terrascale-cli");
-                var response = await client.PostAsync(origin + "/api/v1/dashboard/cli/device-authorization", new() { Form = form });
-                await Assert.That(response.Status).IsEqualTo(200);
-                var issued = (await response.JsonAsync())!.Value;
-                await Assert.That(issued.GetProperty("expires_in").GetInt32()).IsEqualTo(600);
-                await Assert.That(issued.GetProperty("interval").GetInt32()).IsEqualTo(5);
-                await Assert.That(issued.GetProperty("verification_uri").GetString()).IsEqualTo(origin + "/cli/approve");
-                return issued;
-            }
-            Task<IAPIResponse> PollAsync(JsonElement grant)
-            {
-                var form = client.CreateFormData();
-                form.Set("client_id", "terrascale-cli");
-                form.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code");
-                form.Set("device_code", grant.GetProperty("device_code").GetString()!);
-                return client.PostAsync(origin + "/api/v1/dashboard/cli/token", new() { Form = form });
-            }
-            static async Task<string?> ErrorAsync(IAPIResponse response) => (await response.JsonAsync())!.Value.GetProperty("error").GetString();
-            var grant = await IssueAsync();
-            var tooSoon = await PollAsync(grant);
-            await Assert.That(tooSoon.Status).IsEqualTo(400);
-            await Assert.That(await ErrorAsync(tooSoon)).IsEqualTo("slow_down");
-            var anonymous = await publicContext.NewPageAsync();
-            await anonymous.GotoAsync(grant.GetProperty("verification_uri_complete").GetString()!);
-            await anonymous.GetByRole(AriaRole.Link, new() { Name = "Sign in to approve", Exact = true }).WaitForAsync();
-            await GotoAsync(page, "/cli/approve?user_code=" + grant.GetProperty("user_code").GetString());
-            await page.Locator("#cliPassword").FillAsync("wrong-password");
-            await SubmitAsync(page, "form[action=\"/cli/approve/submit\"]", "Authorize CLI");
-            await page.GetByRole(AriaRole.Alert).Filter(new() { HasText = "Current password is incorrect." }).WaitForAsync();
-            await page.Locator("#cliPassword").FillAsync(user.Password);
-            await page.GetByRole(AriaRole.Button, new() { Name = "Show password", Exact = true }).ClickAsync();
-            await Assert.That(await page.Locator("#cliPassword").GetAttributeAsync("type")).IsEqualTo("text");
-            await page.GetByRole(AriaRole.Button, new() { Name = "Hide password", Exact = true }).ClickAsync();
-            await SubmitAsync(page, "form[action=\"/cli/approve/submit\"]", "Authorize CLI");
-            await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "CLI authorized" }).WaitForAsync();
-            await ShotAsync(page, "cli-authorized");
-            await page.WaitForTimeoutAsync(11000);
-            var polls = await Task.WhenAll(PollAsync(grant), PollAsync(grant));
-            await Assert.That(polls.Count(response => response.Status == 200)).IsEqualTo(1).Because("concurrent public polls return one token");
-            var delivered = (await polls.First(response => response.Status == 200).JsonAsync())!.Value;
-            var token = delivered.GetProperty("access_token").GetString()!;
-            await Assert.That(Regex.IsMatch(token, "^tspat_[A-Za-z0-9_-]{43}$")).IsTrue();
-            await Assert.That(delivered.GetProperty("token_type").GetString()).IsEqualTo("Bearer");
-            Task<IAPIResponse> McpAsync() => client.PostAsync(origin + "/mcp", new()
-            {
-                Headers = new Dictionary<string, string> { ["Authorization"] = "Bearer " + token, ["Accept"] = "application/json, text/event-stream" },
-                DataObject = new { jsonrpc = "2.0", id = 1, method = "tools/list", @params = new { } }
-            });
-            await Assert.That((await McpAsync()).Status).IsEqualTo(200);
-            var replay = await PollAsync(grant);
-            await Assert.That(replay.Status).IsEqualTo(400);
-            await Assert.That(await ErrorAsync(replay)).IsEqualTo("invalid_grant");
-            await LogoutAsync(page);
-            await Assert.That((await McpAsync()).Status).IsEqualTo(200).Because("independent CLI grant survives browser logout");
-            await Assert.That((await LoginAsync(page, user)).Status).IsEqualTo(303);
-            grant = await IssueAsync();
-            await GotoAsync(page, "/cli/approve?user_code=" + grant.GetProperty("user_code").GetString());
-            await SubmitAsync(page, "form[action=\"/cli/approve/submit\"]", "Deny request");
-            await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "Request denied" }).WaitForAsync();
-            await page.WaitForTimeoutAsync(5300);
-            await Assert.That(await ErrorAsync(await PollAsync(grant))).IsEqualTo("access_denied");
-            grant = await IssueAsync();
-            await GotoAsync(page, "/cli/approve?user_code=" + grant.GetProperty("user_code").GetString());
-            await page.Locator("#cliPassword").FillAsync(user.Password);
-            await SubmitAsync(page, "form[action=\"/cli/approve/submit\"]", "Authorize CLI");
-            await LogoutAsync(page);
-            await page.WaitForTimeoutAsync(5300);
-            await Assert.That(await ErrorAsync(await PollAsync(grant))).IsEqualTo("access_denied").Because("browser logout before redemption invalidates approval");
-            await Assert.That((await LoginAsync(page, user)).Status).IsEqualTo(303);
-            await GotoAsync(page, "/profile?tab=access-tokens");
-            var row = page.Locator("#profile-access-tokens tbody tr").Filter(new() { HasText = "TerraScale CLI" });
-            await Assert.That(await row.CountAsync()).IsEqualTo(1).Because("only successful single-use flow created a token");
-            await GotoAsync(page, "/profile?tab=danger");
-            var dangerRow = page.Locator("#profile-danger tbody tr").Filter(new() { HasText = "TerraScale CLI" });
-            await dangerRow.GetByRole(AriaRole.Button, new() { Name = "Revoke", Exact = true }).ClickAsync();
-            await SubmitAsync(page, "dialog[open] form", "Revoke token");
-            await Assert.That((await McpAsync()).Status).IsEqualTo(401).Because("native profile revocation invalidates CLI token");
-            checks.Add("CLI anonymous/reauth/password-toggle approval, slow poll, single use, denial, logout binding, MCP and revocation");
-        }
-        async Task SsoAsync()
+        async Task FailedCallbackAsync()
         {
             var (context, page) = await NewContextAsync();
             await GotoAsync(page, "/login/callback?state=forged&code=test-code", 400);
             await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "This sign-in link expired or was started in another browser." }).WaitForAsync();
-            await BrowserAudit.AssertAccessibleAsync(page, "SSO recovery accessibility");
-            await page.GetByRole(AriaRole.Link, new() { Name = "Try again", Exact = true }).ClickAsync();
-            await Assert.That(QueryHelpers.ParseQuery(new Uri(page.Url).Query).ContainsKey("prompt")).IsFalse().Because("ts-auth answers login_required to prompt=login");
-            await GotoAsync(page, "/login?returnTo=%2Fapi%2Fv1%2Fauth%2Fme");
-            var callbackRequest = page.WaitForRequestAsync(request => new Uri(request.Url).AbsolutePath == "/login/callback" &&
-                QueryHelpers.ParseQuery(new Uri(request.Url).Query).GetValueOrDefault("code") == "test-code");
-            await page.GetByRole(AriaRole.Link, new() { Name = "Single sign-on", Exact = true }).ClickAsync();
+            await BrowserAudit.AssertAccessibleAsync(page, "sign-in failure accessibility");
+            await ShotAsync(page, "signin-failure");
+            await Assert.That(await page.GetByRole(AriaRole.Link, new() { Name = "Try again", Exact = true }).GetAttributeAsync("href")).IsEqualTo("/login");
+            var callbackRequest = page.WaitForRequestAsync(request => new Uri(request.Url).AbsolutePath == "/login/callback");
+            await Assert.That((await BrowserAudit.SignInAsync(page, fixture.Origin, "/api/v1/auth/me"))!.Status).IsEqualTo(200);
             var callbackUrl = new Uri((await callbackRequest).Url);
             await Assert.That(Regex.IsMatch(QueryHelpers.ParseQuery(callbackUrl.Query).GetValueOrDefault("state").ToString(), "^[a-f0-9]{64}$")).IsTrue()
                 .Because("test-only OIDC producer returns the issued state");
-            await page.WaitForURLAsync(origin + "/api/v1/auth/me");
+            await Assert.That(page.Url).IsEqualTo(origin + "/api/v1/auth/me");
             await Assert.That((await context.APIRequest.GetAsync(origin + "/api/v1/auth/me")).Status).IsEqualTo(200);
             await GotoAsync(page, callbackUrl.PathAndQuery, 400);
             await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "This sign-in link expired or was started in another browser." }).WaitForAsync();
             await LogoutAsync(page);
-            checks.Add("SSO browser recovery, test-only producer callback, state verification and single-use callback");
+            checks.Add("failed-callback recovery page, test-only producer callback, state verification and single-use callback");
         }
     }
 
@@ -464,31 +261,14 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             Check(anonymousHead.StatusCode == HttpStatusCode.SeeOther && anonymousHead.Headers.Location?.OriginalString == "/login",
                 "Anonymous HEAD matches the original login redirect");
 
-        using var loginPage = await client.GetAsync("/login?returnTo=%2Fadmin%2Fusers");
-        Check(loginPage.StatusCode == HttpStatusCode.OK, "Native login form is available");
-        var csrf = Hidden(await loginPage.Content.ReadAsStringAsync(), "_csrf");
-        Check(csrf.Length == 64 && loginPage.Headers.CacheControl?.NoStore == true, "Auth form supplies CSRF and prevents caching");
-        var credentials = new Dictionary<string, string>
-        {
-            ["email"] = "user@example.com",
-            ["password"] = "test-password",
-            ["redirectTo"] = "/admin/users"
-        };
-        using (var missing = await client.PostAsync("/login", new FormUrlEncodedContent(credentials)))
-            Check(missing.StatusCode == HttpStatusCode.Forbidden, "A missing form token cannot sign in");
-        credentials["_csrf"] = (csrf[0] == 'a' ? "b" : "a") + csrf[1..];
-        using (var forged = await client.PostAsync("/login", new FormUrlEncodedContent(credentials)))
-            Check(forged.StatusCode == HttpStatusCode.Forbidden, "A forged form token cannot sign in");
-        credentials["_csrf"] = csrf;
-        using (var foreignRequest = new HttpRequestMessage(HttpMethod.Post, "/login") { Content = new FormUrlEncodedContent(credentials) })
-        {
-            foreignRequest.Headers.Add("Origin", "https://untrusted.example");
-            using var foreign = await client.SendAsync(foreignRequest);
-            Check(foreign.StatusCode == HttpStatusCode.Forbidden, "Foreign Origin cannot sign in using a valid token");
-        }
-        using var signedIn = await client.PostAsync("/login", new FormUrlEncodedContent(credentials));
+        using (var forged = await client.GetAsync("/login/callback?state=" + new string('a', 64) + "&code=forged"))
+            Check(forged.StatusCode == HttpStatusCode.BadRequest && !(forged.Headers.TryGetValues("Set-Cookie", out var set) && set.Any(value => value.StartsWith("ts-dashboard-session=", StringComparison.Ordinal))),
+                "A callback without this browser's sign-in state cannot sign in");
+        using (var denied = await HttpJourney.LoginAsync(client, "user@example.com", "wrong-password", "/admin/users"))
+            Check(denied.StatusCode == HttpStatusCode.Unauthorized, "ts-auth refusing the hosted sign-in starts no session");
+        using var signedIn = await HttpJourney.LoginAsync(client, returnTo: "/admin/users");
         Check(signedIn.StatusCode == HttpStatusCode.SeeOther && signedIn.Headers.Location?.OriginalString == "/admin/users",
-            "Native login preserves a local admin return path");
+            "Hosted sign-in preserves a local admin return path");
         var sessionCookie = SessionCookie(signedIn);
         Check(signedIn.Headers.GetValues("Set-Cookie").Any(value => value.StartsWith("ts-dashboard-session=", StringComparison.Ordinal) &&
             value.Contains("httponly", StringComparison.OrdinalIgnoreCase)), "Browser session is HttpOnly");
@@ -521,14 +301,15 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
         Check(tokenPage.StatusCode == HttpStatusCode.OK, "Native personal access token form is available");
         var tokenCsrf = Hidden(await tokenPage.Content.ReadAsStringAsync(), "_csrf");
         var tokenName = "TUnit ordinary-owner " + Guid.NewGuid().ToString("N");
-        using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/access-tokens", new Dictionary<string, string>
+        using var authorize = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/access-tokens", new Dictionary<string, string>
         {
             ["_csrf"] = tokenCsrf,
             ["name"] = tokenName,
-            ["expiresInDays"] = "30",
-            ["password"] = "test-password"
+            ["expiresInDays"] = "30"
         });
-        Check(created.StatusCode == HttpStatusCode.OK, "A fresh password grant creates the PAT through its native form");
+        Check(authorize.StatusCode == HttpStatusCode.Redirect, "The PAT form redirects to ts-auth's hosted sign-in for a fresh grant");
+        using var created = await HttpJourney.HostedSignInAsync(client, authorize);
+        Check(created.StatusCode == HttpStatusCode.OK, "A fresh hosted sign-in creates the PAT through its native form");
         var createdHtml = await created.Content.ReadAsStringAsync();
         var secret = InputById(createdHtml, "access-token-secret");
         Check(Regex.IsMatch(secret, "^tspat_[A-Za-z0-9_-]{43}$", RegexOptions.CultureInvariant), "PAT plaintext is displayed after creation");
@@ -568,7 +349,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             Check(stillSignedIn.StatusCode == HttpStatusCode.OK, "Rejected logout does not invalidate the browser session");
         using (var logout = await client.PostAsync("/api/v1/auth/logout", new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = tokenCsrf })))
         {
-            Check(logout.StatusCode == HttpStatusCode.SeeOther && logout.Headers.Location?.OriginalString == "/login", "Native logout returns to login");
+            Check(logout.StatusCode == HttpStatusCode.SeeOther && logout.Headers.Location?.OriginalString == "/login", "Logout continues to the end-session URL (the test host answers /login)");
             Check(logout.Headers.GetValues("Set-Cookie").Any(value => value.StartsWith("ts-dashboard-session=;", StringComparison.Ordinal)), "Native logout clears the browser cookie");
         }
         using (var ended = await Request(replica, HttpMethod.Get, "/api/v1/auth/me", sessionCookie))
@@ -579,10 +360,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
         using (var independent = await Mcp(replica, "tools/list", new { }, secret))
             Check(independent.StatusCode == HttpStatusCode.OK, "The independent PAT family survives browser logout");
 
-        using var freshLoginPage = await client.GetAsync("/login");
-        credentials["_csrf"] = Hidden(await freshLoginPage.Content.ReadAsStringAsync(), "_csrf");
-        credentials["redirectTo"] = "https://untrusted.example/";
-        using (var freshLogin = await client.PostAsync("/login", new FormUrlEncodedContent(credentials)))
+        using (var freshLogin = await HttpJourney.LoginAsync(client, returnTo: "https://untrusted.example/"))
             Check(freshLogin.StatusCode == HttpStatusCode.SeeOther && freshLogin.Headers.Location?.OriginalString == "/",
                 "A successful login cannot redirect to an external origin");
         using var freshTokenPage = await client.GetAsync("/profile?tab=access-tokens");

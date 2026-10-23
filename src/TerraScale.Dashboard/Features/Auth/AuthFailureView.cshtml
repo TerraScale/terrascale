@@ -13,11 +13,11 @@
                     <div class="ts-auth-heading"><h1 class="ts-auth-title">Sign in</h1><p class="ts-auth-subtitle">Sign-in through ts-auth did not finish.</p></div>
                 </div>
                 <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">@Model.Message</p><p class="ts-alert-body">Reference: <code>@Model.Reference</code></p></div>
-                <div class="ts-form"><a class="ts-btn ts-btn-primary ts-btn-block" href="@Model.RetryUrl">Try again</a><a class="ts-btn ts-btn-secondary ts-btn-block" href="@Model.CodeUrl">Sign in with an emailed code</a></div>
+                <div class="ts-form"><a class="ts-btn ts-btn-primary ts-btn-block" href="@Model.RetryUrl">Try again</a></div>
                 <p class="ts-meta">Still failing? Check <a class="ts-link" href="https://status.terrascale.tech">TerraScale status</a>, and quote the reference when you contact us.</p>
             </div>
         </div>
-        <footer class="ts-login-footer"><div class="ts-auth-locale"><label class="ts-sr-only" for="auth-locale">Language</label><select id="auth-locale" class="ts-select ts-input-sm" aria-label="Language"><option value="en" selected>English</option><option value="pt-BR">Português</option></select></div><a href="https://docs.terrascale.tech/legal/terms">Terms</a><a href="https://docs.terrascale.tech/legal/privacy">Privacy</a><a href="https://status.terrascale.tech">Status</a></footer>
+        <footer class="ts-login-footer"><a href="https://docs.terrascale.tech/legal/terms">Terms</a><a href="https://docs.terrascale.tech/legal/privacy">Privacy</a><a href="https://status.terrascale.tech">Status</a></footer>
     </div>
 </main>
 @functions { public DocumentModel LayoutModel => Model.Document; }

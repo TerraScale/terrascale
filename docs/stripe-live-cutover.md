@@ -13,13 +13,15 @@ The production binary has no demo or billing mode switches. Preparation alone do
 The production dashboard runs on OCI gru under ts-orch. Its fixed public origin
 is `https://dash.terrascale.tech` (`StripeBilling.Origin`); the webhook is
 `https://dash.terrascale.tech/api/v1/billing/stripe/webhook`.
-Verify the serving release, readiness and native login immediately before a change:
+Verify the serving release, readiness and sign-in immediately before a change:
 
 ```sh
 curl -fsS https://dash.terrascale.tech/health/ready
 curl -fsS https://dash.terrascale.tech/readyz
-scripts/smoke-native-login.sh https://dash.terrascale.tech
+curl -fsS -o /dev/null -w '%{http_code} %{redirect_url}\n' https://dash.terrascale.tech/login
 ```
+
+`/login` must answer `302` to `https://auth.terrascale.tech/terrascale/oauth/authorize`.
 
 Record the source revision and OCI Vault secret version identifiers, never values.
 State stays in TerraBase, database provisioning belongs to TerraBase startup,
@@ -36,7 +38,7 @@ Verify account authorization, restricted-key permissions, six distinct recurring
 prices, matching live products, the production webhook URL/API version/events
 and portal settings. Endpoint signing-secret identity requires verification;
 a prefix alone cannot prove a match. Preserve the existing database scope,
-native login, CSRF and persistence. Record only object IDs and secret version
+hosted ts-auth sign-in, CSRF and persistence. Record only object IDs and secret version
 identifiers in private operational evidence, never credential values.
 
 The earlier inspection did not identify verified live credential references.
@@ -98,7 +100,7 @@ remain runtime gaps, so this document cannot certify a completed cutover.
 
 Explicit authorization remains required for actual charges/refunds and approved
 obsolete-data resets. Record the resulting release identity and verify readiness,
-persistent backend, secure native login and matching provider bindings.
+persistent backend, hosted ts-auth sign-in and matching provider bindings.
 
 ## Verify delivery and reconcile
 
@@ -118,4 +120,4 @@ persistent backend, secure native login and matching provider bindings.
    only after these checks pass. If no live payment exists, restore the saved
    prior configuration if needed. After any live payment, stop new checkouts
    and fix forward; switching paying customers back to test mode strands their
-   billing. Preserve native login in every recovery release.
+   billing.

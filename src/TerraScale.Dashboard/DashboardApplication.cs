@@ -46,12 +46,11 @@ public static class DashboardApplication
         builder.Services.AddSingleton<AssetUrls>();
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<IDashboardIdentity, DashboardIdentity>();
-        builder.Services.AddSingleton<IAuthGateway, TsAuthGateway>();
         builder.Services.AddSingleton<IDashboardState, TerraBaseDashboardState>();
         builder.Services.AddHostedService<DashboardStateInitializer>();
         builder.Services.AddSingleton<DashboardSessions>();
         builder.Services.AddAccountFeatures();
-        builder.Services.AddEnrollmentAuth();
+        builder.Services.AddAuth();
         builder.Services.AddDatabaseFeatures();
         builder.Services.AddImportFeatures();
         builder.Services.AddOnboarding();
@@ -59,7 +58,6 @@ public static class DashboardApplication
         builder.Services.AddHomeFeatures();
         builder.Services.AddAnalyticsFeatures();
         builder.Services.AddUsageFeatures();
-        builder.Services.AddInternalBillingCommands();
         builder.Services.AddSettingsFeatures();
         builder.Services.AddQuerySubscriptions();
         builder.Services.AddOrganizationFeatures();

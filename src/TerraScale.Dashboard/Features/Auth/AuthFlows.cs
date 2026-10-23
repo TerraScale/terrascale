@@ -6,77 +6,17 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Auth;
 
-// Only a random bearer travels in the browser. Passwords and PKCE verifiers
-// are encrypted in TerraBase, versioned across replicas, and never logged.
+// Only a random bearer travels in the browser. PKCE verifiers, state and nonce
+// are encrypted in TerraBase, shared across replicas, and never logged.
 public sealed class AuthFlows(IDashboardState state, IDashboardIdentity identity, TimeProvider time)
 {
     private const string Collection = "auth-flows";
-    private const string SignUpCookie = "ts-dashboard-signup";
     private const string OidcCookie = "ts-dashboard-oidc";
 
-    public int Remaining(SignUpFlow flow) => Math.Max(0, (int)Math.Ceiling((flow.ResendAt - time.GetUtcNow()).TotalSeconds));
-
-    public async Task StartSignUpAsync(HttpContext context, SignUpFlow flow)
-    {
-        await EndAsync(context, SignUpCookie);
-        await StoreAsync(context, SignUpCookie, flow, flow.ExpiresAt);
-    }
-
-    public async Task<SignUpFlow?> ReadSignUpAsync(HttpContext context)
-    {
-        var stored = await ReadAsync<SignUpFlow>(context, SignUpCookie);
-        if (stored is null) return null;
-        if (stored.Value.ExpiresAt > time.GetUtcNow()) return stored.Value;
-        await EndAsync(context, SignUpCookie);
-        return null;
-    }
-
-    public async Task<SignUpFlow?> ReserveResendAsync(HttpContext context)
-    {
-        var stored = await ReadAsync<SignUpFlow>(context, SignUpCookie);
-        if (stored is null || stored.Value.ExpiresAt <= time.GetUtcNow()) return null;
-        if (Remaining(stored.Value) > 0)
-            throw new AuthRequestRejectedException($"Please wait {Remaining(stored.Value)} seconds before resending the code.", statusCode: 429, retryAfter: Remaining(stored.Value));
-        var next = stored.Value with { ResendAt = time.GetUtcNow().AddMinutes(1) };
-        try { await UpdateAsync(context, stored.Id, stored.Version, SignUpCookie, next); }
-        catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict)
-        { throw new AuthRequestRejectedException("Please wait 60 seconds before resending the code.", statusCode: 429, retryAfter: 60); }
-        return next;
-    }
-
-    public async Task UpdateSignUpAsync(HttpContext context, SignUpFlow flow)
-    {
-        var stored = await ReadAsync<SignUpFlow>(context, SignUpCookie);
-        if (stored is null) throw new AuthRequestRejectedException("Your verification session has expired. Create your account again to request a new code.", statusCode: 400);
-        await UpdateAsync(context, stored.Id, stored.Version, SignUpCookie, flow);
-    }
-
-    public Task EndSignUpAsync(HttpContext context) => EndAsync(context, SignUpCookie);
-
-    public async Task ReserveSignUpMailAsync(string email, CancellationToken cancellationToken)
-    {
-        var id = "signup-" + Key(email);
-        var previous = await state.GetAsync("auth-mail-budgets", id, cancellationToken);
-        var now = time.GetUtcNow();
-        var until = previous?.Document.Deserialize<MailBudget>()?.Until;
-        if (until > now)
-        {
-            var seconds = Math.Max(1, (int)Math.Ceiling((until.Value - now).TotalSeconds));
-            throw new AuthRequestRejectedException($"Please wait {seconds} seconds before resending the code.", statusCode: 429, retryAfter: seconds);
-        }
-        try
-        {
-            await state.PutAsync("auth-mail-budgets", id, JsonSerializer.SerializeToElement(new MailBudget(now.AddMinutes(1))),
-                previous is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(previous.Version), cancellationToken);
-        }
-        catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict)
-        { throw new AuthRequestRejectedException("Please wait 60 seconds before resending the code.", statusCode: 429, retryAfter: 60); }
-    }
-
-    public async Task<OidcFlow> StartOidcAsync(HttpContext context, string returnTo)
+    public async Task<OidcFlow> StartOidcAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0)
     {
         var flow = new OidcFlow(Random(), Random(), Random(), Csrf.LocalRedirect(returnTo),
-            $"{context.Request.Scheme}://{context.Request.Host}/login/callback", time.GetUtcNow().AddMinutes(10));
+            $"{context.Request.Scheme}://{context.Request.Host}/login/callback", time.GetUtcNow().AddMinutes(10), tokenName, tokenDays);
         await EndAsync(context, OidcCookie);
         await StoreAsync(context, OidcCookie, flow, flow.ExpiresAt);
         return flow;
@@ -113,12 +53,6 @@ public sealed class AuthFlows(IDashboardState state, IDashboardIdentity identity
         try { return new(document.Id, document.Version, Open<T>(document.Document, credentials.SessionEncryptionKey, cookie)); }
         catch (Exception error) when (error is CryptographicException or FormatException or JsonException)
         { throw new IOException("Authentication flow is invalid."); }
-    }
-
-    private async Task UpdateAsync<T>(HttpContext context, string id, string version, string cookie, T value)
-    {
-        var credentials = await identity.ReadAsync(context.RequestAborted);
-        await state.PutAsync(Collection, id, Seal(value, credentials.SessionEncryptionKey, cookie), TerraBasePrecondition.Matches(version), context.RequestAborted);
     }
 
     private async Task EndAsync(HttpContext context, string cookie)
@@ -164,5 +98,4 @@ public sealed class AuthFlows(IDashboardState state, IDashboardIdentity identity
     private static string Random() => Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
     private static string Key(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     private sealed record Stored<T>(string Id, string Version, T Value);
-    private sealed record MailBudget(DateTimeOffset Until);
 }

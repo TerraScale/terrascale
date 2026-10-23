@@ -2,11 +2,6 @@ namespace TerraScale.Dashboard.Platform.Identity;
 
 public interface IAuthGateway
 {
-    Task<SessionRecord> PasswordAsync(string email, string password, string ip, CancellationToken cancellationToken);
-    Task<SessionRecord> EmailCodeAsync(string email, string code, string ip, CancellationToken cancellationToken);
-    Task StartEmailCodeAsync(string email, string ip, CancellationToken cancellationToken);
-    Task StartPasswordResetAsync(string email, string ip, CancellationToken cancellationToken);
-    Task CompletePasswordResetAsync(string email, string code, string password, string ip, CancellationToken cancellationToken);
     Task<bool> IsActiveAsync(SessionRecord session, CancellationToken cancellationToken);
     Task RevokeAsync(SessionRecord session, CancellationToken cancellationToken);
 }

@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
@@ -13,47 +12,47 @@ public sealed class InternalBillingAuthenticationJourneyTests(DashboardRootFixtu
     [Test]
     [Arguments("report-internal-billing", "Organization has no internal billing policy.")]
     [Arguments("configure-internal-billing", "Internal billing requires the organization named exactly terrascale.")]
-    public async Task OriginalCommandEntryRequiresNativeDeviceApprovalAndFreshSignedOperatorBeforeItsTarget(string command, string targetError)
+    public async Task OriginalCommandEntryRequiresHostedDeviceApprovalAndFreshSignedOperatorBeforeItsTarget(string command, string targetError)
     {
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
         var organization = await SignInAsync(browser, producer, "admin");
-        var result = await RunApprovedAsync(scenario, browser, producer, CommandArguments(command, organization));
+        var result = await RunApprovedAsync(scenario, producer, CommandArguments(command, organization));
         await ErrorAsync(result, command, targetError);
-        await CheckAsync(result.Observed.GetProperty("refreshes").GetInt32() == 1 && result.Observed.GetProperty("issuedAdminRoleGrants").GetInt32() == 3,
-            "Browser sign-in, independent device reauthentication and fresh persisted command rotation each receive actual signed operator evidence");
+        await CheckAsync(result.Observed.GetProperty("refreshes").GetInt32() == 0 && result.Observed.GetProperty("issuedAdminRoleGrants").GetInt32() == 2,
+            "Browser sign-in and the freshly approved device grant each carry signed operator evidence; the target check fails before any rotation");
         await CleanAsync(scenario, browser, producer);
     }
 
     [Test]
     [Arguments("ordinary")]
     [Arguments("removed")]
-    public async Task OrdinaryOrRemovedPlatformRoleCannotUseADevicePatAsOperatorAuthority(string state)
+    public async Task OrdinaryOrRemovedPlatformRoleCannotUseTheDeviceGrantAsOperatorAuthority(string state)
     {
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
         var organization = await SignInAsync(browser, producer, state == "removed" ? "admin" : "");
-        var result = await RunApprovedAsync(scenario, browser, producer, CommandArguments("report-internal-billing", organization),
-            beforePoll: state == "removed" ? () => ControlAsync(producer, new { command = "platform-role", value = "" }) : null);
+        var result = await RunApprovedAsync(scenario, producer, CommandArguments("report-internal-billing", organization),
+            beforeDecision: state == "removed" ? () => ControlAsync(producer, new { command = "platform-role", value = "" }) : null);
         await ErrorAsync(result, "report-internal-billing", "Platform administrator authorization is required.");
-        await CheckAsync(result.Observed.GetProperty("refreshes").GetInt32() == 1 &&
-            result.Observed.GetProperty("issuedAdminRoleGrants").GetInt32() == (state == "removed" ? 2 : 0),
-            "The command rotates its independent PAT family and reads the removed or ordinary role from a newly signed access grant");
+        await CheckAsync(result.Observed.GetProperty("refreshes").GetInt32() == 0 &&
+            result.Observed.GetProperty("issuedAdminRoleGrants").GetInt32() == (state == "removed" ? 1 : 0),
+            "The device grant carries the current ordinary or removed role, so the command stops before any privileged rotation");
         await CleanAsync(scenario, browser, producer);
     }
 
     [Test]
-    public async Task AdminEmailArgumentMustMatchTheActualNativelyApprovedIdentity()
+    public async Task AdminEmailArgumentMustMatchTheActualHostedApprovedIdentity()
     {
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
         var organization = await SignInAsync(browser, producer, "admin");
-        var result = await RunApprovedAsync(scenario, browser, producer, CommandArguments("report-internal-billing", organization, "other@example.com"));
+        var result = await RunApprovedAsync(scenario, producer, CommandArguments("report-internal-billing", organization, "other@example.com"));
         await ErrorAsync(result, "report-internal-billing", "Approved account does not match --admin-email.");
-        await CheckAsync(result.Observed.GetProperty("refreshes").GetInt32() == 1, "An email argument does not replace the fresh provider-authenticated principal");
+        await CheckAsync(result.Observed.GetProperty("refreshes").GetInt32() == 0, "An email argument does not replace the provider-authenticated principal");
         await CleanAsync(scenario, browser, producer);
     }
 
@@ -63,26 +62,47 @@ public sealed class InternalBillingAuthenticationJourneyTests(DashboardRootFixtu
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
-        var organization = await SignInAsync(browser, producer, "admin");
-        var result = await RunApprovedAsync(scenario, browser, producer, CommandArguments("report-internal-billing", organization),
-            beforePoll: () => ControlAsync(producer, new { command = "drop-refresh-response" }));
-        await ErrorAsync(result, "report-internal-billing", "Internal billing dependencies are unavailable.");
+        await SignInAsync(browser, producer, "admin");
+        // A valid internal target is the first point where the command forces its privileged rotation.
+        using var seeded = await producer.PostAsJsonAsync("/__test/control", new { command = "internal-seed", count = 1, paymentMethodValidated = false });
+        seeded.EnsureSuccessStatusCode();
+        using var targets = JsonDocument.Parse(await seeded.Content.ReadAsStringAsync());
+        var organization = targets.RootElement.GetProperty("targets")[0].GetProperty("organizationId").GetString()!;
+        var result = await RunApprovedAsync(scenario, producer, CommandArguments("configure-internal-billing", organization),
+            beforeDecision: () => ControlAsync(producer, new { command = "drop-refresh-response" }));
+        await ErrorAsync(result, "configure-internal-billing", "Internal billing dependencies are unavailable.");
         await CheckAsync(result.Observed.GetProperty("refreshes").GetInt32() == 1, "The real producer spends the single-use rotating grant once despite the lost reply");
         await CleanAsync(scenario, browser, producer);
-        await CheckAsync((await ObserveAsync(producer)).GetProperty("refreshes").GetInt32() == 1, "Native cleanup never replays the ambiguous rotation");
+        await CheckAsync((await ObserveAsync(producer)).GetProperty("refreshes").GetInt32() == 1, "Cleanup never replays the ambiguous rotation");
     }
 
     [Test]
-    public async Task NativeDeviceDenialStopsTheCommandBeforeAnyPrivilegeRefresh()
+    public async Task HostedDeviceDenialStopsTheCommandBeforeAnyPrivilegeRefresh()
     {
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var producer = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
         var organization = await SignInAsync(browser, producer, "admin");
-        var result = await RunApprovedAsync(scenario, browser, producer, CommandArguments("report-internal-billing", organization), decision: "deny");
+        var result = await RunApprovedAsync(scenario, producer, CommandArguments("report-internal-billing", organization), approve: false);
         await ErrorAsync(result, "report-internal-billing", "CLI authorization was denied.");
-        await CheckAsync(result.Observed.GetProperty("refreshes").GetInt32() == 0 && result.Observed.GetProperty("passwordGrants").GetInt32() == 1,
-            "A native denial neither reauthenticates the browser nor creates a privilege grant");
+        await CheckAsync(result.Observed.GetProperty("refreshes").GetInt32() == 0 && result.Observed.GetProperty("issuedAdminRoleGrants").GetInt32() == 1,
+            "A hosted denial issues no CLI grant and no privilege rotation; only the browser's own grant exists");
+        await CleanAsync(scenario, browser, producer, revoked: false);
+    }
+
+    [Test]
+    public async Task ExpiredHostedDeviceCodeStopsTheCommandWithoutAGrant()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var producer = scenario.CreateProviderClient();
+        using var browser = scenario.CreateClient();
+        var organization = await SignInAsync(browser, producer, "admin");
+        // ts-auth's clock passes the 600 second device lifetime before anyone decides.
+        var result = await RunApprovedAsync(scenario, producer, CommandArguments("report-internal-billing", organization),
+            beforeDecision: () => ControlAsync(producer, new { command = "advance", seconds = 601 }), decide: false);
+        await ErrorAsync(result, "report-internal-billing", "CLI authorization expired. Start the command again.");
+        await CheckAsync(result.Observed.GetProperty("refreshes").GetInt32() == 0 && result.Observed.GetProperty("issuedAdminRoleGrants").GetInt32() == 1,
+            "An expired device code issues no CLI grant and no privilege rotation");
         await CleanAsync(scenario, browser, producer, revoked: false);
     }
 
@@ -110,8 +130,7 @@ public sealed class InternalBillingAuthenticationJourneyTests(DashboardRootFixtu
             "The actual public command entry reports the original numeric argument error without issuing an approval code");
         await CheckAsync(scenario.CliRequests.Count == 0, "Invalid command arguments do not contact the running device endpoint");
         var observed = await ObserveAsync(producer);
-        await CheckAsync(observed.GetProperty("refreshes").GetInt32() == 0 && observed.GetProperty("encryptedCredentialRecords").GetInt32() == 0,
-            "The parsing error creates no encrypted credential or operator rotation");
+        await CheckAsync(observed.GetProperty("refreshes").GetInt32() == 0, "The parsing error creates no operator rotation");
         await ProtocolAsync(observed);
     }
 
@@ -128,11 +147,11 @@ public sealed class InternalBillingAuthenticationJourneyTests(DashboardRootFixtu
         var args = CommandArguments(command, organization).Select(argument => argument.StartsWith("--", StringComparison.Ordinal)
             ? prefix + argument[2..] : argument).ToArray();
         if (terminator) args = [.. args, "--"];
-        var result = await RunApprovedAsync(scenario, browser, producer, args);
+        var result = await RunApprovedAsync(scenario, producer, args);
         await ErrorAsync(result, command, command == "report-internal-billing"
             ? "Organization has no internal billing policy." : "Internal billing requires the organization named exactly terrascale.");
-        await CheckAsync(result.Observed.GetProperty("refreshes").GetInt32() == 1,
-            "Valid original flag syntax reaches actual device approval, signed current operator rotation and the owning target check");
+        await CheckAsync(result.Observed.GetProperty("refreshes").GetInt32() == 0 && result.Observed.GetProperty("issuedAdminRoleGrants").GetInt32() == 2,
+            "Valid original flag syntax reaches hosted device approval, the signed operator check and the owning target check");
         await CleanAsync(scenario, browser, producer);
     }
 
@@ -153,11 +172,9 @@ public sealed class InternalBillingAuthenticationJourneyTests(DashboardRootFixtu
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var exit = await scenario.RunCliAsync(args, output, error, deadline.Token);
         await CheckAsync(exit == 1 && output.ToString() == "" && error.ToString() == "report-internal-billing: " + expected + "\n" && scenario.CliRequests.Count == 0,
-            "The real full entry rejects malformed original flag syntax before native device issue");
+            "The real full entry rejects malformed original flag syntax before contacting ts-auth's device endpoint");
         var observed = await ObserveAsync(producer);
-        await CheckAsync(observed.GetProperty("refreshes").GetInt32() == 0 && observed.GetProperty("encryptedCredentialRecords").GetInt32() == 0 &&
-            observed.GetProperty("accessTokenHashRecords").GetInt32() == 0,
-            "Invalid argv creates no encrypted operator credential, rotating family or personal token index");
+        await CheckAsync(observed.GetProperty("refreshes").GetInt32() == 0, "Invalid argv creates no rotating operator family");
         await ProtocolAsync(observed);
     }
 
@@ -176,8 +193,9 @@ public sealed class InternalBillingAuthenticationJourneyTests(DashboardRootFixtu
         ? [command, "--org", organization, "--admin-email", email]
         : [command, "--org", organization, "--admin-email", email, "--base-plan", "business", "--spend-cap-cents", "840", "--write-cents-per-million", "100", "--storage-cents-per-gib-month", "20"];
 
-    internal static async Task<CommandResult> RunApprovedAsync(AuthProviderScenario scenario, HttpClient browser, HttpClient producer, string[] args,
-        Func<Task>? beforePoll = null, string decision = "approve")
+    // Reads the printed ts-auth verification URL and code, then decides on the stand-in for ts-auth's hosted page.
+    internal static async Task<CommandResult> RunApprovedAsync(AuthProviderScenario scenario, HttpClient producer, string[] args,
+        Func<Task>? beforeDecision = null, bool approve = true, bool decide = true, string email = "user@example.com")
     {
         using var output = new PromptWriter(); using var error = new StringWriter();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(40));
@@ -186,30 +204,25 @@ public sealed class InternalBillingAuthenticationJourneyTests(DashboardRootFixtu
         {
             var raw = await output.Prompt.WaitAsync(deadline.Token);
             var approval = new Uri(raw);
-            await CheckAsync(approval.GetLeftPart(UriPartial.Authority) == scenario.Origin.GetLeftPart(UriPartial.Authority) && approval.AbsolutePath == "/cli/approve" && approval.Fragment == "",
-                "The command prints the actual native approval origin rather than an arbitrary external redirect");
+            await CheckAsync(approval.Scheme == "https" && approval.IsDefaultPort && approval.Host == "auth.terrascale.tech" && approval.UserInfo == "" &&
+                approval.AbsolutePath == "/ui/terrascale/device" && approval.Fragment == "" && approval.Query.StartsWith("?user_code=", StringComparison.Ordinal),
+                "The command prints ts-auth's hosted verification page rather than a dashboard or arbitrary origin");
             var code = Uri.UnescapeDataString(approval.Query["?user_code=".Length..]);
-            await CheckAsync(Regex.IsMatch(code, "^[A-Z2-9]{4}-[A-Z2-9]{4}$", RegexOptions.CultureInvariant), "The displayed public user code is the native device code format");
-            var csrf = await HttpJourney.CsrfAsync(browser, approval.PathAndQuery);
-            using var accepted = await HttpJourney.PostFormAsync(browser, "/cli/approve/submit", new()
-            { ["_csrf"] = csrf, ["user_code"] = code, ["decision"] = decision, ["password"] = decision == "approve" ? "test-password" : "" });
-            await CheckAsync(accepted.StatusCode == HttpStatusCode.OK, "The actual native form decides the command's pending device grant");
-            await CheckAsync((await accepted.Content.ReadAsStringAsync()).Contains(decision == "approve" ? "CLI authorized" : "Request denied", StringComparison.Ordinal),
-                "Native approval renders the owning device decision");
-            if (beforePoll is not null) await beforePoll();
-            // Hold the scenario clock until approval and any authority change
-            // finish. Early real-time polls cannot redeem before this boundary.
-            await ControlAsync(producer, new { command = "advance", seconds = 60 });
+            if (beforeDecision is not null) await beforeDecision();
+            if (decide) await CheckAsync(scenario.DecideDevice(code, email, approve), "The printed user code names the command's pending ts-auth device grant");
             var exit = await running;
             var text = output.Snapshot;
-            await CheckAsync(text == "Approve CLI access: " + approval.AbsoluteUri + "\nUser code: " + code + "\n",
-                "The public command prompt contains only the verification URL and public user code");
-            await CheckAsync(!(text + error).Contains("tspat_", StringComparison.Ordinal) && !(text + error).Contains("test-password", StringComparison.Ordinal) &&
+            await CheckAsync(text.StartsWith("Approve CLI access: " + raw + "\nUser code: " + code + "\n", StringComparison.Ordinal),
+                "The public command prompt contains only the verification URL and its user code");
+            await CheckAsync(!(text + error).Contains("protocol-refresh-", StringComparison.Ordinal) && !(text + error).Contains("test-password", StringComparison.Ordinal) &&
                 !(text + error).Contains("device_code", StringComparison.Ordinal) && !(text + error).Contains("sk_management-key", StringComparison.Ordinal),
-                "The complete CLI entry never prints its PAT, device secret, password or management credential");
-            await CheckAsync(scenario.CliRequests.Count >= 2 && scenario.CliRequests[0] == "POST /api/v1/dashboard/cli/device-authorization" &&
-                scenario.CliRequests.Skip(1).All(request => request == "POST /api/v1/dashboard/cli/token"),
-                "The command issues and polls through real HTTP application endpoints");
+                "The complete CLI entry never prints its grant, device secret, password or management credential");
+            var requests = scenario.CliRequests;
+            var revokes = requests.Count(request => request == "POST /terrascale/oauth/revoke");
+            await CheckAsync(requests.Count >= 2 && requests[0] == "POST /terrascale/oauth/device" &&
+                requests.Skip(1).Take(requests.Count - 1 - revokes).All(request => request == "POST /terrascale/oauth/token") &&
+                requests.Skip(requests.Count - revokes).All(request => request == "POST /terrascale/oauth/revoke") && revokes <= 1,
+                "The command starts ts-auth's device grant, polls and rotates on its token endpoint, then revokes at most once");
             return new(exit, text, error.ToString(), await ObserveAsync(producer));
         }
         finally
@@ -225,12 +238,9 @@ public sealed class InternalBillingAuthenticationJourneyTests(DashboardRootFixtu
     private static async Task CleanAsync(AuthProviderScenario scenario, HttpClient browser, HttpClient producer, bool revoked = true)
     {
         var observed = await ObserveAsync(producer);
-        await CheckAsync(observed.GetProperty("encryptedCredentialRecords").GetInt32() == 0 && observed.GetProperty("accessTokenHashRecords").GetInt32() == 0,
-            "The command removes its encrypted credential and hashed PAT index after its actual result");
-        await CheckAsync(observed.GetProperty("revocations").GetInt32() == (revoked ? 1 : 0), "Only the command's independent provider family is revoked");
-        using var profile = await browser.GetAsync("/profile?tab=access-tokens");
-        await CheckAsync(profile.StatusCode == HttpStatusCode.OK && (await profile.Content.ReadAsStringAsync()).Contains("No access tokens", StringComparison.Ordinal),
-            "Native profile shows no forgotten command PAT while the ordinary browser remains signed in");
+        await CheckAsync(observed.GetProperty("revocations").GetInt32() == (revoked ? 1 : 0) &&
+            scenario.CliRequests.Count(request => request == "POST /terrascale/oauth/revoke") == (revoked ? 1 : 0),
+            "Only the command's own ts-cli grant is revoked, and only when one was issued");
         using var identity = await browser.GetAsync("/api/v1/auth/me");
         await CheckAsync(identity.StatusCode == HttpStatusCode.OK, "Command cleanup preserves the independently authenticated browser");
         await ProtocolAsync(observed);
@@ -244,8 +254,8 @@ public sealed class InternalBillingAuthenticationJourneyTests(DashboardRootFixtu
         await CheckAsync(observed.GetProperty("contractFailures").GetInt32() == 0 && observed.GetProperty("unsupportedIntrospectionRequests").GetInt32() == 0 &&
             observed.GetProperty("managementRequests").GetInt32() == 0 && observed.GetProperty("managementMutations").GetInt32() == 0,
             "CLI identity uses real userinfo and signed grants without borrowed management authorization or unpublished mutations");
-        await CheckAsync(observed.GetProperty("credentialsEncrypted").GetBoolean() && observed.GetProperty("enrollmentSecretsEncrypted").GetBoolean(),
-            "External provider observations confirm authentication material is never stored as plaintext");
+        await CheckAsync(observed.GetProperty("credentialsEncrypted").GetBoolean(),
+            "External provider observations confirm no issued grant is stored as plaintext");
     }
 
     private static async Task ControlAsync(HttpClient producer, object command)

@@ -190,22 +190,6 @@
   letter-spacing: -0.02em;
 }
 
-.ts-login-panel .ts-auth-providers {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--ts-s2);
-}
-
-.ts-login-panel .ts-auth-providers .ts-btn {
-  padding-inline: var(--ts-s3);
-}
-
-/* Matches the prototype's mono uppercase divider label. */
-.ts-login-panel .ts-auth-divider {
-  font-family: var(--ts-font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
 .ts-login-footer {
   display: flex;
   flex-wrap: wrap;
@@ -217,69 +201,6 @@
 .ts-login-footer > a {
   color: var(--ts-ink-3);
   font-size: var(--ts-fs-xs);
-}
-
-.ts-login-footer .ts-auth-locale .ts-select {
-  width: 130px;
-  height: 28px;
-  font-size: var(--ts-fs-xs);
-}
-
-/* Keep a usable native field until Datastar has initialized the digit boxes. */
-.ts-email-code {
-  position: relative;
-  min-width: 0;
-}
-
-.ts-email-code-slots {
-  display: none;
-}
-
-.ts-email-code-ready .ts-email-code-input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: text;
-}
-
-.ts-email-code-ready .ts-email-code-slots {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: var(--ts-s2);
-  pointer-events: none;
-}
-
-.ts-email-code-slot {
-  display: grid;
-  place-items: center;
-  height: var(--ts-s12);
-  border: 1px solid var(--ts-accent);
-  border-radius: var(--ts-radius);
-  background: var(--ts-canvas);
-  color: var(--ts-ink);
-  font-size: var(--ts-fs-2xl);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.ts-email-code:focus-within .ts-email-code-active {
-  outline: 2px solid var(--ts-focus);
-  outline-offset: 2px;
-  background: var(--ts-accent-soft);
-}
-
-.ts-email-code:focus-within .ts-email-code-selected {
-  background: var(--ts-accent-soft);
-}
-
-.ts-email-code:has([aria-invalid="true"]) .ts-email-code-slot {
-  border-color: var(--ts-danger);
-}
-
-.ts-email-code:has([aria-invalid="true"]):focus-within .ts-email-code-active {
-  outline-color: var(--ts-danger);
 }
 
 /* Below 900px the map hides and the form stacks from the top, as in the prototype. */

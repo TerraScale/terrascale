@@ -30,32 +30,27 @@ public sealed class HostLifecycleJourneyTests
             using var live = await client.GetAsync("/health/live");
             await Assert.That(live.StatusCode).IsEqualTo(HttpStatusCode.OK);
             using var login = await client.GetAsync("/login");
-            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(await login.Content.ReadAsStringAsync()).Contains("Sign in");
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+            await Assert.That(login.Headers.Location!.OriginalString).StartsWith("/__test/oidc?state=");
             using var anonymous = await client.GetAsync("/api/v1/auth/me");
             await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         }
     }
 
     [Test]
-    public async Task DeviceApprovalUsesThePublicOriginForwardedByTheLoopbackEdge()
+    public async Task HostedSignInRedirectUsesThePublicOriginForwardedByTheLoopbackEdge()
     {
-        await using var fixture = new DashboardE2EFixture();
-        await fixture.InitializeAsync();
-        using var client = new HttpClient { BaseAddress = fixture.Origin };
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/cli/device-authorization")
-        {
-            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["client_id"] = "terrascale-cli" })
-        };
+        await using var scenario = await AuthProviderScenario.StartAsync(DashboardE2EFixture.FindRoot());
+        using var client = scenario.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/login");
         request.Headers.Host = "dash.terrascale.tech";
         request.Headers.Add("X-Forwarded-Proto", "https");
         request.Headers.Add("X-Forwarded-For", "203.0.113.7");
         using var response = await client.SendAsync(request);
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        using var grant = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        await Assert.That(grant.RootElement.GetProperty("verification_uri").GetString())
-            .IsEqualTo("https://dash.terrascale.tech/cli/approve");
-        await Assert.That(grant.RootElement.GetProperty("verification_uri_complete").GetString())
-            .StartsWith("https://dash.terrascale.tech/cli/approve?user_code=");
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+        var authorize = response.Headers.Location!;
+        await Assert.That(authorize.GetLeftPart(UriPartial.Path)).IsEqualTo("https://auth.terrascale.tech/terrascale/oauth/authorize");
+        var redirect = authorize.Query.TrimStart('?').Split('&').Single(field => field.StartsWith("redirect_uri=", StringComparison.Ordinal));
+        await Assert.That(Uri.UnescapeDataString(redirect["redirect_uri=".Length..])).IsEqualTo("https://dash.terrascale.tech/login/callback");
     }
 }
