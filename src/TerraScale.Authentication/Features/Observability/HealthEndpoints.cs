@@ -49,7 +49,7 @@ public sealed class ReadyzEndpoint(ReadinessProbe probe) : EndpointWithoutReques
         Get("/readyz");
         Name("readyz");
         Summary("Readiness probe");
-        Description("Returns 200 only when the configured TerraBase auth database, required collections, reads and conditional writes are usable, the serving issuer has signing keys with valid authenticated public metadata, and this replica's startup signing-ring bootstrap has completed. Startup seeds the platform owner and projects and provisions the first encrypted signing key when absent; existing unusable keys fail closed without replacement. A background check runs every five seconds with a two-second deadline and this endpoint answers its latest result. Answers not ready before the first check completes and when the latest check is older than fifteen seconds.");
+        Description("Returns 200 only when the configured TerraBase auth database, required collections, reads and conditional writes are usable, the serving issuer has signing keys with valid authenticated public metadata, and this replica's startup signing-ring bootstrap has completed. Startup seeds the platform owner and projects and provisions the first encrypted signing key when absent; existing unusable keys fail closed without replacement. A background check runs five seconds after the previous one ends, with an eight-second deadline, and this endpoint answers its latest result. Answers not ready before the first check completes and when the latest check is older than fifteen seconds.");
         Tags("Observability");
         Produces<ReadyBody>();
         Produces<ReadyBody>(StatusCodes.Status503ServiceUnavailable);
