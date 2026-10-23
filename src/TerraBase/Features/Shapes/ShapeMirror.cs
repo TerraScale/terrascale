@@ -46,6 +46,9 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 {
     internal const int ManifestObjects = 8;
     private const int QueueItems = 32;
+    // Uploads run concurrently: one shape seals up to a chunk per commit, and a single bucket round trip at a time falls
+    // behind that, refusing (and so never mirroring) the overflow.
+    private const int Workers = 4;
     private const int TrimItems = 64;
     private const long TrimBytes = 1024;
     private const long QueueBytes = 64 * 1024 * 1024;
@@ -56,7 +59,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
     private readonly Channel<Pending> _queue = Channel.CreateBounded<Pending>(new BoundedChannelOptions(QueueItems)
     {
         FullMode = BoundedChannelFullMode.Wait,
-        SingleReader = true,
     });
     private readonly Channel<PendingTrim> _trims = Channel.CreateBounded<PendingTrim>(new BoundedChannelOptions(TrimItems)
     {
@@ -237,7 +239,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 }
 
                 linked.Token.ThrowIfCancellationRequested();
-                var (url, expires) = _objects.Presign(key);
+                var (url, expires) = _objects.Link(key);
                 entries.Add(new(offset, cached.NextOffset, handle + "\0" + offset, key, url, expires,
                     Number(cached.Head.Epoch), cached.Head.KeyId, cached.Head.Sha256, cached.Head.Size));
                 offset = cached.NextOffset;
@@ -400,21 +402,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         var trims = TrimQueueAsync(stoppingToken);
         try
         {
-            await foreach (var pending in _queue.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
-            {
-                try
-                {
-                    await MirrorAsync(pending, stoppingToken).ConfigureAwait(false);
-                }
-                catch (Exception error) when (!stoppingToken.IsCancellationRequested)
-                {
-                    _logger.ZLogWarning(error, $"Shape mirror failed; immutable origin bytes remain available");
-                }
-                finally
-                {
-                    Release(pending);
-                }
-            }
+            await Task.WhenAll(Enumerable.Range(0, Workers).Select(_ => Task.Run(() => DrainAsync(stoppingToken), stoppingToken))).ConfigureAwait(false);
         }
         finally
         {
@@ -443,6 +431,25 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 }
 
                 ClearCaches();
+            }
+        }
+    }
+
+    private async Task DrainAsync(CancellationToken stoppingToken)
+    {
+        await foreach (var pending in _queue.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
+        {
+            try
+            {
+                await MirrorAsync(pending, stoppingToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (!stoppingToken.IsCancellationRequested)
+            {
+                _logger.ZLogWarning(error, $"Shape mirror failed; immutable origin bytes remain available");
+            }
+            finally
+            {
+                Release(pending);
             }
         }
     }
@@ -833,10 +840,12 @@ internal sealed class ShapeObjectStore : IDisposable
     private readonly BackupSettings _settings;
     private readonly IObjectStore _objects;
     private readonly TimeProvider _time;
+    private readonly Uri? _cdn;
 
     public ShapeObjectStore(BackupSettings settings, IHttpClientFactory http, IObjectStore objects, TimeProvider time)
     {
         _settings = settings;
+        _cdn = Cdn(settings);
         _objects = objects;
         _time = time;
         _s3 = new(new BasicAWSCredentials(settings.AccessKeyId, settings.SecretKey), new AmazonS3Config
@@ -933,11 +942,27 @@ internal sealed class ShapeObjectStore : IDisposable
         }
     }
 
-    public (string Url, DateTimeOffset ExpiresAt) Presign(string key)
+    /// <summary>
+    /// Free reads T2: an R2 bucket serves its shape objects through Cloudflare's cache at its custom domain
+    /// <c>shapes-&lt;bucket&gt;.terrascale.tech</c> (docs/terrabase/free-reads-cdn.md). The link is the object's path alone, so
+    /// every reader at one Cloudflare location shares one cached copy; the bytes are TBS1 ciphertext, opened only with the
+    /// key from <c>GET …/shape/keys</c>. Any other bucket is linked by a presigned URL (T1).
+    /// </summary>
+    internal static Uri? Cdn(BackupSettings settings) =>
+        settings.Endpoint.Scheme == Uri.UriSchemeHttps && settings.Endpoint.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase)
+            ? new Uri("https://shapes-" + settings.Bucket + ".terrascale.tech/") : null;
+
+    /// <summary>The object's URL and when the manifest that names it should be read again: the start of the next epoch.</summary>
+    public (string Url, DateTimeOffset ExpiresAt) Link(string key)
     {
         // Signing and expiry share one whole-second clock snapshot, including at the epoch boundary.
         var now = DateTimeOffset.FromUnixTimeSeconds(_time.GetUtcNow().ToUnixTimeSeconds());
         var expires = DateTimeOffset.FromUnixTimeSeconds((now.ToUnixTimeSeconds() / ShapeCrypto.EpochSeconds + 1) * ShapeCrypto.EpochSeconds);
+        if (_cdn is not null)
+        {
+            return (_cdn.AbsoluteUri + key, expires);
+        }
+
         var request = new DefaultRequest(new GetObjectRequest(), "s3")
         {
             Endpoint = _settings.Endpoint,

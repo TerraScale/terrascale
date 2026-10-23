@@ -18,7 +18,7 @@ namespace TerraBase.Slow.Shapes;
 /// Free reads tier T1 against a real S3-compatible bucket (<c>make terrabase-test-slow</c>, the bucket-scoped CI
 /// credentials): the server's own mirror uploads sealed TBS1 objects, the manifest lists them, an anonymous client fetches
 /// each presigned URL straight from the bucket, and the bytes open with the key route's key to exactly what the origin served.
-/// Only endpoint, bucket and keys name the provider; the same test proves Tigris and R2.
+/// Only endpoint, bucket and keys name the provider; the same test proves Tigris and R2, and on R2 also the CDN tier T2.
 /// </summary>
 public sealed class S3ShapeMirrorTests
 {
@@ -93,6 +93,20 @@ public sealed class S3ShapeMirrorTests
 
             await Assert.That(opened[0].SequenceEqual(pageBytes)).IsTrue().Because("the bucket's snapshot page opens to the page the origin served");
             await Assert.That(opened[1].SequenceEqual(chunkBytes)).IsTrue().Because("the bucket's chunk opens to the chunk the origin served");
+
+            // Free reads T2: an R2 bucket links its objects by their path on its Cloudflare custom domain, and a repeated read
+            // is answered from Cloudflare's cache. Any other bucket keeps presigned links (T1).
+            var link = new Uri(objects[1].GetProperty("url").GetString()!);
+            if (TigrisCiBucket.R2)
+            {
+                await Assert.That(link.GetLeftPart(UriPartial.Path)).IsEqualTo($"https://shapes-{TigrisCiBucket.Bucket}.terrascale.tech/{link.AbsolutePath[1..]}");
+                await Assert.That(link.Query).IsEmpty().Because("the CDN key is the path alone, the same for every reader and epoch");
+                await CachedAsync(anonymous, link, cancellationToken);
+            }
+            else
+            {
+                await Assert.That(link.Query).Contains("X-Amz-Signature=");
+            }
         }
         finally
         {
@@ -134,6 +148,24 @@ public sealed class S3ShapeMirrorTests
     private static async Task PutAsync(HttpClient data, ManagedDatabaseRef database, Faker faker, CancellationToken cancellationToken) =>
         (await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, Collection, EntityIds.New().ToString())),
             new { text = faker.Lorem.Sentence() }, cancellationToken)).EnsureSuccessStatusCode();
+
+    // Cloudflare caches on the first read at a location; poll until a read is a HIT, so a cache that never serves fails.
+    private static async Task CachedAsync(HttpClient anonymous, Uri link, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(MirrorDeadline);
+        while (true)
+        {
+            using var response = await anonymous.GetAsync(link, deadline.Token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            if (response.Headers.TryGetValues("cf-cache-status", out var status) && status.Single() == "HIT")
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(250), deadline.Token);
+        }
+    }
 
     // The mirror uploads in the background; poll the manifest until it lists the expected objects.
     private static async Task<JsonElement[]> ManifestAsync(HttpClient data, string target, int count, CancellationToken cancellationToken)

@@ -197,6 +197,9 @@ internal static class TigrisCiBucket
         && (name == "ts-terrabase-ci" || (name.StartsWith("ts-", StringComparison.Ordinal) && name.EndsWith("-test", StringComparison.Ordinal)))
         ? name : throw new InvalidOperationException("BUCKET_NAME must name the private ts-terrabase-ci bucket or a ts-*-test bucket");
 
+    /// <summary>Whether the endpoint is Cloudflare R2, whose bucket serves shape objects through its CDN custom domain.</summary>
+    public static bool R2 => new Uri(Variable("AWS_ENDPOINT_URL_S3")).Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase);
+
     public static void Configure(Dictionary<string, string> settings)
     {
         settings["backup-endpoint"] = Variable("AWS_ENDPOINT_URL_S3");

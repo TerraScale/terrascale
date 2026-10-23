@@ -13,7 +13,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Shapes;
 
-/// <summary><c>GET …/collections/{collection}/shape/manifest</c>: presigned Tigris objects of a shape's immutable offsets (FR-22, section 14).</summary>
+/// <summary><c>GET …/collections/{collection}/shape/manifest</c>: the mirrored objects of a shape's immutable offsets (FR-22, section 14; T2 in free-reads-cdn.md).</summary>
 internal sealed class GetShapeManifestEndpoint(
     IDocumentService documents, ITenantDirectory tenants, IShapeLineages lineages, IShapeSnapshots snapshots, IShapeChunks chunks, IShapeMirror mirror)
     : EndpointWithoutRequest<IResult>
@@ -27,9 +27,9 @@ internal sealed class GetShapeManifestEndpoint(
     {
         Get(DocumentRoute.Collections + "/{collection}/shape/manifest");
         Name("getShapeManifest");
-        Summary("Lists a shape's presigned sealed objects");
+        Summary("Lists a shape's mirrored sealed objects");
         Description("""
-            Requires documents:read. Lists up to 8 presigned URLs of the immutable TBS1 objects that begin at offset, each followed by its next_offset. Fetch an object, check its size and sha256, decrypt it with the key from GET …/shape/keys, and apply it only if all of that passes. Otherwise read that offset from the origin with GET …/shape. The list is empty when the offset is not mirrored yet, or is a tail body that is up to date. A stale handle, an offset below retention or an unpublished offset answers 409 must_refetch with the current handle in TB-Shape-Handle and the body; restart at offset=-1 on GET …/shape. Responses are private, no-store; each URL expires at the start of the next epoch.
+            Requires documents:read. Lists up to 8 URLs of the immutable TBS1 objects that begin at offset, each followed by its next_offset; a URL is a stable Cloudflare CDN path for an R2 bucket, otherwise a presigned bucket URL. Fetch an object, check its size and sha256, decrypt it with the key from GET …/shape/keys, and apply it only if all of that passes. Otherwise read that offset from the origin with GET …/shape. The list is empty when the offset is not mirrored yet, or is a tail body that is up to date. A stale handle, an offset below retention or an unpublished offset answers 409 must_refetch with the current handle in TB-Shape-Handle and the body; restart at offset=-1 on GET …/shape. Responses are private, no-store; read the manifest again after expires_at, the start of the next epoch, when a presigned URL expires.
             """);
         Tags("Live");
         Produces<ShapeMirrorManifest>();
