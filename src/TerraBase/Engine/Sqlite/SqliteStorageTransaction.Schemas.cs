@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Memory;
@@ -95,87 +96,133 @@ internal sealed partial class SqliteStorageTransaction
                 throw new InvalidDataException("invalid collection schema");
             }
 
-            using var metadataReservation = ReserveCollectionMetadata(name, out _);
+            List<(string, ReadOnlyMemory<byte>)> added = schema is { } value
+                ? [("schema", JsonMarshal.GetRawUtf8Value(value).ToArray()), ("schema_dialect", Encoding.UTF8.GetBytes($"\"{CollectionSchemaDialect}\""))]
+                : [];
+            RewriteCollectionMetadata(name, createdAt, static member => member is "schema" or "schema_dialect", added, cancellationToken);
+            return true;
+        }, cancellationToken, mutation: true);
+
+    public ValueTask<JsonElement?> GetCollectionTableAsync(string name, CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            if (!IsClient || Command(SqliteStatements.GetCollection, name).ExecuteScalar() is null)
+            {
+                return null;
+            }
+
+            using var reservation = ReserveCollectionMetadata(name, out _);
             using var metadata = ReadCollectionMetadata(name);
-            // Count the exact encoded bytes before allocating the output and admitting its write.
-            var bytes = 2;
-            var members = 0;
-            var hasCreatedAt = false;
+            return metadata is not null && metadata.RootElement.TryGetProperty("sql", out var table) ? table.Clone() : (JsonElement?)null;
+        }, cancellationToken);
+
+    public ValueTask<bool> SetCollectionTableAsync(string name, JsonElement definition, CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            ThrowIfReadOnly();
+            if (!IsClient)
+            {
+                throw new InvalidOperationException("table definitions belong to client databases");
+            }
+
+            long createdAt;
+            using (var reader = Command(SqliteStatements.GetCollection, name).ExecuteReader())
+            {
+                if (!reader.Read())
+                {
+                    return false;
+                }
+
+                createdAt = reader.GetInt64(1);
+            }
+
+            RewriteCollectionMetadata(name, createdAt, static member => member == "sql", [("sql", JsonMarshal.GetRawUtf8Value(definition).ToArray())], cancellationToken);
+            return true;
+        }, cancellationToken, mutation: true);
+
+    // Worker-only: rewrites a collection's metadata document with the members `replaced` selects dropped and `added`
+    // appended, keeping every other member (so a schema and a table definition never overwrite each other).
+    private void RewriteCollectionMetadata(
+        string name, long createdAt, Func<string, bool> replaced, IReadOnlyList<(string Name, ReadOnlyMemory<byte> Raw)> added, CancellationToken cancellationToken)
+    {
+        using var metadataReservation = ReserveCollectionMetadata(name, out _);
+        using var metadata = ReadCollectionMetadata(name);
+        // Count the exact encoded bytes before allocating the output and admitting its write.
+        var bytes = 2;
+        var members = 0;
+        var hasCreatedAt = false;
+        if (metadata is not null)
+        {
+            foreach (var property in metadata.RootElement.EnumerateObject())
+            {
+                if (replaced(property.Name))
+                {
+                    continue;
+                }
+
+                hasCreatedAt |= property.Name == "created_at";
+                CountMember(property.Name, JsonMarshal.GetRawUtf8Value(property.Value).Length);
+            }
+        }
+
+        if (!hasCreatedAt)
+        {
+            CountMember("created_at", createdAt.ToString(CultureInfo.InvariantCulture).Length);
+        }
+
+        foreach (var (member, raw) in added)
+        {
+            CountMember(member, raw.Length);
+        }
+
+        Reserve(name, bytes);
+        var buffer = new ArrayBufferWriter<byte>(bytes);
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
             if (metadata is not null)
             {
                 foreach (var property in metadata.RootElement.EnumerateObject())
                 {
-                    if (property.Name is "schema" or "schema_dialect")
+                    if (replaced(property.Name))
                     {
                         continue;
                     }
 
-                    hasCreatedAt |= property.Name == "created_at";
-                    CountMember(property.Name, JsonMarshal.GetRawUtf8Value(property.Value).Length);
+                    writer.WritePropertyName(property.Name);
+                    writer.WriteRawValue(JsonMarshal.GetRawUtf8Value(property.Value), skipInputValidation: true);
                 }
             }
 
             if (!hasCreatedAt)
             {
-                CountMember("created_at", createdAt.ToString(CultureInfo.InvariantCulture).Length);
+                writer.WriteNumber("created_at", createdAt);
             }
 
-            if (schema is { } value)
+            foreach (var (member, raw) in added)
             {
-                CountMember("schema", JsonMarshal.GetRawUtf8Value(value).Length);
-                CountMember("schema_dialect", CollectionSchemaDialect.Length + 2);
+                writer.WritePropertyName(member);
+                writer.WriteRawValue(raw.Span, skipInputValidation: true);
             }
 
-            Reserve(name, bytes);
-            var buffer = new ArrayBufferWriter<byte>(bytes);
-            using (var writer = new Utf8JsonWriter(buffer))
+            writer.WriteEndObject();
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        // The complete envelope must be admissible on replication as well as locally.
+        var body = DocumentJson.Read(buffer.WrittenMemory, requireObject: true);
+        WriteMetadata(DocumentDelta.Collections, name, body);
+        ChangedReaderState = true;
+
+        void CountMember(string propertyName, int valueBytes)
+        {
+            bytes += JsonEncodedText.Encode(propertyName).EncodedUtf8Bytes.Length + 3 + valueBytes + (members++ == 0 ? 0 : 1);
+            if (bytes > MaxDocumentBytes)
             {
-                writer.WriteStartObject();
-                if (metadata is not null)
-                {
-                    foreach (var property in metadata.RootElement.EnumerateObject())
-                    {
-                        if (property.Name is "schema" or "schema_dialect")
-                        {
-                            continue;
-                        }
-
-                        writer.WritePropertyName(property.Name);
-                        writer.WriteRawValue(JsonMarshal.GetRawUtf8Value(property.Value), skipInputValidation: true);
-                    }
-                }
-
-                if (!hasCreatedAt)
-                {
-                    writer.WriteNumber("created_at", createdAt);
-                }
-
-                if (schema is { } definition)
-                {
-                    writer.WritePropertyName("schema");
-                    writer.WriteRawValue(JsonMarshal.GetRawUtf8Value(definition), skipInputValidation: true);
-                    writer.WriteString("schema_dialect", CollectionSchemaDialect);
-                }
-
-                writer.WriteEndObject();
+                throw new StorageWriteLimitException("collection metadata is at most 1 MiB");
             }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            // The complete envelope must be admissible on replication as well as locally.
-            var body = DocumentJson.Read(buffer.WrittenMemory, requireObject: true);
-            WriteMetadata(DocumentDelta.Collections, name, body);
-            ChangedReaderState = true;
-            return true;
-
-            void CountMember(string propertyName, int valueBytes)
-            {
-                bytes += JsonEncodedText.Encode(propertyName).EncodedUtf8Bytes.Length + 3 + valueBytes + (members++ == 0 ? 0 : 1);
-                if (bytes > MaxDocumentBytes)
-                {
-                    throw new StorageWriteLimitException("collection metadata is at most 1 MiB");
-                }
-            }
-        }, cancellationToken, mutation: true);
+        }
+    }
 
     private JsonDocument? ReadCollectionMetadata(string name)
     {

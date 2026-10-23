@@ -239,6 +239,18 @@ public interface IStorageTransaction : IAsyncDisposable
     /// </summary>
     ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Reads a client collection's relational table definition (member <c>sql</c> of its <c>_collections</c> metadata),
+    /// or <see langword="null"/> when it has none or the collection is absent.
+    /// </summary>
+    ValueTask<JsonElement?> GetCollectionTableAsync(string name, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Attaches or replaces a client collection's table definition, keeping every other metadata member; it replicates
+    /// with the metadata (last writer wins). <see langword="false"/> when the collection is absent.
+    /// </summary>
+    ValueTask<bool> SetCollectionTableAsync(string name, JsonElement definition, CancellationToken cancellationToken);
+
     /// <summary>Lists at most <paramref name="limit"/> collections with names after <paramref name="afterName"/>, in name order.</summary>
     ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(
         string? afterName, int limit, CancellationToken cancellationToken);
