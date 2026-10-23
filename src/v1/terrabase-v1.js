@@ -11,6 +11,7 @@ import { readShapeManifest } from "./shape-manifest.js";
 import { V1ShapeSubscription } from "./shape-subscription.js";
 import { decryptSealedShapePage, readShapePage, readShapeKey } from "./shape-reader.js";
 import { runSql, checkSql } from "./sql.js";
+import { executeSql, sqlRowObjects, sqlStatement } from "./sql-execute.js";
 import { streamChanges } from "./changes.js";
 import { exportDocuments } from "./export.js";
 import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema, getCollectionTtl, putCollectionTtl, deleteCollectionTtl } from "./catalog.js";
@@ -854,6 +855,39 @@ export class V1Database {
   /** @param {string} statement @param {V1RequestOptions} [options] */
   explainSql(statement, options = {}) {
     return checkSql(this.#transport, this.name, statement, options, "explainSql");
+  }
+
+  /**
+   * Runs one relational SQL statement as its own transaction. Reads need documents:read; writes and DDL need documents:write.
+   * @param {string} sql
+   * @param {import("./sql-execute.js").V1SqlArguments} [args] Positional array, or named values keyed without their prefix.
+   * @param {V1RequestOptions} [options]
+   * @returns {Promise<import("./sql-execute.js").V1SqlExecuteResult>}
+   */
+  async execute(sql, args, options = {}) {
+    const [result] = await executeSql(this.#transport, this.name, [sqlStatement(sql, args)], options);
+    return /** @type {import("./sql-execute.js").V1SqlExecuteResult} */ (result);
+  }
+
+  /**
+   * Runs one statement and returns its rows as objects keyed by column name.
+   * @template [T=Record<string, import("./sql-execute.js").V1SqlValue>]
+   * @param {string} sql
+   * @param {import("./sql-execute.js").V1SqlArguments} [args]
+   * @param {V1RequestOptions} [options]
+   * @returns {Promise<T[]>}
+   */
+  async query(sql, args, options = {}) {
+    return sqlRowObjects(await this.execute(sql, args, options));
+  }
+
+  /**
+   * Runs 1 to 256 statements as one transaction: all commit or none do. A refused statement throws SqlError.
+   * @param {readonly (string | import("./sql-execute.js").V1SqlStatement)[]} statements
+   * @param {V1RequestOptions} [options]
+   */
+  batch(statements, options = {}) {
+    return executeSql(this.#transport, this.name, statements, options);
   }
 
   /** @param {import("./changes.js").V1ChangeStreamRequest} [request] @param {V1RequestOptions} [options] */
