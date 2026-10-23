@@ -85,6 +85,21 @@ public sealed class UsageBackendContractTests
     }
 
     [Test]
+    public async Task AProjectWithoutDatabasesCountsAsZeroWhenTerraBaseHasNotRegisteredIt()
+    {
+        using var wire = new Wire { Failure = 404 };
+        var selection = Selection();
+        var empty = new ProjectRecord { Id = "01JA0000000000000000000006", OrganizationId = selection.Context.Organization!.Id, Name = "empty" };
+        selection.Context.Organization.Projects.Add(empty.Id, empty);
+        wire.Allowed.Add("/v1/projects/" + empty.Id + "/usage");
+        var result = await new UsageBackend(wire, new Clock(), new Tokens()).ReadAsync(selection, CancellationToken.None);
+        await Assert.That(result.Monthly[empty.Id].State).IsEqualTo(UsageSourceState.Measured);
+        await Assert.That(result.Monthly[empty.Id].Reading!.Period.Reads + result.Monthly[empty.Id].Reading!.Period.Writes).IsEqualTo(0);
+        await Assert.That(result.Monthly["01JA0000000000000000000001"].State).IsEqualTo(UsageSourceState.Restricted)
+            .Because("A project with databases that TerraBase does not know stays unknown.");
+    }
+
+    [Test]
     public async Task ForeignDatabaseIdentityCannotBecomeUsageForSelectedDatabase()
     {
         using var wire = new Wire { Foreign = true };
@@ -121,12 +136,13 @@ public sealed class UsageBackendContractTests
     {
         public int Failure { get; init; }
         public bool Foreign { get; init; }
+        public HashSet<string> Allowed { get; } = [];
         public HttpClient CreateClient(string name) => new(this, false);
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
             var database = path == "/v1/projects/01JA0000000000000000000001/databases/app/usage";
-            if (!database && path != "/v1/projects/01JA0000000000000000000001/usage" || request.Headers.Authorization?.Parameter != "meter-project-token")
+            if (!database && path != "/v1/projects/01JA0000000000000000000001/usage" && !Allowed.Contains(path) || request.Headers.Authorization?.Parameter != "meter-project-token")
                 throw new InvalidOperationException("Noncanonical meter request.");
             if (Failure > 0) return Task.FromResult(Response((HttpStatusCode)Failure, "{\"error\":{\"code\":\"invalid_query\",\"message\":\"failed\"}}"));
             var query = QueryHelpers.ParseQuery(request.RequestUri.Query);
