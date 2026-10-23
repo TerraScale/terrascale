@@ -52,7 +52,7 @@ const page = await posts.query({
 }, { signal })
 ```
 
-The current contract allows at most **4 sort keys**, **64 projection paths**, and a page `limit` from **1 to 1000** (default **50**). A page can stop at its byte or scan budget before reaching that count. A sort may require an index and fail with `sort_requires_index`; do not assume automatic index creation. See [limits](/pt-br/limits).
+The current contract allows at most **4 sort keys**, **64 projection paths**, and a page `limit` from **1 to 1000** (default **50**). A page can stop at its byte or scan budget before reaching that count. A sort may require an index and fail with `sort_requires_index`; do not assume automatic index creation. See [limits](/pt-br/limits). To order by similarity to an embedding, use a [`near` sort](/pt-br/guides/vector-search).
 
 C# uses `Filter`, `Sort`, `Project`, `Limit`, `Cursor` and `Count` on `TerraBaseQuery`. Filters can be created with `JsonSerializer.SerializeToElement(new { eq = new[] { "/status", "active" } })`.
 

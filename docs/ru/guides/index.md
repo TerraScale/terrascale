@@ -19,6 +19,8 @@ Use the [quickstart](/ru/getting-started/) to establish one working application 
 - [Errors and safe retries](/ru/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/ru/guides/indexes): secondary indexes, recommendations and automatic indexing.
 - [Schema validation](/ru/guides/schema-validation): JSON Schema checks and unique keys per collection.
+- [Expire documents with TTL](/ru/guides/ttl): automatic deletion after a per-document expiry time, with about an hour of lag.
+- [Vector similarity search](/ru/guides/vector-search): nearest-neighbour queries over stored embeddings for semantic search and RAG.
 - [Transactions](/ru/guides/transactions): atomic multi-document writes with conditional asserts.
 - [Realtime changes](/ru/guides/realtime): the server-sent changes feed and filtered collection shapes.
 - [Backups and restore](/ru/guides/backups-and-restore): backup policy, point-in-time restore into a new database.

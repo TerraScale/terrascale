@@ -19,6 +19,8 @@ Use the [quickstart](/pt-br/getting-started/) to establish one working applicati
 - [Errors and safe retries](/pt-br/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/pt-br/guides/indexes): secondary indexes, recommendations and automatic indexing.
 - [Schema validation](/pt-br/guides/schema-validation): JSON Schema checks and unique keys per collection.
+- [Expire documents with TTL](/pt-br/guides/ttl): automatic deletion after a per-document expiry time, with about an hour of lag.
+- [Vector similarity search](/pt-br/guides/vector-search): nearest-neighbour queries over stored embeddings for semantic search and RAG.
 - [Transactions](/pt-br/guides/transactions): atomic multi-document writes with conditional asserts.
 - [Realtime changes](/pt-br/guides/realtime): the server-sent changes feed and filtered collection shapes.
 - [Backups and restore](/pt-br/guides/backups-and-restore): backup policy, point-in-time restore into a new database.
