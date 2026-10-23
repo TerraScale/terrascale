@@ -57,7 +57,7 @@ public sealed class PlanCatalogContractTests(DashboardE2EFixture fixture)
         var paid = listed.GetProperty("plans").EnumerateArray().ToArray();
         using var source = JsonDocument.Parse(PlanCatalog.PublishedJson);
         var available = source.RootElement.GetProperty("plans").EnumerateArray().Where(plan => plan.GetProperty("available").GetBoolean()).ToArray();
-        await Assert.That(available.Select(plan => plan.GetProperty("name").GetString()).ToArray()).IsEquivalentTo(new[] { "Free", "Starter", "Pro", "Team" });
+        await Assert.That(available.Select(plan => plan.GetProperty("name").GetString()!).ToArray()).IsEquivalentTo(new[] { "Free", "Starter", "Pro", "Team" });
         await Assert.That(paid.Length).IsEqualTo(available.Length - 1);
         var html = WebUtility.HtmlDecode(await client.GetStringAsync("/organization?tab=billing"));
         foreach (var published in available)
