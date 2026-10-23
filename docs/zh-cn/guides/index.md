@@ -15,6 +15,12 @@ Use the [quickstart](/zh-cn/getting-started/) to establish one working applicati
 - [Authentication](/zh-cn/guides/authentication): credential scope and server/browser boundaries.
 - [Queries and pagination](/zh-cn/guides/queries): filters, projection, cursors and version preconditions.
 - [Errors and safe retries](/zh-cn/guides/errors): typed failures and uncertain write outcomes.
+- [Indexes](/zh-cn/guides/indexes): secondary indexes, recommendations and automatic indexing.
+- [Schema validation](/zh-cn/guides/schema-validation): JSON Schema checks and unique keys per collection.
+- [Transactions](/zh-cn/guides/transactions): atomic multi-document writes with conditional asserts.
+- [Realtime changes](/zh-cn/guides/realtime): the server-sent changes feed and filtered collection shapes.
+- [Backups and restore](/zh-cn/guides/backups-and-restore): backup policy, point-in-time restore into a new database.
+- [Branches](/zh-cn/guides/branches): copy a database into a new branch database.
 - [Dashboard usage](/zh-cn/guides/dashboard): customer account and database workflow.
 - [Import an existing database](/zh-cn/guides/import) (pending): one-time import of a PostgreSQL or Turso export with dry-run preview and validation.
 

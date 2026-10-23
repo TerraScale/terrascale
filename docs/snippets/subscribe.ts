@@ -11,6 +11,8 @@ type Sandbox = {
 };
 
 export const title = "Live subscription";
+// Stale: targets the unpublished Sync v1 client. Use the changes feed in /guides/realtime.
+export const runnable = false;
 
 const [first, second, third] = [
   "01JB7Q3V0Z8K4M2N6P9R5T1W6A",

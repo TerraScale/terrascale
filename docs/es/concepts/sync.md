@@ -21,6 +21,6 @@ The supported request and response contract must match the serving release. A co
 
 Older `TerraScaleSyncV1Client`, shared reactive views and SQL subscription examples target a different SDK contract and an unpublished pin. They are retained only as local compatibility fixtures. Do not copy them into a new application using the current root entrypoint.
 
-Keep durable writes on the authorized server path. A reversible optimistic UI does not prove a write committed or create an offline mutation contract. Confirm real-service live-update availability before implementing a browser integration.
+Keep durable writes on the authorized server path. A reversible optimistic UI does not prove a write committed or create an offline mutation contract. For live updates, use the changes feed or a filtered shape as described in [Realtime changes](/es/guides/realtime). In a browser, read the feed with `fetch` and an `Authorization` header (`EventSource` cannot send one), using a short-lived token you renew before it expires.
 
 </div>
