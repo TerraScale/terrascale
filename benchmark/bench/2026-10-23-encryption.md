@@ -68,6 +68,43 @@ The dirty instrumentation patch SHA-256 is
 One Release build and one six-case invocation passed; SDK, sibling and native
 identities match the retained baseline. No failed run was discarded.
 
+## Managed Abort correction with old native: failed, stopped early
+
+The opt-in reader reset correction at
+`89311f5d2f629a9a091a8334cf446b969d1d95bc` was measured against the same
+fixture-patched main `7b80cacbe`, using the original physical-backlog fixture
+in both arms and the unchanged `efd5916a…3e8b` software-AES native library.
+The original four-second budget, workload, assertions and parallelism 16
+remained unchanged.
+
+| Completed invocation | Stop ms | Passed / failed / skipped | Runner exit |
+| --- | ---: | --- | ---: |
+| Pair 1 main | 905.723 | 6 / 0 / 0 | 0 |
+| Pair 1 correction | 4328.039 | 5 / 1 / 0 | 2 |
+| Pair 2 correction | 1521.069 | 6 / 0 / 0 | 0 |
+
+**The correction alone did not qualify.** In the failed Stop, the first read
+took 608.115 ms; the second took 3584.695 ms and threw
+`OperationCanceledException`, leaving one segment and an unread backlog.
+The first failed pair already violated the all-pass requirement. On explicit
+stop instruction, pair 2 main was interrupted and all remaining pairs, clean
+split-test builds/repeats and vendor-reset tests were left unrun. There is no
+complete three-pair median or five-repeat proof from this attempt.
+
+The two Release builds passed once each. The first admission had stopped on
+a harness status-parser defect before any build or test; that failure and the
+second-admission deviation are preserved separately. The stopped wrapper exit
+was 137; no aggregate exit was produced. Host loads were high and uneven.
+Completed results and interruption errors remain separate in the evidence.
+
+Partial evidence:
+`~/.t3/test-artifacts/database-encryption/fix-gate-harness-20261023T201055Z/supervision-partial/`.
+`PARTIAL-REPORT.md` SHA-256:
+`3885d806b342589c686b684350ba94b5c6bf5d588997dd198d72774c6bc6475d`.
+The Abort correction is retained. A full combined correction plus the corrected
+runtime-dispatched native comparison remains pending; it must meet the original
+18/18 and median Stop at most 1.5 times matched-main acceptance bar.
+
 ## Shared FTS/encryption native measurement — pushed commit 1c3b609f6
 
 Measured 2026-10-23 on `delta`, exact pushed commit `1c3b609f65588ed712b41a81dfb1d807b00f44a4`, Release, SDK `11.0.100-rc.1.26425.128` through `/home/mariogk/.local/share/mise/dotnet-root/dotnet`; runtime `11.0.0`. SDK sibling: `bcd20603f11f3aa54dc54cec6e410b4fe9e24151`. The admitted disposable checkout and sibling were clean at completion.
