@@ -24,8 +24,8 @@ Fix: [PR #463](https://github.com/TerraScale/terrascale/pull/463).
 
 ## Five-repeat proof
 
-Tested source: `90f917e0f2fbdf6875a8ad8a32c72ddd05609f3e`, before the clean
-rebase over #453. Host: `delta`. Configuration: Release.
+Tested source: `90f917e0f2fbdf6875a8ad8a32c72ddd05609f3e`, before the
+rebases onto later main commits. Host: `delta`. Configuration: Release.
 .NET SDK: `11.0.100-rc.1.26425.128`.
 
 | Test | Passed | Failed/skipped |
@@ -67,7 +67,7 @@ Runner script SHA-256:
 
 [Run 39947556827](https://github.com/TerraScale/terrascale/actions/runs/39947556827)
 passed required checks on the tested head. TerraBase Fast recorded 2464 passes,
-zero failures and one existing host-fixture skip; the driver recorded 22 passes.
+zero failures and the existing #437 skip; the driver recorded 22 passes.
 Non-blocking Slow recorded 63 passes, 15 failures and one existing host-fixture
 skip. Six SQL fixture assertions overlap PR #456; restart/WAL-shim failures
 overlap PR #457 (the image lacks `cc`). Neither targeted Slow test failed.
