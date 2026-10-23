@@ -661,6 +661,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 {
                     await ((Task)skipped).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
                     positions.Remove(database);
+                    work.WakeCapacity();
                 }
 
                 continue;
@@ -703,7 +704,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     {
                         if (positions.Count == MaxPendingResponses)
                         {
-                            work.Later(database, _time.GetTimestamp() + (long)(Idle.TotalSeconds * _time.TimestampFrequency));
+                            work.DeferInitialization(database);
                             continue;
                         }
 
@@ -719,6 +720,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     }
 
                     positions.Remove(database);
+                    work.WakeCapacity();
                     position = await initializing.ConfigureAwait(false);
                 }
                 if (position is not (var found, var acked))
@@ -898,6 +900,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             {
                 await ((Task)position).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
                 positions.Remove(database);
+                link.Work.WakeCapacity();
             }
         }
     }
@@ -1245,6 +1248,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         private readonly Lock _gate = new();
         private readonly Queue<TenantContext> _dirty = [];
         private readonly HashSet<TenantContext> _queued = [];
+        private readonly Queue<TenantContext> _capacity = [];
+        private readonly HashSet<TenantContext> _capacityQueued = [];
+        private bool _capacityOverflow;
         private SortedSet<(long At, TenantContext Database)> _due = [with(DueOrder)];
         private Dictionary<TenantContext, long> _scheduled = [];
         private TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1307,6 +1313,42 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
         }
 
+        public void DeferInitialization(TenantContext database)
+        {
+            lock (_gate)
+            {
+                if (_capacityQueued.Contains(database))
+                {
+                    return;
+                }
+
+                if (_capacity.Count == MaxDirty)
+                {
+                    // Reconcile after a slot opens; doing it while all slots are held would repeat discovery forever.
+                    _capacityOverflow = true;
+                    return;
+                }
+
+                _capacityQueued.Add(database);
+                _capacity.Enqueue(database);
+            }
+        }
+
+        public void WakeCapacity()
+        {
+            lock (_gate)
+            {
+                while (_capacity.TryDequeue(out var database))
+                {
+                    Enqueue(database);
+                }
+
+                _capacityQueued.Clear();
+                _reconcile |= _capacityOverflow;
+                _capacityOverflow = false;
+            }
+        }
+
         public bool TakeReconciliation()
         {
             lock (_gate)
@@ -1325,6 +1367,18 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             lock (_gate)
             {
                 (_due, _scheduled) = (due, scheduled);
+                for (var remaining = _capacity.Count; remaining > 0; remaining--)
+                {
+                    var database = _capacity.Dequeue();
+                    if (databases.Contains(database))
+                    {
+                        _capacity.Enqueue(database);
+                    }
+                    else
+                    {
+                        _capacityQueued.Remove(database);
+                    }
+                }
             }
         }
 
