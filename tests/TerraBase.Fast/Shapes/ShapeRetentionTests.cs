@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Turso.Data.Sqlite;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Features.Shapes;
 using TerraBase.Fast.Documents;
@@ -336,12 +336,12 @@ public sealed class ShapeRetentionTests
     private static DateTimeOffset Ago(TimeProvider time, TimeSpan age) => time.GetUtcNow() - age;
 
     private static ShapeRetention Retention(TerraBaseTestServer server, TimeProvider time) =>
-        new(time, new SqliteShapeStorage(server.Services.GetRequiredService<SqliteStorageEngine>()));
+        new(time, new TursoShapeStorage(server.Services.GetRequiredService<TursoStorageEngine>()));
 
-    private static async Task<SqliteDatabaseStore> StoreAsync(TerraBaseTestServer server, TenantContext tenant) =>
-        (SqliteDatabaseStore)(await server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
+    private static async Task<TursoDatabaseStore> StoreAsync(TerraBaseTestServer server, TenantContext tenant) =>
+        (TursoDatabaseStore)(await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
 
-    private static async Task<int> DrainAsync(ShapeRetention retention, SqliteDatabaseStore store, string handle)
+    private static async Task<int> DrainAsync(ShapeRetention retention, TursoDatabaseStore store, string handle)
     {
         var total = 0;
         int deleted;
@@ -355,7 +355,7 @@ public sealed class ShapeRetentionTests
         return total;
     }
 
-    private static async Task<int> DrainDropAsync(ShapeRetention retention, SqliteDatabaseStore store, string handle)
+    private static async Task<int> DrainDropAsync(ShapeRetention retention, TursoDatabaseStore store, string handle)
     {
         var total = 0;
         int deleted;
@@ -370,16 +370,16 @@ public sealed class ShapeRetentionTests
     }
 
     // Shape rows are written with the capture-off pragma SuspendCaptureAsync sends, then capture is turned back on.
-    private static Task<bool> WriteAsync(SqliteDatabaseStore store, Action<SqliteConnection> write) => store.WithWriterAsync(session =>
+    private static Task<bool> WriteAsync(TursoDatabaseStore store, Action<SqliteConnection> write) => store.WithWriterAsync(session =>
     {
-        Execute(session.Connection, SqliteSession.CaptureOff);
+        Execute(session.Connection, TursoSession.CaptureOff);
         try
         {
             write(session.Connection);
         }
         finally
         {
-            Execute(session.Connection, SqliteSession.CaptureOn);
+            Execute(session.Connection, TursoSession.CaptureOn);
         }
 
         return true;
@@ -395,7 +395,7 @@ public sealed class ShapeRetentionTests
             "INSERT INTO _tb_shape_snapshot (handle, offset, page, next_id, body, sealed_at) VALUES ($h, $o, $p, NULL, $b, $s);",
             ("$h", handle), ("$o", offset), ("$p", page), ("$b", new byte[bytes]), ("$s", sealedAt.ToUnixTimeMilliseconds()));
 
-    private static Task<long[]> OffsetsAsync(SqliteDatabaseStore store, string handle) => store.WithWriterAsync(session =>
+    private static Task<long[]> OffsetsAsync(TursoDatabaseStore store, string handle) => store.WithWriterAsync(session =>
     {
         using var command = session.Connection.CreateCommand();
         command.CommandText = "SELECT offset FROM _tb_shape_chunk WHERE handle = $h ORDER BY offset;";
@@ -410,7 +410,7 @@ public sealed class ShapeRetentionTests
         return offsets.ToArray();
     }, "a test reading chunk offsets", CancellationToken.None);
 
-    private static Task<(long Offset, long Page)[]> PagesAsync(SqliteDatabaseStore store, string handle) => store.WithWriterAsync(session =>
+    private static Task<(long Offset, long Page)[]> PagesAsync(TursoDatabaseStore store, string handle) => store.WithWriterAsync(session =>
     {
         using var command = session.Connection.CreateCommand();
         command.CommandText = "SELECT offset, page FROM _tb_shape_snapshot WHERE handle = $h ORDER BY offset, page;";
@@ -425,11 +425,11 @@ public sealed class ShapeRetentionTests
         return pages.ToArray();
     }, "a test reading snapshot pages", CancellationToken.None);
 
-    private static Task<long> BodyBytesAsync(SqliteDatabaseStore store, string handle) => ScalarAsync(store,
+    private static Task<long> BodyBytesAsync(TursoDatabaseStore store, string handle) => ScalarAsync(store,
         "SELECT (SELECT COALESCE(SUM(length(body)), 0) FROM _tb_shape_chunk WHERE handle = $h) + (SELECT COALESCE(SUM(length(body)), 0) FROM _tb_shape_snapshot WHERE handle = $h);",
         ("$h", handle));
 
-    private static Task<long[]> FeedSeqsAsync(SqliteDatabaseStore store) => store.WithWriterAsync(session =>
+    private static Task<long[]> FeedSeqsAsync(TursoDatabaseStore store) => store.WithWriterAsync(session =>
     {
         using var command = session.Connection.CreateCommand();
         command.CommandText = "SELECT seq FROM _tb_feed ORDER BY seq;";
@@ -443,7 +443,7 @@ public sealed class ShapeRetentionTests
         return seqs.ToArray();
     }, "a test reading the feed sequence", CancellationToken.None);
 
-    private static Task<long> ScalarAsync(SqliteDatabaseStore store, string sql, params (string Name, object? Value)[] parameters) =>
+    private static Task<long> ScalarAsync(TursoDatabaseStore store, string sql, params (string Name, object? Value)[] parameters) =>
         store.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
@@ -471,7 +471,7 @@ public sealed class ShapeRetentionTests
     private sealed class RetentionProbe(ShapeRetention retention)
     {
         public ShapeRetention Retention { get; } = retention;
-        public SqliteDatabaseStore? Store { get; set; }
+        public TursoDatabaseStore? Store { get; set; }
     }
 
     /// <summary>Test-only adapter for the error returned to FR-20; no production route is registered by this lane.</summary>

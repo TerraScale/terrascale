@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Replication;
@@ -81,7 +81,7 @@ public sealed class BoundedShutdownTests
         var server = api.Server;
         var lifetime = server.Services.GetRequiredService<IHostApplicationLifetime>();
         var completion = server.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var hostedBudget = server.Services.GetRequiredService<IOptions<HostOptions>>().Value.ShutdownTimeout;
         var streams = new List<HttpResponseMessage>();
         var readers = new List<StreamReader>();
@@ -212,7 +212,7 @@ public sealed class BoundedShutdownTests
         var directory = api.Server.DataDirectory;
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var replica = engine.ReplicaId;
         var tenant = await api.TenantOfAsync();
         var store = (await engine.OpenDatabaseAsync(tenant, token))!;
@@ -236,7 +236,7 @@ public sealed class BoundedShutdownTests
         await Assert.That(engine.Ledger.FailedClosed).IsNull();
         await Assert.That(engine.Pool.OpenCount).IsEqualTo(0);
         await using var restarted = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = directory);
-        var reopened = restarted.Services.GetRequiredService<SqliteStorageEngine>();
+        var reopened = restarted.Services.GetRequiredService<TursoStorageEngine>();
         await Assert.That(reopened.ReplicaId).IsEqualTo(replica).Because("healthy reader cleanup must record a clean stop");
         var saved = (await reopened.OpenDatabaseAsync(tenant, token))!;
         await using var check = await saved.BeginTransactionAsync(write: false, token);

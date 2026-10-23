@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -254,7 +254,7 @@ public sealed class Cluster : IAsyncDisposable
     /// <summary>Local nodes only: <paramref name="region"/>'s data directory, also while the node is stopped.</summary>
     public string DataDirectory(string region) => RequireLocal().DataDirectory(region);
 
-    /// <summary>Local nodes only: the SQLite file of this cluster's database on <paramref name="region"/>'s node.</summary>
+    /// <summary>Local nodes only: the Turso file of this cluster's database on <paramref name="region"/>'s node.</summary>
     public string DatabaseFile(string region) => RequireLocal().DatabaseFile(region);
 
     /// <summary>Local nodes only: the Prometheus listener of <paramref name="region"/>'s node.</summary>
@@ -634,9 +634,9 @@ public sealed class Cluster : IAsyncDisposable
         public async Task StallStorageAsync(string region, TimeSpan stall)
         {
             var api = _nodes[region].Api ?? throw new InvalidOperationException($"{region} is down");
-            var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
             var database = new TenantContext(OrganizationId, PlanTier.Hobby, _project, _database);
-            var store = await engine.OpenDatabaseAsync(database, CancellationToken.None) as SqliteDatabaseStore
+            var store = await engine.OpenDatabaseAsync(database, CancellationToken.None) as TursoDatabaseStore
                 ?? throw new InvalidOperationException($"{region} does not hold the database");
             _ = await store.WithWritersHeldAsync(async () =>
             {

@@ -18,7 +18,7 @@ using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
@@ -101,7 +101,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             using var attempt = new FileStream(Path.Combine(dataDirectory, ".terrabase.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             return false;
         }
-        catch (IOException error) when (SqliteStorageEngine.IsLockConflict(error))
+        catch (IOException error) when (TursoStorageEngine.IsLockConflict(error))
         {
             // Only the lock being held, the same test the engine applies. Every other failure (a missing directory, a
             // full disk, a broken lock file) propagates, so a broken probe never reads as an owned directory.
@@ -158,7 +158,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 // Each server starts its read threads eagerly, one per core by default: on a 46-core host the parallel suite
                 // held about 7,400 threads and exhausted the user's process limit. Production nodes resolve this to 1.
                 ["storage-threads"] = "2",
-                // The query budget's time half counts wall time while SQLite runs, so a loaded runner that deschedules or
+                // The query budget's time half counts wall time while Turso runs, so a loaded runner that deschedules or
                 // GC-pauses a tiny list fails it (TS-742). Tests of that budget pin it with UseProductionQueryBudget.
                 ["query-budget-seconds"] = "120",
             };
@@ -255,7 +255,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     private static void InitializeProcessTimers()
     {
-        // Process-wide SQLite and SDK diagnostics workers must not capture a fixture's startup context.
+        // Process-wide Turso and SDK diagnostics workers must not capture a fixture's startup context.
         if (ExecutionContext.IsFlowSuppressed())
         {
             Initialize();
@@ -338,7 +338,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         {
             claim = new FileStream(Path.Combine(directory, port.ToString(CultureInfo.InvariantCulture)), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         }
-        catch (IOException error) when (SqliteStorageEngine.IsLockConflict(error))
+        catch (IOException error) when (TursoStorageEngine.IsLockConflict(error))
         {
             return false;
         }
@@ -497,7 +497,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         PeerCredential peerCredential, CancellationTokenSource? linkedCancellation, CancellationToken cancellationToken) : WebApplicationFactory<Program>
     {
         private ShutdownHost? _host;
-        private SqliteStorageEngine? _nativeEngine;
+        private TursoStorageEngine? _nativeEngine;
         private readonly FixtureHttpHandlers _httpHandlers = new();
 
         public Task Startup { get; set; } = Task.CompletedTask;
@@ -636,16 +636,16 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 // Run after all existing filters configure the pipeline, including logging and instrumentation.
                 values.Insert(0, ServiceDescriptor.Singleton<IHttpMessageHandlerBuilderFilter>(_httpHandlers));
                 // Capture when Program validates the directory, before service activation/StartingAsync can fail.
-                var native = values.Last(value => value.ServiceType == typeof(SqliteStorageEngine));
-                if (native.ImplementationInstance is SqliteStorageEngine instance)
+                var native = values.Last(value => value.ServiceType == typeof(TursoStorageEngine));
+                if (native.ImplementationInstance is TursoStorageEngine instance)
                 {
                     // Keep instance registrations externally owned, as DI does.
                     _nativeEngine = instance;
                 }
                 else
                 {
-                    values[values.IndexOf(native)] = ServiceDescriptor.Describe(typeof(SqliteStorageEngine),
-                        provider => _nativeEngine = (SqliteStorageEngine)(native.ImplementationFactory is { } create
+                    values[values.IndexOf(native)] = ServiceDescriptor.Describe(typeof(TursoStorageEngine),
+                        provider => _nativeEngine = (TursoStorageEngine)(native.ImplementationFactory is { } create
                             ? create(provider)
                             : ActivatorUtilities.CreateInstance(provider, native.ImplementationType!)), native.Lifetime);
                 }

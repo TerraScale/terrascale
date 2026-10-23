@@ -3,7 +3,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Turso.Data.Sqlite;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Fast.Documents;
 using TerraBase.Tenancy;
@@ -98,7 +98,7 @@ public sealed class FeedSequenceTests
         {
             _ = await abandoned.PutAsync(DocumentApi.Collection, DocumentApi.NewId(), Json(1), CancellationToken.None);
             _ = await abandoned.PutAsync(DocumentApi.Collection, DocumentApi.NewId(), Json(2), CancellationToken.None);
-            await ((SqliteStorageTransaction)abandoned).FlushStatesAsync();
+            await ((TursoStorageTransaction)abandoned).FlushStatesAsync();
 
             var inside = await abandoned.ReadFeedAsync(null, null, 1000, long.MaxValue, CancellationToken.None);
             await Assert.That(inside.Events.Count).IsEqualTo(feedBefore.Length + 2)
@@ -159,7 +159,7 @@ public sealed class FeedSequenceTests
         await RawWriteAsync(store, ShapeChunk, ShapeSnapshot);
 
         var target = source with { DatabaseId = DocumentApi.NewId() };
-        await Assert.That(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().CopyDatabaseAsync(source, target, CancellationToken.None)).IsTrue();
+        await Assert.That(await api.Server.Services.GetRequiredService<TursoStorageEngine>().CopyDatabaseAsync(source, target, CancellationToken.None)).IsTrue();
 
         var copy = await StoreAsync(api.Server, target);
         await Assert.That(await ScalarAsync(copy, "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name IN ('_tb_shape_chunk', '_tb_shape_snapshot');")).IsEqualTo(2L)
@@ -186,7 +186,7 @@ public sealed class FeedSequenceTests
             var counter = await CounterAsync(store);
 
             var path = Path.Combine(directory, "snapshot.db");
-            await using (var tap = (TursoChangeTap)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenTapAsync(tenant, CancellationToken.None))!)
+            await using (var tap = (TursoChangeTap)(await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenTapAsync(tenant, CancellationToken.None))!)
             {
                 _ = await tap.SnapshotAsync(Stream.Null, path, CancellationToken.None);
             }
@@ -211,22 +211,22 @@ public sealed class FeedSequenceTests
     private const string ShapeChunk = "INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) VALUES ('h2-feed-seq', 0, 1, X'7B7D', 1791849600000);";
     private const string ShapeSnapshot = "INSERT INTO _tb_shape_snapshot (handle, offset, page, next_id, body, sealed_at) VALUES ('h2-feed-seq', 0, 0, NULL, X'7B7D', 1791849600000);";
 
-    private static async Task<SqliteDatabaseStore> StoreAsync(TerraBaseTestServer server, TenantContext tenant) =>
-        (SqliteDatabaseStore)(await server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
+    private static async Task<TursoDatabaseStore> StoreAsync(TerraBaseTestServer server, TenantContext tenant) =>
+        (TursoDatabaseStore)(await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
 
     private static byte[] Json(int n) => Encoding.UTF8.GetBytes($"{{\"n\":{n}}}");
 
     // An instant past every stamp this test writes, so one pass deletes the whole feed.
     private static Hlc FarFuture() => new((ulong)DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeMilliseconds() << 16);
 
-    private static async Task PutOneAsync(SqliteDatabaseStore store, string id)
+    private static async Task PutOneAsync(TursoDatabaseStore store, string id)
     {
         await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
         _ = await transaction.PutAsync(DocumentApi.Collection, id, Json(1), CancellationToken.None);
         _ = await transaction.CommitAsync(CancellationToken.None);
     }
 
-    private static async Task<int> TrimAsync(SqliteDatabaseStore store, Hlc before)
+    private static async Task<int> TrimAsync(TursoDatabaseStore store, Hlc before)
     {
         await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
         var deleted = await transaction.TrimFeedAsync(before, 1024, CancellationToken.None);
@@ -234,11 +234,11 @@ public sealed class FeedSequenceTests
         return deleted;
     }
 
-    private static Task<bool> RawWriteAsync(SqliteDatabaseStore store, params string[] statements) => store.WithWriterAsync(session =>
+    private static Task<bool> RawWriteAsync(TursoDatabaseStore store, params string[] statements) => store.WithWriterAsync(session =>
     {
         using (var off = session.Connection.CreateCommand())
         {
-            off.CommandText = SqliteSession.CaptureOff;
+            off.CommandText = TursoSession.CaptureOff;
             off.ExecuteNonQuery();
         }
 
@@ -254,14 +254,14 @@ public sealed class FeedSequenceTests
         finally
         {
             using var on = session.Connection.CreateCommand();
-            on.CommandText = SqliteSession.CaptureOn;
+            on.CommandText = TursoSession.CaptureOn;
             on.ExecuteNonQuery();
         }
 
         return true;
     }, "a test writing feed and shape rows uncaptured", CancellationToken.None);
 
-    private static Task<long[]> FeedSeqsAsync(SqliteDatabaseStore store) => store.WithWriterAsync(session =>
+    private static Task<long[]> FeedSeqsAsync(TursoDatabaseStore store) => store.WithWriterAsync(session =>
     {
         using var command = session.Connection.CreateCommand();
         command.CommandText = "SELECT seq FROM _tb_feed ORDER BY seq;";
@@ -275,7 +275,7 @@ public sealed class FeedSequenceTests
         return seqs.ToArray();
     }, "a test reading the feed sequence", CancellationToken.None);
 
-    private static Task<(long Seq, long CommitOffset)[]> FeedRowsAsync(SqliteDatabaseStore store) => store.WithWriterAsync(session =>
+    private static Task<(long Seq, long CommitOffset)[]> FeedRowsAsync(TursoDatabaseStore store) => store.WithWriterAsync(session =>
     {
         using var command = session.Connection.CreateCommand();
         command.CommandText = "SELECT seq, commit_offset FROM _tb_feed ORDER BY seq;";
@@ -289,10 +289,10 @@ public sealed class FeedSequenceTests
         return rows.ToArray();
     }, "a test reading the feed rows", CancellationToken.None);
 
-    private static Task<long> CounterAsync(SqliteDatabaseStore store) =>
+    private static Task<long> CounterAsync(TursoDatabaseStore store) =>
         ScalarAsync(store, "SELECT seq FROM _tb_feed_sequence WHERE id = 1;");
 
-    private static Task<long> ScalarAsync(SqliteDatabaseStore store, string sql) => store.WithWriterAsync(session =>
+    private static Task<long> ScalarAsync(TursoDatabaseStore store, string sql) => store.WithWriterAsync(session =>
     {
         using var command = session.Connection.CreateCommand();
         command.CommandText = sql;

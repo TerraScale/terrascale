@@ -5,7 +5,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Memory;
@@ -22,7 +22,7 @@ namespace TerraBase.Fast.Shapes;
 /// </summary>
 public sealed class ShapeFilterTests
 {
-    // Values that separate SQLite's comparison rules from .NET defaults: exact integer/real comparison beyond 2^53,
+    // Values that separate Turso's comparison rules from .NET defaults: exact integer/real comparison beyond 2^53,
     // UTF-8 byte order of astral characters against U+E000..U+FFFF, arrays holding null, nested and missing members.
     private static readonly string[] Documents =
     [
@@ -282,12 +282,12 @@ public sealed class ShapeFilterTests
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { d = 1 })).Status.ShouldBe(HttpStatusCode.Created);
         // Both API and engine reject new duplicates; inject a retained legacy body on this test's writer.
-        var store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+        var store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>()
             .OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
         _ = await store.WithWriterAsync(session =>
         {
             using var capture = session.Connection.CreateCommand();
-            capture.CommandText = SqliteSession.CaptureOff;
+            capture.CommandText = TursoSession.CaptureOff;
             capture.ExecuteNonQuery();
             try
             {
@@ -299,7 +299,7 @@ public sealed class ShapeFilterTests
             }
             finally
             {
-                capture.CommandText = SqliteSession.CaptureOn;
+                capture.CommandText = TursoSession.CaptureOn;
                 capture.ExecuteNonQuery();
             }
         }, "injecting a retained legacy document in a test", CancellationToken.None);
@@ -324,9 +324,9 @@ public sealed class ShapeFilterTests
         var tenant = await api.TenantOfAsync();
         var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None)
             ?? throw new InvalidOperationException("the database is missing");
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var sqlite = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(tenant, CancellationToken.None))!;
-        var start = await sqlite.WithWriterAsync(session =>
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var turso = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(tenant, CancellationToken.None))!;
+        var start = await turso.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
             command.CommandText = "SELECT seq FROM _tb_feed_sequence WHERE id = 1;";
@@ -355,7 +355,7 @@ public sealed class ShapeFilterTests
         }
 
         var sealer = new ShapeSealer(api.Server.Services.GetRequiredService<IMemoryBudget>(),
-            NullLogger<ShapeSealer>.Instance, new SqliteShapeStorage(engine), new LocalDurability());
+            NullLogger<ShapeSealer>.Instance, new TursoShapeStorage(engine), new LocalDurability());
         var end = await sealer.SealUpToHeadAsync(store, shape, start, CancellationToken.None);
         using var chunk = await sealer.ReadChunkAsync(store, shape.Handle, start, CancellationToken.None)
             ?? throw new InvalidOperationException("the filtered chunk is missing");

@@ -13,7 +13,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -69,11 +69,11 @@ public sealed class DataDirectoryTests
             string before;
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = dataDirectory, services =>
             {
-                var registration = services.Single(service => service.ServiceType == typeof(SqliteStorageEngine));
+                var registration = services.Single(service => service.ServiceType == typeof(TursoStorageEngine));
                 services.Remove(registration);
                 services.AddSingleton(provider =>
                 {
-                    var engine = (SqliteStorageEngine)registration.ImplementationFactory!(provider);
+                    var engine = (TursoStorageEngine)registration.ImplementationFactory!(provider);
                     // Keep a completed readiness probe cached while comparing the directory's complete contents.
                     engine.ReadinessClock = new FakeTimeProvider();
                     return engine;
@@ -147,7 +147,7 @@ public sealed class DataDirectoryTests
             await transaction.CommitAsync(CancellationToken.None);
             await transaction.DisposeAsync();
             await shutdown.WaitAsync(TimeSpan.FromSeconds(30));
-            await server.Services.GetRequiredService<SqliteStorageEngine>().CleanupCompletion
+            await server.Services.GetRequiredService<TursoStorageEngine>().CleanupCompletion
                 .WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(dataDirectory)).IsFalse();
             serverDisposed = true;
@@ -193,7 +193,7 @@ public sealed class DataDirectoryTests
         await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)).IsTrue();
         await transaction.CommitAsync(CancellationToken.None);
         await transaction.DisposeAsync();
-        await server.Services.GetRequiredService<SqliteStorageEngine>().CleanupCompletion;
+        await server.Services.GetRequiredService<TursoStorageEngine>().CleanupCompletion;
         // Its session was the last connection: returning it released the directory.
         await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)).IsFalse();
     }
@@ -204,10 +204,10 @@ public sealed class DataDirectoryTests
         // Periodic catalog reads rent pooled sessions; freeze their clock while checking the exact idle count.
         await using var server = await TerraBaseTestServer.StartAsync(settings => settings["shutdown-grace-seconds"] = "1",
             services => services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow)));
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var project = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString());
         var connections = new List<SqliteConnection>();
-        var stores = new List<SqliteDatabaseStore>();
+        var stores = new List<TursoDatabaseStore>();
         // More databases than the pool keeps idle connections for: returning the later sessions evicts earlier ones.
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
         {
@@ -215,7 +215,7 @@ public sealed class DataDirectoryTests
             await engine.CreateDatabaseAsync(database, CancellationToken.None);
             var path = Path.Combine(server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
             // These stores share the live engine's pool, but no background transaction can rent their sessions.
-            var store = new SqliteDatabaseStore("eviction", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64;");
+            var store = new TursoDatabaseStore("eviction", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64;");
             stores.Add(store);
             var connection = new SqliteConnection(Connect(path));
             var session = await OpenSessionAsync(connection);
@@ -252,7 +252,7 @@ public sealed class DataDirectoryTests
         Exception? cleanupFailure = null;
         try
         {
-            var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+            var engine = server.Services.GetRequiredService<TursoStorageEngine>();
             var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
             await engine.CreateDatabaseAsync(database, CancellationToken.None);
             var path = Path.Combine(server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
@@ -267,7 +267,7 @@ public sealed class DataDirectoryTests
             ];
             foreach (var connection in connections)
             {
-                var store = new SqliteDatabaseStore("probe", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;");
+                var store = new TursoDatabaseStore("probe", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;");
                 var session = await OpenSessionAsync(connection);
                 await Assert.That(engine.Pool.Rent(store)).IsNull();
                 engine.Pool.Adopt(store, session);
@@ -486,10 +486,10 @@ public sealed class DataDirectoryTests
 
     private static string Connect(string path) => new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString();
 
-    private static async Task<SqliteSession> OpenSessionAsync(SqliteConnection connection)
+    private static async Task<TursoSession> OpenSessionAsync(SqliteConnection connection)
     {
         await connection.OpenAsync();
-        return new SqliteSession(connection);
+        return new TursoSession(connection);
     }
 
     // Database files under the directory this process holds open, from /proc/self/fd.
@@ -732,7 +732,7 @@ public sealed class DataDirectoryTests
             {
                 _ = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
             }
-            var journal = Path.Combine(directory, SqliteStorageEngine.IntentName + ".db");
+            var journal = Path.Combine(directory, TursoStorageEngine.IntentName + ".db");
             await Assert.That(File.Exists(journal)).IsTrue();
             foreach (var suffix in new[] { string.Empty, "-wal", "-shm", "-journal" })
             {

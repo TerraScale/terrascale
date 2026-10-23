@@ -1,10 +1,10 @@
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 
 namespace TerraBase.LiveRestoreDrill
 {
     internal static class ScratchCleanup
     {
-        internal static async Task DeleteAsync(SqliteStorageEngine? engine, string? scratch)
+        internal static async Task DeleteAsync(TursoStorageEngine? engine, string? scratch)
         {
             if (engine is not null)
             {

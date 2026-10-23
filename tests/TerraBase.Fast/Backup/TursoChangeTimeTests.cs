@@ -1,5 +1,5 @@
 using System.Globalization;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using Turso;
 using Turso.Data.Sqlite;
 
@@ -27,9 +27,9 @@ public sealed class TursoChangeTimeTests
             // The connections a store's writer and the backup tap's reader use, with their settings.
             using var writer = new SqliteConnection($"Data Source={path}");
             writer.Open();
-            Execute(writer, "PRAGMA synchronous = NORMAL;", SqliteSession.CaptureOn, "CREATE TABLE visible(x);");
+            Execute(writer, "PRAGMA synchronous = NORMAL;", TursoSession.CaptureOn, "CREATE TABLE visible(x);");
             using var reader = new TursoConnection($"Data Source={path}");
-            SqliteSession.OpenExisting(reader, path);
+            TursoSession.OpenExisting(reader, path);
 
             // The newest commit row of a transaction whose commit has returned, published only after it returned.
             long returned = 0;
@@ -90,7 +90,7 @@ public sealed class TursoChangeTimeTests
         {
             using var connection = new TursoConnection($"Data Source={Path.Combine(directory.FullName, "measure.db")}");
             connection.Open();
-            Execute(connection, SqliteSession.CaptureOn, "CREATE TABLE measure(x);");
+            Execute(connection, TursoSession.CaptureOn, "CREATE TABLE measure(x);");
             var after = (long)Scalar(connection, "SELECT max(change_id) FROM turso_cdc;")!;
 
             // Late in a second, where rounding to the nearest second would give the next one, and ending in the second it

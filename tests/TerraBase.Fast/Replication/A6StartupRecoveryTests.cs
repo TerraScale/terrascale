@@ -3,7 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -50,7 +50,7 @@ public sealed class A6StartupRecoveryTests
         var firstScan = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var restarted = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory.Root,
             services => services.AddSingleton<IRebuildRecovery>(provider => new ObservedStartupRecovery(
-                provider.GetRequiredService<SqliteStorageEngine>().Ledger,
+                provider.GetRequiredService<TursoStorageEngine>().Ledger,
                 provider.GetRequiredService<IHostApplicationLifetime>(), firstScan)),
             time: time, failedStartCleanup: directory.RetainCleanup);
         try

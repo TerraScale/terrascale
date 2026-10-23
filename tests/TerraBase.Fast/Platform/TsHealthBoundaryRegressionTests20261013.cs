@@ -3,7 +3,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
@@ -90,7 +90,7 @@ public sealed class TsHealthBoundaryRegressionTests20261013
         {
             release.TrySetResult();
             using var completed = await pending.WaitAsync(TimeSpan.FromSeconds(30));
-            await server.Services.GetRequiredService<SqliteStorageEngine>().ReadinessProbeTask.WaitAsync(TimeSpan.FromSeconds(30));
+            await server.Services.GetRequiredService<TursoStorageEngine>().ReadinessProbeTask.WaitAsync(TimeSpan.FromSeconds(30));
         }
     }
 
@@ -98,11 +98,11 @@ public sealed class TsHealthBoundaryRegressionTests20261013
     {
         // Freeze background pressure sampling separately from the filesystem probe's test clock.
         services.AddSingleton<TimeProvider>(new FakeTimeProvider());
-        var registration = services.Single(service => service.ServiceType == typeof(SqliteStorageEngine));
+        var registration = services.Single(service => service.ServiceType == typeof(TursoStorageEngine));
         services.Remove(registration);
         services.AddSingleton(provider =>
         {
-            var engine = (SqliteStorageEngine)registration.ImplementationFactory!(provider);
+            var engine = (TursoStorageEngine)registration.ImplementationFactory!(provider);
             engine.ReadinessClock = clock;
             engine.BeforeReadinessProbe = probe;
             return engine;

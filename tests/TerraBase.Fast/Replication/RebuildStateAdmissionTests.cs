@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
@@ -359,7 +359,7 @@ public sealed class StateAdmissionTests
         await Assert.That(await repair.RepairRebuildAsync(fixture.Database, pin, refresh, Token)).IsNull();
         await Assert.That(await repair.RecordRefillAsync(fixture.Database, pin, "hash-source", sourcePin, 2, default, Token)).IsFalse();
         await Assert.That(await repair.CompleteRebuildAsync(fixture.Database, original, pin, Token)).IsFalse();
-        await Assert.That(fixture.Service<SqliteStorageEngine>().Ledger.FailedClosed).IsNull();
+        await Assert.That(fixture.Service<TursoStorageEngine>().Ledger.FailedClosed).IsNull();
         if (receiver)
         {
             await Assert.That(await fixture.Service<IRebuildStorage>().FinalizeAsync(fixture.Database, pin, fixture.Side!, Token)).IsFalse();
@@ -442,7 +442,7 @@ public sealed class StateAdmissionTests
     public async Task Invalid_SYSTEM_hash_types_refuse_before_state_projection_and_fail_the_node_closed(string column, string damage)
     {
         await using var fixture = await Fixture.StartAsync();
-        var engine = fixture.Service<SqliteStorageEngine>();
+        var engine = fixture.Service<TursoStorageEngine>();
         var system = engine.SystemStore ?? throw new InvalidOperationException("SYSTEM is missing");
         var id = EntityIds.New().ToString();
         await using (var seed = await system.BeginDurableTransactionAsync(Token))
@@ -561,7 +561,7 @@ public sealed class StateAdmissionTests
         await Assert.That(await fixture.Service<IChangeGroupSource>().AckAsync(fixture.Database, pin, ReplicaId.Of(99, 1, 0), 0, default, Token)).IsFalse();
         await Assert.That((await fixture.DigestAsync(null)).Held).IsFalse();
         await Assert.That((await fixture.DigestAsync(pin)).Held).IsFalse();
-        await Assert.That(fixture.Service<SqliteStorageEngine>().Ledger.FailedClosed).IsNull();
+        await Assert.That(fixture.Service<TursoStorageEngine>().Ledger.FailedClosed).IsNull();
         await fixture.SourceReleasedAsync();
     }
 
@@ -592,7 +592,7 @@ public sealed class StateAdmissionTests
     public async Task Invalid_SYSTEM_digest_scalars_fail_the_node_closed(bool pinned)
     {
         await using var fixture = await Fixture.StartAsync();
-        var engine = fixture.Service<SqliteStorageEngine>();
+        var engine = fixture.Service<TursoStorageEngine>();
         var system = engine.SystemStore ?? throw new InvalidOperationException("SYSTEM is missing");
         var id = EntityIds.New().ToString();
         await using (var seed = await system.BeginDurableTransactionAsync(Token))
@@ -632,19 +632,19 @@ public sealed class StateAdmissionTests
         _ => new byte[] { 1, 2, 3 },
     };
 
-    private static async Task AssertOrdinaryWriteRefusedAsync(SqliteDatabaseStore copy) =>
+    private static async Task AssertOrdinaryWriteRefusedAsync(TursoDatabaseStore copy) =>
         _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () =>
         {
             await using var write = await copy.BeginDurableTransactionAsync(Token);
         });
 
-    private sealed class Fixture(ManagementApi api, TenantContext database, SqliteDatabaseStore store, Probe probe, string id) : IAsyncDisposable
+    private sealed class Fixture(ManagementApi api, TenantContext database, TursoDatabaseStore store, Probe probe, string id) : IAsyncDisposable
     {
         private static readonly string[] SideSuffixes = ["", "-wal", "-shm", "-journal"];
         private readonly long _foregroundBaseline = Volatile.Read(ref probe.ForegroundReserved);
         public ManagementApi Api => api;
         public TenantContext Database => database;
-        public SqliteDatabaseStore Store => store;
+        public TursoDatabaseStore Store => store;
         public Probe Probe => probe;
         public string Id => id;
         public string? Side { get; private set; }
@@ -685,7 +685,7 @@ public sealed class StateAdmissionTests
                 var database = await api.Server.Services.GetRequiredService<ITenantDirectory>()
                     .FindDatabaseAsync(managed.Organization, managed.Project, managed.Name, Token)
                     is TenantContext found ? found : throw new InvalidOperationException("the database is not registered");
-                var store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+                var store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>()
                     .OpenDatabaseAsync(database, Token))!;
                 var id = EntityIds.New().ToString();
                 while (DocumentStateEncoding.Bucket("items", id) == DocumentStateEncoding.Bucket(DocumentDelta.Collections, "items"))
@@ -783,7 +783,7 @@ public sealed class StateAdmissionTests
                 ?? throw new InvalidOperationException("the admission fixture did not swap");
             var pending = await ledger.GetAsync(database, Token) ?? throw new InvalidOperationException("the fault row is missing");
             await ledger.SaveAsync(pending with { Phase = RebuildPhase.Swapped, NewIncarnation = rebuilt }, Token);
-            store = (SqliteDatabaseStore)(await Service<SqliteStorageEngine>().OpenDatabaseAsync(database, Token))!;
+            store = (TursoDatabaseStore)(await Service<TursoStorageEngine>().OpenDatabaseAsync(database, Token))!;
             var working = await storage.CopyForSalvageAsync(Side, Token);
             try
             {
@@ -812,8 +812,8 @@ public sealed class StateAdmissionTests
             await Assert.That(pending?.AdditionalIncarnation).IsEqualTo(additional);
             await Assert.That(pending?.NewIncarnation).IsNull();
             await Assert.That(store.RebuildRow?.Refill).IsNull();
-            var system = Service<SqliteStorageEngine>().SystemStore ?? throw new InvalidOperationException("SYSTEM is missing");
-            await using var read = (SqliteStorageTransaction)await system.BeginTransactionAsync(write: false, Token);
+            var system = Service<TursoStorageEngine>().SystemStore ?? throw new InvalidOperationException("SYSTEM is missing");
+            await using var read = (TursoStorageTransaction)await system.BeginTransactionAsync(write: false, Token);
             var count = await read.LedgerAsync(command =>
             {
                 using var select = command("""

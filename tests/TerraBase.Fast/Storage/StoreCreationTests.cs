@@ -3,7 +3,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -22,15 +22,15 @@ public sealed class StoreCreationTests
         var target = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby,
             EntityIds.New().ToString(), EntityIds.New().ToString());
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        SqliteStorageEngine? engine = null;
-        SqliteDatabaseStore? initialized = null;
+        TursoStorageEngine? engine = null;
+        TursoDatabaseStore? initialized = null;
         Task<bool>? deletion = null;
         await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton(provider =>
         {
             var options = provider.GetRequiredService<TerraBaseOptions>();
-            engine = new SqliteStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
+            engine = new TursoStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl,
+                provider.GetRequiredService<ILogger<TursoStorageEngine>>(), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl,
                 checkpoint: (step, database) =>
                 {
                     if (step == "create.published" && database == target && deletion is null)

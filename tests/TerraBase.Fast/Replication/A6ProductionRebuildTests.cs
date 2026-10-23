@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -36,7 +36,7 @@ public sealed class A6ProductionRebuildTests
     {
         using var directory = new TempDirectory();
         var identity = Path.Combine(directory.Root, ReplicaIdentityFile.FileName);
-        var journal = Path.Combine(directory.Root, SqliteStorageEngine.IntentName + ".db");
+        var journal = Path.Combine(directory.Root, TursoStorageEngine.IntentName + ".db");
         TenantContext database;
         Ulid incarnation;
         byte[] running;
@@ -44,8 +44,8 @@ public sealed class A6ProductionRebuildTests
         {
             (database, incarnation) = await CreateDatabaseAsync(first);
             await DurableWriteAsync(first, database);
-            var firstEngine = first.Server.Services.GetRequiredService<SqliteStorageEngine>();
-            _ = await ((SqliteDatabaseStore)(await firstEngine.OpenDatabaseAsync(database, CancellationToken.None))!).BeginOperationAsync(CancellationToken.None);
+            var firstEngine = first.Server.Services.GetRequiredService<TursoStorageEngine>();
+            _ = await ((TursoDatabaseStore)(await firstEngine.OpenDatabaseAsync(database, CancellationToken.None))!).BeginOperationAsync(CancellationToken.None);
             running = await File.ReadAllBytesAsync(identity);
         }
         var priorJournal = await File.ReadAllBytesAsync(journal);
@@ -65,7 +65,7 @@ public sealed class A6ProductionRebuildTests
         await using var third = await StartAsync(directory.Root);
         var services = third.Server.Services;
         await Assert.That(await services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None)).IsEqualTo(fault);
-        var engine = services.GetRequiredService<SqliteStorageEngine>();
+        var engine = services.GetRequiredService<TursoStorageEngine>();
         var remaining = await engine.IntentStore!.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
@@ -81,8 +81,8 @@ public sealed class A6ProductionRebuildTests
     {
         await using var api = await StartAsync(directory: null);
         var (database, _) = await CreateDatabaseAsync(api);
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
         var system = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
         Task recording = Task.CompletedTask;
         try
@@ -226,7 +226,7 @@ public sealed class A6ProductionRebuildTests
         await using var api = await StartAsync(directory: null);
         var (database, _) = await CreateDatabaseAsync(api);
         await DurableWriteAsync(api, database);
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var store = await engine.OpenDatabaseAsync(database, CancellationToken.None)
             ?? throw new InvalidOperationException("the test copy is missing");
         async Task<bool> IntentAsync()
@@ -264,7 +264,7 @@ public sealed class A6ProductionRebuildTests
             await using var child = await StartAsync(Path.Combine(childRoot, "data"));
             var (childDatabase, incarnation) = await CreateDatabaseAsync(child);
             var document = await DurableWriteAsync(child, childDatabase);
-            var engine = child.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            var engine = child.Server.Services.GetRequiredService<TursoStorageEngine>();
             await File.WriteAllTextAsync(Path.Combine(childRoot, "crashed.json"), JsonSerializer.Serialize(new Crashed(
                 childDatabase.OrganizationId, childDatabase.ProjectId!, childDatabase.DatabaseId!, incarnation.ToString(), document, engine.ReplicaId.Epoch)));
             Environment.FailFast($"crashed at {step}");
@@ -321,7 +321,7 @@ public sealed class A6ProductionRebuildTests
 
         await using var api = await StartAsync(data);
         var services = api.Server.Services;
-        var engine = services.GetRequiredService<SqliteStorageEngine>();
+        var engine = services.GetRequiredService<TursoStorageEngine>();
         var storage = services.GetRequiredService<IRebuildStorage>();
         await Assert.That((int)engine.ReplicaId.Epoch).IsGreaterThan(crashed.Epoch).Because("the crash ended the process uncleanly");
         var record = await services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None);
@@ -387,7 +387,7 @@ public sealed class A6ProductionRebuildTests
         }
 
         await ledger.SaveAsync(swapped with { Phase = RebuildPhase.Salvaged }, CancellationToken.None);
-        var engine = services.GetRequiredService<SqliteStorageEngine>();
+        var engine = services.GetRequiredService<TursoStorageEngine>();
         await File.WriteAllTextAsync(Path.Combine(root, "crashed.json"), JsonSerializer.Serialize(new Crashed(
             database.OrganizationId, database.ProjectId!, database.DatabaseId!, original.ToString(), document, engine.ReplicaId.Epoch,
             replacement.ToString(), Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(side))))));
@@ -430,7 +430,7 @@ public sealed class A6ProductionRebuildTests
         var database = new TenantContext(crashed.Organization, PlanTier.Hobby, crashed.Project, crashed.Database);
 
         await using var api = await StartAsync(data);
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         await Assert.That((int)engine.ReplicaId.Epoch).IsGreaterThan(crashed.Epoch).Because("the crash ended the process uncleanly");
         var record = await api.Server.Services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None);
         await Assert.That(record?.Phase).IsEqualTo(RebuildPhase.Pending);
@@ -456,7 +456,7 @@ public sealed class A6ProductionRebuildTests
         }));
         var (database, incarnation) = await CreateDatabaseAsync(api);
         var document = await DurableWriteAsync(api, database);
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         await File.WriteAllTextAsync(Path.Combine(root, "crashed.json"), JsonSerializer.Serialize(new Crashed(
             database.OrganizationId, database.ProjectId!, database.DatabaseId!, incarnation.ToString(), document, engine.ReplicaId.Epoch)));
         Volatile.Write(ref target, database);
@@ -529,7 +529,7 @@ public sealed class A6ProductionRebuildTests
     private static void Observe(IServiceCollection services, Action<Observed> created) =>
         services.AddSingleton<IRebuildRecovery>(provider =>
         {
-            var observed = new Observed(provider.GetRequiredService<SqliteStorageEngine>().Ledger);
+            var observed = new Observed(provider.GetRequiredService<TursoStorageEngine>().Ledger);
             created(observed);
             return observed;
         });
@@ -561,7 +561,7 @@ public sealed class A6ProductionRebuildTests
     private static async Task<RebuildRecord?> PendingAsync(ManagementApi api, TenantContext database)
     {
         // The engine's ledger itself, not the DI seam, which a test may observe.
-        await foreach (var record in api.Server.Services.GetRequiredService<SqliteStorageEngine>().Ledger.PendingAsync(CancellationToken.None))
+        await foreach (var record in api.Server.Services.GetRequiredService<TursoStorageEngine>().Ledger.PendingAsync(CancellationToken.None))
         {
             if (record.Database.DatabaseId == database.DatabaseId)
             {
@@ -573,9 +573,9 @@ public sealed class A6ProductionRebuildTests
     }
 
     // The reason column of the database's ledger row, which RebuildRecord does not carry.
-    private static async Task<string?> ReasonAsync(SqliteStorageEngine engine, TenantContext database)
+    private static async Task<string?> ReasonAsync(TursoStorageEngine engine, TenantContext database)
     {
-        var system = (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(CancellationToken.None);
+        var system = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(CancellationToken.None);
         return await system.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
@@ -745,7 +745,7 @@ public sealed class A6ProductionRebuildTests
 
         public async Task<Ulid> IncarnationAsync()
         {
-            return await Api.Server.Services.GetRequiredService<SqliteStorageEngine>().IncarnationAsync(pair.Database, CancellationToken.None)
+            return await Api.Server.Services.GetRequiredService<TursoStorageEngine>().IncarnationAsync(pair.Database, CancellationToken.None)
                 ?? throw new InvalidOperationException($"the database is missing on {region}");
         }
 

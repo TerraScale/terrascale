@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -153,15 +153,15 @@ public sealed class CollectedRepairE2ETests
         // Garbage collection once every replica is past the deletion: the horizon of a machine whose peer left 24 h ago.
         public async Task<int> CollectAsync()
         {
-            var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-            await using var transaction = (SqliteStorageTransaction)await (await OpenAsync()).BeginTransactionAsync(write: true, CancellationToken.None);
+            var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+            await using var transaction = (TursoStorageTransaction)await (await OpenAsync()).BeginTransactionAsync(write: true, CancellationToken.None);
             var collected = await transaction.CollectAsync(engine.Member.Clock.Tick(), CancellationToken.None);
             _ = await transaction.CommitAsync(CancellationToken.None);
             return collected;
         }
 
         public async Task<bool> HasStateAsync(string id) =>
-            await ((SqliteDatabaseStore)await OpenAsync()).WithWriterAsync(session =>
+            await ((TursoDatabaseStore)await OpenAsync()).WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
                 command.CommandText = "SELECT 1 FROM _tb_state WHERE collection = $collection AND id = $id;";
@@ -172,7 +172,7 @@ public sealed class CollectedRepairE2ETests
 
         // The stamp below which this file collected states: a join of older entries into an absent key is a deleted clear.
         public async Task<long> GcFloorAsync() =>
-            await ((SqliteDatabaseStore)await OpenAsync()).WithWriterAsync(session =>
+            await ((TursoDatabaseStore)await OpenAsync()).WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
                 command.CommandText = "SELECT stamp FROM _tb_gc_floor WHERE id = 1;";
@@ -182,7 +182,7 @@ public sealed class CollectedRepairE2ETests
         public ValueTask DisposeAsync() => api.DisposeAsync();
 
         private async Task<IDatabaseStore> OpenAsync() =>
-            await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+            await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
                 ?? throw new InvalidOperationException("the database is not held");
     }
 

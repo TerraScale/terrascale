@@ -5,7 +5,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -41,14 +41,14 @@ public sealed class HarnessShutdownTests
                 services.AddSingleton(provider =>
                 {
                     var options = provider.GetRequiredService<TerraBaseOptions>();
-                    return new SqliteStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
+                    return new TursoStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                         provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                        provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl);
+                        provider.GetRequiredService<ILogger<TursoStorageEngine>>(), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl);
                 });
             }
         });
         var directory = server.DataDirectory;
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var lifetime = server.Services.GetRequiredService<IHostApplicationLifetime>();
         var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
         var token = TestContext.Current!.Execution.CancellationToken;
@@ -121,7 +121,7 @@ public sealed class HarnessShutdownTests
                 return worker;
             });
         }, cancellationToken: execution.Token);
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         try
         {
             using var response = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative), token);
@@ -172,7 +172,7 @@ public sealed class HarnessShutdownTests
                 services => services.AddSingleton<IHostedService>(_ => otherProbe));
             using var response = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative), token);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+            var engine = server.Services.GetRequiredService<TursoStorageEngine>();
             var lifetime = server.Services.GetRequiredService<IHostApplicationLifetime>();
             var store = await engine.OpenSystemDatabaseAsync(token);
             transaction = await store.BeginTransactionAsync(write: false, token);
@@ -230,12 +230,12 @@ public sealed class HarnessShutdownTests
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var deleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        SqliteStorageEngine? engine = null;
+        TursoStorageEngine? engine = null;
         Task? completion = null;
         Task? cleanup = null;
         var startup = ManagementApi.StartAsync(settings => settings["data-directory"] = directory, services => services.AddSingleton<IHostedService>(provider =>
         {
-            engine = provider.GetRequiredService<SqliteStorageEngine>();
+            engine = provider.GetRequiredService<TursoStorageEngine>();
             completion = provider.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
             return new HeldStarting(entered, release, token);
         }), cancellationToken: execution.Token,
@@ -310,14 +310,14 @@ public sealed class HarnessShutdownTests
         using var execution = CancellationTokenSource.CreateLinkedTokenSource(token);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        SqliteStorageEngine? engine = null;
+        TursoStorageEngine? engine = null;
         Task? completion = null;
         Task? cleanup = null;
         string? directory = null;
         var startup = TerraBaseTestServer.StartAsync(settings => directory = settings["data-directory"], services =>
             services.AddSingleton<IHostedService>(provider =>
             {
-                engine = provider.GetRequiredService<SqliteStorageEngine>();
+                engine = provider.GetRequiredService<TursoStorageEngine>();
                 completion = provider.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
                 return new HeldStarting(entered, release, token);
             }), cancellationToken: execution.Token, failedStartCleanup: task => cleanup = task);
@@ -350,7 +350,7 @@ public sealed class HarnessShutdownTests
         var stopError = new InvalidOperationException("hosted stop failed");
         var probe = new ShutdownProbe(stopError);
         var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<IHostedService>(_ => probe));
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         try
         {
             using var response = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative), token);
@@ -421,7 +421,7 @@ public sealed class HarnessShutdownTests
         var callbackError = new InvalidOperationException("cleanup callback failed");
         var callbackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = new TaskCompletionSource<IStorageTransaction>(TaskCreationOptions.RunContinuationsAsynchronously);
-        SqliteStorageEngine? engine = null;
+        TursoStorageEngine? engine = null;
         Task? runCompletion = null;
         EarlyFailingStartup? probe = null;
         string? directory = null;
@@ -431,7 +431,7 @@ public sealed class HarnessShutdownTests
             settings["shutdown-grace-seconds"] = "0";
         }, services => services.AddSingleton<IHostedService>(provider =>
         {
-            engine = provider.GetRequiredService<SqliteStorageEngine>();
+            engine = provider.GetRequiredService<TursoStorageEngine>();
             runCompletion = provider.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
             return probe = new EarlyFailingStartup(engine, entered, startError);
         }), failedStartCleanup: _ =>
@@ -484,7 +484,7 @@ public sealed class HarnessShutdownTests
         var disposalError = new IOException("DI disposal failed");
         var probe = new ShutdownProbe(stopError, disposalError);
         var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<IHostedService>(_ => probe));
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         try
         {
             using var response = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative), token);
@@ -539,7 +539,7 @@ public sealed class HarnessShutdownTests
     }
 
     private sealed class EarlyFailingStartup(
-        SqliteStorageEngine engine, TaskCompletionSource<IStorageTransaction> entered, Exception error) : IHostedLifecycleService
+        TursoStorageEngine engine, TaskCompletionSource<IStorageTransaction> entered, Exception error) : IHostedLifecycleService
     {
         public bool Started { get; private set; }
 

@@ -1,4 +1,4 @@
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using Turso.Data.Sqlite;
 
 namespace TerraBase.Testing;
@@ -6,7 +6,7 @@ namespace TerraBase.Testing;
 // Direct file-damage fixtures that change the logical rows also change their derived bucket summaries.
 internal static class MerkleFixture
 {
-    internal static void Rebuild(SqliteSession session, SqliteTransaction transaction)
+    internal static void Rebuild(TursoSession session, SqliteTransaction transaction)
     {
         var hashes = new long[4096 * 2];
         using var command = session.Connection.CreateCommand();

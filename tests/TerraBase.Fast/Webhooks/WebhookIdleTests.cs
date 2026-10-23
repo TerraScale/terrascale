@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -88,8 +88,8 @@ public sealed class WebhookIdleTests
         }, services: services => services.AddSingleton<TimeProvider>(clock));
         using var health = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative), token);
         health.EnsureSuccessStatusCode();
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
-        var system = (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(token);
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
+        var system = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(token);
         // Keep an idle reader available: an unsynchronized probe would rent it and enqueue an older snapshot.
         await using (var warm = await system.BeginTransactionAsync(write: false, token))
         {
@@ -108,7 +108,7 @@ public sealed class WebhookIdleTests
         {
             _ = await write.PutAsync(Collection, EntityIds.New().ToString(), """{"value":true}"""u8.ToArray(), token);
             // Group commit flushes local states before publication, just as Join already does.
-            await ((SqliteStorageTransaction)write).FlushStatesAsync();
+            await ((TursoStorageTransaction)write).FlushStatesAsync();
         }
 
         using var release = new ManualResetEventSlim();

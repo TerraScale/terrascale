@@ -2,7 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -36,8 +36,8 @@ public sealed class WriterResetTests
         await ManagementApi.CreateCollectionAsync(data, managed, "items");
         var tenant = await api.Server.Services.GetRequiredService<ITenantDirectory>().FindDatabaseAsync(managed.Organization, managed.Project, managed.Name, CancellationToken.None)
             is TenantContext found ? found : throw new InvalidOperationException("the database is not registered");
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(tenant, CancellationToken.None))!;
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(tenant, CancellationToken.None))!;
         var source = api.Server.Services.GetRequiredService<IChangeGroupSource>();
         Volatile.Write(ref target, tenant.DatabaseId);
 

@@ -1,5 +1,5 @@
 using System.Text.Json.Nodes;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using Turso.Data.Sqlite;
 
 namespace TerraBase.Slow.Replication;
@@ -48,10 +48,10 @@ internal sealed partial class FaultSoakCluster
             }
 
             command.Parameters.Clear();
-            command.CommandText = $"SELECT doc FROM {SqliteStorageTransaction.Table(Collection)} WHERE id = $id;";
+            command.CommandText = $"SELECT doc FROM {TursoStorageTransaction.Table(Collection)} WHERE id = $id;";
             command.Parameters.AddWithValue("$id", id);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            return await reader.ReadAsync(cancellationToken) ? JsonNode.Parse(SqliteSession.Bytes(reader, 0).AsSpan()) : null;
+            return await reader.ReadAsync(cancellationToken) ? JsonNode.Parse(TursoSession.Bytes(reader, 0).AsSpan()) : null;
         }
         finally
         {

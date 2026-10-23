@@ -104,7 +104,7 @@ public sealed record TenantPressure(
 
 /// <summary>Physical storage of one organization.</summary>
 /// <param name="Org">Organization ULID.</param>
-/// <param name="Bytes">SQLite file and sidecar bytes, not logical document size.</param>
+/// <param name="Bytes">Turso file and sidecar bytes, not logical document size.</param>
 public sealed record TenantStoragePressure(
     [property: JsonPropertyName("org")] string Org,
     [property: JsonPropertyName("bytes")] long Bytes);

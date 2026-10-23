@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Configuration;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
@@ -836,26 +836,26 @@ public sealed class ShapeMirrorTests
         }
     }
 
-    /// <summary>The production snapshot store over the server's memory budget, time and SQLite engine.</summary>
+    /// <summary>The production snapshot store over the server's memory budget, time and Turso engine.</summary>
     private static ShapeSnapshots SnapshotStore(IServiceProvider services) => (ShapeSnapshots)services.GetRequiredService<IShapeSnapshotSealer>();
 
     /// <summary>One sealed chunk, copied out of its reservation.</summary>
     private sealed record Sealed(long Offset, long EndOffset, long ValuesAt, byte[] Body);
 
-    /// <summary>One database of a server: its production store, its SQLite store for direct reads, and a sealer.</summary>
-    private sealed class Database(TerraBaseTestServer server, IDatabaseStore store, SqliteDatabaseStore sqlite)
+    /// <summary>One database of a server: its production store, its Turso store for direct reads, and a sealer.</summary>
+    private sealed class Database(TerraBaseTestServer server, IDatabaseStore store, TursoDatabaseStore turso)
     {
         public IDatabaseStore Store { get; } = store;
 
         public ShapeSealer Sealer => new(server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance,
-            new SqliteShapeStorage(server.Services.GetRequiredService<SqliteStorageEngine>()), server.Services.GetRequiredService<IRemoteDurability>());
+            new TursoShapeStorage(server.Services.GetRequiredService<TursoStorageEngine>()), server.Services.GetRequiredService<IRemoteDurability>());
 
         public static async Task<Database> OpenAsync(TerraBaseTestServer server, TenantContext tenant)
         {
             var store = await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None)
                 ?? throw new InvalidOperationException("the database is missing");
-            var sqlite = (SqliteDatabaseStore)(await server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
-            return new Database(server, store, sqlite);
+            var turso = (TursoDatabaseStore)(await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
+            return new Database(server, store, turso);
         }
 
         public async Task<long> SealWithMirrorAsync(ShapeSealDefinition shape, long offset) =>
@@ -897,7 +897,7 @@ public sealed class ShapeMirrorTests
             return await HeadAsync();
         }
 
-        public Task<long> HeadAsync() => sqlite.WithWriterAsync(session =>
+        public Task<long> HeadAsync() => turso.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
             command.CommandText = "SELECT seq FROM _tb_feed_sequence WHERE id = 1;";

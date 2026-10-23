@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Cluster;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
@@ -514,7 +514,7 @@ public sealed class ReplicaRebuildTests
 
         public AntiEntropy AntiEntropy => Api.Server.Services.GetRequiredService<AntiEntropy>();
 
-        private SqliteStorageEngine Engine => Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        private TursoStorageEngine Engine => Api.Server.Services.GetRequiredService<TursoStorageEngine>();
 
         public async Task StartAsync()
         {
@@ -558,7 +558,7 @@ public sealed class ReplicaRebuildTests
 
         public async Task LoseDatabaseAsync()
         {
-            var path = ((SqliteDatabaseStore)await StoreAsync()).FilePath;
+            var path = ((TursoDatabaseStore)await StoreAsync()).FilePath;
             await StopAsync();
             // Lose only the certified file: an explicit database deletion also deletes its retained side copies.
             foreach (var suffix in new[] { string.Empty, "-wal", "-shm", "-journal" })
@@ -628,7 +628,7 @@ public sealed class ReplicaRebuildTests
 
         public async Task<string?> IntegrityAsync()
         {
-            var store = (SqliteDatabaseStore)await StoreAsync();
+            var store = (TursoDatabaseStore)await StoreAsync();
             return await store.WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
@@ -649,7 +649,7 @@ public sealed class ReplicaRebuildTests
 
         private async Task OnWriterAsync(string sql, string collection, string id, string? misplaced = null)
         {
-            var store = (SqliteDatabaseStore)await StoreAsync();
+            var store = (TursoDatabaseStore)await StoreAsync();
             _ = await store.WithWriterAsync(session =>
             {
                 using var transaction = session.Connection.BeginTransaction();

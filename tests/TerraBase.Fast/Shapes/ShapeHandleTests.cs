@@ -2,7 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
@@ -368,8 +368,8 @@ public sealed class ShapeHandleTests
 
                 // Intentionally leave an operation unfinished to model a crash during native work. No I/O admission is held;
                 // its active count keeps shutdown's checkpoint from retiring the simulated interrupted operation's intent.
-                var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-                var native = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(tenant, CancellationToken.None))!;
+                var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+                var native = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(tenant, CancellationToken.None))!;
                 _ = await native.BeginOperationAsync(CancellationToken.None);
                 // Captured while live: the file then says the process is running, so the next start is unclean.
                 running = await File.ReadAllBytesAsync(identity);
@@ -470,7 +470,7 @@ public sealed class ShapeHandleTests
     private static ReplicaId Replica(DocumentApi api) => Replica(api.Server);
 
     private static ReplicaId Replica(TerraBaseTestServer server) =>
-        server.Services.GetRequiredService<SqliteStorageEngine>().ReplicaId;
+        server.Services.GetRequiredService<TursoStorageEngine>().ReplicaId;
 
     private static async Task<IDatabaseStore> StoreAsync(DocumentApi api)
     {

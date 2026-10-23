@@ -12,7 +12,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
@@ -811,14 +811,14 @@ public sealed class ShapeSealTests
 
     private sealed record Op(long Commit, string Kind, string Id, string? Version, string? Document);
 
-    /// <summary>One database of a server: its production store, its SQLite store for direct reads, and a sealer.</summary>
-    private sealed class Database(TerraBaseTestServer server, TenantContext tenant, IDatabaseStore store, SqliteDatabaseStore sqlite, string collectionName)
+    /// <summary>One database of a server: its production store, its Turso store for direct reads, and a sealer.</summary>
+    private sealed class Database(TerraBaseTestServer server, TenantContext tenant, IDatabaseStore store, TursoDatabaseStore turso, string collectionName)
     {
         public string CollectionName { get; } = collectionName;
 
         public IDatabaseStore Store { get; } = store;
 
-        public SqliteShapeStorage Storage { get; } = new(server.Services.GetRequiredService<SqliteStorageEngine>());
+        public TursoShapeStorage Storage { get; } = new(server.Services.GetRequiredService<TursoStorageEngine>());
 
         public ShapeSealer Sealer => new(server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance, Storage,
             server.Services.GetRequiredService<IRemoteDurability>());
@@ -829,8 +829,8 @@ public sealed class ShapeSealTests
         {
             var store = await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None)
                 ?? throw new InvalidOperationException("the database is missing");
-            var sqlite = (SqliteDatabaseStore)(await server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
-            return new Database(server, tenant, store, sqlite, collection);
+            var turso = (TursoDatabaseStore)(await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
+            return new Database(server, tenant, store, turso, collection);
         }
 
         public async Task<long> SealAsync(ShapeSealDefinition shape, long offset) =>
@@ -894,7 +894,7 @@ public sealed class ShapeSealTests
             return Encoding.UTF8.GetString(document.Json.Span);
         }
 
-        public Task<long> ScalarAsync(string sql) => sqlite.WithWriterAsync(session =>
+        public Task<long> ScalarAsync(string sql) => turso.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
             command.CommandText = sql;
@@ -902,11 +902,11 @@ public sealed class ShapeSealTests
         }, "a test reading a scalar", CancellationToken.None);
 
         // Runs statements on the writer with capture off, as the engine writes derived rows.
-        public Task<bool> RawWriteAsync(string sql) => sqlite.WithWriterAsync(session =>
+        public Task<bool> RawWriteAsync(string sql) => turso.WithWriterAsync(session =>
         {
             using (var off = session.Connection.CreateCommand())
             {
-                off.CommandText = SqliteSession.CaptureOff;
+                off.CommandText = TursoSession.CaptureOff;
                 off.ExecuteNonQuery();
             }
 
@@ -919,7 +919,7 @@ public sealed class ShapeSealTests
             finally
             {
                 using var on = session.Connection.CreateCommand();
-                on.CommandText = SqliteSession.CaptureOn;
+                on.CommandText = TursoSession.CaptureOn;
                 on.ExecuteNonQuery();
             }
 
@@ -930,19 +930,19 @@ public sealed class ShapeSealTests
         public async Task<long> HoldCdcAsync()
         {
             _ = await Groups.AckedAsync(tenant, ReplicaId.Of(99, 1, 0), CancellationToken.None);
-            return await Groups.HeadAsync(tenant, sqlite.Incarnation, CancellationToken.None) ?? throw new InvalidOperationException("the copy refused its own incarnation");
+            return await Groups.HeadAsync(tenant, turso.Incarnation, CancellationToken.None) ?? throw new InvalidOperationException("the copy refused its own incarnation");
         }
 
         public async Task ReplaceCapturedDocumentAsync(long after, string document, string table)
         {
-            var (changeId, capturedId, capturedDocument) = await sqlite.WithWriterAsync(session =>
+            var (changeId, capturedId, capturedDocument) = await turso.WithWriterAsync(session =>
             {
                 using var read = session.Connection.CreateCommand();
                 read.CommandText = "SELECT change_id, after FROM turso_cdc WHERE change_id > $after AND table_name = $collection AND change_type IN (0, 1) ORDER BY change_id LIMIT 1;";
                 read.Parameters.AddWithValue("$after", after);
                 read.Parameters.AddWithValue("$collection", CollectionName);
                 using var reader = read.ExecuteReader();
-                if (!reader.Read() || SqliteRecord.Decode(SqliteSession.Bytes(reader, 1)) is not [string id, string body])
+                if (!reader.Read() || SqliteRecord.Decode(TursoSession.Bytes(reader, 1)) is not [string id, string body])
                 {
                     throw new InvalidDataException("the captured document row is missing");
                 }
@@ -956,7 +956,7 @@ public sealed class ShapeSealTests
                 return;
             }
 
-            var (stateChangeId, stateImage) = await sqlite.WithWriterAsync(session =>
+            var (stateChangeId, stateImage) = await turso.WithWriterAsync(session =>
             {
                 using var read = session.Connection.CreateCommand();
                 read.CommandText = "SELECT change_id, after FROM turso_cdc WHERE change_id > $after AND table_name = '_tb_state' AND change_type IN (0, 1) ORDER BY change_id;";
@@ -964,7 +964,7 @@ public sealed class ShapeSealTests
                 using var reader = read.ExecuteReader();
                 while (reader.Read())
                 {
-                    var candidate = SqliteSession.Bytes(reader, 1);
+                    var candidate = TursoSession.Bytes(reader, 1);
                     if (SqliteRecord.Decode(candidate) is [string collection, string id, _, string, long, long, 1L, _, _]
                         && collection == CollectionName && id == capturedId)
                     {
@@ -1005,7 +1005,7 @@ public sealed class ShapeSealTests
             await Assert.That(json["expect"]!.GetValue<string>()).IsEqualTo("refused");
             await Assert.That(json["row"]!.GetValue<string>()).IsEqualTo("state");
             var mutation = json["mutation"]!.AsObject();
-            var damaged = await sqlite.WithWriterAsync(session =>
+            var damaged = await turso.WithWriterAsync(session =>
             {
                 long id = 0;
                 byte[]? image = null;
@@ -1016,7 +1016,7 @@ public sealed class ShapeSealTests
                     using var reader = read.ExecuteReader();
                     while (reader.Read())
                     {
-                        var candidate = SqliteSession.Bytes(reader, 1);
+                        var candidate = TursoSession.Bytes(reader, 1);
                         if (SqliteRecord.Decode(candidate) is [string collection, ..] && collection == Collection)
                         {
                             (id, image) = (reader.GetInt64(0), candidate);

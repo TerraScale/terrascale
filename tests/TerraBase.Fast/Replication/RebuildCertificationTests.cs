@@ -11,7 +11,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
@@ -368,8 +368,8 @@ public sealed class RebuildCertificationTests
         await Assert.That(pair.Gru.Source.HookCalls).IsEqualTo(1).Because("the source write hook is one-shot");
         var requests = pair.Gru.Source.RefillRequests[0];
         await Assert.That(requests.Length).IsGreaterThanOrEqualTo(2).Because("the first-pass write requires another bucket request");
-        await Assert.That(requests[0]).IsEqualTo(SqliteStorageTransaction.Buckets);
-        await Assert.That(requests[1]).IsGreaterThan(0).And.IsLessThan(SqliteStorageTransaction.Buckets).Because("the second request refreshes a subset under the same pin");
+        await Assert.That(requests[0]).IsEqualTo(TursoStorageTransaction.Buckets);
+        await Assert.That(requests[1]).IsGreaterThan(0).And.IsLessThan(TursoStorageTransaction.Buckets).Because("the second request refreshes a subset under the same pin");
         await Assert.That(await pair.Sjc.ReadAsync(during)).IsEqualTo("{\"n\":7}");
         await pair.Sjc.CertifiedAsync(faulted, ((RebuildOutcome.Completed)outcome).NewIncarnation, pair.Gru);
     }
@@ -400,9 +400,9 @@ public sealed class RebuildCertificationTests
         await Assert.That(outcome is RebuildOutcome.Completed).IsTrue().Because(outcome.ToString());
         var requests = pair.Gru.Source.RefillRequests[0];
         await Assert.That(requests.Length).IsEqualTo(2);
-        await Assert.That(requests[0]).IsEqualTo(SqliteStorageTransaction.Buckets);
+        await Assert.That(requests[0]).IsEqualTo(TursoStorageTransaction.Buckets);
         await Assert.That(requests[1]).IsGreaterThan(0);
-        await Assert.That(requests[1]).IsLessThan(SqliteStorageTransaction.Buckets);
+        await Assert.That(requests[1]).IsLessThan(TursoStorageTransaction.Buckets);
         foreach (var id in ids)
         {
             await Assert.That(await pair.Sjc.ReadAsync(id)).IsEqualTo("""{"n":7}""");
@@ -428,8 +428,8 @@ public sealed class RebuildCertificationTests
         await Assert.That(pair.Gru.Source.Fired).IsTrue();
         var requests = pair.Gru.Source.RefillRequests[0];
         await Assert.That(requests.Length).IsEqualTo(8);
-        await Assert.That(requests[0]).IsEqualTo(SqliteStorageTransaction.Buckets);
-        await Assert.That(requests.Skip(1).All(count => count is > 0 and < SqliteStorageTransaction.Buckets)).IsTrue();
+        await Assert.That(requests[0]).IsEqualTo(TursoStorageTransaction.Buckets);
+        await Assert.That(requests.Skip(1).All(count => count is > 0 and < TursoStorageTransaction.Buckets)).IsTrue();
         _ = await pair.Sjc.RetainedRefusalAsync(faulted);
         await pair.AdmissionsReleasedAsync();
     }
@@ -483,8 +483,8 @@ public sealed class RebuildCertificationTests
         {
             var requests = pair.Gru.Source.RefillRequests[0];
             await Assert.That(requests.Length).IsEqualTo(8).Because("persistent mismatches exhaust the bounded refresh rounds");
-            await Assert.That(requests[0]).IsEqualTo(SqliteStorageTransaction.Buckets);
-            await Assert.That(requests.Skip(1).All(count => count is > 0 and < SqliteStorageTransaction.Buckets)).IsTrue();
+            await Assert.That(requests[0]).IsEqualTo(TursoStorageTransaction.Buckets);
+            await Assert.That(requests.Skip(1).All(count => count is > 0 and < TursoStorageTransaction.Buckets)).IsTrue();
         }
 
         var rebuilt = await pair.Sjc.SwappedAsync(faulted);
@@ -756,7 +756,7 @@ public sealed class RebuildCertificationTests
         using var channel = PeerChannel.Create(new Uri(address), PeerTls.Credential);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
         var request = new BucketRequest { Database = ChangeGroups.Wire(pair.Database, incarnation) };
-        request.Buckets.AddRange(Enumerable.Range(0, SqliteStorageTransaction.Buckets).Select(bucket => (uint)bucket));
+        request.Buckets.AddRange(Enumerable.Range(0, TursoStorageTransaction.Buckets).Select(bucket => (uint)bucket));
         using var call = client.ReadBucket(request, deadline: DateTime.UtcNow + Deadline, cancellationToken: pair.Token);
         _ = await Assert.ThrowsAsync<RpcException>(async () =>
         {
@@ -985,7 +985,7 @@ public sealed class RebuildCertificationTests
         }
 
         var request = new BucketRequest { Database = ChangeGroups.Wire(database, incarnation) };
-        request.Buckets.AddRange(Enumerable.Range(0, SqliteStorageTransaction.Buckets).Select(bucket => (uint)bucket));
+        request.Buckets.AddRange(Enumerable.Range(0, TursoStorageTransaction.Buckets).Select(bucket => (uint)bucket));
         async Task<int> ReadAsync()
         {
             using var call = client.ReadBucket(request, deadline: deadline, cancellationToken: stop.Token);
@@ -1155,7 +1155,7 @@ public sealed class RebuildCertificationTests
 
         public Rebuilds Rebuilds => (Rebuilds)Service<IReplicaRebuild>();
 
-        private SqliteStorageEngine Engine => Service<SqliteStorageEngine>();
+        private TursoStorageEngine Engine => Service<TursoStorageEngine>();
 
         public T Service<T>()
             where T : notnull => Api.Server.Services.GetRequiredService<T>();
@@ -1296,7 +1296,7 @@ public sealed class RebuildCertificationTests
         {
             var source = Service<TursoChangeGroupSource>();
             var digest = await DigestAsync();
-            var page = await source.ReadBucketsAsync(pair.Database, digest.Incarnation, [.. Enumerable.Range(0, SqliteStorageTransaction.Buckets)], null,
+            var page = await source.ReadBucketsAsync(pair.Database, digest.Incarnation, [.. Enumerable.Range(0, TursoStorageTransaction.Buckets)], null,
                 ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, pair.Token);
             return page?.States.Single(state => state.Id == id) ?? throw new InvalidOperationException($"{region} does not hold {id}");
         }
@@ -1349,7 +1349,7 @@ public sealed class RebuildCertificationTests
             {
                 throw new ArgumentOutOfRangeException(nameof(column));
             }
-            var store = (SqliteDatabaseStore)await StoreAsync();
+            var store = (TursoDatabaseStore)await StoreAsync();
             var changed = await store.WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
@@ -1393,7 +1393,7 @@ public sealed class RebuildCertificationTests
 
         public async Task<long> StateReadChargeAsync(string collection, string id)
         {
-            var store = (SqliteDatabaseStore)await StoreAsync();
+            var store = (TursoDatabaseStore)await StoreAsync();
             return await store.WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
@@ -1413,7 +1413,7 @@ public sealed class RebuildCertificationTests
 
         public async Task ChangePersistedIncarnationAsync(Ulid incarnation)
         {
-            var store = (SqliteDatabaseStore)await StoreAsync();
+            var store = (TursoDatabaseStore)await StoreAsync();
             _ = await store.WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
@@ -1425,7 +1425,7 @@ public sealed class RebuildCertificationTests
 
         public async Task<Ulid> PersistedIncarnationAsync()
         {
-            var store = (SqliteDatabaseStore)await StoreAsync();
+            var store = (TursoDatabaseStore)await StoreAsync();
             return await store.WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
@@ -1462,7 +1462,7 @@ public sealed class RebuildCertificationTests
 
         public async Task RemoveStateKeepingDocumentAsync(string id)
         {
-            var store = (SqliteDatabaseStore)await StoreAsync();
+            var store = (TursoDatabaseStore)await StoreAsync();
             var changed = await store.WithWriterAsync(session => Uncaptured(session, command =>
             {
                 command.CommandText = "DELETE FROM _tb_state WHERE collection = 'items' AND id = $id;";
@@ -1481,7 +1481,7 @@ public sealed class RebuildCertificationTests
 
         public async Task CorruptStateAsync(string id)
         {
-            var store = (SqliteDatabaseStore)await StoreAsync();
+            var store = (TursoDatabaseStore)await StoreAsync();
             await store.WithWriterAsync(session => Uncaptured(session, command =>
             {
                 command.CommandText = "UPDATE _tb_state SET state = (SELECT state FROM _tb_state WHERE collection = 'items' AND id != $id LIMIT 1) WHERE collection = 'items' AND id = $id;";
@@ -1498,7 +1498,7 @@ public sealed class RebuildCertificationTests
 
         public async Task CorruptDocumentAsync(string id)
         {
-            var store = (SqliteDatabaseStore)await StoreAsync();
+            var store = (TursoDatabaseStore)await StoreAsync();
             var changed = await store.WithWriterAsync(session => Uncaptured(session, command =>
             {
                 command.CommandText = "UPDATE \"items\" SET doc = '{\"n\":9}' WHERE id = $id;";
@@ -1510,12 +1510,12 @@ public sealed class RebuildCertificationTests
 
         // Damage at rest, not a write: with capture on, the CDC tail would decode the raw edit and fault the copy first, in
         // memory ahead of its durable record, so the read under test would be refused before the keyed check ever ran.
-        private static int Uncaptured(SqliteSession session, Func<SqliteCommand, int> corrupt)
+        private static int Uncaptured(TursoSession session, Func<SqliteCommand, int> corrupt)
         {
             using var command = session.Connection.CreateCommand();
             command.CommandText = "SELECT coalesce(max(change_id), 0) FROM turso_cdc;";
             var head = (long)command.ExecuteScalar()!;
-            command.CommandText = SqliteSession.CaptureOff;
+            command.CommandText = TursoSession.CaptureOff;
             _ = command.ExecuteNonQuery();
             int changed;
             try
@@ -1525,7 +1525,7 @@ public sealed class RebuildCertificationTests
             finally
             {
                 command.Parameters.Clear();
-                command.CommandText = SqliteSession.CaptureOn;
+                command.CommandText = TursoSession.CaptureOn;
                 _ = command.ExecuteNonQuery();
             }
 
@@ -1536,7 +1536,7 @@ public sealed class RebuildCertificationTests
         // Deletes the document's rows from the file directly, as a lost apply would leave it.
         public async Task LoseAsync(string id)
         {
-            var store = (SqliteDatabaseStore)await StoreAsync();
+            var store = (TursoDatabaseStore)await StoreAsync();
             _ = await store.WithWriterAsync(session =>
             {
                 using var transaction = session.Connection.BeginTransaction();
@@ -1556,7 +1556,7 @@ public sealed class RebuildCertificationTests
         // The reason on the database's ledger row: which check faulted the copy first, or null.
         public async Task<string?> FaultReasonAsync()
         {
-            var system = (SqliteDatabaseStore)await Engine.OpenSystemDatabaseAsync(pair.Token);
+            var system = (TursoDatabaseStore)await Engine.OpenSystemDatabaseAsync(pair.Token);
             return await system.WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
@@ -1569,7 +1569,7 @@ public sealed class RebuildCertificationTests
         // The refill proof on the database's ledger row: the source member's name, or null.
         public async Task<string?> RefillSourceAsync()
         {
-            var system = (SqliteDatabaseStore)await Engine.OpenSystemDatabaseAsync(pair.Token);
+            var system = (TursoDatabaseStore)await Engine.OpenSystemDatabaseAsync(pair.Token);
             return await system.WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
@@ -1616,7 +1616,7 @@ public sealed class RebuildCertificationTests
         // The rebuilt file's certificate rows (decision 0013a's _tb_refill).
         public async Task<List<(string Origin, string Incarnation, long Head)>> CertificateAsync()
         {
-            var store = (SqliteDatabaseStore)await StoreAsync();
+            var store = (TursoDatabaseStore)await StoreAsync();
             return await store.WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
@@ -1856,7 +1856,7 @@ public sealed class RebuildCertificationTests
         }
     }
 
-    // A global host-local observation scope also reaches the dedicated SQLite writer (which restores QoS, not arbitrary AsyncLocals).
+    // A global host-local observation scope also reaches the dedicated Turso writer (which restores QoS, not arbitrary AsyncLocals).
     private sealed class ObservedRepair(IRebuildRepair inner, AdmissionProbe probe, TenantContext watched) : IRebuildRepair
     {
         public async ValueTask<int?> RefillRebuildAsync(TenantContext database, Ulid newIncarnation, IReadOnlyList<int> buckets,

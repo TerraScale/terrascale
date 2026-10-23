@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Memory;
@@ -16,7 +16,7 @@ namespace TerraBase.Fast.Shapes;
 
 /// <summary>
 /// Live tail and request collapsing (FR-14, free-reads.md 3.6, shape-reads.md 4) on a real server: documents are written
-/// over HTTP and commit through SQLite, which wakes live waiters. The seal and the shape read are fakes injected through
+/// over HTTP and commit through Turso, which wakes live waiters. The seal and the shape read are fakes injected through
 /// DI, and the clock is a fake. Waits are released by barriers, by a real commit, or by advancing time, never by sleeps.
 /// </summary>
 public sealed class ShapeLiveTests
@@ -561,7 +561,7 @@ public sealed class ShapeLiveTests
             collection.AddSingleton<TimeProvider>(time);
             collection.AddSingleton<IShapeFlightSealer>(sealer);
             collection.AddSingleton<IShapeFlights<ShapePage>>(provider => new ShapeFlights<ShapePage>(
-                provider.GetRequiredService<SqliteStorageEngine>(), sealer, provider.GetRequiredService<IMemoryBudget>(),
+                provider.GetRequiredService<TursoStorageEngine>(), sealer, provider.GetRequiredService<IMemoryBudget>(),
                 time, provider.GetRequiredService<IHostApplicationLifetime>()));
         });
 
@@ -592,15 +592,15 @@ public sealed class ShapeLiveTests
         return databases;
     }
 
-    private static async Task<SqliteDatabaseStore> StoreAsync(DocumentApi api, TenantContext database) =>
-        (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
+    private static async Task<TursoDatabaseStore> StoreAsync(DocumentApi api, TenantContext database) =>
+        (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
 
     private static FakeSealer Sealer(DocumentApi api) => (FakeSealer)api.Server.Services.GetRequiredService<IShapeFlightSealer>();
 
     private static async Task<long> HeadAsync(DocumentApi api, TenantContext database) =>
         await FeedHeadAsync(await StoreAsync(api, database), CancellationToken.None);
 
-    private static Task<long> FeedHeadAsync(SqliteDatabaseStore store, CancellationToken cancellationToken) => store.WithWriterAsync(session =>
+    private static Task<long> FeedHeadAsync(TursoDatabaseStore store, CancellationToken cancellationToken) => store.WithWriterAsync(session =>
     {
         using var command = session.Connection.CreateCommand();
         command.CommandText = "SELECT seq FROM _tb_feed_sequence WHERE id = 1;";
@@ -668,7 +668,7 @@ public sealed class ShapeLiveTests
                 return refusal;
             }
 
-            var head = await FeedHeadAsync((SqliteDatabaseStore)store, cancellationToken);
+            var head = await FeedHeadAsync((TursoDatabaseStore)store, cancellationToken);
             lock (_gate)
             {
                 _heads[store.Incarnation] = head;
@@ -733,7 +733,7 @@ public sealed class ShapeLiveTests
             }
 
             var head = sealer.Head(store);
-            return new ShapePage(_body, head, head == await FeedHeadAsync((SqliteDatabaseStore)store, cancellationToken));
+            return new ShapePage(_body, head, head == await FeedHeadAsync((TursoDatabaseStore)store, cancellationToken));
         };
     }
 }

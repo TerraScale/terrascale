@@ -7,7 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Fast.Management;
 using TerraBase.Features.Management.Usage;
@@ -38,7 +38,7 @@ public sealed class GroupCommitTests
         }, cancellationToken: deadline.Token);
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var store = await StoreAsync(api);
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var context = api.Server.Services.GetRequiredService<IHttpContextAccessor>();
         CancellationTokenRegistration cancellationObserved = default;
         hook.BeforeDocumentQuota = (_, token) =>
@@ -212,7 +212,7 @@ public sealed class GroupCommitTests
         {
             waiting = api.PutAsync(DocumentApi.NewId(), new { n = 1 });
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.BatchedWrites == 1));
-            clock.Advance(SqliteDatabaseStore.SlowWriterWait + TimeSpan.FromSeconds(1));
+            clock.Advance(TursoDatabaseStore.SlowWriterWait + TimeSpan.FromSeconds(1));
         }
         finally
         {
@@ -346,7 +346,7 @@ public sealed class GroupCommitTests
         await Assert.That((await api.GetAsync(failingId)).Status).IsEqualTo(HttpStatusCode.NotFound);
     }
 
-    // insideCommit fails the work CommitAsync still does after the SQLite commit; otherwise the batch fails after CommitAsync.
+    // insideCommit fails the work CommitAsync still does after the Turso commit; otherwise the batch fails after CommitAsync.
     [Test]
     [Arguments(true)]
     [Arguments(false)]
@@ -365,7 +365,7 @@ public sealed class GroupCommitTests
 
         if (insideCommit)
         {
-            store.AfterSqliteCommit = Fail;
+            store.AfterTursoCommit = Fail;
         }
         else
         {
@@ -396,7 +396,7 @@ public sealed class GroupCommitTests
         await Assert.That(logged).IsEqualTo(insideCommit);
 
         // The writer keeps working.
-        store.AfterSqliteCommit = store.AfterGroupCommit = null;
+        store.AfterTursoCommit = store.AfterGroupCommit = null;
         var next = DocumentApi.NewId();
         await Assert.That((await api.PutAsync(next, new { n = 2 })).Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That((await api.GetAsync(next)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(2);
@@ -408,8 +408,8 @@ public sealed class GroupCommitTests
     public async Task A_failure_after_a_catalog_group_commit_still_fails_the_write(bool insideCommit)
     {
         await using var api = await DocumentApi.StartAsync();
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var system = (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(CancellationToken.None);
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var system = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(CancellationToken.None);
         static void Fail()
         {
             throw new IOException("the test fails the work after the commit");
@@ -417,7 +417,7 @@ public sealed class GroupCommitTests
 
         if (insideCommit)
         {
-            system.AfterSqliteCommit = Fail;
+            system.AfterTursoCommit = Fail;
         }
         else
         {
@@ -436,7 +436,7 @@ public sealed class GroupCommitTests
         // it: every other catalog commit meanwhile fails at that hook too, while the hook after CommitAsync runs once they moved.
         await feed.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(system.CommitSequence).IsGreaterThan(sequence);
-        system.AfterSqliteCommit = system.AfterGroupCommit = null;
+        system.AfterTursoCommit = system.AfterGroupCommit = null;
         var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
         await using (read)
         {
@@ -449,7 +449,7 @@ public sealed class GroupCommitTests
     {
         await using var api = await DocumentApi.StartAsync();
         var store = await StoreAsync(api);
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         await store.WithWriterAsync(writer =>
         {
             writer.Connection.StateChange += (_, change) =>
@@ -500,7 +500,7 @@ public sealed class GroupCommitTests
         var store = await StoreAsync(api);
         var sequence = store.CommitSequence;
         var committed = store.WaitForCommitAsync(sequence, CancellationToken.None);
-        store.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
+        store.AfterTursoCommit = () => throw new IOException("the test fails the work right after the commit");
 
         var written = await api.PutAsync(DocumentApi.NewId(), new { n = 1 });
 
@@ -509,7 +509,7 @@ public sealed class GroupCommitTests
         await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
         await committed.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(store.CommitSequence).IsGreaterThan(sequence);
-        store.AfterSqliteCommit = null;
+        store.AfterTursoCommit = null;
     }
 
     [Test]
@@ -519,13 +519,13 @@ public sealed class GroupCommitTests
         await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<ILoggerProvider>(logs));
         var store = await StoreAsync(api);
         var sequence = store.CommitSequence;
-        store.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
+        store.AfterTursoCommit = () => throw new IOException("the test fails the work right after the commit");
 
         // Both log calls after the commit throw: the write is still answered, and the commit count still moved.
         var written = await api.PutAsync(DocumentApi.NewId(), new { n = 1 }).WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(store.CommitSequence).IsGreaterThan(sequence);
-        store.AfterSqliteCommit = null;
+        store.AfterTursoCommit = null;
         var next = await api.PutAsync(DocumentApi.NewId(), new { n = 2 }).WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(next.Status).IsEqualTo(HttpStatusCode.Created);
     }
@@ -538,10 +538,10 @@ public sealed class GroupCommitTests
         var id = DocumentApi.NewId();
         // Loads the collection names the database serves, without the new one.
         await Assert.That((await api.GetAsync(id)).Code).IsEqualTo("not_found");
-        store.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
+        store.AfterTursoCommit = () => throw new IOException("the test fails the work right after the commit");
 
         var created = await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "fresh" });
-        store.AfterSqliteCommit = null;
+        store.AfterTursoCommit = null;
 
         // Not a group commit: it answers the unknown outcome. With no later commit, the new collection is served.
         await Assert.That(created.Status).IsEqualTo(HttpStatusCode.InternalServerError);
@@ -560,9 +560,9 @@ public sealed class GroupCommitTests
         {
             await Assert.That(await transaction.CreateIndexAsync(
                 new IndexDefinition("items_id", DocumentApi.Collection, [DocumentField.Id]), CancellationToken.None)).IsTrue();
-            store.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
+            store.AfterTursoCommit = () => throw new IOException("the test fails the work right after the commit");
             await Assert.ThrowsAsync<IOException>(async () => await transaction.CommitAsync(CancellationToken.None));
-            store.AfterSqliteCommit = null;
+            store.AfterTursoCommit = null;
         }
 
         // Sessions opened before the ANALYZE are closed instead of pooled, so later queries plan with its statistics.
@@ -582,7 +582,7 @@ public sealed class GroupCommitTests
         });
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { n = 0 })).Status).IsEqualTo(HttpStatusCode.Created);
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
 
         // Occupy the only read thread, as a long runSql would.
         using var release = new ManualResetEventSlim();
@@ -601,10 +601,10 @@ public sealed class GroupCommitTests
         }
     }
 
-    private static async Task<SqliteDatabaseStore> StoreAsync(DocumentApi api)
+    private static async Task<TursoDatabaseStore> StoreAsync(DocumentApi api)
     {
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        return (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        return (TursoDatabaseStore)(await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
     }
 
     // Fails counting committed writes, as accounting after a commit may; everything else reaches the real meter.

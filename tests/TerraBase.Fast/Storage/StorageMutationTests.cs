@@ -3,7 +3,7 @@ using System.Text;
 using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 
 namespace TerraBase.Fast.Storage;
@@ -29,13 +29,13 @@ public sealed class StorageMutationTests
         await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "1", cancellationToken: deadline.Token);
         var id = DocumentApi.NewId();
         await api.PutAsync(id, new { n = 1 }, cancellationToken: deadline.Token);
-        var native = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var native = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         IStorageEngine engine = stamped ? api.Server.Services.GetRequiredService<IStorageEngine>() : native;
         var database = await api.TenantOfAsync(cancellationToken: deadline.Token);
         var store = (await engine.OpenDatabaseAsync(database, deadline.Token))!;
         var sequence = store.CommitSequence;
         // Write transactions run their calls on the database's write thread: blocking it queues the calls below.
-        var lane = ((SqliteDatabaseStore)(await native.OpenDatabaseAsync(database, deadline.Token))!).WriteLane;
+        var lane = ((TursoDatabaseStore)(await native.OpenDatabaseAsync(database, deadline.Token))!).WriteLane;
         using var release = new ManualResetEventSlim();
         var firstId = DocumentApi.NewId();
         var secondId = DocumentApi.NewId();

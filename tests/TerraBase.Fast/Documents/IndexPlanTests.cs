@@ -2,7 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Turso.Data.Sqlite;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -71,7 +71,7 @@ public sealed class IndexPlanTests
         {
             // Every compiled scan carries the per-row budget guard (tb_qos_scan), and the index still serves the filter.
             using var command = new SqliteCommand();
-            var sql = new SqliteQueryCompiler(command.Parameters, RowSource.Client("people"))
+            var sql = new TursoQueryCompiler(command.Parameters, RowSource.Client("people"))
                 .Compile(new DocumentQuery("people", filter, [], null, 10, 1024));
             // Values are read with json_extract, never spelled ->>, and a short list is equalities, not json_each.
             await Assert.That(sql).DoesNotContain("->>");

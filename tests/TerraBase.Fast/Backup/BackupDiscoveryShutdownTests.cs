@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -28,7 +28,7 @@ public sealed class BackupDiscoveryShutdownTests
         await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
             s3.Route(services);
-            services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
+            services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<TursoStorageEngine>()));
             // Observe shutdown's cancellation failures here, while allowing factory disposal to rejoin its cleanup.
             var host = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
                 && descriptor.ImplementationFactory?.Method.ReturnType == typeof(ContinuousBackup));

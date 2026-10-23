@@ -5,7 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
@@ -24,7 +24,7 @@ public sealed class ApplyDurabilityTests
     public async Task Every_receiver_transaction_commits_with_FULL_before_the_next_chunk()
     {
         var modes = new ConcurrentQueue<int>();
-        SqliteDatabaseStore? store = null;
+        TursoDatabaseStore? store = null;
         string? target = null;
         await using var api = await ManagementApi.StartAsync(services: services =>
         {
@@ -46,7 +46,7 @@ public sealed class ApplyDurabilityTests
         await ManagementApi.CreateCollectionAsync(data, managed, "items");
         var tenant = await api.Server.Services.GetRequiredService<ITenantDirectory>().FindDatabaseAsync(managed.Organization, managed.Project, managed.Name, CancellationToken.None)
             is TenantContext found ? found : throw new InvalidOperationException("the database is not registered");
-        store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
+        store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
         Volatile.Write(ref target, tenant.DatabaseId);
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));

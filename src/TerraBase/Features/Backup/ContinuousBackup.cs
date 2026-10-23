@@ -1171,7 +1171,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     private string ScratchFile(string extension) => Path.Combine(_scratch, EntityIds.New().ToString() + extension);
 
-    // SQLite may leave a journal, and a drill a log, next to a snapshot.
+    // Turso may leave a journal, and a drill a log, next to a snapshot.
     private static void DeleteSnapshot(string path) => BackupReader.Delete(path);
 
     private static async Task Use(Stream stream, Func<Stream, Task> use)

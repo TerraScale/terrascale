@@ -4,7 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Cluster;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
@@ -197,7 +197,7 @@ public sealed partial class ShapeResumeTests
         public Task DurableAsync() =>
             TerraBaseTestServer.EventuallyAsync(async token =>
             {
-                var store = (await _api!.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(cell.Database, token))!;
+                var store = (await _api!.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(cell.Database, token))!;
                 await using var transaction = await store.BeginTransactionAsync(write: false, token);
                 var shapes = (IShapeStorageTransaction)transaction;
                 return await shapes.ReadShapeFrontierAsync(remote: true, token) == await shapes.ReadShapeFrontierAsync(remote: false, token);

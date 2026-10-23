@@ -6,7 +6,7 @@ using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
@@ -149,7 +149,7 @@ public sealed class OriginStampOrderTests
                 await PutAsync(api, managed, EntityIds.New().ToString(), """{"n":0}""");
 
                 // The future document joins as a peer's delta through the engine, with its feed row.
-                var store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
+                var store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
                 using (var body = JsonDocument.Parse("""{"n":1}"""))
                 {
                     var state = DocumentState.Bottom.Put(new EntryVersion(future, remoteOrigin), body.RootElement);
@@ -159,7 +159,7 @@ public sealed class OriginStampOrderTests
                 }
 
                 // A copying refill forgets the document's state and body above its stamp; retention may then trim the feed.
-                await using (var transaction = (SqliteStorageTransaction)await store.BeginDurableTransactionAsync(CancellationToken.None))
+                await using (var transaction = (TursoStorageTransaction)await store.BeginDurableTransactionAsync(CancellationToken.None))
                 {
                     _ = await transaction.ForgetAsync([(Collection, remoteId)], horizon, CancellationToken.None);
                     if (trimFeed)
@@ -232,7 +232,7 @@ public sealed class OriginStampOrderTests
     // One number from the database's own tables, read through its engine store.
     private static async Task<long> ScalarAsync(ManagementApi api, TenantContext database, string sql, params (string Name, object Value)[] parameters)
     {
-        var store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
+        var store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
         return await store.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
@@ -313,7 +313,7 @@ public sealed class OriginStampOrderTests
 
         public ReplicaId Node => Api.Server.Services.GetRequiredService<LocalReplica>().Id;
 
-        private SqliteStorageEngine Engine => Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        private TursoStorageEngine Engine => Api.Server.Services.GetRequiredService<TursoStorageEngine>();
 
         public async Task StartAsync()
         {
@@ -384,7 +384,7 @@ public sealed class OriginStampOrderTests
         // The stamp and origin of the document's state row, as the engine stored them.
         public async Task<(Hlc Stamp, ReplicaId Origin)> StampAsync(string id)
         {
-            var store = (SqliteDatabaseStore)await StoreAsync();
+            var store = (TursoDatabaseStore)await StoreAsync();
             return await store.WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();

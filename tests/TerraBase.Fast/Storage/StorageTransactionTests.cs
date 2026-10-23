@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -16,7 +16,7 @@ using TerraBase.Testing;
 namespace TerraBase.Fast.Storage;
 
 /// <summary>
-/// The SQLite session pool, through the running server's engine: no listener can dispose a
+/// The Turso session pool, through the running server's engine: no listener can dispose a
 /// transaction twice, delete a database under an open transaction, or start one pre-cancelled.
 /// </summary>
 public sealed class StorageTransactionTests
@@ -25,7 +25,7 @@ public sealed class StorageTransactionTests
     private static readonly TenantContext Database = Tenant(EntityIds.New().ToString());
 
     [Test]
-    public async Task SQLite_enforces_query_only_for_reads_and_resets_it_before_reusing_the_session()
+    public async Task Turso_enforces_query_only_for_reads_and_resets_it_before_reusing_the_session()
     {
         await using var server = await TerraBaseTestServer.StartAsync();
         var (engine, store) = await OpenAsync(server);
@@ -35,7 +35,7 @@ public sealed class StorageTransactionTests
             await seed.CommitAsync(CancellationToken.None);
         }
 
-        var session = ((SqliteStorageEngine)engine).Pool.Rent(store) ?? throw new InvalidOperationException("missing idle session");
+        var session = ((TursoStorageEngine)engine).Pool.Rent(store) ?? throw new InvalidOperationException("missing idle session");
         try
         {
             using var view = session.Connection.CreateCommand();
@@ -58,7 +58,7 @@ public sealed class StorageTransactionTests
         }
 
         // The read reset its session before pooling it.
-        var reused = ((SqliteStorageEngine)engine).Pool.Rent(store) ?? throw new InvalidOperationException("missing idle session");
+        var reused = ((TursoStorageEngine)engine).Pool.Rent(store) ?? throw new InvalidOperationException("missing idle session");
         try
         {
             using var flag = reused.Connection.CreateCommand();
@@ -71,7 +71,7 @@ public sealed class StorageTransactionTests
         }
 
         // Writes run on the store's own writer connection, which is never read-only.
-        var writer = await ((SqliteDatabaseStore)store).WithWriterAsync(session =>
+        var writer = await ((TursoDatabaseStore)store).WithWriterAsync(session =>
         {
             using var flag = session.Connection.CreateCommand();
             flag.CommandText = "SELECT query_only FROM pragma_query_only;";
@@ -214,13 +214,13 @@ public sealed class StorageTransactionTests
     public async Task Idle_connections_stay_bounded_across_many_databases()
     {
         await using var server = await TerraBaseTestServer.StartAsync(services: ConfigurePool);
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
-        var stores = new List<SqliteDatabaseStore>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
+        var stores = new List<TursoDatabaseStore>();
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
         {
             var name = Database with { DatabaseId = EntityIds.New().ToString() };
             await engine.CreateDatabaseAsync(name, CancellationToken.None);
-            var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(name, CancellationToken.None))!;
+            var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(name, CancellationToken.None))!;
             await (await store.BeginTransactionAsync(write: false, CancellationToken.None)).DisposeAsync();
             stores.Add(store);
         }
@@ -405,16 +405,16 @@ public sealed class StorageTransactionTests
             written.EnsureSuccessStatusCode();
         }
 
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var database = await tenant.ContextAsync(management.Server, "pool", deadline.Token);
-        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, deadline.Token))!;
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, deadline.Token))!;
         using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var scanned = 0;
         var observing = false;
         var session = await StorageFixture.RentReaderAsync(engine, store);
         try
         {
-            // Cancel from real SQLite row evaluation, after the worker started (not by request timing).
+            // Cancel from real Turso row evaluation, after the worker started (not by request timing).
             session.Connection.CreateFunction<string, string>("observed_body", body =>
             {
                 if (!observing)
@@ -471,7 +471,7 @@ public sealed class StorageTransactionTests
             settings["storage-queue"] = "3";
         }, ConfigurePool);
         var (_, store) = await OpenAsync(server);
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var io = engine.Io;
         await using (var seed = await store.BeginTransactionAsync(write: true, deadline.Token))
         {
@@ -479,7 +479,7 @@ public sealed class StorageTransactionTests
             await seed.CommitAsync(deadline.Token);
         }
 
-        // Hold the only worker inside real SQLite row evaluation until released, not by timing.
+        // Hold the only worker inside real Turso row evaluation until released, not by timing.
         using var release = new ManualResetEventSlim();
         var holding = 0;
         var session = await StorageFixture.RentReaderAsync(engine, store);
@@ -575,10 +575,10 @@ public sealed class StorageTransactionTests
         services.AddSingleton(provider =>
         {
             var options = provider.GetRequiredService<TerraBaseOptions>();
-            return new SqliteStorageEngine(
+            return new TursoStorageEngine(
                 options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace, maxIdle: 8, maxIdlePerDatabase: 2);
+                provider.GetRequiredService<ILogger<TursoStorageEngine>>(), options.ShutdownGrace, maxIdle: 8, maxIdlePerDatabase: 2);
         });
     }
 
@@ -615,10 +615,10 @@ public sealed class StorageTransactionTests
 
     private static TenantContext Tenant(string database) => new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), database);
 
-    private static async Task<(IStorageEngine Engine, SqliteDatabaseStore Store)> OpenAsync(TerraBaseTestServer server)
+    private static async Task<(IStorageEngine Engine, TursoDatabaseStore Store)> OpenAsync(TerraBaseTestServer server)
     {
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         await engine.CreateDatabaseAsync(Database, CancellationToken.None);
-        return (engine, (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(Database, CancellationToken.None))!);
+        return (engine, (TursoDatabaseStore)(await engine.OpenDatabaseAsync(Database, CancellationToken.None))!);
     }
 }

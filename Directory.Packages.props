@@ -64,7 +64,7 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.19.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.19.0" />
   </ItemGroup>
-  <!-- Storage engine (Engine/Sqlite): tracks the .NET 11 train like Microsoft.Extensions. -->
+  <!-- Storage engine (Engine/Turso): tracks the .NET 11 train like Microsoft.Extensions. -->
   <ItemGroup Label="Storage engine">
     <!-- The Rust core of the vendored Turso .NET driver: the same version as its upstream tag (src/vendor/Turso.Data.Sqlite/UPSTREAM.md). -->
     <PackageVersion Include="Turso.Data.Native" Version="0.8.2" />

@@ -2,7 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -143,7 +143,7 @@ public sealed class RestoreWindowLatestTests
         public async Task StampAsync(DateTimeOffset second, CancellationToken cancellationToken)
         {
             var tenant = new TenantContext(host.Database.Organization, PlanTier.Enterprise, host.Database.Project, host.Database.Id);
-            var store = (SqliteDatabaseStore)(await host.Api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(tenant, cancellationToken))!;
+            var store = (TursoDatabaseStore)(await host.Api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, cancellationToken))!;
             _stamped = await store.WithWriterAsync(writer =>
             {
                 using (var update = writer.Connection.CreateCommand())

@@ -2,7 +2,7 @@ using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
 using TerraBase.Engine.Cluster;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
@@ -20,7 +20,7 @@ public static class EngineExtensions
     internal const string QueryDeadlineClock = "query-deadline";
 
     /// <summary>
-    /// Registers the SQLite engine over <see cref="TerraBaseOptions.DataDirectory"/> as <see cref="IStorageEngine"/>, with the
+    /// Registers the Turso engine over <see cref="TerraBaseOptions.DataDirectory"/> as <see cref="IStorageEngine"/>, with the
     /// <see cref="IWriteStamps"/> of every write made through it.
     /// </summary>
     public static IServiceCollection AddTerraBaseEngine(this IServiceCollection services, TerraBaseOptions options)
@@ -36,10 +36,10 @@ public static class EngineExtensions
         services.AddSingleton(provider =>
         {
             var configured = provider.GetRequiredService<TerraBaseOptions>();
-            return new SqliteStorageEngine(
+            return new TursoStorageEngine(
                 configured.DataDirectory, configured.StorageThreads, configured.StorageQueue, configured.MemoryBudget,
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), configured.ShutdownGrace, readinessCacheTtl: configured.ReadinessCacheTtl,
+                provider.GetRequiredService<ILogger<TursoStorageEngine>>(), configured.ShutdownGrace, readinessCacheTtl: configured.ReadinessCacheTtl,
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), queryBudget: configured.QueryBudget,
                 backupTime: provider.GetService<TimeProvider>(),
@@ -48,28 +48,28 @@ public static class EngineExtensions
                 RequiresRemoteProof = provider.GetService<IMemberDirectory>() is not null,
             };
         });
-        services.AddSingleton<IWalBackup>(provider => provider.GetRequiredService<SqliteStorageEngine>());
-        services.AddSingleton<IRebuildStorage>(provider => provider.GetRequiredService<SqliteStorageEngine>());
-        services.AddSingleton<IRebuildLedger>(provider => provider.GetRequiredService<SqliteStorageEngine>().Ledger);
-        services.AddSingleton<IRebuildRecovery>(provider => provider.GetRequiredService<SqliteStorageEngine>().Ledger);
-        services.AddSingleton<IReplicaCopyFaults>(provider => provider.GetRequiredService<SqliteStorageEngine>().Ledger);
-        services.AddSingleton<IRebuildRepair>(provider => provider.GetRequiredService<SqliteStorageEngine>().Ledger);
-        services.AddSingleton(provider => provider.GetRequiredService<SqliteStorageEngine>().Member);
+        services.AddSingleton<IWalBackup>(provider => provider.GetRequiredService<TursoStorageEngine>());
+        services.AddSingleton<IRebuildStorage>(provider => provider.GetRequiredService<TursoStorageEngine>());
+        services.AddSingleton<IRebuildLedger>(provider => provider.GetRequiredService<TursoStorageEngine>().Ledger);
+        services.AddSingleton<IRebuildRecovery>(provider => provider.GetRequiredService<TursoStorageEngine>().Ledger);
+        services.AddSingleton<IReplicaCopyFaults>(provider => provider.GetRequiredService<TursoStorageEngine>().Ledger);
+        services.AddSingleton<IRebuildRepair>(provider => provider.GetRequiredService<TursoStorageEngine>().Ledger);
+        services.AddSingleton(provider => provider.GetRequiredService<TursoStorageEngine>().Member);
         // The peer streams' source: the CDC tailer of every database file.
         services.AddSingleton(provider => new TursoChangeGroupSource(
-            provider.GetRequiredService<SqliteStorageEngine>(), provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<TursoChangeGroupSource>>(),
+            provider.GetRequiredService<TursoStorageEngine>(), provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<TursoChangeGroupSource>>(),
             provider.GetService<IRemoteDurability>));
         services.AddSingleton<FaultAwareReplicaSource>();
         services.AddSingleton<IChangeGroupSource>(provider => provider.GetRequiredService<FaultAwareReplicaSource>());
         services.AddSingleton<IReplicaStates>(provider => provider.GetRequiredService<FaultAwareReplicaSource>());
         services.AddHostedService(provider => provider.GetRequiredService<TursoChangeGroupSource>());
         // The changes feed's 7-day retention.
-        services.AddSingleton(provider => new FeedRetention(provider.GetRequiredService<SqliteStorageEngine>(), provider.GetRequiredService<ILogger<FeedRetention>>()));
+        services.AddSingleton(provider => new FeedRetention(provider.GetRequiredService<TursoStorageEngine>(), provider.GetRequiredService<ILogger<FeedRetention>>()));
         services.AddHostedService(provider => provider.GetRequiredService<FeedRetention>());
-        // Shape sealing and snapshots open their derived-data transactions through the SQLite engine.
-        services.AddSingleton<IShapeStorage>(provider => new SqliteShapeStorage(provider.GetRequiredService<SqliteStorageEngine>()));
-        services.AddSingleton<IShapeSnapshotTransactions>(provider => new SqliteShapeSnapshotTransactions(provider.GetRequiredService<SqliteStorageEngine>()));
-        services.AddSingleton(provider => new StampingStorageEngine(provider.GetRequiredService<SqliteStorageEngine>()));
+        // Shape sealing and snapshots open their derived-data transactions through the Turso engine.
+        services.AddSingleton<IShapeStorage>(provider => new TursoShapeStorage(provider.GetRequiredService<TursoStorageEngine>()));
+        services.AddSingleton<IShapeSnapshotTransactions>(provider => new TursoShapeSnapshotTransactions(provider.GetRequiredService<TursoStorageEngine>()));
+        services.AddSingleton(provider => new StampingStorageEngine(provider.GetRequiredService<TursoStorageEngine>()));
         services.AddSingleton<IStorageEngine>(provider => provider.GetRequiredService<StampingStorageEngine>());
         return services.AddSingleton<IWriteStamps>(provider => provider.GetRequiredService<StampingStorageEngine>());
     }

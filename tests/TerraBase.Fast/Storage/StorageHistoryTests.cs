@@ -3,7 +3,7 @@ using System.Net;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Primitives;
 
@@ -73,7 +73,7 @@ public sealed class StorageHistoryTests
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { n = 1 }, cancellationToken: token)).Status.ShouldBe(HttpStatusCode.Created);
         (await api.PutAsync(DocumentApi.NewId(), new { n = 2 }, cancellationToken: token)).Status.ShouldBe(HttpStatusCode.Created);
-        var engine = native ? api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+        var engine = native ? api.Server.Services.GetRequiredService<TursoStorageEngine>()
             : api.Server.Services.GetRequiredService<IStorageEngine>();
         var tenant = await api.TenantOfAsync(cancellationToken: token);
         var store = (await engine.OpenDatabaseAsync(tenant, token))!;
@@ -99,7 +99,7 @@ public sealed class StorageHistoryTests
             else if (ending == "cancel")
             {
                 // Cancel inside native execution: a failed scan must still end Turso's transaction.
-                var nativeStore = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+                var nativeStore = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>()
                     .OpenDatabaseAsync(tenant, token))!;
                 await nativeStore.WriteLane.RunAsync(() => nativeStore.CurrentWriter()!.StopWhen(() =>
                 {
@@ -141,7 +141,7 @@ public sealed class StorageHistoryTests
         await using var api = await DocumentApi.StartAsync(cancellationToken: token);
         var seed = DocumentApi.NewId();
         (await api.PutAsync(seed, new { n = 1 }, cancellationToken: token)).Status.ShouldBe(HttpStatusCode.Created);
-        var engine = native ? api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+        var engine = native ? api.Server.Services.GetRequiredService<TursoStorageEngine>()
             : api.Server.Services.GetRequiredService<IStorageEngine>();
         var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(cancellationToken: token), token))!;
         var idA = DocumentApi.NewId();

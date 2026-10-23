@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -525,7 +525,7 @@ public sealed class A6LocalRebuildE2ETests
             var local = await Service<IReplicaStates>().DigestAsync(pair.Database, rebuilt, token)
                 ?? throw new InvalidOperationException("the rebuilt receiver refused its pinned digest");
             await Assert.That(local.Buckets.AsSpan().SequenceEqual(digest.Buckets)).IsTrue();
-            var store = (SqliteDatabaseStore)(await Service<SqliteStorageEngine>().OpenDatabaseAsync(pair.Database, token)
+            var store = (TursoDatabaseStore)(await Service<TursoStorageEngine>().OpenDatabaseAsync(pair.Database, token)
                 ?? throw new InvalidOperationException("the rebuilt copy is missing"));
             var (origin, incarnation, head) = await store.WithWriterAsync(session =>
             {

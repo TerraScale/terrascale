@@ -12,7 +12,7 @@ using Microsoft.Extensions.Options;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -138,7 +138,7 @@ public sealed class BenchmarkProcessHost
             await WaitForBootstrapAsync(api, root, directory, databaseIds, cancellationToken);
             await Assert.That(api.Server.Services.GetRequiredService<IRemoteDurability>().Confirms).IsTrue();
             var timing = api.Server.Services.GetRequiredService<CommitTiming>();
-            timing.Attach((SqliteDatabaseStore?)await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(
+            timing.Attach((TursoDatabaseStore?)await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(
                 new TenantContext(Get("organization"), PlanTier.Hobby, Get("project"), Get("database")), cancellationToken)
                 ?? throw new InvalidOperationException("benchmark database not open"));
             timing.Origin = api.Server.Services.GetRequiredService<LocalReplica>().Id.ToString();
@@ -728,14 +728,14 @@ public sealed class BenchmarkProcessHost
         private readonly AsyncLocal<List<long>?> _applyCommits = new();
         private long _nativeCommit;
         private long _dropped;
-        public SqliteDatabaseStore? Store { get; private set; }
+        public TursoDatabaseStore? Store { get; private set; }
         public string? Origin { get; set; }
 
-        public void Attach(SqliteDatabaseStore store)
+        public void Attach(TursoDatabaseStore store)
         {
             Store = store;
-            var previous = store.AfterSqliteCommit;
-            store.AfterSqliteCommit = () =>
+            var previous = store.AfterTursoCommit;
+            store.AfterTursoCommit = () =>
             {
                 Volatile.Write(ref _nativeCommit, Stopwatch.GetTimestamp());
                 previous?.Invoke();

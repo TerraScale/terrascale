@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 using TUnit.Core.Enums;
@@ -99,7 +99,7 @@ public sealed class HealthTests
         });
         using var client = tls.CreateClient(server.ClientAddress!);
         var provider = server.Services;
-        var engine = provider.GetRequiredService<SqliteStorageEngine>();
+        var engine = provider.GetRequiredService<TursoStorageEngine>();
         var pending = AssertProbeAsync(client, "/readyz", HttpStatusCode.ServiceUnavailable, "unavailable");
         try
         {
@@ -145,7 +145,7 @@ public sealed class HealthTests
             ConfigureReadiness(services, clock, barrier);
             services.AddSingleton<IStartupFilter>(requests);
         });
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         using var cancellation = new CancellationTokenSource();
         var pending = server.Client.GetAsync(new Uri("/readyz", UriKind.Relative), cancellation.Token);
         try
@@ -199,7 +199,7 @@ public sealed class HealthTests
         var barrier = new ProbeBarrier();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, services => ConfigureReadiness(services, clock, barrier));
         using var client = tls.CreateClient(server.ClientAddress!);
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var pending = Enumerable.Range(0, 16).Select(_ => AssertProbeAsync(client, "/readyz", HttpStatusCode.OK, "ready")).ToArray();
         try
         {
@@ -308,7 +308,7 @@ public sealed class HealthTests
             using var client = tls.CreateClient(server.ClientAddress!);
             await AssertProbeAsync(client, "/readyz", HttpStatusCode.OK, "ready");
 
-            var identityPath = Path.Combine(dataDirectory, TerraBase.Engine.Sqlite.ReplicaIdentityFile.FileName);
+            var identityPath = Path.Combine(dataDirectory, TerraBase.Engine.Turso.ReplicaIdentityFile.FileName);
             var identity = await File.ReadAllBytesAsync(identityPath);
 
             // A lost volume: nothing can be created in the data directory any more.
@@ -344,7 +344,7 @@ public sealed class HealthTests
         var before = Directory.GetFileSystemEntries(server.DataDirectory).Order(StringComparer.Ordinal).ToList();
 
         await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => AssertProbeAsync(server.Client, "/readyz", HttpStatusCode.OK, "ready")));
-        await server.Services.GetRequiredService<SqliteStorageEngine>().ReadinessProbeTask.WaitAsync(TimeSpan.FromSeconds(30));
+        await server.Services.GetRequiredService<TursoStorageEngine>().ReadinessProbeTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         await Assert.That(Directory.GetFileSystemEntries(server.DataDirectory).Order(StringComparer.Ordinal).ToList()).IsEquivalentTo(before);
     }
@@ -354,11 +354,11 @@ public sealed class HealthTests
     {
         // Keep background pressure sampling independent of the manually advanced readiness clock.
         services.AddSingleton<TimeProvider>(new FakeTimeProvider());
-        var registration = services.Single(service => service.ServiceType == typeof(SqliteStorageEngine));
+        var registration = services.Single(service => service.ServiceType == typeof(TursoStorageEngine));
         services.Remove(registration);
         services.AddSingleton(provider =>
         {
-            var engine = (SqliteStorageEngine)registration.ImplementationFactory!(provider);
+            var engine = (TursoStorageEngine)registration.ImplementationFactory!(provider);
             engine.ReadinessClock = clock;
             engine.BeforeReadinessProbe = barrier.HoldAsync;
             return engine;

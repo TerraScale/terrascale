@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 
@@ -21,8 +21,8 @@ public sealed class GcPresenceTests
         var machine = cluster["gru"];
         var member = machine.Api.Server.Services.GetRequiredService<LocalReplica>();
         var peer = new ReplicaId(member.Id.Value == 1 ? 2UL : 1UL);
-        var engine = machine.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+        var engine = machine.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
         var placement = new DatabasePlacement("gru", placed && !allRegions ? ["sjc"] : [], 1, allRegions);
         member.Presence.Listed([("unheard", "sjc")], member.Clock.Tick().Milliseconds);
         clock.Offset = TimeSpan.FromDays(2);
@@ -32,7 +32,7 @@ public sealed class GcPresenceTests
         member.Presence.Heard("unheard", peer, now.Milliseconds);
         await AssertBoundsAsync(held: placed);
 
-        await using (var write = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        await using (var write = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             await write.RecordAppliedAsync(peer, now, CancellationToken.None);
             await write.RecordStableAsync(peer, now, clock.GetUtcNow(), CancellationToken.None);
@@ -45,7 +45,7 @@ public sealed class GcPresenceTests
 
         async Task AssertBoundsAsync(bool held)
         {
-            await using var read = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None);
+            await using var read = (TursoStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None);
             await Assert.That((await read.GetStableAsync(now, CancellationToken.None, placement)).Value).IsEqualTo(held ? 0UL : now.Value);
             await Assert.That((await read.GetHorizonAsync(now, CancellationToken.None, placement)).Value > 0).IsEqualTo(!held);
         }
@@ -59,9 +59,9 @@ public sealed class GcPresenceTests
         var machine = cluster["gru"];
         var member = machine.Api.Server.Services.GetRequiredService<LocalReplica>();
         var peer = new ReplicaId(member.Id.Value == 1 ? 2UL : 1UL);
-        var engine = machine.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
-        await using (var write = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        var engine = machine.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+        await using (var write = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             await write.RecordStableAsync(peer, default, clock.GetUtcNow(), CancellationToken.None);
             _ = await write.CommitAsync(CancellationToken.None);
@@ -78,7 +78,7 @@ public sealed class GcPresenceTests
         var replacement = new ReplicaId(member.Id.Value == 3 ? 4UL : 3UL);
         var covered = member.Clock.Tick();
         member.Presence.Heard("partitioned", replacement, covered.Milliseconds);
-        await using (var write = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        await using (var write = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             await write.RecordAppliedAsync(replacement, covered, CancellationToken.None);
             await write.RecordStableAsync(replacement, covered, clock.GetUtcNow(), CancellationToken.None);
@@ -87,7 +87,7 @@ public sealed class GcPresenceTests
 
         await AssertHeldAsync();
         clock.Offset = TimeSpan.FromDays(3) + TimeSpan.FromMinutes(1);
-        await using (var remapped = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        await using (var remapped = (TursoStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
         {
             await Assert.That(await remapped.GetStableAsync(member.Clock.Tick(), CancellationToken.None)).IsEqualTo(covered);
         }
@@ -99,14 +99,14 @@ public sealed class GcPresenceTests
         member.Presence.Listed([], member.Clock.Tick().Milliseconds);
         await AssertHeldAsync();
         clock.Offset = TimeSpan.FromDays(6);
-        await using var read = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        await using var read = (TursoStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None);
         var now = member.Clock.Tick();
         await Assert.That(await read.GetStableAsync(now, CancellationToken.None)).IsEqualTo(now);
         await Assert.That((await read.GetHorizonAsync(now, CancellationToken.None)).Value).IsGreaterThan(0UL);
 
         async Task AssertHeldAsync()
         {
-            await using var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None);
+            await using var transaction = (TursoStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None);
             var now = member.Clock.Tick();
             await Assert.That((await transaction.GetStableAsync(now, CancellationToken.None)).Value).IsEqualTo(0UL);
             await Assert.That((await transaction.GetHorizonAsync(now, CancellationToken.None)).Value).IsEqualTo(0UL);
