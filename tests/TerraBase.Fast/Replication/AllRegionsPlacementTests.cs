@@ -135,7 +135,7 @@ public sealed class AllRegionsPlacementTests
                 if (await Api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None) is { } store)
                 {
                     await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-                    if (await transaction.GetAsync(Collection, id, CancellationToken.None) is not null)
+                    if (await transaction.GetAsync(Collection, ManagementApi.DocumentId(id), CancellationToken.None) is not null)
                     {
                         return true;
                     }
