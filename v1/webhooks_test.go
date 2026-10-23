@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	tb "terrascale.tech/sdk/v1"
@@ -52,20 +53,32 @@ func TestWebhookContracts(t *testing.T) {
 			if attempted {
 				fields = `"lastAttemptAt":"2026-10-23T12:00:00Z","nextAttemptAt":"2026-10-23T12:00:01Z","httpStatus":503,"errorCode":"http_error"`
 			}
-			reply := `[{"id":"` + parityID + `","createdAt":"2026-10-23T12:00:00Z","status":"pending","attempts":1,` + fields + `}]`
+			reply := `[{"id":"` + parityID + `","createdAt":"2026-10-23T12:00:00Z","status":"pending","attempts":2147483648,` + fields + `}]`
 			col := parityClient(t, http.MethodGet, webhookPath+"/"+parityID+"/deliveries", "after="+parityID+"&limit=1", "", reply, http.StatusOK).Database(parityProject, "main").Collection("users")
 			out, err := col.WebhookDeliveries(t.Context(), parityID, tb.WebhookListOptions{After: parityID, Limit: 1})
 			if err != nil || len(out) != 1 {
 				t.Fatalf("deliveries failed: %v", err)
 			}
 			d := out[0]
-			if d.ID != parityID || d.CreatedAt.IsZero() || d.Status != "pending" || d.Attempts != 1 || (d.LastAttemptAt != nil) != attempted || (d.NextAttemptAt != nil) != attempted || (d.HTTPStatus != nil) != attempted || (d.ErrorCode != nil) != attempted {
+			if d.ID != parityID || d.CreatedAt.IsZero() || d.Status != "pending" || d.Attempts != 2147483648 || (d.LastAttemptAt != nil) != attempted || (d.NextAttemptAt != nil) != attempted || (d.HTTPStatus != nil) != attempted || (d.ErrorCode != nil) != attempted {
 				t.Fatal("delivery fields did not preserve nullability")
 			}
 			if attempted && (*d.HTTPStatus != 503 || *d.ErrorCode != "http_error") {
 				t.Fatal("delivery failure fields were lost")
 			}
 		})
+	}
+}
+
+func TestCreatedWebhookFormattingRedactsSecret(t *testing.T) {
+	hook := tb.CreatedWebhook{Secret: "synthetic-secret-never-log"}
+	for _, value := range []any{hook, &hook} {
+		for _, format := range []string{"%v", "%+v", "%#v", "%s", "%q"} {
+			got := fmt.Sprintf(format, value)
+			if strings.Contains(got, hook.Secret) || !strings.Contains(got, "secret redacted") {
+				t.Fatal("webhook formatting must redact the signing secret")
+			}
+		}
 	}
 }
 

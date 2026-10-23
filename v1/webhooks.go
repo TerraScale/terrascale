@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,6 +26,9 @@ type CreatedWebhook struct {
 	Secret string `json:"secret"`
 }
 
+func (CreatedWebhook) String() string                  { return "terrabase webhook (secret redacted)" }
+func (hook CreatedWebhook) Format(f fmt.State, _ rune) { fmt.Fprint(f, hook.String()) }
+
 // WebhookDelivery is a retained delivery attempt record, without its body or secrets.
 // Status is pending or delivered. ErrorCode is nil, http_error, transport_error,
 // or target_rejected. At most the latest 100 records per webhook are retained.
@@ -32,7 +36,7 @@ type WebhookDelivery struct {
 	ID            string     `json:"id" ulid:"required"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	Status        string     `json:"status"`
-	Attempts      int        `json:"attempts"`
+	Attempts      int64      `json:"attempts"`
 	LastAttemptAt *time.Time `json:"lastAttemptAt"`
 	NextAttemptAt *time.Time `json:"nextAttemptAt"`
 	HTTPStatus    *int       `json:"httpStatus"`
