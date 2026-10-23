@@ -42,10 +42,14 @@ public sealed class ImportClient : IAsyncDisposable
     public ImportClient For(string project) => new(Api, project, Api.WithToken(Token(Api, project, AllScopes)), ownsApi: false);
 
     /// <summary>A project access token for <paramref name="project"/> with <paramref name="scopes"/>.</summary>
-    public static string Token(ManagementApi api, string project, string scopes) => api.Issuer.Mint(EntityIds.New().ToString(), token =>
+    public static string Token(ManagementApi api, string project, string scopes, DateTime? expires = null) => api.Issuer.Mint(EntityIds.New().ToString(), token =>
     {
         token.Claims["project_id"] = project;
         token.Claims["scope"] = scopes;
+        if (expires is { } expiration)
+        {
+            token.Expires = expiration;
+        }
     });
 
     /// <summary>Creates a new destination the documented way and returns its import route.</summary>
@@ -93,19 +97,19 @@ public sealed class ImportClient : IAsyncDisposable
         return (response.StatusCode, await ReadAsync(response));
     }
 
-    public async Task<JsonElement> GetAsync(string import)
+    public async Task<JsonElement> GetAsync(string import, CancellationToken cancellationToken = default)
     {
-        using var response = await Client.GetAsync(Uri(import));
-        return await ReadAsync(response);
+        using var response = await Client.GetAsync(Uri(import), cancellationToken);
+        return await ReadAsync(response, cancellationToken);
     }
 
     /// <summary>Polls until the job reaches one of <paramref name="states"/>.</summary>
     public async Task<JsonElement> WaitAsync(string import, params string[] states)
     {
         JsonElement job = default;
-        await TerraBaseTestServer.EventuallyAsync(async _ =>
+        await TerraBaseTestServer.EventuallyAsync(async cancellationToken =>
         {
-            job = await GetAsync(import);
+            job = await GetAsync(import, cancellationToken);
             return states.Contains(job.GetProperty("state").GetString());
         }, TimeSpan.FromSeconds(120));
         return job;
@@ -165,9 +169,9 @@ public sealed class ImportClient : IAsyncDisposable
         }
     }
 
-    private static async Task<JsonElement> ReadAsync(HttpResponseMessage response)
+    private static async Task<JsonElement> ReadAsync(HttpResponseMessage response, CancellationToken cancellationToken = default)
     {
-        var text = await response.Content.ReadAsStringAsync();
+        var text = await response.Content.ReadAsStringAsync(cancellationToken);
         return text.Length == 0 ? default : JsonElement.Parse(text);
     }
 
