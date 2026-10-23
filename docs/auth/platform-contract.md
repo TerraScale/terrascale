@@ -380,8 +380,9 @@ tokens expire:
 
 - **Invitations** go to an email address, for an organization role or (with
   `project_id`) a project role. They expire after 7 days and work once.
-  ts-auth emails the invitee a link to `TS_AUTH_INVITATION_URL?token=<token>`
-  (the dashboard's accept page). The create call also answers the token once,
+  ts-auth emails the invitee a link to the dashboard's accept page,
+  `<dashboard origin>/invitations/<token>`, where the origin is that of the
+  first `TS_AUTH_DASHBOARD_REDIRECT_URIS` entry. The create call also answers the token once,
   for callers that deliver it themselves. The token is `tsi_` and 52 base32
   characters; only its SHA-256 is stored.
 - **Accepting and declining** need a sign-in token whose `email` is verified and

@@ -33,7 +33,6 @@ public sealed partial record AuthOptions
         "dashboard-post-logout-redirect-uris",
         "access-token-audiences",
         "service-clients",
-        "invitation-url",
         "terrabase-url",
         "environment");
 
@@ -89,12 +88,6 @@ public sealed partial record AuthOptions
 
     /// <summary>Confidential service clients allowed the client-credentials grant, registered at startup.</summary>
     public IReadOnlyList<ServiceClientOptions> ServiceClients { get; init; } = [];
-
-    /// <summary>
-    /// The dashboard page that accepts an invitation (TS-598); invitation emails link to it with <c>?token=</c>. Without
-    /// it no invitation email is sent and callers deliver the token they are answered.
-    /// </summary>
-    public Uri? InvitationUrl { get; init; }
 
     /// <summary>
     /// Origin of the TerraBase internal listener that holds ts-auth's storage (<c>TS_AUTH_TERRABASE_URL</c>, for example
@@ -240,7 +233,6 @@ public sealed partial record AuthOptions
             DashboardClient = ParseDashboardClient(Optional("dashboard-client-secret"), Optional("dashboard-redirect-uris"), Optional("dashboard-post-logout-redirect-uris")),
             AccessTokenAudiences = [.. ParseAudiences(Optional("access-token-audiences")).Prepend(TerraBaseAudience).Distinct(StringComparer.Ordinal)],
             ServiceClients = ParseServiceClients(Optional("service-clients")),
-            InvitationUrl = Optional("invitation-url") is { } invitationUrl ? ParseInvitationUrl(invitationUrl, development) : null,
             TerraBaseUrl = Optional("terrabase-url") is { } terraBaseUrl ? ParseOrigin("terrabase-url", terraBaseUrl) : null,
             Development = development,
         };
@@ -372,13 +364,6 @@ public sealed partial record AuthOptions
         secret.Length is >= 32 and <= 512 && !secret.Any(character => char.IsWhiteSpace(character) || char.IsControl(character) || character == ';');
 
     // Exact strings, compared byte for byte by resource servers: never normalized (Uri would add a trailing slash).
-    // An exact HTTPS page (HTTP only for loopback in Development) without credentials, query or fragment: ?token= follows.
-    private static Uri ParseInvitationUrl(string raw, bool development) =>
-        Uri.TryCreate(raw, UriKind.Absolute, out var url) && string.IsNullOrEmpty(url.UserInfo) && string.IsNullOrEmpty(url.Query) && string.IsNullOrEmpty(url.Fragment)
-            && (url.Scheme == Uri.UriSchemeHttps || development && url.Scheme == Uri.UriSchemeHttp && url.IsLoopback)
-            ? url
-            : throw Invalid("TS_AUTH_INVITATION_URL must be an absolute HTTPS URL without credentials, query or fragment");
-
     private static string[] ParseAudiences(string? raw)
     {
         var values = (raw ?? string.Empty).Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
