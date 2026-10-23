@@ -53,7 +53,7 @@ public static class OrganizationWizard
         if (http.Request.Query["payment"] == "success" && context.Role == "owner")
         {
             await http.RequestServices.GetRequiredService<StripeBilling>().ConfirmAsync(context, http.RequestAborted);
-            context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted);
+            context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
         }
         return context;
     }

@@ -37,19 +37,23 @@ public static class BillingEndpoints
                 History = new([], InvoiceHistory.ForBrowser([], query, now), InvoiceHistory.Summarize([], now), now, "", internalControls.OrganizationCapCents)
             };
         }
-        var changes = await BillingPlanPresentation.ForAsync(page, billing, query, now, cancellationToken);
+        // The plan changes, the payment method and the invoices are separate Stripe reads; they run together.
+        var changesRead = BillingPlanPresentation.ForAsync(page, billing, query, now, cancellationToken);
+        var paymentMethodRead = billing.PaymentMethodAsync(shell.Context, cancellationToken);
+        var invoicesRead = billing.InvoicesAsync(shell.Context, cancellationToken);
         BillingCard? paymentMethod = null;
         var paymentMethodUnavailable = false;
-        try { paymentMethod = await billing.PaymentMethodAsync(shell.Context, cancellationToken); }
+        try { paymentMethod = await paymentMethodRead; }
         catch (Exception error) when (error is HttpRequestException or StripeException or BillingPaymentMethodUnavailableException ||
                                       error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         { paymentMethodUnavailable = true; }
         IReadOnlyList<BillingInvoice> invoices = [];
         var errorMessage = "";
-        try { invoices = await billing.InvoicesAsync(shell.Context, cancellationToken); }
+        try { invoices = await invoicesRead; }
         catch (Exception error) when (error is HttpRequestException or IOException or StripeException ||
                                       error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         { errorMessage = "Payment history could not be loaded. Apply the filters to retry."; }
+        var changes = await changesRead;
         return page with
         {
             PlanChanges = changes,

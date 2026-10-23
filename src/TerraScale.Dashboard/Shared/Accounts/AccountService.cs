@@ -131,17 +131,29 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
     public async Task<AccountContext> GetContextAsync(SessionRecord session, CancellationToken cancellationToken,
         string? organizationId = null, string? projectId = null)
     {
+        // The account and ts-auth's organization list load together; a Personal organization this call just
+        // created is listed again below, so the parallel list never hides it.
+        var listing = platform.ListOrganizationsAsync(session, cancellationToken);
         var account = await EnsureAsync(session, cancellationToken);
-        var organizations = new List<OrganizationRecord>();
+        var lives = await listing;
+        if (account.PersonalOrganizationId.Length != 0 && lives.All(live => live.Id != account.PersonalOrganizationId))
+            lives = await platform.ListOrganizationsAsync(session, cancellationToken);
+        // The organization this view selects also needs its members and ownership transfer; they load with its projects.
+        var accessFor = organizationId ?? (projectId is null ? account.ActiveOrganizationId : null);
+        var prefetched = new System.Collections.Concurrent.ConcurrentDictionary<string, OrganizationAccess>(StringComparer.Ordinal);
+        async Task HydrateSelectedAsync(OrganizationRecord org) =>
+            ApplyAccess(org, session, prefetched.TryGetValue(org.Id, out var access) ? access : await FetchAccessAsync(session, org.Id, cancellationToken));
         // A project collaborator has no organization role (role null) and no organization view.
-        foreach (var live in await platform.ListOrganizationsAsync(session, cancellationToken))
+        var loaded = await Task.WhenAll(lives.Where(live => live.Role is { Length: > 0 } && TerraScaleIds.IsValid(live.Id)).Select(async live =>
         {
-            if (live.Role is not { Length: > 0 } || !TerraScaleIds.IsValid(live.Id)) continue;
             // Only a platform admin, checked against the signed access token on every request, sees the platform organization.
             var platformOrg = PlatformDatabases.IsPlatform(live.Id);
-            if (platformOrg && await roles.PlatformRoleAsync(session, cancellationToken) != "admin") continue;
-            var org = await OrganizationStateAsync(live, cancellationToken);
-            Hydrate(org, live, await platform.ListProjectsAsync(session, live.Id, cancellationToken), session);
+            if (platformOrg && await roles.PlatformRoleAsync(session, cancellationToken) != "admin") return null;
+            var access = live.Id == accessFor ? FetchAccessAsync(session, live.Id, cancellationToken) : null;
+            var stored = OrganizationStateAsync(live, cancellationToken);
+            var projects = platform.ListProjectsAsync(session, live.Id, cancellationToken);
+            var org = await stored;
+            Hydrate(org, live, await projects, session);
             await plans.PublishAsync(org, cancellationToken);
             if (platformOrg)
             {
@@ -149,28 +161,31 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
                 // Listed without databases while TerraBase does not answer; never cached.
                 catch (Exception error) when (error is HttpRequestException or AccountAccessException or JsonException or KeyNotFoundException or InvalidOperationException) { }
             }
-            if (org.ContainsMember(session.UserId)) organizations.Add(org);
-        }
+            if (!org.ContainsMember(session.UserId)) return null;
+            if (access is not null) prefetched[org.Id] = await access;
+            return org;
+        }));
+        var organizations = loaded.OfType<OrganizationRecord>().ToList();
         if (organizationId is not null || projectId is not null)
         {
             var selected = organizations.SingleOrDefault(org => (organizationId is null || org.Id == organizationId) &&
                 (projectId is null || org.Projects.ContainsKey(projectId)))
                 ?? throw new AccountAccessException("Workspace is unavailable.", 404);
-            await HydrateAccessAsync(selected, session, cancellationToken);
+            await HydrateSelectedAsync(selected);
             var selectedProject = projectId is null ? DefaultProject(selected) : selected.Projects[projectId];
             if (selectedProject is not null && selectedProject.OrganizationId != selected.Id)
                 throw new AccountAccessException("Project belongs to another organization.");
             var selectedContext = new AccountContext(session, account, organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray(), selected, selectedProject);
             await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(state, selectedContext, cancellationToken);
-            return selectedContext;
+            return selectedContext with { Loaded = ServerTiming.Now() };
         }
         var active = organizations.FirstOrDefault(item => item.Id == account.ActiveOrganizationId);
-        if (active is not null) await HydrateAccessAsync(active, session, cancellationToken);
+        if (active is not null) await HydrateSelectedAsync(active);
         var project = active?.Projects.GetValueOrDefault(account.ActiveProjectId);
         if (active is null && organizations.Count > 0)
         {
             active = organizations.OrderBy(item => item.Kind != "personal").ThenBy(item => item.Name).First();
-            await HydrateAccessAsync(active, session, cancellationToken);
+            await HydrateSelectedAsync(active);
             project = DefaultProject(active);
             await UpdateAccountAsync(session, current =>
             {
@@ -184,7 +199,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         if (project is not null && project.OrganizationId != active!.Id) throw new AccountAccessException("Project belongs to another organization.");
         var context = new AccountContext(session, account, organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray(), active, project);
         await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(state, context, cancellationToken);
-        return context;
+        return context with { Loaded = ServerTiming.Now() };
     }
 
     // An organization created outside the dashboard starts as a business workspace that needs billing.
@@ -231,9 +246,22 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
 
     // Members, the owner and a pending ownership transfer as ts-auth holds them now. Stored
     // member entries contribute only display names; they never decide membership.
-    public async Task HydrateAccessAsync(OrganizationRecord org, SessionRecord session, CancellationToken cancellationToken)
+    public async Task HydrateAccessAsync(OrganizationRecord org, SessionRecord session, CancellationToken cancellationToken) =>
+        ApplyAccess(org, session, await FetchAccessAsync(session, org.Id, cancellationToken));
+
+    private sealed record OrganizationAccess(IReadOnlyList<TerraScaleAuthPlatformMember> Members, TerraScaleAuthPlatformOwnershipTransfer? Transfer);
+
+    // The two ts-auth reads are independent, so they run together.
+    private async Task<OrganizationAccess> FetchAccessAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
     {
-        var members = await platform.ListMembersAsync(session, org.Id, cancellationToken);
+        var members = platform.ListMembersAsync(session, organizationId, cancellationToken);
+        var transfer = platform.GetOwnershipTransferAsync(session, organizationId, cancellationToken);
+        return new(await members, await transfer);
+    }
+
+    private static void ApplyAccess(OrganizationRecord org, SessionRecord session, OrganizationAccess access)
+    {
+        var members = access.Members;
         var saved = org.Members;
         org.Members = members.ToDictionary(member => member.UserId, member => new MemberRecord
         {
@@ -246,9 +274,8 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         });
         var owners = members.Where(member => member.Role == "owner").Select(member => member.UserId).Order(StringComparer.Ordinal).ToArray();
         org.OwnerUserId = owners.Contains(session.UserId) ? session.UserId : owners.FirstOrDefault() ?? "";
-        var transfer = await platform.GetOwnershipTransferAsync(session, org.Id, cancellationToken);
-        org.PendingOwnerUserId = transfer?.ToUserId ?? "";
-        org.PendingOwnerExpiresAt = transfer?.ExpiresAt;
+        org.PendingOwnerUserId = access.Transfer?.ToUserId ?? "";
+        org.PendingOwnerExpiresAt = access.Transfer?.ExpiresAt;
     }
 
     // The caller's live ts-auth role decides; a demoted owner stops being this view's owner.

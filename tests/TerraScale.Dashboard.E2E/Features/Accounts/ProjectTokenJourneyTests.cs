@@ -45,6 +45,32 @@ public sealed class ProjectTokenJourneyTests
         await Assert.That(scenario.Issuer.Failures).IsEmpty();
     }
 
+    [Test]
+    public async Task OneExchangedProjectTokenServesRepeatedPageLoads()
+    {
+        await using var scenario = await TokenScenario.StartAsync();
+        using var client = scenario.Client();
+        using (var login = await HttpJourney.LoginAsync(client)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        for (var load = 0; load < 3; load++)
+        {
+            using var page = await client.GetAsync("/analytics?range=24h");
+            await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(page.Headers.GetValues("Server-Timing").Single()).StartsWith("app;dur=");
+        }
+        await Assert.That(scenario.Issuer.Exchanges).IsEqualTo(1).Because("a page reuses the session's exchanged project token instead of asking ts-auth again");
+        await Assert.That(scenario.Recorder.Bearers.Select(bearer => bearer.Token).Distinct().Single()).IsEqualTo(scenario.Issuer.LastToken);
+
+        // Another session never shares the token, and a failed exchange is never reused: its next load asks ts-auth again.
+        using var other = scenario.Client();
+        using (var login = await HttpJourney.LoginAsync(other)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        scenario.Issuer.Fault = "expired";
+        using (var page = await other.GetAsync("/analytics?range=24h")) await Assert.That(await page.Content.ReadAsStringAsync()).Contains("Analytics unavailable");
+        scenario.Issuer.Fault = "";
+        using (var page = await other.GetAsync("/analytics?range=24h")) await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(scenario.Issuer.Exchanges).IsEqualTo(3);
+        await Assert.That(scenario.Issuer.Failures).IsEmpty();
+    }
+
     private sealed class TokenScenario : IAsyncDisposable
     {
         private readonly DemoEnvironment environment = new();

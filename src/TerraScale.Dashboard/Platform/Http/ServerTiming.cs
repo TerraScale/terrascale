@@ -1,0 +1,94 @@
+using System.Diagnostics;
+using System.Globalization;
+
+namespace TerraScale.Dashboard.Platform.Http;
+
+// Per-request time spent waiting on each upstream, so a slow page names the dependency it waited on.
+// Browsers show the Server-Timing header in their network panel; the log line keeps prod regressions visible.
+public sealed class ServerTiming
+{
+    private static readonly AsyncLocal<ServerTiming?> Current = new();
+    private readonly Stopwatch clock = Stopwatch.StartNew();
+    private readonly Lock gate = new();
+    private readonly Dictionary<string, (int Calls, double Ms)> upstreams = new(StringComparer.Ordinal);
+    private int writes;
+    private bool reads;
+
+    // A point in this request's upstream history: it stays current until the request sends something that can change
+    // state (a state write, or a ts-auth or Stripe mutation), so a value read before it is still as fresh as a re-read.
+    public sealed record Mark(ServerTiming Request, int Writes)
+    {
+        public bool Current => ServerTiming.Current.Value == Request && Volatile.Read(ref Request.writes) == Writes;
+    }
+
+    // Only page loads (GET and HEAD) reuse reads; a form post always re-reads what it changes.
+    public static Mark? Now() => Current.Value is { reads: true } timing ? new(timing, Volatile.Read(ref timing.writes)) : null;
+
+    // Token exchange and refresh grants change no account, organization or billing state.
+    private static bool Mutates(HttpRequestMessage request) =>
+        request.Method != HttpMethod.Get && request.Method != HttpMethod.Head && request.Method != HttpMethod.Options &&
+        !(Upstream(request.RequestUri) == "auth" && request.RequestUri!.AbsolutePath.EndsWith("/oauth/token", StringComparison.Ordinal));
+
+    // Upstream names by host: ts-auth, TerraBase's public API, the dashboard's own state database, Stripe.
+    public static string Upstream(Uri? uri) => uri?.Host switch
+    {
+        "auth.terrascale.tech" => "auth",
+        "api.stripe.com" => "stripe",
+        "127.0.0.1" or "localhost" or "::1" => "state",
+        { } host when host.EndsWith("api.terrascale.tech", StringComparison.Ordinal) => "terrabase",
+        _ => "other",
+    };
+
+    public void Record(string upstream, double ms)
+    {
+        lock (gate)
+        {
+            var (calls, total) = upstreams.GetValueOrDefault(upstream);
+            upstreams[upstream] = (calls + 1, total + ms);
+        }
+    }
+
+    // Calls that overlap add up, so an upstream's total can exceed the page's own time when they ran in parallel.
+    public string Header()
+    {
+        var parts = new List<string> { Metric("app", clock.Elapsed.TotalMilliseconds, "") };
+        lock (gate) parts.AddRange(upstreams.OrderBy(entry => entry.Key, StringComparer.Ordinal).Select(entry => Metric(entry.Key, entry.Value.Ms, entry.Value.Calls + " calls")));
+        return string.Join(", ", parts);
+    }
+
+    private static string Metric(string name, double ms, string description) =>
+        name + ";dur=" + ms.ToString("0.0", CultureInfo.InvariantCulture) + (description.Length == 0 ? "" : ";desc=\"" + description + "\"");
+
+    public static async Task MiddlewareAsync(HttpContext context, Func<Task> next, ILogger logger)
+    {
+        var timing = new ServerTiming { reads = HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method) };
+        Current.Value = timing;
+        context.Response.OnStarting(() =>
+        {
+            context.Response.Headers["Server-Timing"] = timing.Header();
+            return Task.CompletedTask;
+        });
+        try { await next(); }
+        finally
+        {
+            bool called;
+            lock (timing.gate) called = timing.upstreams.Count > 0;
+            if (context.GetEndpoint() is not null && called)
+                logger.LogInformation("Page timing {Method} {Path} {Status}: {Timing}", context.Request.Method, context.Request.Path.Value, context.Response.StatusCode, timing.Header());
+        }
+    }
+
+    // Times every request sent through a dashboard HttpClient into the current page's record.
+    public sealed class Handler : DelegatingHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var timing = Current.Value;
+            if (timing is null) return await base.SendAsync(request, cancellationToken);
+            if (Mutates(request)) Interlocked.Increment(ref timing.writes);
+            var started = Stopwatch.GetTimestamp();
+            try { return await base.SendAsync(request, cancellationToken); }
+            finally { timing.Record(Upstream(request.RequestUri), Stopwatch.GetElapsedTime(started).TotalMilliseconds); }
+        }
+    }
+}

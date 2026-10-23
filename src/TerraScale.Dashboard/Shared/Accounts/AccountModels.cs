@@ -208,6 +208,8 @@ public sealed record AccountContext(SessionRecord Session, AccountRecord Account
     public string Role => Organization?.RoleFor(UserId) ?? "";
     public bool CanManage => Organization?.CanManage(UserId) ?? false;
     public bool CanWrite => Organization?.CanWrite(UserId) ?? false;
+    // When this request loaded the context from ts-auth; AccountScope reuses it while nothing has changed since.
+    [System.Text.Json.Serialization.JsonIgnore] public ServerTiming.Mark? Loaded { get; init; }
 }
 
 // One in-flight invitation: its email, when the slot was taken and, once ts-auth answered, its id.

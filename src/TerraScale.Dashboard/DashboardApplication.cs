@@ -64,11 +64,14 @@ public static class DashboardApplication
         builder.Services.AddSingleton<IProfileTokens>(services => services.GetRequiredService<AccessTokens>());
         builder.Services.AddDashboardMcp();
         builder.Services.AddDashboardContracts();
+        builder.Services.AddTransient<ServerTiming.Handler>();
         builder.Services.AddHttpClient("platform", client => client.Timeout = TimeSpan.FromSeconds(30))
-            .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler);
+            .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
+            .AddHttpMessageHandler<ServerTiming.Handler>();
         builder.Services.AddTransient<TerraBasePeerCredential>();
         builder.Services.AddHttpClient(TerraBaseDashboardState.ClientName, client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
+            .AddHttpMessageHandler<ServerTiming.Handler>()
             .AddHttpMessageHandler<TerraBasePeerCredential>();
         configureTestHost?.Invoke(builder);
         var app = builder.Build();
@@ -76,6 +79,8 @@ public static class DashboardApplication
         // ts-orch's TLS edge on the same host proxies over loopback. Only loopback peers (the default known
         // proxies) may set the scheme and client IP; a browser's own forwarding headers never reach past the edge.
         app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto });
+        var timingLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ServerTiming");
+        app.Use((context, next) => ServerTiming.MiddlewareAsync(context, next, timingLogger));
         app.Use(async (context, next) =>
         {
             var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));

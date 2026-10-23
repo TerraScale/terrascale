@@ -210,10 +210,12 @@ public static class DataEndpoints
             if (section == "documents" && collections.Count > 0)
             {
                 // Counts are an optional producer measurement. Omit unavailable
-                // counts while retaining independently available document rows.
-                try { collectionCounts = await data.CollectionCountsAsync(context, id, http.RequestAborted); }
+                // counts while retaining independently available document rows; both reads run together.
+                var countsRead = data.CollectionCountsAsync(context, id, http.RequestAborted);
+                var browseRead = data.BrowseAsync(context, id, collection, search, sort, descending, int.TryParse(BrowseValue("page"), out var page) ? page : 1, http.RequestAborted);
+                try { collectionCounts = await countsRead; }
                 catch (Exception error) when (error is HttpRequestException or JsonException || DatabaseResults.KnownFailure(error)) { }
-                browse = await data.BrowseAsync(context, id, collection, search, sort, descending, int.TryParse(BrowseValue("page"), out var page) ? page : 1, http.RequestAborted);
+                browse = await browseRead;
                 if (dialog.Length == 0 && (http.Request.Query["edit"].ToString() is { Length: > 0 } edit))
                 {
                     var selected = await data.GetAsync(context, id, collection, edit, http.RequestAborted);
