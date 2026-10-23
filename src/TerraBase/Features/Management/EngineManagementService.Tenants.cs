@@ -58,6 +58,10 @@ internal sealed partial class EngineManagementService
     // Serializes insertions so concurrent misses cannot grow a cache past MaxCachedTenants; never held across an await.
     private readonly Lock _cacheInsertion = new();
 
+    // The running catalog read of each missed key at one commit sequence, removed when it ends, so bounded by concurrent requests.
+    private readonly Lock _missGate = new();
+    private readonly Dictionary<(string Kind, string Organization, string Project, string Database), (long Sequence, Task Read)> _misses = [];
+
     public async ValueTask<FindDatabaseResult> FindDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
         var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
@@ -67,7 +71,8 @@ internal sealed partial class EngineManagementService
             return cached.Tenant;
         }
 
-        var found = await FindUncachedAsync(organizationId, projectId, database, cancellationToken).ConfigureAwait(false);
+        var found = await ShareMissAsync("tenant", key, sequence, token => FindUncachedAsync(organizationId, projectId, database, token), cancellationToken)
+            .ConfigureAwait(false);
         if (found is TenantContext tenant)
         {
             Cache(_tenants, key, sequence, tenant);
@@ -92,6 +97,54 @@ internal sealed partial class EngineManagementService
 
             cache[key] = (sequence, value);
         }
+    }
+
+    // Every catalog commit invalidates the caches above, and every request of a fan-out (a thousand shape readers) then misses
+    // together: concurrent misses of one key at one sequence share one read instead of each reading the same rows. The read runs
+    // without the first caller's ambient context and cancellation; a caller inside a commit transaction reads its own.
+    private async ValueTask<T> ShareMissAsync<T>(
+        string kind, (string, string, string) key, long sequence, Func<CancellationToken, ValueTask<T>> read, CancellationToken cancellationToken)
+    {
+        if (CommitTransaction.Value is not null)
+        {
+            return await read(cancellationToken).ConfigureAwait(false);
+        }
+
+        var id = (kind, key.Item1, key.Item2, key.Item3);
+        Task<T> shared;
+        lock (_missGate)
+        {
+            if (_misses.TryGetValue(id, out var running) && running.Sequence == sequence)
+            {
+                shared = (Task<T>)running.Read;
+            }
+            else
+            {
+                var flow = ExecutionContext.IsFlowSuppressed() ? (AsyncFlowControl?)null : ExecutionContext.SuppressFlow();
+                try
+                {
+                    shared = Task.Run(async () => await read(CancellationToken.None).ConfigureAwait(false), CancellationToken.None);
+                }
+                finally
+                {
+                    flow?.Undo();
+                }
+
+                _misses[id] = (sequence, shared);
+                _ = shared.ContinueWith(_ =>
+                {
+                    lock (_missGate)
+                    {
+                        if (_misses.TryGetValue(id, out var current) && current.Read == shared)
+                        {
+                            _misses.Remove(id);
+                        }
+                    }
+                }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            }
+        }
+
+        return await shared.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     // A catalog read of database's identity, reused while the catalog has not committed since the read began.
@@ -487,12 +540,12 @@ internal sealed partial class EngineManagementService
             return cached.Record is { } known ? known : ManagementErrors.NotFound;
         }
 
-        var found = await ReadAsync<FindDatabaseRecordResult>(async transaction =>
-            await FindDatabaseAsync(transaction, organizationId, projectId, name, cancellationToken).ConfigureAwait(false) is { } tenant
-            && await GetAsync(transaction, Databases(projectId), tenant.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is { } record
+        var found = await ShareMissAsync("record", key, sequence, token => ReadAsync<FindDatabaseRecordResult>(async transaction =>
+            await FindDatabaseAsync(transaction, organizationId, projectId, name, token).ConfigureAwait(false) is { } tenant
+            && await GetAsync(transaction, Databases(projectId), tenant.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, token).ConfigureAwait(false) is { } record
                 ? record
                 : ManagementErrors.NotFound,
-            static error => error, cancellationToken).ConfigureAwait(false);
+            static error => error, token), cancellationToken).ConfigureAwait(false);
         if (found is Unavailable)
         {
             return found;
@@ -520,11 +573,11 @@ internal sealed partial class EngineManagementService
             }
         }
 
-        var result = await ReadAsync<TenantPlanResult>(async transaction =>
-            Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
-                ? await PlanUncheckedAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false)
+        var result = await ShareMissAsync("plan", (organizationId, incarnation.ToString(), ""), sequence, token => ReadAsync<TenantPlanResult>(async transaction =>
+            Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, token).ConfigureAwait(false))
+                ? await PlanUncheckedAsync(transaction, organizationId, token).ConfigureAwait(false)
                 : UnreadableCatalog,
-            static error => error, cancellationToken).ConfigureAwait(false);
+            static error => error, token), cancellationToken).ConfigureAwait(false);
         if (result is PlanTier plan && store.Incarnation == incarnation && store.CommitSequence == sequence)
         {
             lock (_planGate)
