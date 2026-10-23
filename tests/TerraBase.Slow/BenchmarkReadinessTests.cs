@@ -228,7 +228,9 @@ public sealed class BenchmarkReadinessTests
     }
 
     [Test]
-    public async Task Bootstrap_requires_physical_databases_and_both_peer_acks_through_a_frozen_cutoff(CancellationToken cancellationToken)
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task Bootstrap_requires_physical_databases_and_all_peer_acks_through_a_frozen_cutoff(int regions, CancellationToken cancellationToken)
     {
         await using var api = await ManagementApi.StartAsync(cancellationToken: cancellationToken);
         var database = await api.CreateManagedDatabaseAsync("canary");
@@ -239,7 +241,7 @@ public sealed class BenchmarkReadinessTests
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var source = api.Server.Services.GetRequiredService<IChangeGroupSource>();
         var self = api.Server.Services.GetRequiredService<LocalReplica>().Id;
-        var peers = Enumerable.Range(1, 3).Select(id => ReplicaId.Of((ushort)id, 1, 1)).Where(peer => peer.Region != self.Region).Take(2).ToArray();
+        var peers = Enumerable.Range(1, 3).Select(id => ReplicaId.Of((ushort)id, 1, 1)).Where(peer => peer.Region != self.Region).Take(regions - 1).ToArray();
         var extra = EntityIds.New().ToString();
         var root = Directory.CreateTempSubdirectory("benchmark-bootstrap-").FullName;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -247,7 +249,7 @@ public sealed class BenchmarkReadinessTests
         Task ready = Task.CompletedTask;
         try
         {
-            foreach (var (index, region) in RemoteRegions.Index())
+            foreach (var (index, region) in RemoteRegions.Take(regions - 1).Index())
             {
                 Directory.CreateDirectory(Path.Combine(root, region));
                 await File.WriteAllTextAsync(Path.Combine(root, region, "bootstrap.json"),
@@ -297,7 +299,7 @@ public sealed class BenchmarkReadinessTests
             await BenchmarkProcessHost.WaitForWritesAsync(client, collections, "bench-ready", deadline.Token);
             foreach (var peer in peers)
             {
-                if (peer == peers[1])
+                if (peer != peers[0])
                 {
                     await WaitForReasonAsync("own-prefix", peer.Value);
                 }

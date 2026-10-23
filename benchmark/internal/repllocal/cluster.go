@@ -88,6 +88,11 @@ func startCluster(ctx context.Context, Root string, databases int, regions []str
 		return nil, errors.Join(err, c.Close())
 	}
 	for _, region := range regions {
+		if err := os.MkdirAll(filepath.Join(Work, region), 0o700); err != nil {
+			return nil, errors.Join(err, c.Close())
+		}
+	}
+	for _, region := range regions {
 		p, err := StartWireProxy(ctx)
 		if err != nil {
 			return nil, errors.Join(err, c.Close())

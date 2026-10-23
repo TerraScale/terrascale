@@ -435,7 +435,8 @@ public sealed class BenchmarkProcessHost
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancel, cancellationToken);
             var token = linked.Token;
             var peers = new List<ReplicaId>();
-            foreach (var region in Regions)
+            var activeRegions = Regions.Where(region => Directory.Exists(Path.Combine(root, region))).ToArray();
+            foreach (var region in activeRegions)
             {
                 var path = Path.Combine(root, region, "bootstrap.json");
                 if (!File.Exists(path))
@@ -448,9 +449,9 @@ public sealed class BenchmarkProcessHost
                     peers.Add(peer);
                 }
             }
-            if (peers.Count != 2 || peers.Distinct().Count() != 2)
+            if (activeRegions.Length is < 2 or > 3 || peers.Count != activeRegions.Length - 1 || peers.Distinct().Count() != peers.Count)
             {
-                throw new InvalidOperationException("bootstrap requires two distinct remote replicas");
+                throw new InvalidOperationException("bootstrap requires distinct remote replicas for every active region");
             }
             var physical = new HashSet<string>(StringComparer.Ordinal);
             var stores = new List<(TenantContext Database, IDatabaseStore Store)>();
