@@ -135,6 +135,7 @@ public sealed class TerraBaseContractTests
         yield return ("documents", "deleteCollectionTtl", client => Db(client).ClearCollectionTtlAsync("users"));
         yield return ("documents", "branchDatabase", client => Db(client).BranchAsync("copy"));
         yield return ("documents", "runSql", client => Db(client).RunSqlAsync("SELECT * FROM users LIMIT 1"));
+        yield return ("documents", "executeSql", client => Db(client).ExecuteSqlAsync("SELECT 1"));
         yield return ("documents", "listIndexes", client => Db(client).ListIndexesAsync());
         yield return ("documents", "createIndex", client => Db(client).CreateIndexAsync("users", ["email"]));
         yield return ("documents", "dropIndex", client => Db(client).DropIndexAsync("users_email"));

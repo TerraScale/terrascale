@@ -106,6 +106,30 @@ TerraBaseDocument? current = await database.GetDocumentAsync("users", userId, ca
 
 `DeleteAsync` deletes the database and its data; it throws `TerraBaseConflictException` (`database_replicated`) while replica regions exist.
 
+Relational SQL runs on the same database handle and project access token
+([contract](contracts/terrabase/sql-execute.md)). Each call is one transaction, all or nothing; reads need
+`documents:read`, writes and DDL `documents:write`. Arguments are positional (`?`) or named (keys without `:`, `@`
+or `$`); values are null, integers, finite doubles, booleans (stored as 1/0) or strings. Integers come back as JSON
+numbers: exact here, but JavaScript clients lose precision beyond 2^53.
+
+```csharp
+await database.ExecuteSqlBatchAsync([
+    new("CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT)"),
+    new("INSERT INTO people (name) VALUES (:name)", Named: new Dictionary<string, TerraBaseSqlValue> { ["name"] = "Ada" }),
+], cancellationToken);
+
+TerraBaseSqlStatementResult inserted = await database.ExecuteSqlAsync(
+    "INSERT INTO people (name) VALUES (?)", ["Grace"], cancellationToken); // RowsAffected, LastInsertRowid
+
+foreach (TerraBaseSqlRecord row in await database.QuerySqlAsync("SELECT id, name FROM people WHERE id > ?", [0], cancellationToken))
+    names[row.GetInt64("id")] = row.GetString("name");
+```
+
+A refused statement rolls the request back and throws `TerraBaseSqlException` with `Code` (`sql_error`,
+`forbidden_scope`, `sql_conflict`, `sql_too_large`), `Statement` (zero-based index) and `SqliteCode`; other failures
+keep the usual `TerraBaseException` types. Nothing is retried. `RunSqlAsync` is the legacy read-only document SQL
+subset (`databases:read`, refused for dashboard keys); prefer the methods above.
+
 One-time imports follow TerraBase's import contract (monorepo `docs/terrabase/import.md` and `import-ndjson.md` at
 `94481f1f2`; nothing here is live-qualified). Every imported row gets a generated deterministic ULID document id;
 source primary keys (and NDJSON `id`, `_id` or `$oid`) stay ordinary fields. The user exports with their own tools
@@ -229,7 +253,7 @@ are sent.
 Regions follow TerraBase's regional contract (monorepo `docs/terrabase/region-identity.md`). Without `Region`, a request
 goes to `BaseAddress` (for example `https://api.terrascale.tech`) and
 carries no routing header. With `Region = "gru"` (a lowercase region id), every request is sent to
-`https://gru.api.terrascale.tech` (unless `BaseAddress`/`EndpointResolver` is set) and pinned with
+`https://api.terrascale.tech` (unless `BaseAddress`/`EndpointResolver` is set) and pinned with
 `X-TerraScale-Region-Pin: gru`, so no other region serves it. A region that does not serve the request answers `421`,
 surfaced as `TerraBaseWrongRegionException`: `Region` is the region that answered, `HomeRegion` and `Regions` (from
 `X-TerraBase-Database-Home`/`-Regions`) say where to send it. Nothing is retried or redirected automatically: a write is

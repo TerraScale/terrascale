@@ -51,8 +51,8 @@ internal sealed class TerraBaseConnection
                 throw new ArgumentException("Region must be a TerraBase region id: a lowercase letter, then lowercase letters, digits or hyphens, at most 63 characters, not ending in a hyphen (for example gru).", nameof(region));
             }
 
-            // Without an explicit origin the region's own host serves it; with one, the pin still holds the request to it.
-            baseAddress ??= endpointResolver is null ? TerraBaseRegion.Origin(region) : null;
+            // Without an explicit origin the public origin routes the pinned request; with one, the pin still holds the request to it.
+            baseAddress ??= endpointResolver is null ? TerraBaseRegion.PublicOrigin : null;
             regionPin = region;
         }
 

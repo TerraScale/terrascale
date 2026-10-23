@@ -164,7 +164,7 @@ public sealed class TerraBaseRegionalContractTests
     }
 
     [Test]
-    public async Task A_region_option_targets_that_regions_host_and_pins_every_request_to_it()
+    public async Task A_region_option_targets_the_public_origin_and_pins_every_request_to_it()
     {
         var sent = new List<HttpRequestMessage>();
         using var handler = new TerraBaseTestHandler((request, _) =>
@@ -180,7 +180,7 @@ public sealed class TerraBaseRegionalContractTests
         await regional.PutDocumentAsync("items", "01JA00000000000000000000D1", Body());
         await explicitOrigin.PutDocumentAsync("items", "01JA00000000000000000000D1", Body());
 
-        await Assert.That(sent.Select(request => request.RequestUri!.GetLeftPart(UriPartial.Authority))).IsEquivalentTo(["https://fra.api.terrascale.tech", "https://api.terrascale.test"]);
+        await Assert.That(sent.Select(request => request.RequestUri!.GetLeftPart(UriPartial.Authority))).IsEquivalentTo(["https://api.terrascale.tech", "https://api.terrascale.test"]);
         await Assert.That(sent.Select(request => string.Join(',', request.Headers.GetValues(TerraBaseRegion.PinHeader)))).IsEquivalentTo(["fra", "sjc"]);
         foreach (var request in sent)
         {
