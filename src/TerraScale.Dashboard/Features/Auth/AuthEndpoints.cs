@@ -25,7 +25,7 @@ public static class AuthEndpoints
 
     public static void MapAuth(this WebApplication app)
     {
-        app.MapGet("/login", StartAsync);
+        app.MapMethods("/login", ["GET", "HEAD"], StartAsync);
         app.MapGet("/login/callback", CompleteAsync);
         app.MapPost("/api/v1/auth/logout", (Delegate)LogoutAsync);
     }
