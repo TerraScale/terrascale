@@ -70,7 +70,8 @@ internal sealed partial class TursoStorageTransaction
         ThrowIfReadOnly();
         Member.Clock.Observe(at.Stamp);
         ClearEntry? collectionDrop = null;
-        if (IsClient && !IsMetadata(collection) && ReadState(DocumentDelta.Collections, collection).Clear is { Deleted: true } dropped)
+        var metadata = IsClient && !IsMetadata(collection) ? ReadState(DocumentDelta.Collections, collection) : DocumentState.Bottom;
+        if (metadata.Clear is { Deleted: true } dropped)
         {
             collectionDrop = dropped;
             var clear = new DocumentState(dropped, DocumentState.Bottom.Fields);
@@ -112,18 +113,20 @@ internal sealed partial class TursoStorageTransaction
         }
 
         var materialized = Materialize(next);
-        var metadata = IsMetadata(collection);
-        var affected = metadata ? [] : ReplaceUniqueKeys(collection, id, materialized, cancellationToken, local: false);
+        var isMetadata = IsMetadata(collection);
+        var affected = isMetadata ? [] : ReplaceUniqueKeys(collection, id, materialized, cancellationToken, local: false);
         ClearUniqueConflict(collection, id);
         cancellationToken.ThrowIfCancellationRequested();
         Offset();
-        var beforeProof = !metadata && ReadCollectionRules(collection)?.Owner is not null ? OwnerProof(collection, state) : null;
+        var beforeProof = OwnerProof(state, metadata);
         PutRow(collection, id, materialized);
-        WriteState(collection, id, next, at, beforeProof: beforeProof);
-        if (metadata)
+        WriteState(collection, id, next, at, beforeProof: beforeProof, metadata: metadata);
+        if (isMetadata)
         {
             if (collection == DocumentDelta.Collections)
             {
+                // A join writes metadata immediately; earlier pending documents must refresh it before their feed capture.
+                _joinedCollectionMetadata = true;
                 CollectionMetadata(id, materialized, next, state.Clear, cancellationToken);
             }
             else if (collection == DocumentDelta.Indexes)

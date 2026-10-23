@@ -2,6 +2,8 @@ using System.Text.Json;
 using TerraBase.Features.Documents;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Memory;
+using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Turso;
 
@@ -19,6 +21,23 @@ internal sealed partial class TursoStorageTransaction
             return null;
         }
 
+        return ParseCollectionRules(rules);
+    }
+
+    private CollectionAccessRules? ReadCollectionRules(DocumentState metadata)
+    {
+        if (CollectionField(metadata, "rules") is not { } raw)
+        {
+            return null;
+        }
+
+        using var reservation = ReserveSchemaMemory(8L * StrictUtf8.GetByteCount(raw), MemoryLane.Foreground);
+        using var parsed = JsonDocument.Parse(raw, RequestJson.StoredDocumentOptions);
+        return ParseCollectionRules(parsed.RootElement);
+    }
+
+    private static CollectionAccessRules? ParseCollectionRules(JsonElement rules)
+    {
         try
         {
             var parsed = rules.Deserialize(CollectionRulesJsonContext.Default.CollectionAccessRules);
@@ -56,9 +75,26 @@ internal sealed partial class TursoStorageTransaction
             return true;
         }, cancellationToken, mutation: true);
 
-    private DocumentOwnerProof? OwnerProof(string collection, DocumentState state)
+    private static string? CollectionField(DocumentState metadata, string name) =>
+        metadata.Exists && metadata.Fields.TryGetValue(name, out var field)
+            && field.Value(metadata.Clear?.Version) is { Kind: FieldKind.Base, Json: { } raw } ? raw : null;
+
+    private static string? CollectionGeneration(DocumentState metadata)
     {
-        if (!state.Exists || ReadCollectionRules(collection) is not { Owner: not null } rules)
+        // Lattice values are canonical JSON, so a ULID is exactly 26 unescaped ASCII characters inside quotes.
+        if (CollectionField(metadata, "entity_id") is not { Length: 28 } raw || raw[0] != '"' || raw[^1] != '"')
+        {
+            return null;
+        }
+
+        var generation = raw[1..^1];
+        return EntityIds.IsValid(generation) ? generation : null;
+    }
+
+    private DocumentOwnerProof? OwnerProof(DocumentState state, DocumentState metadata)
+    {
+        if (!state.Exists || ReadCollectionRules(metadata) is not { Owner: not null } rules
+            || CollectionGeneration(metadata) is not { } generation)
         {
             return null;
         }
@@ -87,8 +123,7 @@ internal sealed partial class TursoStorageTransaction
             return null;
         }
 
-        using var reader = Command(TursoStatements.GetCollection, collection).ExecuteReader();
-        return reader.Read() ? new DocumentOwnerProof(reader.GetString(2), rules.Owner, subject, rules.Fingerprint()) : null;
+        return new DocumentOwnerProof(generation, rules.Owner, subject, rules.Fingerprint());
     }
 
     public ValueTask<DocumentOwnerProof?> GetDocumentOwnerProofAsync(string collection, string id, CancellationToken cancellationToken) =>

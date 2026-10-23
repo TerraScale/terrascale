@@ -18,12 +18,13 @@ namespace TerraBase.Engine.Turso;
 internal sealed partial class TursoStorageTransaction
 {
     // The documents this request changed, with the version their operations share; their state rows are not written yet.
-    private readonly Dictionary<(string Collection, string Id), (DocumentState State, EntryVersion At, int BodyBytes, DocumentOwnerProof? BeforeProof)> _pending = [];
+    private readonly Dictionary<(string Collection, string Id), (DocumentState State, EntryVersion At, int BodyBytes, DocumentOwnerProof? BeforeProof, DocumentState? Metadata)> _pending = [];
 
     // The state rows of this machine's own writes this transaction wrote: the tailer ships them as one change group, so they
     // stay within a group's bounds (the bytes are counted in _changeBytes, which only the system database uses otherwise).
     private int _captured;
     private int? _catalogProofBytes;
+    private bool _joinedCollectionMetadata;
 
     private LocalReplica Member => store.Member ?? throw new InvalidOperationException("a database writes with this member's replica id");
 
@@ -146,12 +147,12 @@ internal sealed partial class TursoStorageTransaction
 
     // Worker-only: writes the document row of a state an operation at `at` produced, and keeps the state for the end of
     // the request. Returns the version of the write.
-    private long Store(string collection, string id, DocumentState state, EntryVersion at, string? body, DocumentState? previous = null)
+    private long Store(string collection, string id, DocumentState state, EntryVersion at, string? body, DocumentState? previous = null, DocumentState? metadata = null)
     {
         var beforeProof = _pending.TryGetValue((collection, id), out var pending) ? pending.BeforeProof
-            : previous is not null && !store.IsSystem && !IsMetadata(collection) && ReadCollectionRules(collection)?.Owner is not null
-                ? OwnerProof(collection, previous) : null;
-        _pending[(collection, id)] = (state, at, body is null ? 0 : StrictUtf8.GetByteCount(body), beforeProof);
+            : previous is not null && metadata is not null && !store.IsSystem && !IsMetadata(collection)
+                ? OwnerProof(previous, metadata) : null;
+        _pending[(collection, id)] = (state, at, body is null ? 0 : StrictUtf8.GetByteCount(body), beforeProof, metadata);
         PutRow(collection, id, body);
         return Version(at.Stamp);
     }
@@ -244,11 +245,22 @@ internal sealed partial class TursoStorageTransaction
     // Worker-only: the _tb_state row of a document, stamped with the operation `at` that last changed it and that
     // operation's node, and its changes feed row. A plain UPDATE, then an INSERT when no row exists: the CDC tailer reads
     // after-images only.
-    private void WriteState(string collection, string id, DocumentState state, EntryVersion at, byte[]? stored = null, DocumentOwnerProof? beforeProof = null)
+    private void WriteState(string collection, string id, DocumentState state, EntryVersion at, byte[]? stored = null, DocumentOwnerProof? beforeProof = null, DocumentState? metadata = null)
     {
         store.CollectionStateWritten?.Invoke(collection);
-        var afterProof = !store.IsSystem && !IsMetadata(collection) && ReadCollectionRules(collection)?.Owner is not null
-            ? OwnerProof(collection, state) : null;
+        metadata ??= !store.IsSystem && !IsMetadata(collection) ? CollectionState(collection) : DocumentState.Bottom;
+        var generation = CollectionGeneration(metadata);
+        // Validate the admitted metadata against its projection; provisional identities must stay unknown.
+        if (generation is not null && Command("SELECT entity_id FROM collections WHERE name = $collection;", collection).ExecuteScalar() as string != generation)
+        {
+            generation = null;
+        }
+        var afterProof = generation is null ? null : OwnerProof(state, metadata);
+        if (generation is null)
+        {
+            beforeProof = null;
+        }
+
         var digest = DocumentStateEncoding.Digest(collection, id, state);
         RemoveMerkleState(collection, id);
         var update = BodyCommand(TursoStatements.UpdateState, collection, id);
@@ -262,7 +274,7 @@ internal sealed partial class TursoStorageTransaction
         }
 
         FoldMerkle(Bucket(collection, id), unchecked((long)(ulong)(digest >> 64)), unchecked((long)(ulong)digest));
-        AppendFeed(collection, id, at, state.Exists, beforeProof, afterProof);
+        AppendFeed(collection, id, at, state.Exists, beforeProof, afterProof, generation);
 
         void Bind(SqliteCommand command)
         {
@@ -320,11 +332,13 @@ internal sealed partial class TursoStorageTransaction
 
         var proof = store.IsSystem && !_pending.ContainsKey((ManagementCatalog.Collection, ManagementCatalog.VersionId)) ? ReadCatalogVersionProof() : null;
         var proofAt = default(EntryVersion);
-        foreach (var ((collection, id), (state, at, bodyBytes, beforeProof)) in _pending)
+        foreach (var ((collection, id), (state, at, bodyBytes, beforeProof, metadata)) in _pending)
         {
             var stored = DocumentStateEncoding.EncodeStored(state);
             Capture(collection, id, stored.Length, bodyBytes);
-            WriteState(collection, id, state, at, stored, beforeProof);
+            var currentMetadata = _pending.TryGetValue((DocumentDelta.Collections, collection), out var pendingMetadata) ? pendingMetadata.State
+                : _joinedCollectionMetadata ? null : metadata;
+            WriteState(collection, id, state, at, stored, beforeProof, currentMetadata);
             if (proof is not null && at.Stamp.Value > proofAt.Stamp.Value)
             {
                 proofAt = at;
