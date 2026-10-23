@@ -17,8 +17,6 @@ The [C# quickstart](/zh-cn/getting-started/csharp) builds the SDK package from s
 
 The JavaScript example's tests run against synthetic responses, not the hosted API. Use synthetic data and a test database when you run it for real.
 
-Older files under `docs/snippets` and the retained Next.js starter pin `@terrascale/sdk` 0.3.0, which is not published. They target an older contract; do not copy them into new applications.
-
-`docs/snippets/exports.ts` targets the current client instead: it exports a database with `@terrascale/sdk` 0.0.5 `database(name).export()` and resumes from the last line's cursor. See [Export your data](/zh-cn/guides/export). No CI job executes or type-checks the files under `docs/snippets`.
+The files under `docs/snippets` use `createTerraBaseV1Client` from `@terrascale/sdk` 0.0.4: document CRUD, SQL, the changes feed, backups and restore, branches and a database per tenant. Backups, branches and tenants need a token with management access to the project. `exports.ts` needs `database(name).export()` from `@terrascale/sdk` 0.0.5, which is not on npm yet; see [Export your data](/zh-cn/guides/export). No CI job executes or type-checks the files under `docs/snippets`.
 
 </div>

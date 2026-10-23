@@ -1,7 +1,6 @@
 ---
 title: Import an existing database
-description: Proposed one-time import of a PostgreSQL or Turso export into a new, empty TerraBase database, with full dry-run preview and validation.
-head: [['meta', { name: 'robots', content: 'noindex' }]]
+description: One-time import of a PostgreSQL or Turso export into a new, empty TerraBase database, with full dry-run preview and validation.
 ---
 
 <!-- i18n:fallback:ru -->
@@ -13,9 +12,7 @@ head: [['meta', { name: 'robots', content: 'noindex' }]]
 
 Export a PostgreSQL or Turso database with your own tools, upload the file into a new, empty TerraBase database, review a dry-run preview of every row and start the copy.
 
-::: warning Pending feature
-Import follows the proposed import contract v1. Its implementation is in progress and no serving release provides it yet. Routes, fields and limits on this page can change before release. Rehearse with synthetic data only; do not upload production data until import is announced for your release.
-:::
+In the dashboard, open **Databases** and select **Import**. The page uploads your file, shows the preview and starts the copy. The steps below do the same over the HTTP API. Rehearse with synthetic data before you import production data.
 
 Prepare your export with its guide:
 
@@ -37,7 +34,7 @@ Prepare your export with its guide:
 - `bash` or `zsh`, `curl` 7.76 or newer, and `jq`.
 - Room in your plan. The destination counts as one of your plan's databases. Imported documents count toward your organization's storage quota and are metered as document writes; import calls, upload bytes included, are metered as requests. An import never bypasses a quota. See [pricing](/ru/pricing/).
 
-No SDK or CLI wraps import in contract v1. The steps below use its public HTTP routes. **Pending:** a guided dashboard flow.
+`@terrascale/sdk` 0.0.4 wraps these routes as `client.database(name).imports`. The steps below use the HTTP routes directly.
 
 ## Keep credentials and the export private
 

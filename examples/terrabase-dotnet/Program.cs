@@ -18,14 +18,14 @@ public static class Program
             Console.WriteLine("PASS_TERRABASE_CRUD_QUERY");
             return 0;
         }
-        catch (TerraBaseException)
+        catch (TerraBaseException error)
         {
-            Console.Error.WriteLine("TerraBase rejected the request. Check scope, credential and version; do not blindly replay writes.");
+            Console.Error.WriteLine($"TerraBase rejected the request: HTTP {(int?)error.StatusCode} {error.ErrorCode ?? "no_code"}. Do not blindly replay writes.");
             return 1;
         }
-        catch (Exception)
+        catch (Exception error)
         {
-            Console.Error.WriteLine("Starter failed. Check configuration and connectivity; an interrupted write may need reconciliation.");
+            Console.Error.WriteLine($"Starter failed: {error.GetType().Name}: {error.Message} An interrupted write may need reconciliation.");
             return 1;
         }
     }

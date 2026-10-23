@@ -1,33 +1,31 @@
-// Runnable snippet: configure and trigger an on-demand backup with
-// @terrascale/sdk 0.3.0. Backups are unbilled; logical documents and retained history are billed storage.
+// Runnable snippet: backup policy, an on-demand backup and a restore into a
+// new database with @terrascale/sdk 0.0.4. The token needs management access
+// to the sandbox project. Backups are unbilled; logical documents and
+// retained history are billed storage.
 import { strict as assert } from "node:assert";
-import type { TerraScaleClient } from "@terrascale/sdk";
+import type { TerraBaseV1Client } from "@terrascale/sdk";
 
 type Sandbox = {
-  readonly databaseId: string;
-  readonly client: Pick<TerraScaleClient, "backups">;
+  readonly databaseName: string;
+  readonly client: Pick<TerraBaseV1Client, "database" | "databases">;
 };
 
-export const title = "Backup and restore point";
-// The project-scoped backup producer routes are not published yet.
-export const runnable = false;
+export const runnable = true;
+export const title = "Backup and restore";
 
 export async function run(sandbox: Sandbox): Promise<void> {
-  const configured = await sandbox.client.backups.configurePolicy(sandbox.databaseId, {
-    fullBackupCron: "0 2 * * *",
-    retentionDays: 7,
-  });
-  assert.equal(configured.ok, true);
+  const db = sandbox.client.database(sandbox.databaseName);
 
-  const operationSessionId = "docs-snippet-backup";
-  const plan = await sandbox.client.backups.planBackup(sandbox.databaseId, { operationSessionId });
-  assert.equal(plan.ok, true);
-  if (!plan.ok) throw new Error("backup plan failed");
+  const policy = await db.backups.setPolicy({ fullBackupCron: "0 2 * * *", retentionDays: 7 });
+  assert.equal(policy.retentionDays, 7);
 
-  const executed = await sandbox.client.backups.executeBackup(
-    sandbox.databaseId,
-    { operationSessionId, confirmationToken: plan.value.confirmationToken },
-    "docs-snippet-backup-execute",
-  );
-  assert.equal(executed.ok, true);
+  const backup = await db.backups.create();
+  assert.equal(backup.trigger, "manual");
+  const listed = await db.backups.list();
+  assert.ok(listed.items.some((item) => item.id === backup.id), "the new backup is listed");
+
+  // Restore never overwrites: it creates a new database from the backup.
+  const restored = await db.backups.restore(backup.id, { name: `${sandbox.databaseName}-restored` });
+  assert.equal(restored.name, `${sandbox.databaseName}-restored`);
+  await sandbox.client.databases.delete(restored.name);
 }

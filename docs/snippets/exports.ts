@@ -12,8 +12,9 @@ type Sandbox = {
 
 type Line = { readonly collection: string; readonly id: string; readonly document: object };
 
-export const runnable = true;
 export const title = "Database export (NDJSON)";
+// `export()` ships in @terrascale/sdk 0.0.5; npm serves 0.0.4 as latest.
+export const runnable = false;
 
 // Document ids are canonical ULIDs. Export orders lines by collection, then id.
 const noteIds = [
