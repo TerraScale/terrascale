@@ -30,7 +30,7 @@ Replication safety metadata may retain only opaque ULIDs and content hashes, nev
 
 1. A listed region that remains offline retains its replication garbage-collection hold, so purge completion waits for it. This exception also covers pending authentication deletion-job metadata containing only opaque generated subject and organization ULIDs, with no emails, names or content, retained only while a listed holder is offline and cleared by the normal job once it returns. An operator alert is required at day 20. Region removal requires explicit user authorization and is never automatic.
 2. Catalog and project-closure tombstones may remain permanently, but only as opaque ULIDs with no content, field values, names, emails or user-chosen keys. This permanent exception does not include content hashes.
-3. An erasure stalled by a replica epoch change stays pending and requires an immediate operator alert. Operators must escalate to engineering (TS-875: safe automatic erasure re-cut); no operator re-cut command or roots-only override treats missing replication coverage as proof of erasure.
+3. An erasure stalled by a replica epoch change stays pending and requires an operator alert that fires within 15 minutes. Operators must escalate to engineering for safe recovery; no operator re-cut command or roots-only override treats missing replication coverage as proof of erasure.
 
 Organization cleanup can fail after the organization has been removed. The reviewed implementation does not establish a guaranteed completion deadline for those remaining records. Removal of authorization is not confirmation of complete erasure.
 
