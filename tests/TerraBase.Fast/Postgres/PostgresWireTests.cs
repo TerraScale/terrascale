@@ -1,4 +1,6 @@
-using System.Text.Json;
+using System.Buffers.Binary;
+using System.Net.Sockets;
+using System.Text;
 using Bogus;
 using Npgsql;
 using TerraBase.Testing;
@@ -7,71 +9,161 @@ namespace TerraBase.Fast.Postgres;
 
 public sealed class PostgresWireTests
 {
+    private const string People = "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email VARCHAR(80) UNIQUE, team TEXT)";
+
     private static readonly Faker Faker = new();
 
     [Test]
-    public async Task Npgsql_with_default_settings_authenticates_with_an_api_key_and_reads_documents()
+    public async Task Npgsql_with_default_settings_creates_tables_and_answers_session_queries()
     {
         await using var api = await ManagementApi.StartAsync();
-        var (database, key, names) = await SeedAsync(api);
+        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
         await using var source = Source(api, key, database.Name);
         await using var connection = await source.OpenConnectionAsync();
 
-        var rows = await ReadAsync(connection, "SELECT name, age FROM people ORDER BY age");
-        var version = await ReadAsync(connection, "SELECT version()");
-        await using (var set = new NpgsqlCommand("SET application_name = 'wire test'", connection))
-        {
-            await set.ExecuteNonQueryAsync();
-        }
-
+        await ExecuteAsync(connection, People);
+        var duplicate = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, People));
+        var session = await ReadAsync(connection, "SELECT current_database(), current_schema(), current_user, version()");
+        await ExecuteAsync(connection, "SET application_name = 'wire test'");
         var shown = await ReadAsync(connection, "SHOW application_name");
+        var unsupported = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "SELECT relname FROM pg_catalog.pg_class"));
+        var values = await ReadAsync(connection, "SELECT 40 + 2, 2.5, upper('xy'), count(*) FROM people WHERE name LIKE 'A%'");
+        var missing = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "SELECT * FROM nowhere"));
 
         await Assert.That(connection.PostgreSqlVersion).IsEqualTo(new Version(16, 0));
-        await Assert.That(rows.Select(row => ManagementApi.DocumentName(row[0]))).IsEquivalentTo(["p1", "p2", "p3"]);
-        await Assert.That(rows.Select(row => JsonElement.Parse(row[1]).GetProperty("name").GetString()!)).IsEquivalentTo(names);
-        await Assert.That(version[0][0]).IsEqualTo("PostgreSQL 16.0 (TerraBase)");
+        await Assert.That(duplicate!.SqlState).IsEqualTo("42P07");
+        await Assert.That(session[0]).IsEquivalentTo([database.Name, "public", "wire", "PostgreSQL 16.0 (TerraBase)"]);
         await Assert.That(shown[0][0]).IsEqualTo("wire test");
+        await Assert.That(unsupported!.SqlState).IsEqualTo("0A000");
+        await Assert.That(values[0]).IsEquivalentTo(["42", "2.5", "XY", "0"]);
+        await Assert.That(missing!.SqlState).IsEqualTo("42P01");
     }
 
     [Test]
-    public async Task Parameters_bind_as_literals_and_unsupported_statements_leave_the_session_usable()
+    public async Task Read_only_keys_cannot_write()
     {
         await using var api = await ManagementApi.StartAsync();
-        var (database, key, _) = await SeedAsync(api, tricky: @"O'Brien \' OR 1=1 --");
+        var (database, key) = await DatabaseAsync(api, "documents:read");
         await using var source = Source(api, key, database.Name);
         await using var connection = await source.OpenConnectionAsync();
 
-        await using var query = new NpgsqlCommand("SELECT _id FROM people WHERE name = $1 AND age >= $2 AND active = $3", connection)
+        var refused = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, People));
+
+        await Assert.That(refused!.SqlState).IsEqualTo("42501");
+    }
+
+    [Test]
+    public async Task Psql_runs_statements_in_order()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var psql = await RawClient.ConnectAsync(api.Server.PostgresPort, key, database.Name);
+
+        var script = await psql.QueryAsync($"{People}; CREATE TABLE people (id INTEGER PRIMARY KEY); CREATE TABLE never (id INTEGER PRIMARY KEY)");
+        var deallocated = await psql.QueryAsync("DEALLOCATE ALL");
+
+        await Assert.That(script.Select(message => $"{message.Type}:{message.Fields[0]}")).IsEquivalentTo(["C:CREATE TABLE", "E:42P07", "Z:I"]);
+        await Assert.That(deallocated.Select(message => message.Fields[0]!)).IsEquivalentTo(["DEALLOCATE ALL", "I"]);
+    }
+
+    // Needs SQ1-c (SELECT with joins) and SQ1-d (INSERT/UPDATE/DELETE).
+    [Test]
+    public async Task Rows_are_written_with_parameters_and_read_with_joins()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var source = Source(api, key, database.Name);
+        await using var connection = await source.OpenConnectionAsync();
+        await ExecuteAsync(connection, People);
+        await ExecuteAsync(connection, "CREATE TABLE teams (code TEXT PRIMARY KEY, label TEXT NOT NULL)");
+        var (ann, bob) = (Faker.Name.FullName(), Faker.Name.FullName() + " O'Brien");
+
+        var teams = await ExecuteAsync(connection, "INSERT INTO teams (code, label) VALUES ($1, $2), ($3, $4)", "core", "Core", "edge", "Edge");
+        var people = await ExecuteAsync(connection, "INSERT INTO people (name, email, team) VALUES ($1, $2, $3), ($4, $5, $6)",
+            ann, Faker.Internet.Email(), "core", bob, Faker.Internet.Email(), "edge");
+        var updated = await ExecuteAsync(connection, "UPDATE people SET team = $1 WHERE name LIKE $2", "core", bob.ToUpperInvariant());
+        var joined = await ReadAsync(connection, "SELECT p.name, t.label, p.id FROM people p JOIN teams t ON t.code = p.team ORDER BY p.name");
+        var deleted = await ExecuteAsync(connection, "DELETE FROM people WHERE name = $1", ann);
+
+        await Assert.That((teams, people, updated, deleted)).IsEqualTo((2, 2, 1, 1));
+        await Assert.That(joined.Select(row => $"{row[0]}|{row[1]}")).IsEquivalentTo(new[] { $"{ann}|Core", $"{bob}|Core" }.Order(StringComparer.Ordinal));
+    }
+
+    // Needs SQ1-d (INSERT and unique constraints).
+    [Test]
+    public async Task Prepared_statements_run_repeatedly_and_unique_violations_are_23505()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var source = Source(api, key, database.Name);
+        await using var connection = await source.OpenConnectionAsync();
+        await ExecuteAsync(connection, People);
+        string[] emails = [.. Enumerable.Range(0, 3).Select(i => $"{i}{Faker.Internet.Email()}")];
+
+        await using var insert = new NpgsqlCommand("INSERT INTO people (name, email) VALUES ($1, $2)", connection)
         {
-            Parameters = { new() { Value = @"O'Brien \' OR 1=1 --" }, new() { Value = 20 }, new() { Value = true } },
+            Parameters = { new() { NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text }, new() { NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Text } },
         };
-        var matched = new List<string>();
-        await using (var reader = await query.ExecuteReaderAsync())
+        await insert.PrepareAsync();
+        var inserted = 0;
+        foreach (var email in emails)
         {
-            while (await reader.ReadAsync())
-            {
-                matched.Add(reader.GetString(0));
-            }
+            (insert.Parameters[0].Value, insert.Parameters[1].Value) = (Faker.Name.FullName(), email);
+            inserted += await insert.ExecuteNonQueryAsync();
         }
 
-        var insert = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "INSERT INTO people VALUES (1)"));
-        var begin = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "BEGIN"));
-        var syntax = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "SELECT * FROM"));
-        var after = await ReadAsync(connection, "SELECT _id FROM people WHERE age = 40");
+        insert.Parameters[1].Value = emails[0];
+        var conflict = await Assert.ThrowsAsync<PostgresException>(insert.ExecuteNonQueryAsync);
+        var count = await ReadAsync(connection, "SELECT count(*) FROM people");
 
-        await Assert.That(matched.Select(ManagementApi.DocumentName)).IsEquivalentTo(["p2"]);
-        await Assert.That(insert!.SqlState).IsEqualTo("0A000");
-        await Assert.That(insert.MessageText).Contains("not supported yet");
-        await Assert.That(begin!.SqlState).IsEqualTo("0A000");
-        await Assert.That(syntax!.SqlState).IsEqualTo("42601");
-        await Assert.That(after.Select(row => ManagementApi.DocumentName(row[0]))).IsEquivalentTo(["p3"]);
+        await Assert.That(inserted).IsEqualTo(3);
+        await Assert.That(conflict!.SqlState).IsEqualTo("23505");
+        await Assert.That(count[0][0]).IsEqualTo("3");
+    }
+
+    // Needs SQ1-d (writes) and SQ1-e (transactions).
+    [Test]
+    public async Task Transactions_commit_roll_back_and_abort_after_an_error()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
+        await using var source = Source(api, key, database.Name);
+        await using var connection = await source.OpenConnectionAsync();
+        await ExecuteAsync(connection, People);
+        var (kept, discarded) = (Faker.Name.FullName(), Faker.Name.FullName());
+
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", kept);
+            await transaction.CommitAsync();
+        }
+
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", discarded);
+            await transaction.RollbackAsync();
+        }
+
+        PostgresException? failed, aborted;
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            failed = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "INSERT INTO people (name) VALUES (NULL)"));
+            aborted = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "SELECT 1"));
+            await transaction.RollbackAsync();
+        }
+
+        var names = await ReadAsync(connection, "SELECT name FROM people");
+
+        await Assert.That(failed!.SqlState).IsEqualTo("23502");
+        await Assert.That(aborted!.SqlState).IsEqualTo("25P02");
+        await Assert.That(names.Select(row => row[0])).IsEquivalentTo([kept]);
     }
 
     [Test]
     public async Task Wrong_keys_unknown_databases_and_unreached_databases_fail_alike()
     {
         await using var api = await ManagementApi.StartAsync();
-        var (database, key, _) = await SeedAsync(api);
+        var (database, key) = await DatabaseAsync(api, "documents:read");
         var other = await api.CreateManagedDatabaseAsync();
         var otherKey = await api.Server.IssueNarrowedAsync(other.Organization, other.Project, null, "documents:read");
 
@@ -107,10 +199,15 @@ public sealed class PostgresWireTests
             SslMode = SslMode.Disable,
         }.ConnectionString);
 
-    private static async Task ExecuteAsync(NpgsqlConnection connection, string sql)
+    private static async Task<int> ExecuteAsync(NpgsqlConnection connection, string sql, params object[] values)
     {
         await using var command = new NpgsqlCommand(sql, connection);
-        await command.ExecuteNonQueryAsync();
+        foreach (var value in values)
+        {
+            command.Parameters.Add(new NpgsqlParameter { Value = value });
+        }
+
+        return await command.ExecuteNonQueryAsync();
     }
 
     private static async Task<List<string[]>> ReadAsync(NpgsqlConnection connection, string sql)
@@ -120,26 +217,93 @@ public sealed class PostgresWireTests
         var rows = new List<string[]>();
         while (await reader.ReadAsync())
         {
-            rows.Add([.. Enumerable.Range(0, reader.FieldCount).Select(reader.GetString)]);
+            rows.Add([.. Enumerable.Range(0, reader.FieldCount).Select(i => Convert.ToString(reader.GetValue(i), System.Globalization.CultureInfo.InvariantCulture)!)]);
         }
 
         return rows;
     }
 
-    // Three people aged 20, 30 and 40; p2 has the tricky name and p3 a lookalike, both active.
-    private static async Task<(ManagedDatabaseRef Database, string Key, string[] Names)> SeedAsync(ManagementApi api, string? tricky = null)
+    private static async Task<(ManagedDatabaseRef Database, string Key)> DatabaseAsync(ManagementApi api, params string[] scopes)
     {
         var database = await api.CreateManagedDatabaseAsync();
-        var key = await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, "documents:read", "documents:write");
-        using var data = api.DataClient(key);
-        await ManagementApi.CreateCollectionAsync(data, database, "people");
-        string[] names = [Faker.Name.FullName(), tricky ?? Faker.Name.FullName(), tricky is null ? Faker.Name.FullName() : tricky.Replace("'", "", StringComparison.Ordinal)];
-        for (var i = 0; i < names.Length; i++)
+        return (database, await api.Server.IssueNarrowedAsync(database.Organization, database.Project, null, scopes));
+    }
+
+    // The simple-query protocol as psql speaks it: one Query message, every response until ReadyForQuery.
+    private sealed class RawClient(TcpClient tcp, NetworkStream stream) : IAsyncDisposable
+    {
+        public static async Task<RawClient> ConnectAsync(int port, string key, string database)
         {
-            (await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", $"p{i + 1}")), new { name = names[i], age = 20 + i * 10, active = i > 0 }))
-                .EnsureSuccessStatusCode();
+            var tcp = new TcpClient();
+            await tcp.ConnectAsync("127.0.0.1", port);
+            var client = new RawClient(tcp, tcp.GetStream());
+            await client.SendAsync(null, [0, 3, 0, 0, .. CString("user"), .. CString("wire"), .. CString("database"), .. CString(database), 0]);
+            await client.ReadAsync(); // AuthenticationCleartextPassword
+            await client.SendAsync('p', CString(key));
+            while ((await client.ReadAsync()).Type != 'Z')
+            {
+            }
+
+            return client;
         }
 
-        return (database, key, names);
+        public async Task<List<(char Type, string?[] Fields)>> QueryAsync(string sql)
+        {
+            await SendAsync('Q', CString(sql));
+            var messages = new List<(char Type, string?[] Fields)>();
+            for (var message = await ReadAsync(); ; message = await ReadAsync())
+            {
+                var body = message.Body;
+                messages.Add((message.Type, message.Type switch
+                {
+                    'D' => Values(body),
+                    'E' => [Encoding.UTF8.GetString(body).Split('\0').First(field => field.StartsWith('C'))[1..]],
+                    'C' => [Encoding.UTF8.GetString(body).TrimEnd('\0')],
+                    'Z' => [((char)body[0]).ToString()],
+                    _ => [null],
+                }));
+                if (message.Type == 'Z')
+                {
+                    return [.. messages.Where(entry => entry.Type is 'D' or 'E' or 'C' or 'Z')];
+                }
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await stream.DisposeAsync();
+            tcp.Dispose();
+        }
+
+        private static string?[] Values(byte[] body)
+        {
+            var values = new string?[BinaryPrimitives.ReadInt16BigEndian(body)];
+            for (int i = 0, at = 2; i < values.Length; i++)
+            {
+                var length = BinaryPrimitives.ReadInt32BigEndian(body.AsSpan(at));
+                values[i] = length < 0 ? null : Encoding.UTF8.GetString(body, at + 4, length);
+                at += 4 + Math.Max(0, length);
+            }
+
+            return values;
+        }
+
+        private static byte[] CString(string value) => [.. Encoding.UTF8.GetBytes(value), 0];
+
+        private async Task SendAsync(char? type, byte[] body)
+        {
+            var length = new byte[4];
+            BinaryPrimitives.WriteInt32BigEndian(length, body.Length + 4);
+            await stream.WriteAsync((byte[])[.. type is { } t ? new[] { (byte)t } : [], .. length, .. body]);
+        }
+
+        private async Task<(char Type, byte[] Body)> ReadAsync()
+        {
+            var header = new byte[5];
+            await stream.ReadExactlyAsync(header);
+            var body = new byte[BinaryPrimitives.ReadInt32BigEndian(header.AsSpan(1)) - 4];
+            await stream.ReadExactlyAsync(body);
+            return ((char)header[0], body);
+        }
     }
 }

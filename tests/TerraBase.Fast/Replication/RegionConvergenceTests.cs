@@ -132,38 +132,49 @@ public sealed class RegionConvergenceTests
     }
 
     [Test]
-    public async Task Documents_written_in_one_region_are_read_with_sql_over_the_postgres_wire_in_the_others()
+    public async Task Rows_written_over_the_postgres_wire_in_one_region_are_read_in_the_others()
     {
         await using var cell = await Cell.StartAsync();
-        await cell.SeedCollectionAsync();
         string[] ids = [EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString()];
-        for (var i = 0; i < ids.Length; i++)
+        await using (var gru = Wire(cell.Gru, await cell.Gru.Api.Server.IssueNarrowedAsync(
+            cell.Database.OrganizationId, cell.Database.ProjectId, null, "documents:read", "documents:write")))
         {
-            _ = await PutAsync(cell.Gru.Data, cell, ids[i], $$"""{"age":{{20 + i * 10}}}""");
+            await using var connection = await gru.OpenConnectionAsync();
+            await using (var create = new NpgsqlCommand("CREATE TABLE people (code TEXT PRIMARY KEY, age INTEGER)", connection))
+            {
+                _ = await create.ExecuteNonQueryAsync();
+            }
+
+            for (var i = 0; i < ids.Length; i++)
+            {
+                await using var insert = new NpgsqlCommand("INSERT INTO people (code, age) VALUES ($1, $2)", connection);
+                insert.Parameters.Add(new() { Value = ids[i] });
+                insert.Parameters.Add(new() { Value = 20 + i * 10 });
+                _ = await insert.ExecuteNonQueryAsync();
+            }
         }
 
         foreach (var machine in new[] { cell.Sjc, cell.Fra })
         {
-            var key = await machine.Api.Server.IssueNarrowedAsync(cell.Database.OrganizationId, cell.Database.ProjectId, null, "documents:read");
-            await using var source = NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder
-            {
-                Host = "127.0.0.1",
-                Port = machine.Api.Server.PostgresPort,
-                Username = "wire",
-                Password = key,
-                Database = "main",
-                SslMode = SslMode.Disable,
-            }.ConnectionString);
+            await using var source = Wire(machine, await machine.Api.Server.IssueNarrowedAsync(
+                cell.Database.OrganizationId, cell.Database.ProjectId, null, "documents:read"));
             List<string> rows = [];
             await TerraBaseTestServer.EventuallyAsync(async token =>
             {
                 await using var connection = await source.OpenConnectionAsync(token);
-                await using var command = new NpgsqlCommand($"SELECT _id FROM {Cell.Collection} WHERE age >= 20 ORDER BY age", connection);
-                await using var reader = await command.ExecuteReaderAsync(token);
+                await using var command = new NpgsqlCommand("SELECT code FROM people WHERE age >= 20 ORDER BY age", connection);
                 rows = [];
-                while (await reader.ReadAsync(token))
+                try
                 {
-                    rows.Add(reader.GetString(0));
+                    await using var reader = await command.ExecuteReaderAsync(token);
+                    while (await reader.ReadAsync(token))
+                    {
+                        rows.Add(reader.GetString(0));
+                    }
+                }
+                catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.UndefinedTable)
+                {
+                    // The table definition has not replicated to this region yet.
                 }
 
                 return rows.Count == ids.Length;
@@ -171,6 +182,16 @@ public sealed class RegionConvergenceTests
             await Assert.That(string.Join(',', rows)).IsEqualTo(string.Join(',', ids)).Because(machine.Region);
         }
     }
+
+    private static NpgsqlDataSource Wire(Machine machine, string key) => NpgsqlDataSource.Create(new NpgsqlConnectionStringBuilder
+    {
+        Host = "127.0.0.1",
+        Port = machine.Api.Server.PostgresPort,
+        Username = "wire",
+        Password = key,
+        Database = "main",
+        SslMode = SslMode.Disable,
+    }.ConnectionString);
 
     private static async Task<string> PutAsync(HttpClient http, Cell cell, string id, string json)
     {
