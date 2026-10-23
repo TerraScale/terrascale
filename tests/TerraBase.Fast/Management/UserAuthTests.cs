@@ -45,6 +45,7 @@ public sealed class UserAuthTests
         Action<SecurityTokenDescriptor>[] invalid =
         [
             token => (token.IssuedAt, token.NotBefore, token.Expires) = (now.AddMinutes(-10), now.AddMinutes(-10), now.AddMinutes(-2)),
+            token => token.Expires = now.AddSeconds(-10),
             token => (token.NotBefore, token.Expires) = (now.AddMinutes(2), now.AddMinutes(10)),
             token => token.Expires = null,
             token => token.Issuer = "https://auth.test/other-instance",
@@ -60,11 +61,38 @@ public sealed class UserAuthTests
             statuses.Add(await SendOnceAsync(api.WithToken(api.Issuer.Mint(user, edit))));
         }
 
-        // Within the 30 s clock skew a just-expired token still passes.
-        var skewed = await SendOnceAsync(api.WithToken(api.Issuer.Mint(user, token => token.Expires = DateTime.UtcNow.AddSeconds(-10))));
+        // Clock tolerance applies only to nbf, never to exp.
+        var skewed = await SendOnceAsync(api.WithToken(api.Issuer.Mint(user, token => token.NotBefore = DateTime.UtcNow.AddSeconds(10))));
 
         await Assert.That(statuses).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.Unauthorized));
         await Assert.That(skewed).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    [Test]
+    public async Task Cached_and_uncached_tokens_are_rejected_at_exact_expiration_without_contacting_the_issuer()
+    {
+        var now = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        var clock = new FakeTimeProvider(now);
+        await using var api = await ManagementApi.StartAsync(time: clock);
+        var expires = now.AddMinutes(5);
+        string Mint() => api.Issuer.Mint(EntityIds.New().ToString(), token =>
+            (token.IssuedAt, token.NotBefore, token.Expires) = (now.UtcDateTime, now.UtcDateTime, expires.UtcDateTime));
+        using var warm = api.WithToken(Mint());
+        using var cold = api.WithToken(Mint());
+        var discoveryFetches = api.Issuer.DiscoveryFetches;
+        var jwksFetches = api.Issuer.JwksFetches;
+        api.Issuer.Available = false;
+
+        await Assert.That(await StatusAsync(warm)).IsEqualTo(HttpStatusCode.OK);
+        clock.SetUtcNow(expires.AddTicks(-1));
+        await Assert.That(await StatusAsync(warm)).IsEqualTo(HttpStatusCode.OK);
+        clock.Advance(TimeSpan.FromTicks(1));
+
+        await Assert.That(await StatusAsync(warm)).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(await StatusAsync(cold)).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(api.Issuer.DiscoveryFetches).IsEqualTo(discoveryFetches);
+        await Assert.That(api.Issuer.JwksFetches).IsEqualTo(jwksFetches);
+        await Assert.That(api.Issuer.ProjectFetches).IsEqualTo(0);
     }
 
     [Test]

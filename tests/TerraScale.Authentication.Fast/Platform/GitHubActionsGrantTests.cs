@@ -55,7 +55,7 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         await Assert.That(access.Audiences).IsEquivalentTo([GitHubActionsGrant.ApiAudience]);
         await Assert.That(body.TryGetProperty("id_token", out _)).IsFalse();
         await Assert.That(access.Subject).IsEqualTo(GitHubActionsGrant.ClientId);
-        await Assert.That(access.ValidTo - access.IssuedAt).IsLessThanOrEqualTo(TimeSpan.FromMinutes(15));
+        await Assert.That(access.ValidTo - access.IssuedAt).IsLessThanOrEqualTo(TimeSpan.FromMinutes(5));
         await Assert.That(body.TryGetProperty("refresh_token", out _)).IsFalse();
 
         // A narrower request gets only what it asked for. More than the workload's scopes is refused by OpenIddict itself:

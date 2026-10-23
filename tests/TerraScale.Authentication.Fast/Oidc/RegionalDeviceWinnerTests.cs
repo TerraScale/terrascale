@@ -135,7 +135,7 @@ public sealed class RegionalDeviceWinnerTests
                 await UsableAsync(replica, access, winner.Id);
                 var members = await replica.OkAsync(HttpMethod.Get, $"{Organizations}/{organization}/members", access);
                 await Assert.That(members.GetProperty("items").EnumerateArray()
-                    .Select(member => member.GetProperty("user_id").GetString()).ToArray()).IsEquivalentTo([winner.Id]);
+                    .Select(member => member.GetProperty("user_id").GetString()!).ToArray()).IsEquivalentTo([winner.Id]);
             }
         }
 

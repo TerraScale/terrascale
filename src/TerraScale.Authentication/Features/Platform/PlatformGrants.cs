@@ -37,7 +37,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
     public const string DatabaseClaim = "database";
 
     /// <summary>The lifetime of organization and project tokens.</summary>
-    public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(15);
+    public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(5);
 
     private static readonly TimeSpan AuthenticationTimeClockSkew = TimeSpan.FromSeconds(30);
 

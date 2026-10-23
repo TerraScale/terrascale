@@ -66,7 +66,7 @@ public static class OidcIssuer
     public const string JwksPath = ".well-known/jwks.json";
 
     /// <summary>Lifetime of access and identity tokens; within the key ring's <c>Jwt.MaxLifetime</c>.</summary>
-    public static readonly TimeSpan TokenLifetime = TimeSpan.FromHours(1);
+    public static readonly TimeSpan TokenLifetime = TimeSpan.FromMinutes(5);
 
     /// <summary>The platform issuer, derived only from the configured public origin.</summary>
     public static Uri Issuer(AuthOptions options) => Issuer(options, Slug);

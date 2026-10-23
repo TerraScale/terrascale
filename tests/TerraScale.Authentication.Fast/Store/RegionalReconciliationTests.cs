@@ -188,6 +188,13 @@ public sealed class RegionalReconciliationTests
             tokens.Add(await OidcHarness.JsonAsync(response));
         }
 
+        foreach (var contender in tokens)
+        {
+            var access = await gru.ValidateAsync(contender.GetProperty("access_token").GetString()!, OidcHarness.Issuer);
+            await Assert.That(access.ValidTo > access.IssuedAt).IsTrue();
+            await Assert.That(access.ValidTo - access.IssuedAt <= TimeSpan.FromMinutes(5)).IsTrue();
+        }
+
         await Assert.That(await ReadinessWait.UntilAsync(async () =>
         {
             var owners = await Task.WhenAll(stores.Select(store => store.FindUniqueOwnerAsync(OidcIssuer.InstanceId, "credential:oidc", parentId)));
@@ -214,7 +221,15 @@ public sealed class RegionalReconciliationTests
         }
 
         await Assert.That(outcomes.Count(valid => valid)).IsEqualTo(1);
-        var loser = tokens[outcomes.IndexOf(false)].GetProperty("refresh_token").GetString()!;
+        var losingTokens = tokens[outcomes.IndexOf(false)];
+        // Offline consumers accept the signed loser until exp; store-bound refresh already rejects it.
+        foreach (var node in auth)
+        {
+            var offline = await node.ValidateAsync(losingTokens.GetProperty("access_token").GetString()!, OidcHarness.Issuer);
+            await Assert.That(offline.ValidTo > DateTime.UtcNow).IsTrue();
+        }
+
+        var loser = losingTokens.GetProperty("refresh_token").GetString()!;
         foreach (var node in auth)
         {
             using var rejected = await node.RefreshAsync(loser);

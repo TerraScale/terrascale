@@ -167,37 +167,42 @@ cooldown and notice deadlines remain persisted. Replication delay can admit
 duplicate attempts temporarily. Lockout notices are best effort; globally
 exclusive notice delivery is not promised.
 
-## Offline JWT prerequisite: unresolved
+## Offline JWT security model: accepted five-minute window
 
-Store reconciliation cannot revoke a self-contained JWT at an offline
-consumer. No expiry or consumer authentication policy is changed here.
-Current lifetimes are:
+The accepted policy keeps TerraBase JWT authorization offline. Store
+reconciliation stops losing sessions, refresh tokens and key-secret exchanges
+at ts-auth after the required winner deltas arrive. It cannot revoke a JWT
+already issued to an offline consumer. A losing access token may therefore
+continue authorizing until its signed `exp`.
 
-1. User sign-in access/identity JWTs and ordinary service access JWTs: one hour
-   (`OidcIssuer.TokenLifetime`, `Features/Oidc/OidcServer.cs`).
-2. Organization/project exchange and API-key access JWTs: at most 15 minutes
-   (`PlatformGrants.Lifetime`, `Features/Platform/PlatformGrants.cs`); exchange
-   also caps this at the subject token's remaining lifetime.
-3. Browser sessions and reference refresh tokens: 14 days; these are checked
-   against stored state and winning claims on use.
+All newly issued ts-auth access JWTs live at most five minutes: ordinary
+sign-in/service tokens use `OidcIssuer.TokenLifetime`; organization/project,
+API-key and GitHub Actions exchanges use `PlatformGrants.Lifetime`. Subject
+exchange also caps this at the subject token's remaining lifetime. Identity
+JWTs use the same five-minute issuer lifetime. Browser sessions and reference
+refresh tokens keep their 14-day lifetime but consult stored winner ancestry
+on use; a losing refresh is rejected after convergence instead of obtaining
+another five-minute access token.
 
 TerraBase's offline consumer is
-`src/TerraBase/Features/UserAuth/UserAuthenticationHandler.cs` (signature,
-issuer, audience and claim validation), with successful token caching in
-`src/TerraBase/Features/UserAuth/ValidatedTokens.cs`. It does not consult
-winner/revocation state. `UserAuthExtensions.cs` derives authorization from
-that validated identity. An immediate winner check would require an explicit
-contract decision: a ts-auth winner/introspection API accessed through the
-SDK and consulted by the handler, with the successful-token cache honoring
-the replication-window bound. An alternative is explicit acceptance of the
-existing JWT lifetime bound. Neither path is implemented or implicitly
-approved. Other products' offline JWT consumers require their own inventory;
-no sibling product was edited here.
+`src/TerraBase/Features/UserAuth/UserAuthenticationHandler.cs`, with successful
+signature-validation caching in `ValidatedTokens.cs`. Cold and cached requests
+must reject at `exp`; clock tolerance must not extend expiration. No per-request
+call to ts-auth or winner introspection is introduced. Other offline consumers
+must also enforce `exp` without extending this window; no sibling product is
+edited here.
 
-Therefore proof of stored refresh/session/key rejection is not proof of
-TerraBase JWT rejection within the replication window. During a partition
-there is no fixed replication deadline; the window ends when the required
-claim deltas reach each regional copy.
+There is no fixed replication deadline during a partition. Before the local
+winner deltas arrive, a branch can still issue tokens. Once they arrive,
+ts-auth rejects the losing refresh/exchange; its last issued offline access
+JWT has at most five minutes remaining. This accepted expiry window replaces
+the earlier requirement for immediate offline JWT revocation at convergence.
+
+Already-issued JWTs cannot be shortened retroactively: the prior ordinary
+lifetime was one hour and platform exchanges were up to 15 minutes. Rollout
+must allow those outstanding tokens to expire before claiming the new
+five-minute bound across all traffic. Resetting stored auth records alone
+does not revoke an existing offline JWT.
 
 ## Evidence boundary
 
