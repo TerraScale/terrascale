@@ -59,8 +59,24 @@ public static class BillingEndpoints
             PlanChanges = changes,
             PaymentMethod = paymentMethod,
             PaymentMethodUnavailable = paymentMethodUnavailable,
-            History = new(invoices, InvoiceHistory.ForBrowser(invoices, query, now), InvoiceHistory.Summarize(invoices, now), now, errorMessage, 0)
+            History = new(invoices, InvoiceHistory.ForBrowser(invoices, query, now), InvoiceHistory.Summarize(invoices, now, Renewal(page.Binding, changes.State)), now, errorMessage, 0)
         };
+    }
+
+    // The next invoice is the renewal charge: the scheduled plan's price when a change applies at renewal, else the current plan's.
+    private static InvoiceRenewal? Renewal(BillingBinding? binding, BillingPlanState? state)
+    {
+        static long Price(string key, string interval) => PlanCatalog.Plans.FirstOrDefault(plan => plan.Key == key) is { } plan
+            ? interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents : 0;
+        if (state is not null)
+        {
+            var scheduled = state.ScheduledPlanKey.Length > 0 && (state.ScheduledAt is null || state.ScheduledAt <= state.RenewalAt);
+            var interval = scheduled && state.ScheduledInterval.Length > 0 ? state.ScheduledInterval : state.Interval;
+            return new(state.RenewalAt, Price(scheduled ? state.ScheduledPlanKey : state.PlanKey, interval), "usd", state.Interval, state.CancelAtPeriodEnd);
+        }
+        if (binding is not { SubscriptionId.Length: > 0, RenewalAt: { } renews } || binding.Status is "canceled" or "incomplete_expired") return null;
+        var current = binding.EffectiveInterval.Length > 0 ? binding.EffectiveInterval : binding.Interval;
+        return new(renews, Price(binding.EffectivePlan, current), "usd", current);
     }
 
     public static IEndpointRouteBuilder MapBilling(this IEndpointRouteBuilder endpoints)

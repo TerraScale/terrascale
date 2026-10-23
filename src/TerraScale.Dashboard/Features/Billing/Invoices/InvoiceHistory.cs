@@ -22,6 +22,8 @@ public sealed record InvoiceHistoryPage(BillingInvoiceList Listing, string Statu
         return "/organization" + QueryString.Create(values.OrderBy(value => value.Key, StringComparer.Ordinal));
     }
 }
+// The subscription's next renewal: Stripe charges the plan price for the next period on this date.
+public sealed record InvoiceRenewal(DateTimeOffset At, long AmountCents, string Currency, string Interval, bool Ends = false);
 public sealed record InvoiceSummary(string NextInvoice, string NextDetail, string Period, string PeriodDetail,
     string Outstanding, string OutstandingDetail, bool HasPeriod = false, int PeriodPercent = 0);
 
@@ -82,21 +84,34 @@ public static class InvoiceHistory
         : currency.Length == 0 ? Amount(cents, currency) + " (currency unreported)"
         : currency.ToUpperInvariant() + " " + Amount(cents, currency);
 
-    public static InvoiceSummary Summarize(IReadOnlyList<BillingInvoice> invoices, DateTimeOffset now)
+    public static string Plural(int count, string noun) => count.ToString(CultureInfo.InvariantCulture) + " " + noun + (count == 1 ? "" : "s");
+
+    public static InvoiceSummary Summarize(IReadOnlyList<BillingInvoice> invoices, DateTimeOffset now, InvoiceRenewal? renewal = null)
     {
-        var summary = new InvoiceSummary("Not recorded", "No upcoming invoice is recorded.", "Unavailable",
+        var summary = new InvoiceSummary("None scheduled", "No upcoming invoice is scheduled.", "Unavailable",
             "No current billing period is recorded.", "Not recorded", "No invoices are recorded.");
+        if (renewal is { } next && next.At > now) summary = summary with
+        {
+            NextInvoice = next.Ends ? "None scheduled" : Money(next.AmountCents, next.Currency),
+            NextDetail = (next.Ends ? "The subscription ends on " : "Renewal invoice on ") + next.At.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture)
+        };
         var current = invoices.Where(invoice => invoice.PeriodStart is { } start && invoice.PeriodEnd is { } end &&
             start <= now && now < end).OrderByDescending(invoice => invoice.PeriodStart).FirstOrDefault();
-        if (current is not null)
+        (DateTimeOffset Start, DateTimeOffset End)? period = current is null ? null : (current.PeriodStart!.Value, current.PeriodEnd!.Value);
+        if (period is null && renewal is { At: var renews } && renews > now && renewal.Interval is "annual" or "monthly")
         {
-            var start = current.PeriodStart!.Value; var end = current.PeriodEnd!.Value;
+            var started = renewal.Interval == "annual" ? renews.AddYears(-1) : renews.AddMonths(-1);
+            if (started <= now) period = (started, renews);
+        }
+        if (period is { } known)
+        {
+            var (start, end) = known;
             var days = Math.Max(1, (int)(end - start).TotalDays);
             var elapsed = Math.Clamp((int)(now - start).TotalDays, 0, days);
             summary = summary with
             {
                 Period = start.UtcDateTime.ToString("MMM d", CultureInfo.InvariantCulture) + " – " + end.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture),
-                PeriodDetail = $"Day {elapsed} of {days} · based on a recorded invoice period",
+                PeriodDetail = $"Day {elapsed} of {days}" + (current is null ? " · based on the subscription renewal date" : " · based on a recorded invoice period"),
                 HasPeriod = true,
                 PeriodPercent = Math.Clamp(Math.Max(elapsed > 0 ? 1 : 0, (int)Math.Round(elapsed * 100d / days, MidpointRounding.AwayFromZero)), 0, 100)
             };
@@ -115,7 +130,7 @@ public static class InvoiceHistory
             foreach (var invoice in open) amount = checked(amount + Math.Max(0, invoice.RemainingCents ?? invoice.AmountCents));
             summary = summary with
             {
-                OutstandingDetail = $"{open.Length} open invoice(s) in recorded history",
+                OutstandingDetail = Plural(open.Length, "open invoice") + " in recorded history",
                 Outstanding = open.Length == 0 ? "0 open invoices" : currencies.Length > 1 ? "Multiple currencies" : Money(amount, currencies[0])
             };
         }
