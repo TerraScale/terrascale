@@ -24,7 +24,7 @@ internal sealed class UserAuthenticationHandler(
     TerraBaseOptions terraBase,
     IIssuerKeys issuerKeys,
     ValidatedTokens validated,
-    [FromKeyedServices(SchemeName)] TimeProvider? time = null) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    [FromKeyedServices(UserAuthenticationHandler.SchemeName)] TimeProvider? time = null) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     public const string SchemeName = UserAuthExtensions.TokenScheme;
 

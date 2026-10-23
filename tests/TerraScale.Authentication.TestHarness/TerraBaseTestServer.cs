@@ -434,11 +434,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             {
                 using var entry = JsonDocument.Parse(line);
                 var fields = entry.RootElement;
-                if (fields.TryGetProperty("level", out var level) && level.GetString() is "WARN" or "ERROR" or "CRITICAL"
-                    && fields.TryGetProperty("msg", out var message))
+                if (fields.TryGetProperty("level", out var level) && fields.TryGetProperty("msg", out var message)
+                    && (level.GetString() is "WARN" or "ERROR" or "CRITICAL" || message.GetString() == "Application is shutting down..."))
                 {
                     // Templates only: retain backend readiness failures without payloads or credentials.
-                    Console.Error.WriteLine($"TerraBase {this.node.Region}: {level.GetString()} {message.GetString()}");
+                    Console.Error.WriteLine($"TerraBase {DateTimeOffset.UtcNow:O} {this.node.Region}: {level.GetString()} {message.GetString()}");
                 }
             }
             catch (JsonException)
@@ -506,7 +506,7 @@ internal sealed class BackendErrorDiagnostics : DelegatingHandler
                 // Non-JSON failures still retain their status; the SDK receives the original buffered content.
             }
 
-            Console.Error.WriteLine($"TerraBase {request.Method}: {(int)response.StatusCode}, code={code ?? "unavailable"}, retry-after={response.Headers.RetryAfter}");
+            Console.Error.WriteLine($"TerraBase {DateTimeOffset.UtcNow:O} {request.Method}: {(int)response.StatusCode}, code={code ?? "unavailable"}, retry-after={response.Headers.RetryAfter}");
         }
 
         return response;
