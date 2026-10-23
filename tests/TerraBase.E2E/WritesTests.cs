@@ -61,12 +61,22 @@ public sealed class WritesTests
     {
         var ids = Enumerable.Range(0, 800).Select(index => $"doc{index:D3}").ToArray();
         var hang = new TaskCompletionSource();
+        var started = new TaskCompletionSource<Writes>(TaskCreationOptions.RunContinuationsAsynchronously);
         var writes = Writes.Start(ids, 8, (index, token) => index switch
         {
             < 5 => Task.CompletedTask,
-            5 => Task.FromException(new HttpRequestException($"PUT {ids[index]} answered 500: {Signature}", null, HttpStatusCode.InternalServerError)),
+            5 => FailAfterAcceptedAsync(),
             _ => hang.Task.WaitAsync(token),
         });
+        started.SetResult(writes);
         return (writes, ids);
+
+        async Task FailAfterAcceptedAsync()
+        {
+            // Callback indices do not order completion: establish the exact count before publishing the failure.
+            var active = await started.Task;
+            _ = await active.UntilAcceptedAsync(5, "the fixture's first five writes");
+            throw new HttpRequestException($"PUT {ids[5]} answered 500: {Signature}", null, HttpStatusCode.InternalServerError);
+        }
     }
 }
