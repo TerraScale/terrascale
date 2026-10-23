@@ -9,17 +9,17 @@ title: Dashboard usage
 
 # Dashboard usage
 
-Use the dashboard's native account pages to manage access to TerraScale. Use TerraBase SDKs for your application's documents. Public self-service access and individual dashboard workflows must be confirmed for the serving release.
+Use the dashboard's native account pages to manage access to TerraScale. Use TerraBase SDKs for your application's documents.
 
 ## Prepare a database connection
 
-1. Sign in through the supported dashboard entrypoint supplied with your access.
-2. Select the organization and project you are authorized to use.
-3. Select or provision an isolated development database through the available public workflow.
-4. Obtain its database name, collection name and HTTPS API endpoint.
-5. Issue or obtain a scoped application credential through the supported access flow and place it in your application's secret store.
+1. Sign in at [dash.terrascale.tech](https://dash.terrascale.tech/login), or [create an account](https://dash.terrascale.tech/register).
+2. Select the organization and project you want to use. The **Organization** page shows the **Current project** ID.
+3. Open **Databases** and create a database, or select an existing one.
+4. Open **API keys**, select **New project key**, limit **Database access** to that database and choose the minimum permissions.
+5. Copy the key when it is shown and place it in your application's secret store.
 
-Do not infer a credential issuance route or a UI control from this checklist. Where provisioning or authorization is unavailable, stop before database requests; a local test is not a substitute for an allocation.
+The application exchanges the key for an access token and calls `https://api.terrascale.tech`; see [authentication](/de/guides/authentication).
 
 ## Use the database from an application
 

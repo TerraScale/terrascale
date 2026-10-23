@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { pathToFileURL } from 'node:url'
 import {
   createTerraBaseV1Client, v1Filter,
-  V1NotFoundError, V1PreconditionFailedError,
+  TerraBaseV1Error, V1NotFoundError, V1PreconditionFailedError,
 } from '@terrascale/sdk'
 
 // #region connection
@@ -10,6 +10,17 @@ export function connect({ endpoint, project, token }) {
   return createTerraBaseV1Client({ baseUrl: endpoint, project, token })
 }
 // #endregion connection
+
+// #region collection
+// A new database has no collections; 409 means this one already exists.
+export async function ensureCollection(client, database, collection, signal) {
+  try {
+    await client.database(database).collections.create(collection, { signal })
+  } catch (error) {
+    if (!(error instanceof TerraBaseV1Error && error.status === 409)) throw error
+  }
+}
+// #endregion collection
 
 // #region journey
 export async function runJourney(client, database, collection, signal) {
@@ -57,8 +68,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       project: required('TERRASCALE_PROJECT_ID'),
       token: required('TERRASCALE_ACCESS_TOKEN'),
     })
-    await runJourney(client, required('TERRASCALE_DATABASE_NAME'),
-      required('TERRASCALE_COLLECTION_NAME'), AbortSignal.timeout(60_000))
+    const database = required('TERRASCALE_DATABASE_NAME')
+    const collection = required('TERRASCALE_COLLECTION_NAME')
+    const signal = AbortSignal.timeout(60_000)
+    await ensureCollection(client, database, collection, signal)
+    await runJourney(client, database, collection, signal)
     console.log('PASS_TERRABASE_CRUD_QUERY')
   } catch {
     console.error('Quickstart failed. Check access and reconcile any interrupted write before retrying.')

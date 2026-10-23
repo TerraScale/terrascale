@@ -3,10 +3,13 @@
 Install Node 22 or 24 and npm 11 or newer, then run `npm ci` in this directory.
 This consumer pins the published `@terrascale/sdk@0.0.3` package.
 
-Supply `TERRASCALE_API_URL`, `TERRASCALE_PROJECT_ID`,
-`TERRASCALE_DATABASE_NAME`, `TERRASCALE_COLLECTION_NAME` and
-`TERRASCALE_ACCESS_TOKEN` from an authorized isolated development allocation.
-Keep the credential in your secret manager or private shell.
+Create a database and an API key in the dashboard, exchange the key for an
+access token and export `TERRASCALE_API_URL=https://api.terrascale.tech`,
+`TERRASCALE_PROJECT_ID`, `TERRASCALE_DATABASE_NAME`,
+`TERRASCALE_COLLECTION_NAME` and `TERRASCALE_ACCESS_TOKEN` as shown in
+https://docs.terrascale.tech/getting-started/javascript. The example creates the
+collection when it does not exist. Keep the key and token in your secret
+manager or private shell.
 
 Run `npm start`. Success prints `PASS_TERRABASE_CRUD_QUERY`. The example
 verifies CRUD, a version conflict, paginated query contents and deletion of
