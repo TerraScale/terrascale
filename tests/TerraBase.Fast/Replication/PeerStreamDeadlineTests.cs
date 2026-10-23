@@ -669,10 +669,12 @@ public sealed class PeerStreamDeadlineTests
     }
 
     [Test]
-    public async Task Missing_coverage_refills_immediately_but_a_refused_refill_keeps_the_retry_backoff()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Missing_coverage_refills_immediately_but_a_refused_refill_keeps_the_retry_backoff(bool repeatedCoverageRefusal)
     {
         var time = new ObservedTime();
-        await using var peer = await FakePeer.StartAsync(silentStreams: 0, coverageRefusal: true);
+        await using var peer = await FakePeer.StartAsync(silentStreams: 0, coverageRefusal: true, repeatedCoverageRefusal: repeatedCoverageRefusal);
         var (source, bindSource) = CreateSource();
         TenantContext database = null!;
         await using var api = await StartSenderAsync(peer, source, bindSource, time, async api =>
@@ -1422,6 +1424,7 @@ public sealed class PeerStreamDeadlineTests
         private readonly bool _stableBeforeBatches;
         private readonly bool _stableBurst;
         private readonly bool _coverageRefusal;
+        private readonly bool _repeatedCoverageRefusal;
         private WebApplication? _app;
         private int _streams;
         private int _batchesBeforeRelease;
@@ -1429,7 +1432,7 @@ public sealed class PeerStreamDeadlineTests
 
         private FakePeer(
             int silentStreams, RepairState? repair, TaskCompletionSource? refillRelease, TaskCompletionSource? batchRelease,
-            TaskCompletionSource? frontierRelease, int unansweredStreams, bool stableBeforeBatches, bool stableBurst, bool coverageRefusal)
+            TaskCompletionSource? frontierRelease, int unansweredStreams, bool stableBeforeBatches, bool stableBurst, bool coverageRefusal, bool repeatedCoverageRefusal)
         {
             _silentStreams = silentStreams;
             _unansweredStreams = unansweredStreams;
@@ -1440,6 +1443,7 @@ public sealed class PeerStreamDeadlineTests
             _stableBeforeBatches = stableBeforeBatches;
             _stableBurst = stableBurst;
             _coverageRefusal = coverageRefusal;
+            _repeatedCoverageRefusal = repeatedCoverageRefusal;
         }
 
         public string Address { get; private set; } = "";
@@ -1459,9 +1463,9 @@ public sealed class PeerStreamDeadlineTests
 
         public static async Task<FakePeer> StartAsync(
             int silentStreams, RepairState? repair = null, TaskCompletionSource? refillRelease = null, TaskCompletionSource? batchRelease = null,
-            TaskCompletionSource? frontierRelease = null, int unansweredStreams = 0, bool stableBeforeBatches = false, bool stableBurst = false, bool coverageRefusal = false)
+            TaskCompletionSource? frontierRelease = null, int unansweredStreams = 0, bool stableBeforeBatches = false, bool stableBurst = false, bool coverageRefusal = false, bool repeatedCoverageRefusal = false)
         {
-            var peer = new FakePeer(silentStreams, repair, refillRelease, batchRelease, frontierRelease, unansweredStreams, stableBeforeBatches, stableBurst, coverageRefusal);
+            var peer = new FakePeer(silentStreams, repair, refillRelease, batchRelease, frontierRelease, unansweredStreams, stableBeforeBatches, stableBurst, coverageRefusal, repeatedCoverageRefusal);
             var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
             builder.Configuration.Sources.Clear();
             builder.Logging.ClearProviders();
@@ -1527,7 +1531,7 @@ public sealed class PeerStreamDeadlineTests
                         PushFrame.KindOneofCase.Hello => new AckFrame { Welcome = new Welcome { Node = ReplicaId.Of(1, 9, 0).Value } },
                         PushFrame.KindOneofCase.Heartbeat => new AckFrame(),
                         PushFrame.KindOneofCase.Batch => new AckFrame { Ack = new Ack { Database = frame.Batch.Database, Refused = true, RefillRequired = _coverageRefusal } },
-                        PushFrame.KindOneofCase.Refill => new AckFrame { Ack = new Ack { Database = frame.Refill.Database, Refused = true } },
+                        PushFrame.KindOneofCase.Refill => new AckFrame { Ack = new Ack { Database = frame.Refill.Database, Refused = true, RefillRequired = _repeatedCoverageRefusal } },
                         _ => null,
                     };
                     if (answer is not null && (ordinal > _unansweredStreams || frame.Hello is not null))
