@@ -64,7 +64,7 @@ public sealed class CollectionAccessChangesTests
         var generation = DocumentApi.NewId();
         var at = new EntryVersion(new Hlc(((ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16) + 1000), ReplicaId.Of(4112, 7, 1));
         using var body = JsonDocument.Parse("""{"value":"joined"}""");
-        using var metadata = JsonDocument.Parse($$"""{"created_at":0,"entity_id":"{{generation}}","rules":{"read":{"public":true,"owner":false,"roles":[]},"write":{"public":false,"owner":false,"roles":[]}}}""");
+        using var metadata = JsonDocument.Parse($$$$"""{"created_at":0,"entity_id":"{{{{generation}}}}","rules":{"read":{"public":true,"owner":false,"roles":[]},"write":{"public":false,"owner":false,"roles":[]}}}""");
         await using (var write = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             await Assert.That(await write.JoinAsync("incoming", unknown, DocumentState.Bottom.Put(at, body.RootElement), at, CancellationToken.None)).IsTrue();
