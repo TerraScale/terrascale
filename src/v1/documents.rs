@@ -290,6 +290,8 @@ pub struct Document<T = Box<RawValue>> {
     /// Vector distance on results of a [`super::Near`] query, meters on
     /// results of a [`super::GeoNear`] query; otherwise `None`.
     pub distance: Option<f64>,
+    /// Relevance score; set on full-text search query results.
+    pub score: Option<f64>,
 }
 
 impl<T> Document<T> {
@@ -342,6 +344,8 @@ struct WireDocument<T> {
     siblings: Option<Vec<WireSibling<T>>>,
     #[serde(default)]
     distance: Option<f64>,
+    #[serde(default)]
+    score: Option<f64>,
 }
 
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for Document<T> {
@@ -384,6 +388,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Document<T> {
             version: w.version,
             state,
             distance: w.distance,
+            score: w.score,
         })
     }
 }

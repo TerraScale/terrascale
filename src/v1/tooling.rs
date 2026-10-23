@@ -6,7 +6,39 @@ use super::{
     ids::check_name,
 };
 use reqwest::{Method, StatusCode};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+
+/// Secondary index strategy. Omission in a create request uses a B-tree.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IndexKind {
+    #[default]
+    BTree,
+    Text,
+}
+
+/// Optional typed body for [`Database::create_index`]; raw JSON remains supported.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct IndexRequest {
+    pub collection: String,
+    /// One to four dotted member paths.
+    pub fields: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<IndexKind>,
+}
+
+/// Secondary index returned by the create and list routes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Index {
+    pub name: String,
+    pub collection: String,
+    pub fields: Vec<String>,
+    pub state: String,
+    #[serde(default)]
+    pub kind: IndexKind,
+}
 
 impl Database {
     pub(crate) async fn management_delete(&self, suffix: &[&str]) -> Result<()> {
@@ -66,7 +98,8 @@ impl Database {
         )
         .await
     }
-    /// `POST D/indexes`; body contains `collection`, `fields`, optional `name`.
+    /// `POST D/indexes`; body contains `collection`, `fields`, optional `name`
+    /// and `kind` (`btree` by default, or `text`).
     pub async fn create_index<T: DeserializeOwned>(&self, body: &impl Serialize) -> Result<T> {
         self.management(
             Method::POST,
