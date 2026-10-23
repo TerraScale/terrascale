@@ -114,6 +114,11 @@ export { V1ProjectUsageClient, V1DatabaseUsageClient } from "./v1/usage.js";
 /** @typedef {import("./v1/usage.js").V1AnalyticsRequest} V1AnalyticsRequest */
 
 export { V1Backups, V1BackupDestinationClient } from "./v1/backups.js";
+export { V1ChangeWebhooks } from "./v1/change-webhooks.js";
+/** @typedef {import("./v1/change-webhooks.js").V1ChangeWebhook} V1ChangeWebhook */
+/** @typedef {import("./v1/change-webhooks.js").V1CreatedChangeWebhook} V1CreatedChangeWebhook */
+/** @typedef {import("./v1/change-webhooks.js").V1ChangeWebhookDelivery} V1ChangeWebhookDelivery */
+/** @typedef {import("./v1/change-webhooks.js").V1ChangeWebhookListRequest} V1ChangeWebhookListRequest */
 /** @typedef {import("./v1/backups.js").V1Backup} V1Backup */
 /** @typedef {import("./v1/backups.js").V1BackupPage} V1BackupPage */
 /** @typedef {import("./v1/backups.js").V1BackupPolicy} V1BackupPolicy */
