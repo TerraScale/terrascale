@@ -69,6 +69,15 @@ public static class HomeConnectSnippets
             	fmt.Println(len(page.Items))
             }
             """),
+        ("python", "Python", "pip install \"terrascale @ git+https://github.com/TerraScale/ts-python@v0.0.1\"", $$"""
+            import os
+
+            from terrascale import TerraScale
+
+            with TerraScale(project="{{projectId}}", token=os.environ["TERRASCALE_ACCESS_TOKEN"], base_url="{{ApiUrl}}") as ts:
+                page = ts.database("{{database}}").collection("{{Collection}}").list(limit=10)
+                print(len(page.items))
+            """),
         ("rust", "Rust", "cargo add terrascale serde_json tokio --features tokio/full", $$"""
             use terrascale::v1::Client;
 
