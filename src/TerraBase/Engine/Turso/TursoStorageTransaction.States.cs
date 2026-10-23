@@ -262,7 +262,8 @@ internal sealed partial class TursoStorageTransaction
         }
 
         var digest = DocumentStateEncoding.Digest(collection, id, state);
-        RemoveMerkleState(collection, id);
+        // The old and the new contribution go to the same bucket: one fold of both (XOR) leaves it as two folds would.
+        var (oldH1, oldH2) = StoredDigest(collection, id) ?? (0, 0);
         var update = BodyCommand(TursoStatements.UpdateState, collection, id);
         Bind(update);
         if (update.ExecuteNonQuery() == 0)
@@ -273,7 +274,7 @@ internal sealed partial class TursoStorageTransaction
             insert.ExecuteNonQuery();
         }
 
-        FoldMerkle(Bucket(collection, id), unchecked((long)(ulong)(digest >> 64)), unchecked((long)(ulong)digest));
+        FoldMerkle(Bucket(collection, id), unchecked((long)(ulong)(digest >> 64)) ^ oldH1, unchecked((long)(ulong)digest) ^ oldH2);
         AppendFeed(collection, id, at, state.Exists, beforeProof, afterProof, generation);
 
         void Bind(SqliteCommand command)

@@ -33,6 +33,15 @@ public sealed class MerkleDigestTests
             await ExactAsync(client);
         }
         await Assert.That((await api.PutAsync(id, new { value = 2 }, cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.OK);
+        await ExactAsync(client);
+        // One transaction replacing the same document twice folds its old and new digest into the bucket each time.
+        await using (var twice = (TursoStorageTransaction)await client.BeginTransactionAsync(write: true, token))
+        {
+            _ = await twice.PutAsync("items", id, "{\"value\":21}"u8.ToArray(), token);
+            await twice.FlushStatesAsync();
+            _ = await twice.PutAsync("items", id, "{\"value\":22}"u8.ToArray(), token);
+            _ = await twice.CommitAsync(token);
+        }
         var committed = await ExactAsync(client);
         await using (var rollback = (TursoStorageTransaction)await client.BeginTransactionAsync(write: true, token))
         {
