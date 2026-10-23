@@ -14,6 +14,7 @@ const routes = [
   ['/guides/sdks', 'Supported runtimes, installation and SDK contracts'],
   ['/guides/authentication', 'API keys, token exchange and scoped access'],
   ['/guides/queries', 'JSON filters, projection, opaque pagination and version preconditions'],
+  ['/guides/libsql-clients', 'Run SQL from the official libSQL clients (JavaScript, Go, Rust, Python)'],
   ['/guides/errors', 'Typed errors, SDK retry behavior and uncertain mutation reconciliation'],
   ['/guides/dashboard', 'Customer dashboard and application database workflow'],
   ['/guides/mcp', 'Connect MCP clients with a personal access token and discover permitted tools'],
