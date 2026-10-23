@@ -27,11 +27,11 @@ public sealed class RequestLogMemoryTests
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var api = await RequestLogMemoryFixture.StartAsync(
             settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), time: clock);
-        using var first = await api.CreateTenantAsync("documents:read");
-        using var second = await api.CreateTenantAsync("documents:read");
-        using var third = await api.CreateTenantAsync("documents:read");
-        using var fourth = await api.CreateTenantAsync("documents:read");
-        using var fifth = await api.CreateTenantAsync("documents:read");
+        using var first = await api.CreateTenantAsync("documents:read", "documents:write");
+        using var second = await api.CreateTenantAsync("documents:read", "documents:write");
+        using var third = await api.CreateTenantAsync("documents:read", "documents:write");
+        using var fourth = await api.CreateTenantAsync("documents:read", "documents:write");
+        using var fifth = await api.CreateTenantAsync("documents:read", "documents:write");
         var tenants = new[] { first, second, third, fourth, fifth }.Take(databaseCount).ToArray();
         var pending = databaseCount * 100L;
         var databases = new List<TenantContext>();
@@ -124,7 +124,7 @@ public sealed class RequestLogMemoryTests
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var api = await RequestLogMemoryFixture.StartAsync(
             settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), time: clock);
-        using var tenant = await api.CreateTenantAsync("documents:read");
+        using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         var database = await tenant.ContextAsync(api.Server, "app", token);
         // This test isolates retained observations from the separate document/API-key cache.
         api.Server.Services.GetRequiredService<DocumentCache>().Dispose();
