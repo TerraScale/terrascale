@@ -25,7 +25,7 @@ public sealed class StorageTransactionTests
     private static readonly TenantContext Database = Tenant(EntityIds.New().ToString());
 
     [Test]
-    public async Task Turso_enforces_query_only_for_reads_and_resets_it_before_reusing_the_session()
+    public async Task Turso_enforces_query_only_for_reads_and_never_for_writes()
     {
         await using var server = await TerraBaseTestServer.StartAsync();
         var (engine, store) = await OpenAsync(server);
@@ -57,13 +57,14 @@ public sealed class StorageTransactionTests
                 .IsEqualTo("{\"readOnly\":1}");
         }
 
-        // The read reset its session before pooling it.
+        // Pooled sessions serve reads only, so the read leaves its session read-only: changing the setting makes Turso prepare
+        // every kept statement again (TursoSession.Settings).
         var reused = ((TursoStorageEngine)engine).Pool.Rent(store) ?? throw new InvalidOperationException("missing idle session");
         try
         {
             using var flag = reused.Connection.CreateCommand();
             flag.CommandText = "SELECT query_only FROM pragma_query_only;";
-            await Assert.That(await flag.ExecuteScalarAsync()).IsEqualTo(0L);
+            await Assert.That(await flag.ExecuteScalarAsync()).IsEqualTo(1L);
         }
         finally
         {
