@@ -139,6 +139,7 @@ The replication end-to-end suite runs against the disposable ts-orch service ([e
 ## Layout
 
 Optional declared JSON Schema per collection: [attach, validate, and detach](collection-schemas.md).
+Per-collection TTL: [declare an expiry member; the home region sweeps expired documents](collection-ttl.md).
 
 Export a database as NDJSON, resumable by cursor: [export](export.md).
 

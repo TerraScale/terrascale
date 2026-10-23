@@ -389,6 +389,12 @@ public sealed class QueryCacheIntegrationTests
 
         public ValueTask<CollectionSchemaResult> SetCollectionSchemaAsync(TenantContext database, string name, JsonElement? schema, CancellationToken cancellationToken) =>
             inner.SetCollectionSchemaAsync(database, name, schema, cancellationToken);
+
+        public ValueTask<CollectionTtlResult> GetCollectionTtlAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+            inner.GetCollectionTtlAsync(database, name, cancellationToken);
+
+        public ValueTask<CollectionTtlResult> SetCollectionTtlAsync(TenantContext database, string name, string? path, CancellationToken cancellationToken) =>
+            inner.SetCollectionTtlAsync(database, name, path, cancellationToken);
     }
 
 }
