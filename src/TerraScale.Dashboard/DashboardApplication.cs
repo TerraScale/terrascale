@@ -83,8 +83,6 @@ public static class DashboardApplication
         {
             var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
             context.Items["nonce"] = nonce;
-            context.Response.Headers.XContentTypeOptions = "nosniff";
-            context.Response.Headers["Referrer-Policy"] = "same-origin";
             var path = context.Request.Path.Value ?? "";
             var editorStyles = path.StartsWith("/api/v1/dashboard/data/", StringComparison.Ordinal) ||
                 path.StartsWith("/api/v1/dashboard/indexes", StringComparison.Ordinal) ||
@@ -94,16 +92,29 @@ public static class DashboardApplication
             var styles = reference ? $"style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'" :
                 editorStyles ? $"style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'; worker-src 'self'" : "style-src 'self'";
             // form-action covers the redirects that follow forms: sign-out to ts-auth, checkout and portal to Stripe.
-            context.Response.Headers["Content-Security-Policy"] =
+            var policy =
                 $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; {styles}; " +
                 "img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self' https://auth.terrascale.tech https://checkout.stripe.com https://billing.stripe.com; base-uri 'none'; frame-ancestors 'none'";
-            if (!context.Request.Path.StartsWithSegments("/js") &&
-                !context.Request.Path.StartsWithSegments("/css") &&
-                !context.Request.Path.StartsWithSegments("/fonts") &&
-                !context.Request.Path.StartsWithSegments("/brand") &&
-                !context.Request.Path.StartsWithSegments("/flags") &&
-                !context.Request.Path.StartsWithSegments("/img"))
-                context.Response.Headers.CacheControl = "no-store";
+            context.Response.OnStarting(() =>
+            {
+                // Error handling can clear headers; preserve endpoint policies and restore the baseline before writing.
+                var headers = context.Response.Headers;
+                headers.XContentTypeOptions = "nosniff";
+                headers.XFrameOptions = "DENY";
+                headers.TryAdd("Referrer-Policy", "same-origin");
+                headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()";
+                if (context.Request.IsHttps)
+                    headers.StrictTransportSecurity = "max-age=31536000";
+                headers.TryAdd("Content-Security-Policy", policy);
+                if (!context.Request.Path.StartsWithSegments("/js") &&
+                    !context.Request.Path.StartsWithSegments("/css") &&
+                    !context.Request.Path.StartsWithSegments("/fonts") &&
+                    !context.Request.Path.StartsWithSegments("/brand") &&
+                    !context.Request.Path.StartsWithSegments("/flags") &&
+                    !context.Request.Path.StartsWithSegments("/img"))
+                    headers.TryAdd("Cache-Control", "no-store");
+                return Task.CompletedTask;
+            });
             try
             {
                 await next(context);
@@ -123,6 +134,14 @@ public static class DashboardApplication
                 if (context.Response.HasStarted) throw;
                 var view = Shared.UI.Slices.ServiceUnavailable.Create(new DocumentModel("Service unavailable", nonce));
                 view.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                await ((IResult)view).ExecuteAsync(context);
+            }
+            catch (Exception error) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
+            {
+                app.Logger.LogError("Dashboard request failed ({ErrorType})", error.GetType().Name);
+                context.Response.Clear();
+                var view = Shared.UI.Slices.ServiceUnavailable.Create(new DocumentModel("Service unavailable", nonce));
+                view.StatusCode = StatusCodes.Status500InternalServerError;
                 await ((IResult)view).ExecuteAsync(context);
             }
         });
