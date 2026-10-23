@@ -36,6 +36,10 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
     public bool SystemDatabaseExists => inner.SystemDatabaseExists;
 
+    public ValueTask<bool> MayHaveSystemCollectionStateAsync(string collection, CancellationToken cancellationToken) =>
+        inner.MayHaveSystemCollectionStateAsync(collection, cancellationToken);
+
+
     public event EventHandler<IDatabaseStore>? DatabaseDeleted
     {
         add => inner.DatabaseDeleted += value;

@@ -19,6 +19,7 @@ public sealed class ApiReferenceTests
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) deleteDocument Documents
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) deleteDeclaredCollectionSchema Collections
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/ttl TsAuth(documents:write) deleteCollectionTtl Collections
+        DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook} TsAuth(documents:read,documents:write) deleteCollectionWebhook Webhooks
         DELETE /v1/projects/{project}/databases/{database}/indexes/{index} TsAuth(databases:write) dropIndex Indexes
         DELETE /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) deleteSavedQuery Queries
         GET /backupz anonymous backupz Health
@@ -47,6 +48,8 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape/keys TsAuth(documents:read) getShapeKey Live
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape/manifest TsAuth(documents:read) getShapeManifest Live
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/ttl TsAuth(documents:read) getCollectionTtl Collections
+        GET /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks TsAuth(documents:read) listCollectionWebhooks Webhooks
+        GET /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook}/deliveries TsAuth(documents:read) listCollectionWebhookDeliveries Webhooks
         GET /v1/projects/{project}/databases/{database}/export TsAuth(documents:read) exportDatabase Documents
         GET /v1/projects/{project}/databases/{database}/import TsAuth(databases:read) getImport Imports
         GET /v1/projects/{project}/databases/{database}/index-recommendations TsAuth(databases:read) listIndexRecommendations Indexes
@@ -71,6 +74,7 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/collections TsAuth(documents:write) createCollection Collections
         POST /v1/projects/{project}/databases/{database}/collections/{collection}/documents TsAuth(documents:write) createDocument Documents
         POST /v1/projects/{project}/databases/{database}/collections/{collection}/query TsAuth(documents:read) queryDocuments Queries
+        POST /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks TsAuth(documents:read,documents:write) createCollectionWebhook Webhooks
         POST /v1/projects/{project}/databases/{database}/import TsAuth(databases:write,documents:write) createImport Imports
         POST /v1/projects/{project}/databases/{database}/import/cancel TsAuth(databases:write) cancelImport Imports
         POST /v1/projects/{project}/databases/{database}/import/resume TsAuth(databases:write,documents:write) resumeImport Imports

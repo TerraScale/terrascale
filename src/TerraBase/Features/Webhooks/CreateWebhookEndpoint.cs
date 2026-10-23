@@ -16,6 +16,7 @@ public sealed class CreateWebhookEndpoint(IManagementService management, IWebhoo
         Summary("Registers a collection change webhook");
         Description(WebhookRoute.Description + " Body {url}; returns a generated signing secret only once. Starts at the current local feed head. Maximum 32 registrations per collection.");
         Tags("Webhooks");
+        Metadata(new RequestBodyMetadata(typeof(CreateWebhookRequest), "application/json"));
         Produces<CreatedWebhookBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);

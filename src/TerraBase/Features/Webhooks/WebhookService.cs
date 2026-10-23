@@ -29,7 +29,8 @@ public static class WebhooksExtensions
 }
 
 internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalog, IWebhookTransport transport,
-    TerraBaseOptions options, TimeProvider time, IMemoryBudget memory, IMeterFactory meters, ILogger<WebhookService> logger) : BackgroundService, IWebhooks
+    TerraBaseOptions options, TimeProvider time, IMemoryBudget memory, IMeterFactory meters, ILogger<WebhookService> logger,
+    ICatalogGuard guard, ICatalogGate gate) : BackgroundService, IWebhooks
 {
     private const string Dispatches = "webhook_dispatch";
     private const int MaxBodyBytes = 512 * 1024;
@@ -175,6 +176,21 @@ internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalo
         }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
+    public override async Task StartAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Warm existing state before listeners start; a fresh node does not open or create its catalog.
+            _ = await engine.MayHaveSystemCollectionStateAsync(Dispatches, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.ZLogWarning($"Webhook discovery failed; persisted work will retry");
+        }
+
+        await base.StartAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1), time);
@@ -203,21 +219,26 @@ internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalo
 
     private async Task PassAsync(CancellationToken cancellationToken)
     {
-        if (!engine.SystemDatabaseExists)
+        if (!gate.IsOpen || !await engine.MayHaveSystemCollectionStateAsync(Dispatches, cancellationToken).ConfigureAwait(false))
         {
             return;
         }
 
         // Empty dispatch scans consume no buffer budget; retain admission only for rows actually read.
         using var pageMemory = new QosContext.ResultMemory(memory);
-        var dispatches = await catalog.ReadAsync(async transaction =>
+        var dispatches = await catalog.ReadUncheckedAsync<WebhookDispatch[]>(async transaction =>
         {
             using var scope = QosContext.EnterFlight(ChangeGroups.System, pageMemory);
+            if (await guard.CheckReadAsync(transaction, cancellationToken).ConfigureAwait(false) is not Done)
+            {
+                return [];
+            }
+
             var page = await transaction.ListAsync(Dispatches, _after, 32, 64 * 1024, cancellationToken).ConfigureAwait(false);
             _after = page.HasMore && page.Documents.Count > 0 ? page.Documents[^1].Id : null;
-            return page.Documents.Select(document => EntityPayload.Read(document, TerraBaseJsonContext.Default.WebhookDispatch)!)
-                .Where(dispatch => dispatch.Machine == options.MachineId).ToArray();
-        }, static _ => [], cancellationToken).ConfigureAwait(false);
+            return [.. page.Documents.Select(document => EntityPayload.Read(document, TerraBaseJsonContext.Default.WebhookDispatch)!)
+                .Where(dispatch => dispatch.Machine == options.MachineId)];
+        }, cancellationToken).ConfigureAwait(false);
         await Parallel.ForEachAsync(dispatches, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
             async (dispatch, token) =>
             {

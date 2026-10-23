@@ -94,6 +94,7 @@ internal static class ApiExamples
         "createIndex" => """{"collection":"people","fields":["name"],"name":"people_name"}""",
         "setAutoIndexPolicy" => """{"enabled":false}""",
         "createCollection" => """{"name":"people"}""",
+        "createCollectionWebhook" => """{"url":"https://receiver.example/events"}""",
         "putDeclaredCollectionSchema" => DeclaredSchema,
         "putCollectionTtl" => """{"path":"/expiresAt"}""",
         "declareCollectionSchema" => """{"fields":[{"name":"email","unique":true,"normalization":"lowercase"}],"indexes":[{"name":"tenant_handle","fields":["tenant","handle"],"unique":true}]}""",
@@ -141,6 +142,10 @@ internal static class ApiExamples
         "getDatabaseUsage" => Usage.Replace("PERIOD", Period, StringComparison.Ordinal).Replace("SERIES", Series, StringComparison.Ordinal),
         "getProjectUsage" => "{\"projectId\":\"01ARZ3NDEKTSV4RRFFQ69G5FA2\",\"databases\":0,\"storageBytes\":0,\"logicalBytes\":0,\"documents\":0,\"reads\":0,\"writes\":0,\"period\":" + Period + ",\"series\":" + Series + ",\"items\":[]}",
         "createCollection" or "getCollection" or "dropCollection" => Collection,
+        "createCollectionWebhook" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAA","url":"https://receiver.example/events","createdAt":"2026-10-07T12:00:00Z","status":"active","secret":"<creation-only base64url key>"}""",
+        "listCollectionWebhooks" => """[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAA","url":"https://receiver.example/events","createdAt":"2026-10-07T12:00:00Z","status":"active"}]""",
+        "listCollectionWebhookDeliveries" => """[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAB","createdAt":"2026-10-07T12:00:00Z","status":"pending","attempts":1,"lastAttemptAt":"2026-10-07T12:00:00Z","nextAttemptAt":"2026-10-07T12:00:01Z","httpStatus":503,"errorCode":"http_error"}]""",
+
         "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" => "{\"schema\":" + DeclaredSchema + ",\"dialect\":\"https://json-schema.org/draft/2020-12/schema\"}",
         "deleteDeclaredCollectionSchema" => """{"schema":null}""",
         "getCollectionTtl" or "putCollectionTtl" => """{"path":"/expiresAt"}""",

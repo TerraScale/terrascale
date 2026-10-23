@@ -197,6 +197,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         }
 
         public bool SystemDatabaseExists => inner.SystemDatabaseExists;
+        public ValueTask<bool> MayHaveSystemCollectionStateAsync(string collection, CancellationToken cancellationToken) =>
+            inner.MayHaveSystemCollectionStateAsync(collection, cancellationToken);
+
         public ValueTask CompleteDatabaseIntentAsync(TenantContext database, CancellationToken cancellationToken) => inner.CompleteDatabaseIntentAsync(database, cancellationToken);
         public ValueTask<bool> RecordDatabaseDeleteIntentAsync(
             TenantContext database, Func<CancellationToken, ValueTask<bool>> recordIntent, CancellationToken cancellationToken) =>

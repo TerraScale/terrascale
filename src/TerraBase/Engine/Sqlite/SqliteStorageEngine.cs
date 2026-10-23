@@ -333,6 +333,69 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
     public bool SystemDatabaseExists => File.Exists(LocateSystem());
 
+    private readonly ConcurrentDictionary<string, CollectionPresence> _systemCollectionPresence = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _collectionProbe = new(1, 1);
+
+    private sealed class CollectionPresence
+    {
+        public int State = -1;
+    }
+
+    public async ValueTask<bool> MayHaveSystemCollectionStateAsync(string collection, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(collection);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(collection.Length, 1024);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
+        if (_systemCollectionPresence.TryGetValue(collection, out var presence) && Volatile.Read(ref presence.State) >= 0)
+        {
+            return Volatile.Read(ref presence.State) != 0;
+        }
+
+        await _collectionProbe.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!_systemCollectionPresence.TryGetValue(collection, out presence))
+            {
+                if (_systemCollectionPresence.Count == 16)
+                {
+                    throw new InvalidOperationException("at most 16 system collection presence probes are tracked");
+                }
+
+                presence = new CollectionPresence();
+                _systemCollectionPresence[collection] = presence;
+            }
+
+            if (Volatile.Read(ref presence.State) < 0)
+            {
+                var exists = false;
+                if (SystemDatabaseExists)
+                {
+                    var store = await OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+                    await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+                    exists = await transaction.HasCollectionStateAsync(collection, prefix: false, cancellationToken).ConfigureAwait(false);
+                }
+
+                // A concurrent write can turn the hint positive while this older snapshot is being inspected.
+                _ = Interlocked.CompareExchange(ref presence.State, exists ? 1 : 0, -1);
+            }
+
+            return Volatile.Read(ref presence.State) != 0;
+        }
+        finally
+        {
+            _collectionProbe.Release();
+        }
+    }
+
+    private void NoteSystemCollectionState(string collection)
+    {
+        if (_systemCollectionPresence.TryGetValue(collection, out var presence))
+        {
+            Volatile.Write(ref presence.State, 1);
+        }
+    }
+
+
     public event EventHandler<IDatabaseStore>? DatabaseDeleted;
 
     /// <summary>
@@ -861,6 +924,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                         Member = Member,
                         Checkpoint = _checkpoint,
                         Ledger = Ledger,
+                        CollectionStateWritten = NoteSystemCollectionState,
                     };
                     await openingSystem.BootstrapAsync(openingToken).ConfigureAwait(false);
                     await openingSystem.SeedClockAsync(openingToken).ConfigureAwait(false);
