@@ -3,9 +3,9 @@
 Status on 2026-10-23: **not approved for activation**. Do not run
 `bind-github-actions-e2e`, create a grant/client/credential, or widen TerraBase
 trust. This is a proposal and review checklist, not an activation record.
-The proposed temporary fallback is project-only `client_credentials` through
-GitHub Secrets, with its own approval and secure provisioning; no management
-credential is needed. This review does not establish that it is provisioned.
+After approval, use the project-only `client_credentials` handoff through GitHub
+Secrets while OIDC approval is pending; no management credential is needed. No
+project or key has been approved or provisioned by this work.
 
 ## Evidence from current main and public endpoints
 
@@ -16,8 +16,10 @@ credential is needed. This review does not establish that it is provisioned.
   repurpose that binding for the read-only orchestrator consumer.
 - The actual consumer is `TerraScale/ts-orchestrator/.github/workflows/e2e.yml`,
   job `prod`: `workflow_dispatch`, `inputs.target == 'prod'`, main, environment
-  `production`. Inspected checkout `1ed9883126b0c4c4635b0ca9df9fdef8fd4bc4ee`.
-  It currently has no OIDC exchange or `id-token: write` permission. Changes to
+  `production`. Inspected assigned checkout
+  `/home/mariogk/.t3/worktrees/ts-orchestrator/fix/ku-security-deploy`, main
+  baseline `f1eeddaf66029e5c8f0cf9769c9928a60466e8d4`.
+  That baseline has no OIDC exchange or `id-token: write` permission. Changes to
   its consumer and permission need their own reviewed, approved implementation.
 - Public GitHub repository metadata reports ts-orchestrator repository id
   `1422428095`, owner `TerraScale`, owner id `206395477`, default branch `main`.
@@ -85,10 +87,13 @@ proposal's read-only scopes, consumer pins or grant deadline.
 
 ## Approval, audit and revocation
 
-1. MarioGK selects exact isolated organization/project ids and confirms the owner,
-   output audience, `documents:read`, and a 24-hour maximum grant duration. Record
+1. User action: MarioGK approves the exact isolated organization/project ids,
+   grant, output audience, owner, `documents:read`, token lifetime (15 minutes
+   maximum), and grant lifetime (24 hours maximum) before policy implementation
+   or activation. Record
    the approval link, policy/workflow source SHAs, UTC start/deadline, verifier
-   scope and rollback owner. Until then the ticket stays open and activation held.
+   scope and rollback owner. The ticket stays open until approved activation and
+   verification; merged code or green CI alone never marks it Done.
 2. Implement and review that exact proposal with CI evidence. The current bind
    command generates fresh ids and has no grant expiry; it cannot establish this
    policy. Do not substitute broad persistent trust or run it to discover ids.
