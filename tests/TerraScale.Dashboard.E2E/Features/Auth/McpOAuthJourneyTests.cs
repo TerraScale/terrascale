@@ -46,8 +46,14 @@ public sealed class McpOAuthJourneyTests(DashboardRootFixture fixture)
         var challenge = WebEncoders.Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
         var authorize = new Dictionary<string, string?>
         {
-            ["response_type"] = "code", ["client_id"] = clientId, ["redirect_uri"] = Callback, ["code_challenge"] = challenge,
-            ["code_challenge_method"] = "S256", ["state"] = "tunit-state", ["resource"] = origin + "/mcp", ["scope"] = "mcp"
+            ["response_type"] = "code",
+            ["client_id"] = clientId,
+            ["redirect_uri"] = Callback,
+            ["code_challenge"] = challenge,
+            ["code_challenge_method"] = "S256",
+            ["state"] = "tunit-state",
+            ["resource"] = origin + "/mcp",
+            ["scope"] = "mcp"
         };
         using (var foreign = await browser.GetAsync(QueryHelpers.AddQueryString("/oauth/authorize", new Dictionary<string, string?>(authorize) { ["redirect_uri"] = "http://127.0.0.1:33418/other" })))
             await Assert.That(foreign.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
