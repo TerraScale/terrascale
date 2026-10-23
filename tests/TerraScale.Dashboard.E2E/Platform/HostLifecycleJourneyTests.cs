@@ -20,13 +20,14 @@ public sealed class HostLifecycleJourneyTests
             { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(30) };
             using var ready = await client.GetAsync("/readyz");
             await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(await ready.Content.ReadAsStringAsync()).IsEqualTo("ok");
-            // ts-status probes this original URL and reads the commit after '+' in version.
+            using (var receipt = JsonDocument.Parse(await ready.Content.ReadAsStringAsync()))
+                await Assert.That(receipt.RootElement.GetProperty("status").GetString()).IsEqualTo("ok");
+            // ts-status probes this original URL; public bodies no longer carry the build revision.
             using var legacy = await client.GetAsync("/health/ready");
             await Assert.That(legacy.StatusCode).IsEqualTo(HttpStatusCode.OK);
             using var probe = JsonDocument.Parse(await legacy.Content.ReadAsStringAsync());
             await Assert.That(probe.RootElement.GetProperty("status").GetString()).IsEqualTo("ok");
-            await Assert.That(probe.RootElement.GetProperty("version").GetString()!.Split('+')[^1]).Matches("^[0-9a-f]{40}$");
+            await Assert.That(probe.RootElement.TryGetProperty("version", out _)).IsFalse();
             using var live = await client.GetAsync("/health/live");
             await Assert.That(live.StatusCode).IsEqualTo(HttpStatusCode.OK);
             using var login = await client.GetAsync("/login");

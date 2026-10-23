@@ -47,22 +47,27 @@ public sealed class OciProductionJourneyTests(DashboardRootFixture fixture)
             process.ErrorDataReceived += (_, line) => { lock (log) log.AppendLine(line.Data); };
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            HttpStatusCode? ready = null;
-            for (var attempt = 0; attempt < 120 && ready != HttpStatusCode.OK; attempt++)
+            // Readiness also probes the real ts-auth, which this hermetic journey does not require: it waits for the
+            // configured TerraBase to read as ready in the body, whatever ts-auth answers.
+            string? terraBaseReady = null, region = null;
+            for (var attempt = 0; attempt < 120 && terraBaseReady != "ok"; attempt++)
             {
                 if (process.HasExited) break;
-                try { using var response = await client.GetAsync("/health/ready"); ready = response.StatusCode; }
-                catch (HttpRequestException) { await Task.Delay(500); }
+                try
+                {
+                    using var response = await client.GetAsync("/health/ready");
+                    using var health = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                    terraBaseReady = health.RootElement.GetProperty("dependencies").GetProperty("terrabase").GetString();
+                    region = health.RootElement.GetProperty("region").GetString();
+                }
+                catch (Exception error) when (error is HttpRequestException or JsonException or KeyNotFoundException) { }
+                if (terraBaseReady != "ok") await Task.Delay(500);
             }
             string output;
             lock (log) output = log.ToString();
-            await Assert.That(ready).IsEqualTo(HttpStatusCode.OK).Because("Production under ts-orch is ready on ASPNETCORE_URLS: " + output);
+            await Assert.That(terraBaseReady).IsEqualTo("ok").Because("Production under ts-orch reads its TerraBase state on ASPNETCORE_URLS: " + output);
             await Assert.That(credentialed).IsGreaterThan(0).Because("State requests reach the configured TerraBase with the peer credential.");
-
-            using var probe = await client.GetAsync("/health/ready");
-            using var health = JsonDocument.Parse(await probe.Content.ReadAsStringAsync());
-            await Assert.That(health.RootElement.TryGetProperty("region", out _)).IsFalse()
-                .Because("The ts-orch single-host service contract supplies no region metadata.");
+            await Assert.That(region).IsEqualTo("gru").Because("Readiness names the region ts-orch sets in TS_REGION.");
 
             // The loopback edge terminates TLS: its X-Forwarded-Proto makes cookies Secure.
             using var behindEdge = new HttpRequestMessage(HttpMethod.Get, "/login");
@@ -98,7 +103,8 @@ public sealed class OciProductionJourneyTests(DashboardRootFixture fixture)
         start.Environment["ASPNETCORE_HTTP_PORTS"] = "8080";
         start.Environment["ASPNETCORE_URLS"] = $"http://127.0.0.1:{port}";
         start.Environment["TS_DASHBOARD_TERRABASE_URL"] = terraBase;
-        // Format-valid test-only identity; no real ts-auth or Stripe is contacted by readiness.
+        start.Environment["TS_REGION"] = "gru";
+        // Format-valid test-only identity; readiness contacts ts-auth's public /readyz only, never Stripe.
         start.Environment["TS_AUTH_DASHBOARD_CLIENT_SECRET"] = new string('a', 48);
         start.Environment["TS_DASHBOARD_SESSION_ENCRYPTION_KEY"] = Convert.ToBase64String(new byte[32]);
         start.Environment["STRIPE_SECRET_KEY"] = "sk_test_ocijourney";
