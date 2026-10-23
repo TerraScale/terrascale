@@ -7,7 +7,7 @@ info:
     name: Apache-2.0
     identifier: Apache-2.0
 servers:
-  - url: https://gru.auth.terrascale.tech
+  - url: https://auth.terrascale.tech
 security:
   - projectApiKey: []
 tags:
