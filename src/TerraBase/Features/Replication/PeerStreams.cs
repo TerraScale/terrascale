@@ -299,6 +299,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             {
                 (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.RequiresRefill, cursor.Refilling, cursor.Live) =
                     (null, null, null, 0, false, false, null);
+                cursor.Confirmed = null;
             }
         }
 
@@ -590,10 +591,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                                 {
                                     lock (link.Gate)
                                     {
-                                        if (cursor.Incarnation == incarnation)
+                                        if (cursor.Incarnation == incarnation && cursor.InFlight is null)
                                         {
                                             Reset(link, database, cursor, incarnation);
-                                            cursor.RetryAt = _time.GetTimestamp() + (long)(MaxBackoff.TotalSeconds * _time.TimestampFrequency);
+                                            // A busy ACK writer must not hold later writes past their confirmation bound.
+                                            var retry = error is StorageBusyException ? Idle : MaxBackoff;
+                                            cursor.RetryAt = _time.GetTimestamp() + (long)(retry.TotalSeconds * _time.TimestampFrequency);
                                         }
                                     }
                                 }
@@ -742,6 +745,11 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 }
                 lock (link.Gate)
                 {
+                    // Bookkeeping may reset to an older persisted ACK; this receiver already confirmed these rows.
+                    if (cursor.Confirmed is { } confirmed && confirmed.Incarnation == incarnation)
+                    {
+                        acked = Math.Max(acked, confirmed.ChangeId);
+                    }
                     (cursor.Incarnation, cursor.Acked, cursor.RequiresRefill, cursor.Stable) = (incarnation, acked, position.Value.RequiresRefill, position.Value.Stable);
                 }
 
@@ -948,6 +956,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
 
             cursor.Stable = new Hlc(Math.Max(cursor.Stable.Value, ack.Stable));
+            cursor.Confirmed = (incarnation, inFlight);
             // The stream goes on from the peer's ack in memory; the ledger persists it behind the stream.
             (cursor.Acked, cursor.Live, cursor.RequiresRefill) = (inFlight, live ? (incarnation, from) : null, false);
             link.Work.Enqueue(database);
@@ -1482,6 +1491,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         public Hlc Stable { get; set; }
 
         public long? Acked { get; set; }
+
+        // The receiver's cursor on this connection survives local bookkeeping failures, scoped to the source copy.
+        public (Ulid Incarnation, long ChangeId)? Confirmed { get; set; }
 
         public long? InFlight { get; set; }
 
