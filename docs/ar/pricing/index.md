@@ -9,7 +9,7 @@ title: Pricing and limits
 
 # Pricing and limits
 
-The [pricing sheet](/ar/pricing) and [limits](/ar/limits) are generated from the public [pricing catalog](https://terrascale.tech/pricing.json) and documentation policy. Public Alpha uses hard allowances with no paid overages. Confirm final enrollment terms and serving-release availability before relying on a proposed policy.
+The [pricing sheet](/ar/pricing) and [limits](/ar/limits) are generated from the public [pricing catalog](https://terrascale.tech/pricing.json) and documentation policy. Public Alpha uses hard allowances with no paid overages.
 
 ## Operation units and storage
 
@@ -19,12 +19,10 @@ Storage counts once per selected region. Database and branch usage share the org
 
 ## Enrollment and billing policy
 
-See the generated [pricing sheet](/ar/pricing) for plan amounts, eligibility, billing cycles and the proposed 30-day grace period. These policies do not qualify hosted provisioning, automatic deletion or recovery behavior. Confirm an authorized deletion's exact scope and preserve required data before submitting it.
+See the generated [pricing sheet](/ar/pricing) for plan amounts, eligibility, billing cycles and the proposed 30-day grace period. Confirm a deletion's exact scope and [export data you need](/ar/guides/export) before submitting it.
 
-## API limits and qualification
+## API limits
 
-Document limits, query limits and overload errors depend on the serving contract. The [limits page](/ar/limits) separates the Documents API from plan policy. Availability of an allowance does not prove an SDK feature or production guarantee.
-
-Review [SDK availability](/ar/guides/sdks) and [replication boundaries](/ar/concepts/replication) separately.
+The [limits page](/ar/limits) lists document, query and plan limits. See [SDK reference](/ar/guides/sdks) and [replication](/ar/concepts/replication) for SDK features and durability.
 
 </div>

@@ -10,13 +10,13 @@ description: Always-on platform behavior, customer authorization and automatic s
 
 # Zero-configuration contract
 
-TerraScale's operating contract is that platform features work without activation flags, deployment toggles or operator tuning. This contract states required behavior; it does not claim every current SDK or hosted workflow has completed release qualification.
+TerraScale's operating contract is that platform features work without activation flags, deployment toggles or operator tuning.
 
 ## Features and regions are always on
 
 Every feature is always available within its authorization and service contract. Every region begins serving when it is ready, without a customer enable step. Availability does not bypass authentication, resource scope, residency or safety limits.
 
-Customer-selected database placement determines where data may reside. Automatic platform operation does not widen that boundary. Check the serving release's supported placement and [replication semantics](/ru/concepts/replication) before relying on them.
+Customer-selected database placement determines where data may reside. Automatic platform operation does not widen that boundary. See [replication semantics](/ru/concepts/replication) for what each placement guarantees.
 
 ## Production secrets arrive automatically
 
@@ -28,6 +28,6 @@ Customer applications still need authorized credentials. Store those in the appl
 
 The platform uses one correct setting for each behavior. Features do not depend on opt-in flags, demo stores or skip-auth production modes. Test fakes remain in test code.
 
-The current SDK candidates require an explicit authorized endpoint or caller-supplied resolver. The platform operating contract does not manufacture automatic discovery support in a client that lacks it. See [SDK reference](/ru/guides/sdks) for implemented surfaces and availability.
+The SDKs take one explicit endpoint, `https://api.terrascale.tech`, or a resolver you supply. See [SDK reference](/ru/guides/sdks).
 
 </div>

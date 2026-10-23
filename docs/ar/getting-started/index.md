@@ -16,10 +16,10 @@ Create an account in the [TerraScale dashboard](https://dash.terrascale.tech/reg
 | Language | Start here | Availability |
 | --- | --- | --- |
 | JavaScript / TypeScript | [JavaScript quickstart](/ar/getting-started/javascript) | `@terrascale/sdk@0.0.3` is published on npm |
-| C# | [C# quickstart](/ar/getting-started/csharp) | Exact candidate package required; public NuGet release not available |
-| Go | [SDK reference](/ar/guides/sdks) | Source candidate; immutable module and deployed journey require verification |
+| C# | [C# quickstart](/ar/getting-started/csharp) | Package built from source; not on nuget.org yet |
+| Go | [SDK reference](/ar/guides/sdks) | `go get terrascale.tech/sdk@v0.0.1` |
 
-Package availability checked October 12, 2026 (UTC). There is no documented public Python, Java or Rust SDK release for this contract.
+There is no Python, Java or Rust SDK yet; call the HTTP API directly from those languages.
 
 ## Create an account, a database and an API key
 

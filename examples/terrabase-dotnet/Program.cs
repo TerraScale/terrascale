@@ -30,7 +30,7 @@ public static class Program
         }
     }
 
-    // The qualification consumer runs this exact journey with the SDK's real-process helper.
+    // Creates, reads, updates, queries and deletes one document, then checks stale-version rejection.
     public static async Task RunAsync(HttpClient http, Uri endpoint, string token,
         string project, string databaseName, string collection, CancellationToken cancellationToken)
     {

@@ -9,14 +9,14 @@ const routes = [
   ['/', 'Developer documentation'],
   ['/getting-started/', 'Current quickstarts and service availability'],
   ['/getting-started/javascript', 'Published JavaScript SDK 0.0.3 installation and CRUD/query example'],
-  ['/getting-started/csharp', 'C# candidate package-only quickstart; public NuGet release unavailable'],
-  ['/guides/sdks', 'Supported runtimes, public package availability and current SDK contracts'],
-  ['/guides/authentication', 'Scoped credentials, server/browser boundaries and authorization availability'],
+  ['/getting-started/csharp', 'C# quickstart with the SDK package built from source'],
+  ['/guides/sdks', 'Supported runtimes, installation and SDK contracts'],
+  ['/guides/authentication', 'API keys, token exchange and scoped access'],
   ['/guides/queries', 'JSON filters, projection, opaque pagination and version preconditions'],
   ['/guides/errors', 'Typed errors, SDK retry behavior and uncertain mutation reconciliation'],
   ['/guides/dashboard', 'Customer dashboard and application database workflow'],
   ['/guides/zero-configuration', 'Public always-on operating contract and secret-store delivery'],
-  ['/concepts/replication', 'Current write results and separate multi-region qualification boundary'],
+  ['/concepts/replication', 'Write durability and multi-region behavior'],
   ['/concepts/sync', 'Shape reads and legacy live-update compatibility'],
   ['/concepts/sql', 'Separate SQL entrypoint and contract compatibility'],
   ['/pricing/', 'Pricing overview'], ['/pricing', 'Generated canonical plan catalog'],
@@ -27,9 +27,10 @@ const routes = [
 const text = `# TerraScale documentation
 
 > TerraBase stores project-scoped JSON documents. The JavaScript SDK
-> @terrascale/sdk@0.0.3 is published. C# and Go candidate availability and
-> hosted authorization must be verified independently. A package release
-> does not establish public self-service launch or multi-region guarantees.
+> @terrascale/sdk@0.0.3 is on npm, the Go module terrascale.tech/sdk@v0.0.1
+> is on the Go proxy, and the C# package builds from source. Exchange a
+> dashboard API key at https://auth.terrascale.tech/terrascale/oauth/token and
+> call https://api.terrascale.tech.
 
 ## Documentation
 
