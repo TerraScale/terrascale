@@ -71,7 +71,8 @@ export function tokenize(code: string, lang: Lang): Token[] {
 }
 
 export const CODE_SAMPLES: Record<Lang, string> = {
-  typescript: `// Server-side: keep your tb_ API key out of browser bundles.
+  typescript: `// Server-side: TERRASCALE_ACCESS_TOKEN is a 15-minute token exchanged from
+// your dashboard API key. Keep both out of browser bundles.
 // Supply a resolver and trusted origins from server configuration.
 // The override skips discovery.
 async function createAndQueryCustomers(
@@ -98,14 +99,14 @@ async function createAndQueryCustomers(
   if ([project, database, collection].some(name => !name || name === '.' || name === '..')) {
     throw new Error('Resource names are required');
   }
-  const apiKey = process.env.TERRABASE_API_KEY;
-  if (!apiKey?.trim()) throw new Error('TERRABASE_API_KEY is required');
+  const accessToken = process.env.TERRASCALE_ACCESS_TOKEN;
+  if (!accessToken?.trim()) throw new Error('TERRASCALE_ACCESS_TOKEN is required');
 
   const path = '/v1/projects/' + encodeURIComponent(project) +
     '/databases/' + encodeURIComponent(database) +
     '/collections/' + encodeURIComponent(collection);
   const headers = {
-    Authorization: 'Bearer ' + apiKey,
+    Authorization: 'Bearer ' + accessToken,
     'Content-Type': 'application/json',
   };
   const created = await fetch(new URL(path + '/documents', origin), {
@@ -132,7 +133,8 @@ async function createAndQueryCustomers(
   csharp: `using System.Net.Http.Headers;
 using System.Net.Http.Json;
 
-// Server-side: TERRABASE_API_KEY holds a tb_ key.
+// Server-side: TERRASCALE_ACCESS_TOKEN is a 15-minute token exchanged from
+// your dashboard API key; the key itself as Bearer answers 401.
 // Supply a resolver and trusted origins from server configuration.
 // The override skips discovery.
 static class DocumentsExample
@@ -160,20 +162,20 @@ static class DocumentsExample
         if (new[] { project, database, collection }.Any(name =>
             string.IsNullOrEmpty(name) || name == "." || name == ".."))
             throw new ArgumentException("Resource names are required");
-        var apiKey = Environment.GetEnvironmentVariable("TERRABASE_API_KEY");
-        if (string.IsNullOrWhiteSpace(apiKey))
-            throw new InvalidOperationException("TERRABASE_API_KEY is required");
+        var accessToken = Environment.GetEnvironmentVariable("TERRASCALE_ACCESS_TOKEN");
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new InvalidOperationException("TERRASCALE_ACCESS_TOKEN is required");
 
         var path = "/v1/projects/" + Uri.EscapeDataString(project) +
             "/databases/" + Uri.EscapeDataString(database) +
             "/collections/" + Uri.EscapeDataString(collection);
         using var create = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, path + "/documents"));
-        create.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        create.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         create.Content = JsonContent.Create(new { email = "team@example.com", plan = "pro" });
         using (var created = await Http.SendAsync(create, HttpCompletionOption.ResponseHeadersRead, token))
             created.EnsureSuccessStatusCode();
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, path + "/query"));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         request.Content = JsonContent.Create(new {
             filter = new { eq = new[] { "/plan", "pro" } },
             limit = 25
@@ -200,9 +202,12 @@ claude mcp add --transport http terrascale https://mcp.terrascale.tech/ \\
 # Then ask in plain language
 claude -p "Which of my TerraScale databases replicate to fra?"
 
-# Or let the agent call the HTTP API from its shell
+# Or let the agent call the HTTP API from its shell.
+# Exchange the dashboard API key (<key ID>_<secret>) for an access token first.
+TOKEN=$(curl -sS -u "\${TERRASCALE_API_KEY%%_*}:$TERRASCALE_API_KEY" \\
+  -d grant_type=client_credentials https://auth.terrascale.tech/terrascale/oauth/token | jq -r .access_token)
 curl https://api.terrascale.tech/v1/projects/$PROJECT/databases/app/sql \\
-  -H "Authorization: Bearer $TERRABASE_API_KEY" \\
+  -H "Authorization: Bearer $TOKEN" \\
   --json '{"sql": "SELECT email, seats FROM customers WHERE seats >= 10 LIMIT 25"}'`,
 }
 
