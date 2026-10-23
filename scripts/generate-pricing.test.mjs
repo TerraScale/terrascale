@@ -37,6 +37,14 @@ test('existing engine safety tiers do not invent commercial PITR entitlements', 
   assert.doesNotMatch(limits, /Free 1 \/ Starter .*PITR/);
 });
 
+test('operation units count writes once and exclude regional replication', () => {
+  for (const copy of [pricing, read('docs/pricing/index.md'), read('docs/concepts/pricing-philosophy.md')]) {
+    assert.match(copy, /Writes count once regardless of the number of selected regions/);
+    assert.match(copy, /Replication between regions is not billed/);
+    assert.doesNotMatch(copy, /Writes count once per selected region/);
+  }
+});
+
 test('pricing overview, usage accounting and terms publish approved pricing with collection caveats', () => {
   for (const path of ['docs/pricing/index.md', 'docs/concepts/pricing-philosophy.md', 'docs/legal/terms.md']) {
     const copy = read(path);

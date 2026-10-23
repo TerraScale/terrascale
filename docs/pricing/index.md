@@ -8,7 +8,7 @@ The [pricing sheet](/pricing) and [limits](/limits) are generated from the publi
 
 ## Operation units and storage
 
-Each started 4 KiB of a logical object successfully read or written consumes an operation unit. Writes count once per selected region; reads count only in the serving region. Lists, queries and batches count each returned item independently. Failed, denied, invalid, throttled and not-found requests are not billed.
+Each started 4 KiB of a logical object successfully read or written consumes an operation unit. Writes count once regardless of the number of selected regions; reads count only in the serving region. Replication between regions is not billed. Lists, queries and batches count each returned item independently. Failed, denied, invalid, throttled and not-found requests are not billed.
 
 Storage counts once per selected region and uses decimal GB-region-month averaged over time during the month. Client egress is decimal outbound application response bytes, excluding replication traffic. Database and branch usage share the organization's plan allowances; there is no additional branch allowance. Exhausted operation units with covered storage do not start a storage-deletion grace period.
 

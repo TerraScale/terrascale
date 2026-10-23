@@ -10,7 +10,7 @@
 
 ## How usage is metered
 
-- **Operation units.** One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Writes count once per selected region; reads count only in the serving region. Failed, denied, invalid, throttled, and not-found requests are not billed.
+- **Operation units.** One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Writes count once regardless of the number of selected regions; reads count only in the serving region. Replication between regions is not billed. Failed, denied, invalid, throttled, and not-found requests are not billed.
 - **Storage across regions.** Stored bytes count once in every selected region. Storage uses decimal GB-region-month, averaged over time during the month.
 - **Client egress.** Outbound application response bytes to clients, excluding replication traffic; decimal GB.
 - **Allowances.** Free includes small allowances without a card and has no automatic overages. Paid plans include monthly allowances, then pay-as-you-go usage. Usage charges are not yet collected.
