@@ -52,7 +52,7 @@ Paid plans include the allowances above, then pay-as-you-go usage at the approve
 
 These allowances and rates are approved. Usage charges are not yet collected.
 
-**Shared organization allowances.** Databases and branches share their owning organization’s plan allowances. There is no additional branch allowance. Writes consume operation units once per selected region. Storage is decimal GB-region-month, averaged over time: 100 MB stored across three regions for a full month consumes 0.3 GB-region-month.
+**Shared organization allowances.** Databases and branches share their owning organization’s plan allowances. There is no additional branch allowance. Each 4 KiB written counts once, no matter how many regions hold the database; reads count in the region that serves them; replication between regions is free. Storage is decimal GB-region-month, averaged over time: 100 MB stored across three regions for a full month consumes 0.3 GB-region-month.
 
 **Free.** Free requires no payment card and has no automatic overages. No trial or first-paid-month promotion is offered by this catalog.
 

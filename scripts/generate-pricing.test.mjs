@@ -41,8 +41,15 @@ test('operation units count writes once and exclude regional replication', () =>
   for (const copy of [pricing, read('docs/pricing/index.md'), read('docs/concepts/pricing-philosophy.md')]) {
     assert.match(copy, /Writes count once regardless of the number of selected regions/);
     assert.match(copy, /Replication between regions is not billed/);
-    assert.doesNotMatch(copy, /Writes count once per selected region/);
+    assert.doesNotMatch(copy, /writes (?:count|consume operation units) once per selected region/i);
   }
+});
+
+test('shared organization allowances never multiply writes by selected regions', () => {
+  const policies = JSON.parse(read('data/policies.json'));
+  assert.match(policies.sharedAllowances, /Each 4 KiB written counts once, no matter how many regions hold the database/);
+  assert.match(policies.sharedAllowances, /replication between regions is free/);
+  assert.ok(pricing.includes(policies.sharedAllowances));
 });
 
 test('pricing overview, usage accounting and terms publish approved pricing with collection caveats', () => {
