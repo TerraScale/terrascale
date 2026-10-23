@@ -37,6 +37,12 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
     await writeFile(path.join(consumer, "caller.ts"), installedCaller);
     await npmRun(["exec", "--", "tsc", "--noEmit", "--strict", "--skipLibCheck", "--target", "ES2023", "--module", "NodeNext", "--moduleResolution", "NodeNext", "caller.ts"], consumer);
     await run(process.execPath, ["caller.ts"], { cwd: consumer });
+    await writeFile(path.join(consumer, "shape-identity.js"), `
+      import { createTerraBaseClient } from "@terrascale/sdk";
+      import { verifyShapeTokenIdentity } from ${JSON.stringify(new URL("../test/support/shape-token-identity.js", import.meta.url).href)};
+      await verifyShapeTokenIdentity(createTerraBaseClient, true);
+    `);
+    await run(process.execPath, ["shape-identity.js"], { cwd: consumer });
     await run(process.execPath, ["--conditions=browser", "--input-type=module", "--eval",
       "import assert from 'node:assert/strict'; for (const entry of ['local','better-auth','postgres']) await assert.rejects(import('@terrascale/sdk/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });"], { cwd: consumer });
     const declarations = await readFile(path.join(root, "types/index.d.ts"), "utf8");
@@ -49,6 +55,10 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
 const installedCaller = `import { createTerraBaseClient, createTerraBaseV1Client, TerraBaseV1Client, ExactDecimal, TerraBaseV1Error } from "@terrascale/sdk";
 const token = "eyJ0eXAiOiJhdCtqd3QifQ.eyJwcm9qZWN0X2lkIjoicHJvamVjdCJ9.c2lnbmF0dXJl";
 const client = createTerraBaseClient({ project: "01ARZ3NDEKTSV4RRFFQ69G5FA1", baseUrl: "http://127.0.0.1:18447", token });
+const tokenProvider: import("@terrascale/sdk").V1TokenProvider = () => token;
+for (const token of [tokenProvider, async () => tokenProvider()]) {
+  createTerraBaseClient({ project: "01ARZ3NDEKTSV4RRFFQ69G5FA1", baseUrl: "http://127.0.0.1:18447", token });
+}
 if (!(client instanceof TerraBaseV1Client) || createTerraBaseClient !== createTerraBaseV1Client) throw new Error("Multiple client implementations.");
 const db = client.database("main");
 const collection = db.collection("users");

@@ -34,7 +34,8 @@ export async function fixture(handle) {
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => resolve(undefined)); });
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("Expected loopback address.");
-  return { client: createTerraBaseClient({ project, token, baseUrl: `http://127.0.0.1:${address.port}` }), requests };
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  return { client: createTerraBaseClient({ project, token, baseUrl }), requests, baseUrl };
 }
 /** @param {import("node:http").ServerResponse} response @param {unknown} value @param {number} [status] */
 export function json(response, value, status = 200) {

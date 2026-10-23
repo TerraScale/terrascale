@@ -9,7 +9,7 @@ import { TerraBaseV1Error } from "./errors.js";
 /** @import { V1ShapeRequest, V1ShapePage } from "./shapes.js" */
 /** @typedef {{handle: string; offset: string; epoch: string; keyId: string}} V1SealedShapePosition */
 /** @typedef {{ latestEpoch: bigint; keys: Map<string, { epoch: bigint; key: Uint8Array }> }} ShapeKeys */
-/** @type {WeakMap<V1Transport, Map<string, ShapeKeys>>} Keys stay scoped to a credential, database and collection. */
+/** @type {WeakMap<V1Transport, Map<string, ShapeKeys>>} Only immutable credentials retain keys across decrypts. */
 const shapeKeys = new WeakMap();
 /** @param {Readonly<Record<string, string>>} params */
 const keyScope = params => JSON.stringify([params.database, params.collection]);
@@ -26,8 +26,10 @@ async function shapeCall(transport, params, operation, options) {
     throw error;
   }
 }
-/** @param {V1Transport} transport @param {Readonly<Record<string, string>>} params @returns {ShapeKeys} */
+/** @param {V1Transport} transport @param {Readonly<Record<string, string>>} params @returns {ShapeKeys | undefined} */
 function currentKeys(transport, params) {
+  // Callback tokens can change users; authorize every decrypt without retaining their keys.
+  if (transport.hasTokenProvider) return undefined;
   let scopes = shapeKeys.get(transport);
   if (scopes === undefined) { scopes = new Map(); shapeKeys.set(transport, scopes); }
   const scope = keyScope(params);
@@ -152,7 +154,7 @@ export async function readShapePage(transport, params, request, signal, ifNoneMa
   return page;
 }
 /**
- * Reuse process-memory keys for this handle/epoch/KID; fetch misses without HTTP cache reuse.
+ * Reuse keys only for static credentials; callback tokens authorize every decrypt with no-store.
  * @param {V1Transport} transport @param {Readonly<Record<string,string>>} params
  * @param {Uint8Array} bytes @param {V1SealedShapePosition} position @param {AbortSignal | undefined} signal
  * @returns {Promise<V1ShapePage>}
@@ -167,7 +169,7 @@ export async function decryptSealedShapePage(transport, params, bytes, position,
   signal?.throwIfAborted();
   const cache = currentKeys(transport, params);
   const cacheId = JSON.stringify([handle, epoch, keyId]);
-  let raw = cache.keys.get(cacheId)?.key;
+  let raw = cache?.keys.get(cacheId)?.key;
   if (raw === undefined) {
     const query = new URLSearchParams({ handle, epoch, key_id: keyId });
     const response = await shapeCall(transport, params, "getShapeKey", { query, cache: "no-store", signal });
@@ -179,7 +181,7 @@ export async function decryptSealedShapePage(transport, params, bytes, position,
     if (btoa(String.fromCharCode(...raw)).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "") !== encoded) malformed("shape epoch key encoding");
     const servedEpoch = BigInt(epoch);
     const active = currentKeys(transport, params);
-    if (active === cache && servedEpoch >= cache.latestEpoch) {
+    if (cache !== undefined && active === cache && servedEpoch >= cache.latestEpoch) {
       cache.latestEpoch = servedEpoch;
       for (const [id, entry] of cache.keys) if (entry.epoch < servedEpoch) cache.keys.delete(id);
       cache.keys.set(cacheId, { epoch: servedEpoch, key: raw });
