@@ -15,6 +15,7 @@ export {
   V1InvalidKeyError,
   V1ForbiddenScopeError,
   V1NotFoundError,
+  SqlError,
   V1ErrorCode,
   isTerraBaseV1Error,
 } from "./v1/errors.js";
@@ -76,6 +77,12 @@ export { V1SavedQueries } from "./v1/saved-queries.js";
 /** @typedef {import("./v1/sql.js").V1SqlResult} V1SqlResult */
 /** @typedef {import("./v1/sql.js").V1SqlIndexSuggestion} V1SqlIndexSuggestion */
 /** @typedef {import("./v1/sql.js").V1SqlCheck} V1SqlCheck */
+/** @typedef {import("./v1/sql-execute.js").V1SqlArgument} V1SqlArgument */
+/** @typedef {import("./v1/sql-execute.js").V1SqlArguments} V1SqlArguments */
+/** @typedef {import("./v1/sql-execute.js").V1SqlStatement} V1SqlStatement */
+/** @typedef {import("./v1/sql-execute.js").V1SqlValue} V1SqlValue */
+/** @typedef {import("./v1/sql-execute.js").V1SqlColumn} V1SqlColumn */
+/** @typedef {import("./v1/sql-execute.js").V1SqlExecuteResult} V1SqlExecuteResult */
 /** @typedef {import("./v1/changes.js").V1ChangeStreamRequest} V1ChangeStreamRequest */
 /** @typedef {import("./v1/changes.js").V1DatabaseChange} V1DatabaseChange */
 /** @typedef {import("./v1/changes.js").V1DatabaseChangeCursor} V1DatabaseChangeCursor */

@@ -110,7 +110,8 @@ OpenAPI and immutable release qualification remain open gates.
 | Collections and declared JSON Schema | `db.collections.create/get/list/drop`; `collection.getSchema/putSchema/deleteSchema` |
 | Collection TTL | `collection.putTtl/getTtl/deleteTtl` |
 | Databases | `client.databases.create/list/get/update/delete/branch` |
-| SQL | `db.sql/checkSql/explainSql` |
+| Relational SQL | `db.execute/query/batch` |
+| Read-only SQL (older) | `db.sql/checkSql/explainSql` |
 | Changes | `db.changes` (SSE async iterator) |
 | Export | `db.export` (NDJSON async iterator) |
 
@@ -161,6 +162,37 @@ or replay mutations after an uncertain result; this release does not promise
 mutation deduplication. Validation, authentication, authorization and
 precondition failures are not automatically retried.
 
+Relational SQL runs statements on tables created with `CREATE TABLE` (rows
+are documents). `execute` runs one statement, `query` returns its rows as
+objects keyed by column name, and `batch` sends 1 to 256 statements as one
+transaction: all commit or none do. `BEGIN`, `COMMIT` and `ROLLBACK` are
+refused. Arguments are positional (`?`) or named (`:name`, `@name`, `$name`,
+passed without the prefix). Each is `null`, a number, an int64 `bigint`, a
+boolean (stored as 1 or 0) or a string. Reads need `documents:read`; writes and
+DDL also need `documents:write`.
+
+```js
+await db.batch([
+  "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+  { sql: "INSERT INTO people (id, name) VALUES (?, ?)", args: [1, "Ada"] },
+  { sql: "INSERT INTO people (id, name) VALUES (:id, :name)", named: { id: 2, name: "Grace" } },
+]);
+const people = await db.query("SELECT id, name FROM people WHERE id > ?", [0]);
+const { columns, rows, rowsAffected, lastInsertRowid } = await db.execute("DELETE FROM people WHERE id = :id", { id: 2 });
+```
+
+A refused statement throws `SqlError`, a `TerraBaseV1Error` that adds
+`statement` (zero-based index) and `sqliteCode` (such as
+`SQLITE_CONSTRAINT_PRIMARYKEY`). Its `code` is `sql_error` (400),
+`forbidden_scope` (403), `sql_conflict` (409) or `sql_too_large` (413).
+Authentication, quota and availability errors keep their usual error classes.
+
+TerraBase sends integers as JSON numbers. A plain JavaScript number cannot hold
+an integer above 2^53 exactly, so the SDK decodes such a value (a row value or
+`lastInsertRowid`) as an `ExactDecimal` that keeps every digit. Convert it with
+`BigInt(String(value))`. Pass large integer arguments as `bigint`.
+
+The older `db.sql` route below is read-only.
 SQL is the producer's bounded read-only subset: `{ matched, truncated, rows }`,
 with row `{ id, value }` and no pagination cursor. `checkSql` returns `ok: false`
 for invalid SQL; `explainSql` returns an HTTP error for invalid SQL. All three

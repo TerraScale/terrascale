@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.6 — relational SQL
+
+`db.execute(sql, args)`, `db.query(sql, args)` and `db.batch(statements)` call
+TerraBase's `POST /v1/projects/{project}/databases/{database}/sql/execute`.
+Each request is one transaction. Results are typed
+`{ columns, rows, rowsAffected, lastInsertRowid }`; a refused statement throws
+`SqlError` (a `TerraBaseV1Error`) with `statement` and `sqliteCode`. The
+read-only `db.sql` route is unchanged.
+
 ## Unreleased — collection TTL and vector near sort
 
 `collection.putTtl(path)`, `getTtl()` and `deleteTtl()` call

@@ -76,6 +76,7 @@ export const V1ErrorCode = Object.freeze({
   mustRefetch: "must_refetch", preconditionFailed: "precondition_failed", payloadTooLarge: "payload_too_large",
   unsupportedMediaType: "unsupported_media_type", uriTooLong: "uri_too_long", shapeBusy: "shape_busy",
   internalError: "internal_error", capacity: "capacity", notModified: "not_modified",
+  sqlError: "sql_error", sqlConflict: "sql_conflict", sqlTooLarge: "sql_too_large",
 });
 
 /** `412 precondition_failed`: an If-Match, If-None-Match, assert or assert_count failed. */
@@ -115,10 +116,35 @@ export class V1NotFoundError extends TerraBaseV1Error {
 }
 
 /**
+ * A refused relational SQL statement: `sql_error` (400), `forbidden_scope` (403, writes and DDL need
+ * documents:write), `sql_conflict` (409) or `sql_too_large` (413). The whole request rolled back.
+ */
+export class SqlError extends TerraBaseV1Error {
+  /** @type {number} Zero-based index of the failing statement. */
+  statement;
+  /** @type {string | undefined} The SQLite error code, such as `SQLITE_CONSTRAINT_PRIMARYKEY`. */
+  sqliteCode;
+
+  /** @param {TerraBaseV1ErrorInit & { statement: number; sqliteCode?: string | undefined }} init */
+  constructor(init) {
+    super(init);
+    this.name = "SqlError";
+    this.statement = init.statement;
+    this.sqliteCode = init.sqliteCode;
+  }
+}
+
+/**
  * @param {TerraBaseV1ErrorInit} init
  * @returns {TerraBaseV1Error}
  */
 function typedError(init) {
+  // Only the SQL execute route reports a statement index.
+  const statement = init.details?.statement;
+  if (typeof statement === "number" && Number.isInteger(statement) && statement >= 0) {
+    const sqliteCode = init.details?.sqlite_code;
+    return new SqlError({ ...init, statement, sqliteCode: typeof sqliteCode === "string" ? sqliteCode : undefined });
+  }
   switch (init.code) {
     case "precondition_failed": return new V1PreconditionFailedError(init);
     case "invalid_key": return new V1InvalidKeyError(init);
