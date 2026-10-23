@@ -21,7 +21,7 @@ internal static class ApiExamples
     private const string Period = """{"from":"2026-10-07T00:00:00Z","to":"2026-10-08T00:00:00Z","granularity":"day","reads":0,"writes":0}""";
     private const string Series = """[{"start":"2026-10-07T00:00:00Z","reads":0,"writes":0}]""";
     private const string ImportJob = """
-        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA8","project":"01ARZ3NDEKTSV4RRFFQ69G5FA2","database":"import-01arz3ndektsv4rrffq69g5fa9","region":"gru-1","state":"ready","cancelRequested":false,"options":{"missingPrimaryKey":"reject","exclude":[]},"source":{"format":"postgres_plain","bytes":8165,"sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08","receivedBytes":8165,"staged":true,"retainedUntil":null},"preview":{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAA","tables":[{"source":"public.orgs","collection":"orgs","excluded":false,"rows":3,"idPolicy":"primary_key","primaryKey":["id"],"columns":[{"name":"id","sourceType":"bigint","mapping":"integer","nullable":false,"excluded":false},{"name":"name","sourceType":"text","mapping":"string","nullable":false,"excluded":false}],"constraints":[{"kind":"primary_key","name":"orgs_pkey","columns":["id"],"references":null,"enforced":false}],"issues":[]}],"skipped":[{"kind":"index","name":"public.users_org_idx"}],"skippedTruncated":false,"blocking":0,"warnings":0},"confirmedPreviewId":null,"progress":null,"validation":null,"error":null,"createdAt":"2026-10-12T12:00:00+00:00","updatedAt":"2026-10-12T12:00:05+00:00","startedAt":null,"finishedAt":null}
+        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA8","project":"01ARZ3NDEKTSV4RRFFQ69G5FA2","database":"import-01arz3ndektsv4rrffq69g5fa9","region":"gru-1","state":"ready","cancelRequested":false,"options":{"exclude":[]},"source":{"format":"postgres_plain","bytes":8165,"sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08","receivedBytes":8165,"staged":true,"retainedUntil":null},"preview":{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAA","tables":[{"source":"public.orgs","collection":"orgs","excluded":false,"rows":3,"primaryKey":["id"],"columns":[{"name":"id","sourceType":"bigint","mapping":"integer","nullable":false,"excluded":false},{"name":"name","sourceType":"text","mapping":"string","nullable":false,"excluded":false}],"constraints":[{"kind":"primary_key","name":"orgs_pkey","columns":["id"],"references":null,"enforced":false}],"issues":[]}],"skipped":[{"kind":"index","name":"public.users_org_idx"}],"skippedTruncated":false,"blocking":0,"warnings":0},"confirmedPreviewId":null,"progress":null,"validation":null,"error":null,"createdAt":"2026-10-12T12:00:00+00:00","updatedAt":"2026-10-12T12:00:05+00:00","startedAt":null,"finishedAt":null}
         """;
     private const string Usage = """{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FA1","storageBytes":40960,"logicalBytes":0,"collections":0,"documents":0,"reads":0,"writes":0,"period":PERIOD,"series":SERIES}""";
 
@@ -36,9 +36,9 @@ internal static class ApiExamples
                 Name = "id",
                 In = ParameterLocation.Query,
                 Required = true,
-                Description = "Raw document key, supplied exactly once using UTF-8 query encoding. Decode once; slashes, dot segments and literal percent escapes remain distinct keys. No Unicode normalization. No other query parameters are accepted.",
-                Schema = new OpenApiSchema { Type = JsonSchemaType.String, MinLength = 1, MaxLength = 256 },
-                Example = JsonValue.Create("a/b"),
+                Description = "The document's canonical ULID (26 uppercase Crockford base32 characters), supplied exactly once; any other form answers 400 invalid_document_id. No other query parameters are accepted.",
+                Schema = new OpenApiSchema { Type = JsonSchemaType.String, MinLength = 26, MaxLength = 26, Pattern = "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+                Example = JsonValue.Create("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
             });
         }
 
@@ -107,8 +107,8 @@ internal static class ApiExamples
         "createSavedQuery" or "updateSavedQuery" => """{"name":"People","sql":"SELECT * FROM people LIMIT 50"}""",
         "runTransaction" => """{"ops":[{"op":"create","collection":"people","document":{"name":"Ada"}}]}""",
         "executeSql" => """{"statements":[{"sql":"CREATE TABLE IF NOT EXISTS people (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"}]}""",
-        "createImport" => """{"format":"postgres_plain","sourceBytes":8165,"sourceSha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08","options":{"missingPrimaryKey":"reject","exclude":["public.audit_log"]}}""",
-        "updateImport" => """{"options":{"missingPrimaryKey":"generate","exclude":["public.tagged.tags"]}}""",
+        "createImport" => """{"format":"postgres_plain","sourceBytes":8165,"sourceSha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08","options":{"exclude":["public.audit_log"]}}""",
+        "updateImport" => """{"options":{"exclude":["public.tagged.tags"]}}""",
         "startImport" => """{"previewId":"01ARZ3NDEKTSV4RRFFQ69G5FAA"}""",
         "uploadImportSource" => "\"<up to 4 MiB of the source file, starting at offset>\"",
         _ => "{}",

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
+using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 using static TerraScale.Authentication.Tests.TerraBaseFixture;
 
@@ -130,9 +131,7 @@ public sealed class AuthStoreTests(TerraBaseFixture fixture)
         await Assert.That(documents.Count).IsEqualTo(2);
         foreach (var document in documents)
         {
-            var bytes = Guid.Parse(document.Id).ToByteArray(bigEndian: true);
-            await Assert.That(bytes[6] >> 4).IsEqualTo(8);
-            await Assert.That(bytes[8] >> 6).IsEqualTo(2);
+            await Assert.That(TerraScaleIds.IsValid(document.Id)).IsTrue();
         }
 
         await Assert.That(await store.ReleaseUniqueAsync(instanceA, kindA, keyA, "owner-a")).IsTrue();

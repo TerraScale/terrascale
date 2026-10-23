@@ -52,22 +52,6 @@ public sealed class EntityIdTests
     }
 
     [Test]
-    [Arguments("customer-key")]
-    [Arguments("doc_existing")]
-    [Arguments("01jc9xq1t3v5x7z9b2d4f7hj2k")]
-    [Arguments("00112233-4455-6677-8899-aabbccddeeff")]
-    public async Task Caller_supplied_keys_work_in_document_and_transaction_writes(string key)
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var created = await api.PutAsync(key, new { value = 1 });
-        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
-        var changed = await api.TransactAsync(new { op = "put", collection = "items", id = key, document = new { value = 2 } });
-        await Assert.That(changed.Status).IsEqualTo(HttpStatusCode.OK);
-        var read = await api.GetAsync(key);
-        await Assert.That(read.Json.GetProperty("document").GetProperty("value").GetInt32()).IsEqualTo(2);
-    }
-
-    [Test]
     [Arguments("00112233-4455-6677-8899-aabbccddeeff")]
     [Arguments("org_01JC9XQ1T3V5X7Z9B2D4F7HJ2K")]
     [Arguments("01jc9xq1t3v5x7z9b2d4f7hj2k")]

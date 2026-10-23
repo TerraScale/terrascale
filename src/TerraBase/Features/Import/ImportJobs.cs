@@ -105,7 +105,7 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
 
         var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\0',
             [database.ProjectId!, database.DatabaseId!, request.Format, bytes.ToString(System.Globalization.CultureInfo.InvariantCulture), sha,
-            normalized.MissingPrimaryKey!, normalized.Collection ?? "", .. normalized.Exclude!]))));
+            normalized.Collection ?? "", .. normalized.Exclude!]))));
         var gate = Lock(database);
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -346,7 +346,7 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
     /// <summary>Reads both records of the destination's import in one query, so they come from one snapshot.</summary>
     internal async ValueTask<ReadImportResult> ReadAsync(TenantContext database, CancellationToken cancellationToken)
     {
-        var both = new InFilter(DocumentPath.Id, [new ScalarValue(ScalarKind.Text, "job"), new ScalarValue(ScalarKind.Text, "state")]);
+        var both = new InFilter(DocumentPath.Id, [new ScalarValue(ScalarKind.Text, ImportNames.JobId), new ScalarValue(ScalarKind.Text, ImportNames.StateId)]);
         var page = await documents.QueryAsync(database, new DocumentQuery(ImportNames.Collection, both, [], null, 2, DocumentRoute.MaxPageBytes), null, cancellationToken)
             .ConfigureAwait(false);
         if (page is not QueryOutcome outcome)
@@ -358,8 +358,8 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
             };
         }
 
-        var jobDocument = outcome.Page.Rows.FirstOrDefault(row => row.Document.Id == "job")?.Document;
-        var stateDocument = outcome.Page.Rows.FirstOrDefault(row => row.Document.Id == "state")?.Document;
+        var jobDocument = outcome.Page.Rows.FirstOrDefault(row => row.Document.Id == ImportNames.JobId)?.Document;
+        var stateDocument = outcome.Page.Rows.FirstOrDefault(row => row.Document.Id == ImportNames.StateId)?.Document;
         if (jobDocument is null || stateDocument is null)
         {
             return UnknownImport;
@@ -392,12 +392,12 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
         var all = new List<DocumentOperation>(operations.Count + 3);
         all.AddRange(operations);
         all.Add(previous is null
-            ? new AssertOperation(ImportNames.Collection, "state", null)
-            : new AssertOperation(ImportNames.Collection, "state", new CompareFilter(new DocumentPath(["rev"]), Comparison.Equal, new ScalarValue(ScalarKind.Text, previous.State.Rev))));
-        all.Add(new PutOperation(ImportNames.Collection, "state", Stored(next.Rev, JsonSerializer.Serialize(next, TerraBaseJsonContext.Default.ImportStateRecord)), Unconditional));
+            ? new AssertOperation(ImportNames.Collection, ImportNames.StateId, null)
+            : new AssertOperation(ImportNames.Collection, ImportNames.StateId, new CompareFilter(new DocumentPath(["rev"]), Comparison.Equal, new ScalarValue(ScalarKind.Text, previous.State.Rev))));
+        all.Add(new PutOperation(ImportNames.Collection, ImportNames.StateId, Stored(next.Rev, JsonSerializer.Serialize(next, TerraBaseJsonContext.Default.ImportStateRecord)), Unconditional));
         if (job is not null && !ReferenceEquals(job, previous?.Job))
         {
-            all.Add(new PutOperation(ImportNames.Collection, "job", Stored(null, JsonSerializer.Serialize(job, TerraBaseJsonContext.Default.ImportJobRecord)), Unconditional));
+            all.Add(new PutOperation(ImportNames.Collection, ImportNames.JobId, Stored(null, JsonSerializer.Serialize(job, TerraBaseJsonContext.Default.ImportJobRecord)), Unconditional));
         }
 
         return await documents.WriteAsync(database, all, indexErrors: true, cancellationToken).ConfigureAwait(false) switch
@@ -491,12 +491,6 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
 
     private static Valid<ImportOptionsBody> Normalize(ImportOptionsBody? requested)
     {
-        var missing = requested?.MissingPrimaryKey ?? "reject";
-        if (missing is not ("reject" or "generate"))
-        {
-            return new Validation("options.missingPrimaryKey must be reject or generate");
-        }
-
         var exclude = requested?.Exclude ?? [];
         if (exclude.Count > 1000 || exclude.Sum(entry => entry?.Length ?? 0) > 64 * 1024)
         {
@@ -520,7 +514,7 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
             return new Validation("options.collection must be a lowercase, unreserved collection name of at most 63 characters");
         }
 
-        return new ImportOptionsBody(missing, [.. canonical], collection);
+        return new ImportOptionsBody([.. canonical], collection);
     }
 
     /// <summary>A decision of <see cref="ChangeAsync"/>.</summary>

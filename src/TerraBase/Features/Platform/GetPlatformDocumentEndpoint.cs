@@ -19,7 +19,7 @@ public sealed class GetPlatformDocumentEndpoint(IDocumentService documents, ITen
         Get(PlatformExplore.Documents + "/by-key");
         Name("getPlatformDocument");
         Summary("Reads a platform document, redacted");
-        Description("Platform admins only (platform_role admin). Query: id, the document key. Secret-looking fields read \"[redacted]\".");
+        Description("Platform admins only (platform_role admin). Query: id, the document's ULID. Secret-looking fields read \"[redacted]\".");
         Tags("Platform");
         Produces<DocumentBody>();
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);

@@ -16,7 +16,7 @@ public sealed class UpdateImportEndpoint(IImportJobs jobs, ITenantDirectory tena
         Patch(ImportRoute.Path);
         Name("updateImport");
         Summary("Changes the import's options and analyzes the source again");
-        Description("Body {options: {missingPrimaryKey, exclude}}, allowed while ready or rejected. The job moves to analyzing and gets a new preview id; the source cannot change." + ImportRoute.Reference);
+        Description("Body {options: {exclude}}, allowed while ready or rejected. The job moves to analyzing and gets a new preview id; the source cannot change." + ImportRoute.Reference);
         Tags(ImportRoute.Tag);
         Produces<ImportJobBody>(StatusCodes.Status202Accepted);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

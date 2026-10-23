@@ -33,8 +33,8 @@ public sealed class PlatformDatabasesTests
         using var storage = PeerTls.CreateClient(server.BaseAddress);
 
         using var collection = await storage.PostAsJsonAsync(ManagementApi.Uri(Auth + "/collections"), new { name = "users" });
-        using var written = await storage.PutAsJsonAsync(ManagementApi.Uri(Auth + "/collections/users/documents/by-key?id=ada"), new { name = "Ada" });
-        using var read = await storage.GetAsync(ManagementApi.Uri(Auth + "/collections/users/documents/by-key?id=ada"));
+        using var written = await storage.PutAsJsonAsync(ManagementApi.Uri(Auth + "/collections/users/documents/by-key?id=" + ManagementApi.DocumentId("ada")), new { name = "Ada" });
+        using var read = await storage.GetAsync(ManagementApi.Uri(Auth + "/collections/users/documents/by-key?id=" + ManagementApi.DocumentId("ada")));
         using var dashboard = await storage.GetAsync(ManagementApi.Uri(Dashboard + "/collections"));
 
         await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -82,7 +82,7 @@ public sealed class PlatformDatabasesTests
                 first = await RecordsAsync(server);
                 using var storage = PeerTls.CreateClient(server.BaseAddress);
                 using var collection = await storage.PostAsJsonAsync(ManagementApi.Uri(Auth + "/collections"), new { name = "signing_keys" });
-                using var written = await storage.PutAsJsonAsync(ManagementApi.Uri(Auth + "/collections/signing_keys/documents/by-key?id=k1"), new { kid = "k1" });
+                using var written = await storage.PutAsJsonAsync(ManagementApi.Uri(Auth + "/collections/signing_keys/documents/by-key?id=" + ManagementApi.DocumentId("k1")), new { kid = "k1" });
                 await Assert.That(written.IsSuccessStatusCode).IsTrue();
 
                 // Eight more runs at once on a seeded node: every one succeeds and changes nothing.
@@ -100,7 +100,7 @@ public sealed class PlatformDatabasesTests
             {
                 await SeededAsync(restarted);
                 using var storage = PeerTls.CreateClient(restarted.BaseAddress);
-                using var kept = await storage.GetAsync(ManagementApi.Uri(Auth + "/collections/signing_keys/documents/by-key?id=k1"));
+                using var kept = await storage.GetAsync(ManagementApi.Uri(Auth + "/collections/signing_keys/documents/by-key?id=" + ManagementApi.DocumentId("k1")));
 
                 await Assert.That(await RecordsAsync(restarted)).IsEquivalentTo(first);
                 await Assert.That(kept.StatusCode).IsEqualTo(HttpStatusCode.OK);

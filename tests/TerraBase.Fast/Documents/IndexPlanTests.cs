@@ -38,7 +38,7 @@ public sealed class IndexPlanTests
         {
             var sql = $"SELECT _id FROM people WHERE {where} ORDER BY _id";
             var run = await PostAsync(api, $"{database.Path}/sql", sql);
-            await Assert.That(run.GetProperty("rows").EnumerateArray().Select(row => row.GetProperty("id").GetString()!).ToList())
+            await Assert.That(run.GetProperty("rows").EnumerateArray().Select(row => ManagementApi.DocumentName(row.GetProperty("id").GetString()!)).ToList())
                 .IsEquivalentTo(expected).Because(where);
         }
 
@@ -96,7 +96,7 @@ public sealed class IndexPlanTests
         var people = Emails.Select((email, i) => ($"p{i}", email)).Concat(Enumerable.Range(0, 200).Select(i => ($"q{i:D3}", $"q{i}@y.test")));
         using var written = await data.PostAsJsonAsync(ManagementApi.Uri($"{database.Data}/transactions"), new
         {
-            ops = people.Select(person => new { op = "put", collection = "people", id = person.Item1, document = new { email = person.Item2 } }).ToArray(),
+            ops = people.Select(person => new { op = "put", collection = "people", id = ManagementApi.DocumentId(person.Item1), document = new { email = person.Item2 } }).ToArray(),
         });
         written.EnsureSuccessStatusCode();
 

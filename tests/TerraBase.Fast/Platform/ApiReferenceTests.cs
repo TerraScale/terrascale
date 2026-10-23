@@ -279,8 +279,10 @@ public sealed class ApiReferenceTests
                 await Assert.That(key.GetProperty("in").GetString()).IsEqualTo("query");
                 await Assert.That(key.GetProperty("required").GetBoolean()).IsTrue();
                 await Assert.That(key.GetProperty("schema").GetProperty("type").GetString()).IsEqualTo("string");
-                await Assert.That(key.GetProperty("schema").GetProperty("maxLength").GetInt32()).IsEqualTo(256);
-                await Assert.That(key.GetProperty("example").GetString()).IsEqualTo("a/b");
+                await Assert.That(key.GetProperty("schema").GetProperty("minLength").GetInt32()).IsEqualTo(26);
+                await Assert.That(key.GetProperty("schema").GetProperty("maxLength").GetInt32()).IsEqualTo(26);
+                await Assert.That(key.GetProperty("schema").GetProperty("pattern").GetString()).IsEqualTo("^[0-7][0-9A-HJKMNP-TV-Z]{25}$");
+                await Assert.That(EntityIds.IsValid(key.GetProperty("example").GetString())).IsTrue();
                 await Assert.That(responses.Any(status => status.Name == "400")).IsTrue();
             }
 

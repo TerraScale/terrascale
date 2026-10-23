@@ -9,6 +9,12 @@ internal static class ImportNames
     /// <summary>The collection that holds the import's own record in its destination.</summary>
     public const string Collection = "terrascale-import";
 
+    /// <summary>The fixed ULID of the import's job document in <see cref="Collection"/>.</summary>
+    public const string JobId = "0000000000000000000000000J";
+
+    /// <summary>The fixed ULID of the import's state document in <see cref="Collection"/>.</summary>
+    public const string StateId = "0000000000000000000000000S";
+
     /// <summary>An identifier as the contract writes it: bare when it is <c>[a-z0-9_]</c> not starting with a digit, else double-quoted.</summary>
     public static string Quote(string identifier) =>
         identifier.Length > 0 && !char.IsAsciiDigit(identifier[0]) && identifier.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_')
@@ -108,11 +114,4 @@ internal static class ImportNames
 
     /// <summary>Whether a collection name is reserved by the engine or by the import itself.</summary>
     public static bool Reserved(string collection) => CollectionName.IsReserved(collection) || collection == Collection;
-
-    /// <summary>The Documents API rule for a caller-supplied key.</summary>
-    public static bool ValidId(string id) => id.Length is > 0 and <= 256 && !id.Any(char.IsControl);
-
-    /// <summary>A composite key component: <c>%</c> and <c>:</c> escaped, so joining with <c>:</c> stays unambiguous.</summary>
-    public static string Component(string value) =>
-        value.Replace("%", "%25", StringComparison.Ordinal).Replace(":", "%3A", StringComparison.Ordinal);
 }

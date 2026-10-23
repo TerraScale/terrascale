@@ -187,42 +187,35 @@ public sealed class CommitApiTests
     }
 
     [Test]
-    [Arguments("settings")]
-    [Arguments("doc_existing")]
-    [Arguments("00112233-4455-6677-8899-aabbccddeeff")]
-    public async Task Dashboard_documents_keep_caller_supplied_keys_in_commits_and_reads(string key)
+    public async Task Dashboard_documents_are_addressed_by_ULID_in_commits_and_query_key_reads()
     {
         await using var api = await ManagementApi.StartAsync();
         using var service = api.Service(api.User);
-        var written = await CommitAsync(service, new { op = "put", collection = "settings", id = key, document = new { value = 1 } });
-        await Assert.That(written.Status).IsEqualTo(HttpStatusCode.OK);
-        var read = await GetAsync(service, $"/v1/management/documents/settings/by-key?id={System.Uri.EscapeDataString(key)}");
-        await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(read.Json.GetProperty("id").GetString()).IsEqualTo(key);
-        await Assert.That(read.Json.GetProperty("document").GetProperty("value").GetInt32()).IsEqualTo(1);
-        await Assert.That(read.ETag).IsEqualTo(Version(written, 0));
-    }
-
-    [Test]
-    public async Task Dashboard_query_key_reads_preserve_raw_key_identity_without_path_aliases()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        using var service = api.Service(api.User);
-        string[] keys = ["a/b", "a%2Fb", ".", "%2E", "..", "%2E%2E", "%", "?", "#", "+", " ", "雪😀", "é", "e\u0301"];
+        string[] keys = [NewId(), NewId(), NewId()];
         var written = await CommitAsync(service, [.. keys.Select(key => (object)new { op = "put", collection = "settings", id = key, document = new { value = key } })]);
         await Assert.That(written.Status).IsEqualTo(HttpStatusCode.OK);
         for (var i = 0; i < keys.Length; i++)
         {
-            var read = await GetAsync(service, $"{Documents}/settings/by-key?id={System.Uri.EscapeDataString(keys[i])}");
+            var read = await GetAsync(service, $"{Documents}/settings/by-key?id={keys[i]}");
             await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(read.Json.GetProperty("id").GetString()).IsEqualTo(keys[i]);
             await Assert.That(read.Json.GetProperty("document").GetProperty("value").GetString()).IsEqualTo(keys[i]);
             await Assert.That(read.ETag).IsEqualTo(Version(written, i));
         }
 
+        // Caller-chosen keys and other id formats are not document ids: writes and reads refuse them.
+        string[] invalid = ["settings", "doc_existing", "00112233-4455-6677-8899-aabbccddeeff", keys[0].ToLowerInvariant(), "a/b", "%", "雪😀", "e\u0301"];
+        foreach (var key in invalid)
+        {
+            var refused = await CommitAsync(service, new { op = "put", collection = "settings", id = key, document = new { value = 1 } });
+            await Assert.That((refused.Status, refused.Code, refused.Op)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_document_id", (int?)0)).Because(key);
+            var read = await GetAsync(service, $"{Documents}/settings/by-key?id={System.Uri.EscapeDataString(key)}");
+            await Assert.That((read.Status, read.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_document_id")).Because(key);
+        }
+
         var missing = await GetAsync(service, $"{Documents}/settings/by-key");
-        var duplicate = await GetAsync(service, $"{Documents}/settings/by-key?id=a%2Fb&id=a%252Fb");
-        var unknown = await GetAsync(service, $"{Documents}/settings/by-key?id=a%2Fb&x=1");
+        var duplicate = await GetAsync(service, $"{Documents}/settings/by-key?id={keys[0]}&id={keys[1]}");
+        var unknown = await GetAsync(service, $"{Documents}/settings/by-key?id={keys[0]}&x=1");
         await Assert.That(missing.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(duplicate.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(unknown.Status).IsEqualTo(HttpStatusCode.BadRequest);

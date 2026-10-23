@@ -37,7 +37,7 @@ public sealed class PlatformExploreTests
         using var databases = await client.GetAsync(ManagementApi.Uri(PlatformExplore.Databases));
         using var collections = await client.GetAsync(ManagementApi.Uri($"{PlatformExplore.Databases}/{PlatformDatabases.Auth}/collections"));
         using var page = await client.GetAsync(ManagementApi.Uri(Explore));
-        using var one = await client.GetAsync(ManagementApi.Uri(Explore + "/by-key?id=k1"));
+        using var one = await client.GetAsync(ManagementApi.Uri(Explore + "/by-key?id=" + ManagementApi.DocumentId("k1")));
         var listed = (await databases.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("items").EnumerateArray()
             .Select(item => item.GetProperty("name").GetString()!).ToList();
         var key = (await one.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document");
@@ -80,7 +80,7 @@ public sealed class PlatformExploreTests
         }));
         using var anonymous = api.WithToken(null);
         using var admin = api.WithToken(AdminToken(api, user));
-        var path = ManagementApi.Uri(Explore + "/by-key?id=k1");
+        var path = ManagementApi.Uri(Explore + "/by-key?id=" + ManagementApi.DocumentId("k1"));
 
         using var asUser = await plainUser.GetAsync(path);
         using var asViewer = await viewer.GetAsync(path);
@@ -99,7 +99,7 @@ public sealed class PlatformExploreTests
         // No write route exists: the method is refused and the stored key is unchanged.
         await Assert.That(write.IsSuccessStatusCode).IsFalse();
         using var storage = PeerTls.CreateClient(api.Server.BaseAddress);
-        using var stored = await storage.GetAsync(ManagementApi.Uri(Keys + "/documents/by-key?id=k1"));
+        using var stored = await storage.GetAsync(ManagementApi.Uri(Keys + "/documents/by-key?id=" + ManagementApi.DocumentId("k1")));
         await Assert.That((await stored.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("kid").GetString()).IsEqualTo("k1");
     }
 
@@ -114,10 +114,10 @@ public sealed class PlatformExploreTests
             using var created = await storage.PostAsJsonAsync(ManagementApi.Uri(dashboard), new { name = "plans" }, token);
             return created.StatusCode is HttpStatusCode.Created or HttpStatusCode.Conflict;
         });
-        using var written = await storage.PutAsJsonAsync(ManagementApi.Uri(dashboard + "/plans/documents/by-key?id=basic"), new { name = "Basic" });
+        using var written = await storage.PutAsJsonAsync(ManagementApi.Uri(dashboard + "/plans/documents/by-key?id=" + ManagementApi.DocumentId("basic")), new { name = "Basic" });
         written.EnsureSuccessStatusCode();
         using var client = api.WithToken(AdminToken(api, EntityIds.New().ToString()));
-        using var read = await client.GetAsync(ManagementApi.Uri(PlatformExplore.Databases + "/ts-dashboard/collections/plans/documents/by-key?id=basic"));
+        using var read = await client.GetAsync(ManagementApi.Uri(PlatformExplore.Databases + "/ts-dashboard/collections/plans/documents/by-key?id=" + ManagementApi.DocumentId("basic")));
 
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("name").GetString()).IsEqualTo("Basic");
@@ -139,7 +139,7 @@ public sealed class PlatformExploreTests
             using var created = await storage.PostAsJsonAsync(ManagementApi.Uri(Keys[..Keys.LastIndexOf('/')]), new { name = "signing_keys" }, token);
             return created.StatusCode is HttpStatusCode.Created or HttpStatusCode.Conflict;
         });
-        using var written = await storage.PutAsJsonAsync(ManagementApi.Uri(Keys + "/documents/by-key?id=k1"), new
+        using var written = await storage.PutAsJsonAsync(ManagementApi.Uri(Keys + "/documents/by-key?id=" + ManagementApi.DocumentId("k1")), new
         {
             kid = "k1",
             algorithm = "ES256",

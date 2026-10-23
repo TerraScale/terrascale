@@ -215,7 +215,7 @@ logged and counted as unknown while management requests keep returning `503`.
 - **IDs** are canonical uppercase 26-character Crockford ULIDs. Lists in id order (organizations, projects, databases)
   sort by timestamp, with monotonic generation within a millisecond per process. Clock changes can change timestamp order.
   A malformed entity id answers `400`; an unknown valid id answers `404`. The document key is the entity id; stored payloads omit its redundant `id`.
-  Caller-supplied document keys remain unrestricted except for the documented length and character bounds.
+  Document ids are canonical ULIDs too (`400 invalid_document_id` otherwise).
 - **Organization and project names** are 1 to 128 characters after trimming. They must contain a
   letter or digit and no control characters, and are compared ignoring case.
   - Project names are unique within their organization.
@@ -897,7 +897,7 @@ not cover branches.
 | --- | --- | --- |
 | Paths | `/v1/management/…` | ts-go SDK calls `/api/v1/databases…`; control-plane-v1 uses `/v1/dashboard/tenants/{tenant}/databases` |
 | Tenant | The organization is the tenant; projects group its databases | SDK sends the dashboard **organization** id as `X-TerraScale-Tenant-ID`; control-plane-v1 says tenant = project |
-| IDs | Canonical uppercase ULIDs | All repositories use the same contract; caller-supplied document keys keep their bounds-only validation |
+| IDs | Canonical uppercase ULIDs | All repositories use the same contract, document ids included |
 | Database names | `^[a-z][a-z0-9_-]{0,62}$` | dashboard and SDK use `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$` (leading digit allowed, no `_`, no trailing `-`) |
 | JSON | camelCase, ISO 8601 timestamps | control-plane-v1 uses snake_case, Unix-ms strings and `next_cursor` |
 | Idempotency | commits carry a client commit id with a durable, queryable outcome ([management-commits.md](management-commits.md#uncertain-outcomes)); other routes have none | control-plane-v1 requires `Idempotency-Key` on mutations |

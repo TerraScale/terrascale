@@ -130,7 +130,10 @@ public sealed class ShapeSnapshotTests
         await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "4");
         await using var fixture = await Fixture.OpenAsync(api);
         var faker = new Faker();
-        var ids = Ids(1000);
+        // One id is held back to be written later, inside the keyset range: between ids[500] and ids[501].
+        var all = Ids(1001);
+        var inside = all[501];
+        string[] ids = [.. all.Where(id => id != inside)];
         var model = Model();
         var versions = await WriteAsync(api, model, [.. ids.Select((id, n) => (id, (JsonObject?)Doc(n, faker.Random.AlphaNumeric(1500))))]);
         var expected = Model(model);
@@ -157,7 +160,7 @@ public sealed class ShapeSnapshotTests
 
             // Updates at both ends and the middle, deletes, an id inside the keyset range and one after it, all while page 0 scans.
             _ = await WriteAsync(api, model, (ids[0], Doc(-1)), (ids[500], Doc(-2)), (ids[999], Doc(-3)), (ids[1], null), (ids[998], null),
-                (ids[500] + "x", Doc(-4)), (DocumentApi.NewId(), Doc(-5)));
+                (inside, Doc(-4)), (DocumentApi.NewId(), Doc(-5)));
             afterWrites = await CounterAsync(fixture.Raw);
         }
         finally
@@ -405,12 +408,13 @@ public sealed class ShapeSnapshotTests
     }
 
     [Test]
-    public async Task A_filtered_out_long_id_cannot_push_the_continuation_past_the_page_byte_limit()
+    public async Task A_filtered_out_id_advances_the_continuation_within_the_page_byte_limit()
     {
         await using var api = await DocumentApi.StartAsync();
         await using var fixture = await Fixture.OpenAsync(api);
+        // Every id is a 26-character ULID, so a filtered-out id fits wherever the included id before it did.
         var ids = Ids(3);
-        var excluded = ids[1] + new string('b', 200);
+        var excluded = ids[1];
         var model = Model();
         _ = await WriteAsync(api, model, (ids[0], Doc(0, "")), (excluded, Doc(1)), (ids[2], Doc(2)));
         var shape = await ShapeAsync(fixture.Store, document => document.Id != excluded);
@@ -433,7 +437,7 @@ public sealed class ShapeSnapshotTests
         var (pages, nextIds) = await PagesAsync(fixture.Snapshots, fixture.Store, shape.Handle, snapshot.Offset);
         await Assert.That(pages.Count).IsEqualTo(2);
         await Assert.That(pages[0].Length).IsLessThanOrEqualTo(ShapeSnapshots.PageBytes);
-        await Assert.That(nextIds[0]).IsEqualTo(ids[0]).Because("the longer excluded id cannot fit in this page's continuation");
+        await Assert.That(nextIds[0]).IsEqualTo(excluded).Because("the examined excluded id fits in this page's continuation");
         await AssertMatchesAsync(await OpsAsync(pages, shape, snapshot.Offset), model);
     }
 

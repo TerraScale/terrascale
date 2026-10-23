@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Features.Import;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Testing;
 
@@ -30,11 +31,11 @@ public sealed class ImportApiTests
         var (uploaded, _) = await client.UploadAsync(import, dump, part: 1000);
         await Assert.That(uploaded).IsEqualTo(HttpStatusCode.OK);
 
-        // Dry run: events has no primary key and tagged holds an array, so the default options block.
+        // Dry run: tagged holds an array, so the default options block; events has no primary key and imports with generated ids.
         var rejected = await client.WaitAsync(import, "ready", "rejected");
         await Assert.That(rejected.GetProperty("state").GetString()).IsEqualTo("rejected").Because(rejected.GetRawText());
         var tables = Tables(rejected);
-        await Assert.That(Issue(tables["public.events"], "missing_primary_key")).IsTrue();
+        await Assert.That(tables["public.events"].GetProperty("issues").GetArrayLength()).IsEqualTo(0);
         await Assert.That(Issue(tables["public.tagged"], "unsupported_type")).IsTrue();
         await Assert.That(tables.ContainsKey("public.measurements")).IsFalse();
         var skipped = rejected.GetProperty("preview").GetProperty("skipped").EnumerateArray()
@@ -48,7 +49,7 @@ public sealed class ImportApiTests
         await Assert.That(await client.IdsAsync(import, "users")).IsEmpty();
 
         var stale = rejected.GetProperty("preview").GetProperty("id").GetString();
-        var (updated, _) = await client.UpdateAsync(import, new { missingPrimaryKey = "generate", exclude = TaggedArray });
+        var (updated, _) = await client.UpdateAsync(import, new { exclude = TaggedArray });
         await Assert.That(updated).IsEqualTo(HttpStatusCode.Accepted);
         var ready = await client.WaitAsync(import, "ready", "rejected");
         await Assert.That(ready.GetProperty("state").GetString()).IsEqualTo("ready").Because(ready.GetRawText());
@@ -57,7 +58,6 @@ public sealed class ImportApiTests
         await Assert.That(preview.GetProperty("id").GetString()).IsNotEqualTo(stale);
         tables = Tables(ready);
         var users = tables["public.users"];
-        await Assert.That(users.GetProperty("idPolicy").GetString()).IsEqualTo("primary_key");
         await Assert.That(Mapping(users, "balance")).IsEqualTo("decimal_string");
         await Assert.That(Mapping(users, "mood")).IsEqualTo("string");
         await Assert.That(Mapping(users, "created_at")).IsEqualTo("timestamptz");
@@ -65,7 +65,6 @@ public sealed class ImportApiTests
         await Assert.That(users.GetProperty("constraints").EnumerateArray().Any(constraint =>
             constraint.GetProperty("kind").GetString() == "foreign_key" && constraint.GetProperty("references").GetString() == "public.orgs(id)"
             && !constraint.GetProperty("enforced").GetBoolean())).IsTrue();
-        await Assert.That(tables["public.events"].GetProperty("idPolicy").GetString()).IsEqualTo("generated");
         await Assert.That(tables["sales.\"Order Items\""].GetProperty("collection").GetString()).IsEqualTo("sales_order_items");
 
         // A stale preview id cannot start the copy.
@@ -83,7 +82,7 @@ public sealed class ImportApiTests
         await Assert.That(done.GetProperty("progress").GetProperty("rowsWritten").GetInt64()).IsEqualTo(15);
         await Assert.That(done.GetProperty("source").GetProperty("staged").GetBoolean()).IsFalse();
 
-        var ada = await client.DocumentAsync(import, "users", "5f0c8e9a-6a43-4c3e-9a7d-2d1f0c5e8b11");
+        var ada = await client.DocumentAsync(import, "users", ("id", "5f0c8e9a-6a43-4c3e-9a7d-2d1f0c5e8b11"));
         await Assert.That(ada.GetProperty("balance").GetString()).IsEqualTo("1234567890.1234");
         await Assert.That(ada.GetProperty("score").GetRawText()).IsEqualTo("0.1");
         await Assert.That(ada.GetProperty("small").GetInt32()).IsEqualTo(-32768);
@@ -96,19 +95,21 @@ public sealed class ImportApiTests
         await Assert.That(ada.GetProperty("avatar").GetString()).IsEqualTo("AP8Q");
         await Assert.That(ada.GetProperty("span").GetString()).IsEqualTo("1 year 2 mons 3 days 04:05:06");
         await Assert.That(ada.GetProperty("Display Name").GetString()).IsEqualTo("Ada Lovelace");
-        var odd = await client.DocumentAsync(import, "users", "a1b2c3d4-e5f6-4711-8899-aabbccddeeff");
+        var odd = await client.DocumentAsync(import, "users", ("id", "a1b2c3d4-e5f6-4711-8899-aabbccddeeff"));
         await Assert.That(odd.GetProperty("Display Name").GetString()).IsEqualTo("Quote \" and \\ backslash");
         await Assert.That(odd.GetProperty("created_at").GetString()).IsEqualTo("2000-02-29T06:30:00Z");
         await Assert.That(odd.GetProperty("avatar").GetString()).IsEqualTo("");
-        await Assert.That((await client.DocumentAsync(import, "orgs", "9007199254740993")).GetProperty("id").GetRawText()).IsEqualTo("9007199254740993");
-        await Assert.That((await client.DocumentAsync(import, "orgs", "2")).GetProperty("name").GetString()).IsEqualTo("Tab\tand\nnewline");
-        await Assert.That((await client.IdsAsync(import, "sales_order_items")).Order(StringComparer.Ordinal)).IsEquivalentTo(["1:1", "1:2", "2:1"]);
-        await Assert.That((await client.DocumentAsync(import, "sales_order_items", "1:2")).GetProperty("unit.price").GetString()).IsEqualTo("0.000000000000000000000000001");
-        await Assert.That((await client.DocumentAsync(import, "tagged", "1")).TryGetProperty("tags", out _)).IsFalse();
-        await Assert.That(await client.IdsAsync(import, "measurements_2026")).IsEquivalentTo(["2:2026-06-01", "3:2026-07-01"]);
+        await Assert.That((await client.DocumentAsync(import, "orgs", ("id", "9007199254740993"))).GetProperty("id").GetRawText()).IsEqualTo("9007199254740993");
+        await Assert.That((await client.DocumentAsync(import, "orgs", ("id", "2"))).GetProperty("name").GetString()).IsEqualTo("Tab\tand\nnewline");
+        var orderItems = await client.IdsAsync(import, "sales_order_items");
+        await Assert.That(orderItems.Count(ImportClient.IsUlid)).IsEqualTo(3);
+        await Assert.That((await client.KeysAsync(import, "sales_order_items", "order_id", "line")).Order(StringComparer.Ordinal)).IsEquivalentTo(["1:1", "1:2", "2:1"]);
+        await Assert.That((await client.DocumentAsync(import, "sales_order_items", ("order_id", "1"), ("line", "2"))).GetProperty("unit.price").GetString()).IsEqualTo("0.000000000000000000000000001");
+        await Assert.That((await client.DocumentAsync(import, "tagged", ("id", "1"))).TryGetProperty("tags", out _)).IsFalse();
+        await Assert.That((await client.KeysAsync(import, "measurements_2026", "id", "taken")).Order(StringComparer.Ordinal)).IsEquivalentTo(["2:2026-06-01", "3:2026-07-01"]);
         var events = await client.IdsAsync(import, "events");
         await Assert.That(events.Count).IsEqualTo(2);
-        await Assert.That(events.All(id => id.Length == 26)).IsTrue();
+        await Assert.That(events.All(ImportClient.IsUlid)).IsTrue();
     }
 
     [Test]
@@ -134,7 +135,8 @@ public sealed class ImportApiTests
         await Assert.That(Mapping(tables["main.notes"], "misc")).IsEqualTo("integer+string");
         await Assert.That(Issue(tables["main.notes"], "mixed_storage_classes")).IsTrue();
         await Assert.That(Mapping(tables["main.notes"], "data")).IsEqualTo("base64");
-        await Assert.That(tables["main.plain"].GetProperty("idPolicy").GetString()).IsEqualTo("rowid");
+        // plain has neither a primary key nor a declared type: it imports like any table, without an issue.
+        await Assert.That(tables["main.plain"].GetProperty("issues").GetArrayLength()).IsEqualTo(0);
         await Assert.That(Issue(tables["main.g"], "not_imported")).IsTrue();
 
         _ = await client.StartAsync(import, ready.GetProperty("preview").GetProperty("id").GetString());
@@ -142,25 +144,27 @@ public sealed class ImportApiTests
         await Assert.That(done.GetProperty("state").GetString()).IsEqualTo("completed").Because(done.GetRawText());
         await Assert.That(done.GetProperty("validation").GetProperty("passed").GetBoolean()).IsTrue();
 
-        await Assert.That((await client.IdsAsync(import, "notes")).Count).IsEqualTo(1203);
-        var unicode = await client.DocumentAsync(import, "notes", "3");
+        var notes = await client.IdsAsync(import, "notes");
+        await Assert.That(notes.Count(ImportClient.IsUlid)).IsEqualTo(1203);
+        await Assert.That(notes.Distinct().Count()).IsEqualTo(1203);
+        var unicode = await client.DocumentAsync(import, "notes", ("id", "3"));
         await Assert.That(unicode.GetProperty("body").GetString()).IsEqualTo("ü ß 漢字 🎉");
         await Assert.That(unicode.GetProperty("id").GetInt64()).IsEqualTo(3);
-        await Assert.That((await client.DocumentAsync(import, "notes", "1")).GetProperty("data").GetString()).IsEqualTo("AP8=");
+        await Assert.That((await client.DocumentAsync(import, "notes", ("id", "1"))).GetProperty("data").GetString()).IsEqualTo("AP8=");
         // Rows that spill into overflow pages come back whole.
-        await Assert.That((await client.DocumentAsync(import, "notes", "303")).GetProperty("body").GetString()!.Length).IsEqualTo(9000);
+        await Assert.That((await client.DocumentAsync(import, "notes", ("id", "303"))).GetProperty("body").GetString()!.Length).IsEqualTo(9000);
         // Rows written before ALTER TABLE … ADD COLUMN get the column's literal default.
-        await Assert.That((await client.DocumentAsync(import, "plain", "1")).GetProperty("z").GetString()).IsEqualTo("zed");
-        await Assert.That((await client.DocumentAsync(import, "plain", "3")).GetProperty("z").GetString()).IsEqualTo("set");
-        // WITHOUT ROWID records hold the key first; the composite id follows the declared key order (c, a).
-        await Assert.That((await client.IdsAsync(import, "wr")).Order(StringComparer.Ordinal)).IsEquivalentTo(["x:1", "x:2", "y:1"]);
-        await Assert.That((await client.DocumentAsync(import, "wr", "x:2")).GetProperty("b").GetString()).IsEqualTo("bee2");
-        await Assert.That((await client.IdsAsync(import, "kv")).Order(StringComparer.Ordinal)).IsEquivalentTo(["a", "b:c", "d%e"]);
-        var generated = await client.DocumentAsync(import, "g", "2");
+        await Assert.That((await client.DocumentAsync(import, "plain", ("x", "1"))).GetProperty("z").GetString()).IsEqualTo("zed");
+        await Assert.That((await client.DocumentAsync(import, "plain", ("x", "5"))).GetProperty("z").GetString()).IsEqualTo("set");
+        // WITHOUT ROWID records hold the key (c, a) first; every key column still lands in its own field.
+        await Assert.That((await client.KeysAsync(import, "wr", "c", "a")).Order(StringComparer.Ordinal)).IsEquivalentTo(["x:1", "x:2", "y:1"]);
+        await Assert.That((await client.DocumentAsync(import, "wr", ("c", "x"), ("a", "2"))).GetProperty("b").GetString()).IsEqualTo("bee2");
+        await Assert.That((await client.KeysAsync(import, "kv", "k")).Order(StringComparer.Ordinal)).IsEquivalentTo(["a", "b:c", "d%e"]);
+        var generated = await client.DocumentAsync(import, "g", ("a", "2"));
         await Assert.That(generated.GetProperty("c").GetInt32()).IsEqualTo(3);
         await Assert.That(generated.GetProperty("d").GetString()).IsEqualTo("two");
         await Assert.That(generated.TryGetProperty("b", out _)).IsFalse();
-        await Assert.That((await client.DocumentAsync(import, "weird_name", "10")).GetProperty("two").GetString()).IsEqualTo("ten");
+        await Assert.That((await client.DocumentAsync(import, "weird_name", ("Col One", "10"))).GetProperty("two").GetString()).IsEqualTo("ten");
     }
 
     [Test]
@@ -227,7 +231,7 @@ public sealed class ImportApiTests
             _ = await client.UploadAsync(import, bytes);
             var job = await client.WaitAsync(import, "ready", "rejected", "failed");
             await Assert.That(job.GetProperty("state").GetString()).IsEqualTo("rejected").Because($"{format} case of {bytes.Length} bytes");
-            await Assert.That(await client.IdsAsync(import, "terrascale-import")).IsEquivalentTo(["job", "state"]);
+            await Assert.That(await client.IdsAsync(import, "terrascale-import")).IsEquivalentTo([ImportNames.JobId, ImportNames.StateId]);
         }
 
         // The runner still serves a good import afterwards.
@@ -254,7 +258,7 @@ public sealed class ImportApiTests
         var (replay, same) = await client.CreateAsync(import, "postgres_plain", dump);
         await Assert.That((first, replay)).IsEqualTo((HttpStatusCode.Created, HttpStatusCode.OK));
         await Assert.That(same.GetProperty("id").GetString()).IsEqualTo(job.GetProperty("id").GetString());
-        var (different, other) = await client.CreateAsync(import, "postgres_plain", dump, new { missingPrimaryKey = "generate" });
+        var (different, other) = await client.CreateAsync(import, "postgres_plain", dump, new { exclude = TaggedArray });
         await Assert.That(different).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(Code(other)).IsEqualTo("import_exists");
 
@@ -326,11 +330,12 @@ public sealed class ImportApiTests
         _ = await client.UploadAsync(import, file);
         var ready = await client.WaitAsync(import, "ready");
 
-        // Someone writes into the destination between preview and start, at an id the import will need.
+        // Someone writes into the destination between preview and start, at the id the import derives for row 700 of notes.
         var faker = new Faker();
         var title = faker.Lorem.Sentence();
+        var taken = TerraBase.Features.Import.ImportMapping.GeneratedId(ready.GetProperty("id").GetString()!, ready.GetProperty("createdAt").GetDateTimeOffset(), "main.notes", 700);
         await CreateCollectionAsync(client, import, "notes");
-        using (var put = await client.Client.PutAsJsonAsync(new Uri($"{ImportClient.Data(import)}/collections/notes/documents/by-key?id=700", UriKind.Relative), new { title }))
+        using (var put = await client.Client.PutAsJsonAsync(new Uri($"{ImportClient.Data(import)}/collections/notes/documents/by-key?id={taken}", UriKind.Relative), new { title }))
         {
             await Assert.That(put.StatusCode).IsEqualTo(HttpStatusCode.Created);
         }
@@ -340,12 +345,16 @@ public sealed class ImportApiTests
         await Assert.That(failed.GetProperty("state").GetString()).IsEqualTo("failed");
         await Assert.That(failed.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("destination_modified");
         await Assert.That(failed.GetProperty("error").GetProperty("retryable").GetBoolean()).IsFalse();
-        await Assert.That((await client.DocumentAsync(import, "notes", "700")).GetProperty("title").GetString()).IsEqualTo(title);
+        using (var kept = await client.Client.GetAsync(new Uri($"{ImportClient.Data(import)}/collections/notes/documents/by-key?id={taken}", UriKind.Relative)))
+        {
+            await Assert.That((await kept.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("title").GetString()).IsEqualTo(title);
+        }
+
         var written = failed.GetProperty("progress").GetProperty("rowsWritten").GetInt64();
         await Assert.That(written).IsGreaterThan(0);
 
         // The owner removes their document; the resumed copy continues under the same preview and validates.
-        using (var deleted = await client.Client.DeleteAsync(new Uri($"{ImportClient.Data(import)}/collections/notes/documents/by-key?id=700", UriKind.Relative)))
+        using (var deleted = await client.Client.DeleteAsync(new Uri($"{ImportClient.Data(import)}/collections/notes/documents/by-key?id={taken}", UriKind.Relative)))
         {
             await Assert.That(deleted.IsSuccessStatusCode).IsTrue();
         }

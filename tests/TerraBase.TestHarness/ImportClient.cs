@@ -125,33 +125,46 @@ public sealed class ImportClient : IAsyncDisposable
 
     public Task<(HttpStatusCode Status, JsonElement Body)> ResumeAsync(string import) => SendAsync(HttpMethod.Post, import + "/resume", null);
 
-    /// <summary>A document of the destination, or Undefined when absent.</summary>
-    public async Task<JsonElement> DocumentAsync(string import, string collection, string id)
-    {
-        using var response = await Client.GetAsync(Uri($"{Data(import)}/collections/{collection}/documents/by-key?id={System.Uri.EscapeDataString(id)}"));
-        return response.StatusCode == HttpStatusCode.OK ? (await ReadAsync(response)).GetProperty("document") : default;
-    }
+    /// <summary>
+    /// The one document whose body holds every <paramref name="key"/> field (strings compared as text, other values as raw
+    /// JSON), or Undefined when none does. Imported documents have generated ULIDs; source keys are plain fields.
+    /// </summary>
+    public async Task<JsonElement> DocumentAsync(string import, string collection, params (string Field, string Value)[] key) =>
+        (await ItemsAsync(import, collection)).Select(item => item.GetProperty("document"))
+            .SingleOrDefault(document => key.All(part => document.TryGetProperty(part.Field, out var value) && Text(value) == part.Value));
+
+    /// <summary>The <paramref name="fields"/> of every document of a collection, joined with <c>:</c>.</summary>
+    public async Task<List<string>> KeysAsync(string import, string collection, params string[] fields) =>
+        [.. (await ItemsAsync(import, collection)).Select(item => string.Join(':', fields.Select(field => Text(item.GetProperty("document").GetProperty(field)))))];
 
     /// <summary>Every document id of a collection.</summary>
-    public async Task<List<string>> IdsAsync(string import, string collection)
+    public async Task<List<string>> IdsAsync(string import, string collection) =>
+        [.. (await ItemsAsync(import, collection)).Select(item => item.GetProperty("id").GetString()!)];
+
+    /// <summary>Whether <paramref name="id"/> is a canonical uppercase ULID.</summary>
+    public static bool IsUlid(string id) => id.Length == 26 && id[0] is >= '0' and <= '7' && id.All("0123456789ABCDEFGHJKMNPQRSTVWXYZ".Contains);
+
+    private async Task<List<JsonElement>> ItemsAsync(string import, string collection)
     {
-        var ids = new List<string>();
+        var items = new List<JsonElement>();
         string? cursor = null;
         do
         {
             using var response = await Client.GetAsync(Uri($"{Data(import)}/collections/{collection}/documents?limit=1000" + (cursor is null ? "" : "&cursor=" + System.Uri.EscapeDataString(cursor))));
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                return ids;
+                return items;
             }
 
             var page = await ReadAsync(response);
-            ids.AddRange(page.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!));
+            items.AddRange(page.GetProperty("items").EnumerateArray());
             cursor = page.GetProperty("next_cursor").GetString();
         }
         while (cursor is not null);
-        return ids;
+        return items;
     }
+
+    private static string Text(JsonElement value) => value.ValueKind == JsonValueKind.String ? value.GetString()! : value.GetRawText();
 
     public async Task<(HttpStatusCode Status, JsonElement Body)> SendAsync(HttpMethod method, string path, object? body)
     {

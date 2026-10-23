@@ -182,11 +182,26 @@ public sealed class ManagementApi : IAsyncDisposable
     public async Task<ManagedDatabaseRef> CreateManagedDatabaseAsync(string organization, string project, string name) =>
         new(organization, project, await CreateDatabaseAsync(organization, project, name), name);
 
-    /// <summary>A caller-supplied document key, ordered by its readable fixture name.</summary>
-    public static string DocumentId(string name) => name;
+    /// <summary>
+    /// The ULID whose 16 bytes are the fixture name's UTF-8, zero-padded, so ids sort like their names; a name that is
+    /// already a ULID (too long to be a fixture name) is its own id.
+    /// </summary>
+    public static string DocumentId(string name)
+    {
+        if (EntityIds.IsValid(name))
+        {
+            return name;
+        }
 
-    /// <summary>The fixture name is its document key.</summary>
-    public static string DocumentName(string id) => id;
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(Encoding.UTF8.GetByteCount(name), 16);
+        Span<byte> bytes = stackalloc byte[16];
+        bytes.Clear();
+        Encoding.UTF8.GetBytes(name, bytes);
+        return new Ulid(bytes).ToString();
+    }
+
+    /// <summary>The fixture name <see cref="DocumentId"/> encoded in <paramref name="id"/>.</summary>
+    public static string DocumentName(string id) => Encoding.UTF8.GetString(Ulid.Parse(id).ToByteArray()).TrimEnd('\0');
 
     /// <summary>The data API route of document <see cref="DocumentId"/>(<paramref name="name"/>) of a collection of <paramref name="database"/>.</summary>
     public static string DocumentPath(ManagedDatabaseRef database, string collection, string name) =>

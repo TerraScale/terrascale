@@ -108,11 +108,6 @@ internal static partial class ImportMapping
         return parts.Count == 0 ? type : PostgresDump.Key(parts);
     }
 
-    /// <summary>Whether a primary key may use this mapping.</summary>
-    public static bool KeyAllowed(ColumnMapping mapping) =>
-        mapping is ColumnMapping.Integer or ColumnMapping.DecimalString or ColumnMapping.Boolean or ColumnMapping.String or ColumnMapping.Uuid
-            or ColumnMapping.Date or ColumnMapping.Timestamp or ColumnMapping.Timestamptz or ColumnMapping.Text or ColumnMapping.Storage;
-
     /// <summary>Writes one value under its mapping, or throws <see cref="ImportValueException"/>.</summary>
     public static void Write(Utf8JsonWriter writer, SourceValue value, ColumnMapping mapping, string column)
     {
@@ -163,38 +158,7 @@ internal static partial class ImportMapping
         }
     }
 
-    /// <summary>The id text of one key component, or throws <see cref="ImportValueException"/>.</summary>
-    public static string KeyText(SourceValue value, ColumnMapping mapping, string column)
-    {
-        switch (value.Kind)
-        {
-            case SourceKind.Null:
-                throw new ImportValueException("invalid_document_id", "a primary key value is NULL", column);
-            case SourceKind.Integer:
-                return value.Integer.ToString(CultureInfo.InvariantCulture);
-            case SourceKind.Text when value.Text is { } text && mapping == ColumnMapping.Storage:
-                return text;
-            case SourceKind.Text when value.Text is not null:
-                {
-                    using var buffer = new PooledWriter();
-                    Write(buffer.Writer, value, mapping, column);
-                    buffer.Writer.Flush();
-                    using var parsed = JsonDocument.Parse(buffer.Written);
-                    return parsed.RootElement.ValueKind switch
-                    {
-                        JsonValueKind.String => parsed.RootElement.GetString()!,
-                        JsonValueKind.True => "true",
-                        JsonValueKind.False => "false",
-                        _ => parsed.RootElement.GetRawText(),
-                    };
-                }
-
-            default:
-                throw new ImportValueException("invalid_document_id", "a primary key value is a REAL, BLOB or invalid text", column);
-        }
-    }
-
-    /// <summary>A deterministic ULID for row <paramref name="row"/> of a keyless table: the job's time, randomness from SHA-256.</summary>
+    /// <summary>The document id of row <paramref name="row"/>: a ULID with the job's time and randomness from SHA-256, identical on every resume.</summary>
     public static string GeneratedId(string jobId, DateTimeOffset createdAt, string table, long row)
     {
         Span<byte> bytes = stackalloc byte[16];

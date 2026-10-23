@@ -359,6 +359,7 @@ internal sealed class ImportRunner : BackgroundService
                     targets.Clear();
                 }
 
+                // NDJSON export lines keep their ids, so two lines can name one document.
                 if (!targets.Add((plan.Collection, id)))
                 {
                     await FailAsync(database, new ImportError("duplicate_document_id", $"two rows map to document id {id}", Retryable: false, table, ordinal), stop)
@@ -424,7 +425,7 @@ internal sealed class ImportRunner : BackgroundService
                 case DocumentRejected { Op: { } op } rejected when op < batch.Count && rejected.Error is PreconditionFailed:
                     var put = (PutOperation)batch[op];
                     await FailAsync(database, new ImportError("destination_modified",
-                        $"document {put.Id} of collection {put.Collection} already exists: written outside the import, or two source rows map to the same id",
+                        $"document {put.Id} of collection {put.Collection} already exists: written outside the import, or two source lines name the same id",
                         Retryable: false), stop).ConfigureAwait(false);
                     return null;
                 case DocumentRejected { Op: { } op } when op == batch.Count:
