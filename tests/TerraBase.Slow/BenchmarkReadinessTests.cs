@@ -1,8 +1,10 @@
+using System.Net.Sockets;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -10,6 +12,116 @@ namespace TerraBase.Slow;
 
 public sealed class BenchmarkReadinessTests
 {
+    [Test]
+    public async Task Quiescence_joins_backgrounds_while_the_peer_listener_remains_live(CancellationToken cancellationToken)
+    {
+        var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var api = await ManagementApi.StartAsync(services: services =>
+            services.AddSingleton<IHostedService>(new HeldBackground(stopping, release)), cancellationToken: cancellationToken);
+        var quiescing = BenchmarkProcessHost.QuiesceAsync(api.Server.Services);
+        try
+        {
+            await stopping.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+            await Assert.That(quiescing.IsCompleted).IsFalse();
+            await ConnectPeerAsync(api, cancellationToken);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await quiescing;
+        }
+
+        await Assert.That(api.Server.Services.GetServices<IHostedService>().OfType<BackgroundService>()
+            .All(service => service.ExecuteTask is null || service.ExecuteTask.IsCompleted)).IsTrue();
+        await ConnectPeerAsync(api, cancellationToken);
+        using var response = await api.Server.Client.GetAsync("/healthz", cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    [Test]
+    public async Task Quiescence_and_full_disposal_retain_faulted_cancellation_and_stop_errors(CancellationToken cancellationToken)
+    {
+        var executionError = new OperationCanceledException("benchmark faulted ExecuteTask");
+        var stopError = new InvalidOperationException("benchmark StopAsync failure");
+        var execution = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var api = await ManagementApi.StartAsync(services: services =>
+        {
+            services.Configure<HostOptions>(options => options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore);
+            services.AddSingleton<IHostedService>(new FaultingBackground(execution.Task, stopError));
+        }, cancellationToken: cancellationToken);
+        execution.SetException(executionError);
+        Exception? quiescenceError = null;
+        Exception? disposalError = null;
+        try
+        {
+            await BenchmarkProcessHost.QuiesceAsync(api.Server.Services);
+        }
+        catch (Exception error)
+        {
+            quiescenceError = error;
+        }
+        finally
+        {
+            try
+            {
+                await api.DisposeAsync();
+            }
+            catch (Exception error)
+            {
+                disposalError = error;
+            }
+
+            try
+            {
+                await api.CleanupCompletion;
+            }
+            catch (Exception error)
+            {
+                disposalError = error;
+            }
+        }
+
+        await Assert.That(quiescenceError).IsNotNull();
+        await Assert.That(new AggregateException(quiescenceError!).Flatten().InnerExceptions.Contains(executionError)).IsTrue();
+        await Assert.That(new AggregateException(quiescenceError!).Flatten().InnerExceptions.Contains(stopError)).IsTrue();
+        await Assert.That(disposalError).IsNotNull();
+        await Assert.That(new AggregateException(disposalError!).Flatten().InnerExceptions.Contains(executionError)).IsTrue();
+    }
+
+    private static async Task ConnectPeerAsync(ManagementApi api, CancellationToken cancellationToken)
+    {
+        using var peer = new TcpClient();
+        await peer.ConnectAsync(api.Server.PeerAddress!.Host, api.Server.PeerAddress.Port, cancellationToken);
+    }
+
+    private sealed class HeldBackground(TaskCompletionSource stopping, TaskCompletionSource release) : BackgroundService
+    {
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
+            }
+            finally
+            {
+                stopping.TrySetResult();
+                await release.Task;
+            }
+        }
+    }
+
+    private sealed class FaultingBackground(Task execution, Exception stopError) : BackgroundService
+    {
+        protected override Task ExecuteAsync(CancellationToken stoppingToken) => execution;
+
+        public override async Task StopAsync(CancellationToken cancellationToken)
+        {
+            await base.StopAsync(cancellationToken);
+            throw stopError;
+        }
+    }
+
     [Test]
     public async Task Registration_retries_503_with_the_original_commit(CancellationToken cancellationToken)
     {

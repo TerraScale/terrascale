@@ -1,11 +1,14 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
@@ -92,9 +95,12 @@ public sealed class BenchmarkProcessHost
         await using var ownership = new FileStream(Path.Combine(directory, "worker.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         File.Delete(target);
         File.Delete(listening);
+        ManagementApi? api = null;
+        Task? failedStartCleanup = null;
+        var failures = new List<Exception>();
         try
         {
-            await using var api = await ManagementApi.StartAsync(settings =>
+            api = await ManagementApi.StartAsync(settings =>
             {
                 settings["region"] = region;
                 settings["node-name"] = Get("machine").ToLowerInvariant();
@@ -103,7 +109,7 @@ public sealed class BenchmarkProcessHost
             {
                 services.AddSingleton<IMemberDirectory>(new DirectoryOfMembers(members));
                 MeasureDurability(services);
-            }, userId: Get("user"), cancellationToken: cancellationToken);
+            }, userId: Get("user"), cancellationToken: cancellationToken, failedStartCleanup: task => failedStartCleanup = task);
             await WriteAsync(listening, new JsonObject { ["peer_url"] = api.Server.PeerAddress!.ToString() }.ToJsonString(), cancellationToken);
             await WriteAsync(member, $"{region}\n{advertised ?? api.Server.PeerAddress!.ToString()}", cancellationToken);
             await RegisterAsync(api, config, cancellationToken);
@@ -137,8 +143,19 @@ public sealed class BenchmarkProcessHost
             }.ToJsonString(), cancellationToken);
             string? sampled = null;
             var sampleRequest = Path.Combine(directory, "sample.request");
+            var quiesceRequest = Path.Combine(directory, "quiesce.request");
+            var generation = Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
+            var quiesced = false;
             while (File.Exists(control))
             {
+                if (!quiesced && File.Exists(quiesceRequest)
+                    && await File.ReadAllTextAsync(quiesceRequest, cancellationToken) == generation)
+                {
+                    await QuiesceAsync(api.Server.Services);
+                    await WriteAsync(Path.Combine(directory, "quiesced"), generation, cancellationToken);
+                    quiesced = true;
+                }
+
                 if (File.Exists(sampleRequest))
                 {
                     var id = (await File.ReadAllTextAsync(sampleRequest, cancellationToken)).Trim();
@@ -153,11 +170,100 @@ public sealed class BenchmarkProcessHost
                 await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
             }
         }
+        catch (Exception error)
+        {
+            failures.Add(error);
+        }
         finally
         {
-            File.Delete(target);
-            File.Delete(listening);
-            File.Delete(member);
+            if (api is not null)
+            {
+                try
+                {
+                    await api.DisposeAsync();
+                }
+                catch (Exception error)
+                {
+                    failures.Add(error);
+                }
+            }
+
+            // A bounded harness disposal can return before its owner; retain the full completion and its faults.
+            var cleanup = api?.CleanupCompletion ?? failedStartCleanup;
+            if (cleanup is not null)
+            {
+                try
+                {
+                    await cleanup;
+                }
+                catch (Exception error)
+                {
+                    failures.Add(error);
+                }
+            }
+
+            Console.WriteLine($"benchmark worker lifecycle utc={DateTime.UtcNow:O} boundary=api-disposed-cleanup");
+            foreach (var file in new[] { target, listening, member, Path.Combine(directory, "bootstrap.json") })
+            {
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (Exception error)
+                {
+                    failures.Add(error);
+                }
+            }
+        }
+
+        if (failures.Count > 0)
+        {
+            throw new AggregateException(failures).Flatten();
+        }
+    }
+
+    internal static async Task QuiesceAsync(IServiceProvider services)
+    {
+        // Manual cancellation precedes ApplicationStopping; keep the host from closing listeners for canceled tasks.
+        // The execution join below and ApplicationRunCompletion still report every fault.
+        services.GetRequiredService<IOptions<HostOptions>>().Value.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+        // GenericWebHostService is not a BackgroundService: its peer listener must keep serving other workers.
+        var background = services.GetServices<IHostedService>().OfType<BackgroundService>().ToArray();
+        var failures = new List<Exception>();
+        var stopping = Task.WhenAll(background.Select(async service => await service.StopAsync(CancellationToken.None)));
+        try
+        {
+            await stopping;
+        }
+        catch (Exception error)
+        {
+            if (stopping.Exception is { } faults)
+            {
+                failures.AddRange(faults.InnerExceptions);
+            }
+            else
+            {
+                failures.Add(error);
+            }
+        }
+
+        var joined = Task.WhenAll(background.Select(service => service.ExecuteTask).OfType<Task>());
+        try
+        {
+            await joined;
+        }
+        catch (OperationCanceledException) when (joined.IsCanceled)
+        {
+            // Match ApplicationRunCompletion: only a genuinely canceled aggregate is a clean worker exit.
+        }
+        catch (Exception) when (joined.IsFaulted)
+        {
+            failures.AddRange(joined.Exception!.InnerExceptions);
+        }
+
+        if (failures.Count > 0)
+        {
+            throw new AggregateException(failures).Flatten();
         }
     }
 

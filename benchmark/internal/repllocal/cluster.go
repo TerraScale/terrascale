@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -62,32 +65,29 @@ func StartCluster(ctx context.Context, Root string) (*Cluster, error) {
 	}
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
-		return nil, err
+		return nil, errors.Join(err, os.RemoveAll(Work))
 	}
 	c := &Cluster{Work: Work, Root: Root, secret: hex.EncodeToString(secret), Nodes: map[string]*Worker{}}
 	base := workerConfig{RunDirectory: Work, Organization: ulid.Make().String(), Project: ulid.Make().String(), Database: ulid.Make().String(), User: ulid.Make().String()}
 	if err := os.Mkdir(filepath.Join(Work, "members"), 0o700); err != nil {
-		return nil, err
+		return nil, errors.Join(err, c.Close())
 	}
 	for _, region := range []string{"gru", "sjc", "fra"} {
 		p, err := StartWireProxy(ctx)
 		if err != nil {
-			c.Close()
-			return nil, err
+			return nil, errors.Join(err, c.Close())
 		}
 		cfg := base
 		cfg.Region, cfg.Machine, cfg.AdvertisedPeerURL = region, ulid.Make().String(), p.URL()
 		w := &Worker{Config: cfg, Proxy: p}
 		c.Nodes[region] = w
 		if err := c.Launch(w); err != nil {
-			c.Close()
-			return nil, err
+			return nil, errors.Join(err, c.Close())
 		}
 	}
 	if err := c.Ready(ctx); err != nil {
 		c.Preserve = true
-		c.Close()
-		return nil, err
+		return nil, errors.Join(err, c.Close())
 	}
 	return c, nil
 }
@@ -108,7 +108,7 @@ func (c *Cluster) Launch(w *Worker) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "control"), nil, 0o600); err != nil {
+	if err := prepareWorkerControl(dir); err != nil {
 		return err
 	}
 	path := filepath.Join(dir, "config.json")
@@ -129,7 +129,8 @@ func (c *Cluster) Launch(w *Worker) error {
 		return err
 	}
 	w.exited = make(chan error, 1)
-	go func() { w.exited <- w.cmd.Wait() }()
+	cmd, exited := w.cmd, w.exited
+	go func() { exited <- cmd.Wait() }()
 	return nil
 }
 
@@ -180,18 +181,108 @@ func (c *Cluster) Targets() replbench.Targets {
 }
 
 func (c *Cluster) Stop(w *Worker) error {
+	// Outgoing channels from this worker pass through the other workers' proxies too.
+	for _, peer := range c.Nodes {
+		peer.Proxy.beginQuiescence()
+	}
+	defer func() {
+		for _, peer := range c.Nodes {
+			peer.Proxy.endQuiescence()
+		}
+	}()
+	err := c.quiesce(w)
+	if err == nil {
+		w.Proxy.target.Store(nil)
+	}
+	err = errors.Join(err, c.signalStop(w), c.waitStopped(w, time.Now().Add(30*time.Second)))
 	w.Proxy.Suspend()
+	return err
+}
+
+func prepareWorkerControl(dir string) error {
+	// A relaunch must not reuse discovery or acknowledgements from the previous PID.
+	for _, name := range []string{"quiesce.request", "quiesced", "listening.json", "target.json", "bootstrap.json"} {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return os.WriteFile(filepath.Join(dir, "control"), nil, 0o600)
+}
+
+func (c *Cluster) quiesce(workers ...*Worker) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var errs []error
+	var requested []*Worker
+	for _, w := range workers {
+		if w.exited == nil {
+			continue
+		}
+		select {
+		case err := <-w.exited:
+			w.exited <- err
+			errs = append(errs, fmt.Errorf("%s host exited before quiescence: %w", w.Config.Region, errors.Join(errors.New("unexpected worker exit"), err)))
+			continue
+		default:
+		}
+		pid := strconv.Itoa(w.cmd.Process.Pid)
+		if err := os.WriteFile(filepath.Join(c.Work, w.Config.Region, "quiesce.request"), []byte(pid), 0o600); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		requested = append(requested, w)
+	}
+	for _, w := range requested {
+		if err := c.awaitQuiescence(ctx, w); err != nil {
+			errs = append(errs, fmt.Errorf("%s host quiesce: %w; private work: %s", w.Config.Region, err, c.Work))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (c *Cluster) awaitQuiescence(ctx context.Context, w *Worker) error {
+	for {
+		select {
+		case err := <-w.exited:
+			w.exited <- err
+			return errors.Join(errors.New("worker exited before quiescence"), err)
+		default:
+		}
+		ack, err := os.ReadFile(filepath.Join(c.Work, w.Config.Region, "quiesced"))
+		if err == nil && string(ack) == strconv.Itoa(w.cmd.Process.Pid) {
+			return nil
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+func (c *Cluster) signalStop(w *Worker) error {
 	if w.exited == nil {
 		return nil
 	}
-	_ = os.Remove(filepath.Join(c.Work, w.Config.Region, "control"))
+	if err := os.Remove(filepath.Join(c.Work, w.Config.Region, "control")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (c *Cluster) waitStopped(w *Worker, deadline time.Time) error {
+	if w.exited == nil {
+		return nil
+	}
 	var err error
 	select {
 	case err = <-w.exited:
-	case <-time.After(30 * time.Second):
-		_ = syscall.Kill(-w.cmd.Process.Pid, syscall.SIGKILL)
-		<-w.exited
-		err = fmt.Errorf("%s host did not stop in 30 seconds", w.Config.Region)
+	case <-time.After(time.Until(deadline)):
+		killErr := syscall.Kill(-w.cmd.Process.Pid, syscall.SIGKILL)
+		err = errors.Join(fmt.Errorf("%s host did not stop in 30 seconds", w.Config.Region), killErr, <-w.exited)
 	}
 	w.exited = nil
 	return err
@@ -202,18 +293,32 @@ func (c *Cluster) Close() error {
 		return nil
 	}
 	c.closed = true
+	workers := slices.Collect(maps.Values(c.Nodes))
 	var errs []error
-	for _, w := range c.Nodes {
-		w.Proxy.cancel()
+	// Keep transports alive until every worker has stopped background replication and exited.
+	for _, w := range workers {
+		w.Proxy.beginQuiescence()
 	}
-	for _, w := range c.Nodes {
-		if err := w.Proxy.Close(); err != nil {
+	if err := c.quiesce(workers...); err != nil {
+		errs = append(errs, err)
+	}
+	for _, w := range workers {
+		if err := c.signalStop(w); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	for _, w := range c.Nodes {
-		if err := c.Stop(w); err != nil {
+	deadline := time.Now().Add(30 * time.Second)
+	for _, w := range workers {
+		if err := c.waitStopped(w, deadline); err != nil {
 			errs = append(errs, err)
+		}
+	}
+	for _, w := range workers {
+		w.Proxy.target.Store(nil)
+	}
+	for _, w := range workers {
+		if err := w.Proxy.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("%s proxy close: %w; private work: %s", w.Config.Region, err, c.Work))
 		}
 	}
 	if !c.Preserve && len(errs) == 0 {

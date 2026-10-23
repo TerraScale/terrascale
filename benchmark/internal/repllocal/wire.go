@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -14,17 +15,19 @@ import (
 )
 
 type WireProxy struct {
-	listener net.Listener
-	ctx      context.Context
-	cancel   context.CancelFunc
-	target   atomic.Pointer[string]
-	upload   atomic.Int64
-	download atomic.Int64
-	wg       sync.WaitGroup
-	stopped  chan struct{}
-	mu       sync.Mutex
-	active   map[net.Conn]struct{}
-	err      error
+	listener       net.Listener
+	ctx            context.Context
+	cancel         context.CancelFunc
+	target         atomic.Pointer[string]
+	upload         atomic.Int64
+	download       atomic.Int64
+	wg             sync.WaitGroup
+	stopped        chan struct{}
+	mu             sync.Mutex
+	active         map[net.Conn]struct{}
+	err            error
+	quiescing      bool
+	shutdownResets int
 }
 
 func StartWireProxy(ctx context.Context) (*WireProxy, error) {
@@ -118,6 +121,36 @@ func (p *WireProxy) record(err error) {
 	}
 }
 
+// beginQuiescence keeps forwarding available while workers intentionally cancel their channels.
+func (p *WireProxy) beginQuiescence() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.quiescing = true
+}
+
+func (p *WireProxy) endQuiescence() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.quiescing = false
+}
+
+func (p *WireProxy) recordForward(err error, target *string, uploadComplete bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err == nil || p.ctx.Err() != nil || (p.target.Load() != target && !p.quiescing) {
+		return
+	}
+	// After upload EOF, an intentionally stopped gRPC channel can reset the response half.
+	if p.quiescing && uploadComplete && errors.Is(err, syscall.ECONNRESET) {
+		p.shutdownResets++
+		fmt.Fprintf(os.Stderr, "benchmark expected-shutdown-reset count=%d: %v\n", p.shutdownResets, err)
+		return
+	}
+	if p.err == nil {
+		p.err = err
+	}
+}
+
 func (p *WireProxy) track(conn net.Conn) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -141,16 +174,9 @@ func (p *WireProxy) forward(client net.Conn, target *string) {
 	if target == nil || p.target.Load() != target {
 		return // The directory can advertise the proxy before its worker is ready.
 	}
-	record := func(err error) {
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		if err != nil && p.ctx.Err() == nil && p.target.Load() == target && p.err == nil {
-			p.err = err
-		}
-	}
 	peer, err := (&net.Dialer{}).DialContext(p.ctx, "tcp", *target)
 	if err != nil {
-		record(fmt.Errorf("peer dial: %w", err))
+		p.recordForward(fmt.Errorf("peer dial: %w", err), target, false)
 		return
 	}
 	if !p.track(peer) {
@@ -161,10 +187,14 @@ func (p *WireProxy) forward(client net.Conn, target *string) {
 		return
 	}
 	var streams sync.WaitGroup
-	copyStream := func(dst, src net.Conn, count *atomic.Int64) {
+	var uploadComplete atomic.Bool
+	copyStream := func(dst, src net.Conn, count *atomic.Int64, upload bool) {
 		// Hide TCP's ReaderFrom/WriterTo methods to keep buffers and accounting explicit.
 		_, err := io.CopyBuffer(wireWriter{dst, count}, struct{ io.Reader }{src}, make([]byte, 32*1024))
 		if err == nil {
+			if upload {
+				uploadComplete.Store(true)
+			}
 			err = dst.(*net.TCPConn).CloseWrite()
 			// A peer that already closed can leave its socket disconnected.
 			if errors.Is(err, syscall.ENOTCONN) {
@@ -172,16 +202,13 @@ func (p *WireProxy) forward(client net.Conn, target *string) {
 			}
 		}
 		if err != nil {
-			// Peer reconnects and HTTP/2 stream shutdown can close either socket during a copy.
-			if !errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET) && !errors.Is(err, net.ErrClosed) {
-				record(fmt.Errorf("peer stream: %w", err))
-			}
+			p.recordForward(fmt.Errorf("peer stream: %w", err), target, !upload && uploadComplete.Load())
 			client.Close()
 			peer.Close()
 		}
 	}
-	streams.Go(func() { copyStream(peer, client, &p.upload) })
-	streams.Go(func() { copyStream(client, peer, &p.download) })
+	streams.Go(func() { copyStream(peer, client, &p.upload, true) })
+	streams.Go(func() { copyStream(client, peer, &p.download, false) })
 	streams.Wait()
 }
 
