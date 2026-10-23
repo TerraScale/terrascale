@@ -56,7 +56,7 @@ internal sealed class UserAuthenticationHandler(
         }
 
         var token = header["Bearer ".Length..].Trim();
-        return await ValidateAsync(token, terraBase, issuerKeys, validated, Context.RequestAborted).ConfigureAwait(false) switch
+        return await ValidateAsync(token, terraBase, issuerKeys, validated, time ?? TimeProvider.System, Context.RequestAborted).ConfigureAwait(false) switch
         {
             (ValidatedTokens.Accepted accepted, _) => Success(accepted),
             (_, var failure) => AuthenticateResult.Fail(failure!),
@@ -68,7 +68,7 @@ internal sealed class UserAuthenticationHandler(
     /// password too): what it accepted, or why not. The failure never contains the token.
     /// </summary>
     internal static async Task<(ValidatedTokens.Accepted? Accepted, string? Failure)> ValidateAsync(
-        string token, TerraBaseOptions terraBase, IIssuerKeys issuerKeys, ValidatedTokens validated, CancellationToken cancellationToken)
+        string token, TerraBaseOptions terraBase, IIssuerKeys issuerKeys, ValidatedTokens validated, TimeProvider time, CancellationToken cancellationToken)
     {
         if (terraBase.AuthIssuer is null)
         {
@@ -89,7 +89,7 @@ internal sealed class UserAuthenticationHandler(
         }
 
         var checkedWith = keys;
-        var result = await Tokens.ValidateTokenAsync(token, Parameters(terraBase, keys)).ConfigureAwait(false);
+        var result = await Tokens.ValidateTokenAsync(token, Parameters(terraBase, keys, time)).ConfigureAwait(false);
         if (result.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
             // A key ts-auth rotated in after the last fetch: one rate-limited refresh, then one more attempt.
@@ -97,7 +97,7 @@ internal sealed class UserAuthenticationHandler(
             if (refreshed is IReadOnlyList<SecurityKey> refreshedKeys && !ReferenceEquals(refreshedKeys, keys))
             {
                 checkedWith = refreshedKeys;
-                result = await Tokens.ValidateTokenAsync(token, Parameters(terraBase, refreshedKeys)).ConfigureAwait(false);
+                result = await Tokens.ValidateTokenAsync(token, Parameters(terraBase, refreshedKeys, time)).ConfigureAwait(false);
             }
         }
 
@@ -195,7 +195,7 @@ internal sealed class UserAuthenticationHandler(
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 
-    private static TokenValidationParameters Parameters(TerraBaseOptions terraBase, IReadOnlyList<SecurityKey> keys) => new()
+    private static TokenValidationParameters Parameters(TerraBaseOptions terraBase, IReadOnlyList<SecurityKey> keys, TimeProvider time) => new()
     {
         ValidIssuer = terraBase.AuthIssuer,
         ValidAudiences = terraBase.AuthAudiences,
@@ -211,7 +211,7 @@ internal sealed class UserAuthenticationHandler(
         ClockSkew = ClockSkew,
         LifetimeValidator = (notBefore, expires, _, _) =>
         {
-            var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+            var now = time.GetUtcNow().UtcDateTime;
             return expires is { } end && now < end
                 && (notBefore is not { } start || start <= end && start <= now + ClockSkew);
         },

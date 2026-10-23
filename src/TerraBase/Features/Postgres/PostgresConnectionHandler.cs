@@ -249,7 +249,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     {
         var slash = database.IndexOf('/', StringComparison.Ordinal);
         var (accepted, _) = await UserAuthenticationHandler.ValidateAsync(token, services.GetRequiredService<TerraBaseOptions>(),
-            services.GetRequiredService<IIssuerKeys>(), services.GetRequiredService<ValidatedTokens>(), cancellationToken).ConfigureAwait(false);
+            services.GetRequiredService<IIssuerKeys>(), services.GetRequiredService<ValidatedTokens>(),
+            services.GetKeyedService<TimeProvider>(UserAuthenticationHandler.SchemeName) ?? TimeProvider.System, cancellationToken).ConfigureAwait(false);
         if (accepted is not { Project: { } project })
         {
             return Denied;
