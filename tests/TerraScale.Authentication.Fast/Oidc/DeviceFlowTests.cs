@@ -73,6 +73,10 @@ public sealed class DeviceFlowTests(TerraBaseFixture fixture)
         await Assert.That(body.GetProperty("refresh_token").GetString()).IsNotNull();
         await Assert.That(body.GetProperty("id_token").GetString()).IsNotNull();
 
+        // The device's access token calls the platform API as the approving user.
+        var (status, _) = await oidc.FailAsync(HttpMethod.Get, PlatformCalls.Organizations, body.GetProperty("access_token").GetString());
+        await Assert.That(status).IsEqualTo((int)HttpStatusCode.OK);
+
         // A device code is redeemed once, and its user code decides once.
         clock.Advance(TimeSpan.FromSeconds(6));
         await Assert.That(await PollAsync(oidc, deviceCode)).IsEqualTo("invalid_grant");
