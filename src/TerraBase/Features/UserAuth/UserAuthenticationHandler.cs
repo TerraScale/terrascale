@@ -100,7 +100,7 @@ internal sealed class UserAuthenticationHandler(
         }
 
         List<Claim> claims = [new(ClaimTypes.NameIdentifier, user)];
-        foreach (var name in new[] { "project_id", "database", "scope" })
+        foreach (var name in new[] { "project_id", "org_id", "database", "scope" })
         {
             if (jwt.TryGetPayloadValue<object>(name, out var claim) && claim is not string)
             {
@@ -117,6 +117,15 @@ internal sealed class UserAuthenticationHandler(
             }
 
             claims.Add(new Claim("project_id", project));
+            if (jwt.TryGetPayloadValue<string>("org_id", out var organization))
+            {
+                if (!EntityIds.IsValid(organization))
+                {
+                    return AuthenticateResult.Fail("invalid project access token");
+                }
+
+                claims.Add(new Claim("org_id", organization));
+            }
         }
 
         if (jwt.TryGetPayloadValue<string>("database", out var database))

@@ -112,6 +112,34 @@ public sealed class ProjectTokenTests
             .Where(line => line.StartsWith("terrabase_storage_reads_total{", StringComparison.Ordinal) && line.Contains("path=\"point\"", StringComparison.Ordinal))
             .Sum(line => double.Parse(line.Split(' ')[^1], System.Globalization.CultureInfo.InvariantCulture));
 
+    // Usage, plans and allowances key on the organization ts-auth signs into the project token, so every project of one
+    // ts-auth organization lands in it; an organization a legacy commit created with that id keeps its own storage.
+    [Test]
+    public async Task Enrolled_projects_land_in_the_ts_auth_organization_the_token_signs()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var actor = EntityIds.New().ToString();
+        var organization = EntityIds.New().ToString();
+        var catalog = api.Server.Services.GetRequiredService<IProjectCatalog>();
+        foreach (var project in new[] { EntityIds.New().ToString(), EntityIds.New().ToString() })
+        {
+            using var client = api.WithToken(Token(api, actor, project, AllScopes, edit: token => token.Claims["org_id"] = organization));
+            using (var created = await client.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"), new { name = "main" }))
+            {
+                await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            }
+
+            await Assert.That(await catalog.ProjectOrganizationAsync(project, CancellationToken.None) is string found && found == organization).IsTrue();
+        }
+
+        var owned = await api.CreateOrganizationAsync("Legacy " + EntityIds.New().ToString());
+        var squatter = EntityIds.New().ToString();
+        using var squatting = api.WithToken(Token(api, actor, squatter, AllScopes, edit: token => token.Claims["org_id"] = owned));
+        await Assert.That(await StatusAsync(squatting.PostAsJsonAsync(Uri($"/v1/projects/{squatter}/databases"), new { name = "main" })))
+            .IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(await catalog.ProjectOrganizationAsync(squatter, CancellationToken.None) is not string).IsTrue();
+    }
+
     // An enrolled project's organization has no owner to set its plan; the internal listener's operator sizes it, and
     // admission applies the new plan at once. Projects bound to an owned organization keep the owner route.
     [Test]

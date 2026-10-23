@@ -206,6 +206,12 @@ public sealed class TestIssuer : IDisposable
         }
 
         edit?.Invoke(descriptor);
+        // ts-auth signs every project token with the organization that owns the project.
+        if (descriptor.Claims.ContainsKey("project_id"))
+        {
+            descriptor.Claims.TryAdd("org_id", EntityIds.New().ToString());
+        }
+
         return Tokens.CreateToken(descriptor);
     }
 

@@ -96,7 +96,14 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
 
         var actor = ManagementRoute.UserId(HttpContext);
         var project = ManagementRoute.Value(HttpContext, "project");
-        var resolved = await catalog.ResolveProjectAsync(project, actor, create: true, cancellationToken).ConfigureAwait(false);
+        // The billing identity: ts-auth signs the project's organization, and usage, plans and allowances key on it.
+        var owner = HttpContext.User.FindFirst("org_id")?.Value;
+        if (owner is null)
+        {
+            return ErrorResponse.From(new NotFound("the database does not exist", "unknown_database"));
+        }
+
+        var resolved = await catalog.ResolveProjectAsync(project, actor, owner, cancellationToken).ConfigureAwait(false);
         if (resolved is not string organization)
         {
             return resolved switch
