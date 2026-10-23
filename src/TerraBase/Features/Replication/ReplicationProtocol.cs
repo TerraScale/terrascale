@@ -12,6 +12,15 @@ public static class ReplicationProtocol
     /// <summary>Largest envelope and largest decoded change group.</summary>
     public const int MaxApplicationBytes = 4 * 1024 * 1024;
 
+    /// <summary>
+    /// The newest peer stream protocol this build speaks, sent in <c>Hello</c> and <c>Welcome</c>; a stream uses the lower of
+    /// the two, and a peer that sends none speaks 1. 1: one batch per database in flight.
+    /// </summary>
+    public const uint Version = 1;
+
+    /// <summary>The protocol a stream uses with a peer that announced <paramref name="announced"/> (0: none).</summary>
+    public static uint Negotiate(uint announced) => Math.Min(Version, Math.Max(1, announced));
+
     /// <summary>A sender abandons a stream on which nothing it waits for arrives for this long.</summary>
     public static TimeSpan ProgressTimeout { get; } = TimeSpan.FromSeconds(15);
 }
