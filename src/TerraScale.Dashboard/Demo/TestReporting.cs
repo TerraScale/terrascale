@@ -232,11 +232,13 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
         var selected = project.Databases.Values.Where(database => databaseName.Length == 0 || database.Name == databaseName).Select(database => database.Id).ToArray();
         if (databaseName.Length > 0 && selected.Length != 1) return Json(new { error = new { code = "not_found", message = "database not found" } }, HttpStatusCode.NotFound);
         var granularity = query.GetValueOrDefault("granularity").ToString() is { Length: > 0 } requested ? requested : "hour";
-        if (granularity is not ("hour" or "day") || !query.ContainsKey("from") || !query.ContainsKey("to"))
-            return Json(new { error = new { code = "invalid_query", message = "granularity is hour or day; from and to are required here" } }, HttpStatusCode.BadRequest);
+        if (granularity is not ("hour" or "day") || !query.ContainsKey("from"))
+            return Json(new { error = new { code = "invalid_query", message = "granularity is hour or day; from is required here" } }, HttpStatusCode.BadRequest);
         var step = granularity == "day" ? TimeSpan.TicksPerDay : TimeSpan.TicksPerHour;
         var from = new DateTimeOffset(DateTimeOffset.Parse(query["from"].ToString(), CultureInfo.InvariantCulture).UtcTicks / step * step, TimeSpan.Zero);
-        var to = new DateTimeOffset((DateTimeOffset.Parse(query["to"].ToString(), CultureInfo.InvariantCulture).UtcTicks + step - 1) / step * step, TimeSpan.Zero);
+        // As TerraBase's UsageWindow: to defaults to now.
+        var end = query.ContainsKey("to") ? DateTimeOffset.Parse(query["to"].ToString(), CultureInfo.InvariantCulture) : DateTimeOffset.UtcNow;
+        var to = new DateTimeOffset((end.UtcTicks + step - 1) / step * step, TimeSpan.Zero);
         var buckets = (int)((to - from).Ticks / step);
         var reads = scenario == "negative" ? -1 : scenario == "overflow" ? long.MaxValue : scenario == "zero" ? 0 : 12;
         var writes = scenario == "zero" ? 0L : 7L;

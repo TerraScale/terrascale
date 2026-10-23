@@ -94,7 +94,8 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
             var from = period.GetProperty("from").GetDateTimeOffset();
             var to = period.GetProperty("to").GetDateTimeOffset();
             var granularity = range == "30d" ? "day" : "hour";
-            if (from != new DateTimeOffset(start) || to <= from || to > time.GetUtcNow() ||
+            // TerraBase rounds the period's end up to the end of the bucket holding now.
+            if (from != new DateTimeOffset(start) || to <= from || to > time.GetUtcNow() + (range == "30d" ? TimeSpan.FromDays(1) : TimeSpan.FromHours(1)) ||
                 period.GetProperty("granularity").GetString() != granularity)
                 throw new JsonException("Activity returned an invalid period.");
             var points = new List<ActivityPoint>();
