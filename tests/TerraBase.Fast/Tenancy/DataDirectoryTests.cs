@@ -420,7 +420,7 @@ public sealed class DataDirectoryTests
                     break;
                 case "unrecorded-identity":
                     // A replica identity copied into a directory no server recorded: refused, not adopted.
-                    await WriteReplicaAsync(dataDirectory, 1, [7, 0, 0, 0], [0, 0], running: false);
+                    await WriteReplicaAsync(dataDirectory, 2, [7, 0, 0, 0], [0, 0], running: false);
                     break;
                 case "previous-format":
                     // What production ran before formats were recorded: the layout byte alone, beside a system database.
@@ -510,7 +510,7 @@ public sealed class DataDirectoryTests
                 // A crash leaves the identity as the start wrote it: still running.
                 var identity = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName));
                 await Assert.That(identity[7]).IsEqualTo((byte)1);
-                await WriteReplicaAsync(dataDirectory, 1, identity.AsSpan(1, 4).ToArray(), identity.AsSpan(5, 2).ToArray(), running: true);
+                await WriteReplicaAsync(dataDirectory, 2, identity.AsSpan(1, 4).ToArray(), identity.AsSpan(5, 2).ToArray(), running: true);
                 await Assert.That(await ReplicaAsync(dataDirectory)).IsEqualTo((member, (double)crash));
             }
 
@@ -531,7 +531,7 @@ public sealed class DataDirectoryTests
             var (member, _) = await ReplicaAsync(dataDirectory);
             // The member at epoch 65535, still running: an unclean start past the last epoch.
             var identity = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName));
-            await WriteReplicaAsync(dataDirectory, 1, identity.AsSpan(1, 4).ToArray(), [0xff, 0xff], running: true);
+            await WriteReplicaAsync(dataDirectory, 2, identity.AsSpan(1, 4).ToArray(), [0xff, 0xff], running: true);
             var (renumbered, epoch) = await ReplicaAsync(dataDirectory);
             await Assert.That(renumbered).IsNotEqualTo(member);
             await Assert.That(renumbered).IsNotEqualTo(0d);
@@ -551,7 +551,7 @@ public sealed class DataDirectoryTests
         {
             var (member, _) = await ReplicaAsync(dataDirectory);
             var identity = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName));
-            await WriteReplicaAsync(dataDirectory, 1, identity.AsSpan(1, 4).ToArray(), [0xff, 0x00], running: true);
+            await WriteReplicaAsync(dataDirectory, 2, identity.AsSpan(1, 4).ToArray(), [0xff, 0x00], running: true);
             await Assert.That(await ReplicaAsync(dataDirectory)).IsEqualTo((member, 256d));
         }
         finally
@@ -585,7 +585,7 @@ public sealed class DataDirectoryTests
                 default:
                     // A running record at epoch 0x0100 whose rewrite to 0x0101 a power loss tore after the epoch landed:
                     // the epoch reads 0x0101 under the old checksum, so no part of the record can be trusted.
-                    await WriteReplicaAsync(dataDirectory, 1, identity.AsSpan(1, 4).ToArray(), [0x00, 0x01], running: true);
+                    await WriteReplicaAsync(dataDirectory, 2, identity.AsSpan(1, 4).ToArray(), [0x00, 0x01], running: true);
                     identity = await File.ReadAllBytesAsync(path);
                     identity[5] = 1;
                     await File.WriteAllBytesAsync(path, identity);
@@ -621,20 +621,20 @@ public sealed class DataDirectoryTests
             switch (problem)
             {
                 case "an unknown format":
-                    await WriteReplicaAsync(dataDirectory, 2, [1, 0, 0, 0], [0, 0], running: false);
+                    await WriteReplicaAsync(dataDirectory, 3, [1, 0, 0, 0], [0, 0], running: false);
                     break;
                 case "an unknown format with another checksum":
                     // A newer build may checksum differently: still its identity, not a torn record of this format.
-                    await File.WriteAllBytesAsync(path, [2, 1, 0, 0, 0, 0, 0, 1, 0xde, 0xad, 0xbe, 0xef]);
+                    await File.WriteAllBytesAsync(path, [3, 1, 0, 0, 0, 0, 0, 1, 0xde, 0xad, 0xbe, 0xef]);
                     break;
                 case "an unknown state":
-                    await WriteReplicaAsync(dataDirectory, 1, [1, 0, 0, 0], [0, 0], running: false, state: 2);
+                    await WriteReplicaAsync(dataDirectory, 2, [1, 0, 0, 0], [0, 0], running: false, state: 2);
                     break;
                 case "member zero":
-                    await WriteReplicaAsync(dataDirectory, 1, [0, 0, 0, 0], [0, 0], running: false);
+                    await WriteReplicaAsync(dataDirectory, 2, [0, 0, 0, 0], [0, 0], running: false);
                     break;
                 case "a short record of another format":
-                    await File.WriteAllBytesAsync(path, [2, 1, 0]);
+                    await File.WriteAllBytesAsync(path, [3, 1, 0]);
                     break;
                 case "a much larger file":
                     // Replaced by something else entirely: refused after reading one byte past a record.
@@ -686,19 +686,48 @@ public sealed class DataDirectoryTests
         await using var server = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = dataDirectory);
         var identity = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName));
         var (member, epoch) = (await server.MetricAsync("terrabase_replica_member"), await server.MetricAsync("terrabase_replica_epoch"));
-        await Assert.That(identity.Length).IsEqualTo(12);
+        await Assert.That(identity.Length).IsEqualTo(44);
         await Assert.That(identity[7]).IsEqualTo((byte)0);
-        await Assert.That(identity.AsSpan(8).SequenceEqual(SHA256.HashData(identity.AsSpan(0, 8)).AsSpan(0, 4))).IsTrue();
+        await Assert.That(identity.AsSpan(40).SequenceEqual(SHA256.HashData(identity.AsSpan(0, 40)).AsSpan(0, 4))).IsTrue();
         await Assert.That((double)BinaryPrimitives.ReadUInt32LittleEndian(identity.AsSpan(1))).IsEqualTo(member);
         await Assert.That((double)BinaryPrimitives.ReadUInt16LittleEndian(identity.AsSpan(5))).IsEqualTo(epoch);
         return (member, epoch);
     }
 
-    // An identity as a process left it, with a valid checksum: format, member and epoch (little-endian) and its state.
-    private static Task WriteReplicaAsync(string dataDirectory, byte format, byte[] member, byte[] epoch, bool running, byte? state = null)
+    // An identity as a process left it, retaining its owner fingerprint under the updated checksum.
+    private static async Task WriteReplicaAsync(string dataDirectory, byte format, byte[] member, byte[] epoch, bool running, byte? state = null)
     {
-        byte[] record = [format, .. member, .. epoch, state ?? (running ? (byte)0 : (byte)1)];
-        return File.WriteAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName), [.. record, .. SHA256.HashData(record).AsSpan(0, 4)]);
+        var path = Path.Combine(dataDirectory, ReplicaFileName);
+        var owner = File.Exists(path) ? (await File.ReadAllBytesAsync(path)).AsSpan(8, 32).ToArray() : new byte[32];
+        byte[] record = [format, .. member, .. epoch, state ?? (running ? (byte)0 : (byte)1), .. owner];
+        await File.WriteAllBytesAsync(path, [.. record, .. SHA256.HashData(record).AsSpan(0, 4)]);
+    }
+
+    [Test]
+    public async Task An_established_directory_without_its_operation_journal_refuses_startup()
+    {
+        var directory = Directory.CreateTempSubdirectory("terrabase-missing-intents-").FullName;
+        try
+        {
+            await using (var server = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = directory))
+            {
+                _ = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+            }
+            var journal = Path.Combine(directory, SqliteStorageEngine.IntentName + ".db");
+            await Assert.That(File.Exists(journal)).IsTrue();
+            foreach (var suffix in new[] { string.Empty, "-wal", "-shm", "-journal" })
+            {
+                File.Delete(journal + suffix);
+            }
+            var identity = await File.ReadAllBytesAsync(Path.Combine(directory, ReplicaIdentityFile.FileName));
+            await AssertStartupRefusedAsync(directory, "the data directory is missing its storage operation intent journal");
+            await Assert.That(File.Exists(journal)).IsFalse();
+            await Assert.That(await File.ReadAllBytesAsync(Path.Combine(directory, ReplicaIdentityFile.FileName))).IsEquivalentTo(identity);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     // Runs the real binary on the directory: it must print the message and exit with code 2.

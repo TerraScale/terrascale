@@ -32,6 +32,73 @@ public sealed class A6ProductionRebuildTests
     private static readonly string[] SentinelRegions = ["gru"];
 
     [Test]
+    public async Task A_replayed_operation_journal_preserves_the_already_committed_fault()
+    {
+        using var directory = new TempDirectory();
+        var identity = Path.Combine(directory.Root, ReplicaIdentityFile.FileName);
+        var journal = Path.Combine(directory.Root, SqliteStorageEngine.IntentName + ".db");
+        TenantContext database;
+        Ulid incarnation;
+        byte[] running;
+        await using (var first = await StartAsync(directory.Root))
+        {
+            (database, incarnation) = await CreateDatabaseAsync(first);
+            await DurableWriteAsync(first, database);
+            var firstEngine = first.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            _ = await ((SqliteDatabaseStore)(await firstEngine.OpenDatabaseAsync(database, CancellationToken.None))!).BeginOperationAsync(CancellationToken.None);
+            running = await File.ReadAllBytesAsync(identity);
+        }
+        var priorJournal = await File.ReadAllBytesAsync(journal);
+        await File.WriteAllBytesAsync(identity, running);
+        RebuildRecord? fault;
+        await using (var second = await StartAsync(directory.Root))
+        {
+            fault = await second.Server.Services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None);
+            await Assert.That(fault?.Phase).IsEqualTo(RebuildPhase.Pending);
+            await Assert.That(fault?.OldIncarnation).IsEqualTo(incarnation);
+            running = await File.ReadAllBytesAsync(identity);
+        }
+
+        // Model a crash after SYSTEM committed the fault but before the journal's DELETE became durable.
+        await File.WriteAllBytesAsync(journal, priorJournal);
+        await File.WriteAllBytesAsync(identity, running);
+        await using var third = await StartAsync(directory.Root);
+        var services = third.Server.Services;
+        await Assert.That(await services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None)).IsEqualTo(fault);
+        var engine = services.GetRequiredService<SqliteStorageEngine>();
+        var remaining = await engine.IntentStore!.WithWriterAsync(session =>
+        {
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = "SELECT count(*) FROM _tb_write_intent;";
+            return (long)command.ExecuteScalar()!;
+        }, "checking journal replay", CancellationToken.None);
+        await Assert.That(remaining).IsEqualTo(0);
+        await Assert.That(await services.GetRequiredService<IReplicaCopyFaults>().RefusedAsync(database, incarnation, CancellationToken.None)).IsTrue();
+    }
+
+    [Test]
+    public async Task A_copy_intent_does_not_wait_for_the_catalog_writer()
+    {
+        await using var api = await StartAsync(directory: null);
+        var (database, _) = await CreateDatabaseAsync(api);
+        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+        var system = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
+        Task recording = Task.CompletedTask;
+        try
+        {
+            await using var held = await system.BeginDurableTransactionAsync(CancellationToken.None);
+            recording = engine.Ledger.RecordIntentAsync(store, CancellationToken.None);
+            await recording.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally
+        {
+            // Dispose the held writer before waiting for a recorder that the regression blocked.
+            await recording;
+        }
+    }
+
+    [Test]
     public async Task A_copy_fault_record_stays_on_its_node_and_never_reaches_a_peer()
     {
         await using var pair = await Pair.StartAsync();
@@ -151,6 +218,75 @@ public sealed class A6ProductionRebuildTests
 
         await Assert.That(counts[databases[6].DatabaseId!]).IsEqualTo(1);
         await Assert.That(probe.Calls.ToHashSet().SetEquals(databases.Select((database, index) => (database.DatabaseId!, incarnations[index])))).IsTrue();
+    }
+
+    [Test]
+    public async Task A_copy_intent_is_retired_only_after_its_last_active_operation_finishes()
+    {
+        await using var api = await StartAsync(directory: null);
+        var (database, _) = await CreateDatabaseAsync(api);
+        await DurableWriteAsync(api, database);
+        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var store = await engine.OpenDatabaseAsync(database, CancellationToken.None)
+            ?? throw new InvalidOperationException("the test copy is missing");
+        async Task<bool> IntentAsync()
+        {
+            return await engine.IntentStore!.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT 1 FROM _tb_write_intent WHERE database = $database;";
+                command.Parameters.AddWithValue("$database", database.DatabaseId);
+                return command.ExecuteScalar() is not null;
+            }, "checking operation protection", CancellationToken.None);
+        }
+        await Assert.That(await IntentAsync()).IsFalse();
+        await using var tap = (TursoChangeTap)(await engine.OpenTapAsync(database, CancellationToken.None))!;
+        await DurableWriteAsync(api, database);
+        tap.BeforeTrim = _ => throw new IOException("backup destination failed after reading");
+        _ = await Assert.ThrowsAsync<IOException>(async () => await tap.ReadAsync(Stream.Null, CancellationToken.None));
+        tap.BeforeTrim = null;
+        await Assert.That(await IntentAsync()).IsFalse().Because("an idle tap and a clean output failure leave no native work");
+        await using var first = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        await using var second = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        await Assert.That(await IntentAsync()).IsTrue();
+        await first.DisposeAsync();
+        await Assert.That(await IntentAsync()).IsTrue().Because("the other native operation is still active");
+        await second.DisposeAsync();
+        await Assert.That(await IntentAsync()).IsFalse();
+    }
+
+    [Test]
+    public async Task A_locally_acknowledged_idle_copy_survives_a_process_crash_without_rebuild()
+    {
+        const string step = "acknowledged idle copy";
+        if (Environment.GetEnvironmentVariable(CrashRoot) is { } childRoot)
+        {
+            await using var child = await StartAsync(Path.Combine(childRoot, "data"));
+            var (childDatabase, incarnation) = await CreateDatabaseAsync(child);
+            var document = await DurableWriteAsync(child, childDatabase);
+            var engine = child.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            await File.WriteAllTextAsync(Path.Combine(childRoot, "crashed.json"), JsonSerializer.Serialize(new Crashed(
+                childDatabase.OrganizationId, childDatabase.ProjectId!, childDatabase.DatabaseId!, incarnation.ToString(), document, engine.ReplicaId.Epoch)));
+            Environment.FailFast($"crashed at {step}");
+            return;
+        }
+
+        using var root = new TempDirectory();
+        var (exit, crashedAtStep, output) = await RunChildAsync(nameof(A_locally_acknowledged_idle_copy_survives_a_process_crash_without_rebuild), root.Root, step);
+        await Assert.That(exit).IsNotEqualTo(0).Because(output);
+        await Assert.That(crashedAtStep).IsTrue().Because(output);
+        var crashed = JsonSerializer.Deserialize<Crashed>(await File.ReadAllTextAsync(Path.Combine(root.Root, "crashed.json")))!;
+        var database = new TenantContext(crashed.Organization, PlanTier.Hobby, crashed.Project, crashed.Database);
+        await using var api = await StartAsync(Path.Combine(root.Root, "data"));
+        var services = api.Server.Services;
+        await Assert.That(await services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None)).IsNull()
+            .Because("a completed FULL commit and cleanup leave no interrupted storage operation");
+        var store = await services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+            ?? throw new InvalidOperationException("the acknowledged copy is missing");
+        await Assert.That(store.Incarnation).IsEqualTo(Ulid.Parse(crashed.Incarnation));
+        await Assert.That(await services.GetRequiredService<IReplicaCopyFaults>().RefusedAsync(database, store.Incarnation, CancellationToken.None)).IsFalse();
+        await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        await Assert.That(await read.GetAsync("items", crashed.Document, CancellationToken.None)).IsNotNull();
     }
 
     [Test]

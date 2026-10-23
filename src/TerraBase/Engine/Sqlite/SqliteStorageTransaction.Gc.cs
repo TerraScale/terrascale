@@ -103,6 +103,7 @@ internal sealed partial class SqliteStorageTransaction
 
             foreach (var (collection, id) in dead)
             {
+                RemoveMerkleState(collection, id);
                 var delete = Command("DELETE FROM _tb_state WHERE collection = $collection AND id = $id AND live = 0;", collection);
                 delete.Parameters.AddWithValue("$id", id);
                 delete.ExecuteNonQuery();
@@ -134,6 +135,7 @@ internal sealed partial class SqliteStorageTransaction
                     PutRow(collection, id, null);
                 }
 
+                RemoveMerkleState(collection, id);
                 foreach (var sql in ForgetStatements)
                 {
                     var delete = Command(sql, collection);

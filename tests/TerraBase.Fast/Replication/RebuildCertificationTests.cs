@@ -51,6 +51,12 @@ public sealed class RebuildCertificationTests
 
         /// <summary>The digests do not match the states the source streams.</summary>
         DigestDiffers,
+
+        /// <summary>The first stream ends at its deadline after delivering a nonempty page.</summary>
+        StreamDeadline,
+
+        /// <summary>Every stream ends at its deadline before delivering any state.</summary>
+        NoProgressDeadline,
     }
 
     [Test]
@@ -349,6 +355,66 @@ public sealed class RebuildCertificationTests
         await Assert.That(requests[1]).IsGreaterThan(0).And.IsLessThan(SqliteStorageTransaction.Buckets).Because("the second request refreshes a subset under the same pin");
         await Assert.That(await pair.Sjc.ReadAsync(during)).IsEqualTo("{\"n\":7}");
         await pair.Sjc.CertifiedAsync(faulted, ((RebuildOutcome.Completed)outcome).NewIncarnation, pair.Gru);
+    }
+
+    [Test]
+    public async Task A_refill_stream_deadline_retries_only_uncovered_buckets_and_certifies_every_document()
+    {
+        await using var pair = await Pair.StartAsync();
+        var (kept, only) = await pair.SeedAsync();
+        var ids = Enumerable.Range(0, 1025).Select(_ => EntityIds.New().ToString()).ToArray();
+        foreach (var chunk in ids.Chunk(256))
+        {
+            await pair.Gru.WriteAsync(async transaction =>
+            {
+                foreach (var id in chunk)
+                {
+                    _ = await transaction.PutAsync("items", id, Encoding.UTF8.GetBytes("""{"n":7}"""), pair.Token);
+                }
+            });
+        }
+
+        var faulted = await pair.Sjc.IncarnationAsync();
+        pair.Gru.Source.Arm(SourceFault.StreamDeadline, afterPage: null);
+
+        var outcome = await pair.Sjc.FaultAsync(faulted);
+
+        await Assert.That(pair.Gru.Source.Fired).IsTrue().Because("the first stream delivered a page before its injected deadline");
+        await Assert.That(outcome is RebuildOutcome.Completed).IsTrue().Because(outcome.ToString());
+        var requests = pair.Gru.Source.RefillRequests[0];
+        await Assert.That(requests.Length).IsEqualTo(2);
+        await Assert.That(requests[0]).IsEqualTo(SqliteStorageTransaction.Buckets);
+        await Assert.That(requests[1]).IsGreaterThan(0);
+        await Assert.That(requests[1]).IsLessThan(SqliteStorageTransaction.Buckets);
+        foreach (var id in ids)
+        {
+            await Assert.That(await pair.Sjc.ReadAsync(id)).IsEqualTo("""{"n":7}""");
+        }
+
+        await Assert.That(await pair.Sjc.ReadAsync(kept)).IsEqualTo("""{"n":1}""");
+        await Assert.That(await pair.Sjc.ReadAsync(only)).IsEqualTo("""{"n":2}""");
+        await pair.Sjc.CertifiedAsync(faulted, ((RebuildOutcome.Completed)outcome).NewIncarnation, pair.Gru);
+        await pair.AdmissionsReleasedAsync();
+    }
+
+    [Test]
+    public async Task Refill_stream_deadlines_without_progress_exhaust_the_bounded_rounds_and_keep_the_side_copy()
+    {
+        await using var pair = await Pair.StartAsync();
+        _ = await pair.SeedAsync();
+        var faulted = await pair.Sjc.IncarnationAsync();
+        pair.Gru.Source.Arm(SourceFault.NoProgressDeadline, afterPage: null);
+
+        var outcome = await pair.Sjc.FaultAsync(faulted);
+
+        await Assert.That(outcome).IsEqualTo(new RebuildOutcome.Refused(NoRefill));
+        await Assert.That(pair.Gru.Source.Fired).IsTrue();
+        var requests = pair.Gru.Source.RefillRequests[0];
+        await Assert.That(requests.Length).IsEqualTo(8);
+        await Assert.That(requests[0]).IsEqualTo(SqliteStorageTransaction.Buckets);
+        await Assert.That(requests.Skip(1).All(count => count is > 0 and < SqliteStorageTransaction.Buckets)).IsTrue();
+        _ = await pair.Sjc.RetainedRefusalAsync(faulted);
+        await pair.AdmissionsReleasedAsync();
     }
 
     [Test]
@@ -1428,10 +1494,15 @@ public sealed class RebuildCertificationTests
             var store = (SqliteDatabaseStore)await StoreAsync();
             _ = await store.WithWriterAsync(session =>
             {
+                using var transaction = session.Connection.BeginTransaction();
                 using var command = session.Connection.CreateCommand();
+                command.Transaction = transaction;
                 command.CommandText = "DELETE FROM \"items\" WHERE id = $id; DELETE FROM _tb_state WHERE collection = 'items' AND id = $id;";
                 command.Parameters.AddWithValue("$id", id);
-                return command.ExecuteNonQuery();
+                var changed = command.ExecuteNonQuery();
+                MerkleFixture.Rebuild(session, transaction);
+                transaction.Commit();
+                return changed;
             }, "a test editing rows directly", pair.Token);
             store.ForgetCollections();
             await Assert.That(await ReadAsync(id)).IsNull();
@@ -2128,6 +2199,13 @@ public sealed class RebuildCertificationTests
             if (after is null)
             {
                 refill.BucketCounts.Enqueue(buckets.Count);
+            }
+
+            if (fault == (int)SourceFault.NoProgressDeadline
+                || fault == (int)SourceFault.StreamDeadline && after is not null && Interlocked.CompareExchange(ref _fired, 1, 0) == 0)
+            {
+                Fire();
+                throw new RpcException(new Status(StatusCode.DeadlineExceeded, "the test source reached its refill stream deadline"));
             }
 
             if (fault == Disarmed && Volatile.Read(ref _afterPage) is null && BeforePage is null)

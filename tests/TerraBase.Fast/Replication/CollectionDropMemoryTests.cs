@@ -119,7 +119,7 @@ public sealed class CollectionDropMemoryTests
 
         public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant)
         {
-            if (Volatile.Read(ref _limit) is not { } limit)
+            if (lane != MemoryLane.Foreground || Volatile.Read(ref _limit) is not { } limit)
             {
                 return inner.TryReserve(lane, bytes, tenant);
             }

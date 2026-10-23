@@ -1,0 +1,232 @@
+{
+  "scope": "beta loopback; 100000 docs; three repetitions per variant; A all three then B all three, not interleaved",
+  "variants": {
+    "a": {
+      "commit": "e074e3e140ba5c17e4286040cbccf71ace1bca33",
+      "terrabase_source_tree": "d1f2f2931dd72b7489e0a85329121c2e6af1ffc7",
+      "started": "2026-10-22T17:03:41.275816727Z",
+      "finished": "2026-10-22T17:37:30.177851396Z",
+      "repetitions": [
+        {
+          "repeat": 1,
+          "metrics": {
+            "recovery.expected_docs": 100000,
+            "recovery.first_exact_round_seconds": 338.47676859,
+            "recovery.ready_seconds": 383.997517227,
+            "recovery.verified_by_seconds": 383.997505175
+          },
+          "expected_digest": "bd27d992149eac8c6dcf53ec6af294230c13094b9a8c626c1f020dda11da82d2",
+          "memory_window_start_utc": "2026-10-22T17:08:38.307364+00:00",
+          "memory_window_end_utc": "2026-10-22T17:15:01+00:00",
+          "sample_count": 1128,
+          "sampled_peak_single_worker_rss_mib": 1392.19140625,
+          "sampled_peak_rss_mib_by_region": {
+            "gru": 1065.5234375,
+            "sjc": 1392.19140625,
+            "fra": 748.5625
+          }
+        },
+        {
+          "repeat": 2,
+          "metrics": {
+            "recovery.expected_docs": 100000,
+            "recovery.first_exact_round_seconds": 348.603407779,
+            "recovery.ready_seconds": 403.503889159,
+            "recovery.verified_by_seconds": 403.50373478
+          },
+          "expected_digest": "7d0ec2e6e31f7c7a8e1fc2f1d5997e5688e30d6baea037cb1e2ee8e0840fca2b",
+          "memory_window_start_utc": "2026-10-22T17:20:25.002347+00:00",
+          "memory_window_end_utc": "2026-10-22T17:27:07+00:00",
+          "sample_count": 1179,
+          "sampled_peak_single_worker_rss_mib": 1106.5078125,
+          "sampled_peak_rss_mib_by_region": {
+            "gru": 1106.5078125,
+            "sjc": 638.8125,
+            "fra": 827.4296875
+          }
+        },
+        {
+          "repeat": 3,
+          "metrics": {
+            "recovery.expected_docs": 100000,
+            "recovery.first_exact_round_seconds": 268.397237233,
+            "recovery.ready_seconds": 324.760653618,
+            "recovery.verified_by_seconds": 324.76062785
+          },
+          "expected_digest": "75e7e1625efbb68ea37d24b52aacc8c5497839cd22f40c6bd7a3c3a51491714c",
+          "memory_window_start_utc": "2026-10-22T17:32:01.602806+00:00",
+          "memory_window_end_utc": "2026-10-22T17:37:25+00:00",
+          "sample_count": 954,
+          "sampled_peak_single_worker_rss_mib": 1192.7421875,
+          "sampled_peak_rss_mib_by_region": {
+            "gru": 1192.7421875,
+            "sjc": 636.23046875,
+            "fra": 761.1171875
+          }
+        }
+      ],
+      "summary": {
+        "recovery.expected_docs": {
+          "median": 100000,
+          "min": 100000,
+          "max": 100000
+        },
+        "recovery.first_exact_round_seconds": {
+          "median": 338.47676859,
+          "min": 268.397237233,
+          "max": 348.603407779
+        },
+        "recovery.ready_seconds": {
+          "median": 383.997517227,
+          "min": 324.760653618,
+          "max": 403.503889159
+        },
+        "recovery.verified_by_seconds": {
+          "median": 383.997505175,
+          "min": 324.76062785,
+          "max": 403.50373478
+        },
+        "sampled_peak_single_worker_rss_mib": {
+          "median": 1192.7421875,
+          "min": 1106.5078125,
+          "max": 1392.19140625
+        },
+        "sampled_peak_gru_rss_mib": {
+          "median": 1106.5078125,
+          "min": 1065.5234375,
+          "max": 1192.7421875
+        },
+        "sampled_peak_sjc_rss_mib": {
+          "median": 638.8125,
+          "min": 636.23046875,
+          "max": 1392.19140625
+        },
+        "sampled_peak_fra_rss_mib": {
+          "median": 761.1171875,
+          "min": 748.5625,
+          "max": 827.4296875
+        }
+      }
+    },
+    "b": {
+      "commit": "0ff775c5f3e59344152fed2ffdd58e233511bf83",
+      "terrabase_source_tree": "61a104e6db4031a21eb8f50d1a3c23c2bae03c05",
+      "started": "2026-10-22T17:39:34.118012175Z",
+      "finished": "2026-10-22T18:16:22.327534645Z",
+      "repetitions": [
+        {
+          "repeat": 1,
+          "metrics": {
+            "recovery.expected_docs": 100000,
+            "recovery.first_exact_round_seconds": 334.626587615,
+            "recovery.ready_seconds": 380.121573245,
+            "recovery.verified_by_seconds": 380.121557546
+          },
+          "expected_digest": "bcda017a2d7659d64cf76bd328226faa9a0110509cbc5869d2aa9ac23d1826a4",
+          "memory_window_start_utc": "2026-10-22T17:44:55.374439+00:00",
+          "memory_window_end_utc": "2026-10-22T17:51:14+00:00",
+          "sample_count": 1116,
+          "sampled_peak_single_worker_rss_mib": 1148.30859375,
+          "sampled_peak_rss_mib_by_region": {
+            "gru": 1148.30859375,
+            "sjc": 732.78515625,
+            "fra": 838.01171875
+          }
+        },
+        {
+          "repeat": 2,
+          "metrics": {
+            "recovery.expected_docs": 100000,
+            "recovery.first_exact_round_seconds": 364.398939526,
+            "recovery.ready_seconds": 406.263235573,
+            "recovery.verified_by_seconds": 406.263222258
+          },
+          "expected_digest": "15ab55e3d09a582251ab74bd36bc03effef51c433352d008d592380019aa758a",
+          "memory_window_start_utc": "2026-10-22T17:56:58.909421+00:00",
+          "memory_window_end_utc": "2026-10-22T18:03:44+00:00",
+          "sample_count": 1191,
+          "sampled_peak_single_worker_rss_mib": 1097.7265625,
+          "sampled_peak_rss_mib_by_region": {
+            "gru": 1097.7265625,
+            "sjc": 830.48046875,
+            "fra": 846.28515625
+          }
+        },
+        {
+          "repeat": 3,
+          "metrics": {
+            "recovery.expected_docs": 100000,
+            "recovery.first_exact_round_seconds": 381.264490474,
+            "recovery.ready_seconds": 431.344614749,
+            "recovery.verified_by_seconds": 431.344601624
+          },
+          "expected_digest": "95adab3714de9c415bf9cbfa06eb9522247bc1baa493b3da06074f1a2305ac8c",
+          "memory_window_start_utc": "2026-10-22T18:09:06.648966+00:00",
+          "memory_window_end_utc": "2026-10-22T18:16:17+00:00",
+          "sample_count": 1251,
+          "sampled_peak_single_worker_rss_mib": 1103.234375,
+          "sampled_peak_rss_mib_by_region": {
+            "gru": 1103.234375,
+            "sjc": 660.43359375,
+            "fra": 862.8984375
+          }
+        }
+      ],
+      "summary": {
+        "recovery.expected_docs": {
+          "median": 100000,
+          "min": 100000,
+          "max": 100000
+        },
+        "recovery.first_exact_round_seconds": {
+          "median": 364.398939526,
+          "min": 334.626587615,
+          "max": 381.264490474
+        },
+        "recovery.ready_seconds": {
+          "median": 406.263235573,
+          "min": 380.121573245,
+          "max": 431.344614749
+        },
+        "recovery.verified_by_seconds": {
+          "median": 406.263222258,
+          "min": 380.121557546,
+          "max": 431.344601624
+        },
+        "sampled_peak_single_worker_rss_mib": {
+          "median": 1103.234375,
+          "min": 1097.7265625,
+          "max": 1148.30859375
+        },
+        "sampled_peak_gru_rss_mib": {
+          "median": 1103.234375,
+          "min": 1097.7265625,
+          "max": 1148.30859375
+        },
+        "sampled_peak_sjc_rss_mib": {
+          "median": 732.78515625,
+          "min": 660.43359375,
+          "max": 830.48046875
+        },
+        "sampled_peak_fra_rss_mib": {
+          "median": 846.28515625,
+          "min": 838.01171875,
+          "max": 862.8984375
+        }
+      }
+    }
+  },
+  "artifact_sha256": {
+    "catchup-a.json": "f7d6cfab760ef570443641143713f38307bf554eb58a897a5dc85f3f210ae906",
+    "catchup-b.json": "19b2e87b5ffabd1ee5ebb27816798eb5804ebe5680a84a365e44a37028362b2e",
+    "catchup-a.md": "f6bc32c2d151cc3191794987db0cca5866a16b1efbcdfc251c3446c34e169b3c",
+    "catchup-b.md": "4d7ed552ee8e268c83d4b65548e1b41d628878aeb374555d4cf9192ab0070376",
+    "catchup-a.log": "2cadbc55aaa06571ef07292308327b45fae890f6a78eaca9de3cf49175e32c64",
+    "catchup-b.log": "6a8f9fcdc6f2741a96a927ad4eb856a8b6c9cf297894b5ae5e943e1ed68af6e7",
+    "catchup-a-host-after.txt": "d73f57bcf936e45d602c0ec93c26af2bb7a39a6989a983f6da7eda997bae7aed",
+    "catchup-a-host-before.txt": "9a8269d7a5958014d41f226b138f241e8ea6450d463c6ab34eeba5861f9ba461",
+    "catchup-b-host-after.txt": "8179d5c83a68bd20ca3b6ce00a047206dec7a4502115180e14420a71b5c4ad64",
+    "catchup-b-host-before.txt": "0ad3630f9c287151fc3359f1a27fea4d86da03a32a7af49f711b9d931131eb90",
+    "worker-memory-completed.csv": "672be71e1db2ebea6bffde8c65f802010f5622a52794a57003783388452a409d"
+  }
+}

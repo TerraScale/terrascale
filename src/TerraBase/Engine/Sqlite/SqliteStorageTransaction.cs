@@ -29,6 +29,8 @@ internal sealed partial class SqliteStorageTransaction(
     bool ownsAdmission)
     : IStorageTransaction
 {
+    internal SqliteDatabaseStore.CopyOperation? Operation { get; init; }
+
     // Bounds one commit's written bytes, every repeated write and its framing included.
     private const long MaxWrittenBytes = 7 * 1024 * 1024;
     private const int MaxDocumentBytes = DocumentJson.MaxBytes;
@@ -992,6 +994,7 @@ internal sealed partial class SqliteStorageTransaction(
             }
 
             Command(SqliteStatements.DropDocuments, name).ExecuteNonQuery();
+            RemoveMerkleStates(name);
             Command(SqliteStatements.DropStates, name).ExecuteNonQuery();
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -1040,6 +1043,7 @@ internal sealed partial class SqliteStorageTransaction(
             _pending.Remove((name, id));
             if (next.Equals(clear))
             {
+                RemoveMerkleState(name, id);
                 var delete = Command("DELETE FROM _tb_state WHERE collection = $collection AND id = $id;", name);
                 delete.Parameters.AddWithValue("$id", id);
                 delete.ExecuteNonQuery();
@@ -1137,6 +1141,7 @@ internal sealed partial class SqliteStorageTransaction(
             table.ExecuteNonQuery();
         }
 
+        RemoveMerkleStates(name);
         Command(SqliteStatements.DropStates, name).ExecuteNonQuery();
         foreach (var key in _pending.Keys.Where(key => key.Collection == name).ToList())
         {
@@ -1540,6 +1545,7 @@ internal sealed partial class SqliteStorageTransaction(
                 // Still admitted until pooled or closed, including an eviction checkpoint.
                 store.Return(session);
             }, CancellationToken.None).ConfigureAwait(false);
+            Operation?.Complete();
         }
         finally
         {
@@ -1555,7 +1561,7 @@ internal sealed partial class SqliteStorageTransaction(
             {
                 try
                 {
-                    store.End(write, ownsAdmission);
+                    await store.EndAsync(write, ownsAdmission, Operation).ConfigureAwait(false);
                 }
                 finally
                 {

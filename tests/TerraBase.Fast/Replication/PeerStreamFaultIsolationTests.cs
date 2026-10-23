@@ -120,6 +120,8 @@ public sealed class PeerStreamFaultIsolationTests
             }));
         var store = await node.StoreAsync(node.Database);
         var faults = node.Api.Server.Services.GetRequiredService<IReplicaCopyFaults>();
+        // Admit forensic inspection before SYSTEM can fault; BEGIN DEFERRED takes no read snapshot yet.
+        await using var forensic = await (await node.StoreAsync(node.Database)).BeginTransactionAsync(write: false, CancellationToken.None);
         Task? recording = null;
         afterApply = database =>
         {
@@ -158,7 +160,7 @@ public sealed class PeerStreamFaultIsolationTests
 
         await Assert.That(recording).IsNotNull();
         await recording!.WaitAsync(deadline.Token);
-        await Assert.That(await node.HasAsync(node.Database, "landed", deadline.Token)).IsTrue()
+        await Assert.That(await forensic.GetAsync("items", "landed", deadline.Token) is { Deleted: false }).IsTrue()
             .Because("durable apply completed, but its subsequent stable read refused certification");
     }
 
@@ -174,6 +176,8 @@ public sealed class PeerStreamFaultIsolationTests
         });
         var source = node.Api.Server.Services.GetRequiredService<HeldSource>();
         var faults = node.Api.Server.Services.GetRequiredService<IReplicaCopyFaults>();
+        // Admit forensic inspection before SYSTEM can fault; BEGIN DEFERRED takes no read snapshot yet.
+        await using var forensic = await (await node.StoreAsync(node.Database)).BeginTransactionAsync(write: false, CancellationToken.None);
         var native = new SqliteException("a native I/O error during the stable reader reset", 10);
         var armed = 0;
         Task? recording = null;
@@ -213,7 +217,7 @@ public sealed class PeerStreamFaultIsolationTests
             await Assert.That(recording).IsNotNull();
             await recording!.WaitAsync(deadline.Token);
             await Assert.That(await faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, deadline.Token)).IsTrue();
-            await Assert.That(await node.HasAsync(node.Database, "landed-native", deadline.Token)).IsTrue()
+            await Assert.That(await forensic.GetAsync("items", "landed-native", deadline.Token) is { Deleted: false }).IsTrue()
                 .Because("apply committed before stable failed, but neither a positive nor a refused ACK may follow the node fault");
         }
         finally
@@ -231,6 +235,8 @@ public sealed class PeerStreamFaultIsolationTests
         using var deadline = Timeout();
         using var channel = PeerChannel.Create(node.Api.Server.BaseAddress, PeerTls.Credential);
         using var call = await HelloAsync(new Features.Replication.V1.Replication.ReplicationClient(channel), deadline.Token);
+        // Admit forensic inspection before SYSTEM can fault; BEGIN DEFERRED takes no read snapshot yet.
+        await using var forensic = await (await node.StoreAsync(node.Database)).BeginTransactionAsync(write: false, CancellationToken.None);
         await node.FaultAsync(node.Database, nodeFault: true, deadline.Token);
         var frame = batch ? Frame(node.Database, node.Pin(node.Database), 1, "refused") : new PushFrame
         {
@@ -238,7 +244,7 @@ public sealed class PeerStreamFaultIsolationTests
         };
         await call.RequestStream.WriteAsync(frame, deadline.Token);
         _ = await Assert.ThrowsAsync<RpcException>(() => call.ResponseStream.MoveNext(deadline.Token));
-        await Assert.That(await node.HasAsync(node.Database, "refused", deadline.Token)).IsFalse();
+        await Assert.That(await forensic.GetAsync("items", "refused", deadline.Token) is { Deleted: false }).IsFalse();
     }
 
     [Test]
@@ -340,7 +346,7 @@ public sealed class PeerStreamFaultIsolationTests
         await WarmAsync(sender, receiver, deadline.Token);
         var before = sender.Status(sender.Database)!.Acknowledged;
         var initialized = source.Initializations;
-        var gate = new BookkeepingGate(sender.Database, stableReport);
+        var gate = new BookkeepingGate(sender.Database, stableReport, deadline.Token);
         source.Hold(gate);
         try
         {
@@ -707,10 +713,11 @@ public sealed class PeerStreamFaultIsolationTests
             ValueTask.FromResult<RebuildOutcome>(new RebuildOutcome.Busy());
     }
 
-    private sealed class BookkeepingGate(TenantContext database, bool stableReport)
+    private sealed class BookkeepingGate(TenantContext database, bool stableReport, CancellationToken cancellationToken)
     {
         public TenantContext Database { get; } = database;
         public bool StableReport { get; } = stableReport;
+        public CancellationToken CancellationToken { get; } = cancellationToken;
         public TaskCompletionSource<long> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Refused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -845,25 +852,26 @@ public sealed class PeerStreamFaultIsolationTests
             inner.ProveAsync(database, incarnation, from, through, held, cancellationToken);
 
         public ValueTask<bool> AckAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken) =>
-            BookkeepingAsync(database, stableReport: false, changeId, () => inner.AckAsync(database, incarnation, peer, changeId, stable, cancellationToken), cancellationToken);
+            BookkeepingAsync(database, stableReport: false, changeId, token => inner.AckAsync(database, incarnation, peer, changeId, stable, token), cancellationToken);
 
         public ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) =>
-            BookkeepingAsync(database, stableReport: true, 0, () => inner.RecordStableAsync(database, incarnation, peer, stable, cancellationToken), cancellationToken);
+            BookkeepingAsync(database, stableReport: true, 0, token => inner.RecordStableAsync(database, incarnation, peer, stable, token), cancellationToken);
 
-        private async ValueTask<bool> BookkeepingAsync(TenantContext database, bool stableReport, long changeId, Func<ValueTask<bool>> work, CancellationToken cancellationToken)
+        private async ValueTask<bool> BookkeepingAsync(TenantContext database, bool stableReport, long changeId, Func<CancellationToken, ValueTask<bool>> work, CancellationToken cancellationToken)
         {
             var gate = Volatile.Read(ref _held);
             if (gate is null || gate.Database != database || gate.StableReport != stableReport
                 || Interlocked.CompareExchange(ref _held, null, gate) != gate)
             {
-                return await work();
+                return await work(cancellationToken);
             }
 
             _ = gate.Entered.TrySetResult(changeId);
-            await gate.Release.Task.WaitAsync(cancellationToken);
+            // Another stream worker may see the node fault first; keep the held guard observable under the test deadline.
+            await gate.Release.Task.WaitAsync(gate.CancellationToken);
             try
             {
-                var recorded = await work();
+                var recorded = await work(gate.CancellationToken);
                 if (!recorded)
                 {
                     _ = gate.Refused.TrySetResult();

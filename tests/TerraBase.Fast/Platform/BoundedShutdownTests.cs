@@ -201,6 +201,49 @@ public sealed class BoundedShutdownTests
         }
     }
 
+    [Test]
+    public async Task A_healthy_reader_can_retire_its_intent_after_the_shutdown_grace_expires()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var api = await DocumentApi.StartAsync(settings =>
+        {
+            settings["shutdown-grace-seconds"] = "1";
+        });
+        var directory = api.Server.DataDirectory;
+        var id = DocumentApi.NewId();
+        (await api.PutAsync(id, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var replica = engine.ReplicaId;
+        var tenant = await api.TenantOfAsync();
+        var store = (await engine.OpenDatabaseAsync(tenant, token))!;
+        await using var reader = await store.BeginTransactionAsync(write: false, token);
+        await Assert.That(await reader.GetAsync(DocumentApi.Collection, id, token)).IsNotNull();
+        try
+        {
+            // The real grace wait expires while this admitted reader keeps native cleanup outstanding.
+            await engine.DisposeAsync();
+            await Assert.That(engine.Io.Closed).IsTrue();
+            await Assert.That(engine.CleanupCompletion.IsCompleted).IsFalse();
+            await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(directory)).IsTrue();
+        }
+        finally
+        {
+            // Retiring the last reader still needs the journal writer and the I/O pool.
+            await reader.DisposeAsync();
+        }
+
+        await engine.CleanupCompletion.WaitAsync(token);
+        await Assert.That(engine.Ledger.FailedClosed).IsNull();
+        await Assert.That(engine.Pool.OpenCount).IsEqualTo(0);
+        await using var restarted = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = directory);
+        var reopened = restarted.Services.GetRequiredService<SqliteStorageEngine>();
+        await Assert.That(reopened.ReplicaId).IsEqualTo(replica).Because("healthy reader cleanup must record a clean stop");
+        var saved = (await reopened.OpenDatabaseAsync(tenant, token))!;
+        await using var check = await saved.BeginTransactionAsync(write: false, token);
+        await Assert.That(await check.GetAsync(DocumentApi.Collection, id, token)).IsNotNull();
+        await Assert.That(await reopened.Ledger.GetAsync(tenant, token)).IsNull();
+    }
+
     private static async Task ReadEventAsync(StreamReader reader, string expected, CancellationToken cancellationToken)
     {
         var found = false;

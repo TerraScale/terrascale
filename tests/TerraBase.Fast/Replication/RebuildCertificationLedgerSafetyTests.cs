@@ -755,7 +755,9 @@ public sealed class RebuildCertificationLedgerSafetyTests
             }
         }
         var text = await output + await error;
-        return (child.ExitCode, text.Length > 16384 ? text[^16384..] : text);
+        return (child.ExitCode, text.Length > 16384
+            ? text[..8192] + "\n... child output truncated ...\n" + text[^8192..]
+            : text);
     }
 
     private sealed class BusyRebuild : IReplicaRebuild

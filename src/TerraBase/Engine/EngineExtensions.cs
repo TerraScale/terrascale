@@ -43,7 +43,7 @@ public static class EngineExtensions
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), queryBudget: configured.QueryBudget,
                 backupTime: provider.GetService<TimeProvider>(),
-                schemaMemory: provider.GetRequiredService<IMemoryBudget>())
+                schemaMemory: provider.GetRequiredService<IMemoryBudget>(), replicaOwner: configured.MachineId)
             {
                 RequiresRemoteProof = provider.GetService<IMemberDirectory>() is not null,
             };

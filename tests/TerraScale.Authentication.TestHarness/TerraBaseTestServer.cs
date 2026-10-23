@@ -41,6 +41,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     internal (int Internal, int Public, int Metrics) BackendPorts => this.backendPorts;
 
+    // Offline fault fixtures may modify only a stopped child's own root.
+    internal string StoppedDataDirectory => this.process is null
+        ? Path.Combine(this.directory, "data")
+        : throw new InvalidOperationException("Stop TerraBase before modifying its storage files.");
+
     /// <summary>Origin of the public listener (Documents API with API keys and ts-auth tokens).</summary>
     public Uri ClientAddress => this.publicFront?.Address ?? throw new InvalidOperationException("TerraBase has not started.");
 
