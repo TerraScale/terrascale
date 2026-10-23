@@ -37,40 +37,31 @@ Other assets: `checksums.txt`, `install.sh` and the generated Homebrew `ts.rb`.
 `ts version` and `ts --version` print the embedded version; source builds print
 `ts dev`. Snapshot packages print `ts 0.0.0-dev`.
 
-## Release handoff (owner only)
+## Release
 
-1. Merge the reviewed PR after CI is green on its exact head. Confirm the release
-   commit is on current main and select the next unused **v0.0.X** tag.
-2. Complete the Homebrew handoff below before pushing the tag. Only with
-   release authorization, create and push that tag. The tag workflow
-   builds all six targets and publishes the GitHub release with its own
-   `GITHUB_TOKEN`; no registry token is needed. No tag is created by this PR.
-3. Confirm the release assets, checksums and installed `ts --version` before
-   advertising installation. There is no published CLI release yet.
+1. Merge the reviewed PR after CI is green on its exact head, then create and
+   push the next unused **v0.0.X** tag on a main commit.
+2. The tag workflow builds all six targets and publishes the GitHub release
+   with its own `GITHUB_TOKEN`; no registry token is needed.
+3. Confirm the release assets, checksums and installed `ts --version`.
 
 PRs run `goreleaser release --snapshot --clean` without credentials, validate
 archives/install behavior with `python3 scripts/test-release.py`, and retain
 packages for three days. This does not run or download TerraBase.
 
-## Homebrew handoff (held until tap authorization)
-
-The release generates `ts.rb`; the dependent `homebrew` job publishes it to the
-tap only after the GitHub release succeeds. The pinned GoReleaser
-still supports `brews`; this deprecated integration is retained because
-formulas cover both Linux and macOS, whereas casks only cover macOS.
-
-After the owner authorizes and creates **TerraScale/homebrew-tap**, the owner
-supplies a separate token limited to writing that tap using this single command
-(interactive hidden prompt; never pass `--body` or put the token in chat):
+## Homebrew
 
 ```sh
-gh secret set HOMEBREW_TAP_TOKEN --repo TerraScale/ts-go
+brew install terrascale/tap/ts
 ```
 
-The next authorized **v0.0.X** tag then publishes Homebrew automatically after
-the GitHub release succeeds. The `homebrew` job validates the tag, downloads
-`ts.rb` from that exact release and commits it to `Formula/ts.rb` in the tap.
-It cannot create the tap; a missing tap or token fails the Homebrew job without
-undoing the GitHub release. After correcting the prerequisite, re-run the
-failed job for the same tag. No separate manual dispatch is needed.
-Once published, installation is `brew install TerraScale/tap/ts`.
+Each release generates `ts.rb` as a release asset. The pinned GoReleaser still
+supports `brews`; it is kept because formulas cover Linux and macOS, whereas
+casks only cover macOS. **TerraScale/homebrew-tap** pulls the formula itself:
+its sync workflow runs every 15 minutes, checks that every URL and SHA-256 in
+`ts.rb` matches the latest release's `checksums.txt`, and commits
+`Formula/ts.rb` with the tap's own token. To publish sooner, run it by hand:
+
+```sh
+gh workflow run sync.yml --repo TerraScale/homebrew-tap
+```
