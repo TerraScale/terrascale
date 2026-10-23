@@ -653,10 +653,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 break;
             }
 
-            if (database == ChangeGroups.System && !_catalogGate.Value.Trusted
-                || !await PlacedAsync(link, database, cancellationToken).ConfigureAwait(false))
+            var placed = database == ChangeGroups.System && !_catalogGate.Value.Trusted
+                ? (bool?)null : await PlacedAsync(link, database, cancellationToken).ConfigureAwait(false);
+            if (placed is not true)
             {
-                if (database == ChangeGroups.System)
+                // Catalog verification after restart must not drop an idle tenant's only discovery.
+                if (placed is null)
                 {
                     work.Later(database, _time.GetTimestamp() + (long)(Retry.TotalSeconds * _time.TimestampFrequency));
                 }
@@ -1075,7 +1077,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
     // Whether the database's placement includes the peer's region, read again every heartbeat. The system database is placed
     // in every region.
-    private async ValueTask<bool> PlacedAsync(Link link, TenantContext database, CancellationToken cancellationToken)
+    private async ValueTask<bool?> PlacedAsync(Link link, TenantContext database, CancellationToken cancellationToken)
     {
         if (database == ChangeGroups.System)
         {
@@ -1087,8 +1089,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             return known.Placed;
         }
 
-        var placed = await _tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord record
-            && record.Placement.Includes(link.Peer.Region);
+        var found = await _tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false);
+        if (found is Unavailable)
+        {
+            return null;
+        }
+
+        var placed = found is TenantDatabaseRecord record && record.Placement.Includes(link.Peer.Region);
         link.Placements[database] = (placed, _time.GetTimestamp());
         return placed;
     }
