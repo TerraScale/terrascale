@@ -1,6 +1,5 @@
 ---
 title: Legal documents
-head: [['meta', { name: 'robots', content: 'noindex' }]]
 ---
 
 <!-- i18n:fallback:es -->
@@ -10,12 +9,10 @@ head: [['meta', { name: 'robots', content: 'noindex' }]]
 
 # Legal documents
 
-::: warning Draft — not yet in effect
-This page is not an effective legal contract or service commitment.
-:::
+- [Terms of Service](/es/legal/terms): the agreement for using TerraScale.
+- [Privacy Policy](/es/legal/privacy): what personal data we collect, why, and your rights, including our subprocessor list.
+- [Data Processing Agreement](/es/legal/dpa): our commitments as your processor under GDPR and LGPD.
 
-Binding terms, a privacy policy and a data processing agreement are not published as effective contracts here. Obtain the approved documents before enrollment.
-
-See [authentication](/es/guides/authentication) and [service availability](/es/getting-started/).
+Questions: [legal@terrascale.tech](mailto:legal@terrascale.tech).
 
 </div>
