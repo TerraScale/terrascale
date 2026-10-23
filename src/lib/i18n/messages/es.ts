@@ -48,6 +48,9 @@ export const es: Messages = {
           about: 'Acerca de',
           blog: 'Blog',
           contact: 'Contacto',
+          terms: 'Términos',
+          privacy: 'Privacidad',
+          dpa: 'DPA',
         },
       },
       resources: {

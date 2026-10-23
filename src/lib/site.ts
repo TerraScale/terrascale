@@ -93,6 +93,9 @@ export const footerColumns: FooterColumn[] = [
     links: [
       { key: 'about', href: '/about' },
       { key: 'contact', href: '/contact' },
+      { key: 'terms', href: 'https://docs.terrascale.tech/legal/terms' },
+      { key: 'privacy', href: 'https://docs.terrascale.tech/legal/privacy' },
+      { key: 'dpa', href: 'https://docs.terrascale.tech/legal/dpa' },
     ],
   },
   {

@@ -46,6 +46,9 @@ export const en = {
           about: 'About',
           blog: 'Blog',
           contact: 'Contact',
+          terms: 'Terms',
+          privacy: 'Privacy',
+          dpa: 'DPA',
         },
       },
       resources: {
