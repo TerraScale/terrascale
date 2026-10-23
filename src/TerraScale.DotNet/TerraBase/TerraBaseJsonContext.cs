@@ -42,6 +42,8 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBasePage<TerraBaseAuditEvent>))]
 [JsonSerializable(typeof(TerraBaseSqlResult))]
 [JsonSerializable(typeof(TerraBaseSqlRequest))]
+[JsonSerializable(typeof(TerraBaseSqlExecuteRequest))]
+[JsonSerializable(typeof(TerraBaseSqlExecuteResponse))]
 [JsonSerializable(typeof(TerraBaseCreateIndexRequest))]
 [JsonSerializable(typeof(TerraBaseIndex))]
 [JsonSerializable(typeof(TerraBaseIndexList))]
