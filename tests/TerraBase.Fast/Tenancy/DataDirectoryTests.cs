@@ -8,11 +8,13 @@ using System.Text;
 using Bogus;
 using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -202,23 +204,38 @@ public sealed class DataDirectoryTests
         await using var server = await TerraBaseTestServer.StartAsync(settings => settings["shutdown-grace-seconds"] = "1");
         var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var project = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString());
+        var connections = new List<SqliteConnection>();
+        var stores = new List<SqliteDatabaseStore>();
         // More databases than the pool keeps idle connections for: returning the later sessions evicts earlier ones.
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
         {
             var database = project with { DatabaseId = EntityIds.New().ToString() };
             await engine.CreateDatabaseAsync(database, CancellationToken.None);
-            var store = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
-            await (await store.BeginTransactionAsync(write: false, CancellationToken.None)).DisposeAsync();
+            var path = Path.Combine(server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
+            // These stores share the live engine's pool, but no background transaction can rent their sessions.
+            var store = new SqliteDatabaseStore("eviction", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64;");
+            stores.Add(store);
+            var connection = new SqliteConnection(Connect(path));
+            var session = await OpenSessionAsync(connection);
+            connections.Add(connection);
+            await Assert.That(engine.Pool.Rent(store)).IsNull();
+            engine.Pool.Adopt(store, session);
+            engine.Pool.Return(store, session);
         }
 
-        await Assert.That(engine.Pool.IdleCount).IsEqualTo(engine.Pool.MaxIdle);
+        // Background work cannot rent these stores; only front-eviction can remove their idle sessions.
+        await Assert.That(stores.Take(8).All(store => engine.Pool.IdleCountOf(store) == 0)).IsTrue();
 
-        await engine.DisposeAsync();
+        // Production stops workers before their engine; disposing it beneath catalog convergence races its next read.
+        var completion = server.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
+        server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
+        await completion.WaitAsync(TestContext.Current!.Execution.CancellationToken);
         await engine.CleanupCompletion;
 
         // Every eviction was counted until its connection closed, so shutdown completed: nothing is open, no database
         // file of the directory is held, and the directory is free.
         await Assert.That(engine.Pool.OpenCount).IsEqualTo(0);
+        await Assert.That(connections.All(connection => connection.State == System.Data.ConnectionState.Closed)).IsTrue();
         await Assert.That(OpenDatabaseFiles(server.DataDirectory)).IsEmpty();
         await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)).IsFalse();
     }
