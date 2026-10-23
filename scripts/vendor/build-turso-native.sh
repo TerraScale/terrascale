@@ -5,7 +5,15 @@ arch=${1:?usage: build-turso-native.sh <amd64|arm64> <output-directory>}
 output=${2:?usage: build-turso-native.sh <amd64|arm64> <output-directory>}
 case "$arch" in amd64|arm64) ;; *) echo 'Expected amd64 or arm64' >&2; exit 1 ;; esac
 root=$(git rev-parse --show-toplevel)
-docker buildx build --platform "linux/$arch" --no-cache --target native \
+if command -v docker >/dev/null; then
+  builder=docker
+elif command -v podman >/dev/null; then
+  builder=podman
+else
+  echo 'Docker or Podman is required to build the pinned native core' >&2
+  exit 1
+fi
+"$builder" buildx build --platform "linux/$arch" --no-cache --target native \
   --file "$root/scripts/vendor/Dockerfile.turso-native" \
   --output "type=local,dest=$output" "$root"
 (cd "$output" && sha256sum --check SHA256SUMS-*)
