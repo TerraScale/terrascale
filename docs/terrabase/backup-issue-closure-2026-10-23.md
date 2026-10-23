@@ -31,6 +31,35 @@ still asserts that healthy WAL is stored before the first customer lookup and
 that all three configuration deadlines and cleanup complete; the identical
 restore assertion now runs after shutdown, under the test cancellation token.
 
+## Current-head verification
+
+At `6ed1ac3427582b8082991d645f79d8a101ac7309` on delta, five repetitions of
+the five `ShipperShutdownAndRetryTests` cases, seven `BackupShutdownTests`
+cases, and the originally reported snapshot regression passed: **65 passes,
+zero failures or skips**. All 15 TRX files were checked for the exact expected
+test counts and Passed outcomes. Both builds completed with zero warnings or
+errors; the Makefile's driver tests also passed 22/22.
+
+Commands used `nice -n 19 ts-heavy`, starting with
+`make terrabase-test-fast CONFIGURATION=Release` and a class filter; subsequent
+repetitions reused that Release output through the same TUnit runner. Default
+parallel execution stayed enabled. SDK: `11.0.100-rc.1.26425.128`; sibling
+ts-dotnet: `e7d9cf9a8c310f7c54940318b76253dd8dda7a81`.
+
+Retained evidence on delta:
+`~/.local/state/terrascale/backup-issues-2026-10-23/6ed1ac3427582b8082991d645f79d8a101ac7309/`.
+`fast-proof.json` lists all 15 reports, counts, and checksums; `verify.sh`
+records the exact filters. Red-regression logs/TRX and per-run logs/TRX are
+retained beside it. These are targeted repetitions, not a full-suite claim.
+
+A fresh targeted Slow pass at the same source SHA also passed **13/13** with
+zero failures or skips: six ACK cases, the 256 MiB backlog case, four multipart
+cases, retention over 10,000 expired snapshots, and the real private-Tigris
+restore. `proof-summary.json`, five more TRX files and their logs are retained
+in the same directory. `SHA256SUMS` covers every retained artifact. The
+Tigris invocation used the existing bucket-scoped CI credential file without
+printing or copying its contents.
+
 ## Ten reports already fixed on main
 
 [PR #347](https://github.com/TerraScale/terrascale/pull/347), merged as
