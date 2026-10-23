@@ -34,6 +34,8 @@ public sealed class CatalogFreshnessTests
             services.AddSingleton<IMemberDirectory>(members);
         });
         clock.Advance(TimeSpan.FromSeconds(6));
+        await Assert.That(await local.Services.GetRequiredService<CatalogGate>().VerifyAsync(token)).IsTrue();
+        await Assert.That(await remote.Services.GetRequiredService<CatalogGate>().VerifyAsync(token)).IsTrue();
         var peer = (await members.ListAsync(token)).Single(member => member.Name == remoteName);
         var repair = local.Services.GetRequiredService<AntiEntropy>();
         await Assert.That(await repair.PullAsync(ChangeGroups.System, peer, token)).IsNotNull();
@@ -42,8 +44,11 @@ public sealed class CatalogFreshnessTests
         clock.Advance(TimeSpan.FromSeconds(9));
         await Assert.That(await freshness.IsFreshAsync(window, token)).IsTrue();
 
-        delayed!.Expire = true;
-        await Assert.That(await freshness.IsFreshAsync(window, token)).IsFalse();
+        // Background incarnation reads must not consume the expiry intended for this freshness check.
+        using var expiry = CancellationTokenSource.CreateLinkedTokenSource(token);
+        delayed!.ExpireOn = expiry.Token;
+        await Assert.That(await freshness.IsFreshAsync(window, expiry.Token)).IsFalse();
+        await Assert.That(delayed.Expired).IsTrue();
 
         await Assert.That(await repair.PullAsync(ChangeGroups.System, peer, token)).IsNotNull();
         await Assert.That(await freshness.IsFreshAsync(window, token)).IsTrue();
@@ -51,7 +56,9 @@ public sealed class CatalogFreshnessTests
 
     private sealed class ExpiringStates(IReplicaStates inner, FakeTimeProvider clock) : IReplicaStates
     {
-        public bool Expire { get; set; }
+        public CancellationToken ExpireOn { get; set; }
+
+        public bool Expired { get; private set; }
 
         public ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken) =>
             inner.DigestAsync(database, expected, cancellationToken);
@@ -62,9 +69,10 @@ public sealed class CatalogFreshnessTests
         public ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)?> ReadBucketsAsync(
             TenantContext database, Ulid incarnation, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken)
         {
-            if (Expire && database == ChangeGroups.System && buckets.Count == 0)
+            if (ExpireOn.CanBeCanceled && cancellationToken == ExpireOn && database == ChangeGroups.System && buckets.Count == 0)
             {
-                Expire = false;
+                ExpireOn = default;
+                Expired = true;
                 clock.Advance(TimeSpan.FromSeconds(2));
             }
 

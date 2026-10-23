@@ -202,16 +202,25 @@ public sealed class DataDirectoryTests
         await using var server = await TerraBaseTestServer.StartAsync(settings => settings["shutdown-grace-seconds"] = "1");
         var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var project = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString());
+        var connections = new List<SqliteConnection>();
         // More databases than the pool keeps idle connections for: returning the later sessions evicts earlier ones.
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
         {
             var database = project with { DatabaseId = EntityIds.New().ToString() };
             await engine.CreateDatabaseAsync(database, CancellationToken.None);
-            var store = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
-            await (await store.BeginTransactionAsync(write: false, CancellationToken.None)).DisposeAsync();
+            var path = Path.Combine(server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
+            // These stores share the live engine's pool, but no background transaction can rent their sessions.
+            var store = new SqliteDatabaseStore("eviction", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64;");
+            var connection = new SqliteConnection(Connect(path));
+            var session = await OpenSessionAsync(connection);
+            connections.Add(connection);
+            await Assert.That(engine.Pool.Rent(store)).IsNull();
+            engine.Pool.Adopt(store, session);
+            engine.Pool.Return(store, session);
         }
 
-        await Assert.That(engine.Pool.IdleCount).IsEqualTo(engine.Pool.MaxIdle);
+        // At least eight owned connections were evicted, regardless of background rents in the engine-wide pool.
+        await Assert.That(connections.Take(8).All(connection => connection.State == System.Data.ConnectionState.Closed)).IsTrue();
 
         await engine.DisposeAsync();
         await engine.CleanupCompletion;
@@ -219,6 +228,7 @@ public sealed class DataDirectoryTests
         // Every eviction was counted until its connection closed, so shutdown completed: nothing is open, no database
         // file of the directory is held, and the directory is free.
         await Assert.That(engine.Pool.OpenCount).IsEqualTo(0);
+        await Assert.That(connections.All(connection => connection.State == System.Data.ConnectionState.Closed)).IsTrue();
         await Assert.That(OpenDatabaseFiles(server.DataDirectory)).IsEmpty();
         await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)).IsFalse();
     }
