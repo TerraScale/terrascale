@@ -10,16 +10,16 @@ token (`Authorization: Bearer …`), with the scopes below.
 
 ## Routes and JSON
 
-- `POST` base route, scope `webhooks:write`, body `{"url":"https://receiver.example/events"}`.
+- `POST` base route, scopes `documents:read` **and** `documents:write`, body `{"url":"https://receiver.example/events"}`.
   Returns 201 with `{"id":"<ULID>","url":"https://receiver.example/events","createdAt":"<RFC3339>","status":"active","secret":"<base64url>"}`
-  and Location of the webhook. The generated 32-byte signing secret appears **only**
+  and Location of the webhook, with `Cache-Control: no-store`. The generated 32-byte signing secret appears **only**
   in this response. Store it now; deletion and recreation are required if lost.
-- `GET` base route, scope `webhooks:read`. Returns 200 with a direct array of
+- `GET` base route, scope `documents:read`. Returns 200 with a direct array of
   `{"id":"<ULID>","url":"https://receiver.example/events","createdAt":"<RFC3339>","status":"active"}`.
   `status` is `active` or `feed_gap`. Never includes a secret.
-- `DELETE /{webhook}`, scope `webhooks:write`. Returns 204; unknown webhook 404.
+- `DELETE /{webhook}`, scopes `documents:read` **and** `documents:write`. Returns 204; unknown webhook 404.
   Stops future attempts; an already in-flight request may still complete.
-- `GET /{webhook}/deliveries`, scope `webhooks:read`. Returns 200 with a direct array
+- `GET /{webhook}/deliveries`, scope `documents:read`. Returns 200 with a direct array
   of `{"id":"<ULID>","createdAt":"<RFC3339>","status":"pending","attempts":1,"lastAttemptAt":"<RFC3339 or null>","nextAttemptAt":"<RFC3339 or null>","httpStatus":503,"errorCode":"http_error"}`.
   Status is `pending` or `delivered`; nullable fields are JSON null when absent.
   `errorCode` is null, `http_error`, `transport_error`, or `target_rejected`.
@@ -32,7 +32,7 @@ are retained, including a pending record. There are at most 32 webhooks per
 collection. Common errors: 400 invalid request/URL/pagination, 401 missing or
 invalid token, 403 missing scope, 404 unknown database/collection/webhook or scope
 mismatch, 409 webhook limit, 503 storage temporarily unavailable. Error bodies use
-the standard TerraBase `{code,message}` shape. Create requires an existing collection.
+the standard TerraBase `{error:{code,message}}` shape. Create requires an existing collection.
 
 ## Receiver protocol
 
@@ -46,7 +46,7 @@ Events contain change identities, **not document bodies**. Fetch current state
 through the document API when needed; an intermediate value may already have
 changed. Deletions set `deleted:true`. Collection/index changes and collection
 drops do not emit document events. Each bounded batch contains whole source
-transactions (up to 1024 events, at most 1 MiB encoded); delivery order follows the
+transactions (up to 1024 events, at most 512 KiB encoded); delivery order follows the
 local durable feed, with no global order across origins.
 
 Headers:
@@ -77,7 +77,7 @@ Registration starts at the local feed head; it does not backfill existing data.
 The creating machine owns delivery and resumes after restart with its stable node
 identity. There is no automatic ownership transfer to a different machine.
 The engine retains local change history for 7 days. If downtime/backlog exceeds
-retention, a prefix gap is detected, or the database/collection is recreated, the
+retention, a prefix gap is detected, a source transaction exceeds the conservative 512 KiB encoded batch bound, or the database/collection is recreated, the
 webhook enters `feed_gap` and stops scanning. Already captured pending batches
 still retry. This state is visible in list results; no silent cursor reset or
 claim of lossless delivery beyond retained history. Reconcile current data, delete

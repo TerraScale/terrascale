@@ -48,7 +48,7 @@ internal sealed record TerraBaseCreateChangeWebhookRequest(string Url);
 
 public sealed partial class TerraBaseDatabase
 {
-    /// <summary>Registers an HTTPS receiver at the current feed head. Requires webhooks:write; sent once. Store the returned secret immediately.</summary>
+    /// <summary>Registers an HTTPS receiver at the current feed head. Requires documents:read and documents:write; sent once. Store the returned secret immediately.</summary>
     public async Task<TerraBaseCreatedChangeWebhook> CreateChangeWebhookAsync(string collection, string url, CancellationToken cancellationToken = default)
     {
         if (url is not { Length: > 0 and <= 2048 } || !Uri.TryCreate(url, UriKind.Absolute, out var receiver)
@@ -59,16 +59,16 @@ public sealed partial class TerraBaseDatabase
             Json.TerraBaseCreatedChangeWebhook, null, cancellationToken).ConfigureAwait(false)).Value;
     }
 
-    /// <summary>Lists webhook metadata by ascending ID. Requires webhooks:read. Limit 1–100, default 50; continue with the final ID until an empty list.</summary>
+    /// <summary>Lists webhook metadata by ascending ID. Requires documents:read. Limit 1–100, default 50; continue with the final ID until an empty list.</summary>
     public async Task<IReadOnlyList<TerraBaseChangeWebhook>> ListChangeWebhooksAsync(string collection, string? after = null, int? limit = null, CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, ChangeWebhooksPath(collection) + ChangeWebhookQuery(after, limit),
             null, Json.IReadOnlyListTerraBaseChangeWebhook, null, cancellationToken).ConfigureAwait(false)).Value;
 
-    /// <summary>Stops future attempts. Requires webhooks:write; sent once. An in-flight delivery may still complete; unknown IDs return 404.</summary>
+    /// <summary>Stops future attempts. Requires documents:read and documents:write; sent once. An in-flight delivery may still complete; unknown IDs return 404.</summary>
     public Task DeleteChangeWebhookAsync(string collection, string webhookId, CancellationToken cancellationToken = default) =>
         connection.SendAsync(HttpMethod.Delete, ChangeWebhooksPath(collection) + "/" + TerraScaleIds.Validate(webhookId), null, null, cancellationToken);
 
-    /// <summary>Lists retained delivery records by ascending ID. Requires webhooks:read. Limit 1–100, default 50; continue with the final ID until an empty list.</summary>
+    /// <summary>Lists retained delivery records by ascending ID. Requires documents:read. Limit 1–100, default 50; continue with the final ID until an empty list.</summary>
     public async Task<IReadOnlyList<TerraBaseChangeWebhookDelivery>> ListChangeWebhookDeliveriesAsync(string collection, string webhookId,
         string? after = null, int? limit = null, CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, ChangeWebhooksPath(collection) + "/" + TerraScaleIds.Validate(webhookId) + "/deliveries" + ChangeWebhookQuery(after, limit),
