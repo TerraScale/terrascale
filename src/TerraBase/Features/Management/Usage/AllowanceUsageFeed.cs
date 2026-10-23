@@ -4,14 +4,14 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>Reads bounded observations from the allowance enforcement meter.</summary>
+/// <summary>Reads bounded node-local storage observations; authoritative operation utilization is unavailable.</summary>
 public interface IAllowanceUsageFeed
 {
     /// <summary>The next page after an organization ULID; an empty cursor starts the scan.</summary>
     ValueTask<AllowanceUsagePage> ReadAsync(string after, CancellationToken cancellationToken);
 }
 
-internal sealed class AllowanceUsageFeed(IStorageEngine engine, ISchemaService schema, UsageMeter meter, TimeProvider time) : IAllowanceUsageFeed
+internal sealed class AllowanceUsageFeed(IStorageEngine engine, ISchemaService schema, TimeProvider time) : IAllowanceUsageFeed
 {
     public async ValueTask<AllowanceUsagePage> ReadAsync(string after, CancellationToken cancellationToken)
     {
@@ -46,15 +46,9 @@ internal sealed class AllowanceUsageFeed(IStorageEngine engine, ISchemaService s
         var items = new List<AllowanceUsage>(selected.Count);
         foreach (var (id, databases) in selected)
         {
-            long? operations = null, bytes = null;
+            long? bytes = null;
             if (databases.Count is > 0 and <= 100)
             {
-                foreach (var database in databases)
-                {
-                    _ = meter.MonthOperations(database);
-                }
-                await meter.SeedMonthsAsync(ct).ConfigureAwait(false);
-                operations = meter.SeededMonthOperations(databases[0]);
                 long total = 0;
                 var complete = true;
                 foreach (var database in databases)
@@ -71,7 +65,8 @@ internal sealed class AllowanceUsageFeed(IStorageEngine engine, ISchemaService s
                     bytes = total;
                 }
             }
-            items.Add(new(id, operations, bytes));
+            // The old document counter was removed. Await the authoritative feed contract; never convert its counts here.
+            items.Add(new(id, null, bytes));
         }
 
         if (time.GetUtcNow().Year != now.Year || time.GetUtcNow().Month != now.Month)
