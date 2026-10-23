@@ -27,7 +27,7 @@ func probePause(ctx context.Context, d time.Duration) bool {
 }
 
 // Keep the original dispatch timestamp across retries so admission stalls remain part of visibility lag.
-// Probe PUTs reuse the same ULID and body; retrying an uncertain 503 cannot create another document.
+// PUT retries require a typed refusal before execution; an uncertain write must fail the probe.
 func probeRequest(parent context.Context, region *replbench.Region, method, path string, body []byte, contentType string) (replbench.Response, error) {
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
@@ -35,6 +35,17 @@ func probeRequest(parent context.Context, region *replbench.Region, method, path
 		resp, err := region.Do(ctx, method, path, body, contentType)
 		if err != nil || resp.Status != http.StatusServiceUnavailable {
 			return resp, err
+		}
+		if method != http.MethodGet {
+			var refusal struct{ Error struct{ Code string } }
+			if json.Unmarshal(resp.Body, &refusal) != nil {
+				return resp, nil
+			}
+			switch refusal.Error.Code {
+			case "remote_region_unavailable", "confirmation_busy":
+			default:
+				return resp, nil
+			}
 		}
 		if !probePause(ctx, 100*time.Millisecond) {
 			return resp, ctx.Err()

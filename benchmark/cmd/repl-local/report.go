@@ -17,14 +17,15 @@ import (
 )
 
 type sample struct {
-	Repeat     int                           `json:"repeat"`
-	Phase      string                        `json:"phase"`
-	Metrics    map[string]float64            `json:"metrics"`
-	Result     replbench.Result              `json:"verification"`
-	Visibility map[string]replbench.Summary  `json:"dispatch_to_visible,omitempty"`
-	Before     map[string]repllocal.Snapshot `json:"before,omitempty"`
-	After      map[string]repllocal.Snapshot `json:"after,omitempty"`
-	Load       []loadSample                  `json:"host_load"`
+	Repeat       int                               `json:"repeat"`
+	Phase        string                            `json:"phase"`
+	Metrics      map[string]float64                `json:"metrics"`
+	Result       replbench.Result                  `json:"verification"`
+	Visibility   map[string]replbench.Summary      `json:"dispatch_to_visible,omitempty"`
+	Before       map[string]repllocal.Snapshot     `json:"before,omitempty"`
+	After        map[string]repllocal.Snapshot     `json:"after,omitempty"`
+	Load         []loadSample                      `json:"host_load"`
+	CommitTiming map[string]repllocal.CommitTiming `json:"commit_timing,omitempty"`
 }
 
 type report struct {
@@ -123,6 +124,7 @@ func (r report) write(base string) error {
 	}
 	if r.Scenario == "second-region" {
 		fmt.Fprintln(&b, "\nLocal ACK measures server request dispatch through local durable commit, before remote confirmation starts. Remote ACK measures full HTTP request latency, including admission, local commit, replication, receiver commit and response. Dispatch-to-visible probes include polling and GET latency. None isolates fsync or WAN latency. See JSON for retries and all sample counts; no histogram pooling.")
+		fmt.Fprintln(&b, "\nCommit-to-apply pairs each source CDC commit marker at the existing post-native-COMMIT checkpoint with that exact group's receiver post-native-FULL-COMMIT hook. Same-boot, same-time-namespace Linux CLOCK_MONOTONIC nanoseconds only; no wall-clock/HLC subtraction. All workload documents must match once. Document percentiles weight every document; group percentiles weight each commit once. Receiver transaction chunks are correlated before releasing their exclusive writer. Apply cleanup until sink return is reported separately; ACK return is excluded. Source marker-identification SELECT overhead remains inside lag and is reported separately. Exact timestamps and IDs are retained in JSON. Percentiles use nearest rank; component percentiles must not be added or subtracted.")
 		fmt.Fprintln(&b, "\nPartition probes send each PUT once. After both-direction remote_durable probes, a test-only receiver gate holds ACK delivery after real apply commits. Both peer proxies are suspended; the pending write must answer 503 write_outcome_unknown without Retry-After, and its exact value must remain on both replicas. Both isolated regions must refuse new writes as 503 remote_region_unavailable with Retry-After, with no document on either replica. Healing must restore remote_durable success; only explicit pre-execution refusals are retried during healing. Gate/control files and tokens remain private and are never published.")
 		fmt.Fprintln(&b, "\nThis is local process evidence, not a physical power-loss experiment, WAN latency result, backup-commit proof or production guarantee. No shared network settings or production resources change.\n\n```text\n"+r.HostInfo+"```")
 		return os.WriteFile(base+".md", []byte(b.String()), 0o644)

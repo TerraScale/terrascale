@@ -43,7 +43,7 @@ func partitionProof(parent context.Context, c *repllocal.Cluster, metrics map[st
 				return err
 			}
 			if response.Status == status {
-				if status != http.StatusOK {
+				if status != http.StatusOK || value == nil {
 					return nil
 				}
 				var body struct {
@@ -66,6 +66,12 @@ func partitionProof(parent context.Context, c *repllocal.Cluster, metrics map[st
 				return ctx.Err()
 			case <-time.After(10 * time.Millisecond):
 			}
+		}
+	}
+	// Collection creation is local-durable; every region must discover it before any proof PUT.
+	for name, client := range clients {
+		if err := read(client, "/collections/"+collection, http.StatusOK, nil); err != nil {
+			return fmt.Errorf("proof collection on %s: %w", name, err)
 		}
 	}
 	// Require explicit remote durability in both directions before cutting the only peer path.

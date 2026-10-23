@@ -231,6 +231,22 @@ func writePhase(ctx context.Context, c *repllocal.Cluster, repeat int, name stri
 	if !raw.Passed() || raw.Writes["gru"].Created != int64(docs) || raw.Writes["gru"].Failed != 0 || raw.Convergence.Expected != docs {
 		return s, errors.New("write load incomplete or exact convergence failed")
 	}
+	if name == "second-region" {
+		if raw.Writes["gru"].Retried != 0 {
+			return s, errors.New("second-region proof cannot accept replayed load requests")
+		}
+		s.CommitTiming, err = c.CommitTimings(ctx)
+		if err != nil {
+			return s, err
+		}
+		lag, e := repllocal.CommitLag(s.CommitTiming["gru"], s.CommitTiming["sjc"], raw.Collection, docs)
+		if e != nil {
+			return s, e
+		}
+		for key, value := range lag {
+			s.Metrics[key] = value
+		}
+	}
 	s.Metrics["throughput.docs_per_second"] = raw.Writes["gru"].DocsPerSec
 	s.Metrics["remote_ack.p50_ms"], s.Metrics["remote_ack.p99_ms"] = raw.Writes["gru"].Create.P50, raw.Writes["gru"].Create.P99
 	s.Metrics["wire.transport_stream_bytes_per_source_doc"] = float64(wireBytes) / float64(docs)
