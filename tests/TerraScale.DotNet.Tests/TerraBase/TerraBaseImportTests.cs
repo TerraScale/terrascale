@@ -21,10 +21,10 @@ public sealed class TerraBaseImportTests
         var job = TerraBaseConnection.ReadResponse(Encoding.UTF8.GetBytes("""
             {"id":"01JA00000000000000000000J1","project":"01JA0000000000000000000001","database":"import-01ja00000000000000000000d1",
              "region":"gru","state":"failed","cancelRequested":false,
-             "options":{"missingPrimaryKey":"reject","exclude":["main.\"Audit Log\"","main.users.notes"]},
+             "options":{"exclude":["main.\"Audit Log\"","main.users.notes"]},
              "source":{"format":"sqlite","bytes":8192,"sha256":"SHA","receivedBytes":8192,"staged":true,"retainedUntil":"2026-10-19T12:00:00Z"},
              "preview":{"id":"01JA00000000000000000000P1",
-               "tables":[{"source":"main.users","collection":"users","excluded":false,"rows":2,"idPolicy":"rowid","primaryKey":[],
+               "tables":[{"source":"main.users","collection":"users","excluded":false,"rows":2,"primaryKey":[],
                  "columns":[{"name":"name","sourceType":"TEXT","mapping":"integer+string","nullable":true,"excluded":false},
                             {"name":"notes","sourceType":"TEXT","mapping":"null","nullable":true,"excluded":true}],
                  "constraints":[{"kind":"foreign_key","name":"users_org_fk","columns":["org_id"],"references":"main.orgs(id)","enforced":false},
@@ -47,7 +47,7 @@ public sealed class TerraBaseImportTests
         await Assert.That(job.Source.ReceivedBytes).IsEqualTo(8192);
         await Assert.That(job.Source.RetainedUntil).IsEqualTo(new DateTimeOffset(2026, 10, 19, 12, 0, 0, TimeSpan.Zero));
         var table = job.Preview.Tables[0];
-        await Assert.That(table.IdPolicy).IsEqualTo("rowid");
+        await Assert.That(table.PrimaryKey).IsEmpty();
         await Assert.That(table.Excluded).IsFalse();
         await Assert.That(table.Columns[0].Mapping).IsEqualTo("integer+string");
         await Assert.That(table.Columns[1].Mapping).IsEqualTo("null");
@@ -93,8 +93,8 @@ public sealed class TerraBaseImportTests
         });
         var database = Client(http).Database(Project, Destination);
 
-        await database.CreateImportAsync(TerraBaseImportFormat.PostgresPlain, 4096, Sha,
-            new TerraBaseImportOptions(TerraBaseImportMissingPrimaryKey.Generate, ["public.audit_log"]));
+        await database.CreateImportAsync(TerraBaseImportFormat.Ndjson, 4096, Sha,
+            new TerraBaseImportOptions(["main.audit_log"], "users"));
         await database.CreateImportAsync(TerraBaseImportFormat.Sqlite, 1, Sha);
         await database.UploadImportSourceAsync(TerraBaseDatabase.MaxImportSourcePartBytes, "ab"u8.ToArray());
         await database.GetImportAsync();
@@ -105,11 +105,11 @@ public sealed class TerraBaseImportTests
 
         var job = $"/v1/projects/{Project}/databases/{Destination}/import";
         await Assert.That(string.Join('\n', sent)).IsEqualTo(string.Join('\n',
-            $$$"""POST {{{job}}} application/json {"format":"postgres_plain","sourceBytes":4096,"sourceSha256":"{{{Sha}}}","options":{"missingPrimaryKey":"generate","exclude":["public.audit_log"]}}""",
+            $$$"""POST {{{job}}} application/json {"format":"ndjson","sourceBytes":4096,"sourceSha256":"{{{Sha}}}","options":{"exclude":["main.audit_log"],"collection":"users"}}""",
             $$$"""POST {{{job}}} application/json {"format":"sqlite","sourceBytes":1,"sourceSha256":"{{{Sha}}}"}""",
             $"PUT {job}/source?offset=4194304 application/octet-stream ab",
             $"GET {job}  ",
-            $$$"""PATCH {{{job}}} application/json {"options":{"missingPrimaryKey":"reject","exclude":["main.logs"]}}""",
+            $$$"""PATCH {{{job}}} application/json {"options":{"exclude":["main.logs"]}}""",
             $$$"""POST {{{job}}}/start application/json {"previewId":"01JA00000000000000000000P1"}""",
             $"POST {job}/cancel  ",
             $"POST {job}/resume  "));
@@ -191,7 +191,7 @@ public sealed class TerraBaseImportTests
 
     private static string Job(string state) => $$"""
         {"id":"01JA00000000000000000000J1","project":"{{Project}}","database":"{{Destination}}","region":"gru","state":"{{state}}",
-         "cancelRequested":false,"options":{"missingPrimaryKey":"reject","exclude":[]},
+         "cancelRequested":false,"options":{"exclude":[]},
          "source":{"format":"sqlite","bytes":4096,"sha256":"{{Sha}}","receivedBytes":4096,"staged":true,"retainedUntil":null},
          "preview":null,"confirmedPreviewId":null,"progress":null,"validation":null,"error":null,
          "createdAt":"2026-10-12T10:00:00Z","updatedAt":"2026-10-12T10:00:00Z","startedAt":null,"finishedAt":null}
