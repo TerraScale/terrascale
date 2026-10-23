@@ -172,6 +172,9 @@ export class V1Transport {
     this.#maxResponseBytes = maxResponseBytes;
   }
 
+  /** Internal credential lifetime metadata; never exposes the bearer value. */
+  get hasTokenProvider() { return typeof this.#token === "function"; }
+
   /** @param {AbortSignal | undefined} signal @returns {Promise<string>} */
   async #accessToken(signal) {
     signal?.throwIfAborted();

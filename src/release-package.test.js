@@ -37,6 +37,12 @@ test("packed SDK independently installs its project-scoped JavaScript and declar
     await writeFile(path.join(consumer, "caller.ts"), installedCaller);
     await npmRun(["exec", "--", "tsc", "--noEmit", "--strict", "--skipLibCheck", "--target", "ES2023", "--module", "NodeNext", "--moduleResolution", "NodeNext", "caller.ts"], consumer);
     await run(process.execPath, ["caller.ts"], { cwd: consumer });
+    await writeFile(path.join(consumer, "shape-identity.js"), `
+      import { createTerraBaseClient } from "@terrascale/sdk";
+      import { verifyShapeTokenIdentity } from ${JSON.stringify(new URL("../test/support/shape-token-identity.js", import.meta.url).href)};
+      await verifyShapeTokenIdentity(createTerraBaseClient, true);
+    `);
+    await run(process.execPath, ["shape-identity.js"], { cwd: consumer });
     await run(process.execPath, ["--conditions=browser", "--input-type=module", "--eval",
       "import assert from 'node:assert/strict'; for (const entry of ['local','better-auth','postgres']) await assert.rejects(import('@terrascale/sdk/' + entry), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });"], { cwd: consumer });
     const declarations = await readFile(path.join(root, "types/index.d.ts"), "utf8");
