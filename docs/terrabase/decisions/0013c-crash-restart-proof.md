@@ -1,7 +1,7 @@
 # 0013c: A copy written at an unclean exit serves on from its own log once proven
 
 - Status: proposed (RT2 lane G, finding F1, 2026-10-23; awaiting human review)
-- Scope: `src/TerraBase/Engine/Sqlite` (`RebuildLedger.RecoverAsync`, `PageCache`). Narrows the write-intent rule that
+- Scope: `src/TerraBase/Engine/Turso` (`RebuildLedger.RecoverAsync`, `PageCache`). Narrows the write-intent rule that
   closes the open gap of [0013a](0013a-remote-durable-acknowledgement.md) section 1.3 ("rebuilt or proven").
 
 ## Context
