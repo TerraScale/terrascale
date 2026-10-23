@@ -62,9 +62,6 @@ func OpenFeeds(ctx context.Context, targets replbench.Targets, n int) (stop func
 				}
 				req.Header.Set("Authorization", "Bearer "+target.Token)
 				req.Header.Set("Accept", "text/event-stream")
-				if target.Pin {
-					req.Header.Set("fly-prefer-region", "gru")
-				}
 				resp, err := client.Do(req)
 				if err != nil {
 					fail(errors.New("feed request failed"))
@@ -97,8 +94,8 @@ func OpenFeeds(ctx context.Context, targets replbench.Targets, n int) (stop func
 					return
 				}
 				defer resp.Body.Close()
-				if target.Pin && resp.Header.Get("fly-region") != "gru" || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
-					fail(errors.New("feed answered from wrong region or with wrong content type"))
+				if !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+					fail(errors.New("feed answered with wrong content type"))
 					return
 				}
 				scanner := bufio.NewScanner(resp.Body)

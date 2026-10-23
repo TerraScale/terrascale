@@ -261,6 +261,44 @@ func TestWireProxySuspendedClientKeepsItsGeneration(t *testing.T) {
 	}
 }
 
+func TestWireProxyClientResetDoesNotPoisonTheRun(t *testing.T) {
+	t.Parallel()
+	p, err := StartWireProxy(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { p.Close() })
+	disconnected := make(chan struct{})
+	peer := wireTestPeer(t, func(conn net.Conn) error {
+		defer close(disconnected)
+		payload := make([]byte, 32*1024)
+		for {
+			if _, err := conn.Write(payload); err != nil {
+				return nil
+			}
+		}
+	})
+	if err := p.Target("http://" + peer.Addr().String()); err != nil {
+		t.Fatal(err)
+	}
+	client := wireTestDial(t, p)
+	if _, err := client.Read(make([]byte, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetLinger(0); err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+	select {
+	case <-disconnected:
+	case <-time.After(3 * time.Second):
+		t.Fatal("reset did not disconnect the peer")
+	}
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func wireTestDial(t *testing.T, p *WireProxy) *net.TCPConn {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(p.URL(), "http://"), time.Second)

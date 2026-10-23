@@ -204,6 +204,9 @@ func (c *Cluster) Close() error {
 	c.closed = true
 	var errs []error
 	for _, w := range c.Nodes {
+		w.Proxy.cancel()
+	}
+	for _, w := range c.Nodes {
 		if err := w.Proxy.Close(); err != nil {
 			errs = append(errs, err)
 		}
@@ -213,7 +216,7 @@ func (c *Cluster) Close() error {
 			errs = append(errs, err)
 		}
 	}
-	if !c.Preserve {
+	if !c.Preserve && len(errs) == 0 {
 		if err := os.RemoveAll(c.Work); err != nil {
 			errs = append(errs, err)
 		}

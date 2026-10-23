@@ -172,7 +172,10 @@ func (p *WireProxy) forward(client net.Conn, target *string) {
 			}
 		}
 		if err != nil {
-			record(fmt.Errorf("peer stream: %w", err))
+			// Peer reconnects and HTTP/2 stream shutdown can close either socket during a copy.
+			if !errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET) && !errors.Is(err, net.ErrClosed) {
+				record(fmt.Errorf("peer stream: %w", err))
+			}
 			client.Close()
 			peer.Close()
 		}
