@@ -51,7 +51,7 @@ test.each(vectors("cursor_vectors").filter(row => row.id !== "opaque-r8-proof"))
 test("shape fixtures are source-bound and explicitly defer presigned-manifest", async () => {
   const source = JSON.parse(readFileSync(new URL("./fixtures/shape-vectors.source.json", import.meta.url), "utf8"));
   expect(shapeVectorDigest()).toBe(source.sha256);
-  expect(source.commit).toBe("993927ce7ecf8f9b889d24d4d1d21ec96eaf9416");
+  expect(source.commit).toBe("0d2582d1d6cc73972b49f6b6089b6f9ed0848da9");
   expect(skippedShapeVectorIds).toEqual(new Set(["presigned-manifest"]));
   expect(vectors("http_vectors").some(x => x.id === "presigned-manifest")).toBe(false);
   expect((await shapeProtocolContract()).status).toContain("proposed");
