@@ -1120,7 +1120,7 @@ internal sealed partial class TursoStorageTransaction(
             Command(TursoStatements.DropStates, name).ExecuteNonQuery();
 
             cancellationToken.ThrowIfCancellationRequested();
-            if (Command(TursoStatements.DropCollection, name).ExecuteNonQuery() == 0)
+            if (DropCollectionRow(name) == 0)
             {
                 return false;
             }
@@ -1204,7 +1204,7 @@ internal sealed partial class TursoStorageTransaction(
         else
         {
             DropTable(name);
-            Command(TursoStatements.DropCollection, name).ExecuteNonQuery();
+            DropCollectionRow(name);
             DropUniqueCollection(name, local: false);
         }
 
@@ -1500,6 +1500,8 @@ internal sealed partial class TursoStorageTransaction(
         (long ChangeBytes, int Captured, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged) saved)
     {
         _pending.Clear();
+        // A collection the rolled-back write created is gone again.
+        _tables = null;
         (_changeBytes, _captured, _writes, _writtenBytes, _offset, ChangedReaderState) =
             (saved.ChangeBytes, saved.Captured, saved.Writes, saved.WrittenBytes, saved.Offset, saved.CollectionsChanged);
         _savepoint = null;

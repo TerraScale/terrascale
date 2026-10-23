@@ -46,6 +46,10 @@ internal sealed partial class TursoStorageTransaction
         return names;
     }
 
+    // Collections a write transaction found: only it can drop one (it holds the writer), so a found collection stays until
+    // this transaction drops a collection or rolls back to a savepoint, which forget them all.
+    private HashSet<string>? _tables;
+
     // Worker-only: whether a client collection's table exists. Metadata tables always do, and so does the system
     // database's one documents table.
     private bool HasTable(string collection, string? path = null)
@@ -54,11 +58,29 @@ internal sealed partial class TursoStorageTransaction
         {
             return true;
         }
+        if (_tables?.Contains(collection) == true)
+        {
+            return true;
+        }
         if (path is not null)
         {
             CountRead(path);
         }
-        return Command(TursoStatements.GetCollection, collection).ExecuteScalar() is not null;
+        var exists = Command(TursoStatements.GetCollection, collection).ExecuteScalar() is not null;
+        if (exists && write)
+        {
+            _tables ??= [with(StringComparer.Ordinal)];
+            _ = _tables.Add(collection);
+        }
+
+        return exists;
+    }
+
+    // Worker-only: deletes a client collection's row; every collection found so far is looked up again.
+    private int DropCollectionRow(string collection)
+    {
+        _tables = null;
+        return Command(TursoStatements.DropCollection, collection).ExecuteNonQuery();
     }
 
     // Worker-only: a statement over one collection's table ({0} in sql), prepared once per transaction. The system
