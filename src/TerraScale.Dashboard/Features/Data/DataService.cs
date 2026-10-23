@@ -135,12 +135,17 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         return (database.Name, documents.ExportAsync(DatabaseService.Scope(context), home, database.Name, cancellationToken));
     }
 
-    public async Task<DatabaseSqlResult> SqlAsync(AccountContext context, string databaseId, string statement, CancellationToken cancellationToken)
+    // One statement through TerraBase's relational SQL API, as its own transaction. Reads need read access; writes and DDL
+    // need the same write access as document writes, and callers that promise read-only (MCP) refuse them outright.
+    public async Task<DatabaseSqlResult> SqlAsync(AccountContext context, string databaseId, string statement, bool allowWrites, CancellationToken cancellationToken)
     {
         var database = DatabaseService.Database(context, databaseId);
         statement = statement.Trim();
         if (SqlValidation.Diagnostics(statement).FirstOrDefault(item => item.Severity == "error") is { } problem) throw new AccountAccessException(problem.Message, 422);
-        return await backend.SqlAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, cancellationToken), database.Id, statement, cancellationToken);
+        var write = !SqlValidation.IsRead(statement);
+        if (write && !allowWrites) throw new AccountAccessException("Only read-only statements (SELECT, WITH, EXPLAIN, VALUES) run here.", 422);
+        if (write && !context.CanWrite) throw new AccountAccessException("Write access is required to change data or schema. Your role can run read-only statements.");
+        return await backend.SqlAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, cancellationToken), database.Id, statement, write, cancellationToken);
     }
 
     public async Task<SqlCatalog> CatalogAsync(AccountContext context, string databaseId, IReadOnlyList<TerraBaseCollection> collections, CancellationToken cancellationToken)

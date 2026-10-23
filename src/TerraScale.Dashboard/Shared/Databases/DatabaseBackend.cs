@@ -1,5 +1,8 @@
 using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.DotNet;
@@ -32,7 +35,9 @@ public sealed record DatabaseRegion(string Code, string Id, string Name, string 
 public sealed record ManagedDatabase(string Id, string ProjectId, string Name, DateTimeOffset CreatedAt, string? BranchedFrom = null, string HomeRegion = "", IReadOnlyList<string>? ReplicaRegions = null, bool AllRegions = false);
 public sealed record CollectionStats(string Name, long Documents, long Bytes);
 public sealed record DatabaseSqlRow(string Id, JsonElement Value);
-public sealed record DatabaseSqlResult(int Matched, bool Truncated, IReadOnlyList<DatabaseSqlRow> Rows);
+public sealed record DatabaseSqlColumn(string Name, string? Decltype);
+// One relational statement's result from TerraBase POST .../sql/execute: columns, rows (one value per column), and write counts.
+public sealed record DatabaseSqlResult(IReadOnlyList<DatabaseSqlColumn> Columns, IReadOnlyList<IReadOnlyList<JsonElement>> Rows, long RowsAffected, long? LastInsertRowId);
 public sealed record DatabaseIndex(string Name, string Collection, IReadOnlyList<string> Fields, string State);
 public sealed record ProjectCredential(string Id, string ProjectId, string Name, IReadOnlyList<string> Scopes, string? DatabaseId, string LastFour, DateTimeOffset CreatedAt)
 {
@@ -54,7 +59,7 @@ public interface IDatabaseBackend
     Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
     Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken);
     Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
-    Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, CancellationToken cancellationToken);
+    Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken);
     Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
     Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string collection, IReadOnlyList<string> fields, CancellationToken cancellationToken);
     Task DropIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken);
@@ -171,11 +176,39 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
             .Select(item => new CollectionStats(item.Name, item.Documents, item.Bytes)).ToArray();
     }
 
-    public async Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, CancellationToken cancellationToken)
+    // ts-dotnet 0.0.4 has no wrapper for TerraBase's relational SQL route yet (Ku TS-907), so this posts one statement to
+    // POST /v1/projects/{project}/databases/{name}/sql/execute with the same current-user, action-scoped token as the SDK calls.
+    // Reads ask for documents:read only; writes and DDL also ask for documents:write. TerraBase's own error message is kept.
+    public async Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken)
     {
-        var database = await DatabaseAsync(scope, home, databaseId, "databases:read", cancellationToken);
-        var result = await RunAsync(() => database.RunSqlAsync(statement, cancellationToken));
-        return new(result.Matched, result.Truncated, result.Rows.Select(row => new DatabaseSqlRow(row.Id, row.Value)).ToArray());
+        if (PlatformDatabases.IsPlatform(scope.OrganizationId)) throw PlatformDatabases.ReadOnly();
+        var name = await NameAsync(scope, home, databaseId, cancellationToken);
+        var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
+        var token = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, write ? ["documents:read", "documents:write"] : ["documents:read"], cancellationToken);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(60));
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(home.Api, "/v1/projects/" + Uri.EscapeDataString(scope.ProjectId) + "/databases/" + Uri.EscapeDataString(name) + "/sql/execute"))
+        { Content = JsonContent.Create(new SqlExecuteRequest([new(statement)]), DatabaseSqlJson.Default.SqlExecuteRequest) };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Accept.ParseAdd("application/json");
+        request.Headers.Add("X-TerraScale-Region-Pin", home.Id);
+        using var response = await factory.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        if (response.StatusCode == HttpStatusCode.MisdirectedRequest) throw DatabaseWrongRegionException.From(response);
+        SqlExecuteResponse? body = null;
+        try
+        {
+            await response.Content.LoadIntoBufferAsync(8 * 1024 * 1024, timeout.Token);
+            body = await response.Content.ReadFromJsonAsync(DatabaseSqlJson.Default.SqlExecuteResponse, timeout.Token);
+        }
+        catch (JsonException) when (!response.IsSuccessStatusCode) { }
+        catch (JsonException error) { throw new HttpRequestException("TerraBase returned an invalid SQL result.", error); }
+        if (!response.IsSuccessStatusCode)
+            throw (int)response.StatusCode is 400 or 403 or 409 or 413 && body?.Error is { Message.Length: > 0 } refused
+                ? new DatabaseSqlException(response.StatusCode, refused.Code == "forbidden_scope" ? "Write access is required to change data or schema." : refused.Message)
+                : new DatabaseProviderException(response.StatusCode);
+        if (body?.Results is not [{ } result] || result.Rows.Any(row => row.Count != result.Columns.Count))
+            throw new HttpRequestException("TerraBase returned an invalid SQL result.");
+        return new(result.Columns.Select(column => new DatabaseSqlColumn(column.Name, column.Decltype)).ToArray(), result.Rows, result.RowsAffected, result.LastInsertRowid);
     }
 
     public async Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
@@ -232,6 +265,21 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
 
 
 }
+
+// TerraBase refused a SQL statement; its message names the rule that failed and never quotes the statement.
+public sealed class DatabaseSqlException(HttpStatusCode status, string message) : DatabaseProviderException(status, message);
+
+internal sealed record SqlExecuteRequest(IReadOnlyList<SqlExecuteStatement> Statements);
+internal sealed record SqlExecuteStatement(string Sql);
+internal sealed record SqlExecuteResponse(IReadOnlyList<SqlExecuteResult>? Results, SqlExecuteError? Error);
+internal sealed record SqlExecuteResult(IReadOnlyList<DatabaseSqlColumn> Columns, IReadOnlyList<IReadOnlyList<JsonElement>> Rows,
+    [property: JsonPropertyName("rows_affected")] long RowsAffected, [property: JsonPropertyName("last_insert_rowid")] long? LastInsertRowid);
+internal sealed record SqlExecuteError(string Code, string Message);
+
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+[JsonSerializable(typeof(SqlExecuteRequest))]
+[JsonSerializable(typeof(SqlExecuteResponse))]
+internal sealed partial class DatabaseSqlJson : JsonSerializerContext;
 
 public class DatabaseProviderException(HttpStatusCode status, string message = "The database service could not complete the request.") : HttpRequestException(message, null, status);
 

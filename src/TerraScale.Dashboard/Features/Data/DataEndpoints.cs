@@ -147,8 +147,9 @@ public static class DataEndpoints
                         if (problem is not null) throw new AccountAccessException(problem.Message, 422);
                         if (action == "sql")
                         {
-                            var result = await data.SqlAsync(context, id, form["sql"].ToString(), http.RequestAborted);
-                            return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, id, "sql", data, saved, collection, sql: form["sql"].ToString(), sqlResult: result) : Results.Json(new { rows = result.Rows });
+                            var result = await data.SqlAsync(context, id, form["sql"].ToString(), true, http.RequestAborted);
+                            return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, id, "sql", data, saved, collection, sql: form["sql"].ToString(), sqlResult: result)
+                                : Results.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
                         }
                         var query = await saved.SaveAsync(context, id, form["name"].ToString(), form["sql"].ToString(), http.RequestAborted);
                         return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql", collection) + (collection.Length == 0 ? "?" : "&") + "savedQueryId=" + Uri.EscapeDataString(query.Id)) : Results.Json(PublicSavedQuery(query), statusCode: 201);

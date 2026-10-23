@@ -708,7 +708,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             {
                 [_, _, _, _, _, "changes"] => "documents:read",
                 [_, _, _, _] or [_, _, _, _, _] when method == "GET" => "databases:read",
-                [_, _, _, _, _, "sql" or "schema"] => "databases:read",
+                [_, _, _, _, _, "sql", "execute"] => "documents:read",
+                [_, _, _, _, _, "schema"] => "databases:read",
                 [_, _, _, _, _, "schema", _] when method == "GET" => "databases:read",
                 [_, _, _, _, _, "indexes"] when method == "GET" => "databases:read",
                 _ => "databases:write"
@@ -835,17 +836,35 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                             }).ToArray();
                         return Results.Json(new { collection = parts[6], documents = inferredRows.Count, sampledDocuments = sampled.Length, fields = inferredFields, uniqueConstraints = Array.Empty<object>() });
                     }
-                case (6, "POST", "sql"):
-                    var sql = (await JsonAsync(http)).GetProperty("sql").GetString()!;
+                case (7, "POST", "sql") when parts[6] == "execute":
+                    // TerraBase's relational SQL API, reduced to SELECT * over a document collection and acknowledged writes.
+                    var statements = (await JsonAsync(http)).GetProperty("statements");
+                    Require(statements.GetArrayLength() == 1, "The dashboard runs one statement per request");
+                    var sql = statements[0].GetProperty("sql").GetString()!;
                     var match = System.Text.RegularExpressions.Regex.Match(sql, @"^\s*SELECT\s+\*\s+FROM\s+([A-Za-z0-9_-]+)(?:\s+LIMIT\s+(\d+))?\s*;?\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                    if (!match.Success) return Error(400, "invalid_query");
+                    if (!match.Success)
+                    {
+                        if (!System.Text.RegularExpressions.Regex.IsMatch(sql, @"^\s*(INSERT|UPDATE|DELETE|CREATE|DROP)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                            return SqlError(400, "sql_error", "SQL syntax error at line 1, column 1", "SQLITE_ERROR");
+                        if (Authorize(http, project, "documents:write") is not null) return SqlError(403, "forbidden_scope", "not authorized", "SQLITE_AUTH");
+                        return Results.Json(new { results = new[] { new { columns = Array.Empty<object>(), rows = Array.Empty<object>(), rows_affected = 1, last_insert_rowid = (long?)null } } });
+                    }
                     var take = match.Groups[2].Success ? int.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) : 100;
                     lock (gate)
                     {
-                        if (!collections.TryGetValue(project + "/" + current.Name + "/" + match.Groups[1].Value, out var rows)) return Error(404, "not_found");
-                        var selected = rows.Values.OrderBy(value => value.Id, StringComparer.Ordinal).ToArray();
-                        var page = selected.Take(take).Select(value => new { id = value.Id, value = value.Document }).ToArray();
-                        return Results.Json(new { matched = page.Length, truncated = page.Length < selected.Length, rows = page });
+                        if (!collections.TryGetValue(project + "/" + current.Name + "/" + match.Groups[1].Value, out var rows))
+                            return SqlError(400, "sql_error", "no such table: " + match.Groups[1].Value, "SQLITE_ERROR");
+                        var selected = rows.Values.OrderBy(value => value.Id, StringComparer.Ordinal).Take(take).ToArray();
+                        var names = selected.SelectMany(value => value.Document.EnumerateObject().Select(field => field.Name)).Where(name => name != "id").Distinct().ToArray();
+                        return Results.Json(new
+                        {
+                            results = new[] { new
+                            {
+                                columns = new[] { new { name = "id", decltype = (string?)"TEXT" } }.Concat(names.Select(name => new { name, decltype = (string?)null })).ToArray(),
+                                rows = selected.Select(value => new object?[] { value.Id }.Concat(names.Select(name => value.Document.TryGetProperty(name, out var cell) ? (object?)cell : null)).ToArray()).ToArray(),
+                                rows_affected = 0, last_insert_rowid = (long?)null
+                            } }
+                        });
                     }
                 case (6, "GET", "indexes"):
                     var only = http.Request.Query["collection"].ToString();
@@ -1090,6 +1109,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             http.Response.Headers["X-TerraBase-Database-Regions"] = string.Join(',', (database.ReplicaRegions ?? []).Prepend(database.HomeRegion));
             return Results.Json(new { error = new { code = "wrong_region", message = "the database is served in " + database.HomeRegion } }, statusCode: 421);
         }
+        private static IResult SqlError(int status, string code, string message, string sqliteCode) =>
+            Results.Json(new { error = new { code, message, statement = 0, sqlite_code = sqliteCode } }, statusCode: status);
         private static IResult Error(int status, string code) => Results.Json(new { error = new { code, message = "Protocol producer rejected the request" } }, statusCode: status);
         private static async Task<JsonElement> JsonAsync(HttpContext http) { using var json = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted); return json.RootElement.Clone(); }
         private static JsonNode? Merge(JsonNode? current, JsonNode? patch)

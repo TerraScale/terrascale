@@ -669,7 +669,7 @@ sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
     }
     public Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken) { var changed = databases[databaseId] with { ReplicaRegions = allRegions ? [] : placement.Skip(1).Select(item => item.Id).ToArray(), AllRegions = allRegions }; databases[databaseId] = changed; return Task.FromResult(changed); }
     public Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken) => Task.FromResult(documents.Statistics(scope, Database(scope, databaseId).Name));
-    public Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, CancellationToken cancellationToken) => Task.FromResult(documents.Query(scope, databases[databaseId].Name, statement));
+    public Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, bool write, CancellationToken cancellationToken) => Task.FromResult(documents.Query(scope, databases[databaseId].Name, statement));
     public Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
     { Database(scope, databaseId); return Task.FromResult<IReadOnlyList<DatabaseIndex>>(indexes.Where(item => item.Key.StartsWith(databaseId + "/", StringComparison.Ordinal)).Select(item => item.Value).OrderBy(item => item.Name, StringComparer.Ordinal).ToArray()); }
     public Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string collection, IReadOnlyList<string> fields, CancellationToken cancellationToken)
@@ -808,7 +808,15 @@ sealed partial class TestDocuments : IDocumentBackend
     {
         var match = Regex.Match(statement, "^SELECT \\* FROM ([a-z][a-z0-9_-]*) LIMIT ([0-9]+)$", RegexOptions.IgnoreCase);
         if (!match.Success) throw ProviderError(typeof(TerraBaseValidationException), HttpStatusCode.BadRequest, "Demo SQL fixture supports SELECT * FROM collection LIMIT n.");
-        lock (collections) { var rows = collections.GetValueOrDefault(Key(scope, databaseName, match.Groups[1].Value))?.Values.OrderBy(item => item.Id).Select(item => new DatabaseSqlRow(item.Id, item.Document.Clone())).ToArray() ?? []; var limit = int.Parse(match.Groups[2].Value); return new(rows.Length, rows.Length > limit, rows.Take(limit).ToArray()); }
+        lock (collections)
+        {
+            // Rows of a document collection, as TerraBase's relational API returns them: an id column, then top-level fields.
+            var documents = collections.GetValueOrDefault(Key(scope, databaseName, match.Groups[1].Value))?.Values.OrderBy(item => item.Id).Take(int.Parse(match.Groups[2].Value)).ToArray() ?? [];
+            var names = documents.SelectMany(item => item.Document.ValueKind == JsonValueKind.Object ? item.Document.EnumerateObject().Select(field => field.Name) : []).Where(name => name != "id").Distinct().ToArray();
+            var missing = JsonSerializer.SerializeToElement<string?>(null);
+            var rows = documents.Select(item => (IReadOnlyList<JsonElement>)[JsonSerializer.SerializeToElement(item.Id), .. names.Select(name => item.Document.ValueKind == JsonValueKind.Object && item.Document.TryGetProperty(name, out var value) ? value.Clone() : missing)]).ToArray();
+            return new([new("id", "TEXT"), .. names.Select(name => new DatabaseSqlColumn(name, null))], rows, 0, null);
+        }
     }
     private static JsonNode? Merge(JsonNode? target, JsonNode? patch)
     {
