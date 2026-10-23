@@ -13,6 +13,8 @@ for rid in linux-x64 linux-arm64; do
   test "$(od -An -tx1 -N6 "$library" | tr -d ' \n')" = 7f454c460201
   test "$(od -An -tx1 -j18 -N2 "$library" | tr -d ' \n')" = "$machine"
   grep -qx "host=$host" "$input/release/$rid-build-receipt.txt"
+  grep -qx 'aegis_backend=runtime-dispatched-c' "$input/release/$rid-build-receipt.txt"
+  grep -qx "crypto proof: $rid hardware instructions, runtime dispatch and portable fallback present; HAS_HW_AES undefined" "$input/release/$rid-aegis-proof.txt"
   grep -qx 'native smoke: candidate query/cursor/sort/preflight/count use indexed text id seeks; ULIDs, missing hits and empty counts passed' "$input/release/$rid-fts-smoke.txt"
   grep -qx 'native smoke: three-term carrying-slop reader/count/ordered queries refuse scratch; small admitted slop succeeds' "$input/release/$rid-fts-smoke.txt"
   grep -q '^contract1 smoke: marker=1, aegis256 persisted FTS, SQL spoof constraint and page tamper TURSO_CORRUPT passed$' "$input/release/$rid-contract1-smoke.txt"
@@ -23,7 +25,7 @@ for rid in linux-x64 linux-arm64; do
   cp "$library" "$output/terrascale-turso-$rid.so"
 done
 {
-  printf 'release=turso-native-v0.8.2-fts-contract1-20261023\n'
+  printf 'release=turso-native-v0.8.2-fts-contract1-runtime-aegis-20261023\n'
   printf 'repository_commit=%s\n' "$(git rev-parse HEAD)"
   printf 'workflow_run=%s\n' "${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-TerraScale/terrascale}/actions/runs/${GITHUB_RUN_ID:-not-a-CI-run}"
   printf 'Source, patches, Cargo.lock, recipe, compiler, ABI exports, ELF dependencies and successful smoke logs accompany each architecture.\n'

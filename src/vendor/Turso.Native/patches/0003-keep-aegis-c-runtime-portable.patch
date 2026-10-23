@@ -1,0 +1,39 @@
+--- a/build.rs
++++ b/build.rs
+@@ -1,5 +1,5 @@
+ use std::env;
+-use std::process::Command;
++use std::process::{Command, Stdio};
+ 
+ fn has_clang() -> bool {
+     Command::new("clang")
+@@ -35,10 +35,6 @@
+         .opt_level(3)
+         .flag_if_supported("-Wno-unused-command-line-argument")
+         .flag_if_supported("-Wno-unknown-pragmas")
+-        .flag_if_supported("-mtune=native")
+-        .flag_if_supported("-mcrypto")
+-        .flag_if_supported("-mneon")
+-        .flag_if_supported("-maes")
+         .include("src/c/libaegis/src/include")
+         .file("src/c/libaegis/src/aegis128l/aegis128l.c")
+         .file("src/c/libaegis/src/aegis128l/aegis128l_aesni.c")
+@@ -92,5 +88,18 @@
+             .file("src/c/libaegis/src/raf/raf_aegis256x2.c")
+             .file("src/c/libaegis/src/raf/raf_aegis256x4.c");
+     }
++    // Keep runtime dispatch and its software fallback; hardware files use local target pragmas.
++    let compiler = build.get_compiler();
++    println!("cargo:warning=terrascale-aegis compiler={:?}", compiler.to_command());
++    let macros = compiler.to_command()
++        .args(["-dM", "-E", "-x", "c", "-include", "src/c/libaegis/src/common/cpu.h", "-"])
++        .stdin(Stdio::null())
++        .output()
++        .expect("AEGIS compiler macro audit");
++    assert!(macros.status.success(), "AEGIS compiler macro audit failed");
++    let macros = String::from_utf8(macros.stdout).expect("AEGIS compiler macro output");
++    assert!(!macros.lines().any(|line| line.starts_with("#define HAS_HW_AES")),
++        "global hardware AES flags remove the portable fallback");
++    println!("cargo:warning=terrascale-aegis HAS_HW_AES=undefined; runtime dispatch and portable fallback retained");
+     build.compile("aegis");
+ }

@@ -5,13 +5,17 @@ This delivery path supersedes the build/delivery instructions in
 image jobs download and verify the pinned release; they never compile Rust.
 The required `native` job still gates `test`. Native maintenance is an explicit
 `workflow_dispatch` operation on the existing `.github/workflows/ci.yml`.
-Maintenance runs build once per architecture and prepare an artifact for parent
-publication; they do not qualify Fast, publish images or upload a release.
+One maintenance dispatch runs two independent clean builds per real architecture
+and compares their library bytes before preparing an artifact for parent publication; they do not qualify Fast, publish images or upload a release.
 
 Release: [`turso-native-v0.8.2-fts-contract1-20261023`](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-20261023).
 `SHA256SUMS` pins both qualified libraries; downloads and managed builds reject
 missing or mismatched bytes. Never replace or append assets to encryption-only
 `turso-native-v1` or overwrite the combined release.
+
+Corrected candidate: `turso-native-v0.8.2-fts-contract1-runtime-aegis-20261023`.
+It is not published yet; the downloader and SHA pins above still select the
+historical pure-Rust/softaes library until corrected-byte qualification completes.
 
 ## Pinned inputs and native behavior
 
@@ -26,9 +30,26 @@ missing or mismatched bytes. Never replace or append assets to encryption-only
   `eadb14ec88ac351c938908443bcb89da324411e4eb8f8d068b3cc755fc0808ae`,
   followed by the reviewed `scripts/vendor/turso-native-budget.patch`.
   The build checks the contract patch hash before applying it.
+- `0002-select-runtime-aegis-c-backend.patch` changes sync/sdk-kit's SDK dependency
+  to an explicit path with `default-features = false` and `features = ["encryption",
+  "fts"]`. A top-level `--no-default-features` alone cannot disable the inherited
+  SDK default. The unified graph must not contain `pure-rust-crypto` or AEGIS
+  `pure-rust`; unused target dependencies can still include the softaes crate.
+- Locked AEGIS 0.9.8 archive SHA-256:
+  `78412fa53e6da95324e8902c3641b3ff32ab45258582ea997eb9169c68ffa219`.
+  `0003-keep-aegis-c-runtime-portable.patch` removes global `-maes`, `-mcrypto`,
+  `-mneon`, and host-specific tuning from its build script. Original build.rs SHA
+  `6d8f7dfa155082559521a4ee9fa7190e8ea5853201969ce7cbc2c6a503d4f37a` is checked
+  before patching the downloaded, checksum-verified crate. Crypto code is unchanged.
+  The archive, patch and resulting build script accompany the release. Hardware
+  functions retain upstream's local target pragmas; generic code retains fallback.
+  The actual C compiler command and preprocessor audit must show `HAS_HW_AES`
+  undefined. Linked symbols must retain the software and CPU-dispatched hardware
+  implementations, and disassembly must contain AES-NI or ARMv8 AES instructions.
+  This is build/dispatch evidence, not execution proof on a CPU without AES.
 - Build `cargo +1.88.0 build --locked --package turso_sync_sdk_kit --features
-  turso_sdk_kit/fts --profile lib-release`. Keep defaults, including encryption
-  and pure-rust crypto. The sync library supplies core and sync C exports and is
+  turso_sdk_kit/fts --profile lib-release`. The patched dependency preserves
+  encryption and FTS while selecting the runtime-dispatched C backend. The sync library supplies core and sync C exports and is
   packaged as `libturso_sdk_kit.so`.
 - `index_method` must be enabled in each database's experimental feature list for
   FTS; `encryption` plus cipher `aegis256` and a key are required for encrypted
@@ -50,7 +71,7 @@ a SQL trigger spoof remaining a constraint, and real ciphertext tamper producing
 native corruption. Native admission bounds opaque scoring allocations; it does
 not promise a hard deadline inside third-party work.
 
-## Qualification evidence
+## Historical qualification evidence (pure-Rust release)
 
 [Run 39969762871](https://github.com/TerraScale/terrascale/actions/runs/39969762871)
 and independent [run 39997989468](https://github.com/TerraScale/terrascale/actions/runs/39997989468)
@@ -84,7 +105,8 @@ tag and reviewed pins; the published tag above is immutable.
    gh workflow run ci.yml --repo TerraScale/terrascale --ref feat/full-text-search -F native_artifacts=true
    ```
 
-   `native-build` uses `ubuntu-24.04` and **real** `ubuntu-24.04-arm`. The helper
+   `native-build` uses two separate `ubuntu-24.04` jobs and two **real**
+   `ubuntu-24.04-arm` jobs. Each invokes one uncached build; there is no retry loop. The helper
    rejects a host/target mismatch; no qemu/cross-architecture publication is
    accepted. Each build checks ELF64 little-endian and e_machine x64 `3e00` /
    arm64 `b700`, rejects RPATH/RUNPATH and absolute dynamic dependencies, and runs
@@ -100,16 +122,16 @@ tag and reviewed pins; the published tag above is immutable.
    ```
 
    Review both receipts, ABI exports, dynamic dependencies and smoke logs.
-   Assets include the verified source archive, Cargo.lock, both exact patches,
+   Assets include the verified source archives, Cargo.lock, all exact patches,
    build recipe/helper, C smoke sources, upstream LICENSE/NOTICE and per-arch
    dependency-license archives with package manifests/checksum receipts. All
    release files are covered by `SHA256SUMS`; `NATIVE-SHA256SUMS` contains just the
    two published library names and real hashes.
 
-3. Prove byte-identical library SHA-256 values from a second independently
-   authorized maintenance run using the **same native inputs**. There is no loop
-   or automatic second build in CI. Keep both run URLs and receipts with the
-   publication evidence; ordinary downstream PRs always reuse the release.
+3. Require the dispatch’s two independent builds per architecture to produce
+   byte-identical libraries. Assembly verifies all four manifests and compares
+   each library pair before preparing assets. Keep the run URL and all four
+   job receipts with the publication evidence; ordinary downstream PRs always reuse the release.
 
    Before release publication, copy `NATIVE-SHA256SUMS` to the checked-in pin
    file and install the two candidate libraries under
@@ -123,9 +145,9 @@ tag and reviewed pins; the published tag above is immutable.
    assets and reviewed evidence as release notes:
 
    ```sh
-   gh release create turso-native-v0.8.2-fts-contract1-20261023 \
+   gh release create turso-native-v0.8.2-fts-contract1-runtime-aegis-20261023 \
      --repo TerraScale/terrascale --target "$PIPELINE_SHA" \
-     --title 'Turso 0.8.2 FTS + storage contract 1' \
+     --title 'Turso 0.8.2 FTS + contract1 + runtime AEGIS' \
      --notes-file artifacts/fts-contract1-release-notes.md artifacts/fts-contract1-release/*
    ```
 
