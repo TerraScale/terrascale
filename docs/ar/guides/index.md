@@ -28,6 +28,7 @@ Use the [quickstart](/ar/getting-started/) to establish one working application 
 - [Branches](/ar/guides/branches): copy a database into a new branch database.
 - [Dashboard usage](/ar/guides/dashboard): customer account and database workflow.
 - [Import an existing database](/ar/guides/import) (pending): one-time import of a PostgreSQL or Turso export with dry-run preview and validation.
+- [Import from MongoDB or Firestore](/ar/guides/import-ndjson): mongoexport or a Firestore script into one NDJSON file, then the same import.
 
 The [zero-configuration contract](/ar/guides/zero-configuration) explains the platform's intended operating behavior without disclosing deployment internals.
 

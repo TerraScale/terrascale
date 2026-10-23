@@ -1,6 +1,6 @@
 ---
 title: Import an existing database
-description: One-time import of a PostgreSQL or Turso export into a new, empty TerraBase database, with full dry-run preview and validation.
+description: One-time import of a PostgreSQL, Turso or NDJSON (MongoDB, Firestore) export into a new, empty TerraBase database, with full dry-run preview and validation.
 ---
 
 <!-- i18n:fallback:ru -->
@@ -10,7 +10,7 @@ description: One-time import of a PostgreSQL or Turso export into a new, empty T
 
 # Import an existing database
 
-Export a PostgreSQL or Turso database with your own tools, upload the file into a new, empty TerraBase database, review a dry-run preview of every row and start the copy.
+Export a PostgreSQL, Turso, MongoDB or Firestore database with your own tools, upload the file into a new, empty TerraBase database, review a dry-run preview of every row and start the copy.
 
 In the dashboard, open **Databases** and select **Import**. The page uploads your file, shows the preview and starts the copy. The steps below do the same over the HTTP API. Rehearse with synthetic data before you import production data.
 
@@ -18,6 +18,7 @@ Prepare your export with its guide:
 
 - [Export from PostgreSQL](/ru/guides/import-postgresql)
 - [Export from Turso](/ru/guides/import-turso)
+- [Import from MongoDB or Firestore (NDJSON)](/ru/guides/import-ndjson)
 
 ## What an import is
 
@@ -30,7 +31,7 @@ Prepare your export with its guide:
 ## Before you start
 
 - A project access token for this project with `databases:write`, `documents:write` and `databases:read`. A request without one, including a legacy API key, answers `401`. A token for another project or narrowed to another database answers `404`. See [authentication](/ru/guides/authentication).
-- An export file prepared with the [PostgreSQL](/ru/guides/import-postgresql) or [Turso](/ru/guides/import-turso) guide.
+- An export file prepared with the [PostgreSQL](/ru/guides/import-postgresql), [Turso](/ru/guides/import-turso) or [NDJSON](/ru/guides/import-ndjson) guide.
 - `bash` or `zsh`, `curl` 7.76 or newer, and `jq`.
 - Room in your plan. The destination counts as one of your plan's databases. Imported documents count toward your organization's storage quota and are metered as document writes; import calls, upload bytes included, are metered as requests. An import never bypasses a quota. See [pricing](/ru/pricing/).
 
@@ -72,7 +73,7 @@ Run these in one shell session from the directory that holds your export.
    echo "$DB"
    ```
 
-   Use `FORMAT=sqlite` for a Turso or SQLite file. `DB` is a fresh name for the new destination: a lowercase letter, then lowercase letters, digits, `_` or `-`, at most 63 characters. Note `DB` and, after step 2, `REGION`, and set both again if you continue in another shell. On macOS, replace `sha256sum` in the next step with `shasum -a 256`.
+   Use `FORMAT=sqlite` for a Turso or SQLite file, and `FORMAT=ndjson` for an [NDJSON](/ru/guides/import-ndjson) file. `DB` is a fresh name for the new destination: a lowercase letter, then lowercase letters, digits, `_` or `-`, at most 63 characters. Note `DB` and, after step 2, `REGION`, and set both again if you continue in another shell. On macOS, replace `sha256sum` in the next step with `shasum -a 256`.
 
 2. Create the destination database, then attach the import to it. Declaring the exact size and SHA-256 binds the import to this file.
 
@@ -163,6 +164,8 @@ A preview can cover at most 1000 tables and 1600 columns per table. A preview la
 Write a name bare when it uses only `a-z`, `0-9` and `_` and does not start with a digit. Otherwise double-quote it, doubling any `"` inside, as in SQL: `public."Order Items"."unit.price"`. PostgreSQL names match exactly; SQLite names match without regard to case.
 
 ## How data maps
+
+NDJSON files map line by line, as described in [NDJSON](/ru/guides/import-ndjson#how-lines-become-documents). For PostgreSQL and SQLite:
 
 - **Collection:** the table name, lowercased. Tables in `public` (PostgreSQL) or `main` (SQLite) drop the schema; others become `schema_table`. Characters outside `a-z`, `0-9`, `_` and `-` become `_`, a name that does not start with a letter gets a `t_` prefix, and names are cut to 63 characters. Two tables that map to one name, or a reserved name such as `collections`, block the import (`collection_name_collision`).
 - **Document ID:** a deterministic ULID for each row. Its time is the job's creation time, and its randomness is the SHA-256 of the job ID, table and row number, so every resume writes the same IDs. The primary key and `rowid` are not used. Primary key columns stay ordinary document fields.
