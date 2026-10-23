@@ -16,7 +16,8 @@
 <body data-signals="{_navPending: false, navOpen: false}" data-class:ts-nav-pending="$_navPending"
       data-on:click__window="$_navPending = $_navPending || !!(!evt.defaultPrevented &amp;&amp; evt.button === 0 &amp;&amp; !evt.metaKey &amp;&amp; !evt.ctrlKey &amp;&amp; !evt.shiftKey &amp;&amp; !evt.altKey &amp;&amp; evt.target.closest &amp;&amp; evt.target.closest('a[href]:not([target]):not([download])') &amp;&amp; evt.target.closest('a[href]').origin === location.origin &amp;&amp; (evt.target.closest('a[href]').pathname !== location.pathname || evt.target.closest('a[href]').search !== location.search))"
       data-on:submit__window="evt.target.hasAttribute('data-submit-once') &amp;&amp; $_navPending ? evt.preventDefault() : ($_navPending = $_navPending || (!evt.defaultPrevented &amp;&amp; evt.target.method !== 'dialog' &amp;&amp; !evt.target.target))"
-      data-on:pageshow__window="$_navPending = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_navPending = false)">
+      data-on:pageshow__window="$_navPending = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_navPending = false)"
+      data-page-url="@(HttpContext?.Request.Path.StartsWithSegments("/api") == true ? Model.ReturnUrl : null)" data-init="el.dataset.pageUrl &amp;&amp; history.replaceState(null, '', el.dataset.pageUrl)">
     <a class="ts-skip-link" href="#ts-main" data-attr:inert="$navOpen">Skip to main content</a>
     <div class="ts-shell" data-class:nav-open="$navOpen"
          data-on:keydown__window="evt.key === 'Escape' &amp;&amp; $navOpen &amp;&amp; !document.querySelector('dialog[open]') &amp;&amp; ($navOpen = false, setTimeout(() => document.getElementById('ts-nav-toggle').focus()))"

@@ -25,8 +25,13 @@ public sealed partial class StripeBilling
             {
                 if (string.IsNullOrEmpty(invoice.Id) || invoice.CustomerId != binding.CustomerId || !ids.Add(invoice.Id))
                     throw new IOException("Stripe invoice identity or pagination changed.");
+                // Subscription invoices carry the service period on their lines; the invoice's own
+                // period_start and period_end are the same instant for creation and proration invoices.
+                var lines = invoice.Lines?.Data?.Where(line => line.Period is { } period && period.End > period.Start).ToArray() ?? [];
+                var periodStart = lines.Length > 0 ? lines.Min(line => line.Period.Start) : invoice.PeriodStart;
+                var periodEnd = lines.Length > 0 ? lines.Max(line => line.Period.End) : invoice.PeriodEnd;
                 invoices.Add(new(invoice.Id, invoice.Number ?? "", invoice.Status ?? "", invoice.AmountDue, invoice.Currency ?? "",
-                    new(invoice.Created, TimeSpan.Zero), Timestamp(invoice.PeriodStart), Timestamp(invoice.PeriodEnd),
+                    new(invoice.Created, TimeSpan.Zero), Timestamp(periodStart), Timestamp(periodEnd),
                     InvoiceHistory.SafeUrl(invoice.HostedInvoiceUrl), InvoiceHistory.SafeUrl(invoice.InvoicePdf))
                 { RemainingCents = invoice.AmountRemaining });
             }
