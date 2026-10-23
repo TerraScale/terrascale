@@ -12,8 +12,24 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     // Keyed by statement text; the statements are constants, so this holds a handful of entries.
     private readonly Dictionary<string, SqliteCommand> _commands = [with(StringComparer.Ordinal)];
 
+    // Statements naming a collection's table, one per collection and statement: bounded by TrimTableCommands.
+    private readonly Dictionary<string, SqliteCommand> _tableCommands = [with(StringComparer.Ordinal)];
+
+    // The most table statements an idle session keeps; past it, the next trim drops them all.
+    private const int MaxTableCommands = 256;
+
+    // The schema version every kept statement last ran against; -1 when unknown, which drops them at the next transaction.
+    private long _schema = -1;
+
+    // The transaction CheckSchema last ran in; cleared between transactions.
+    private SqliteTransaction? _checked;
+
+    // The settings this connection runs with (Settings); null until set.
+    private bool? _queryOnly;
+    private bool? _full;
+
     private QueryObservation? _queryObservation;
-    private bool _scanRegistered;
+    private Func<long, bool>? _scanCharge;
     private Func<bool>? _stop;
 
     public SqliteConnection Connection => connection;
@@ -30,23 +46,35 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// <summary>The message of the error <see cref="ThrowIfStopped"/> aborts a statement with.</summary>
     internal const string StoppedMessage = "terrabase: statement stopped";
 
-    // Transactions serialize access to a session. Keep the function registered while pooled, but release the
-    // execution's observation on completion. Non-deterministic prevents SQLite from evaluating it once per query.
-    public void ObserveQueries(QueryObservation? observation)
-    {
-        if (observation is not null && !_scanRegistered)
-        {
-            // The row's id argument makes Turso call it per row: it evaluates a function without arguments once.
-            connection.CreateFunction<object?, bool>("tb_query_scan", _ =>
-            {
-                ThrowIfStopped();
-                _queryObservation?.AddRow();
-                return true;
-            }, isDeterministic: false);
-            _scanRegistered = true;
-        }
+    // Transactions serialize access to a session: a query sets what its per-row functions report to, and clears it after.
+    public void ObserveQueries(QueryObservation? observation) => _queryObservation = observation;
 
-        _queryObservation = observation;
+    /// <summary>Sets what <c>tb_qos_scan</c> charges each row's stored bytes to: true once the query's budget is spent.</summary>
+    public void ChargeScan(Func<long, bool>? exceeded) => _scanCharge = exceeded;
+
+    // Registered once, when the connection opens and before any statement is prepared: a prepared statement keeps the
+    // function it was prepared with, and Turso prepares every statement again after a registration.
+    private void RegisterFunctions()
+    {
+        // The row's id argument makes Turso call it per row: it evaluates a function without arguments once.
+        // Non-deterministic prevents SQLite from evaluating it once per query.
+        connection.CreateFunction<object?, bool>("tb_query_scan", _ =>
+        {
+            ThrowIfStopped();
+            _queryObservation?.AddRow();
+            return true;
+        }, isDeterministic: false);
+        // octet_length reads the stored byte size without decoding or copying the JSON body.
+        connection.CreateFunction<long, long>("tb_qos_scan", size =>
+        {
+            if (_scanCharge?.Invoke(size) == true)
+            {
+                throw new OperationCanceledException(StoppedMessage);
+            }
+
+            ThrowIfStopped();
+            return 1;
+        });
     }
 
     /// <summary>
@@ -90,8 +118,8 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         // process-wide heap limit, so these caches are the memory bound (docs/terrabase/memory.md).
         var pageCacheBytes = memoryBudget / 4;
         var cacheKib = Math.Max(2048, pageCacheBytes / threads / 1024);
-        // NORMAL is the pooled default between transactions and for writer work outside them (backup tap). Every write
-        // transaction switches to FULL for its commit, so its log is synced before it is answered (0003 as amended, 0012).
+        // NORMAL until the first transaction. Every write transaction runs with FULL, so its log is synced before it is
+        // answered (0003 as amended, 0012); the writer keeps FULL after it, also for its work outside transactions (backup tap).
         return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"""
             PRAGMA synchronous = NORMAL;
             PRAGMA cache_size = -{cacheKib};
@@ -121,7 +149,9 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
             {
                 using var command = connection.CreateCommand();
                 command.CommandText = pragmas;
-                return command.ExecuteNonQuery();
+                command.ExecuteNonQuery();
+                session.RegisterFunctions();
+                return true;
             }, cancellationToken).ConfigureAwait(false);
             return session;
         }
@@ -198,13 +228,105 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// Returns the prepared command for <paramref name="sql"/>, bound to <paramref name="transaction"/>
     /// and without parameters. The provider keeps a command's statements prepared while its text is unchanged.
     /// </summary>
-    public SqliteCommand Command(string sql, SqliteTransaction transaction)
+    public SqliteCommand Command(string sql, SqliteTransaction transaction) => Kept(_commands, sql, transaction);
+
+    /// <summary>
+    /// Outside any transaction, sets what the next transaction needs: read-only (<c>query_only</c>, so BEGIN DEFERRED cannot
+    /// upgrade to a write) and whether its commit syncs the log (<c>synchronous = FULL</c>, decision 0010). Only a change
+    /// runs: Turso makes every prepared statement prepare again after any such setting, so a change also drops the kept ones.
+    /// </summary>
+    public void Settings(bool queryOnly, bool full)
     {
-        if (!_commands.TryGetValue(sql, out var command))
+        if (_queryOnly == queryOnly && _full == full)
+        {
+            return;
+        }
+
+        Drop(_commands);
+        Drop(_tableCommands);
+        _queryOnly = null;
+        _full = null;
+        using var command = connection.CreateCommand();
+        command.CommandText = (queryOnly ? "PRAGMA query_only = 1;" : "PRAGMA query_only = 0;")
+            + (full ? "PRAGMA synchronous = FULL;" : "PRAGMA synchronous = NORMAL;");
+        command.ExecuteNonQuery();
+        _queryOnly = queryOnly;
+        _full = full;
+    }
+
+    /// <summary><see cref="Command"/> for a statement naming one collection's table.</summary>
+    public SqliteCommand TableCommand(string sql, SqliteTransaction transaction) => Kept(_tableCommands, sql, transaction);
+
+    /// <summary>
+    /// Between transactions: releases the table statements' parameters, so an idle session retains no bound JSON (a reset
+    /// statement holds no bindings), and drops the statements once a session holds more than it should keep.
+    /// </summary>
+    public void TrimTableCommands()
+    {
+        _checked = null;
+        if (_tableCommands.Count > MaxTableCommands)
+        {
+            Drop(_tableCommands);
+            return;
+        }
+
+        foreach (var command in _tableCommands.Values)
+        {
+            command.Parameters.Clear();
+        }
+    }
+
+    // Before a transaction's first kept statement, which is where its deferred snapshot would start anyway: drops the kept
+    // statements when the schema changed since they last ran. Turso 0.8.2 cannot run a statement prepared against another
+    // schema inside an explicit transaction once another connection's DDL has committed ("Database schema changed", the
+    // transaction unusable), so a kept statement must never be older than the snapshot. A fresh statement is compiled
+    // against the connection's own schema.
+    private void CheckSchema(SqliteTransaction transaction)
+    {
+        _checked = transaction;
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "PRAGMA schema_version;";
+        var schema = Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+        if (schema != _schema)
+        {
+            Drop(_commands);
+            Drop(_tableCommands);
+            _schema = schema;
+        }
+    }
+
+    /// <summary>
+    /// After a write transaction that did not commit: its own DDL may have recompiled kept statements against a schema
+    /// that was rolled back, so the next transaction drops them.
+    /// </summary>
+    public void ForgetSchema() => _schema = -1;
+
+    private static void Drop(Dictionary<string, SqliteCommand> commands)
+    {
+        foreach (var command in commands.Values)
+        {
+            command.Dispose();
+        }
+
+        commands.Clear();
+    }
+
+    // Each command keeps its prepared statement across executions and transactions (the driver's ReuseStatement): preparing
+    // was the largest CPU cost of a point read. CheckSchema and Settings drop them whenever Turso would prepare them again.
+    private SqliteCommand Kept(Dictionary<string, SqliteCommand> commands, string sql, SqliteTransaction transaction)
+    {
+        if (!ReferenceEquals(_checked, transaction))
+        {
+            CheckSchema(transaction);
+        }
+
+        if (!commands.TryGetValue(sql, out var command))
         {
             command = connection.CreateCommand();
             command.CommandText = sql;
-            _commands.Add(sql, command);
+            command.ReuseStatement = true;
+            commands.Add(sql, command);
         }
 
         command.Transaction = transaction;
@@ -227,7 +349,7 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         {
             // Idle eviction must not mutate storage after its operation's durable intent has retired.
             handle?.Deinitialize();
-            foreach (var command in _commands.Values)
+            foreach (var command in _commands.Values.Concat(_tableCommands.Values))
             {
                 command.Dispose();
             }
