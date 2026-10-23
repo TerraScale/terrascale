@@ -1276,6 +1276,11 @@ internal sealed partial class SqliteStorageTransaction(
         }
     }
 
+    private const string CommitMarkerSql = "SELECT change_id, change_type FROM turso_cdc ORDER BY change_id DESC LIMIT 1;";
+
+    // Set once this transaction ran a statement through PlainCommand, which is where every DDL runs.
+    private bool _ranPlain;
+
     // Worker-only, after COMMIT and before releasing the exclusive writer; never read a later connection's head.
     private CommitMarker ReadCommitMarker()
     {
@@ -1284,9 +1289,12 @@ internal sealed partial class SqliteStorageTransaction(
             store.Checkpoint?.Invoke("writer.marker", tenant);
         }
 
-        using var command = session.Connection.CreateCommand();
-        command.CommandText = "SELECT change_id, change_type FROM turso_cdc ORDER BY change_id DESC LIMIT 1;";
-        using var reader = command.ExecuteReader();
+        // Kept unless this transaction ran DDL: preparing this statement cost more than the rest of a small write's statements.
+        var kept = _ranPlain ? null : session.AfterCommit(CommitMarkerSql, transaction);
+        using var fresh = kept is null ? session.Connection.CreateCommand() : null;
+        fresh?.CommandText = CommitMarkerSql;
+
+        using var reader = (kept ?? fresh!).ExecuteReader();
         if (!reader.Read() || reader.GetInt64(0) <= 0 || reader.GetInt64(1) != 2)
         {
             throw new InvalidDataException("a client mutation has no final CDC commit row");
