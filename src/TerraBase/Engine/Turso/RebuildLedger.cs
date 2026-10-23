@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Turso.Data.Sqlite;
@@ -399,6 +400,8 @@ internal sealed class RebuildLedger(TursoStorageEngine engine, ILogger logger, I
         }
 
         var faults = 0;
+        // Milliseconds per restart proof (PageCache), one per crashed copy no fault was recorded for.
+        List<double> proofs = [];
         while (true)
         {
             // Keep the page admitted through both commits. SYSTEM publication precedes journal retirement: a crash
@@ -438,7 +441,16 @@ internal sealed class RebuildLedger(TursoStorageEngine engine, ILogger logger, I
             }
 
             // Synced and dropped from the cache before the copy opens: its reads then come from its disk alone.
-            var evicted = intents.Where(intent => !intent.Faulting && engine.Evicted(intent.Key.Tenant)).Select(intent => intent.Rowid).ToHashSet();
+            HashSet<long> evicted = [];
+            foreach (var (rowid, key, _, _) in intents.Where(intent => !intent.Faulting))
+            {
+                var started = Stopwatch.GetTimestamp();
+                if (engine.Evicted(key.Tenant))
+                {
+                    evicted.Add(rowid);
+                }
+                proofs.Add(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            }
             _ = await InSystemAsync(system, command =>
             {
                 foreach (var (rowid, key, incarnation, _) in intents)
@@ -462,6 +474,12 @@ internal sealed class RebuildLedger(TursoStorageEngine engine, ILogger logger, I
                 }
                 return true;
             }, cancellationToken, rows: 0).ConfigureAwait(false);
+        }
+
+        if (proofs.Count > 0)
+        {
+            proofs.Sort();
+            logger.ZLogInformation($"Restart proofs of {proofs.Count:@Count} copies written at an unclean exit took {proofs[proofs.Count / 2]:@MedianMs} ms median, {proofs[(int)Math.Ceiling(proofs.Count * 0.99) - 1]:@P99Ms} ms p99, {proofs[^1]:@MaxMs} ms max");
         }
 
         var after = 0L;
