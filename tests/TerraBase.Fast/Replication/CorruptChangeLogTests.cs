@@ -270,7 +270,8 @@ public sealed class CorruptChangeLogTests
     // Transaction 1 (document kept) commits; the WAL's size is taken; transaction 2 (documents torn-1..3) commits. A copy of
     // the data directory has its database's WAL cut 100 bytes into the first frame after that size (Variant "cut") or that
     // frame and everything after it overwritten with garbage ("scrambled"). A node started on the copy serves kept exactly,
-    // none of transaction 2. The decoder retains only transaction 1; unclean-copy admission refuses new writes and sourcing.
+    // none of transaction 2. The decoder retains only transaction 1. The copy's log is all that remains of it, so it serves on
+    // from there without a rebuild: new writes and sourcing are accepted.
     [Test]
     [Arguments("cut")]
     [Arguments("scrambled")]
@@ -337,13 +338,13 @@ public sealed class CorruptChangeLogTests
             await Assert.That(deltas.Where(delta => delta.Collection == Items).Select(delta => delta.Id)).IsEquivalentTo(["kept"]);
             await Assert.That(Encoded(deltas.Single(delta => delta.Id == "kept"))).IsEqualTo(Encoded(kept));
 
-            _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () => await restarted.WriteAsync(node.Database,
-                async transaction => _ = await transaction.PutAsync(Items, "after", Json("""{"n":3}"""), CancellationToken.None)));
-            await Assert.That(await restarted.ReadAsync(node.Database, "after")).IsNull();
+            await restarted.WriteAsync(node.Database,
+                async transaction => _ = await transaction.PutAsync(Items, "after", Json("""{"n":3}"""), CancellationToken.None));
+            await Assert.That(await restarted.ReadAsync(node.Database, "after")).IsEqualTo("""{"n":3}""");
             await Assert.That(await restarted.Groups.ReadAsync(node.Database, await restarted.IncarnationAsync(node.Database), 0,
-                ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsNull();
+                ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsNotNull();
             await Assert.That(await restarted.Api.Server.Services.GetRequiredService<IRebuildLedger>()
-                .GetAsync(node.Database, CancellationToken.None)).IsNotNull();
+                .GetAsync(node.Database, CancellationToken.None)).IsNull();
         }
         finally
         {

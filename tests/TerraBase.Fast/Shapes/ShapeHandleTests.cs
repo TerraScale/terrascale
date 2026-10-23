@@ -1,3 +1,4 @@
+using System.IO.MemoryMappedFiles;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
@@ -356,6 +357,7 @@ public sealed class ShapeHandleTests
             CollectionInfo collection;
             IDatabaseStore original;
             byte[] running;
+            string path;
             await using (var api = await DocumentApi.StartAsync(settings => settings["data-directory"] = directory))
             {
                 original = await StoreAsync(api);
@@ -371,12 +373,18 @@ public sealed class ShapeHandleTests
                 var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
                 var native = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(tenant, CancellationToken.None))!;
                 _ = await native.BeginOperationAsync(CancellationToken.None);
+                path = native.FilePath;
                 // Captured while live: the file then says the process is running, so the next start is unclean.
                 running = await File.ReadAllBytesAsync(identity);
             }
 
             // Disposal wrote the clean-stop mark; putting back the running record simulates a crash instead.
             await File.WriteAllBytesAsync(identity, running);
+
+            // A page kept cached (mapped) leaves the interrupted copy unproven, so the restart faults it.
+            using var map = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+            using var view = map.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+            _ = view.ReadByte(0);
 
             // Retain the uncertain copy: this fixture isolates epoch rotation from the rebuild's store replacement.
             await using var restarted = await TerraBaseTestServer.StartAsync(

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.MemoryMappedFiles;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -40,19 +41,26 @@ public sealed class A6ProductionRebuildTests
         TenantContext database;
         Ulid incarnation;
         byte[] running;
+        string path;
         await using (var first = await StartAsync(directory.Root))
         {
             (database, incarnation) = await CreateDatabaseAsync(first);
             await DurableWriteAsync(first, database);
             var firstEngine = first.Server.Services.GetRequiredService<TursoStorageEngine>();
-            _ = await ((TursoDatabaseStore)(await firstEngine.OpenDatabaseAsync(database, CancellationToken.None))!).BeginOperationAsync(CancellationToken.None);
+            var store = (TursoDatabaseStore)(await firstEngine.OpenDatabaseAsync(database, CancellationToken.None))!;
+            _ = await store.BeginOperationAsync(CancellationToken.None);
+            path = store.FilePath;
             running = await File.ReadAllBytesAsync(identity);
         }
         var priorJournal = await File.ReadAllBytesAsync(journal);
         await File.WriteAllBytesAsync(identity, running);
         RebuildRecord? fault;
-        await using (var second = await StartAsync(directory.Root))
+        // A page kept cached (mapped) leaves the copy unproven, so its intent faults it.
+        using (var map = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read))
+        using (var view = map.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read))
         {
+            _ = view.ReadByte(0);
+            await using var second = await StartAsync(directory.Root);
             fault = await second.Server.Services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None);
             await Assert.That(fault?.Phase).IsEqualTo(RebuildPhase.Pending);
             await Assert.That(fault?.OldIncarnation).IsEqualTo(incarnation);
@@ -299,20 +307,120 @@ public sealed class A6ProductionRebuildTests
         CrashAsync(nameof(A_crash_after_the_fault_record_is_durable_keeps_that_record_at_the_next_start), RebuildLedger.Recorded,
             reason => reason == "a test fault");
 
+    // A crash while ordinary writes are in flight (F1): the copy's FULL log is all that remains once the kernel caches none of
+    // its pages, so the next start serves every acknowledged write from it, with no rebuild, and drops the uncommitted one.
+    [Test]
+    public async Task A_copy_written_when_the_process_crashes_serves_every_acknowledged_write_without_rebuild()
+    {
+        using var root = new TempDirectory();
+        var (crashed, written) = await WritingCrashAsync(nameof(A_copy_written_when_the_process_crashes_serves_every_acknowledged_write_without_rebuild), root.Root);
+        var data = Path.Combine(root.Root, "data");
+        var database = new TenantContext(crashed.Organization, PlanTier.Hobby, crashed.Project, crashed.Database);
+        await using var api = await StartAsync(data);
+        var services = api.Server.Services;
+        await Assert.That((int)services.GetRequiredService<TursoStorageEngine>().ReplicaId.Epoch).IsGreaterThan(crashed.Epoch).Because("the crash ended the process uncleanly");
+        await Assert.That(await services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None)).IsNull()
+            .Because("an ordinary write's intent does not fault a copy its own log recovers");
+        var store = await services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+            ?? throw new InvalidOperationException("the written copy is missing");
+        await Assert.That(store.Incarnation).IsEqualTo(Ulid.Parse(crashed.Incarnation));
+        await Assert.That(await services.GetRequiredService<IReplicaCopyFaults>().RefusedAsync(database, store.Incarnation, CancellationToken.None)).IsFalse();
+        await using (var read = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            foreach (var id in written.Acknowledged)
+            {
+                await Assert.That(await read.GetAsync("items", id, CancellationToken.None)).IsNotNull().Because($"{id} was acknowledged");
+            }
+            await Assert.That(await read.GetAsync("items", written.Uncommitted, CancellationToken.None)).IsNull();
+        }
+        _ = await DurableWriteAsync(api, database);
+    }
+
+    // The fail-closed side of the same crash: a page of the copy the kernel keeps cached (here, mapped) could be one a failed
+    // sync never wrote, so the copy faults.
+    [Test]
+    public async Task A_crashed_copy_with_a_page_still_cached_is_faulted()
+    {
+        using var root = new TempDirectory();
+        var (crashed, written) = await WritingCrashAsync(nameof(A_crashed_copy_with_a_page_still_cached_is_faulted), root.Root);
+        var data = Path.Combine(root.Root, "data");
+        var database = new TenantContext(crashed.Organization, PlanTier.Hobby, crashed.Project, crashed.Database);
+        using var map = MemoryMappedFile.CreateFromFile(written.Path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
+        using var view = map.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+        _ = view.ReadByte(0);
+        await using var api = await StartAsync(data);
+        var record = await api.Server.Services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None);
+        await Assert.That(record?.Phase).IsEqualTo(RebuildPhase.Pending);
+        await Assert.That(record?.OldIncarnation).IsEqualTo(Ulid.Parse(crashed.Incarnation));
+        var reason = await ReasonAsync(api.Server.Services.GetRequiredService<TursoStorageEngine>(), database);
+        await Assert.That(reason?.Contains("uncleanly", StringComparison.Ordinal) == true).IsTrue().Because($"the record's reason: {reason}");
+        _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () => await DurableWriteAsync(api, database));
+    }
+
+    // The child acknowledges durable writes, then dies with one more in flight (its transaction open, so its intent stands).
+    private static async Task<(Crashed Crashed, Written Written)> WritingCrashAsync(string test, string root)
+    {
+        const string step = "writes in flight";
+        if (Environment.GetEnvironmentVariable(CrashRoot) is { } childRoot)
+        {
+            await using var child = await StartAsync(Path.Combine(childRoot, "data"));
+            var (database, incarnation) = await CreateDatabaseAsync(child);
+            var acknowledged = new List<string>();
+            for (var i = 0; i < 20; i++)
+            {
+                acknowledged.Add(await DurableWriteAsync(child, database));
+            }
+            var engine = child.Server.Services.GetRequiredService<TursoStorageEngine>();
+            var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+            var uncommitted = EntityIds.New().ToString();
+            await using var transaction = await store.BeginDurableTransactionAsync(CancellationToken.None);
+            _ = await transaction.PutAsync("items", uncommitted, Encoding.UTF8.GetBytes("""{"n":2}"""), CancellationToken.None);
+            if (!await engine.IntentStore!.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT 1 FROM _tb_write_intent WHERE database = $database;";
+                command.Parameters.AddWithValue("$database", database.DatabaseId);
+                return command.ExecuteScalar() is not null;
+            }, "checking the in-flight intent", CancellationToken.None))
+            {
+                throw new InvalidOperationException("the in-flight write left no intent");
+            }
+            await File.WriteAllTextAsync(Path.Combine(childRoot, "crashed.json"), JsonSerializer.Serialize(new Crashed(
+                database.OrganizationId, database.ProjectId!, database.DatabaseId!, incarnation.ToString(), acknowledged[^1], engine.ReplicaId.Epoch)));
+            await File.WriteAllTextAsync(Path.Combine(childRoot, "written.json"), JsonSerializer.Serialize(new Written([.. acknowledged], uncommitted, store.FilePath)));
+            Environment.FailFast($"crashed at {step}");
+        }
+
+        var (exit, crashedAtStep, output) = await RunChildAsync(test, root, step);
+        await Assert.That(exit).IsNotEqualTo(0).Because(output);
+        await Assert.That(crashedAtStep).IsTrue().Because(output);
+        return (JsonSerializer.Deserialize<Crashed>(await File.ReadAllTextAsync(Path.Combine(root, "crashed.json")))!,
+            JsonSerializer.Deserialize<Written>(await File.ReadAllTextAsync(Path.Combine(root, "written.json")))!);
+    }
+
     // The salvaged replacement's own write intent, not the original's, decides the restart: had the intent kept the first
     // incarnation written in the process, recovery would find the original already faulted and keep the replacement salvaged.
     [Test]
-    public async Task A_crash_before_a_replacement_fault_is_durable_faults_the_salvaged_replacement_from_its_own_write_intent()
+    public Task A_crash_before_a_replacement_fault_is_durable_faults_the_salvaged_replacement_from_its_own_write_intent() =>
+        ReplacementCrashAsync(nameof(A_crash_before_a_replacement_fault_is_durable_faults_the_salvaged_replacement_from_its_own_write_intent), RebuildLedger.Recording);
+
+    // A genuinely partial copy: the uncertified replacement keeps its ordinary intent across idle gaps, so a crash with no fault
+    // being recorded still faults it, however clean its pages.
+    [Test]
+    public Task A_crash_during_an_uncertified_rebuild_faults_the_replacement_from_its_ordinary_write_intent() =>
+        ReplacementCrashAsync(nameof(A_crash_during_an_uncertified_rebuild_faults_the_replacement_from_its_ordinary_write_intent), "salvaged replacement");
+
+    private static async Task ReplacementCrashAsync(string test, string step)
     {
         if (Environment.GetEnvironmentVariable(CrashRoot) is { } childRoot)
         {
-            await ReplacementCrashChildAsync(childRoot);
+            await ReplacementCrashChildAsync(childRoot, step);
             return;
         }
 
         using var root = new TempDirectory();
         var data = Directory.CreateDirectory(Path.Combine(root.Root, "data")).FullName;
-        var (exit, crashedAtStep, output) = await RunChildAsync(nameof(A_crash_before_a_replacement_fault_is_durable_faults_the_salvaged_replacement_from_its_own_write_intent), root.Root, RebuildLedger.Recording);
+        var (exit, crashedAtStep, output) = await RunChildAsync(test, root.Root, step);
         await Assert.That(exit).IsNotEqualTo(0).Because(output);
         await Assert.That(crashedAtStep).IsTrue().Because(output);
         var crashed = JsonSerializer.Deserialize<Crashed>(await File.ReadAllTextAsync(Path.Combine(root.Root, "crashed.json")))!;
@@ -348,8 +456,8 @@ public sealed class A6ProductionRebuildTests
     }
 
     // Original written and faulted, swapped, the replacement repaired from the side copy, refilled and salvaged; then its own
-    // fault dies before its FULL record.
-    private static async Task ReplacementCrashChildAsync(string root)
+    // fault dies before its FULL record, or (any other step) the process dies with the replacement salvaged.
+    private static async Task ReplacementCrashChildAsync(string root, string step)
     {
         // Set only after the original's fault is recorded: the checkpoint never reads the host.
         var armed = (string?)null;
@@ -391,6 +499,10 @@ public sealed class A6ProductionRebuildTests
         await File.WriteAllTextAsync(Path.Combine(root, "crashed.json"), JsonSerializer.Serialize(new Crashed(
             database.OrganizationId, database.ProjectId!, database.DatabaseId!, original.ToString(), document, engine.ReplicaId.Epoch,
             replacement.ToString(), Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(side))))));
+        if (step != RebuildLedger.Recording)
+        {
+            Environment.FailFast($"crashed at {step}");
+        }
         Volatile.Write(ref armed, database.DatabaseId);
         await faults.RecordAsync(database, replacement, "an uncertain replacement", CancellationToken.None);
         throw new InvalidOperationException($"the child outlived {RebuildLedger.Recording}");
@@ -589,6 +701,8 @@ public sealed class A6ProductionRebuildTests
 
     private sealed record Crashed(
         string Organization, string Project, string Database, string Incarnation, string Document, int Epoch, string? Replacement = null, string? Side = null);
+
+    private sealed record Written(string[] Acknowledged, string Uncommitted, string Path);
 
     // Test double for the rebuild the worker admits: records each admission; the first may be held, then answers busy; every
     // other answers refused, so the ledger row stays pending exactly as a refused production rebuild leaves it.
