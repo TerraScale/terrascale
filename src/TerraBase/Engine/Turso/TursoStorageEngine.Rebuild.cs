@@ -82,7 +82,7 @@ internal sealed partial class TursoStorageEngine : IRebuildStorage
                 return null;
             }
 
-            await PublishAsync(key.Database, path, temporary => TursoDatabaseStore.InitializeAsync(key.Database, temporary, Io, _pragmas, cancellationToken))
+            await PublishAsync(key.Database, path, temporary => TursoDatabaseStore.InitializeAsync(key.Database, temporary, Io, _pragmas, Encryption, cancellationToken))
                 .ConfigureAwait(false);
         }
         finally

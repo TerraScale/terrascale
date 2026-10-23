@@ -1,5 +1,6 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
+using TerraBase.Engine;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
@@ -30,11 +31,13 @@ public static class BackupExtensions
                 provider.GetRequiredService<ICustomerBackupDns>(), provider.GetRequiredService<ICustomerBackupConnector>()))
             .AddHttpMessageHandler<CustomerBackupResponseLimits>();
         services.AddTransient<CustomerBackupResponseLimits>();
+        var master = new MasterKey(settings.MasterKey);
         return services
             .AddSingleton(settings)
             .AddSingleton<S3ObjectStore>()
             .AddSingleton<IObjectStore>(provider => provider.GetRequiredService<S3ObjectStore>())
-            .AddSingleton<IMasterKey>(new MasterKey(settings.MasterKey))
+            .AddSingleton<IMasterKey>(master)
+            .AddKeyedSingleton<IMasterKey>(EngineExtensions.DatabaseMasterKey, master)
             .AddSingleton<DataKeys>()
             .AddSingleton<BackupTargets>()
             .AddSingleton<ContinuousBackup>()

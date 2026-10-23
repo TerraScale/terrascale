@@ -87,9 +87,10 @@ internal sealed class TursoChangeTap : IWalTap
     {
         await using var operation = await store.BeginOperationAsync(cancellationToken).ConfigureAwait(false);
         // Read before the reader is counted: a rewrite starting meanwhile either refuses it or ends this tap.
+        var connectionString = await store.ConnectionStringAsync(io, cancellationToken).ConfigureAwait(false);
         var lineage = store.Lineage;
         store.OpenBackupReader();
-        var reader = new TursoConnection($"Data Source={store.FilePath}") { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
+        var reader = new TursoConnection(connectionString) { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
         try
         {
             await io.RunAsync(() => TursoSession.OpenExisting(reader, store.FilePath), cancellationToken).ConfigureAwait(false);

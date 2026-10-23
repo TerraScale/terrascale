@@ -8,6 +8,7 @@ using System.Runtime.ExceptionServices;
 using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine.Lattices;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
@@ -42,7 +43,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
     /// <summary>The file whose exclusive lock makes a process the only owner of a data directory.</summary>
     internal const string LockFileName = ".terrabase.lock";
-    private static readonly string[] Sidecars = ["-wal", "-shm", "-journal"];
+    private static readonly string[] Sidecars = ["-wal", "-shm", "-journal", DatabaseKeys.Suffix];
+    internal DatabaseKeys Encryption { get; }
 
     // Opened stores, keyed by tenant and database; a database is bootstrapped once per process.
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), TursoDatabaseStore> _stores = new();
@@ -451,14 +453,18 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     /// <param name="afterBootstrap">Optional integration-test hook before a tenant database's baseline is seeded.</param>
     /// <param name="backupTime">The host's UTC clock for snapshot boundaries, independent of query deadlines.</param>
     /// <param name="schemaMemory">Shared process admission for collection schema evaluation.</param>
+    /// <param name="masterKey">The master key delivered by OCI Vault, wrapping every database data key.</param>
     /// <param name="replicaOwner">Trusted node identity; defaults to the host name for direct construction.</param>
     public TursoStorageEngine(
         string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<TursoStorageEngine> logger,
+        IMasterKey masterKey,
         TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
         TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
         Action<TursoDatabaseStore>? afterBootstrap = null, TimeSpan? queryBudget = null,
         TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null, string? replicaOwner = null)
     {
+        ArgumentNullException.ThrowIfNull(masterKey);
+        Encryption = new DatabaseKeys(masterKey);
         _dataDirectory = dataDirectory;
         _schemaMemory = schemaMemory;
         _schemaEvaluations = meter.CreateCounter<long>("terrabase.schema.keyword_evaluations", description: "Collection schema keyword evaluations started by local writes.");
@@ -959,7 +965,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                     // Once published, complete the opening even if cancellation arrives.
                     var openingToken = created ? CancellationToken.None : cancellationToken;
                     openingSystem = new TursoDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
-                        RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
+                        RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads, Encryption)
                     {
                         ReplicationCommitted = ReplicationNotification(ChangeGroups.System),
                         QueryBudget = QueryBudget,
@@ -1527,11 +1533,11 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         if (key is { } publishing)
         {
             await PublishFreshFileAsync(name, path,
-                temporary => TursoDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, cancellationToken), publishing).ConfigureAwait(false);
+                temporary => TursoDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, Encryption, cancellationToken), publishing).ConfigureAwait(false);
         }
         else
         {
-            await PublishAsync(name, path, temporary => TursoDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, cancellationToken))
+            await PublishAsync(name, path, temporary => TursoDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, Encryption, cancellationToken))
                 .ConfigureAwait(false);
         }
         return true;
@@ -1566,7 +1572,16 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             RejectDatabaseLinks(temporary);
             RejectDatabaseLinks(path);
             await ThrowIfPurgeFencedAsync(name, CancellationToken.None).ConfigureAwait(false);
-            File.Move(temporary, path, overwrite: false);
+            File.Move(temporary + DatabaseKeys.Suffix, path + DatabaseKeys.Suffix, overwrite: false);
+            try
+            {
+                File.Move(temporary, path, overwrite: false);
+            }
+            catch
+            {
+                File.Move(path + DatabaseKeys.Suffix, temporary + DatabaseKeys.Suffix, overwrite: false);
+                throw;
+            }
             published = true;
         }
         finally
@@ -1731,7 +1746,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     {
         var tenant = new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database);
         var store = new TursoDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
-            RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
+            RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads, Encryption)
         {
             ReplicationCommitted = ReplicationNotification(tenant),
             QueryBudget = QueryBudget,

@@ -1080,9 +1080,15 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         while (read.Remaining);
     }
 
-    private Task StoreAsync(ShippedFile file, string key, string path, string kind, CancellationToken cancellationToken) =>
-        Use(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None, 1 << 16, FileOptions.Asynchronous | FileOptions.SequentialScan),
-            content => StoreAsync(file, key, content, kind, cancellationToken));
+    private async Task StoreAsync(ShippedFile file, string key, string path, string kind, CancellationToken cancellationToken)
+    {
+        // This scratch payload contains encrypted pages and a wrapped key; the outer envelope authenticates both.
+        await using var bundle = new FileStream(ScratchFile(".snapshot"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16,
+            FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+        await SnapshotBundle.WriteAsync(path, bundle, cancellationToken).ConfigureAwait(false);
+        bundle.Position = 0;
+        await StoreAsync(file, key, bundle, kind, cancellationToken).ConfigureAwait(false);
+    }
 
     private async Task StoreAsync(ShippedFile file, string key, Stream content, string kind, CancellationToken cancellationToken)
     {
@@ -1173,14 +1179,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     // Turso may leave a journal, and a drill a log, next to a snapshot.
     private static void DeleteSnapshot(string path) => BackupReader.Delete(path);
-
-    private static async Task Use(Stream stream, Func<Stream, Task> use)
-    {
-        await using (stream.ConfigureAwait(false))
-        {
-            await use(stream).ConfigureAwait(false);
-        }
-    }
 
     public override void Dispose()
     {
