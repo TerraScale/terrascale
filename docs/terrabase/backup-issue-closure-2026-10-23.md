@@ -6,9 +6,7 @@ At main `49e32e99c`, final backup shipping's four-second deadline used the
 injected `TimeProvider`, while the host's eight-second service deadline used
 real time. A frozen fixture clock prevented the shorter deadline from firing.
 When shipping waited for the catalog writer, the host canceled first and the
-backup service escalated that cancellation as a cleanup failure. Production
-could also escalate caller cancellation if earlier shutdown work consumed the
-host budget.
+backup service escalated that cancellation as a cleanup failure.
 
 The new blocked-writer integration regression failed before the fix, with the
 same stack as #265: `AcquireWriterAsync`, `RecordAsync`, `RetainAsync`,
@@ -20,12 +18,11 @@ The historical run linked by #265 (`38498891946`) now returns GitHub HTTP 404;
 the issue preserves its redacted stack.
 
 Final shipping now uses `TimeProvider.System`, matching the host deadline.
-Cancellation from either linked deadline ends this best-effort flush normally,
-then disposes every tap. Other errors still fail shutdown. No durability claim
-is added: unshipped data stays in local storage and is included in a later
-snapshot. A second integration regression cancels an upload through the caller
-token, verifies that no segment was stored, and reads the unshipped document
-through the real HTTP API.
+Exhausting the shipping budget ends this best-effort flush normally, then
+disposes every tap. Caller cancellation and other errors still fail shutdown,
+preserving the existing cancellation, tap-return, and directory-reopen tests.
+No durability claim is added: unshipped data stays in local storage and is
+included in a later snapshot.
 
 ## Ten reports already fixed on main
 

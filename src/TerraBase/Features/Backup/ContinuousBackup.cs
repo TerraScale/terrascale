@@ -442,6 +442,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         // Final network shipping must leave time for the durable local close; joins still own their resources.
         using var finalShipping = new CancellationTokenSource(TimeSpan.FromSeconds(4), TimeProvider.System);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, finalShipping.Token);
+        var callerCancellation = cancellationToken;
         cancellationToken = deadline.Token;
         // Known platform files flush before cached customer lookups can consume the shutdown budget.
         // Then refresh cached customer files for detachments, and only then restart customer I/O.
@@ -497,7 +498,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 }
                 catch (Exception error)
                 {
-                    if (error is OperationCanceledException && cancellationToken.IsCancellationRequested)
+                    if (error is OperationCanceledException && cancellationToken.IsCancellationRequested && !callerCancellation.IsCancellationRequested)
                     {
                         _logger.ZLogWarning($"Final backup shipping exhausted its shutdown budget; unshipped changes remain in local storage for the next snapshot");
                     }
