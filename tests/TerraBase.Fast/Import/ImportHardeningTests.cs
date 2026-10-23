@@ -198,7 +198,7 @@ public sealed class ImportHardeningTests
     }
 
     [Test]
-    public async Task One_organization_cannot_take_the_whole_staging_budget_and_replicated_destinations_are_refused()
+    public async Task One_organization_cannot_take_the_whole_staging_budget_and_replicated_destinations_import()
     {
         await using var client = await ImportClient.StartAsync();
         const long Declared = 600L * 1024 * 1024;
@@ -221,10 +221,17 @@ public sealed class ImportHardeningTests
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         }
 
-        var (replicated, refusal) = await client.SendAsync(HttpMethod.Post, $"/v1/projects/{client.Project}/databases/{name}/import",
-            new { format = "sqlite", sourceBytes = 10, sourceSha256 = new string('0', 64) });
-        await Assert.That(replicated).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(refusal.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("destination_replicated");
+        // Every production database has replica regions (decision 0013); the home region imports into it.
+        var replicated = $"/v1/projects/{client.Project}/databases/{name}/import";
+        var source = Text("{\"_id\":{\"$oid\":\"0123456789abcdef01234567\"},\"n\":1}\n{\"n\":2}\n");
+        await Assert.That((await client.CreateAsync(replicated, "ndjson", source, new { collection = "items" })).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await client.UploadAsync(replicated, source)).Status).IsEqualTo(HttpStatusCode.OK);
+        var ready = await client.WaitAsync(replicated, "ready", "rejected");
+        await Assert.That(ready.GetProperty("state").GetString()).IsEqualTo("ready").Because(ready.GetRawText());
+        await client.StartAsync(replicated, ready.GetProperty("preview").GetProperty("id").GetString());
+        var done = await client.WaitAsync(replicated, "completed", "failed");
+        await Assert.That(done.GetProperty("state").GetString()).IsEqualTo("completed").Because(done.GetRawText());
+        await Assert.That((await client.IdsAsync(replicated, "items")).Count).IsEqualTo(2);
     }
 
     private static byte[] Text(string text) => Encoding.UTF8.GetBytes(text);
