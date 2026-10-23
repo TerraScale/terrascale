@@ -22,6 +22,7 @@ import { V1ProjectUsageClient, V1DatabaseUsageClient } from "./usage.js";
 import { V1Indexes } from "./indexes.js";
 import { V1DatabaseSchemaClient } from "./database-schema.js";
 import { V1SavedQueries } from "./saved-queries.js";
+import { V1ChangeWebhooks } from "./change-webhooks.js";
 /**
  * @import { V1Document, V1Durability, V1WriteResult } from "./decode.js"
  * @import { V1Filter, V1Path } from "./filter.js"
@@ -301,6 +302,8 @@ function encodeDocument(document) {
 
 /** A collection handle by name. It performs no I/O until an operation runs. */
 export class V1Collection {
+  /** @type {V1ChangeWebhooks} */
+  webhooks;
   /** @type {V1Transport} */
   #transport;
   /** @type {Readonly<Record<string, string>>} */
@@ -319,6 +322,7 @@ export class V1Collection {
     this.#transport = transport;
     this.database = requireName("database", database);
     this.name = requireName("collection", name);
+    this.webhooks = new V1ChangeWebhooks(transport, this.database, this.name);
     this.#params = Object.freeze({ database: this.database, collection: this.name });
     Object.freeze(this);
   }
