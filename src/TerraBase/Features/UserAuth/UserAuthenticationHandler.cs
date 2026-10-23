@@ -176,7 +176,10 @@ internal sealed class UserAuthenticationHandler(
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 
-    private TokenValidationParameters Parameters(IReadOnlyList<SecurityKey> keys) => new()
+    private TokenValidationParameters Parameters(IReadOnlyList<SecurityKey> keys) => Parameters(terraBase, keys, time);
+
+    /// <summary>How every ts-auth access token is validated, here and for <see cref="TsAuthKeyExchange"/>.</summary>
+    internal static TokenValidationParameters Parameters(TerraBaseOptions terraBase, IReadOnlyList<SecurityKey> keys, TimeProvider? time) => new()
     {
         ValidIssuer = terraBase.AuthIssuer,
         ValidAudiences = terraBase.AuthAudiences,

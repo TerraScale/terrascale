@@ -25,8 +25,9 @@ the URL or the key.
 export TERRABASE_PG_URL='postgresql://smoke:<api-key>@pg.terrascale.tech:5432/<database>?sslmode=require'
 ```
 
-The password is a TerraBase project API key (`tb_…`), the user name is an ignored label, and the database is a
-database name in the key's project (`<projectId>/<name>`, URL-encoded as `<projectId>%2F<name>`, for an org-wide
+The password is a project API key from the dashboard (`<key id>_<secret>`; TerraBase exchanges it at ts-auth and
+honours its scopes and database restriction) or a TerraBase API key (`tb_…`). The user name is an ignored label, and the
+database is a database name in the key's project (`<projectId>/<name>`, URL-encoded as `<projectId>%2F<name>`, for an org-wide
 key). Plaintext connections are refused with SQLSTATE `28000`, so keep `sslmode=require`.
 
 ## Run

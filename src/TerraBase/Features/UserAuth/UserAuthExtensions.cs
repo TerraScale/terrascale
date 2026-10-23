@@ -40,6 +40,7 @@ public static class UserAuthExtensions
         services.AddSingleton<ValidatedTokens>();
         services.AddSingleton<IIssuerKeys>(provider => provider.GetRequiredService<TsAuthKeys>());
         services.AddSingleton<IProjectAuthorityVerifier, TsAuthProjectAuthorityVerifier>();
+        services.AddSingleton<TsAuthKeyExchange>();
         services.AddHostedService(provider => provider.GetRequiredService<TsAuthKeys>());
         services.AddAuthentication()
             .AddScheme<AuthenticationSchemeOptions, UserAuthenticationHandler>(UserAuthenticationHandler.SchemeName, configureOptions: null)
