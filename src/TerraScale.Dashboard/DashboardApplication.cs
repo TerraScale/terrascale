@@ -43,6 +43,7 @@ public static class DashboardApplication
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<IDashboardIdentity, DashboardIdentity>();
         builder.Services.AddSingleton<IDashboardState, TerraBaseDashboardState>();
+        builder.Services.AddSingleton<TerraBasePlanSync>();
         builder.Services.AddHostedService<DashboardStateInitializer>();
         builder.Services.AddSingleton<DependencyReadiness>();
         builder.Services.AddSingleton<DashboardSessions>();
