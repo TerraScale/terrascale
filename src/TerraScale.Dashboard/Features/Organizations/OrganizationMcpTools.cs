@@ -19,7 +19,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
 
     [McpServerTool(Name = "create_project", Title = "Create project", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Create a project in an organization. Requires the owner role and, for business organizations, active billing.")]
     public Task<OrganizationProjectResult> CreateProject([Description("Project name: 1-128 characters including a letter or digit.")] string name,
-        [Description("Primary region code: GRU or SFO. Defaults to the first listed region.")] string region = "",
+        [Description("Primary region code TerraBase serves, such as GRU. Defaults to the first listed region.")] string region = "",
         [Description("Backup region code. Defaults to the first listed region.")] string backupRegion = "",
         [Description("Region codes the project may use. Defaults to the primary region.")] string[]? regions = null,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
@@ -30,7 +30,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
 
     [McpServerTool(Name = "update_project", Title = "Update project", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Rename the project projectId selects and optionally change its regions. Requires the owner role.")]
     public Task<OrganizationDone> UpdateProject([Description("Project name: 1-128 characters including a letter or digit.")] string name,
-        [Description("Primary region code: GRU or SFO. Defaults to the first listed region.")] string region = "",
+        [Description("Primary region code TerraBase serves, such as GRU. Defaults to the first listed region.")] string region = "",
         [Description("Backup region code. Defaults to the first listed region.")] string backupRegion = "",
         [Description("Region codes the project may use. Defaults to the primary region.")] string[]? regions = null,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
