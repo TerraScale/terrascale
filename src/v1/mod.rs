@@ -1,7 +1,7 @@
 //! TerraBase's public v1 project and platform HTTP APIs.
 //!
-//! Project clients use ts-auth bearer access tokens and verified Atlas routing.
-//! An explicit endpoint bypasses Atlas. Entity IDs are canonical uppercase
+//! Project clients use ts-auth bearer access tokens against [`DEFAULT_BASE_URL`].
+//! An explicit endpoint overrides it. Entity IDs are canonical uppercase
 //! ULIDs; database and collection selectors are names. Document IDs are
 //! [`DocumentId`] ULIDs; [`ulid_for`] derives a stable one from a natural key.
 //!
@@ -23,7 +23,6 @@
 //! # let _ = (w, doc); Ok(()) }
 //! ```
 
-mod atlas;
 mod backups;
 mod changes;
 mod client;
@@ -45,7 +44,8 @@ mod types;
 pub use backups::RestoredDatabase;
 pub use changes::{ChangeBytes, ChangesOptions};
 pub use client::{
-    Client, ClientBuilder, RetryPolicy, DEFAULT_MAX_RESPONSE_BYTES, MAX_REQUEST_BYTES,
+    Client, ClientBuilder, RetryPolicy, DEFAULT_BASE_URL, DEFAULT_MAX_RESPONSE_BYTES,
+    MAX_REQUEST_BYTES,
 };
 pub use documents::{
     Collection, Database, Document, DocumentState, Event, Patch, PatchOp, Precondition,

@@ -1,12 +1,10 @@
 //! Isolated ts-auth credentials and bounded read retries.
 
-pub const ATLAS_BASE_URL: &str = "https://atlas.terrascale.tech";
 use crate::error::{Error, ErrorKind, Result};
 use crate::regions::normalize_base_url;
 
 #[derive(Clone)]
 pub struct ClientConfig {
-    atlas_base_url: String,
     auth_base_url: Option<String>,
     auth_api_key: Option<String>,
     max_retry_attempts: u8,
@@ -16,7 +14,6 @@ pub struct ClientConfig {
 impl std::fmt::Debug for ClientConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClientConfig")
-            .field("atlas_base_url", &self.atlas_base_url)
             .field("auth_base_url", &self.auth_base_url)
             .field("auth_api_key", &"[REDACTED]")
             .field("max_retry_attempts", &self.max_retry_attempts)
@@ -29,11 +26,6 @@ impl ClientConfig {
     #[must_use]
     pub fn builder() -> ClientConfigBuilder {
         ClientConfigBuilder::default()
-    }
-    /// Atlas origin. Native discovery admits only the canonical production origin.
-    #[must_use]
-    pub fn atlas_base_url(&self) -> &str {
-        &self.atlas_base_url
     }
     #[must_use]
     pub fn auth_base_url(&self) -> Option<&str> {
@@ -54,7 +46,6 @@ impl ClientConfig {
 
 #[derive(Default)]
 pub struct ClientConfigBuilder {
-    atlas_base_url: Option<String>,
     auth_base_url: Option<String>,
     auth_api_key: Option<String>,
     max_retry_attempts: u8,
@@ -64,7 +55,6 @@ pub struct ClientConfigBuilder {
 impl std::fmt::Debug for ClientConfigBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClientConfigBuilder")
-            .field("atlas_base_url", &self.atlas_base_url)
             .field("auth_base_url", &self.auth_base_url)
             .field("auth_api_key", &"[REDACTED]")
             .field("max_retry_attempts", &self.max_retry_attempts)
@@ -74,11 +64,6 @@ impl std::fmt::Debug for ClientConfigBuilder {
 }
 
 impl ClientConfigBuilder {
-    #[must_use]
-    pub fn atlas_base_url(mut self, value: impl Into<String>) -> Self {
-        self.atlas_base_url = Some(value.into());
-        self
-    }
     #[must_use]
     pub fn auth_base_url(mut self, value: impl Into<String>) -> Self {
         self.auth_base_url = Some(value.into());
@@ -127,14 +112,7 @@ impl ClientConfigBuilder {
             .as_deref()
             .map(normalize_base_url)
             .transpose()?;
-        let atlas_base_url = self
-            .atlas_base_url
-            .as_deref()
-            .map(normalize_base_url)
-            .transpose()?
-            .unwrap_or_else(|| ATLAS_BASE_URL.to_owned());
         Ok(ClientConfig {
-            atlas_base_url,
             auth_base_url,
             auth_api_key,
             max_retry_attempts: self.max_retry_attempts,

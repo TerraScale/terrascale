@@ -1,6 +1,6 @@
 # TerraScale Rust SDK
 
-`terrascale::v1` implements the current C# TerraBase ULID project, ULID document and HTTP SQL contracts with verified Atlas routing. See the [compatibility audit](docs/compatibility-20261013.md) for exact commits, deterministic test evidence and release gaps. Start with [docs/csharp-api.md](docs/csharp-api.md). The older name-based `/v1/databases` and `/v1/dashboard` client remains available for its original producer ([docs/v1-api.md](docs/v1-api.md)). The native UUID/shard API described below is deprecated and will be removed with those routes.
+`terrascale::v1` implements the current C# TerraBase ULID project, ULID document and HTTP SQL contracts routed through the public `https://api.terrascale.tech` origin. See the [compatibility audit](docs/compatibility-20261013.md) for exact commits, deterministic test evidence and release gaps. Start with [docs/csharp-api.md](docs/csharp-api.md). The older name-based `/v1/databases` and `/v1/dashboard` client remains available for its original producer ([docs/v1-api.md](docs/v1-api.md)). The native UUID/shard API described below is deprecated and will be removed with those routes.
 
 ```rust,no_run
 use terrascale::v1::{ulid_for, Client};
@@ -13,9 +13,9 @@ let document = items.get::<serde_json::Value>(ulid_for("items", "customer/a+b"))
 # }
 ```
 
-Project requests use an already exchanged ts-auth bearer token and resolve through Atlas `/v1/resolve` without sending that token to Atlas. The client verifies the ES256 session pin, sends its raw region id to TerraBase, and refreshes routing on expiry, `421`, or redirect. Reads can retry once after a routing correction; mutations are never replayed for routing failures. Direct endpoint/region overrides are restricted to reviewed isolated tests or
+Project requests use an already exchanged ts-auth bearer token and go straight to `https://api.terrascale.tech` with no configuration; the public edge routes them to the owning region. Direct endpoint/region overrides are restricted to reviewed isolated tests or
 producer qualification; they remain implementation inventory, not production
-onboarding. Normal first-party routing uses verified automatic discovery. C# TerraBase currently rejects `Idempotency-Key`, which project clients reject locally.
+onboarding. C# TerraBase currently rejects `Idempotency-Key`, which project clients reject locally.
 
 `scripts/terrabase/run.py` still targets the older SHA-256-pinned C# producer `263598b47ffc79398db394550e3c074acf4fc57d`, with UUID project IDs and legacy bootstrap credentials. It cannot qualify this current client. Updating that release pin and provisioning a current project-token test fixture is a release dependency; this draft does not claim live qualification.
 

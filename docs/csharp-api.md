@@ -59,11 +59,9 @@ The page iterator stops at a null cursor and rejects repeated or missing/empty c
 HTTP SQL returns bounded rows and a truncation flag; it has no parameters or cursors.
 Use `Box<RawValue>` to preserve exact document numbers, including SQL values.
 
-Atlas discovery is anonymous; TerraBase bearer credentials never reach it. ES256 verification
-still binds issuer, exact project string, database, region, API origin and expiry. Sessions last
-at most 600 seconds and use wall and monotonic clocks. Expiry, 421 and redirects trigger refresh;
-reads may retry once, while writes retain their original failure. Static endpoint/region overrides
-are limited to isolated tests and producer qualification. Live ULID Atlas discovery has not been qualified.
+Project clients send every request to `https://api.terrascale.tech` (`DEFAULT_BASE_URL`); the
+public edge routes it to the owning region. There is no client-side resolve step. Static
+endpoint/region overrides are limited to isolated tests and producer qualification.
 
 The implemented `/changes` SSE route has no Rust SDK consumer. Native subscriptions and the
 optional PostgreSQL consumer target older protocols. The existing real-binary runner remains

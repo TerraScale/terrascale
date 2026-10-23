@@ -68,8 +68,8 @@ shim did not locate its installed toolchain; validation used the existing real b
 `/home/mariogk/.rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin`.
 No compiler/model/CI settings were edited.
 
-1. `cargo test --locked --no-default-features --test csharp_current_contract --test csharp_problem_contract --test csharp_sql_contract --test v1_atlas --test v1_fast`
-2. `cargo test --locked --all-features --lib --test auth_idp --test auth_idp_edge --test native_discovery --test postgres --test serde_base64 --test transport --test typed_documents --test typed_routing --test v1_atlas --test v1_fast --test v1_proxy --test csharp_current_contract --test csharp_problem_contract --test csharp_sql_contract`
+1. `cargo test --locked --no-default-features --test csharp_current_contract --test csharp_problem_contract --test csharp_sql_contract --test v1_fast`
+2. `cargo test --locked --all-features --lib --test auth_idp --test auth_idp_edge --test native_discovery --test postgres --test serde_base64 --test transport --test typed_documents --test typed_routing --test v1_fast --test v1_proxy --test csharp_current_contract --test csharp_problem_contract --test csharp_sql_contract`
 3. `cargo fmt --all --check`, `cargo clippy --locked --all-targets --all-features -- -D warnings`, `cargo test --locked --all-features --doc`.
 
 Fixtures use loopback HTTP or throwaway test TLS identities and synthetic credentials only.

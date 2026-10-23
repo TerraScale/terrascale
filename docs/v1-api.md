@@ -5,7 +5,7 @@ at `7bc74f9d` (`docs/api-v1.md`, `query-v1.md`, `control-plane-v1.md`).
 Reference implementation: ts-go `feat/v1-client` (`v1/`).
 
 This page describes the original producer. For the C# producer's project
-paths, bearer credentials, collection API and Atlas session routing, see
+paths, bearer credentials, collection API and public API origin, see
 [csharp-api.md](csharp-api.md). Its real-binary suite is independent of the
 legacy test suite below. Fake fixtures never qualify a live producer.
 
