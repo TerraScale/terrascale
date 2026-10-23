@@ -40,8 +40,7 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         await RefusedAsync(password, HttpStatusCode.Unauthorized);
         using var unknown = await PasswordAsync(oidc, "unknown@example.test", Password);
         await Assert.That(unknown.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That((await password.Content.ReadAsStringAsync()).Replace(user.Email, "{email}", StringComparison.Ordinal))
-            .IsEqualTo((await unknown.Content.ReadAsStringAsync()).Replace("unknown@example.test", "{email}", StringComparison.Ordinal));
+        await Assert.That(await OidcHarness.PageAsync(password, user.Email)).IsEqualTo(await OidcHarness.PageAsync(unknown, "unknown@example.test"));
 
         using (var code = await CodeSignInAsync(oidc, user.Email))
         {

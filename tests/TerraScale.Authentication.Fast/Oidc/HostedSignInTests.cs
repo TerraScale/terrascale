@@ -254,7 +254,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
             using var refused = await oidc.PostFormAsync($"{SignIn}/password", new() { ["email"] = address, ["password"] = password, ["next"] = string.Empty });
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
             await Assert.That(OidcHarness.SessionCookie(refused)).IsNull();
-            pages.Add((await refused.Content.ReadAsStringAsync()).Replace(address, "{email}", StringComparison.Ordinal));
+            pages.Add(await OidcHarness.PageAsync(refused, address));
         }
 
         await Assert.That(pages.Distinct().Count()).IsEqualTo(1);

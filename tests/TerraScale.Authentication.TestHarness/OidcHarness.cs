@@ -108,7 +108,7 @@ public sealed partial class CapturingEmailSender : IEmailSender
 /// A real ts-auth server on a fresh real-TerraBase database, with the dashboard client registered from configuration.
 /// Drives the browser and client sides of the OpenID Connect flows over HTTP.
 /// </summary>
-public sealed class OidcHarness : IAsyncDisposable
+public sealed partial class OidcHarness : IAsyncDisposable
 {
     public const string ClientSecret = "dashboard-test-secret-0123456789abcdef";
     public const string RedirectUri = "https://dash.example.test/auth/callback";
@@ -232,6 +232,13 @@ public sealed class OidcHarness : IAsyncDisposable
 
         return (client ?? this.Client).SendAsync(request);
     }
+
+    /// <summary>A page body with the address and the per-response CSP nonce masked, for comparing two answers.</summary>
+    public static async Task<string> PageAsync(HttpResponseMessage response, string email) =>
+        CspNonce().Replace((await response.Content.ReadAsStringAsync()).Replace(email, "{email}", StringComparison.Ordinal), "nonce=\"{nonce}\"");
+
+    [GeneratedRegex("nonce=\"[^\"]+\"")]
+    private static partial Regex CspNonce();
 
     public static string? SessionCookie(HttpResponseMessage response) =>
         response.Headers.TryGetValues("Set-Cookie", out var cookies)
