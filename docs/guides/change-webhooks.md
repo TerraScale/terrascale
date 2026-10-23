@@ -117,10 +117,12 @@ Delivery status is `pending` or `delivered`. `lastAttemptAt`, `nextAttemptAt`, `
 | --- | --- |
 | `400`, `409` | Correct the URL/pagination, or remove an unused hook if the registration limit was reached. |
 | `401`, `403` | Refresh an expired token or use the required existing document permissions. Write-only credentials cannot create/delete hooks. |
-| `404` | Check the project/database token scope and that the database, collection and hook exist. |
+| `404` | Check the project/database token scope and that the database and hook exist. Creation also requires an existing collection; listing registrations does not. |
 | `503` | Retry reads with backoff; reconcile uncertain creation/deletion before repeating mutations. |
 
 ## Recover a feed gap or remove a hook
+
+After a collection is dropped, retained webhook registrations, their status and delivery logs remain accessible under the same collection name. You can still list and reconcile these hooks, inspect their logs or delete them. Listing returns `200 OK` with `[]` when no registrations exist, including for a missing collection; creating a hook for a missing collection returns `404`.
 
 Registration status is `active` or `feed_gap`. Change history is retained for 7 days. Excessive downtime/backlog, missing retained history, a source transaction exceeding the 512 KiB batch limit or recreation of the database/collection stops scanning with `feed_gap`; already captured pending batches keep retrying. Delivery resumes after a restart of its owning service, but does not automatically transfer to a different owner. Do not assume failover or delivery beyond retained history.
 
