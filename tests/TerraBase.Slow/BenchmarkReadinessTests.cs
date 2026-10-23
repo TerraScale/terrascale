@@ -233,7 +233,7 @@ public sealed class BenchmarkReadinessTests
         await using var api = await ManagementApi.StartAsync(cancellationToken: cancellationToken);
         var database = await api.CreateManagedDatabaseAsync("canary");
         await api.SetPlanAsync(api.User, database.Organization, "enterprise", cancellationToken);
-        using var client = await api.CreateClientAsync(database.Organization, "databases:read", "databases:write", "documents:read", "documents:write");
+        using var client = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         var collections = new Uri($"{database.Data}/collections", UriKind.Relative);
         await BenchmarkProcessHost.WaitForWritesAsync(client, collections, null, cancellationToken);
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
