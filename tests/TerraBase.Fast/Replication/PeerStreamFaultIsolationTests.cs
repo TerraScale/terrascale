@@ -414,7 +414,7 @@ public sealed class PeerStreamFaultIsolationTests
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(90));
         await WarmAsync(sender, receiver, deadline.Token);
-        var initialized = source.Initializations;
+        var connected = source.Connections;
         var confirmed = sender.Status(sender.Database)!.Acknowledged;
         var gate = new BookkeepingGate(sender.Database, stableReport, deadline.Token) { Busy = true, After = confirmed };
         source.Hold(gate);
@@ -438,7 +438,7 @@ public sealed class PeerStreamFaultIsolationTests
             await TerraBaseTestServer.EventuallyAsync(async token =>
                 sender.Status(sender.Database)?.Acknowledged > confirmed
                 && await receiver.HasAsync(receiver.Database, "after-busy", token), TimeSpan.FromSeconds(60));
-            await Assert.That(source.Initializations).IsEqualTo(initialized)
+            await Assert.That(source.Connections).IsEqualTo(connected)
                 .Because("a tenant's writer contention must not restart the shared connection");
         }
         finally
