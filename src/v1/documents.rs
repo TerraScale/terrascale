@@ -643,7 +643,7 @@ impl Collection {
         check_name("collection", &self.name)
     }
 
-    fn segments<'a>(&'a self, rest: &[&'a str]) -> Vec<&'a str> {
+    pub(crate) fn segments<'a>(&'a self, rest: &[&'a str]) -> Vec<&'a str> {
         let mut s = vec!["v1", "databases", &self.db.name, "collections", &self.name];
         s.extend_from_slice(rest);
         s
