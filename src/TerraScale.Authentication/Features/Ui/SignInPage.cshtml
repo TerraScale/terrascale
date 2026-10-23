@@ -54,6 +54,9 @@ break;
 case SignInStep.DeviceDenied:
 <p class="sub">The device was not signed in. You can close this page.</p>
 break;
+case SignInStep.NotFound:
+<p class="sub">The page you opened doesn't exist. Check the link, or sign in again.</p>
+break;
 }
 </div>
 @if (Model.Error is { } error)
@@ -237,6 +240,9 @@ case SignInStep.DeviceApproved:
 break;
 case SignInStep.DeviceDenied:
 <div class="alert" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-x"></use></svg><p>Device denied.</p></div>
+break;
+case SignInStep.NotFound:
+<a class="btn" href="@Model.Link("sign-in")">Sign in<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 }
 @functions {

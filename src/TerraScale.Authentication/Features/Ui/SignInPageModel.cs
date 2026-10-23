@@ -52,6 +52,9 @@ public enum SignInStep
 
     /// <summary>The device was denied.</summary>
     DeviceDenied,
+
+    /// <summary>A browser opened a URL that does not exist.</summary>
+    NotFound,
 }
 
 /// <summary>Model for <c>SignInPage.cshtml</c>. Razor encodes every value.</summary>
@@ -101,6 +104,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         SignInStep.DeviceConfirm => "Approve this device?",
         SignInStep.DeviceApproved => "Device connected",
         SignInStep.DeviceDenied => "Request denied",
+        SignInStep.NotFound => "Page not found",
         _ => "Sign in",
     };
 
