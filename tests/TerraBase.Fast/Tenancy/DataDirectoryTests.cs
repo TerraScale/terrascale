@@ -199,7 +199,9 @@ public sealed class DataDirectoryTests
     [Test]
     public async Task Evicted_idle_connections_are_closed_before_shutdown_releases_the_data_directory()
     {
-        await using var server = await TerraBaseTestServer.StartAsync(settings => settings["shutdown-grace-seconds"] = "1");
+        // Periodic catalog reads rent pooled sessions; freeze their clock while checking the exact idle count.
+        await using var server = await TerraBaseTestServer.StartAsync(settings => settings["shutdown-grace-seconds"] = "1",
+            services => services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow)));
         var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var project = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString());
         // More databases than the pool keeps idle connections for: returning the later sessions evicts earlier ones.
