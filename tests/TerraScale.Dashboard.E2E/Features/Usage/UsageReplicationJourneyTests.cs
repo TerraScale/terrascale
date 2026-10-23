@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 
@@ -37,6 +38,8 @@ public sealed class UsageReplicationJourneyTests(DashboardRootFixture fixture)
         using var producer = scenario.CreateProviderClient();
         using var login = await HttpJourney.LoginAsync(client);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        using (var seeded = await producer.PostAsJsonAsync("/__test/control", new { command = "internal-add-database" }))
+            await Assert.That(seeded.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         using var identityResponse = await client.GetAsync("/api/v1/auth/me");
         await Assert.That(identityResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using var identity = JsonDocument.Parse(await identityResponse.Content.ReadAsStringAsync());

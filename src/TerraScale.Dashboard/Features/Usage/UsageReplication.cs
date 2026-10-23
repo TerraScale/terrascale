@@ -33,6 +33,9 @@ public sealed class UsageReplicationBackend(IHttpClientFactory factory, IProject
             !organization.Projects.TryGetValue(project.Id, out var canonicalProject) || canonicalProject.Id != project.Id || canonicalProject.OrganizationId != organization.Id)
             return new([], []);
         project = canonicalProject;
+        // TerraBase registers a project with its first database, so an empty project has nothing to report (and is 404 there).
+        if (project.Databases.Count == 0)
+            return new([], [], Empty: "No activity yet. Replication starts once this project has a database.");
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(5));

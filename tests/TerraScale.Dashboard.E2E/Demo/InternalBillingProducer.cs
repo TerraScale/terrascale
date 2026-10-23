@@ -90,6 +90,7 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
             case "internal-seed":
                 return await SeedAsync(command.TryGetProperty("count", out var count) ? count.GetInt32() : 1,
                 command.TryGetProperty("paymentMethodValidated", out var validation) && validation.GetBoolean(), cancellationToken);
+            case "internal-add-database": return await AddDatabaseAsync(cancellationToken);
             case "internal-usage":
                 var mode = command.GetProperty("value").GetString();
                 if (mode is not ("coherent" or "partial" or "foreign-project" or "wrong-month" or "incoherent-end" or "overflow" or "offline")) return Results.BadRequest();
@@ -144,6 +145,22 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
     }
 
     private static bool Allowed(string collection) => collection is "dashboard_billing" or "dashboard_internal_billing" or "dashboard_organizations" or "dashboard_accounts";
+
+    // Gives the signed-in account's active project one saved database, so reporting reads have something to report.
+    private async Task<IResult> AddDatabaseAsync(CancellationToken cancellationToken)
+    {
+        var accountDocument = await state.GetAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(subject()), cancellationToken);
+        if (accountDocument is null) return Results.BadRequest();
+        var account = AccountService.Read<AccountRecord>(accountDocument);
+        var organizationDocument = await state.GetAsync(AccountService.OrganizationsCollection, account.ActiveOrganizationId, cancellationToken);
+        if (organizationDocument is null) return Results.BadRequest();
+        var organization = AccountService.Read<OrganizationRecord>(organizationDocument);
+        var project = organization.Projects[account.ActiveProjectId];
+        var database = new DatabaseRecord { Id = new TerraScaleIdGenerator().NewId(), ProjectId = project.Id, Name = "app", Region = "GRU", Regions = ["GRU"], CreatedAt = now() };
+        project.Databases[database.Id] = database;
+        await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), TerraBasePrecondition.Matches(organizationDocument.Version), cancellationToken);
+        return Results.NoContent();
+    }
 
     private async Task<IResult> SeedAsync(int count, bool paymentMethodValidated, CancellationToken cancellationToken)
     {

@@ -51,7 +51,7 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
 
     private async Task CredentialsAsync(AccountContext context, HomeMeasurement result, CancellationToken cancellationToken)
     {
-        try { result.ActiveCredentials = (await keys.ListAsync(context, cancellationToken)).Count; }
+        try { result.ActiveCredentials = (await keys.ListAsync(context, cancellationToken)).Count(key => key.IsActive); }
         catch (Exception error) when (error is AccountAccessException || MeasurementFailure(error, cancellationToken))
         { result.CredentialsError = "Application credentials could not be loaded. Open API keys to retry."; }
     }
@@ -59,6 +59,13 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
     private async Task ActivityAsync(AccountContext context, string range, HomeMeasurement result, CancellationToken cancellationToken)
     {
         if (context.Organization is null || context.Project is null) return;
+        // TerraBase registers a project with its first database, so an empty project has no activity (and is 404 there).
+        if (context.Project.Databases.Count == 0)
+        {
+            result.ActivityMeasured = true;
+            result.ActivityNote = "No activity yet. Create a database to start metering reads and writes.";
+            return;
+        }
         try
         {
             var client = http.CreateClient("platform");

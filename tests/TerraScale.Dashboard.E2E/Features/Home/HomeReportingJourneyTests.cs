@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 
@@ -29,6 +30,13 @@ public sealed class HomeReportingJourneyTests(DashboardRootFixture fixture)
         using var identityResponse = await client.GetAsync("/api/v1/auth/me");
         using var identity = JsonDocument.Parse(await identityResponse.Content.ReadAsStringAsync());
         var projectId = identity.RootElement.GetProperty("projectId").GetString()!;
+
+        // A new project with no databases and no keys: nothing is done yet and nothing is an error.
+        var overview = await client.GetStringAsync("/");
+        await Assert.That(overview).Contains("No activity yet. Create a database to start metering reads and writes.");
+        await Assert.That(overview).Contains("No activity yet. Replication starts once this project has a database.");
+        await Assert.That(overview).DoesNotContain("Replication unavailable");
+        await Assert.That(overview).DoesNotContain(">Done</span>");
 
         using var connect = await client.GetAsync("/?tab=connect");
         await Assert.That(connect.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -84,6 +92,8 @@ public sealed class HomeReportingJourneyTests(DashboardRootFixture fixture)
             using var advanced = await HttpJourney.PostFormAsync(client, "/onboarding/step", step);
             await Assert.That(advanced.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         }
+        using (var seeded = await producer.PostAsJsonAsync("/__test/control", new { command = "internal-add-database" }))
+            await Assert.That(seeded.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
 
         using var identityResponse = await client.GetAsync("/api/v1/auth/me");
         await Assert.That(identityResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
