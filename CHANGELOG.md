@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.4
+
+Publishes current main, including `db.sql`, `db.changes`, backups, indexes and
+`allRegions` placement, plus every Unreleased entry below. Releases are now
+tag-driven: pushing a `v0.0.N` tag that matches `package.json` runs
+`.github/workflows/publish.yml`, which re-runs the checks and publishes to npm
+with provenance.
+
 ## Unreleased — ts-auth platform token contract
 
 `createTsAuthClient` sends every call to `apiBaseUrl`. The Atlas auth discovery
