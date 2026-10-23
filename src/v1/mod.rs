@@ -40,6 +40,7 @@ mod system;
 mod tooling;
 mod tx;
 mod types;
+mod webhooks;
 
 pub use backups::RestoredDatabase;
 pub use changes::{
@@ -65,3 +66,7 @@ pub use sql::{SqlCheck, SqlIndexSuggestion, SqlResult, SqlRow};
 pub use system::HealthResponse;
 pub use tx::{CountBounds, OpResult, Tx, TxResult, MAX_ASSERT_COUNT_OPS, MAX_TX_OPS};
 pub use types::{opt_u64_string, u64_string, Durability, Number};
+pub use webhooks::{
+    CreatedWebhook, Webhook, WebhookDelivery, WebhookDeliveryError, WebhookDeliveryStatus,
+    WebhookStatus,
+};
