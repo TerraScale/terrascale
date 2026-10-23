@@ -3,10 +3,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
-using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
@@ -16,8 +14,9 @@ namespace TerraBase.Fast.Replication;
 
 /// <summary>
 /// Free replication: a client operation is counted once, in the region that served it. Peer stream applies, the refill of a
-/// region that joins later and anti-entropy rounds count nothing, and every region's flush adds to the replicated catalog
-/// without overwriting another region's counts. Real machines in three regions, discovered through one member directory.
+/// region that joins later and anti-entropy rounds count no billed operation, only replication analytics, and every region's
+/// flush adds to the replicated catalog without overwriting another region's counts. Real machines in three regions,
+/// discovered through one member directory.
 /// </summary>
 public sealed class FreeReplicationUsageTests
 {
@@ -75,13 +74,21 @@ public sealed class FreeReplicationUsageTests
         }
 
         await Task.WhenAll(gru.AntiEntropy.RunRoundAsync(token), sjc.AntiEntropy.RunRoundAsync(token), fra.AntiEntropy.RunRoundAsync(token));
-        await Assert.That(fra.Meter.PendingDatabases).IsEqualTo(0).Because("streamed applies, the refill and anti-entropy count no operation");
 
         // Concurrent flushes: each region adds to its own documents of the replicated catalog.
         var after = await SettledAsync(tenant, [gru, sjc, fra]);
         await Assert.That(after.Writes - before.Writes).IsEqualTo(gruIds.Length + sjcIds.Length).Because("each client write counts exactly once");
         await Assert.That(after.Reads - before.Reads).IsEqualTo(2).Because("each client read counts exactly once");
-        await Assert.That(await fra.OwnUsageDocumentsAsync(managed.Id)).IsEmpty().Because("a region that served no client wrote no usage");
+
+        // Replication shows only in the analytics: what each region applied and received from the others.
+        var observed = await ObservationsAsync(fra, tenant);
+        await Assert.That(observed.Where(reading => reading.Dimension.Region == "fra" && reading.Dimension.Meter is "ops" or "requests" or "client_bytes"))
+            .IsEmpty().Because("a region that served no client counted no client operation");
+        await Assert.That(Sum(observed, "replicated_ops", "sjc", "gru")).IsGreaterThanOrEqualTo(gruIds.Length).Because("sjc applied gru's writes");
+        await Assert.That(Sum(observed, "replicated_ops", "gru", "sjc")).IsGreaterThanOrEqualTo(sjcIds.Length).Because("gru applied sjc's writes");
+        await Assert.That(Sum(observed, "replication_bytes", "sjc", "gru")).IsGreaterThan(0).Because("sjc received gru's batches");
+        await Assert.That(observed.Where(reading => reading.Dimension is { Meter: "replication_bytes", Region: "fra" }).Sum(reading => reading.Count))
+            .IsGreaterThan(0).Because("fra counted what it received while it caught up");
 
         // Every region reads the same billed month, in operation units, and its allowance counts the same total.
         foreach (var machine in new[] { gru, sjc, fra })
@@ -121,6 +128,18 @@ public sealed class FreeReplicationUsageTests
         }, timeout: TimeSpan.FromSeconds(30));
         return settled!;
     }
+
+    // Every region's flushed analytics of the database, as fra's replicated catalog reads them.
+    private static async Task<List<UsageReading>> ObservationsAsync(Machine machine, TenantContext database)
+    {
+        var window = new UsageWindow(UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1);
+        return await machine.Meter.GetObservationsAsync(database, window, CancellationToken.None) is UsageCounts counts
+            ? [.. counts.Lifetime.Meters?.Values ?? []] : [];
+    }
+
+    private static long Sum(List<UsageReading> readings, string meter, string region, string peerRegion) =>
+        readings.Where(reading => reading.Dimension.Meter == meter && reading.Dimension.Region == region && reading.Dimension.PeerRegion == peerRegion)
+            .Sum(reading => reading.Count);
 
     // A connected stream does not mean the organization created on gru has reached this machine's catalog yet: a key
     // issued here is refused (400) until it has.
@@ -194,22 +213,6 @@ public sealed class FreeReplicationUsageTests
         public Task ConnectedAsync(string other) =>
             TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Api.Server.Services.GetRequiredService<IReplicationStatus>()
                 .Snapshot().Peers.Any(peer => peer.Region == other)), timeout: TimeSpan.FromSeconds(30));
-
-        // The usage documents this machine's node wrote for the database.
-        public async Task<string[]> OwnUsageDocumentsAsync(string databaseId)
-        {
-            var node = Api.Server.Services.GetRequiredService<TerraBaseOptions>().MachineId;
-            var system = await Api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
-            await using var transaction = await system.BeginTransactionAsync(write: false, CancellationToken.None);
-            List<string> own = [];
-            foreach (var collection in new[] { "usage", "usage-minutes", "usage-hours", "usage-days" })
-            {
-                var page = await transaction.ListAsync(SystemCatalog.DatabaseState(databaseId) + collection, afterId: null, limit: 1000, 1024 * 1024, CancellationToken.None);
-                own.AddRange(page.Documents.Select(document => document.Id).Where(id => id.EndsWith("~" + node, StringComparison.Ordinal)));
-            }
-
-            return [.. own];
-        }
 
         public async Task<bool> HoldsAsync(TenantContext database, string id)
         {

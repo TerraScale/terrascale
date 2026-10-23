@@ -4,6 +4,7 @@ using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication.V1;
@@ -47,6 +48,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private readonly ILogger<PeerStreamReceiver> _logger;
     private readonly IMemoryBudget _memory;
     private readonly ReplicationTimings _timings;
+    private readonly IUsageMeter _usage;
     private int _refilling;
 
     // A test observes a replacement while its predecessor's cancelled repair is still ending.
@@ -56,9 +58,10 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
     public PeerStreamReceiver(
         IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime,
-        ILogger<PeerStreamReceiver> logger, IMemoryBudget memory, Lazy<ICatalogGate> catalogGate, IReplicaCopyFaults faults, ReplicationTimings timings)
+        ILogger<PeerStreamReceiver> logger, IMemoryBudget memory, Lazy<ICatalogGate> catalogGate, IReplicaCopyFaults faults, ReplicationTimings timings, IUsageMeter usage)
     {
         _timings = timings;
+        _usage = usage;
         _catalogGate = catalogGate;
         _memory = memory;
         _logger = logger;
@@ -604,7 +607,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             return refused;
         }
 
-        Observe(groups, region);
+        Observe(database, batch, groups, region);
         return new AckFrame
         {
             Ack = new Ack { Database = batch.Database, ChangeId = batch.LastChangeId, Applied = appliedAt.Value, Stable = stableAt.Value },
@@ -693,15 +696,25 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         }
     }
 
-    private void Observe(List<OriginGroup> groups, string region)
+    // A client database's applied batch also goes to its replication analytics, never to its billed operations: a batch
+    // sent again after a lost ack counts again.
+    private void Observe(TenantContext database, Batch batch, List<OriginGroup> groups, string region)
     {
         var tag = new KeyValuePair<string, object?>("peer_region", region);
         var now = _time.GetUtcNow().ToUnixTimeMilliseconds();
         _merged.Add(groups.Count, tag);
+        var deltas = 0;
         foreach (var group in groups)
         {
             var stamp = group.Deltas.Max(delta => delta.Stamp.Milliseconds);
             _delay.Record(Math.Max(0, now - stamp) / 1000.0, tag);
+            deltas += group.Deltas.Count;
+        }
+
+        if (database != ChangeGroups.System)
+        {
+            _usage.RecordReplicationBytes(database, region, "delta", sent: false, batch.CalculateSize());
+            _usage.RecordReplicatedOperations(database, region, deltas);
         }
     }
 }
