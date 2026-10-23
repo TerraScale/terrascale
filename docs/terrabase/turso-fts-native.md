@@ -106,7 +106,17 @@ per-segment scorer allocation charges 64 KiB per clause before constructing weig
 or scorers. This covers the pinned Tantivy 0.26.2 per-term 1 KiB BM25 table,
 posting decoders/scorer copies and Boolean union score windows, including repeated
 clauses on tiny indexes. Boolean nodes count separately; hidden boosted subtrees
-use bounded source length as a conservative clause count. These are conservative
+use bounded source length as a conservative clause count. Phrase-prefix scorers
+add the pinned parser's 50 suffix expansions; opaque boosted subtrees reserve that
+expansion per positional term. Before any weight/scorer construction, each segment
+also reserves 64 bytes per field-wide recorded token per positional term occurrence.
+Repeated phrases are counted separately through Boolean/boost wrappers. Field token
+metadata includes deleted documents and every emitted tokenizer token, including
+n-grams; it bounds the term-frequency-sized position vectors, their growth, sloppy
+phrase scratch and prefix suffix scratch. Prefix suffixes reuse one position buffer;
+their separate posting decoders are covered by the expansion reservation. The pinned
+parser creates ordinary/sloppy phrases and phrase-prefix queries; it does not create
+RegexPhraseQuery, and regex syntax is disabled. These are conservative
 charges and can reject a long valid query before actual allocations exhaust memory.
 **Cancellation is cooperative:** individual Tantivy
 parser, weight/scorer/advance and identity-sort calls remain opaque; checks bound
@@ -116,7 +126,11 @@ guarantee for a single call.
 The mandatory C smoke asserts loading-byte refusal, interruption before aggregate
 output, ordered traversal interruption, cancellation after the first native reader
 row, callback clearing/recovery, insufficient weight/scorer admission for 500 repeated
-clauses over one document, open-transaction distinct-index reads/rollback, and an
+clauses over one document, and dense repeated/sloppy/prefix/boosted phrase admission
+before scorer construction (including count). The 500-clause smoke first measures
+setup and the distinct weight/scorer charge boundaries, then refuses each charge
+with setup already admitted; it asserts and prints the exact refusal charge and
+callback position. It also checks open-transaction distinct-index reads/rollback and an
 EXPLAIN QUERY PLAN indexed ID seek for
 `json_each($ids) CROSS JOIN collection ON collection.id = hit_id`. It prints the
 actual plan and rejects a collection scan. No seek-plan runtime result is claimed

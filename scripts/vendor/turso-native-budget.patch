@@ -65,7 +65,7 @@ index 0591fff..e011085 100644
 
      pub fn identity_of(&self, position: u32) -> Option<DocumentIdentity> {
 diff --git a/core/index_method/fts/mod.rs b/core/index_method/fts/mod.rs
-index bf97450..5ac1070 100644
+index bf97450..87b8c52 100644
 --- a/core/index_method/fts/mod.rs
 +++ b/core/index_method/fts/mod.rs
 @@ -37,7 +37,8 @@ use crate::{
@@ -546,7 +546,7 @@ index bf97450..5ac1070 100644
          let data = chunks.remove(&chunk_no).ok_or_else(|| {
              LimboError::Corrupt(format!(
                  "FTS file {} is missing chunk {}",
-@@ -2767,6 +2873,21 @@ impl FtsBackingRowDumper {
+@@ -2767,6 +2873,66 @@ impl FtsBackingRowDumper {
      }
  }
 
@@ -565,10 +565,55 @@ index bf97450..5ac1070 100644
 +    terms.max(1)
 +}
 +
++fn fts_query_prefix_expansions(query: &dyn tantivy::query::Query) -> u64 {
++    if let Some(boolean) = query.downcast_ref::<tantivy::query::BooleanQuery>() {
++        return boolean.clauses().iter().fold(0u64, |count, (_, clause)| {
++            count.saturating_add(fts_query_prefix_expansions(clause.as_ref()))
++        });
++    }
++    if query.is::<tantivy::query::PhrasePrefixQuery>() {
++        return 50;
++    }
++    if query.is::<tantivy::query::BoostQuery>() {
++        let mut positional_terms = 0u64;
++        query.query_terms(&mut |_, positions| {
++            positional_terms = positional_terms.saturating_add(u64::from(positions));
++        });
++        // Opaque boosted subtrees may hide one 50-term prefix expansion per positional term.
++        return positional_terms.saturating_mul(50);
++    }
++    0
++}
++
++fn fts_query_position_bytes(
++    query: &dyn tantivy::query::Query,
++    segment: &SegmentReader,
++    fields: &[Field],
++) -> Result<u64> {
++    fields.iter().try_fold(0u64, |bytes, field| {
++        let mut occurrences = 0u64;
++        query.query_terms(&mut |term, positions| {
++            if positions && term.field() == *field {
++                occurrences = occurrences.saturating_add(1);
++            }
++        });
++        if occurrences == 0 {
++            return Ok(bytes);
++        }
++        let tokens = segment
++            .inverted_index(*field)
++            .map_err(|error| LimboError::InternalError(format!("FTS token count error: {error}")))?
++            .total_num_tokens();
++        // Field-wide tokens bound term frequency, even with n-grams/deletes; include Vec growth,
++        // phrase/slop scratch and prefix suffix scratch for every repeated positional occurrence.
++        Ok(bytes.saturating_add(tokens.saturating_mul(occurrences).saturating_mul(64)))
++    })
++}
++
  // ============================ trait impl ============================
 
  impl Drop for FtsCursor {
-@@ -3004,6 +3125,8 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3004,6 +3170,8 @@ impl IndexMethodCursor for FtsCursor {
      /// Starts an FTS query. Parses the query string and executes the search.
      /// Returns true if there are results, false otherwise.
      fn query_start(&mut self, values: &[Register]) -> IOResultOr<bool> {
@@ -577,7 +622,7 @@ index bf97450..5ac1070 100644
          self.ensure_searcher()?;
          let searcher = self
              .searcher
-@@ -3070,7 +3193,7 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3070,7 +3238,7 @@ impl IndexMethodCursor for FtsCursor {
              }
          };
 
@@ -586,7 +631,7 @@ index bf97450..5ac1070 100644
          self.streaming_hits = None;
          self.hit_pos = 0;
          let query_str = match values[1].get_value() {
-@@ -3111,12 +3234,14 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3111,12 +3279,14 @@ impl IndexMethodCursor for FtsCursor {
                  _ => {}
              }
          }
@@ -602,7 +647,7 @@ index bf97450..5ac1070 100644
          // number of live documents: this preserves unlimited-query semantics
          // and prevents a huge SQL LIMIT from allocating beyond the largest
          // possible result set.
-@@ -3127,12 +3252,29 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3127,12 +3297,35 @@ impl IndexMethodCursor for FtsCursor {
 
          // Unordered patterns can walk Tantivy's per-segment scorers directly.
          // This keeps memory constant for the common MATCH path. Global score
@@ -619,6 +664,7 @@ index bf97450..5ac1070 100644
 +        query.query_terms(&mut |_, _| term_work = term_work.saturating_add(1));
 +        let term_work = term_work.max(1);
 +        let clauses = fts_query_clause_count(query.as_ref(), query_str.len() as u64).max(term_work);
++        let scorer_clauses = clauses.saturating_add(fts_query_prefix_expansions(query.as_ref()));
 +        // Tantivy 0.26.2: each term weight owns a 1 KiB BM25 table, plus wrappers and cloned terms.
 +        check_fts_work(connection.as_deref(), 1, clauses.saturating_mul(4 * 1024))?;
 +        for segment in searcher.segment_readers() {
@@ -626,14 +672,19 @@ index bf97450..5ac1070 100644
 +            // Per clause: posting decoders/scorer copies and up to a 4096-slot union score window.
 +            let bytes = work
 +                .saturating_mul(4)
-+                .saturating_add(clauses.saturating_mul(64 * 1024));
++                .saturating_add(scorer_clauses.saturating_mul(64 * 1024))
++                .saturating_add(fts_query_position_bytes(
++                    query.as_ref(),
++                    segment,
++                    &self.default_fields,
++                )?);
 +            check_fts_work(connection.as_deref(), work, bytes)?;
 +        }
 +        check_fts_work(connection.as_deref(), 1, 0)?;
          if let Some(scores_enabled) = streaming_scores {
              let scoring = if scores_enabled {
                  EnableScoring::enabled_from_searcher(searcher)
-@@ -3142,11 +3284,18 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3142,11 +3335,18 @@ impl IndexMethodCursor for FtsCursor {
              let weight = query
                  .weight(scoring)
                  .map_err(|e| LimboError::InternalError(format!("FTS query weight error: {e}")))?;
@@ -652,7 +703,7 @@ index bf97450..5ac1070 100644
                  segments.push(FtsStreamingSegment {
                      scorer,
                      rowids: self.rowid_readers[segment_ord].clone(),
-@@ -3154,6 +3303,7 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3154,6 +3354,7 @@ impl IndexMethodCursor for FtsCursor {
                  });
              }
              let mut stream = FtsHitStream {
@@ -660,7 +711,7 @@ index bf97450..5ac1070 100644
                  segments,
                  segment_pos: 0,
                  remaining: limit,
-@@ -3165,78 +3315,52 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3165,78 +3366,52 @@ impl IndexMethodCursor for FtsCursor {
              return Ok(IOResult::Done(has_result));
          }
 
@@ -780,7 +831,7 @@ index bf97450..5ac1070 100644
 
          Ok(IOResult::Done(!self.current_hits.is_empty()))
      }
-@@ -3417,9 +3541,14 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3417,9 +3592,14 @@ impl IndexMethodCursor for FtsCursor {
          self.reset_to_init();
      }
 
@@ -797,7 +848,7 @@ index bf97450..5ac1070 100644
 
      fn on_transaction_rolled_back(&mut self, _context: &IndexMethodContext) {
 diff --git a/core/index_method/fts/tests.rs b/core/index_method/fts/tests.rs
-index 05ec657..e2c5068 100644
+index 05ec657..fb1af2f 100644
 --- a/core/index_method/fts/tests.rs
 +++ b/core/index_method/fts/tests.rs
 @@ -401,6 +401,7 @@ fn segment_load_reads_the_identities_the_build_wrote() {
@@ -868,7 +919,7 @@ index 05ec657..e2c5068 100644
 
      for cursor in [&mut original, &mut cached] {
          for pattern in [FTS_PATTERN_MATCH, FTS_PATTERN_COMBINED] {
-@@ -906,3 +899,85 @@ mod allocation_failures {
+@@ -906,3 +899,144 @@ mod allocation_failures {
          }
      }
  }
@@ -953,6 +1004,65 @@ index 05ec657..e2c5068 100644
 +        .parse_query(&terms)
 +        .unwrap();
 +    assert!(fts_query_clause_count(query.as_ref(), terms.len() as u64) >= 500);
++}
++
++#[test]
++fn dense_phrase_positions_and_prefix_expansions_are_charged_before_scorers() {
++    let attachment = test_attachment();
++    let body = "a ".repeat(262144);
++    let (segment, _) = build_and_load_segment(&attachment, &[(1, body.as_str())]);
++    let mut cursor = FtsCursor::new(&attachment);
++    cursor.segments = vec![segment];
++    cursor.ensure_searcher().unwrap();
++    let segment = &cursor.searcher.as_ref().unwrap().segment_readers()[0];
++    let parser = tantivy::query::QueryParser::for_index(
++        cursor.index.as_ref().unwrap(),
++        vec![cursor.default_fields[0]],
++    );
++    for (terms, positional_occurrences, expansions) in [
++        (r#""a a""#, 2, 0),
++        (r#""a a"~2"#, 2, 0),
++        (r#""a a"*"#, 1, 50),
++        (r#"("a a")^2"#, 2, 100),
++        (r#"("a a"* OR "a a")^2"#, 3, 150),
++    ] {
++        let query = parser.parse_query(terms).unwrap();
++        assert_eq!(
++            fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields).unwrap(),
++            262144 * positional_occurrences * 64,
++            "{terms}"
++        );
++        assert_eq!(
++            fts_query_prefix_expansions(query.as_ref()),
++            expansions,
++            "{terms}"
++        );
++    }
++    let terms = std::iter::repeat_n(r#""a a""#, 300)
++        .collect::<Vec<_>>()
++        .join(" OR ");
++    assert_eq!(terms.len(), 2696);
++    let query = parser.parse_query(&terms).unwrap();
++    assert_eq!(
++        fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields).unwrap(),
++        262144 * 600 * 64
++    );
++    let query = parser.parse_query("a").unwrap();
++    assert_eq!(
++        fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields).unwrap(),
++        0
++    );
++    let query = cursor
++        .cached_parser
++        .as_ref()
++        .unwrap()
++        .parse_query(r#""a a"*"#)
++        .unwrap();
++    assert_eq!(fts_query_prefix_expansions(query.as_ref()), 100);
++    assert_eq!(
++        fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields).unwrap(),
++        262144 * 64
++    );
 +}
 diff --git a/sdk-kit/src/capi.rs b/sdk-kit/src/capi.rs
 index 2610822..f3944f8 100644

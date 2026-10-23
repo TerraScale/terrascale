@@ -40,6 +40,8 @@ static void search(turso_connection_t *connection, const char *sql, const char *
 }
 
 static uint64_t callback_calls, charged_work, charged_bytes, work_limit, byte_limit, largest_byte_charge;
+typedef struct { uint64_t bytes, before, call, work; } byte_charge;
+static byte_charge largest_charge, second_largest_charge;
 static int stop_requested, stop_on_bytes;
 
 static int32_t fts_budget(uint64_t work, uint64_t bytes) {
@@ -47,6 +49,13 @@ static int32_t fts_budget(uint64_t work, uint64_t bytes) {
     charged_work += work;
     charged_bytes += bytes;
     if (bytes > largest_byte_charge) largest_byte_charge = bytes;
+    byte_charge charge = {bytes, charged_bytes - bytes, callback_calls, work};
+    if (bytes > largest_charge.bytes) {
+        second_largest_charge = largest_charge;
+        largest_charge = charge;
+    } else if (bytes > second_largest_charge.bytes) {
+        second_largest_charge = charge;
+    }
     return stop_requested || (stop_on_bytes && bytes != 0) || charged_work > work_limit || charged_bytes > byte_limit;
 }
 
@@ -54,6 +63,7 @@ static void reset_budget(turso_connection_t *connection) {
     callback_calls = charged_work = charged_bytes = 0;
     work_limit = byte_limit = UINT64_MAX;
     largest_byte_charge = 0;
+    largest_charge = second_largest_charge = (byte_charge){0};
     stop_requested = stop_on_bytes = 0;
     expect(turso_connection_set_fts_progress_handler(connection, fts_budget, &error), TURSO_OK, "set FTS callback");
 }
@@ -135,18 +145,43 @@ static void many_clause_admission_smoke(turso_connection_t *connection) {
     for (int i = 1; i < 500; i++) strcat(terms, " OR a");
     assert(strlen(terms) == 2496);
     const char *sql = "SELECT id, fts_score(title, ?1) FROM tiny_docs WHERE fts_match(title, ?1) LIMIT 10001";
+    /* Measure setup separately: loading/scratch can exceed a fixed small byte ceiling. */
+    reset_budget(connection);
+    turso_statement_t *statement = prepare(connection, sql);
+    expect(turso_statement_bind_positional_text(statement, 1, terms, strlen(terms)), TURSO_OK, "bind healthy many clauses");
+    expect(turso_statement_step(statement, &error), TURSO_ROW, sql);
+    assert(turso_statement_row_value_int(statement, 0) == 1);
+    assert(turso_statement_row_value_double(statement, 1) > 0);
+    expect(turso_statement_step(statement, &error), TURSO_DONE, sql);
+    turso_statement_deinit(statement);
+    byte_charge weight_charge = second_largest_charge;
+    byte_charge scorer_charge = largest_charge;
+    assert(weight_charge.bytes >= (uint64_t)500 * 4 * 1024);
+    assert(scorer_charge.bytes >= (uint64_t)500 * 64 * 1024);
+    assert(weight_charge.work == 1 && scorer_charge.work >= 500);
+    assert(weight_charge.call < scorer_charge.call);
+    assert(weight_charge.before + weight_charge.bytes <= scorer_charge.before);
     for (int scorer = 0; scorer < 2; scorer++) {
+        byte_charge target = scorer ? scorer_charge : weight_charge;
         reset_budget(connection);
-        byte_limit = scorer ? 4 * 1024 * 1024 : 128 * 1024;
-        turso_statement_t *statement = prepare(connection, sql);
+        byte_limit = target.before;
+        statement = prepare(connection, sql);
         expect(turso_statement_bind_positional_text(statement, 1, terms, strlen(terms)), TURSO_OK, "bind 500 clauses");
-        expect(turso_statement_step(statement, &error), TURSO_INTERRUPT, "many clauses exceed native admission");
-        assert(largest_byte_charge >= (uint64_t)500 * (scorer ? 64 * 1024 : 1024));
+        turso_status_code_t status = turso_statement_step(statement, &error);
+        printf("native smoke: %s refusal status=%d call=%llu prior=%llu charge=%llu limit=%llu work=%llu\n", scorer ? "scorer" : "weight", status,
+               (unsigned long long)callback_calls, (unsigned long long)largest_charge.before,
+               (unsigned long long)largest_byte_charge, (unsigned long long)byte_limit, (unsigned long long)largest_charge.work);
+        fflush(stdout);
+        expect(status, TURSO_INTERRUPT, "many clauses exceed native admission");
+        assert(callback_calls == target.call);
+        assert(largest_byte_charge == target.bytes);
+        assert(charged_bytes == target.before + target.bytes);
+        assert(largest_byte_charge >= (uint64_t)500 * (scorer ? 64 * 1024 : 4 * 1024));
         expect(turso_statement_reset(statement, &error), TURSO_OK, "reset clause admission refusal");
         turso_statement_deinit(statement);
     }
     expect(turso_connection_set_fts_progress_handler(connection, NULL, &error), TURSO_OK, "clear clause admission");
-    turso_statement_t *statement = prepare(connection, sql);
+    statement = prepare(connection, sql);
     expect(turso_statement_bind_positional_text(statement, 1, terms, strlen(terms)), TURSO_OK, "bind healthy many clauses");
     expect(turso_statement_step(statement, &error), TURSO_ROW, sql);
     assert(turso_statement_row_value_int(statement, 0) == 1);
@@ -165,6 +200,54 @@ static void many_clause_admission_smoke(turso_connection_t *connection) {
     expect_count(connection, "SELECT count(*) FROM tiny_docs WHERE fts_match(title, 'updated')", 0);
     expect_count(connection, "SELECT count(*) FROM tiny_docs WHERE fts_match(title, 'a')", 1);
     puts("native smoke: completed reads across indexes in an open transaction preserve rollback");
+}
+
+static void dense_phrase_admission_smoke(turso_connection_t *connection) {
+    const size_t tokens = 262144;
+    char *body = malloc(tokens * 2 + 1);
+    assert(body != NULL);
+    for (size_t i = 0; i < tokens; i++) { body[i * 2] = 'a'; body[i * 2 + 1] = ' '; }
+    body[tokens * 2] = '\0';
+    execute(connection, "CREATE TABLE dense_docs(id INTEGER PRIMARY KEY, title TEXT)");
+    turso_statement_t *statement = prepare(connection, "INSERT INTO dense_docs VALUES (1, ?1)");
+    expect(turso_statement_bind_positional_text(statement, 1, body, tokens * 2), TURSO_OK, "bind dense document");
+    expect(turso_statement_step(statement, &error), TURSO_DONE, "insert dense document");
+    turso_statement_deinit(statement);
+    free(body);
+    execute(connection, "CREATE INDEX dense_fts ON dense_docs USING fts(title)");
+    const char *scored = "SELECT id, fts_score(title, ?1) FROM dense_docs WHERE fts_match(title, ?1) LIMIT 10001";
+    const char *counted = "SELECT count(*) FROM dense_docs WHERE fts_match(title, ?1)";
+    for (int variant = 0; variant < 5; variant++) {
+        const int clauses = variant == 3 ? 50 : 300;
+        const char *phrase = variant == 1 ? "\"a a\"~2" : variant == 2 ? "\"a a\"*" : "\"a a\"";
+        char terms[4096] = "";
+        if (variant == 3) strcat(terms, "(");
+        for (int i = 0; i < clauses; i++) {
+            if (i) strcat(terms, " OR ");
+            strcat(terms, phrase);
+        }
+        if (variant == 3) strcat(terms, ")^2");
+        if (variant == 0) assert(strlen(terms) == 2696);
+        reset_budget(connection);
+        byte_limit = 128 * 1024 * 1024;
+        statement = prepare(connection, variant == 4 ? counted : scored);
+        expect(turso_statement_bind_positional_text(statement, 1, terms, strlen(terms)), TURSO_OK, "bind dense phrases");
+        turso_status_code_t status = turso_statement_step(statement, &error);
+        uint64_t position_bound = (uint64_t)tokens * clauses * (variant == 2 ? 1 : 2) * 64;
+        printf("native smoke: dense phrase variant=%d status=%d prior=%llu charge=%llu limit=%llu positional-bound=%llu\n", variant, status,
+               (unsigned long long)(charged_bytes - largest_byte_charge), (unsigned long long)largest_byte_charge,
+               (unsigned long long)byte_limit, (unsigned long long)position_bound);
+        fflush(stdout);
+        expect(status, TURSO_INTERRUPT, "dense phrases refuse position admission");
+        assert(largest_byte_charge >= position_bound);
+        assert(charged_bytes - largest_byte_charge <= byte_limit);
+        assert(largest_byte_charge > byte_limit);
+        expect(turso_statement_reset(statement, &error), TURSO_OK, "reset dense phrase admission refusal");
+        turso_statement_deinit(statement);
+    }
+    expect(turso_connection_set_fts_progress_handler(connection, NULL, &error), TURSO_OK, "clear dense phrase admission");
+    search(connection, scored, "\"a a\"", 1);
+    puts("native smoke: dense repeated/sloppy/prefix/boosted phrases and count refuse before scorer allocation; recovery passed");
 }
 
 static void candidate_seek_smoke(turso_connection_t *connection) {
@@ -254,6 +337,7 @@ int main(int argc, char **argv) {
         puts("native smoke: column FTS match/score, commit, update, delete and rollback passed");
         budget_smoke(connection);
         many_clause_admission_smoke(connection);
+        dense_phrase_admission_smoke(connection);
         candidate_seek_smoke(connection);
     } else {
         /* Expression support is diagnostic: the engine uses ordinary derived text columns. */
