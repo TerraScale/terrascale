@@ -16,5 +16,7 @@ export async function run(sandbox: Sandbox): Promise<void> {
   const source = await sandbox.client.databases.get(sandbox.databaseName);
   const branch = await sandbox.client.databases.branch(source.name, { name: `${source.name}-preview` });
   assert.equal(branch.branchedFrom, source.id);
+  // Delete answers 409 database_replicated until the replicas are removed.
+  await sandbox.client.databases.update(branch.name, { replicaRegions: [] });
   await sandbox.client.databases.delete(branch.name);
 }
