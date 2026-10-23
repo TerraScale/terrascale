@@ -11,6 +11,48 @@ public sealed class EndUserTokenTests
     private static readonly string[] AdminRoles = ["admin"];
 
     [Test]
+    public async Task Expired_and_tampered_end_user_tokens_are_denied_after_a_valid_token_warms_the_cache()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync("main");
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        var documents = Uri(database.Data + "/collections/items/documents");
+        using (var project = api.WithToken(api.Issuer.Mint(api.User, token =>
+        {
+            token.Claims["project_id"] = database.Project;
+            token.Claims["scope"] = "databases:read documents:write";
+        })))
+        {
+            await CreateCollectionAsync(project, database, "items");
+        }
+
+        var valid = Token(api, database.Project);
+        using var authorized = api.WithToken(valid);
+        using var before = await authorized.GetAsync(documents);
+        await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+
+        var now = DateTime.UtcNow;
+        var expired = Token(api, database.Project, token =>
+        {
+            token.IssuedAt = now.AddMinutes(-20);
+            token.NotBefore = now.AddMinutes(-20);
+            token.Expires = now.AddMinutes(-2);
+        });
+        var signature = valid.LastIndexOf('.') + 1;
+        var tampered = string.Concat(valid.AsSpan(0, signature), valid[signature] == 'A' ? "B" : "A", valid.AsSpan(signature + 1));
+        foreach (var rejected in new[] { expired, tampered })
+        {
+            using var client = api.WithToken(rejected);
+            using var response = await client.GetAsync(documents);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            await Assert.That(response.Headers.ETag).IsNull();
+        }
+
+        using var after = await authorized.GetAsync(documents);
+        await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+    }
+
+    [Test]
     public async Task End_users_cannot_use_SQL_management_or_collection_metadata_even_with_an_admin_role()
     {
         await using var api = await ManagementApi.StartAsync();
