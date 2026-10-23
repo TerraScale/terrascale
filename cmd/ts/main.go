@@ -282,7 +282,12 @@ func (s *session) run(ctx context.Context, args []string, out io.Writer) error {
 		fmt.Fprintf(out, "Created %s (%s)\n", args[2], db.ID)
 		return nil
 	case args[1] == "delete" && len(args) == 3:
-		if err := s.tb.Database(s.project, args[2]).Delete(ctx); err != nil {
+		db := s.tb.Database(s.project, args[2])
+		// TerraBase deletes only unreplicated databases, and new ones replicate.
+		if _, err := db.SetRegions(ctx, []string{}); err != nil {
+			return err
+		}
+		if err := db.Delete(ctx); err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "Deleted %s\n", args[2])
