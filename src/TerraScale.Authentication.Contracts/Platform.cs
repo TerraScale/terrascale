@@ -78,7 +78,14 @@ public sealed record ApiKeyRecord(
     DateTimeOffset? PreviousSecretExpiresAt,
     string CreatedBy,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? ExpiresAt);
+    DateTimeOffset? ExpiresAt)
+{
+    /// <summary>The sign-in branch that issued the current secret must remain a replicated winner.</summary>
+    public IReadOnlyList<CredentialBinding>? SecretBindings { get; init; }
+
+    /// <summary>The previous secret retains its own lineage during rotation grace.</summary>
+    public IReadOnlyList<CredentialBinding>? PreviousSecretBindings { get; init; }
+}
 
 /// <summary>
 /// An invitation (collection <c>invitations</c>, addressed by id) to an organization role, or with a project to that

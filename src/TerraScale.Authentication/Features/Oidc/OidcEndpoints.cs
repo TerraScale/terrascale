@@ -142,11 +142,12 @@ public sealed class AuthorizeEndpoint(Sessions sessions, TimeProvider clock, Aut
         {
             if (request.HasPromptValue(PromptValues.None) || live is not null)
             {
-                return OidcResults.Forbid(Errors.LoginRequired, "The user must sign in.");
+                return OidcResults.Forbid(Errors.LoginRequired, CredentialLineage.ConflictNotice);
             }
 
             var resume = $"/{OidcIssuer.Slug}/oauth/authorize{this.HttpContext.Request.QueryString}";
-            return Results.Redirect($"/ui/{OidcIssuer.Slug}/sign-in?next={Uri.EscapeDataString(resume)}");
+            var notice = this.HttpContext.Request.Cookies.ContainsKey(SecuritySchemes.SessionCookieName) ? "&notice=credential_changed" : string.Empty;
+            return Results.Redirect($"/ui/{OidcIssuer.Slug}/sign-in?next={Uri.EscapeDataString(resume)}{notice}");
         }
 
         return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcIssuer.SignInAudiences(options));
@@ -156,7 +157,7 @@ public sealed class AuthorizeEndpoint(Sessions sessions, TimeProvider clock, Aut
 /// <summary>
 /// <c>POST /{slug}/oauth/token</c>: redeems an authorization code, rotates a refresh token, or issues a service client's
 /// client-credentials access token. Each code and refresh token works once: a second presentation, even a concurrent
-/// one, fails and revokes every token of that sign-in. Tokens are refused once the user signed out everywhere.
+/// one in the same region, fails; after replication only the winning branch remains usable. Tokens are refused once the user signed out everywhere.
 /// </summary>
 public sealed class TokenEndpoint(Users users, TotpCredentials mfa, PlatformGrants platform, AuthOptions options, IOpenIddictApplicationStore<OidcApplication> applications) : EndpointWithoutRequest<IResult>
 {
@@ -240,13 +241,14 @@ public sealed class TokenEndpoint(Users users, TotpCredentials mfa, PlatformGran
             ?? throw new InvalidOperationException("OpenIddict passed a token request without a principal.");
         var user = principal.GetClaim(Claims.Subject) is { } subject ? await users.GetAsync(OidcIssuer.InstanceId, subject, cancellationToken) : null;
         if (user is null || principal.GetClaim(OidcIssuer.EpochClaim) != user.AuthEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            || principal.GetClaim(OidcIssuer.StateClaim) != user.AuthStamp
             || !long.TryParse(principal.GetClaim(Claims.AuthenticationTime), System.Globalization.CultureInfo.InvariantCulture, out var authenticatedAt)
             || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
         {
             return OidcResults.Forbid(Errors.InvalidGrant, "The user is no longer signed in.");
         }
 
-        return OidcResults.SignIn(user, DateTimeOffset.FromUnixTimeSeconds(authenticatedAt), principal.GetScopes(), OidcIssuer.SignInAudiences(options));
+        return OidcResults.SignIn(user with { AuthenticationBindings = CredentialLineage.Read(principal) }, DateTimeOffset.FromUnixTimeSeconds(authenticatedAt), principal.GetScopes(), OidcIssuer.SignInAudiences(options));
     }
 }
 
@@ -291,6 +293,7 @@ public sealed class UserInfoEndpoint(Users users, TotpCredentials mfa) : Endpoin
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal;
         if (principal?.GetClaim(Claims.Subject) is not { } subject || await users.GetAsync(OidcIssuer.InstanceId, subject, cancellationToken) is not { } user
             || principal.GetClaim(OidcIssuer.EpochClaim) != user.AuthEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            || principal.GetClaim(OidcIssuer.StateClaim) != user.AuthStamp
             || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
         {
             return Results.Challenge(OidcResults.Error(Errors.InvalidToken, "The access token no longer identifies a user."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
@@ -407,6 +410,7 @@ internal static class OidcResults
             .SetClaim(Claims.EmailVerified, true)
             .SetClaim(Claims.AuthenticationTime, authenticatedAt.ToUnixTimeSeconds())
             .SetClaim(OidcIssuer.EpochClaim, user.AuthEpoch)
+            .SetClaim(OidcIssuer.StateClaim, user.AuthStamp)
             .SetScopes(scopes)
             .SetResources(audiences);
         // Only the platform's own tenant has platform admins; TerraBase's explore API reads the claim (platform-databases.md).
@@ -423,9 +427,11 @@ internal static class OidcResults
             Claims.Subject => [Destinations.AccessToken, Destinations.IdentityToken],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime => [Destinations.AccessToken, Destinations.IdentityToken],
-            OidcIssuer.EpochClaim or PlatformRoleClaim => [Destinations.AccessToken],
+            OidcIssuer.EpochClaim or OidcIssuer.StateClaim or PlatformRoleClaim => [Destinations.AccessToken],
             _ => [],
         });
-        return Results.SignIn(new ClaimsPrincipal(identity), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+        var principal = new ClaimsPrincipal(identity);
+        CredentialLineage.Attach(principal, user.AuthenticationBindings);
+        return Results.SignIn(principal, null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
     }
 }

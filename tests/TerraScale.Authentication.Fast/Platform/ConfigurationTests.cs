@@ -87,11 +87,10 @@ public sealed class ConfigurationTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task An_explicit_url_receives_both_local_and_authority_storage_requests(bool development)
+    public async Task An_explicit_url_receives_all_regional_storage_requests(bool development)
     {
         const string storage = "http://127.0.0.1:18081";
         var reads = new System.Collections.Concurrent.ConcurrentQueue<Uri>();
-        var rest = new System.Collections.Concurrent.ConcurrentQueue<Uri>();
         await using var server = await AuthTestServer.StartAsync(
             settings: values =>
             {
@@ -105,14 +104,12 @@ public sealed class ConfigurationTests
             services: services =>
             {
                 services.AddSingleton(new HttpClient(new RecordingTransport(reads)));
-                services.AddKeyedSingleton(App.StorageAuthority, new HttpClient(new RecordingTransport(rest)));
             });
 
         // The JWKS reads signing keys (a GET); startup provisioning writes.
         using var jwks = await server.Client.GetAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json");
-        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(!reads.IsEmpty && !rest.IsEmpty), TimeSpan.FromSeconds(15))).IsTrue();
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(!reads.IsEmpty), TimeSpan.FromSeconds(15))).IsTrue();
         await Assert.That(reads.Select(uri => uri.GetLeftPart(UriPartial.Authority)).Distinct()).IsEquivalentTo([storage]);
-        await Assert.That(rest.Select(uri => uri.GetLeftPart(UriPartial.Authority)).Distinct()).IsEquivalentTo([storage]);
     }
 
     [Test]

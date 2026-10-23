@@ -138,6 +138,7 @@ public sealed class TcpRelay : IAsyncDisposable
     private async Task RelayAsync(TcpClient client)
     {
         using var upstream = new TcpClient();
+        Task[] forwarding = [];
         this.open[client] = 0;
         this.open[upstream] = 0;
         try
@@ -151,7 +152,8 @@ public sealed class TcpRelay : IAsyncDisposable
             await upstream.ConnectAsync(this.target);
             var downstream = client.GetStream();
             var toTarget = upstream.GetStream();
-            await Task.WhenAny(this.ForwardAsync(downstream, toTarget), toTarget.CopyToAsync(downstream));
+            forwarding = [this.ForwardAsync(downstream, toTarget), toTarget.CopyToAsync(downstream)];
+            await await Task.WhenAny(forwarding);
         }
         catch (Exception error) when (error is IOException or SocketException or ObjectDisposedException or InvalidOperationException)
         {
@@ -162,6 +164,15 @@ public sealed class TcpRelay : IAsyncDisposable
             this.open.TryRemove(client, out _);
             this.open.TryRemove(upstream, out _);
             client.Dispose();
+            upstream.Dispose();
+            try
+            {
+                await Task.WhenAll(forwarding);
+            }
+            catch (Exception error) when (error is IOException or SocketException or ObjectDisposedException or InvalidOperationException)
+            {
+                // Observe both directions when closing either side interrupts the remaining copy.
+            }
         }
     }
 }

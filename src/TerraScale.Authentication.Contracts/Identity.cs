@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TerraScale.Authentication.Contracts;
 
 /// <summary>A user account (collection <c>users</c>). One account owns each normalized email per instance.</summary>
@@ -12,7 +14,15 @@ namespace TerraScale.Authentication.Contracts;
 /// in TerraBase; <see langword="null"/> otherwise. No API sets it: an operator writes it to the user's document through
 /// TerraBase's internal listener. The platform owner is an admin without it (ts-auth's PlatformBootstrap.OwnerEmail).
 /// </param>
-public sealed record UserRecord(string Id, string InstanceId, string Email, long AuthEpoch, DateTimeOffset CreatedAt, string? PasswordHash = null, string? PlatformRole = null);
+public sealed record UserRecord(string Id, string InstanceId, string Email, long AuthEpoch, DateTimeOffset CreatedAt, string? PasswordHash = null, string? PlatformRole = null)
+{
+    /// <summary>Identity of the last authentication-state change; equal numeric epochs can race across regions.</summary>
+    public string? AuthStamp { get; init; }
+
+    /// <summary>Proof lineage for this authentication attempt; never written back to the account.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<CredentialBinding> AuthenticationBindings { get; init; } = [];
+}
 
 /// <summary>A browser session (collection <c>sessions</c>). Only the SHA-256 of its bearer token is stored.</summary>
 /// <param name="InstanceId">The owning instance.</param>
@@ -22,7 +32,14 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
 /// <param name="CreatedAt">Issue time.</param>
 /// <param name="ExpiresAt">Absolute expiry, set at authentication; rotation keeps it.</param>
 /// <param name="Revoked">Set by sign-out and rotation; never cleared.</param>
-public sealed record SessionRecord(string InstanceId, string UserId, string TokenHash, long AuthEpoch, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, bool Revoked = false);
+public sealed record SessionRecord(string InstanceId, string UserId, string TokenHash, long AuthEpoch, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, bool Revoked = false)
+{
+    /// <summary>The user's authentication-state identity when this session was opened.</summary>
+    public string? AuthStamp { get; init; }
+
+    /// <summary>Every one-use ancestor must still name this branch as its winner.</summary>
+    public IReadOnlyList<CredentialBinding> Bindings { get; init; } = [];
+}
 
 /// <summary>
 /// A user's current email passcode (collection <c>passcodes</c>, one per user), or a pending sign-up's code (one per
@@ -57,4 +74,34 @@ public sealed record PasscodeRecord(
     int IssuedInWindow,
     string? Purpose = null,
     string? PasswordHash = null,
-    string? PendingTokenHash = null);
+    string? PendingTokenHash = null)
+{
+    /// <summary>The authentication-state identity at issue.</summary>
+    public string? AuthStamp { get; init; }
+
+    /// <summary>Identifies this issuance even if a later random code repeats.</summary>
+    public string IssueId { get; init; } = string.Empty;
+
+    /// <summary>Immutable issuance predecessors, retained when a later code replaces this one.</summary>
+    public IReadOnlyList<CredentialBinding> IssuanceBindings { get; init; } = [];
+
+    /// <summary>Redemption verifies fresh email possession and advances authentication state before starting a new family.</summary>
+    public bool ResetsAuthentication { get; init; }
+
+    /// <summary>Pruning removes code material but retains the issuance anchor.</summary>
+    public bool Pruned { get; init; }
+
+    /// <summary>The winning redemption this result depends on; not part of the stored passcode.</summary>
+    [JsonIgnore]
+    public CredentialBinding? Binding { get; init; }
+
+    /// <summary>The new state selected by an atomic reset or issuance-budget recovery.</summary>
+    [JsonIgnore]
+    public UserRecord? AuthenticatedUser { get; init; }
+}
+
+/// <summary>A branch of an immutable, tenant-scoped one-use claim. Identifiers contain no bearer secrets.</summary>
+/// <param name="Kind">The credential claim namespace.</param>
+/// <param name="Key">The consumed credential's issuance identifier.</param>
+/// <param name="OwnerId">The request branch that must win the replicated claim.</param>
+public sealed record CredentialBinding(string Kind, string Key, string OwnerId);

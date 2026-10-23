@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.AspNetCore.Builder;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -117,10 +118,10 @@ public sealed partial class OidcHarness : IAsyncDisposable
     public const string PublicOrigin = "https://auth.test.invalid";
     public const string Issuer = PublicOrigin + "/" + OidcIssuer.Slug;
 
-    private readonly TerraBaseFixture fixture;
+    private readonly TerraBaseFixture? fixture;
     private readonly string masterKey;
 
-    private OidcHarness(TerraBaseFixture fixture, TerraBaseTestTenant tenant, string masterKey, AuthTestServer server, TerraBaseDatabase database, CapturingEmailSender email)
+    private OidcHarness(TerraBaseFixture? fixture, TerraBaseTestTenant tenant, string masterKey, AuthTestServer server, TerraBaseDatabase database, CapturingEmailSender email)
     {
         this.fixture = fixture;
         this.Tenant = tenant;
@@ -154,9 +155,17 @@ public sealed partial class OidcHarness : IAsyncDisposable
         return new OidcHarness(fixture, tenant, masterKey, server, database, email);
     }
 
+    /// <summary>Uses a real regional TerraBase copy; the fixture owns the cluster and shared synthetic keys.</summary>
+    public static async Task<OidcHarness> StartAsync(RegionalTerraBaseFixture fixture, string region, Action<WebApplication>? routes = null)
+    {
+        var email = new CapturingEmailSender();
+        var server = await fixture.StartAuthAsync(region, routes: routes, email: email);
+        return new OidcHarness(null, fixture.Tenant, string.Empty, server, fixture.Database(region), email);
+    }
+
     /// <summary>Another replica on this harness's database and master key; the caller disposes it.</summary>
     public Task<AuthTestServer> StartReplicaAsync(Action<Dictionary<string, string>>? settings = null, TimeProvider? clock = null, Action<IServiceCollection>? services = null) =>
-        StartServerAsync(this.fixture, this.Tenant, this.Email, values =>
+        StartServerAsync(this.fixture ?? throw new InvalidOperationException("Regional replicas are started through their regional fixture."), this.Tenant, this.Email, values =>
         {
             values["master-key"] = this.masterKey;
             settings?.Invoke(values);

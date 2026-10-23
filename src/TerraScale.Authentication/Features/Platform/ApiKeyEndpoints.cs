@@ -220,7 +220,7 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
             throw Invalid("expires_at must be in the future.");
         }
 
-        var (key, secret) = await keys.CreateAsync(caller.Id, this.RouteId("organization"), this.ProjectId(), name, scopes, body.Database, body.ExpiresAt, cancellationToken);
+        var (key, secret) = await keys.CreateAsync(caller, this.RouteId("organization"), this.ProjectId(), name, scopes, body.Database, body.ExpiresAt, cancellationToken);
         return Results.Json(new ApiKeySecretBody(this.Map(key), secret), PlatformApiJson.Default.ApiKeySecretBody, statusCode: StatusCodes.Status201Created);
     }
 
@@ -264,7 +264,7 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
             throw Invalid("previous_secret_ttl must be 0 to 86400 seconds.");
         }
 
-        var (key, secret) = await keys.RotateAsync(caller.Id, this.RouteId("organization"), this.ProjectId(), this.KeyId(), ttl, cancellationToken);
+        var (key, secret) = await keys.RotateAsync(caller, this.RouteId("organization"), this.ProjectId(), this.KeyId(), ttl, cancellationToken);
         return Results.Json(new ApiKeySecretBody(this.Map(key), secret), PlatformApiJson.Default.ApiKeySecretBody);
     }
 

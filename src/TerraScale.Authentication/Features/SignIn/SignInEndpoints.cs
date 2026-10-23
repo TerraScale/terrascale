@@ -39,7 +39,8 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         ValueTask.FromResult(SignInFlow.WrongSlug(this.HttpContext)
             ? Results.NotFound()
-            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Email, OidcIssuer.Slug, Next: SignInFlow.SafeNext(this.HttpContext.Request.Query["next"]))));
+            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Email, OidcIssuer.Slug, Next: SignInFlow.SafeNext(this.HttpContext.Request.Query["next"]),
+                Error: this.HttpContext.Request.Query["notice"] == "credential_changed" ? CredentialLineage.ConflictNotice : null)));
 }
 
 /// <summary>
@@ -469,7 +470,7 @@ internal static class SignInFlow
     }
 
     public static IResult WrongCode(HttpContext context, SignInStep step, string email, string? next, string? pendingToken = null) =>
-        SignInPageModel.Render(context, new SignInPageModel(step, OidcIssuer.Slug, email, next, "Check the latest email, or request a new code.")
+        SignInPageModel.Render(context, new SignInPageModel(step, OidcIssuer.Slug, email, next, "This code is invalid, expired, already used, or superseded by a concurrent request. Check the latest email, or request a new code.")
         {
             ErrorTitle = "That code is wrong or expired",
             PendingToken = pendingToken,

@@ -53,9 +53,10 @@ public sealed class PlatformAuthentication(KeyRing ring, Users users, TotpCreden
         return claims is not null && Claim(claims, Claims.Subject) is { } userId
             && await users.GetAsync(OidcIssuer.InstanceId, userId, cancellationToken).ConfigureAwait(false) is { } user
             && Claim(claims, OidcIssuer.EpochClaim) == user.AuthEpoch.ToString(CultureInfo.InvariantCulture)
-            && await this.LiveAsync(claims, userId, cancellationToken).ConfigureAwait(false)
+            && Claim(claims, OidcIssuer.StateClaim) == user.AuthStamp
+            && await this.LiveAsync(claims, userId, cancellationToken).ConfigureAwait(false) is { } entry
             && await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken).ConfigureAwait(false)
-            ? user
+            ? user with { AuthenticationBindings = entry.Bindings }
             : null;
     }
 
@@ -65,17 +66,17 @@ public sealed class PlatformAuthentication(KeyRing ring, Users users, TotpCreden
     // The token entry every sign-in access token names (oi_tkn_id; its jti is a separate value) and the sign-in
     // (authorization) it names must still be valid and the user's: revocation (RFC 7009) and refresh-token reuse revoke
     // them. A token naming no entry cannot be checked, so it is refused.
-    private async Task<bool> LiveAsync(IDictionary<string, object> claims, string userId, CancellationToken cancellationToken)
+    private async Task<OidcToken?> LiveAsync(IDictionary<string, object> claims, string userId, CancellationToken cancellationToken)
     {
         if (Claim(claims, "oi_au_id") is { } authorizationId
             && (await authorizations.FindByIdAsync(authorizationId, cancellationToken).ConfigureAwait(false) is not { } authorization
                 || authorization.Status != Statuses.Valid || authorization.Subject != userId))
         {
-            return false;
+            return null;
         }
 
         return Claim(claims, "oi_tkn_id") is { } tokenId
             && await tokens.FindByIdAsync(tokenId, cancellationToken).ConfigureAwait(false) is { } entry
-            && entry.Status == Statuses.Valid && entry.Subject == userId;
+            && entry.Status == Statuses.Valid && entry.Subject == userId ? entry : null;
     }
 }

@@ -1,4 +1,7 @@
 using System.Net;
+using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Store;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -169,6 +172,42 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
 
         await Assert.That(result.IsValid).IsTrue();
         await Assert.That(((JsonWebToken)result.SecurityToken).Audiences.ToArray()).IsEquivalentTo([AuthOptions.TerraBaseAudience]);
+    }
+
+    [Test]
+    public async Task Refresh_at_the_lineage_budget_requires_signin_without_consuming_or_extending_the_family()
+    {
+        await using var oidc = await StartAsync();
+        var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
+        var user = await oidc.CreateUserAsync();
+        var session = await sessions.CreateAsync(user);
+        for (var rotation = 1; rotation < AuthStore.MaxCredentialBindings - 1; rotation++)
+        {
+            session = (await sessions.RotateAsync(user.InstanceId, session.Token))!;
+        }
+
+        await Assert.That(session.Session.Bindings.Count).IsEqualTo(AuthStore.MaxCredentialBindings - 1);
+        var (verifier, challenge) = OidcHarness.Pkce();
+        using var issued = await oidc.RedeemCodeAsync(await oidc.CodeAsync(session.Token, challenge), verifier);
+        await Assert.That(issued.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var tokens = await OidcHarness.JsonAsync(issued);
+        var before = (await oidc.Database.ListDocumentsAsync(AuthStore.OidcTokenCollection, limit: 1000)).Items;
+        await Assert.That(before.Any(item => item.Document.GetProperty("bindings").GetArrayLength() == AuthStore.MaxCredentialBindings)).IsTrue();
+        await Assert.That(before.All(item => item.Document.GetProperty("bindings").GetArrayLength() <= AuthStore.MaxCredentialBindings)).IsTrue();
+        using var rejected = await oidc.RefreshAsync(tokens.GetProperty("refresh_token").GetString()!);
+        await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        var error = await OidcHarness.JsonAsync(rejected);
+        await Assert.That(error.GetProperty("error").GetString()).IsEqualTo("invalid_grant");
+        await Assert.That(error.GetProperty("error_description").GetString()).Contains("rotation limit");
+        var after = (await oidc.Database.ListDocumentsAsync(AuthStore.OidcTokenCollection, limit: 1000)).Items;
+        await Assert.That(after.Select(item => item.Version).Order(StringComparer.Ordinal)
+            .SequenceEqual(before.Select(item => item.Version).Order(StringComparer.Ordinal))).IsTrue();
+        using var live = await oidc.UserInfoAsync(tokens.GetProperty("access_token").GetString()!);
+        await Assert.That(live.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var fresh = await oidc.SignInAsync(user.Email);
+        var freshPkce = OidcHarness.Pkce();
+        using var restarted = await oidc.RedeemCodeAsync(await oidc.CodeAsync(fresh, freshPkce.Challenge), freshPkce.Verifier);
+        await Assert.That(restarted.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     private Task<OidcHarness> StartAsync() => OidcHarness.StartAsync(fixture, values =>

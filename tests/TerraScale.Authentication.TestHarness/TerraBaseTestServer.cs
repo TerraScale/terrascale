@@ -32,11 +32,13 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     private Process? process;
 
     private readonly bool production;
+    private readonly RegionalNode? node;
 
-    private TerraBaseTestServer(string directory, bool production)
+    private TerraBaseTestServer(string directory, bool production, RegionalNode? node = null)
     {
         this.directory = directory;
         this.production = production;
+        this.node = node;
     }
 
     internal (int Internal, int Public, int Metrics) BackendPorts => this.backendPorts;
@@ -75,7 +77,10 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     public static Task<(TerraBaseTestServer? Server, string? Unavailable)> StartProductionAsync(CancellationToken cancellationToken = default) =>
         StartAsync(production: true, cancellationToken);
 
-    private static async Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(bool production, CancellationToken cancellationToken)
+    internal static Task<(TerraBaseTestServer? Server, string? Unavailable)> StartRegionalAsync(RegionalNode node, CancellationToken cancellationToken = default) =>
+        StartAsync(production: false, cancellationToken, node);
+
+    private static async Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(bool production, CancellationToken cancellationToken, RegionalNode? node = null)
     {
         var binary = Environment.GetEnvironmentVariable("TERRABASE_BINARY");
         if (string.IsNullOrEmpty(binary) || !File.Exists(binary))
@@ -83,7 +88,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             return (null, "TERRABASE_BINARY must name the TerraBase binary built from this commit (make auth-test-fast sets it)");
         }
 
-        var server = new TerraBaseTestServer(Directory.CreateTempSubdirectory("terrabase-test-").FullName, production);
+        var server = new TerraBaseTestServer(Directory.CreateTempSubdirectory("terrabase-test-").FullName, production, node);
         try
         {
             await server.StartAsync(binary, cancellationToken);
@@ -312,6 +317,19 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
             // This fixture credential is never inherited from the invoking environment.
             start.Environment[PeerSecretVariable] = PeerSecret;
+            if (this.node is { } regional)
+            {
+                start.Environment["TS_REGION"] = regional.Region;
+                start.Environment["TS_NODE"] = regional.Name;
+                start.Environment["TS_PEERS_FILE"] = regional.PeersFile;
+                start.Environment["AWS_ENDPOINT_URL_S3"] = regional.Bucket.ToString();
+                start.Environment["AWS_REGION"] = "auto";
+                start.Environment["BUCKET_NAME"] = "ts757";
+                start.Environment["AWS_ACCESS_KEY_ID"] = "test";
+                start.Environment["AWS_SECRET_ACCESS_KEY"] = "test";
+                start.Environment["TERRABASE_MASTER_KEY"] = regional.MasterKey;
+                start.Environment["SSL_CERT_FILE"] = regional.TrustFile;
+            }
 
             if (this.production)
             {
@@ -335,7 +353,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             // All three backend ports are freshly owned by this child, including metrics on every restart.
             start.ArgumentList.Add(this.production ? "--environment=Production" : "--environment=Development");
             start.ArgumentList.Add("--port=0");
-            start.ArgumentList.Add("--internal-port=0");
+            start.ArgumentList.Add($"--internal-port={this.node?.Port ?? 0}");
             start.ArgumentList.Add("--metrics-port=0");
             start.ArgumentList.Add("--postgres-port=0");
             start.ArgumentList.Add($"--data-directory={Path.Combine(this.directory, "data")}");
@@ -374,7 +392,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 }
 
                 this.publicFront.SetBackend(this.backendPorts.Public);
-                this.internalFront.SetBackend(this.backendPorts.Internal);
+                this.internalFront.SetBackend(this.backendPorts.Internal, this.node?.Address);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
@@ -446,6 +464,8 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         }
     }
 }
+
+internal sealed record RegionalNode(string Region, string Name, IPAddress Address, int Port, string PeersFile, Uri Bucket, string TrustFile, string MasterKey);
 
 /// <summary>Sends the peer credential on every request; the header name is spelled out here so a drift from production fails the tests.</summary>
 internal sealed class PeerCredentialHandler(string peerSecret) : DelegatingHandler

@@ -8,8 +8,7 @@ using TerraScale.DotNet.TerraBase;
 namespace TerraScale.Authentication.Fast.Store;
 
 /// <summary>
-/// Both TerraBase HttpClients that <see cref="App.Build"/> registers (this region's and the <see cref="App.StorageAuthority"/>'s)
-/// read <c>TERRABASE_PEER_SECRET</c> from configuration and send it, so the TerraBase internal listener records their reads as
+/// The regional TerraBase HttpClient that <see cref="App.Build"/> registers reads <c>TERRABASE_PEER_SECRET</c> from configuration and send it, so the TerraBase internal listener records their reads as
 /// matched. The clients are the app's own, never replaced; only the origin is the test's, because the app's default origin is the
 /// fixed loopback port 8081. Each test owns its TerraBase, so no other test's traffic moves the counts.
 /// </summary>
@@ -20,9 +19,7 @@ public sealed class PeerCredentialSenderTests
     private static CancellationToken Token => TestContext.Current!.Execution.CancellationToken;
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task The_storage_client_the_app_builds_sends_the_matching_peer_credential(bool authority)
+    public async Task The_storage_client_the_app_builds_sends_the_matching_peer_credential()
     {
         var (started, unavailable) = await TerraBaseTestServer.StartAsync(Token);
         await using var server = started ?? throw new InvalidOperationException($"Real TerraBase integration tests need TerraBase: {unavailable}");
@@ -36,7 +33,7 @@ public sealed class PeerCredentialSenderTests
         // Built, never started: no hosted service reaches the default loopback origin.
         await using var app = App.Build(AuthOptions.Load(AuthTestServer.DefaultSettings()),
             builder => builder.Configuration["TERRABASE_PEER_SECRET"] = TerraBaseTestServer.PeerSecret);
-        var client = authority ? app.Services.GetRequiredKeyedService<HttpClient>(App.StorageAuthority) : app.Services.GetRequiredService<HttpClient>();
+        var client = app.Services.GetRequiredService<HttpClient>();
         var database = new TerraBaseDocumentsClient(client, new TerraBaseDocumentsClientOptions { BaseAddress = server.InternalAddress })
             .Database(tenant.Project.Id, "auth");
 

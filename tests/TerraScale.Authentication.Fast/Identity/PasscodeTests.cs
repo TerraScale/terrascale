@@ -103,7 +103,7 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         IssuedSession? result;
         try
         {
-            await Assert.That(await users.SetPasswordAsync(caller.InstanceId, caller.Id, caller.AuthEpoch, "synthetic-password-hash")).IsTrue();
+            await Assert.That(await users.SetPasswordAsync(caller, "synthetic-password-hash")).IsTrue();
         }
         finally
         {
@@ -382,7 +382,9 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         await Assert.That(stored.GetProperty("issuedInWindow").GetInt32()).IsEqualTo(1);
         await Assert.That(purpose == PasscodePurpose.SignUp
             ? await passcodes.RedeemSignUpAsync("instance", Email, renewed!.Code, "pending-token")
-            : await passcodes.RedeemAsync("instance", Email, renewed!.Code, purpose)).IsNotNull();
+            : purpose == PasscodePurpose.PasswordReset
+                ? await passcodes.ResetPasswordAsync("instance", Email, renewed!.Code, "synthetic-password-hash")
+                : await passcodes.RedeemAsync("instance", Email, renewed!.Code, purpose)).IsNotNull();
     }
 
     [Test]
@@ -584,7 +586,7 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Pruning_deletes_code_records_only_once_their_window_and_every_code_in_it_have_ended()
+    public async Task Pruning_clears_expired_secrets_and_preserves_issuance_anchors()
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         var clock = new StoreTestClock();
@@ -600,8 +602,83 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
 
         clock.UtcNow += Passcodes.Lifetime;
         await Assert.That(await passcodes.PruneAsync(batchSize: 1)).IsEqualTo(2);
-        var left = (await database.ListDocumentsAsync("passcodes")).Items.Single().Document;
-        await Assert.That(left.GetProperty("email").GetString()).IsEqualTo(late.Email);
+        var left = (await database.ListDocumentsAsync("passcodes")).Items.Select(item => item.Document).ToArray();
+        await Assert.That(left.Length).IsEqualTo(3);
+        await Assert.That(left.Count(record => record.GetProperty("pruned").GetBoolean())).IsEqualTo(2);
+        foreach (var anchor in left.Where(record => record.GetProperty("pruned").GetBoolean()))
+        {
+            await Assert.That(anchor.GetProperty("codeHash").GetString()).IsEqualTo(string.Empty);
+            await Assert.That(anchor.GetProperty("passwordHash").ValueKind).IsEqualTo(JsonValueKind.Null);
+            await Assert.That(anchor.GetProperty("pendingTokenHash").ValueKind).IsEqualTo(JsonValueKind.Null);
+            await Assert.That(anchor.GetProperty("issuanceBindings").GetArrayLength()).IsEqualTo(1);
+        }
+
+        await Assert.That(left.Single(record => !record.GetProperty("pruned").GetBoolean()).GetProperty("email").GetString()).IsEqualTo(late.Email);
+        await Assert.That(await passcodes.PruneAsync(batchSize: 1)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Sequential_resend_and_pruning_preserve_completed_signin_and_extend_the_anchor()
+    {
+        var (tenant, database) = await fixture.CreateDatabaseAsync();
+        var clock = new StoreTestClock();
+        var (users, sessions, passcodes) = this.Stack(tenant, clock, AuthOptions.Load(AuthTestServer.DefaultSettings()));
+        await users.CreateAsync("instance", Email);
+        var firstCode = (await passcodes.RequestAsync("instance", Email))!;
+        var first = (await passcodes.VerifyAsync("instance", Email, firstCode.Code))!;
+        var secondCode = (await passcodes.RequestAsync("instance", Email))!;
+        var second = (await passcodes.VerifyAsync("instance", Email, secondCode.Code))!;
+        await Assert.That(await sessions.ResolveAsync("instance", first.Token)).IsNotNull();
+        var before = (await database.ListDocumentsAsync("passcodes")).Items.Single().Document.GetProperty("issuanceBindings").GetRawText();
+        clock.UtcNow += Passcodes.IssueWindow + Passcodes.Lifetime;
+        await Assert.That(await passcodes.PruneAsync(1)).IsEqualTo(1);
+        var pruned = (await database.ListDocumentsAsync("passcodes")).Items.Single().Document;
+        await Assert.That(pruned.GetProperty("issuanceBindings").GetRawText()).IsEqualTo(before);
+        var next = (await passcodes.RequestAsync("instance", Email))!;
+        await Assert.That((await database.ListDocumentsAsync("passcodes")).Items.Single().Document.GetProperty("issuanceBindings").GetArrayLength()).IsEqualTo(3);
+        await Assert.That(await passcodes.VerifyAsync("instance", Email, next.Code)).IsNotNull();
+        await Assert.That(await sessions.ResolveAsync("instance", first.Token)).IsNotNull();
+        await Assert.That(await sessions.ResolveAsync("instance", second.Token)).IsNotNull();
+    }
+
+    [Test]
+    public async Task Passwordless_issuance_budget_recovers_through_verified_email_and_invalidates_old_sessions()
+    {
+        var (tenant, database) = await fixture.CreateDatabaseAsync();
+        var clock = new StoreTestClock();
+        var (users, sessions, passcodes) = this.Stack(tenant, clock, AuthOptions.Load(AuthTestServer.DefaultSettings()));
+        var original = (await users.CreateAsync("instance", Email))!;
+        var oldSession = await sessions.CreateAsync(original);
+        for (var issue = 1; issue <= AuthStore.MaxCredentialBindings - 2; issue++)
+        {
+            clock.UtcNow += Passcodes.IssueWindow;
+            var code = (await passcodes.RequestAsync("instance", Email))!;
+            var stored = (await database.ListDocumentsAsync("passcodes")).Items.Single().Document;
+            await Assert.That(stored.GetProperty("issuanceBindings").GetArrayLength()).IsEqualTo(issue);
+            if (issue == AuthStore.MaxCredentialBindings - 2)
+            {
+                // State + issuance + consumption reaches the exact supported session budget.
+                var boundary = (await passcodes.VerifyAsync("instance", Email, code.Code))!;
+                await Assert.That(boundary.Session.Bindings.Count).IsEqualTo(AuthStore.MaxCredentialBindings);
+            }
+        }
+
+        clock.UtcNow += Passcodes.IssueWindow;
+        var recovery = (await passcodes.RequestAsync("instance", Email))!;
+        var pending = (await database.ListDocumentsAsync("passcodes")).Items.Single().Document;
+        await Assert.That(pending.GetProperty("resetsAuthentication").GetBoolean()).IsTrue();
+        await Assert.That((await users.GetAsync("instance", original.Id))!.AuthStamp).IsEqualTo(original.AuthStamp);
+        var renewed = (await passcodes.VerifyAsync("instance", Email, recovery.Code))!;
+        var current = (await users.GetAsync("instance", original.Id))!;
+        await Assert.That(current.PasswordHash).IsNull();
+        await Assert.That(current.AuthEpoch).IsEqualTo(original.AuthEpoch + 1);
+        await Assert.That(current.AuthStamp).IsNotEqualTo(original.AuthStamp);
+        await Assert.That(renewed.Session.Bindings.Count).IsEqualTo(1);
+        await Assert.That(await sessions.ResolveAsync("instance", oldSession.Token)).IsNull();
+        await Assert.That(await sessions.ResolveAsync("instance", renewed.Token)).IsNotNull();
+        var normal = (await passcodes.RequestAsync("instance", Email))!;
+        await Assert.That(await passcodes.VerifyAsync("instance", Email, normal.Code)).IsNotNull();
+        await Assert.That(await passcodes.VerifyAsync("instance", Email, recovery.Code)).IsNull();
     }
 
     private static string Code(TotpEnrollment enrollment, StoreTestClock clock) =>

@@ -39,12 +39,15 @@ public sealed class Users(AuthStore store, TimeProvider clock)
 
     /// <summary>Creates an account with an Argon2id <paramref name="passwordHash"/>, or none; see the overload.</summary>
     public async Task<UserRecord?> CreateAsync(string instanceId, string email, string? passwordHash, CancellationToken cancellationToken)
+        => await this.CreateAccountAsync(instanceId, email, passwordHash, AuthStore.NewId(), cancellationToken).ConfigureAwait(false);
+
+    internal async Task<UserRecord?> CreateAccountAsync(string instanceId, string email, string? passwordHash, string userId, CancellationToken cancellationToken)
     {
         var normalized = NormalizeEmail(email) ?? throw new ArgumentException("A valid email address is required.", nameof(email));
-        var user = new UserRecord(AuthStore.NewId(), instanceId, normalized, 0, clock.GetUtcNow(), passwordHash);
+        var user = new UserRecord(userId, instanceId, normalized, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthStore.NewId() };
         var record = JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord);
         return await store.CreateClaimedAsync(AuthStore.UserCollection, instanceId, user.Id, record, EmailKind, normalized, cancellationToken).ConfigureAwait(false)
-            ? user
+            ? BindAuthenticationState(user)
             : null;
     }
 
@@ -66,22 +69,26 @@ public sealed class Users(AuthStore store, TimeProvider clock)
         (await this.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false))?.User;
 
     /// <summary>
-    /// Sets the password of the account while its authentication epoch is still <paramref name="authEpoch"/>, and
+    /// Sets the password of the account while its authentication state still matches <paramref name="caller"/>, and
     /// advances the epoch, which signs the user out everywhere. False when the account is gone or its epoch moved on
     /// (another reset or a sign-out everywhere won), so a code issued before that change never sets a password after it.
     /// </summary>
-    public async Task<bool> SetPasswordAsync(string instanceId, string userId, long authEpoch, string passwordHash, CancellationToken cancellationToken = default)
+    public async Task<bool> SetPasswordAsync(UserRecord caller, string passwordHash, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentException.ThrowIfNullOrEmpty(passwordHash);
         // Every write to a user advances its epoch, so a lost write always ends the loop on the epoch check.
         for (var round = 0; round < 3; round++)
         {
-            if (await this.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current || current.User.AuthEpoch != authEpoch)
+            if (await this.GetVersionedAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is not { } current
+                || current.User.AuthEpoch != caller.AuthEpoch || current.User.AuthStamp != caller.AuthStamp
+                || !await store.AreCredentialsCurrentAsync(caller.InstanceId, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
             {
                 return false;
             }
 
-            var updated = JsonSerializer.SerializeToElement(current.User with { PasswordHash = passwordHash, AuthEpoch = authEpoch + 1 }, IdentityJson.Default.UserRecord);
-            if (await store.CompareAndPutAsync(AuthStore.UserCollection, instanceId, userId, updated, current.Version, cancellationToken).ConfigureAwait(false))
+            var updated = JsonSerializer.SerializeToElement(current.User with { PasswordHash = passwordHash, AuthEpoch = checked(caller.AuthEpoch + 1), AuthStamp = AuthStore.NewId() }, IdentityJson.Default.UserRecord);
+            if (await store.CompareAndPutAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id, updated, current.Version, cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
@@ -127,8 +134,15 @@ public sealed class Users(AuthStore store, TimeProvider clock)
 
         var document = await store.GetAsync(AuthStore.UserCollection, instanceId, userId, cancellationToken).ConfigureAwait(false);
         var user = document?.Document.Deserialize(IdentityJson.Default.UserRecord);
-        return user is not null && user.InstanceId == instanceId && user.Id == userId ? (user, document!.Version) : null;
+        return user is not null && user.InstanceId == instanceId && user.Id == userId
+            && await store.FindUniqueOwnerAsync(instanceId, EmailKind, user.Email, cancellationToken).ConfigureAwait(false) == userId
+            ? (BindAuthenticationState(user), document!.Version) : null;
     }
+
+    internal static UserRecord BindAuthenticationState(UserRecord user) => user with
+    {
+        AuthenticationBindings = user.AuthStamp is { } stamp ? [AuthStore.UserStateBinding(user.Id, stamp)] : [],
+    };
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

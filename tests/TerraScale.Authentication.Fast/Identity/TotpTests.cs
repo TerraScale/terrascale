@@ -268,7 +268,7 @@ public sealed class TotpTests(TerraBaseFixture fixture)
 
         pending = (await mfa.BeginAsync(caller))!;
         var hash = await passwords.HashAsync("synthetic password for reset", CancellationToken.None);
-        await Assert.That(await users.SetPasswordAsync(caller.InstanceId, caller.Id, caller.AuthEpoch, hash)).IsTrue();
+        await Assert.That(await users.SetPasswordAsync(caller, hash)).IsTrue();
         await Assert.That(await mfa.ConfirmAsync(caller, Code(pending, clock))).IsNull();
         caller = (await users.GetAsync(caller.InstanceId, caller.Id))!;
         await Assert.That(await mfa.ConfirmAsync(caller, Code(pending, clock))).IsNull();
@@ -285,7 +285,7 @@ public sealed class TotpTests(TerraBaseFixture fixture)
         await Assert.That(Accepts(superseded, Code(pending, clock), clock.UtcNow)).IsFalse();
         await Assert.That(await mfa.ConfirmAsync(caller, Code(pending, clock))).IsNull();
         var active = (await mfa.ConfirmAsync(caller, Code(superseded, clock)))!;
-        await Assert.That(await users.SetPasswordAsync(caller.InstanceId, caller.Id, active.User.AuthEpoch, hash)).IsTrue();
+        await Assert.That(await users.SetPasswordAsync(active.User, hash)).IsTrue();
         caller = (await users.GetAsync(caller.InstanceId, caller.Id))!;
         await Assert.That(await mfa.BeginAsync(caller)).IsNull();
         clock.UtcNow = clock.UtcNow.AddSeconds(30);

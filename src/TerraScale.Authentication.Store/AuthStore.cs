@@ -5,13 +5,14 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using TerraScale.Authentication.Contracts;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Store;
 
 /// <summary>A durable single-use challenge. Only the digest of the bearer secret is persisted.</summary>
-public sealed record StoredChallenge(string InstanceId, string Purpose, string TokenHash, string SubjectId, DateTimeOffset ExpiresAt, bool Consumed = false);
+public sealed record StoredChallenge(string InstanceId, string Purpose, string TokenHash, string SubjectId, DateTimeOffset ExpiresAt, bool Consumed = false, CredentialBinding? Binding = null);
 
 internal sealed record UniqueClaim(string InstanceId, string Kind, string OwnerId);
 
@@ -19,17 +20,13 @@ internal sealed record UniqueClaim(string InstanceId, string Kind, string OwnerI
 /// Documents v1 persistence. Each entity uses its own collection; addresses include the instance.
 /// No unconditional updates, automatic write retries, process-local coordination or memory fallback.
 /// Callers must authorize the instance before using this internal persistence boundary.
-/// Every write is conditional, so every write goes to <c>authority</c>, the one copy that orders them (TerraBase checks a
-/// precondition against the copy it is sent to), and so does every read. Only <see cref="GetLocalAsync"/> and
-/// <see cref="QueryLocalAsync"/> read <c>local</c>, this region's copy.
+/// Preconditions order requests only in this region. Replication resolves concurrent claims with TerraBase's
+/// deterministic LWW metadata; credentials must retain and validate their winning claim on use.
 /// </summary>
-public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authority, TimeProvider clock)
+public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
 {
-    /// <summary>A store whose one copy is both <c>local</c> and <c>authority</c> (a single region).</summary>
-    public AuthStore(TerraBaseDatabase database, TimeProvider clock)
-        : this(database, database, clock)
-    {
-    }
+    /// <summary>Maximum retained proof ancestors; reaching it requires a fresh sign-in, never dropping an ancestor.</summary>
+    public const int MaxCredentialBindings = 64;
 
     /// <summary>Natural-key reservations.</summary>
     public const string UniqueCollection = "uniques";
@@ -116,7 +113,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         {
             try
             {
-                await authority.CreateCollectionAsync(collection, cancellationToken).ConfigureAwait(false);
+                await local.CreateCollectionAsync(collection, cancellationToken).ConfigureAwait(false);
             }
             catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
             {
@@ -145,18 +142,11 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
 
     /// <summary>Reads a document and its opaque ETag version. Missing parents and outages propagate.</summary>
     public Task<TerraBaseDocument?> GetAsync(string collection, string instanceId, string key, CancellationToken cancellationToken = default) =>
-        authority.GetDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), cancellationToken);
+        local.GetDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), cancellationToken);
 
-    /// <summary>
-    /// Reads a document from this region's copy, or from the authority when the copy lacks it (a write not replicated yet).
-    /// Only for reads that decide nothing about authorization and that no write depends on: discovery and the JWKS.
-    /// </summary>
-    public async Task<TerraBaseDocument?> GetLocalAsync(string collection, string instanceId, string key, CancellationToken cancellationToken = default)
-    {
-        var id = NaturalKeyId(instanceId, collection, key);
-        return await local.GetDocumentAsync(collection, id, cancellationToken).ConfigureAwait(false)
-            ?? await authority.GetDocumentAsync(collection, id, cancellationToken).ConfigureAwait(false);
-    }
+    /// <summary>Reads this region's replicated copy, without a remote fallback.</summary>
+    public Task<TerraBaseDocument?> GetLocalAsync(string collection, string instanceId, string key, CancellationToken cancellationToken = default) =>
+        this.GetAsync(collection, instanceId, key, cancellationToken);
 
     /// <summary>Up to <paramref name="limit"/> documents matching a TerraBase query filter, in id order.</summary>
     public Task<IReadOnlyList<TerraBaseDocument>> QueryAsync(string collection, JsonElement filter, int limit, CancellationToken cancellationToken = default) =>
@@ -164,13 +154,13 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
 
     /// <summary>Up to <paramref name="limit"/> documents matching a TerraBase query filter, in <paramref name="sort"/> order, then id order.</summary>
     public async Task<IReadOnlyList<TerraBaseDocument>> QueryAsync(string collection, JsonElement filter, int limit, IReadOnlyList<TerraBaseSort>? sort, CancellationToken cancellationToken = default) =>
-        (await authority.QueryAsync(collection, new TerraBaseQuery { Filter = filter, Limit = limit, Sort = sort }, cancellationToken).ConfigureAwait(false)).Items;
+        (await local.QueryAsync(collection, new TerraBaseQuery { Filter = filter, Limit = limit, Sort = sort }, cancellationToken).ConfigureAwait(false)).Items;
 
     /// <summary>Creates only; a taken address throws a precondition failure.</summary>
     public Task<TerraBaseWriteResult> CreateAsync(string collection, string instanceId, string key, JsonElement record, CancellationToken cancellationToken = default)
     {
         RequireEntityCollection(collection);
-        return authority.PutDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), record, TerraBasePrecondition.Absent, cancellationToken);
+        return local.PutDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), record, TerraBasePrecondition.Absent, cancellationToken);
     }
 
     /// <summary>Replaces only the version read by the caller; false means another writer won.</summary>
@@ -183,7 +173,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         RequireEntityCollection(collection);
         try
         {
-            return (await authority.PutDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), record, TerraBasePrecondition.Matches(expectedVersion), cancellationToken).ConfigureAwait(false)).Version;
+            return (await local.PutDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), record, TerraBasePrecondition.Matches(expectedVersion), cancellationToken).ConfigureAwait(false)).Version;
         }
         catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed")
         {
@@ -202,7 +192,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         var claim = JsonSerializer.SerializeToElement(new UniqueClaim(instanceId, kind, key), StoreJsonContext.Default.UniqueClaim);
         try
         {
-            var result = await authority.TransactAsync(
+            var result = await local.TransactAsync(
             [
                 TerraBaseTransactionOperation.Put(collection, NaturalKeyId(instanceId, collection, key), record, expectedVersion),
                 TerraBaseTransactionOperation.Create(UniqueCollection, claim, NaturalKeyId(instanceId, kind, normalizedKey)),
@@ -228,7 +218,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         var id = NaturalKeyId(instanceId, collection, key);
         try
         {
-            await authority.TransactAsync(
+            await local.TransactAsync(
             [
                 expectedVersion is null ? TerraBaseTransactionOperation.Create(collection, record, id) : TerraBaseTransactionOperation.Put(collection, id, record, expectedVersion),
                 TerraBaseTransactionOperation.Create(historyCollection, record, NaturalKeyId(instanceId, historyCollection, historyKey)),
@@ -253,7 +243,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
     /// <paramref name="equals"/> equal their values. Callers recheck what they read.
     /// </summary>
     public IAsyncEnumerable<TerraBaseDocument> QueryAsync(string collection, string instanceId, IReadOnlyList<(string Field, string Value)> equals, CancellationToken cancellationToken = default) =>
-        QueryAsync(authority, collection, instanceId, equals, cancellationToken);
+        QueryAsync(local, collection, instanceId, equals, cancellationToken);
 
     /// <summary>
     /// Every document of the instance in <paramref name="collection"/>, from this region's copy. Only for the JWKS, which
@@ -293,7 +283,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         RequireEntityCollection(collection);
         try
         {
-            await authority.DeleteDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), TerraBasePrecondition.Matches(expectedVersion), cancellationToken).ConfigureAwait(false);
+            await local.DeleteDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), TerraBasePrecondition.Matches(expectedVersion), cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch (TerraBaseException error) when (error is TerraBasePreconditionFailedException && error.ErrorCode == "precondition_failed"
@@ -311,7 +301,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         var record = JsonSerializer.SerializeToElement(new UniqueClaim(instanceId, kind, ownerId), StoreJsonContext.Default.UniqueClaim);
         try
         {
-            await authority.PutDocumentAsync(UniqueCollection, id, record, TerraBasePrecondition.Absent, cancellationToken).ConfigureAwait(false);
+            await local.PutDocumentAsync(UniqueCollection, id, record, TerraBasePrecondition.Absent, cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed")
@@ -330,7 +320,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         var claim = JsonSerializer.SerializeToElement(new UniqueClaim(instanceId, kind, key), StoreJsonContext.Default.UniqueClaim);
         try
         {
-            await authority.TransactAsync(
+            await local.TransactAsync(
             [
                 TerraBaseTransactionOperation.Create(UniqueCollection, claim, NaturalKeyId(instanceId, kind, normalizedKey)),
                 TerraBaseTransactionOperation.Create(collection, record, NaturalKeyId(instanceId, collection, key)),
@@ -346,7 +336,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
     /// <summary>The owner of a scoped natural key, or <see langword="null"/> when it is unclaimed.</summary>
     public async Task<string?> FindUniqueOwnerAsync(string instanceId, string kind, string normalizedKey, CancellationToken cancellationToken = default)
     {
-        var document = await authority.GetDocumentAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
+        var document = await local.GetDocumentAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
         var claim = document?.Document.Deserialize(StoreJsonContext.Default.UniqueClaim);
         return claim is not null && claim.InstanceId == instanceId && claim.Kind == kind ? claim.OwnerId : null;
     }
@@ -356,7 +346,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
         var id = NaturalKeyId(instanceId, kind, normalizedKey);
-        var document = await authority.GetDocumentAsync(UniqueCollection, id, cancellationToken).ConfigureAwait(false);
+        var document = await local.GetDocumentAsync(UniqueCollection, id, cancellationToken).ConfigureAwait(false);
         if (document is null)
         {
             return false;
@@ -370,7 +360,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
 
         try
         {
-            await authority.DeleteDocumentAsync(UniqueCollection, id, TerraBasePrecondition.Matches(document.Version), cancellationToken).ConfigureAwait(false);
+            await local.DeleteDocumentAsync(UniqueCollection, id, TerraBasePrecondition.Matches(document.Version), cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch (TerraBaseException error) when (error is TerraBasePreconditionFailedException && error.ErrorCode == "precondition_failed"
@@ -417,7 +407,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
 
         try
         {
-            await authority.TransactAsync([.. sent.Select(item => item.Operation.Operation)], cancellationToken).ConfigureAwait(false);
+            await local.TransactAsync([.. sent.Select(item => item.Operation.Operation)], cancellationToken).ConfigureAwait(false);
             return null;
         }
         catch (TerraBaseException error) when (error.OperationIndex is { } index && index >= 0 && index < sent.Count
@@ -479,7 +469,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         }
 
         using var parsed = JsonDocument.Parse(new JsonObject { ["and"] = all }.ToJsonString());
-        return authority.QueryAsync(collection, new TerraBaseQuery
+        return local.QueryAsync(collection, new TerraBaseQuery
         {
             Filter = parsed.RootElement.Clone(),
             Sort = [.. sort.Select(path => new TerraBaseSort(path, descending ? "desc" : null))],
@@ -515,9 +505,85 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
     /// <summary>The owner and version of a scoped natural key, or <see langword="null"/> when it is unclaimed.</summary>
     public async Task<(string OwnerId, string Version)?> FindUniqueAsync(string instanceId, string kind, string normalizedKey, CancellationToken cancellationToken = default)
     {
-        var document = await authority.GetDocumentAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
+        var document = await local.GetDocumentAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
         var claim = document?.Document.Deserialize(StoreJsonContext.Default.UniqueClaim);
         return claim is not null && claim.InstanceId == instanceId && claim.Kind == kind ? (claim.OwnerId, document!.Version) : null;
+    }
+
+    /// <summary>A new contender for a one-use credential slot; TerraBase, never the generated id, orders contenders.</summary>
+    public static CredentialBinding NewCredentialBinding(string kind, string key) => new("credential:" + kind, key, NewId());
+
+    /// <summary>Reserves a credential slot in the same transaction as its consumption.</summary>
+    public static StoreOperation CredentialClaim(string instanceId, CredentialBinding binding)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        if (!binding.Kind.StartsWith("credential:", StringComparison.Ordinal))
+        {
+            throw new ArgumentException("A credential claim needs a credential kind.", nameof(binding));
+        }
+
+        return Claim(instanceId, binding.Kind, binding.Key, binding.OwnerId);
+    }
+
+    /// <summary>Binds delegated credentials to the user's authoritative authentication-state winner.</summary>
+    public static CredentialBinding UserStateBinding(string userId, string authStamp) => new("credential:user-state", userId, authStamp);
+
+    /// <summary>Keeps a device approval and its descendants subject to the original device authorization's revocation.</summary>
+    public static CredentialBinding AuthorizationBinding(string authorizationId) => new("credential:authorization", authorizationId, authorizationId);
+
+    /// <summary>Checks every ancestor against the regional replicated winner; missing claims fail closed.</summary>
+    public async Task<bool> AreCredentialsCurrentAsync(string instanceId, IReadOnlyList<CredentialBinding> bindings, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(bindings);
+        if (bindings.Count > MaxCredentialBindings)
+        {
+            return false;
+        }
+
+        foreach (var binding in bindings)
+        {
+            if (binding is null || string.IsNullOrEmpty(binding.Kind) || string.IsNullOrEmpty(binding.Key) || string.IsNullOrEmpty(binding.OwnerId))
+            {
+                return false;
+            }
+
+            if (binding.Kind == "credential:user-state")
+            {
+                var user = await this.GetAsync(UserCollection, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
+                if (user is null || !user.Document.TryGetProperty("instanceId", out var scope) || scope.GetString() != instanceId
+                    || !user.Document.TryGetProperty("id", out var id) || id.GetString() != binding.Key
+                    || !user.Document.TryGetProperty("authStamp", out var stamp) || stamp.GetString() != binding.OwnerId
+                    || !user.Document.TryGetProperty("email", out var email) || email.GetString() is not { } address
+                    || await this.FindUniqueOwnerAsync(instanceId, "email", address, cancellationToken).ConfigureAwait(false) != binding.Key)
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (binding.Kind == "credential:authorization")
+            {
+                var authorization = await this.GetAsync(OidcAuthorizationCollection, instanceId, binding.Key, cancellationToken).ConfigureAwait(false);
+                if (binding.OwnerId != binding.Key || authorization is null
+                    || !authorization.Document.TryGetProperty("instanceId", out var scope) || scope.GetString() != instanceId
+                    || !authorization.Document.TryGetProperty("id", out var id) || id.GetString() != binding.Key
+                    || !authorization.Document.TryGetProperty("status", out var status) || status.GetString() != "valid")
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!binding.Kind.StartsWith("credential:", StringComparison.Ordinal)
+                || await this.FindUniqueOwnerAsync(instanceId, binding.Kind, binding.Key, cancellationToken).ConfigureAwait(false) != binding.OwnerId)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Creates a bound challenge with a lowercase SHA-256 digest, never the bearer secret.</summary>
@@ -531,7 +597,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         }
 
         var challenge = new StoredChallenge(instanceId, purpose, tokenHash, subjectId, expiresAt);
-        await authority.PutDocumentAsync(ChallengeCollection, NaturalKeyId(instanceId, purpose, tokenHash),
+        await local.PutDocumentAsync(ChallengeCollection, NaturalKeyId(instanceId, purpose, tokenHash),
             JsonSerializer.SerializeToElement(challenge, StoreJsonContext.Default.StoredChallenge), TerraBasePrecondition.Absent, cancellationToken).ConfigureAwait(false);
     }
 
@@ -541,7 +607,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         ValidateTokenHash(tokenHash);
         ArgumentException.ThrowIfNullOrWhiteSpace(subjectId);
         var id = NaturalKeyId(instanceId, purpose, tokenHash);
-        var document = await authority.GetDocumentAsync(ChallengeCollection, id, cancellationToken).ConfigureAwait(false);
+        var document = await local.GetDocumentAsync(ChallengeCollection, id, cancellationToken).ConfigureAwait(false);
         var challenge = document?.Document.Deserialize(StoreJsonContext.Default.StoredChallenge);
         if (challenge is null || challenge.Consumed || challenge.ExpiresAt <= clock.GetUtcNow()
             || challenge.InstanceId != instanceId || challenge.Purpose != purpose || challenge.TokenHash != tokenHash || challenge.SubjectId != subjectId)
@@ -551,11 +617,16 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
 
         try
         {
-            await authority.PutDocumentAsync(ChallengeCollection, id,
-                JsonSerializer.SerializeToElement(challenge with { Consumed = true }, StoreJsonContext.Default.StoredChallenge),
-                TerraBasePrecondition.Matches(document!.Version), cancellationToken).ConfigureAwait(false);
+            var binding = NewCredentialBinding("challenge:" + purpose, tokenHash);
+            var consumed = challenge with { Consumed = true, Binding = binding };
+            await local.TransactAsync(
+            [
+                CredentialClaim(instanceId, binding).Operation,
+                TerraBaseTransactionOperation.Put(ChallengeCollection, id,
+                    JsonSerializer.SerializeToElement(consumed, StoreJsonContext.Default.StoredChallenge), document!.Version),
+            ], cancellationToken).ConfigureAwait(false);
             // A slow committed write must not return authorization after the challenge expired.
-            return challenge.ExpiresAt > clock.GetUtcNow() ? challenge with { Consumed = true } : null;
+            return challenge.ExpiresAt > clock.GetUtcNow() ? consumed : null;
         }
         catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed")
         {

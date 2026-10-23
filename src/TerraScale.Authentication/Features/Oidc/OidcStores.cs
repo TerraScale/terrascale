@@ -60,7 +60,7 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
         if (document is null)
         {
             var keys = services.GetRequiredService<Platform.ApiKeys>();
-            return await keys.FindAsync(identifier, cancellationToken).ConfigureAwait(false) is { } key ? Platform.ApiKeyClients.Describe(key, keys.Digests(key)) : null;
+            return await keys.FindAsync(identifier, cancellationToken).ConfigureAwait(false) is { } key ? Platform.ApiKeyClients.Describe(key, await keys.DigestsAsync(key, cancellationToken).ConfigureAwait(false)) : null;
         }
 
         var application = document.Document.Deserialize(OidcJson.Default.OidcApplication);
@@ -469,7 +469,18 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
         }
 
         var document = await store.GetAsync(Collection, OidcIssuer.InstanceId, identifier, cancellationToken).ConfigureAwait(false);
-        return Read(document) is { } token && token.Id == identifier ? token : null;
+        if (Read(document) is not { } token || token.Id != identifier)
+        {
+            return null;
+        }
+
+        if (!await store.AreCredentialsCurrentAsync(OidcIssuer.InstanceId, token.Bindings, cancellationToken).ConfigureAwait(false))
+        {
+            // Keep the payload resolvable so fresh OpenIddict lookups reach the explicit conflict notice.
+            token.Status = Statuses.Revoked;
+        }
+
+        return token;
     }
 
     /// <inheritdoc />

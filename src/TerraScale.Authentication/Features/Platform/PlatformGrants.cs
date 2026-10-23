@@ -44,6 +44,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
     /// <summary>Token requests per API key per minute.</summary>
     public const int KeyRequestsPerMinute = 1000;
 
+    internal const string InvalidApiKeyNotice = "The API key is invalid, revoked, expired, or superseded by a concurrent change in another region. Use the latest credential.";
+
     /// <summary>The <c>client_credentials</c> grant of an API key OpenIddict has authenticated.</summary>
     public async Task<IResult> ApiKeyAsync(HttpContext context, OpenIddictRequest request, CancellationToken cancellationToken)
     {
@@ -52,10 +54,10 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
         // Read the key again and check the presented string against it: whatever OpenIddict saw, a key revoked or rotated
         // since then, on any replica, issues nothing.
         if (await keys.FindAsync(request.ClientId!, cancellationToken) is not { } key
-            || request.ClientSecret is not { } secret || !Matches(secret, keys.Digests(key))
+            || request.ClientSecret is not { } secret || !Matches(secret, await keys.DigestsAsync(key, cancellationToken))
             || await directory.OrganizationAsync(key.OrganizationId, cancellationToken) is null)
         {
-            return OidcResults.Forbid(Errors.InvalidClient, "The API key is unknown, revoked or expired.");
+            return OidcResults.Forbid(Errors.InvalidClient, InvalidApiKeyNotice);
         }
 
         if (!await limiter.TryAcquireAsync(PlatformDirectory.Instance, "api-key-token", key.Id, KeyRequestsPerMinute, cancellationToken))
@@ -101,6 +103,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
             || subject.GetClaim(Claims.Subject) is not { } userId
             || await users.GetAsync(PlatformDirectory.Instance, userId, cancellationToken) is not { } user
             || subject.GetClaim(OidcIssuer.EpochClaim) != user.AuthEpoch.ToString(CultureInfo.InvariantCulture)
+            || subject.GetClaim(OidcIssuer.StateClaim) != user.AuthStamp
             || subject.GetExpirationDate() is not { } expires || expires <= clock.GetUtcNow()
             || request.SubjectToken is not { } encoded
             || !new JsonWebToken(encoded).TryGetPayloadValue<object>(Claims.AuthenticationTime, out var rawAuthenticationTime)
@@ -318,6 +321,22 @@ public sealed class SkipShortLivedTokenEntries : OpenIddict.Server.IOpenIddictSe
         }
 
         return ValueTask.CompletedTask;
+    }
+}
+
+/// <summary>Preserves API-key recovery guidance when OpenIddict rejects a filtered secret before grant handling.</summary>
+public sealed class ApiKeyFailureNotice(ApiKeys keys) : OpenIddict.Server.IOpenIddictServerHandler<OpenIddict.Server.OpenIddictServerEvents.ApplyTokenResponseContext>
+{
+    /// <inheritdoc />
+    public async ValueTask HandleAsync(OpenIddict.Server.OpenIddictServerEvents.ApplyTokenResponseContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.Response.Error == Errors.InvalidClient && context.Request?.IsClientCredentialsGrantType() == true
+            && context.Request.ClientId is { } clientId
+            && await keys.FindAsync(clientId, context.CancellationToken).ConfigureAwait(false) is not null)
+        {
+            context.Response.ErrorDescription = PlatformGrants.InvalidApiKeyNotice;
+        }
     }
 }
 
