@@ -14,6 +14,13 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
     public async Task<McpCollectionList> Collections(string databaseId, string? organizationId = null, string? projectId = null) =>
         new((await data.CollectionsAsync(Scope(organizationId, projectId), databaseId, Cancellation)).Select(collection => collection.Name).ToArray());
 
+    [McpServerTool(Name = "create_collection", Title = "Create collection", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create an empty collection in a database before writing documents to it. Names start with a lowercase letter and use up to 63 lowercase letters, digits, hyphens and underscores. Fails if the collection exists. Requires write access.")]
+    public async Task<McpCollectionCreated> CreateCollection(string databaseId, string name, string? organizationId = null, string? projectId = null)
+    {
+        await data.CreateCollectionAsync(Scope(organizationId, projectId), databaseId, name, Cancellation);
+        return new(name, "created");
+    }
+
     [McpServerTool(Name = "list_documents", Title = "List documents", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a collection's documents ordered by ID, with optional search and paging.")]
     public async Task<McpDocumentList> Documents(string databaseId, string collection, string search = "", int limit = 0, string after = "", string? organizationId = null, string? projectId = null,
         string sort = "", bool descending = false, int page = 1)
@@ -184,6 +191,7 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
 }
 
 public sealed record McpCollectionList(IReadOnlyList<string> Collections);
+public sealed record McpCollectionCreated(string Collection, string Status);
 public sealed record McpDocument(string Id, JsonElement Value, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Version = null);
 public sealed record McpDocumentList(IReadOnlyList<McpDocument> Documents);
 public sealed record McpDocumentWrite(string Id, string Operation)
