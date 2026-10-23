@@ -17,10 +17,11 @@ Only these three projects come over: no upstream tests, samples, benchmarks or o
 ## Native library
 
 The Rust core (`libturso_sdk_kit`) is built from the pinned commit above with FTS, replacing `Turso.Data.Native`.
-`scripts/vendor/Dockerfile.turso-native` pins the source checksum, Rust image/toolchain and build timestamp. CI builds
-once per architecture (linux-x64 and linux-arm64), runs the native smoke, and publishes SHA-256 manifests with its
-artifacts. Fast, Slow and image builds consume those same artifacts. Missing custom native assets fail the build.
-See `docs/terrabase/turso-fts-native.md` for the SQL/runtime contract and reproduction commands.
+`scripts/vendor/Dockerfile.turso-native` pins the source checksum, Rust image/toolchain and build timestamp. Explicit
+maintenance builds once on each real architecture (linux-x64 and linux-arm64) and runs FTS/encryption smokes. Normal
+CI, Fast, Slow and image builds download the combined pinned release and verify its SHA-256 hashes; they never build
+Rust. Missing or mismatched native assets fail the build. See `src/vendor/Turso.Native/README.md` for delivery and
+qualification evidence, and `docs/terrabase/turso-fts-native.md` for the SQL/runtime contract.
 
 ## What is ours
 

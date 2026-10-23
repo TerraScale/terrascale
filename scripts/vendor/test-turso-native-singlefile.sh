@@ -6,7 +6,7 @@ case "$(uname -m)" in x86_64) rid=linux-x64 ;; aarch64) rid=linux-arm64 ;; *) ex
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 dotnet publish "$root/tests/Turso.Data.Sqlite.Tests" --configuration Release --runtime "$rid" \
-  --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true --output "$scratch/publish"
+  --self-contained true --output "$scratch/publish"
 test ! -f "$scratch/publish/libturso_sdk_kit.so"
 mkdir "$scratch/isolated"
 cp "$scratch/publish/Turso.Data.Sqlite.Tests" "$scratch/isolated/"

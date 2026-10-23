@@ -37,36 +37,36 @@ Evidence in the pinned upstream tree: `sdk-kit/Cargo.toml`,
 `tests/integration/index_method/mod.rs` (`test_fts_sql_queries` and bound-query
 tests), and `core/index_method/fts/mod.rs`.
 
-## Build and verification
+## Delivery and verification
+
+Normal CI, Fast, Slow and image builds download and verify the combined
+`turso-native-v0.8.2-fts-contract1-20261023` release. They never build Rust:
 
 ```sh
-nice -n 19 scripts/vendor/build-turso-native.sh amd64 src/vendor/Turso.Data.Sqlite/native
-# On an arm64 builder, use arm64 instead of amd64 (or configure BuildKit emulation).
+nice -n 19 scripts/vendor/download-turso-native.sh
 ```
 
-The helper makes one clean build. CI makes one build per architecture per run,
-publishes `turso-native-amd64` / `turso-native-arm64`, and verifies their manifests
-before Fast/Slow/image builds. Compare `SHA256SUMS-linux-*` from two independent
-CI runs with the same native inputs for the reproducibility proof. No build loop
-runs in CI. Only main writes the native BuildKit cache; PRs read it.
+The pinned inputs, library hashes, receipts and maintenance/publication process
+are in [`src/vendor/Turso.Native/README.md`](../../src/vendor/Turso.Native/README.md).
+Native maintenance builds once on each real target host; emulation is rejected.
+Both independent runs (39969762871 and 39997989468) passed the mandatory FTS and
+contract1 smokes and produced byte-identical x64/ARM64 library hashes. The exact
+combined x64 candidate passed 2,540 Fast tests, 23 driver tests, and 14 focused
+FTS HTTP regressions. The isolated single-file driver passed all 23 tests and
+its extracted library matches the pin. TerraBase publishes without a Turso sidecar;
+normal CI retains the executable-only loading regression.
 
-Both ELF architecture checks remain: the native library is checked before
-publication, and the existing production apphost guard in `Dockerfile` is retained.
-The native smoke verifies match/positive score, committed insert/update/delete,
-and rollback visibility for insert/update/delete. Fast additionally verifies the
-normal .NET driver, persisted-index reopen, and transaction consistency.
-
-Static validation passed: C smoke against the pinned header, actionlint (without
-its unavailable shellcheck executable), cache-policy fixtures, x64/arm64 MSBuild
-asset selection, missing-native build failure, and vendor patch reverse-apply.
-The original native inputs passed native/ELF/smoke on amd64 and arm64 in CI run
-39946883671 at 3d9a13c (jobs 120392135692 and 120392135570). The native budget patch
-and seek assertions added afterward still need compilation/runtime proof. Release/Fast
-and two-run SHA equality for identical final native inputs remain unverified.
+ELF checks validate the libraries before use and the production apphost before
+image publication. Native smoke covers match/score, mutation/rollback, memory
+admission, cancellation/recovery and candidate seek plans. The contract smoke
+also proves persisted encrypted FTS, marker 1, SQL errors remaining constraints,
+and ciphertext authentication damage returning native corruption. ARM64 native
+proof does not imply ARM64 managed Fast qualification. Final feature-head CI,
+complete benchmark repeats and production live verification are separate gates.
 The old security audit describes the replaced NuGet payload; its documented
 crossbeam-epoch risk is not claimed resolved by this change.
 
-Needs format bump. The deploy lane owns `StorageFormat.cs`.
+Needs format bump. The deploy lane owns `Engine/Turso/StorageFormat.cs`.
 
 ## Native request budgets
 
