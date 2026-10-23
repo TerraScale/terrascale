@@ -85,7 +85,7 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
         {
             using var refused = await ChangeRegionsAsync(regions);
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-            await Assert.That(await RegionsAsync()).IsEqualTo("SFO");
+            await Assert.That(await RegionsAsync()).IsEqualTo("SFO,GRU");
         }
         // Later GRU answers instead. The SFO home is outside the catalog now and must stay selected and addressable.
         await Control(new { command = "api-region", value = "gru" });
