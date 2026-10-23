@@ -1,3 +1,5 @@
+using TerraBase.Features.Management.Logs;
+
 namespace TerraBase.Features.Management.Usage;
 
 /// <summary>Registers usage metering and reporting.</summary>
@@ -10,7 +12,9 @@ public static class UsageExtensions
             .AddSingleton<IUsageMeter>(provider => provider.GetRequiredService<UsageMeter>())
             .AddSingleton<IUsageService, UsageService>()
             .AddSingleton<IOperationAllowance, OperationAllowance>()
+            .AddSingleton<IAllowanceUsageFeed, AllowanceUsageFeed>()
             .AddSingleton<IUsageAnalytics, UsageAnalytics>()
+            .AddSingleton<IRequestLogs, RequestLogRecorder>()
             .AddHostedService<UsageFlushService>();
 
 }

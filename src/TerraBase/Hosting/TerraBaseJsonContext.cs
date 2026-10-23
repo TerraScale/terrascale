@@ -12,6 +12,7 @@ using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management.Credentials;
 using TerraBase.Features.Management.Indexes;
 using TerraBase.Features.Management.Queries;
+using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Platform;
@@ -34,6 +35,8 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(WebhookState))]
 [JsonSerializable(typeof(WebhookDispatch))]
 [JsonSerializable(typeof(WebhookDeliveryRecord))]
+[JsonSerializable(typeof(DatabaseRequestLogs))]
+[JsonSerializable(typeof(RequestLogRecord))]
 [JsonSerializable(typeof(Ulid))]
 [JsonSerializable(typeof(ReplicaRecoveryRequest))]
 [JsonSerializable(typeof(Features.Replication.CatalogGateStatus))]
@@ -78,6 +81,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(DatabaseBody))]
 [JsonSerializable(typeof(DatabaseOwner))]
 [JsonSerializable(typeof(DatabaseUsage))]
+[JsonSerializable(typeof(AllowanceUsagePage))]
 [JsonSerializable(typeof(CollectionBody))]
 [JsonSerializable(typeof(CollectionSchemaBody))]
 [JsonSerializable(typeof(CollectionTtlBody))]

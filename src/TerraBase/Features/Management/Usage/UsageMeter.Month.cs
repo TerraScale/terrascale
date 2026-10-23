@@ -76,4 +76,8 @@ internal sealed partial class UsageMeter
             Interlocked.Add(ref count.Value, units);
         }
     }
+
+    // Failed seeds leave the allowance unknown to notifications rather than presenting a partial total as zero.
+    internal long? SeededMonthOperations(TenantContext database) =>
+        _unseeded.Keys.Any(owner => owner.OrganizationId == database.OrganizationId) ? null : MonthOperations(database);
 }
