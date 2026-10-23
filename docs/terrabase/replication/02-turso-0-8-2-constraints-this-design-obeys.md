@@ -17,6 +17,7 @@ From the spike (PR #12 and its raw output). Each one is a hard rule for every sl
 | The planner prefers an overlapping partial index over an expression index | Per-collection tables remove the overlapping `documents_live` partial index. Slice R2b measures this. |
 | MVCC + CDC works on a database already in `mvcc` mode, but the poller can skip interleaved groups and CDC is a conflict hotspot | Stay on WAL. `BEGIN CONCURRENT` is section 22. |
 
-The spike's "CDC costs about 2 %" figure is invalid: those runs never enabled CDC. The only valid figure is about
-1215 → 766 upserts/s (−37 %) in WAL. The design keeps captured rows per operation to two (the collection row and the
-`_tb_state` row). Slice R3 measures this on a Fly `shared-cpu-2x` machine before R4 builds on it.
+The spike's "CDC costs about 2 %" figure is invalid: those runs never enabled CDC.
+The design keeps captured rows per operation to two (the collection row and the
+`_tb_state` row). Measure CDC overhead on the qualified runtime before using its
+throughput for later slices; retired platform measurements are not OCI evidence.

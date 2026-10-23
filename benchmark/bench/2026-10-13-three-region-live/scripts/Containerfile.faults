@@ -1,8 +1,0 @@
-# TEST-ONLY faults image for ts-terrabase-e2e (never production): the same terrabase binary plus a shell and ip6tables,
-# so a run can cut 6PN traffic between two machines (fly ssh console -C "ip6tables ...") and heal it.
-FROM docker.io/library/debian:trixie-slim
-RUN apt-get update && apt-get install -y --no-install-recommends iptables ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY publish-2/terrabase /app/terrabase
-ENV ASPNETCORE_HTTP_PORTS=
-WORKDIR /data
-ENTRYPOINT ["/app/terrabase"]

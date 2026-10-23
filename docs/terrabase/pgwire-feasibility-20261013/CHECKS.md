@@ -68,7 +68,7 @@ Before the local commit, stage only this directory and inspect `git diff --cache
 ## Explicitly unverified / not executed
 
 1. No .NET restore/build/format/analyzer/Fast/Slow, benchmark, CI workflow, live client, PostgreSQL instance, Turso connection, listener or port. Offline byte checks are not protocol conformance or service integration evidence.
-2. No TLS handshake, Fly routing/handler, authentication payload, token validation/revocation, cancellation routing or backpressure/load behavior. Future gates require implementation admission and relevant owners.
+2. No TLS handshake, ingress routing/handler, authentication payload, token validation/revocation, cancellation routing or backpressure/load behavior. Future gates require implementation admission and relevant owners.
 3. No replication, durable ACK, restore, imports, storage format or engine verification/change. Read-only SQL producer behavior was reviewed from pinned source, not exercised here.
 4. No authoritative Rust sibling contract, current Ku owner/assignment or remote GitHub backlog check; no product production call, credential handling, infrastructure installation, deployment, publication, merge or PR operation.
 

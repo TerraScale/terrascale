@@ -50,5 +50,5 @@ CompleteMultipartUpload and for the composite ETag.
 
 ## Not proven here
 
-Tigris (G1), 100M documents, three regions and six directed replication paths, whole-node DR on Fly, remote durability
+Tigris (G1), 100M documents, three regions and six directed replication paths, whole-node cloud DR, remote durability
 of acknowledged writes (RPO is the shipping lag, about 1 s here), several commits within one second.

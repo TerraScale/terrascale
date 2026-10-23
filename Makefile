@@ -42,10 +42,10 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 	benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj
 
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
-	libs-build libs-test handoff-test libs-check libs-pack libs-nativeaot-check \
+	libs-build libs-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-replication-matrix terrabase-e2e-local terrabase-e2e terrabase-e2e-orch-outage terrabase-check terrabase-run terrabase-publish \
-	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local benchmark-repl-fly
+	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local
 
 # Global: the whole solution.
 restore:
@@ -90,12 +90,8 @@ libs-build: restore
 libs-test: libs-build
 	set -e; for p in $(LIBS_TEST_PROJECTS); do dotnet run --project $$p --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS); done
 
-libs-check: libs-build handoff-test
+libs-check: libs-build
 	set -e; for p in $(LIBS_PROJECTS); do dotnet format style $$p --verify-no-changes --no-restore; done
-
-# The user-run credential entry point (scripts/handoff) and the e2e credential script, against fake flyctl, gh and curl.
-handoff-test:
-	bash scripts/handoff/morning-credentials-test.sh
 
 libs-pack: restore
 	bash scripts/libs/package-version-test.sh
@@ -248,9 +244,3 @@ benchmark-repl-local:
 	$(MAKE) terrabase-build CONFIGURATION=Release
 	$(MAKE) -C benchmark repl-bench-build
 	benchmark/scripts/repl-local.sh
-
-# The same benchmark on Fly: one temporary load machine per region (gru, sjc, fra) in app ts-bench, destroyed on exit.
-# Needs the benchmark credential (benchmark/scripts/repl-fly-tenant.sh install, run by a user) and FLY_API_TOKEN for
-# machine metrics. Flags come from REPL_ARGS.
-benchmark-repl-fly:
-	benchmark/scripts/repl-fly.sh $(REPL_ARGS)

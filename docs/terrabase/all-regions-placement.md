@@ -21,7 +21,7 @@ TerraScale's own databases (ts-auth and ts-dashboard, [platform databases](platf
 - The catalog record keeps `allRegions` instead of a region list. The catalog itself is placed in every region
   ([multi-region-replication.md](multi-region-replication.md) section 15), so each region reads the record.
 - Every placement check (`DatabasePlacement.Includes`, `ManagedDatabase.PlacedIn`) is true for every region. A region
-  that joins Fly's private network (`<region>.<app>.internal`) is a peer like any other. Its machines create the local
+  that ts-orch lists in the peers file ([ts-orch.md](ts-orch.md#peers-file)) is a peer like any other. Its nodes create the local
   file on the first stream or refill, and they serve the database. Nobody calls an API.
 - A region that leaves stops being a peer, so nothing streams to it and no write waits for it. Its machines and their
   copies leave with it.

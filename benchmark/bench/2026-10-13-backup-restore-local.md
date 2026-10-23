@@ -1,6 +1,6 @@
 # Local backup and restore drill — 2026-10-13
 
-This is local integration evidence. It does not prove Tigris shipping, Fly machine recovery, or Fly snapshot recovery.
+This is local integration evidence. It does not prove Tigris shipping, cloud machine recovery, or cloud snapshot recovery.
 
 | Environment | Value |
 |---|---|
@@ -47,9 +47,9 @@ tampered or replayed backup state. Unverified catalogs refuse public requests, m
 system replication export and backup shipping. Anchor GETs must carry `X-Tigris-Consistent: true`.
 
 Production acceptance is pending COS `GO DRILL`, after T2 and the live replication matrix. No cloud resource was changed
-by this drill. COS replaced the buckets; production now uses Fly-managed `ts-terrabase-backups-20261013-v2` through the app secrets.
+by this drill. Current production bucket ownership and recovery remain outside this local drill.
 The obsolete Tigris CLI/OAuth path is not a live prerequisite. Scheduled object listings with timestamps, three-region digest and bidirectional replication
-proof, daily Fly snapshot settings and a snapshot restore, production timings, and drill PR merge remain outstanding.
+proof, daily cloud snapshot settings and a snapshot restore, production timings, and drill PR merge remain outstanding.
 
 ## Historical required gate failures before the product correction
 
@@ -97,7 +97,7 @@ TsDotnetRoot=/home/mariogk/.t3/worktrees/terrascale/cos-backup-restore-sdk \
   ~/.local/bin/ts-heavy make check
 ```
 
-Raw output: `/home/mariogk/.local/state/cos-backup-restore/full-gate-06748fc0.log`; recorded exit file: `full-gate-06748fc0.exit` in the same directory. Runtime/security changes are isolated in gate PR #213, held for T9's combined format-6 reset. The independent local drill slice contains no runtime gate changes. Its latest GitHub `test` must pass before merging. Production shipping, regional recreation and Fly snapshot recovery are still untested.
+Raw output: `/home/mariogk/.local/state/cos-backup-restore/full-gate-06748fc0.log`; recorded exit file: `full-gate-06748fc0.exit` in the same directory. Runtime/security changes are isolated in gate PR #213, held for T9's combined format-6 reset. The independent local drill slice contains no runtime gate changes. Its latest GitHub `test` must pass before merging. Production shipping, regional recreation and cloud snapshot recovery are still untested.
 
 ## Independent drill on ungated main
 

@@ -1,7 +1,0 @@
-2026-10-14T17:30:54Z created organization 01M4XQF0Z2S3CNFTF8TT18D5NE (owner user 01M4XQF0TB4MAY16YYNW43SZSJ, enterprise plan), project 01M4XQF14YVSKSJK3HFCM3P9JF, database 01M4XQF0BSXEZBG1DN9FA2FXX5 (gru + sjc, fra) on ts-vtest-tb
-2026-10-14T17:30:58Z secret import failed
-2026-10-14T17:31:00Z revoked key 01M4XQF5YR2SQJVDAA387BV0GF
-2026-10-14T17:31:00Z commit ok: "set_database_regions"
-2026-10-14T17:31:01Z commit ok: "delete_database"
-2026-10-14T17:31:01Z commit ok: "delete_project"
-2026-10-14T17:31:01Z commit ok: "delete_organization"

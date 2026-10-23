@@ -4,7 +4,7 @@
 - SDK dependency: isolated ts-dotnet checkout `78e311fe1dcb6dd603190800ed540d08e06de5fd`. CI currently pins `bcd20603f11f3aa54dc54cec6e410b4fe9e24151`; main-green T0 owns that mismatch.
 - Host: delta, Intel i7-13620H, 16 logical CPUs; .NET SDK `11.0.100-rc.1.26425.128`, Debug, server GC. Three in-process real application nodes per case, ephemeral ports and separate data directories. Default parallel TUnit execution under `ts-heavy` / nice 19.
 - Result: 16 actual passes, 0 failures, 0 skips, 0 expected failures; test duration 17.449 seconds.
-- This is local loopback proof. No Fly/WAN run or live run URL exists for this candidate yet; live qualification waits for COS T2.
+- This is local loopback proof. No WAN run or live run URL exists for this candidate yet; live qualification waits for COS T2.
 
 ## Command and output
 
@@ -70,6 +70,6 @@ Raw local log: `/tmp/cos-replication-matrix-proof/local-matrix-4.log`; SHA-256 `
 
 Those auth files are unchanged by this branch. `make check` stopped before running TerraBase Fast and the Turso driver tests. Slow was not run. Log: `/tmp/cos-replication-matrix-proof/make-check.log`.
 
-Workflow structure passed `actionlint -shellcheck='' .github/workflows/ci.yml`; the shellcheck shim has no selected version, so its integration was not run. No Docker execution or live Fly execution was performed locally.
+Workflow structure passed `actionlint -shellcheck='' .github/workflows/ci.yml`; the shellcheck shim has no selected version, so its integration was not run. No Docker execution or live cloud execution was performed locally.
 
-The branch is committed locally and unpushed. No PR exists yet: repository rules require `make check` to pass before pushing. Publication and merge wait on **COS: terrascale main green (T0)**; live six-direction and disposable-app outage qualification wait on **COS: terrascale Fly greenfield (T2)**. The CI wiring above is implemented but has not run in GitHub yet.
+The branch is committed locally and unpushed. No PR exists yet: repository rules require `make check` to pass before pushing. Publication and merge wait on **COS: terrascale main green (T0)**; live six-direction and disposable-app outage qualification wait on production qualification. The CI wiring above is implemented but has not run in GitHub yet.

@@ -1,11 +1,9 @@
-# Rollout: cross-region replication gru-1 ↔ sfo-1 (TS-643)
+# Rollout: cross-region replication gru ↔ sjc (TS-643)
 
-This replaces the retired manual region-list and credential-copy rollout
-recipe. The required [operating contract](../zero-configuration.md) discovers
-every region automatically. Production runtime secrets are Fly secrets on each
-Fly app; CI secrets are GitHub Actions secrets.
-The current runtime and checker still depend on explicit profiles and a canary
-file; removing those dependencies is pending TS-773/TS-796.
+The required [operating contract](../zero-configuration.md) discovers regions automatically.
+OCI Vault owns runtime secrets; GitHub Actions secrets serve CI. Current deployment
+and ts-orch migration limits are recorded in [OCI hosting](../../oci.md). Existing
+explicit-profile/checker dependencies do not establish automatic region admission.
 
 ## Verification requirements
 

@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-# Fake flyctl: logged in; `proxy` waits like the real tunnel until it is killed.
-echo "flyctl $*" >> "$FAKE_LOG"
-case "$1 ${2:-}" in
-  "auth whoami") echo "fake@example.com" ;;
-  proxy*) exec sleep 60 ;;
-  *) echo "fake flyctl: unexpected $*" >&2; exit 2 ;;
-esac

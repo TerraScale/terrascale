@@ -396,7 +396,7 @@ async Task<Process> StartAsync()
         start.ArgumentList.Add(argument);
     }
 
-    foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("FLY_", StringComparison.Ordinal) || name.StartsWith("TERRABASE_", StringComparison.Ordinal)).ToList())
+    foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TERRABASE_", StringComparison.Ordinal)).ToList())
     {
         start.Environment.Remove(name);
     }

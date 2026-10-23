@@ -1,8 +1,7 @@
 # GitHub Actions OIDC → ts-auth: the e2e suite's credential without a stored secret
 
-The Fly e2e job asks GitHub for an OIDC token and exchanges it at ts-auth for a 15-minute project token. That token
-covers the isolated e2e project only, with `databases:read databases:write documents:read documents:write`. Nothing is
-stored in GitHub, and the token can create the databases that E12/E13 need.
+The e2e credential exchange requests GitHub OIDC identity and issues a 15-minute
+project token scoped to the isolated e2e project. No reusable token belongs in GitHub secrets.
 
 **Inert until bound.** The code ships with no binding, so every request is refused with `invalid_client`. Binding is the
 activation; the user approved it for TerraScale/terrascale's main CI e2e project only (2026-10-14). Agents never run it.
@@ -53,10 +52,6 @@ The issued token's `sub` is `github-actions:1414527764:<run_id>`. It carries `or
 
 ## Activation (user-run, after approval), revocation
 
-```bash
-fly ssh console -a ts-auth -r gru -C "/app/ts-auth bind-github-actions-e2e"
-# ts-auth bind-github-actions-e2e: bound: client 01M4GHA0E2E000000000000000, organization <ULID>, project <ULID>
-```
 
 - Binding creates the public client with a fresh e2e organization and project id (ULIDs from `AuthStore.NewId`), held in
   the client's properties. They are not platform directory records: no user is a member and no API reaches them, which
@@ -66,9 +61,6 @@ fly ssh console -a ts-auth -r gru -C "/app/ts-auth bind-github-actions-e2e"
 - Both commands log `Audit: operator command …`.
 
 ## TerraBase trust and bootstrap
-
-TerraBase on Fly trusts ts-auth platform project tokens by default (#231, `fix/fly-platform-auth-defaults`): the issued
-token is an ordinary project token, so no TerraBase change or Fly secret is needed for it. Nothing else is trusted more.
 
 - **Bootstrap.** The binding's project exists only as the binding's id; no user, membership or plan in ts-auth reaches it.
   The first `POST /v1/projects/{project}/databases` with the token enrolls the project in TerraBase's catalog
@@ -80,8 +72,7 @@ token is an ordinary project token, so no TerraBase change or Fly secret is need
 
 ## The e2e job (`.github/workflows/ci.yml`, `scripts/e2e/ci-oidc-credential.sh`)
 
-The `e2e` job runs only on a push to `main`, after the deploy, with `permissions: id-token: write`. Each Fly step sources
-`scripts/e2e/ci-oidc-credential.sh`, which:
+The credential exchange:
 
 1. requests a GitHub OIDC token with the URL-encoded `audience=https://auth.terrascale.tech/terrascale`, checks it is one
    compact JWT (three base64url parts, no newline) and masks it before any output;
@@ -93,18 +84,6 @@ The `e2e` job runs only on a push to `main`, after the deploy, with `permissions
    `PATCH …/databases/ci-e2e` at the home region and checked again; a wrong home cannot change, so the step fails naming
    the project, the database and its placement (never a body). It is kept between runs; each test creates and deletes
    its own collection (and any database it creates) in the project;
-5. exports `TERRABASE_E2E_FLY_PROJECT_TOKEN` and `TERRABASE_E2E_FLY_API_KEY` (both the project token, so documents and
-   `/sql` use the same project), `TERRABASE_E2E_FLY_PROJECT` and `TERRABASE_E2E_FLY_DATABASE`, and unsets the ID-token
-   request variables.
-
 A token lives 15 minutes, so each step builds first (`make terrabase-build`, then `make -o terrabase-build terrabase-e2e`)
 and mints its own after the build; a step running longer fails with 401 rather than reusing anything. The script's
 self-check (`scripts/e2e/ci-oidc-credential-test.sh`, a fake curl: no request leaves the runner) runs in the `test` job.
-
-With the project token every Fly scenario has `databases:*`, so `tests/TerraBase.E2E/Gaps.cs` no longer skips any scenario
-for its credential: a refusal fails the test. Scenarios that stop Fly machines keep their own guard.
-Until the binding exists the exchange answers `invalid_client` and the e2e job fails visibly.
-
-The old e2e API key and its three GitHub secrets (`TERRABASE_E2E_FLY_API_KEY`, `_PROJECT`, `_DATABASE`, legacy
-TerraBase-only project) are no longer read by CI. They stay installed until a human revokes them
-(`scripts/handoff/morning-credentials.sh revoke e2e`).

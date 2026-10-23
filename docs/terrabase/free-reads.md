@@ -53,7 +53,6 @@ point at `main`'s layout.
 Electric references: <https://electric.ax/docs/api/http> and <https://electric.ax/docs/guides/auth>, as cited by TS-474.
 
 ---
-
 ## 2. What changed recently, and where reads stand today
 
 ### 2.1 Merged since the replication audit
@@ -318,9 +317,6 @@ FR-22 pricing and caching check (official documentation, 2026-10-14; no account 
 - [Tigris pricing](https://www.tigrisdata.com/pricing.md) charges no regional, inter-region, or Internet egress.
   Global Standard storage is $0.02/GiB-month; PUT is $0.005/1,000 Class A requests and GET/HEAD is $0.0005/1,000 Class B
   requests. Free monthly allowances are 5 GiB Standard storage, 10,000 Class A and 100,000 Class B requests.
-- [Fly pricing](https://fly.io/docs/about/pricing/#extensions) explicitly bills transfer to third-party extensions,
-  including Tigris. Published Internet egress is $0.04/GB from `gru` and $0.02/GB from `sjc` or `fra`; actual upload routing
-  and invoice classification are unmeasured. Direct client downloads avoid serving those body bytes through TerraBase.
 - [Tigris regions](https://www.tigrisdata.com/docs/concepts/regions/) lists `sjc` and `fra` for both `t3.storage.dev` and
   Fly.io, and `gru` in the Fly.io list. This does not promise identical placement through every endpoint.
 - [Global bucket locations](https://www.tigrisdata.com/docs/buckets/locations/) automatically create local copies on
@@ -422,10 +418,9 @@ Metrics on `TerraScale.TerraBase`, without tenant labels:
   Tigris. No new store.
 - **Tests.** Integration tests only, through `TerraBaseTestServer`. Every test runs in parallel. Fast covers the
   critical path.
-- **Ownership.** TerraBase owns reads. A CDN (T2) would be an edge component outside Fly, so it needs a human decision.
+- **Ownership.** TerraBase owns reads. Adding an external CDN needs a separate human decision.
 
 ---
-
 ## 4. Durability baseline
 
 ### Turso dependency, exact
@@ -498,8 +493,8 @@ Test-time classes. Measured values are cited; everything else is an estimate.
 | Fast, full | `make terrabase-test-fast` | ~9 min (CI `terrabase` job 9 min 8 s, run 38393279132) | Haiku |
 | Docs only | none | 0 | Haiku |
 | Slow | `make terrabase-test-slow` | unmeasured (the only CI sample, 3 min 48 s, failed) | Opus until measured ≤10 min |
+| Benchmarks, live runtime, real Tigris | `benchmark/…`, runbooks | >10 min | Opus |
 | E2E (in-process, process-separated, fault shim) | `make terrabase-e2e TEST_ARGS=…` | up to 30 min (CI timeout) | Opus |
-| Benchmarks, live Fly, real Tigris | `benchmark/…`, runbooks | >10 min | Opus |
 
 ---
 
@@ -526,7 +521,7 @@ Test-time classes. Measured values are cited; everything else is an estimate.
 | FR-02 | Repairs in the feed (C3) | — | — | — | — | **Done** (#165) |
 | FR-03 | **Done (#221).** Storage (lane B1): `_tb_feed.seq` from a persisted counter row; `_tb_shape_chunk`, `_tb_shape_snapshot`; storage format version bump (greenfield reset) | `Engine/Sqlite/SqliteDatabaseStore.cs` (schema), `Engine/Sqlite/StorageFormat.cs`, `SqliteStorageTransaction.Feed.cs` (`AppendFeed` only) | — (coordinate with #211) | Fast filtered: `Shapes/FeedSequenceTests` (an emptied feed plus a reopen keeps growing) | ~3 min | Haiku |
 | FR-04 | Protocol and vectors (lane B0): `shape-reads.md` as v1, and `shape-vectors.json` | `docs/terrabase/shape-reads.md`, `docs/terrabase/shape-vectors.json` | — | none (docs) | 0 | Haiku |
-| FR-05 | Peer authentication (C1, lane A1): a shared credential from a fly secret on every internal RPC; anything without it is refused | `Features/Replication/*`, `Hosting/Listeners.cs` | — | Fast with 2 nodes, plus process-separated E2E | >10 min | Opus |
+| FR-05 | Peer authentication (C1, lane A1): a shared credential from a Vault secret on every internal RPC; anything without it is refused | `Features/Replication/*`, `Hosting/Listeners.cs` | — | Fast with 2 nodes, plus process-separated E2E | >10 min | Opus |
 | FR-06 | **Done (#223).** Fan-out benchmark harness (lane B2): N readers per shape; origin reads, bytes, p99; results as `.md` in `benchmark/bench/` | `benchmark/cmd/shape-bench/` | — | benchmark run | >10 min | Opus |
 | FR-07 | Turso FULL crash and power-loss evidence for tenant databases (lane B3): an acknowledged write survives power loss, and a commit's sync covers earlier frames | `tests/TerraBase.Slow/WalFaults/TenantDatabasePowerLossTests.cs` | — | E2E (fault shim) | >10 min | Opus |
 
@@ -561,7 +556,7 @@ Test-time classes. Measured values are cited; everything else is an estimate.
 | FR-30 | A crash or power loss never leaves a published chunk holding a lost write (lane V1) | FR-07, FR-12 | E2E | >10 min | Opus |
 | FR-31 | 3-region shape clients converge with the replicas under partition, drop/re-create, repair and skew (lane V3) | FR-20, FR-23 | E2E | >10 min | Opus |
 | FR-32 | Load: 10k readers per shape; at most 1 origin storage read per chunk per cache location; report in `benchmark/bench/` | FR-06, FR-24 | benchmark | >10 min | Opus |
-| FR-33 | Real Tigris mirror run (credentials from fly secrets, run by a human) | FR-22 | Slow `TigrisShapeMirrorTests` | unmeasured | Opus |
+| FR-33 | Real Tigris mirror run (credentials from OCI Vault, run by a human) | FR-22 | Slow `TigrisShapeMirrorTests` | unmeasured | Opus |
 | FR-34 | Security review: cache keys, tenancy, revocation bound, ciphertext metadata leakage (lane V4) | FR-21, FR-24 | E2E plus review | >10 min | Opus |
 
 ### Wave 5: SDKs (separate repositories; all parallel after FR-04 and FR-21)

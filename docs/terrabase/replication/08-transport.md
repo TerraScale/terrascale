@@ -1,10 +1,10 @@
 # 8. Transport
-
-- **Peers.** Phase 3a's `FlyMachines` directory: TXT `vms.ts-terrabase.internal`, refreshed every 5 s. A database's
-  peers are the machines whose region is in its placement (section 16), minus self. They are addressed per machine at
-  `http://<machine>.vm.ts-terrabase.internal:8081`: the internal listener on `fly-local-6pn` (h2c, gRPC). Region names
-  like `<region>.ts-terrabase.internal` serve routing only, because a region will hold more than one machine. There is
-  no mTLS. Every internal request carries `X-TerraBase-Peer-Credential` from the shared Fly secret `TERRABASE_PEER_SECRET` (see [peer-authentication.md](../peer-authentication.md)); the old `PeerCredentials` and `peer-*` settings remain removed.
+- **Peers.** A database's peers are the admitted machines whose regions belong to its
+  placement (section 16), excluding self. Destinations must identify machines, not just
+  regions, because a region can contain multiple machines. Every internal request carries
+  `X-TerraBase-Peer-Credential` from `TERRABASE_PEER_SECRET`; see
+  [peer authentication](../peer-authentication.md). The deployed OCI discovery and
+  transport integration must be verified rather than inferred from retired DNS names.
 - **Protocol** (replaces `terrabase/v1/replication.proto`, `catalog.proto`, `wan.proto` and
   `terrabase/alpha/anti_entropy.proto`; package `terrabase.v1`, everything v1):
 
@@ -57,3 +57,6 @@ An accepted `Push` publishes its gRPC response headers before waiting for a pred
   stable report to release its response slot; the refill block remains until repair completes. The receiver processes ordinary batches and frontier reports
   in order; that local work must finish within 15 s so it can continue reading heartbeats. A longer wait ends the stream
   and retries from the durable ACK. Refills run separately and keep their 10-minute allowance.
+
+Hosting and private-network admission are described in [OCI hosting](../../oci.md).
+The deployed peer transport and membership contract require verification during the ts-orch migration.

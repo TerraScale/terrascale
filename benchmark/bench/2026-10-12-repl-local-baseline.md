@@ -41,5 +41,4 @@ can only start after peer streams (R4a) bring replication back.
 ## Not tested
 
 - WAN latency, per-node CPU and memory (the nodes share one process), reads under load, counters, sets, SQL writes, the
-  changes feed and faults during the load (tests/TerraBase.E2E covers faults). Fly runs follow once R4a is merged and
-  gru, sjc and fra are deployed.
+  changes feed and faults during the load (tests/TerraBase.E2E covers faults). No cloud execution is established by these local measurements.

@@ -1,8 +1,7 @@
 # Live per-database stats (TS-806)
 
 Each TerraBase member counts reads, writes, requests, replication bytes and lag per database in memory.
-Every 5 seconds it closes a window and exposes bounded aggregates on the existing `/metrics`, which Fly's metrics
-scraping collects. The feature is always on, has no configuration, and does not change the storage format.
+Every 5 seconds it closes a window and exposes bounded aggregates on the existing `/metrics`, for metrics collection. The feature is always on, has no configuration, and does not change the storage format.
 
 ## What is counted
 

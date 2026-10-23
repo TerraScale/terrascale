@@ -3,20 +3,14 @@
 This is the required production contract adopted on 2026-10-09. It is not a
 claim that the current runtime or deployed fleet already implements it.
 
-- Every feature is always available and every region serves automatically.
-  There are no feature flags, region activation steps, deploy toggles or kill switches.
-- A node joins Fly's private network automatically, discovers every region
-  through `.internal` DNS and infers its own region from `FLY_REGION`.
-- Fly secrets deliver every production secret (the master key included);
-  ts-auth generates and rotates its signing keys and stores them in TerraBase sealed under
-  that master key. The platform issuer's first key is the one operator step: ts-auth fails closed
-  without it ([signing-keys.md](signing-keys.md)). Vendor-issued credentials are set once with
-  `fly secrets set`; operators do not copy production credentials.
-- Each value has one correct setting in code. Production exposes no tuning
-  knobs. Fakes, demo stores and authentication bypasses belong only in test
-  code and test binaries.
-- CI rejects new switch-style configuration. A narrow allowance for an
-  unavoidable third-party name needs a one-line reason.
+- Every feature is always available; no feature flags, region activation steps, deploy toggles or kill switches.
+- Nodes join the private NetBird network, discover serving regions and infer their own region automatically.
+- OCI Vault owns production secrets; instance principals and scoped IAM grants govern host reads.
+- CI uses GitHub-hosted runners. Each production value has one correct setting in code; no tuning knobs.
+- Fakes, demo stores and authentication bypasses belong only in test code and test binaries.
+- CI rejects new switch-style configuration; unavoidable third-party names need a narrow allowance with a reason.
+
+See [OCI hosting](../oci.md) for current deployment status and implementation limits.
 
 ## Safety boundaries
 

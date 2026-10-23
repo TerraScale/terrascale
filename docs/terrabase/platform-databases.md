@@ -46,11 +46,14 @@ them as its own. A record seeded with a fixed region list takes this placement o
 
 ## Who reaches them
 
-On the production Fly app `ts-terrabase`, code defaults to issuer `https://auth.terrascale.tech/terrascale` and audience
-`https://api.terrascale.tech` without auth settings. Missing settings cannot disable platform-token authentication;
-explicitly incompatible or partial issuer/audience settings are still refused.
+The required platform issuer is `https://auth.terrascale.tech/terrascale` and its
+audience includes `https://api.terrascale.tech`. Missing production auth settings
+default to this pair. Before cutover, verify that the exact deployed revision
+rejects incompatible issuer/audience settings and preserves the required trust.
+Defaults alone do not establish validation. Missing settings must never disable
+platform authentication.
 
-- The platform operator: TerraBase's internal listener (`http://top1.nearest.of.ts-terrabase.internal:8081`, HTTP/2
+- The platform operator: TerraBase's internal listener (the verified private internal origin, HTTP/2
   prior knowledge, sending `X-TerraBase-Peer-Credential` from `TERRABASE_PEER_SECRET`). Verification outcomes are recorded; refusal is the following rollout phase. ts-auth stores here
   (`App.StorageProject`, `App.StorageDatabase`).
 - Matching scoped project tokens signed by the global issuer: only their own project and database routes, with the
@@ -60,7 +63,9 @@ explicitly incompatible or partial issuer/audience settings are still refused.
 
 ## How the dashboard uses its database
 
-The dashboard (C# rewrite) reaches TerraBase through the ts-dotnet SDK, like ts-auth:
+The dashboard (C# rewrite) reaches TerraBase through the ts-dotnet SDK, like ts-auth.
+In this example, `internalOrigin` is the verified private TerraBase origin supplied by
+the current hosting integration, not a hardcoded discovery hostname:
 
 ```csharp
 var http = new HttpClient(TerraBaseHttp.CreateHandler());
@@ -69,8 +74,8 @@ http.DefaultRequestHeaders.Add("X-TerraBase-Peer-Credential",
         ?? throw new InvalidOperationException("TERRABASE_PEER_SECRET is required"));
 var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
 {
-    // This internal-only transport sends the Fly credential; the SDK sends HTTP/2 prior knowledge.
-    BaseAddress = new Uri("http://top1.nearest.of.ts-terrabase.internal:8081"),
+    // This internal-only transport sends the peer credential; the SDK sends HTTP/2 prior knowledge.
+    BaseAddress = internalOrigin,
 }).Database("00000000000000000000000005", "ts-dashboard");
 
 // At startup, create the collections it needs; an existing name answers 409 name_taken, which is fine.
