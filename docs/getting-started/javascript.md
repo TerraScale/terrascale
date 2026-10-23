@@ -68,4 +68,4 @@ Success prints `PASS_TERRABASE_CRUD_QUERY`. The assertions verify persisted fiel
 
 ## 5. Continue safely
 
-A query page may contain fewer results than its limit, or no results with a continuation cursor. Use [pagination](/guides/queries) to continue until `nextCursor` is `null`. Review [errors and retries](/guides/errors) before adding automatic retries. SDK transport checks with synthetic responses are local evidence; a deployed customer journey requires its own authorized real-service run.
+A query page may contain fewer results than its limit, or no results with a continuation cursor. Use [pagination](/guides/queries) to continue until `nextCursor` is `null`. Review [errors and retries](/guides/errors) before adding automatic retries.

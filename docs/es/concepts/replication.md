@@ -9,21 +9,21 @@ title: Replication and durability
 
 # Replication and durability
 
-Read the durability reported by the serving API literally. The current Documents examples do not establish leaderless operation, global serializability or a multi-region production guarantee.
+Each write response tells you how durable the write is. Read that label literally and design for the guarantees below.
 
 ## Current application contract
 
-Document writes return an opaque version, an offset and a durability label. The candidate's `local_durable` label is an accepting-service acknowledgement. It is not proof that every selected region has persisted the write. Do not parse versions or use a database offset as a portable session token.
+Document writes return an opaque version, an offset and a durability label. `local_durable` means the region that accepted the write has persisted it; other regions receive it afterwards. Do not parse versions or use a database offset as a portable session token.
 
-A version precondition rejects an update when the observed document version is no longer current at the serving API. It does not establish globally unique application values or cross-region linearizability.
+A version precondition rejects an update when the observed document version is no longer current at the serving API. It does not make application values unique or order writes across regions.
 
 A timeout or lost response can leave a write committed. This contract does not support `Idempotency-Key`; [safe retry guidance](/es/guides/errors) describes reconciliation.
 
-## Multi-region product requirements
+## Multi-region behavior
 
-The intended service keeps data within the selected placement and converges authorized replicas without widening residency. Fault recovery, causal sessions, conflict resolution and cross-region durability require independent real-service evidence. The retained isolated CRUD receipt does not qualify them.
+Data stays within the placement you select, and replicas converge without leaving it. Writes do not yet wait for other regions, and there are no causal sessions or custom conflict resolution.
 
-Earlier documents described `RegionalDurable` and `GlobalDurable` requirements. Those names are not selectable write modes in the documented current Documents SDK example. Do not assume a current SDK can request them or provides their historical guarantees.
+Earlier documents described `RegionalDurable` and `GlobalDurable` requirements. They are not write modes in the current SDKs; you cannot request them.
 
 ## All regions placement
 

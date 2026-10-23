@@ -10,6 +10,6 @@
     <PackageReference Include="TerraScale.DotNet" Version="$(TerraBaseSdkPackageVersion)" />
   </ItemGroup>
   <Target Name="RequireExactPackage" BeforeTargets="CollectPackageReferences">
-    <Error Condition="'$(TerraBaseSdkPackageVersion)' == ''" Text="Supply TerraBaseSdkPackageVersion from the verified C# SDK artifact; obtain an exact C# TerraBase SDK candidate package." />
+    <Error Condition="'$(TerraBaseSdkPackageVersion)' == ''" Text="Pass -p:TerraBaseSdkPackageVersion=0.0.3 and a local feed built from ts-dotnet; see https://docs.terrascale.tech/getting-started/csharp." />
   </Target>
 </Project>

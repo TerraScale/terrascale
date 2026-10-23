@@ -9,6 +9,6 @@ title: Scope application data
 
 # Scope application data
 
-A separately scoped customer database can separate application data and access. It does not establish unmeasured capacity or idle-cost guarantees. Use [authentication](/zh-cn/guides/authentication) and [limits](/zh-cn/limits) when choosing an application boundary.
+Give each customer a separately scoped database to separate their data and access. All databases share your organization's plan allowances; see [pricing](/zh-cn/pricing). Use [authentication](/zh-cn/guides/authentication) and [limits](/zh-cn/limits) when choosing an application boundary.
 
 </div>
