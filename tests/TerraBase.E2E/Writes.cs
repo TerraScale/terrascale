@@ -37,6 +37,9 @@ internal sealed class Writes
 
             _accepted[id] = true;
         });
+        // A gate may report the failure before CompletedAsync is called; still observe the background task's fault.
+        _ = _all.ContinueWith(task => _ = task.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
     /// <summary>Starts <paramref name="write"/> for each index of <paramref name="ids"/>, at most <paramref name="parallelism"/> at once.</summary>
