@@ -51,8 +51,9 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         CancellationToken cancellationToken) =>
         statement switch
         {
-            ReadSql read => await ReadAsync(transaction, read, command, describe, cancellationToken).ConfigureAwait(false),
+            ReadSql read => await ReadAsync(transaction, read, command, describe, null, cancellationToken).ConfigureAwait(false),
             InsertSql insert => await InsertAsync(transaction, insert, command, keys, tally, cancellationToken).ConfigureAwait(false),
+            ChangeSql change => await ChangeAsync(transaction, change, command, tally, cancellationToken).ConfigureAwait(false),
             CreateTableSql create => await CreateAsync(transaction, create, cancellationToken).ConfigureAwait(false),
             DropTableSql drop => await DropAsync(transaction, drop, cancellationToken).ConfigureAwait(false),
             _ => SqlErrors.Error("this statement is not supported here"),
@@ -89,9 +90,10 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         return Empty;
     }
 
-    // The engine read of `read`: its tables' definitions, its parameters bound, its rows converted.
+    // The engine read of `read`: its tables' definitions, its parameters bound, its rows converted. `keyed` names the
+    // table whose rows also expose their document id (`_id`), for UPDATE and DELETE.
     private static async ValueTask<SqlOutcome> ReadAsync(
-        IStorageTransaction transaction, ReadSql read, SqlCommand command, bool describe, CancellationToken cancellationToken)
+        IStorageTransaction transaction, ReadSql read, SqlCommand command, bool describe, string? keyed, CancellationToken cancellationToken)
     {
         var tables = new Dictionary<string, SqlTableDefinition>(StringComparer.Ordinal);
         foreach (var name in read.Tables)
@@ -109,7 +111,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             return SqlErrors.Error(string.Create(CultureInfo.InvariantCulture, $"the statement takes {read.Params.Count} arguments"));
         }
 
-        var result = await transaction.ExecuteSqlAsync(SqlRead.Program(read, tables, parameters, describe), cancellationToken).ConfigureAwait(false);
+        var result = await transaction.ExecuteSqlAsync(SqlRead.Program(read, tables, parameters, describe, keyed), cancellationToken).ConfigureAwait(false);
         if (result.Truncated)
         {
             return SqlErrors.TooBig("a result holds at most 10000 rows and 8 MiB; add a LIMIT");
@@ -201,7 +203,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         IReadOnlyList<IReadOnlyList<SqlValue>> rows = [[]];
         if (insert.Source is { } source)
         {
-            switch (await ReadAsync(transaction, source with { Params = insert.Params }, command, false, cancellationToken).ConfigureAwait(false))
+            switch (await ReadAsync(transaction, source with { Params = insert.Params }, command, false, null, cancellationToken).ConfigureAwait(false))
             {
                 case SqlError error:
                     return error;
@@ -279,6 +281,94 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         }
 
         return new SqlResult([], [], affected, lastRowid);
+    }
+
+    private async ValueTask<SqlOutcome> ChangeAsync(
+        IStorageTransaction transaction, ChangeSql change, SqlCommand command, SqlTally tally, CancellationToken cancellationToken)
+    {
+        if (await SqlTable.ReadAsync(transaction, change.Table, cancellationToken).ConfigureAwait(false) is not { } table)
+        {
+            return SqlErrors.Error("no such table");
+        }
+
+        var columns = new List<SqlColumnDefinition>();
+        foreach (var (name, _, _) in change.Assignments)
+        {
+            if (table.Columns.FirstOrDefault(column => column.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) is not { } column || columns.Contains(column))
+            {
+                return SqlErrors.Error("SET assigns each column of the table at most once");
+            }
+
+            if (table.PrimaryKey.Contains(column.Name))
+            {
+                return SqlErrors.Error("a PRIMARY KEY column cannot be updated: delete the row and insert it again");
+            }
+
+            columns.Add(column);
+        }
+
+        var read = await ReadAsync(transaction, change.Rows with { Params = change.Params }, command, false, change.Table, cancellationToken).ConfigureAwait(false);
+        if (read is not SqlResult { Rows: var rows })
+        {
+            return read;
+        }
+
+        if (rows.Count > SqlWrite.MaxRows)
+        {
+            return SqlErrors.TooBig("a statement writes at most 1024 rows");
+        }
+
+        foreach (var row in rows)
+        {
+            var id = row[0].Text!;
+            DocumentOperation operation;
+            if (change.IsDelete)
+            {
+                operation = new DeleteOperation(change.Table, id, new Precondition(null, false, false));
+            }
+            else
+            {
+                var ops = new List<PatchOpRequest>();
+                var value = 1;
+                for (var i = 0; i < columns.Count; i++)
+                {
+                    var (_, op, by) = change.Assignments[i];
+                    var path = "/" + columns[i].Name;
+                    var set = op == "set" ? SqlWrite.Apply(columns[i].Affinity, row[value++]) : SqlValue.Null;
+                    if (op == "inc")
+                    {
+                        ops.Add(new PatchOpRequest("inc", path, default, SqlWrite.Json(SqlValue.Of(by))));
+                    }
+                    else if (set.Kind == SqlValueKind.Null)
+                    {
+                        if (columns[i].NotNull)
+                        {
+                            return SqlErrors.Constraint("NOTNULL", "a NOT NULL column has no value");
+                        }
+
+                        ops.Add(new PatchOpRequest("unset", path, default, default));
+                    }
+                    else
+                    {
+                        ops.Add(new PatchOpRequest("set", path, SqlWrite.Json(set), default));
+                    }
+                }
+
+                if (DocumentPatch.CheckOps(ops) is not DocumentPatch patch)
+                {
+                    return SqlErrors.Error("the new values do not form a valid change");
+                }
+
+                operation = new PatchOperation(change.Table, id, patch, new Precondition(null, false, false));
+            }
+
+            if (await ApplyAsync(transaction, operation, id, tally, cancellationToken).ConfigureAwait(false) is { } refused)
+            {
+                return refused;
+            }
+        }
+
+        return new SqlResult([], [], rows.Count, null);
     }
 
     // The document service's refusal of one operation, in SQLite's vocabulary, or null when it applied.

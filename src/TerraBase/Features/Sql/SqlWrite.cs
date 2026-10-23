@@ -1,6 +1,9 @@
+using System.Buffers;
 using System.Globalization;
 using System.Text.Json;
+using SqlParser;
 using SqlParser.Ast;
+using SqlParser.Dialects;
 
 namespace TerraBase.Features.Sql;
 
@@ -25,6 +28,18 @@ internal enum InsertMode
 internal sealed record InsertSql(string Table, IReadOnlyList<string>? Columns, ReadSql? Source, InsertMode Mode) : ParsedSql
 {
     public override bool IsWrite => true;
+}
+
+/// <summary><c>UPDATE</c> or <c>DELETE</c>: an engine read of the row ids and new values, then one patch or delete per row.</summary>
+/// <param name="Table">Target table.</param>
+/// <param name="Rows">The read: column 0 is <c>_id</c>, then one column per <see cref="Assignments"/> entry that needs a value.</param>
+/// <param name="Assignments">Per assigned column: <c>set</c> (value from the read), <c>unset</c>, or <c>inc</c> by a literal; empty for a delete.</param>
+internal sealed record ChangeSql(string Table, ReadSql Rows, IReadOnlyList<(string Column, string Op, long By)> Assignments) : ParsedSql
+{
+    public override bool IsWrite => true;
+
+    /// <summary>Whether this is a <c>DELETE</c>.</summary>
+    public bool IsDelete => Assignments.Count == 0;
 }
 
 /// <summary>Translates writes and converts values by column affinity.</summary>
@@ -53,6 +68,67 @@ internal static class SqlWrite
         };
         var columns = insert.Columns is { Count: > 0 } named ? named.Select(SqlParse.ColumnName).ToList() : null;
         return new InsertSql(SqlParse.TableName(insert.Name), columns, insert.Source is { Query: var query } ? SqlRead.Read(query) : null, mode);
+    }
+
+    public static ChangeSql Update(Statement.Update update)
+    {
+        if (update is not { Table: { Joins: null or [], Relation: { } relation }, From: null, Returning: null })
+        {
+            throw new FormatException("UPDATE supports one table without FROM or RETURNING");
+        }
+
+        var table = Target(relation);
+        var values = new List<string>();
+        var assignments = new List<(string, string, long)>();
+        foreach (var assignment in update.Assignments)
+        {
+            var column = assignment.Target is AssignmentTarget.ColumnName { Name.Values: [var ident] }
+                ? SqlParse.ColumnName(ident)
+                : throw new FormatException("SET assigns one column at a time");
+            switch (assignment.Value)
+            {
+                case Expression.LiteralValue { Value: Value.Null }:
+                    assignments.Add((column, "unset", 0));
+                    break;
+                case Expression.BinaryOp { Left: Expression.Identifier { Ident: var same }, Op: var op and (BinaryOperator.Plus or BinaryOperator.Minus), Right: Expression.LiteralValue { Value: Value.Number { Value: var text } } }
+                    when same.Value.Equals(column, StringComparison.OrdinalIgnoreCase)
+                        && long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var by) && by != 0:
+                    // A counter: concurrent increments add across regions.
+                    assignments.Add((column, "inc", op == BinaryOperator.Plus ? by : -by));
+                    break;
+                case var value:
+                    assignments.Add((column, "set", 0));
+                    values.Add("(" + value.ToSql() + ")");
+                    break;
+            }
+        }
+
+        return new ChangeSql(table, Select(relation, values, update.Selection), assignments);
+    }
+
+    public static ChangeSql Delete(DeleteOperation delete)
+    {
+        if (delete is not { Tables: null or [], Using: null, Returning: null, OrderBy: null or [], Limit: null, From.From: [{ Joins: null or [], Relation: { } relation }] })
+        {
+            throw new FormatException("DELETE supports one table without USING, ORDER BY, LIMIT or RETURNING");
+        }
+
+        return new ChangeSql(Target(relation), Select(relation, [], delete.Selection), []);
+    }
+
+    private static string Target(TableFactor relation) => relation is TableFactor.Table { Name: var name }
+        ? SqlParse.TableName(name)
+        : throw new FormatException("the target of a write is a table");
+
+    // The rows a change addresses, read with their ids (and new values) from its validated syntax: one past the limit
+    // tells that the statement is too big.
+    private static ReadSql Select(TableFactor relation, List<string> values, Expression? where)
+    {
+        var sql = $"SELECT \"_id\"{string.Concat(values.Select(value => ", " + value))} FROM {relation.ToSql()}"
+            + (where is null ? "" : " WHERE " + where.ToSql()) + $" LIMIT {MaxRows + 1}";
+        return new Parser().ParseSql(sql, new SQLiteDialect()) is [Statement.Select { Query: var query }]
+            ? SqlRead.Read(query)
+            : throw new FormatException("the statement's rows cannot be read");
     }
 
     /// <summary>A value converted by a column's affinity (https://sqlite.org/datatype3.html section 3).</summary>
@@ -107,5 +183,18 @@ internal static class SqlWrite
                 writer.WriteNullValue();
                 break;
         }
+    }
+
+    /// <summary>A value as a standalone JSON element.</summary>
+    public static JsonElement Json(SqlValue value)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            Write(writer, value);
+        }
+
+        using var document = JsonDocument.Parse(buffer.WrittenMemory);
+        return document.RootElement.Clone();
     }
 }

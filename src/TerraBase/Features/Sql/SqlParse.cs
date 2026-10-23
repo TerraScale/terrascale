@@ -100,6 +100,8 @@ internal static partial class SqlParse
     {
         Statement.Select { Query: var query } => SqlRead.Read(query),
         Statement.Insert { InsertOperation: var insert } => SqlWrite.Insert(insert),
+        Statement.Update update => SqlWrite.Update(update),
+        Statement.Delete { DeleteOperation: var delete } => SqlWrite.Delete(delete),
         Statement.CreateTable { Element: var create } => CreateTable(create),
         Statement.Drop { ObjectType: ObjectType.Table } drop => DropTable(drop),
         _ => throw new FormatException("this statement is not supported"),

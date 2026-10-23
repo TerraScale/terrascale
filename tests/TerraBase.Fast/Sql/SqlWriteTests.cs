@@ -66,6 +66,35 @@ public sealed class SqlWriteTests
     }
 
     [Test]
+    public async Task Updates_set_unset_and_increment_and_deletes_remove_rows_with_or_without_keys()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api,
+            "CREATE TABLE ints (id INTEGER PRIMARY KEY, name TEXT NOT NULL, n INTEGER DEFAULT 0, r REAL)",
+            "CREATE TABLE logs (msg TEXT)",
+            "INSERT INTO ints (id, name) VALUES (1, 'ann'), (2, 'bob')",
+            "INSERT INTO logs (msg) SELECT name FROM ints");
+
+        var updated = await OneAsync(api, new { sql = "UPDATE ints SET n = n + 5, r = ? * 2 WHERE id = ?", args = new object[] { 0.75, 1 } });
+        await OneAsync(api, new { sql = "UPDATE ints SET n = n - 1, r = NULL WHERE name = 'bob'" });
+        var unkeyed = await OneAsync(api, new { sql = "UPDATE logs SET msg = upper(msg)" });
+
+        await Assert.That(updated.GetProperty("rows_affected").GetInt64()).IsEqualTo(1);
+        await Assert.That(await RowsAsync(api, "SELECT id, n, r FROM ints ORDER BY id")).IsEqualTo("""[[1,5,1.5],[2,-1,null]]""");
+        await Assert.That(unkeyed.GetProperty("rows_affected").GetInt64()).IsEqualTo(2);
+        await Assert.That(await RowsAsync(api, "SELECT msg FROM logs ORDER BY msg")).IsEqualTo("""[["ANN"],["BOB"]]""");
+        await Assert.That(await RefusedAsync(api, new { sql = "UPDATE ints SET name = NULL WHERE id = 1" })).IsEqualTo("SQLITE_CONSTRAINT_NOTNULL");
+        await Assert.That(await RefusedAsync(api, new { sql = "UPDATE ints SET id = 9 WHERE id = 1" })).IsEqualTo("SQLITE_ERROR");
+
+        var deleted = await OneAsync(api, new { sql = "DELETE FROM ints WHERE id = 2" });
+        var cleared = await OneAsync(api, new { sql = "DELETE FROM logs" });
+
+        await Assert.That(deleted.GetProperty("rows_affected").GetInt64()).IsEqualTo(1);
+        await Assert.That(cleared.GetProperty("rows_affected").GetInt64()).IsEqualTo(2);
+        await Assert.That(await RowsAsync(api, "SELECT (SELECT count(*) FROM ints), (SELECT count(*) FROM logs)")).IsEqualTo("[[1,0]]");
+    }
+
+    [Test]
     public async Task A_statement_writing_more_than_1024_rows_is_too_big_and_writes_nothing()
     {
         await using var api = await DocumentApi.StartAsync();

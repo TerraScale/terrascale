@@ -131,11 +131,12 @@ internal static class SqlRead
     /// The engine program for <paramref name="read"/> over <paramref name="tables"/>; when <paramref name="describe"/>, a
     /// program that returns its columns and no rows.
     /// </summary>
-    public static SqlProgram Program(ReadSql read, IReadOnlyDictionary<string, SqlTableDefinition> tables, IReadOnlyList<object?> parameters, bool describe)
+    public static SqlProgram Program(
+        ReadSql read, IReadOnlyDictionary<string, SqlTableDefinition> tables, IReadOnlyList<object?> parameters, bool describe, string? keyed = null)
     {
         var statement = (read.Query with { With = null }).ToSql();
         return new SqlProgram(
-            [.. read.Tables.Select(name => new SqlProgramTable(name, [.. tables[name].Columns.Select(column => column.Name)]))],
+            [.. read.Tables.Select(name => new SqlProgramTable(name, [.. tables[name].Columns.Select(column => column.Name)], name == keyed))],
             read.Query.With is { } with ? string.Join(", ", with.CteTables.Select(cte => cte.ToSql())) : null,
             describe ? $"SELECT * FROM ({statement}) LIMIT 0" : statement,
             parameters, MaxRows, MaxBytes);

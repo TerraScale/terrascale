@@ -3,7 +3,8 @@ namespace TerraBase.Engine;
 /// <summary>A relational table a <see cref="SqlProgram"/> reads: a collection whose documents are its rows.</summary>
 /// <param name="Name">Collection name (validated like a database name).</param>
 /// <param name="Columns">Column names, each a top-level field (a letter, then letters, digits or <c>_</c>).</param>
-public sealed record SqlProgramTable(string Name, IReadOnlyList<string> Columns);
+/// <param name="WithId">Whether the table also exposes each row's document id as column <c>_id</c>, for a write to address it.</param>
+public sealed record SqlProgramTable(string Name, IReadOnlyList<string> Columns, bool WithId = false);
 
 /// <summary>
 /// One validated relational statement. The engine exposes each of <paramref name="Tables"/> under its name, with one

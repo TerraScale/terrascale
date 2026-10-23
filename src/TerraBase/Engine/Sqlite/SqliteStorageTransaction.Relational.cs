@@ -34,7 +34,7 @@ internal sealed partial class SqliteStorageTransaction
     private SqlProgramResult RunProgram(SqlProgram program, CancellationToken cancellationToken)
     {
         var ctes = program.Tables.Select(table => string.Create(CultureInfo.InvariantCulture,
-            $"{Table(table.Name)} AS (SELECT {string.Join(", ", table.Columns.Select(column => $"json_extract(doc, '$.{column}') AS \"{column}\""))} FROM main.{Table(table.Name)} WHERE tb_qos_scan(octet_length(doc)))")).ToList();
+            $"{Table(table.Name)} AS (SELECT {(table.WithId ? "id AS \"_id\", " : "")}{string.Join(", ", table.Columns.Select(column => $"json_extract(doc, '$.{column}') AS \"{column}\""))} FROM main.{Table(table.Name)} WHERE tb_qos_scan(octet_length(doc)))")).ToList();
         if (program.Ctes is { } own)
         {
             ctes.Add(own);
