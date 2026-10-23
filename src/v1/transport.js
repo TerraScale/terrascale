@@ -23,12 +23,13 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
  * @typedef {{ readonly project: string | undefined; readonly database?: string | undefined; readonly signal?: AbortSignal | undefined }} V1EndpointContext
  */
 /** @typedef {(context: V1EndpointContext) => string | Promise<string>} V1EndpointResolver */
+/** A fresh access token for each authenticated request, including stream reconnects. @typedef {() => string | Promise<string>} V1TokenProvider */
 /**
  * Project-scoped C# Documents API client. Supply exactly one of baseUrl or endpointResolver.
  * URLs must use HTTPS or loopback HTTP. Mutations are never automatically replayed.
  * @typedef {object} TerraBaseV1ClientConfig
  * @property {string} project
- * @property {string} token A ts-auth project access JWT (or a legacy C# tb_ key); held privately.
+ * @property {string | V1TokenProvider} token An access JWT (or a legacy C# tb_ key), or a provider resolved per authenticated request; held privately. Browser callers must use end-user tokens, never project credentials.
  * @property {string | undefined} [baseUrl]
  * @property {V1EndpointResolver | undefined} [endpointResolver]
  * @property {FetchLike | undefined} [fetch]
@@ -117,6 +118,13 @@ function canonicalBaseUrl(raw) {
   return `${url.origin}${url.pathname.replace(/\/+$/u, "")}`;
 }
 
+/** @param {unknown} token @returns {string} */
+function requireToken(token) {
+  if (typeof token !== "string" || token.trim() !== token || !tokenPattern.test(token))
+    throw new TypeError("token must be a compact access JWT or a legacy C# tb_ API key.");
+  return token;
+}
+
 /** A response body that failed in transit after its headers arrived. */
 export class BodyTransportError extends Error {
   /** @param {unknown} cause */
@@ -134,7 +142,7 @@ export class V1Transport {
   #resolver;
   /** @type {Map<string, { promise: Promise<string>; timer: ReturnType<typeof setTimeout>; waiters: number }>} */
   #bases = new Map();
-  /** @type {string | undefined} */
+  /** @type {string | V1TokenProvider | undefined} */
   #token;
   /** @type {FetchLike} */
   #fetch;
@@ -150,8 +158,8 @@ export class V1Transport {
     if (config.endpointResolver !== undefined && typeof config.endpointResolver !== "function")
       throw new TypeError("endpointResolver must be a function.");
     this.#resolver = config.endpointResolver ?? staticBaseUrlResolver(/** @type {string} */ (config.baseUrl));
-    if ((config.project !== undefined || config.token !== undefined) && (typeof config.token !== "string" || !tokenPattern.test(config.token)))
-      throw new TypeError("token must be a compact access JWT or a legacy C# tb_ API key.");
+    if ((config.project !== undefined || config.token !== undefined) && typeof config.token !== "function")
+      requireToken(config.token);
     if ("autoIdempotencyKey" in config || "maxRetries" in config || "resolver" in config)
       throw new TypeError("Unsupported client configuration member.");
     const fetchHandler = config.fetch ?? globalThis.fetch?.bind(globalThis);
@@ -162,6 +170,32 @@ export class V1Transport {
     this.#token = config.token;
     this.#fetch = fetchHandler;
     this.#maxResponseBytes = maxResponseBytes;
+  }
+
+  /** @param {AbortSignal | undefined} signal @returns {Promise<string>} */
+  async #accessToken(signal) {
+    signal?.throwIfAborted();
+    const provider = this.#token;
+    if (typeof provider !== "function") return requireToken(provider);
+    /** @type {() => void} */
+    let abort = () => {};
+    try {
+      const token = await new Promise((resolve, reject) => {
+        abort = () => reject(signal?.reason);
+        signal?.addEventListener("abort", abort, { once: true });
+        void Promise.resolve().then(() => {
+          signal?.throwIfAborted();
+          return provider();
+        }).then(resolve, () => {
+          // Provider errors may contain credentials; do not retain their message or cause.
+          reject(new Error("TerraBase token provider failed."));
+        });
+      });
+      signal?.throwIfAborted();
+      return requireToken(token);
+    } finally {
+      signal?.removeEventListener("abort", abort);
+    }
   }
 
   /**
@@ -345,7 +379,8 @@ export class V1Transport {
     let url = await this.url(operation, params, options.signal);
     if (options.query !== undefined && options.query.size > 0) url += `?${options.query}`;
     const headers = new Headers(options.headers);
-    if (route.permission !== "anonymous" && this.#token !== undefined) headers.set("authorization", `Bearer ${this.#token}`);
+    if (route.permission !== "anonymous" && this.#token !== undefined)
+      headers.set("authorization", `Bearer ${await this.#accessToken(options.signal)}`);
     if (route.responseMediaType !== "") headers.set("accept", route.responseMediaType);
     if (options.body !== undefined) headers.set("content-type", options.contentType ?? "application/json");
     /** @type {RequestInit & { duplex?: "half" }} */
@@ -358,6 +393,7 @@ export class V1Transport {
       init.duplex = "half";
     } else if (options.body !== undefined) init.body = typeof options.body === "string" ? options.body : options.body.slice().buffer;
     if (options.signal !== undefined) init.signal = options.signal;
+    options.signal?.throwIfAborted();
     const response = await this.#fetch(url, init);
     if (options.signal?.aborted) {
       void response.body?.cancel().catch(() => undefined);

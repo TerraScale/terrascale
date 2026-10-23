@@ -28,6 +28,7 @@ export { generateId, isValidId, requireId } from "./ids.js";
 export { ExactDecimal } from "./v1/json.js";
 
 /** @typedef {import("./v1/transport.js").TerraBaseV1ClientConfig} TerraBaseV1ClientConfig */
+/** @typedef {import("./v1/transport.js").V1TokenProvider} V1TokenProvider */
 /** @typedef {import("./v1/terrabase-v1.js").V1RequestOptions} V1RequestOptions */
 /** @typedef {import("./v1/terrabase-v1.js").V1ReadOptions} V1ReadOptions */
 /** @typedef {import("./v1/terrabase-v1.js").V1WriteOptions} V1WriteOptions */

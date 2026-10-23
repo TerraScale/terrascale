@@ -37,6 +37,8 @@ test.beforeAll(async () => {
         response.end(JSON.stringify({ schema: request.method === "PUT" ? JSON.parse(body) : null }));
       } else if (url.pathname.endsWith("/documents") && request.method === "GET") {
         response.end('{"items":[],"next_cursor":null}');
+      } else if (url.pathname.includes("/unauthorized/")) {
+        response.writeHead(401).end('{"error":{"code":"invalid_key","message":"Expired"}}');
       } else if (url.pathname.includes("/denied/")) {
         response.setHeader("x-request-id", "browser-fixture-request");
         response.writeHead(403).end('{"error":{"code":"forbidden_scope","message":"Denied","details":[{"path":"/value"}]},"extension":"kept"}');
@@ -207,13 +209,15 @@ test("packed browser exposes read-only SQL, document listing and declared schema
   expect(requests.map(request => request.method)).toEqual(["POST", "POST", "POST", "GET", "PUT", "DELETE"]);
 });
 
-test("packed browser resumes SSE with latest cursor and closes the iterator", async ({ page }) => {
+test("packed browser resumes SSE with latest cursor and bearer token and closes the iterator", async ({ page }) => {
   const result = await page.evaluate(async ({ baseUrl, project }) => {
     const candidate = "/candidate/src/index.js";
     const sdk = /** @type {typeof import("../src/index.js")} */ (await import(candidate));
-    const db = sdk.createTerraBaseV1Client({ project, token: "fixture.payload.signature", baseUrl }).database("app");
+    let token = "fixture.payload.signature";
+    const db = sdk.createTerraBaseClient({ project, token: async () => token, baseUrl }).database("app");
     const stream = db.changes({ cursor: "now", collections: ["users"] });
     const initial = await stream.next();
+    token = "replacement.payload.signature";
     const change = await stream.next();
     const closed = await stream.return();
     return { initial: initial.value, change: change.value, closed: closed.done };
@@ -221,6 +225,105 @@ test("packed browser resumes SSE with latest cursor and closes the iterator", as
   expect(result).toMatchObject({ initial: { type: "cursor", cursor: "AQ" }, change: { type: "change", id: "natural/key", version: "9007199254740993" }, closed: true });
   expect(requests).toHaveLength(2);
   expect(requests.map(request => request.lastEventId)).toEqual([undefined, "AQ"]);
+  expect(requests.map(request => request.authorization)).toEqual(["Bearer fixture.payload.signature", "Bearer replacement.payload.signature"]);
+});
+
+test("packed browser resolves sync and async providers for each read, write and query", async ({ page }) => {
+  await page.evaluate(async ({ baseUrl, project }) => {
+    const candidate = "/candidate/src/index.js";
+    const sdk = /** @type {typeof import("../src/index.js")} */ (await import(candidate));
+    for (const asynchronous of [false, true]) {
+      let current = "fixture.payload.signature";
+      const token = () => asynchronous ? Promise.resolve(current) : current;
+      const docs = sdk.createTerraBaseClient({ project, token, baseUrl }).database("app").collection("users");
+      await docs.get("01ARZ3NDEKTSV4RRFFQ69G5FA2");
+      current = "replacement.payload.signature";
+      await docs.put("01ARZ3NDEKTSV4RRFFQ69G5FA2", { value: 1 });
+      await docs.query();
+    }
+  }, { baseUrl, project });
+  expect(requests.map(request => request.authorization)).toEqual(Array(2).fill([
+    "Bearer fixture.payload.signature", "Bearer replacement.payload.signature", "Bearer replacement.payload.signature",
+  ]).flat());
+  expect(requests.map(request => request.method)).toEqual(["GET", "PUT", "POST", "GET", "PUT", "POST"]);
+});
+
+test("packed browser rejects invalid or failing providers without requests or credential leakage", async ({ page }) => {
+  const result = await page.evaluate(async ({ baseUrl, project }) => {
+    const candidate = "/candidate/src/index.js";
+    const sdk = /** @type {typeof import("../src/index.js")} */ (await import(candidate));
+    const errors = [];
+    for (const token of [
+      () => "invalid token-canary",
+      async () => "a.b.c\r\nx-secret: token-canary",
+      /** @type {import('../src/index.js').V1TokenProvider} */ (/** @type {unknown} */ (async () => undefined)),
+      () => { throw new Error("sync token-canary"); },
+      async () => { throw new Error("async token-canary"); },
+    ]) {
+      const docs = sdk.createTerraBaseClient({ project, token, baseUrl }).database("app").collection("users");
+      try { await docs.put("01ARZ3NDEKTSV4RRFFQ69G5FA2", {}); throw new Error("Unexpected success."); }
+      catch (error) {
+        if (!(error instanceof Error)) throw error;
+        errors.push({ message: error.message, leaked: `${error.stack}${JSON.stringify(error)}`.includes("token-canary"), cause: error.cause !== undefined });
+      }
+    }
+    return errors;
+  }, { baseUrl, project });
+  expect(result.map(error => error.message)).toEqual([
+    ...Array(3).fill("token must be a compact access JWT or a legacy C# tb_ API key."),
+    ...Array(2).fill("TerraBase token provider failed."),
+  ]);
+  expect(result.every(error => !error.leaked && !error.cause)).toBe(true);
+  expect(requests).toHaveLength(0);
+});
+
+test("packed browser cancels pending token resolution before native fetch", async ({ page }) => {
+  const result = await page.evaluate(async ({ baseUrl, project }) => {
+    const candidate = "/candidate/src/index.js";
+    const sdk = /** @type {typeof import("../src/index.js")} */ (await import(candidate));
+    /** @type {(value: string) => void} */
+    let finish = () => {};
+    /** @type {() => void} */
+    let invoked = () => {};
+    const started = new Promise(resolve => { invoked = () => resolve(undefined); });
+    const pending = new Promise(resolve => { finish = resolve; });
+    const token = () => { invoked(); return /** @type {Promise<string>} */ (pending); };
+    const docs = sdk.createTerraBaseClient({ project, token, baseUrl }).database("app").collection("users");
+    const controller = new AbortController();
+    const reason = new Error("cancel pending browser token");
+    const read = docs.get("01ARZ3NDEKTSV4RRFFQ69G5FA2", { signal: controller.signal });
+    await started;
+    controller.abort(reason);
+    let cancelled = false;
+    try { await read; } catch (error) { cancelled = error === reason; }
+    finish("fixture.payload.signature");
+    await new Promise(resolve => setTimeout(resolve, 0));
+    return cancelled;
+  }, { baseUrl, project });
+  expect(result).toBe(true);
+  expect(requests).toHaveLength(0);
+});
+
+test("packed browser never refreshes or replays mutations after 401 or 403", async ({ page }) => {
+  const result = await page.evaluate(async ({ baseUrl, project }) => {
+    const candidate = "/candidate/src/index.js";
+    const sdk = /** @type {typeof import("../src/index.js")} */ (await import(candidate));
+    const errors = [];
+    for (const collection of ["unauthorized", "denied"]) {
+      let calls = 0;
+      const token = async () => { calls++; return "fixture.payload.signature"; };
+      const docs = sdk.createTerraBaseClient({ project, token, baseUrl }).database("app").collection(collection);
+      try { await docs.patch("01ARZ3NDEKTSV4RRFFQ69G5FA2", { ops: [{ op: "inc", path: "/count", by: 1 }] }); throw new Error("Unexpected success."); }
+      catch (error) {
+        if (!(error instanceof sdk.TerraBaseV1Error)) throw error;
+        errors.push({ status: error.status, calls });
+      }
+    }
+    return errors;
+  }, { baseUrl, project });
+  expect(result).toEqual([{ status: 401, calls: 1 }, { status: 403, calls: 1 }]);
+  expect(requests.map(request => request.method)).toEqual(["PATCH", "PATCH"]);
+  expect(mutationEffects).toBe(0);
 });
 
 test("packed browser requires one wire PATCH despite native 421 retransmission", async ({ page }) => {

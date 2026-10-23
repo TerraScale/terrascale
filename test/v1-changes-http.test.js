@@ -50,6 +50,37 @@ function sse(response, value, end = false) {
 }
 
 describe("current database SSE contract", () => {
+  test("resolves the latest bearer token on reconnect while retaining the cursor", async () => {
+    const { baseUrl, requests } = await fixture((_request, response) =>
+      sse(response, cursor(requests.length === 1 ? committedCursor : advancedCursor), true));
+    let current = token;
+    let calls = 0;
+    const db = createTerraBaseV1Client({ project, baseUrl, token: async () => { calls++; return current; } }).database("app");
+    const stream = db.changes();
+    expect((await stream.next()).value).toEqual({ type: "cursor", cursor: committedCursor });
+    current = "replacement.payload.signature";
+    expect((await stream.next()).value).toEqual({ type: "cursor", cursor: advancedCursor });
+    await stream.return();
+    expect(requests.map(request => request.headers.authorization)).toEqual([`Bearer ${token}`, `Bearer ${current}`]);
+    expect(requests.map(request => request.headers["last-event-id"])).toEqual([undefined, committedCursor]);
+    expect(calls).toBe(2);
+  });
+
+  test.each([false, true])("a failed token refresh stops reconnect before HTTP (reject: %s)", async reject => {
+    const { baseUrl, requests } = await fixture((_request, response) => sse(response, cursor(committedCursor), true));
+    let calls = 0;
+    const db = createTerraBaseV1Client({ project, baseUrl, token: async () => {
+      if (++calls === 1) return token;
+      if (reject) throw new Error("refresh token-canary");
+      return "invalid token-canary";
+    } }).database("app");
+    const stream = db.changes();
+    await stream.next();
+    await expect(stream.next()).rejects.toThrow(reject ? "TerraBase token provider failed." : "token must be");
+    expect(requests).toHaveLength(1);
+    expect(calls).toBe(2);
+  });
+
   test("resumes before an interrupted transaction until its final change issues a cursor", async () => {
     const finalChange = { ...change, id: "second" };
     const { db, requests } = await fixture((_request, response) => {
