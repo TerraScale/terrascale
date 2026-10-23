@@ -127,17 +127,22 @@ internal static class DocumentRoute
 
     private static async ValueTask<TenantResult> AdmitCopyAsync(HttpContext context, TenantContext tenant, CancellationToken cancellationToken)
     {
-        var faults = context.RequestServices.GetRequiredService<IReplicaCopyFaults>();
-        var storage = context.RequestServices.GetRequiredService<IRebuildStorage>();
+        await CheckCopyAsync(context.RequestServices, tenant, cancellationToken).ConfigureAwait(false);
+        context.Features.Set(tenant);
+        return tenant;
+    }
+
+    /// <summary>Throws <see cref="ReplicaCopyFaultedException"/> while the system copy or this database's copy awaits certified recovery.</summary>
+    public static async ValueTask CheckCopyAsync(IServiceProvider services, TenantContext tenant, CancellationToken cancellationToken)
+    {
+        var faults = services.GetRequiredService<IReplicaCopyFaults>();
+        var storage = services.GetRequiredService<IRebuildStorage>();
         var incarnation = await storage.IncarnationAsync(tenant, cancellationToken).ConfigureAwait(false);
         if (await faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false)
             || incarnation is { } pin && await faults.RefusedAsync(tenant, pin, cancellationToken).ConfigureAwait(false))
         {
             throw new ReplicaCopyFaultedException("this database copy is awaiting certified recovery");
         }
-
-        context.Features.Set(tenant);
-        return tenant;
     }
 
     /// <summary>The route's collection name, or the rule it breaks.</summary>
