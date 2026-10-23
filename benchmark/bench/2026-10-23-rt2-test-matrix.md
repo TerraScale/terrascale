@@ -29,6 +29,9 @@ Targeted repeats (flaky-proof, run L):
 | `rt2c/tests-rebuild-on-398` | `f14d41fdb` | same, on #398 head `f2f6723f4` | 52/52 in 5/5, 13/13 once |
 | `rt2c/tests-resurrection-on-398` | `90b72e805` | Slow `CollectedRepairE2ETests` | 5/5 on #398 |
 | `rt2c/tests-resurrection` | `66924213b` | same, on origin/main | fails by design until #398 merges (`no such table: _tb_gc_floor`) |
+| `rt2c/tests-rebuild` on origin/main `49e32e99c` (after #398) | `a20fe2050` | Fast `RebuildCertificationTests` (52), `ReplicaRebuildTests` (13) | 52/52 and 13/13 in 5/5, load 12-31 |
+| `rt2c/tests-resurrection` on origin/main `49e32e99c` (after #398) | `d727b52ae` | Slow `CollectedRepairE2ETests` | 5/5, load 10-20 |
+| `rt2c/tests-sql` on origin/main `49e32e99c` | `645a9591e` | Fast `SqlWriteReplicationTests` (2) | 3/3 more |
 
 ## Matrix
 
