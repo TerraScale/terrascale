@@ -59,14 +59,11 @@ export const es: Messages = {
           docs: 'Docs',
           apiReference: 'Referencia de la API',
           status: 'Estado',
-          community: 'Comunidad',
         },
       },
     },
     social: {
       github: 'GitHub',
-      discord: 'Discord',
-      x: 'X',
       linkedin: 'LinkedIn',
       email: 'Correo',
     },
@@ -317,7 +314,6 @@ export const es: Messages = {
     channelsTitle: 'Contáctanos',
     channels: [
       { value: 'support@terrascale.tech' },
-      { value: 'Únete a nuestra comunidad' },
       { value: 'Abrir issues y PRs' },
     ],
   },

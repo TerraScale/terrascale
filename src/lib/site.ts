@@ -58,6 +58,8 @@ export const publicAlphaCatalog = pricingJson.plans.map((plan) => ({
   name: plan.name,
   slug: plan.id as PublicAlphaPlanSlug,
   ...planPresentation[plan.id as PublicAlphaPlanSlug],
+  accent: 'var(--ts-primary)',
+  accentRgb: 'var(--ts-primary-rgb)',
   available: plan.available,
   price: plan.priceMonthlyUsd,
   annualPrice: plan.priceAnnualUsd,
@@ -101,14 +103,13 @@ export const footerColumns: FooterColumn[] = [
   {
     key: 'resources',
     links: [
-      { key: 'apiReference', href: 'https://docs.terrascale.tech/getting-started/' },
+      { key: 'apiReference', href: 'https://api.terrascale.tech/scalar/' },
       { key: 'status', href: 'https://status.terrascale.tech' },
-      { key: 'community', href: 'https://discord.gg/8Zr2Nw9g' },
     ],
   },
 ]
 
-export type SocialKey = 'github' | 'discord' | 'x' | 'linkedin' | 'email'
+export type SocialKey = 'github' | 'linkedin' | 'email'
 
 export type SocialLink = {
   key: SocialKey
@@ -121,16 +122,6 @@ export const socialLinks: SocialLink[] = [
     key: 'github',
     href: 'https://github.com/TerraScale',
     icon: 'brandGithub',
-  },
-  {
-    key: 'discord',
-    href: 'https://discord.gg/8Zr2Nw9g',
-    icon: 'brandDiscord',
-  },
-  {
-    key: 'x',
-    href: 'https://twitter.com/terrascale',
-    icon: 'brandX',
   },
   {
     key: 'linkedin',
