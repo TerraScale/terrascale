@@ -39,7 +39,8 @@ public interface IHomeMeasurements
 // These producer-owned read contracts are present in ts-go but not yet in the pinned ts-dotnet candidate.
 // Keep the adapter at this boundary until the official SDK exposes usage/metrics/status clients.
 public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, TimeProvider time,
-    TerraScale.Dashboard.Features.ApiKeys.ApiKeyService keys, IAnalyticsBackend analyticsBackend, IUsageReplication replicationBackend) : IHomeMeasurements
+    TerraScale.Dashboard.Features.ApiKeys.ApiKeyService keys, IAnalyticsBackend analyticsBackend, IUsageReplication replicationBackend,
+    TerraScale.Dashboard.Features.Auth.IProjectAccessTokens tokens) : IHomeMeasurements
 {
     public async Task<HomeMeasurement> ReadAsync(AccountContext context, string range, CancellationToken cancellationToken)
     {
@@ -73,11 +74,11 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
             var now = time.GetUtcNow().UtcDateTime;
             var hour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
             var start = range switch { "1h" => hour, "24h" => hour.AddHours(-23), "30d" => now.Date.AddDays(-29), _ => hour.AddHours(-167) };
-            var path = $"/v1/management/organizations/{Uri.EscapeDataString(context.Organization.Id)}/projects/{Uri.EscapeDataString(context.Project.Id)}/usage?granularity={(range == "30d" ? "day" : "hour")}&from={Uri.EscapeDataString(start.ToString("O"))}";
+            // The project usage route with a project token, as the Usage page reads it (UsageBackend).
+            var token = await tokens.GetAsync(context.Session, context.Organization.Id, context.Project.Id, ["databases:read"], cancellationToken);
+            var path = $"/v1/projects/{Uri.EscapeDataString(context.Project.Id)}/usage?granularity={(range == "30d" ? "day" : "hour")}&from={Uri.EscapeDataString(start.ToString("O"))}";
             using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(origin, path));
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", context.Session.AccessToken);
-            request.Headers.Add("X-TerraBase-User-Id", context.UserId);
-            request.Headers.Add("X-TerraBase-Organization-Id", context.Organization.Id);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
