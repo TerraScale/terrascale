@@ -19,7 +19,6 @@ public sealed class ReplicatedApplyPowerLossTests
     [Scenario(Nodes.Processes, Faults.ProcessKill | Faults.FileTampering)]
     public async Task A_power_loss_keeps_every_change_group_the_receiver_acknowledged()
     {
-        Skip.When(Cluster.Live, "kills a local node process and edits its files");
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
         await using var regions = await RegionProcesses.StartWithWalFaultsAsync(Cluster.Gru, Cluster.Sjc);
         var database = regions.Tenant;

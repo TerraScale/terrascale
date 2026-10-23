@@ -36,12 +36,12 @@ internal static class Gaps
     /// <remarks>
     /// No scenario is skipped for its credential: on ts-orch every request carries the e2e project's ts-auth project token
     /// (databases:* and documents:*), so an authentication refusal is a failure, never a gap. A scenario that stops ts-orch
-    /// regions keeps its own guard (SkipLiveUnlessOutageRun, Cluster's fault checks).
+    /// regions keeps Cluster's service-scoped fault checks; explicit local fixtures pass local: true.
     /// </remarks>
-    public static async Task RunAsync(string id, Func<Task> scenario)
+    public static async Task RunAsync(string id, Func<Task> scenario, bool local = false)
     {
         // A pinned run is acceptance evidence: only passing scenarios count, so a listed one fails before its cluster starts.
-        if (Cluster.LivePinned && PinnedRefusal(id) is { } refusal)
+        if (!local && Cluster.LivePinned && PinnedRefusal(id) is { } refusal)
         {
             throw new InvalidOperationException(refusal);
         }

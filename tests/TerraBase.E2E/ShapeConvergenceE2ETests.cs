@@ -20,14 +20,13 @@ public sealed class ShapeConvergenceE2ETests
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task Shape_clients_in_every_region_converge_after_a_partition_heals()
     {
-        SkipLive();
-        await using var cluster = await Cluster.StartAsync(All);
+        await using var cluster = await Cluster.StartLocalAsync(All);
         var readers = Readers(cluster);
         var documents = await WriteAsync(cluster, [.. All], 10);
         _ = await ConvergedAsync(cluster, readers, documents, "seed");
 
         // fra and gru lose their direct link and both keep writing (sjc confirms each side); a shared document gets both edits.
-        cluster.Isolate(Cluster.Fra, Cluster.Gru);
+        await cluster.IsolateAsync(Cluster.Fra, Cluster.Gru);
         try
         {
             var shared = EntityIds.New().ToString();
@@ -39,19 +38,19 @@ public sealed class ShapeConvergenceE2ETests
                 _ = await reader.CatchUpAsync();
             }
 
-            cluster.Heal();
+            await cluster.HealAllAsync();
             var settled = await Converge.SettledAsync(cluster, cluster.Document(shared), "the shared document after the heal");
             documents.Add((shared, settled.Value!.AsObject()));
             _ = await ConvergedAsync(cluster, readers, documents, "partition heal");
         }
         finally
         {
-            cluster.Heal();
+            await cluster.HealAllAsync();
         }
     }
 
     [Test]
-    [Scenario(Nodes.InProcess)]
+    [Scenario(Nodes.Cluster)]
     public async Task Shape_clients_follow_a_collection_drop_and_re_create()
     {
         await using var cluster = await Cluster.StartAsync(All);
@@ -81,8 +80,7 @@ public sealed class ShapeConvergenceE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop | Faults.FileTampering)]
     public async Task Shape_clients_converge_after_anti_entropy_repairs_a_lost_document()
     {
-        SkipLive();
-        await using var cluster = await Cluster.StartAsync(All);
+        await using var cluster = await Cluster.StartLocalAsync(All);
         var readers = Readers(cluster);
         var documents = await WriteAsync(cluster, [.. All], 10);
         _ = await ConvergedAsync(cluster, readers, documents, "before the loss");
@@ -104,9 +102,8 @@ public sealed class ShapeConvergenceE2ETests
     [Arguments(Cluster.Fra, -2000)]
     public async Task Shape_clients_converge_under_clock_skew(string skewed, int skewMilliseconds)
     {
-        SkipLive();
         var skew = TimeSpan.FromMilliseconds(skewMilliseconds);
-        await using var cluster = await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [skewed] = skew });
+        await using var cluster = await Cluster.StartLocalAsync(All, new Dictionary<string, TimeSpan> { [skewed] = skew });
         await SkewedAsync(cluster, skewed, skewMilliseconds);
     }
 
@@ -125,11 +122,8 @@ public sealed class ShapeConvergenceE2ETests
         _ = await ConvergedAsync(cluster, readers, documents, $"clock skew {skewed} {skewMilliseconds:+0;-0} ms");
     }
 
-    private static void SkipLive() =>
-        Skip.When(Cluster.Live, "partitions, edits a stopped node's files or skews its clock: local nodes only");
-
     private static Dictionary<string, ShapeReader> Readers(Cluster cluster) =>
-        cluster.Regions.ToDictionary(region => region, region => new ShapeReader(cluster[region], $"{cluster.DatabasePath}/collections/{cluster.Collection}"), StringComparer.Ordinal);
+        cluster.Regions.ToDictionary(region => region, region => new ShapeReader(() => cluster[region], $"{cluster.DatabasePath}/collections/{cluster.Collection}"), StringComparer.Ordinal);
 
     private static async Task<List<(string Id, JsonObject Body)>> WriteAsync(Cluster cluster, string[] regions, int each)
     {

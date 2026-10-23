@@ -43,7 +43,7 @@ public sealed class EmailTests
     public async Task Production_without_cloudflare_settings_warns_at_startup()
     {
         var logs = new CapturingLogs();
-        // Production off Fly needs storage of its own (App.TerraBaseOrigin); an unreachable one is enough for a startup warning.
+        // Production needs storage; an unreachable TerraBase client is enough for a startup warning.
         await using var server = await StartAsync(logs, cloudflare: null, settings: values =>
         {
             values.Remove("environment");

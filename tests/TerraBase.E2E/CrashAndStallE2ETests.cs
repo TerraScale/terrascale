@@ -24,7 +24,6 @@ public sealed class CrashAndStallE2ETests
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Writes_acknowledged_before_a_SIGKILL_survive_the_restart_of_their_node_process()
     {
-        Skip.When(Cluster.Live, "kills a local node process");
         await using var node = await NodeProcess.StartAsync();
         var database = await node.CreateTenantAsync();
         _ = await Docs.PostAsync(node.Internal, new Uri($"{database}/collections", UriKind.Relative), new JsonObject { ["name"] = "crash" });
@@ -78,13 +77,12 @@ public sealed class CrashAndStallE2ETests
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Writes_acknowledged_before_a_SIGKILL_reach_every_region_once_the_node_is_back()
     {
-        Skip.When(Cluster.Live, "kills a local node process");
         await Gaps.RunAsync("crash-replicated", async () =>
         {
             await using var gru = await NodeProcess.StartAsync();
             // Region identities and peer addresses for node processes come with peer streams (R4a).
             throw new NotSupportedException($"node processes cannot form a three-region cluster before peer streams (R4a); a single node process serves alone");
-        });
+        }, local: true);
     }
 
     // A storage stall on one node: its database file is held by another writer for five seconds while its clients write.
@@ -93,10 +91,9 @@ public sealed class CrashAndStallE2ETests
     [Scenario(Nodes.InProcess, Faults.StorageStall)]
     public async Task Writes_through_a_storage_stall_are_either_refused_or_kept_and_writing_resumes_after_it()
     {
-        Skip.When(Cluster.Live, "locks a local node's database file");
         await Gaps.RunAsync("storage-stall-single", async () =>
         {
-            await using var cluster = await Cluster.StartAsync(Cluster.Gru);
+            await using var cluster = await Cluster.StartLocalAsync(Cluster.Gru);
             var outcome = await StallAsync(Cluster.Gru, [Cluster.Gru], TimeSpan.FromSeconds(5));
             foreach (var (id, canonical) in outcome.Acknowledged)
             {
@@ -105,7 +102,7 @@ public sealed class CrashAndStallE2ETests
 
             Expected.Check(outcome.AfterStall > 0, "writes resume once the stall ends");
             Console.WriteLine($"storage stall: {outcome.Acknowledged.Count} acknowledged, {outcome.Refused} refused, {outcome.AfterStall} acknowledged after the stall");
-        });
+        }, local: true);
     }
 
     // The replicated half: sjc stalls for ten seconds while every region writes; afterwards every region holds exactly the
@@ -114,14 +111,13 @@ public sealed class CrashAndStallE2ETests
     [Scenario(Nodes.InProcess, Faults.StorageStall)]
     public async Task A_storage_stall_on_one_region_loses_no_acknowledged_write_and_the_regions_converge()
     {
-        Skip.When(Cluster.Live, "locks a local node's database file");
         await Gaps.RunAsync("storage-stall", async () =>
         {
-            await using var cluster = await Cluster.StartAsync(All);
+            await using var cluster = await Cluster.StartLocalAsync(All);
             var outcome = await StallAsync(Cluster.Sjc, All, TimeSpan.FromSeconds(10));
             var expected = Docs.Digest(outcome.Acknowledged.Select(pair => (pair.Key, pair.Value)));
             _ = await Converge.ListedAsync(cluster, expected, "every region after sjc's storage stall");
-        });
+        }, local: true);
     }
 
     // Peer traffic through a lossy link (delays, a throughput cap, connection resets): every region ends with exactly the
@@ -130,10 +126,9 @@ public sealed class CrashAndStallE2ETests
     [Scenario(Nodes.InProcess, Faults.NetworkFault)]
     public async Task Writes_converge_exactly_over_lossy_peer_links()
     {
-        Skip.When(Cluster.Live, "ts-orch has no lossy link; the lossy link runs on the local nodes only");
         await Gaps.RunAsync("lossy-link", async () =>
         {
-            await using var cluster = await Cluster.StartAsync(All);
+            await using var cluster = await Cluster.StartLocalAsync(All);
             await using var link = cluster.RouteThrough(Cluster.Gru, Cluster.Sjc, peer => new LossyLink(peer, TimeSpan.FromMilliseconds(200), 256 * 1024, 0.05, seed: 7).Start());
             var faker = new Faker();
             var documents = Enumerable.Range(0, 1000).Select(_ => (Id: EntityIds.New().ToString(), Body: ThreeRegionE2ETests.Synthetic(faker))).ToArray();
@@ -141,7 +136,7 @@ public sealed class CrashAndStallE2ETests
                 await Docs.PutAsync(cluster[All[index % All.Length]], cluster.Document(documents[index].Id), documents[index].Body, token));
             _ = await Converge.ListedAsync(cluster, Docs.Digest(documents.Select(document => (document.Id, Docs.Canonical(document.Body)))), "writes over lossy links");
             Console.WriteLine($"lossy link reset {link.Resets} connections");
-        });
+        }, local: true);
     }
 
     // The lossy link itself, against an echo server: bytes arrive intact and in order through delays and the cap.

@@ -22,10 +22,10 @@ public enum TerraBaseListener
     /// </summary>
     Internal,
 
-    /// <summary>Public API, plain HTTP behind Fly Proxy (TLS ends at the edge), authorized by scoped API keys and ts-auth tokens.</summary>
+    /// <summary>Public API, plain HTTP behind the ts-orch edge proxy (TLS ends at the edge), authorized by scoped API keys and ts-auth tokens.</summary>
     Client,
 
-    /// <summary>The Prometheus scrape Fly's metrics collector reads (<c>[[metrics]]</c>); every interface, no Fly Proxy service.</summary>
+    /// <summary>The Prometheus scrape for the platform metrics collector; every interface, no public proxy service.</summary>
     Metrics,
 
     /// <summary>PostgreSQL wire protocol 3.0, plaintext behind the platform edge (TLS ends there), authorized by API keys.</summary>
@@ -47,7 +47,7 @@ public sealed record ListenerMetadata(params IReadOnlyList<TerraBaseListener> Li
     public static ListenerMetadata Client { get; } = new(TerraBaseListener.Client, TerraBaseListener.Internal);
 
     /// <summary>
-    /// Metadata for health probes, requiring the peer credential internally and served without it for Fly's checks on the
+    /// Metadata for health probes, requiring the peer credential internally and served without it for platform checks on the
     /// public listener. They never answer with tenant data.
     /// </summary>
     public static ListenerMetadata Probe { get; } = new(TerraBaseListener.Internal, TerraBaseListener.Client);
@@ -102,7 +102,7 @@ public static class Listeners
     private static bool IsRegionalHost(string host, out string? region)
     {
         region = null;
-        if (!host.EndsWith(RegionalHostSuffix, StringComparison.OrdinalIgnoreCase) || host.Length == RegionalHostSuffix.Length)
+        if (!host.EndsWith(RegionalHostSuffix, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -215,7 +215,7 @@ public static class Listeners
 
     /// <summary>
     /// Binds the internal listener on <paramref name="internalAddress"/>, then the public, metrics and postgres listeners, in
-    /// that order. Those three bind every interface, except in local development (Development off Fly), where nothing but this
+    /// that order. Those three bind every interface, except in local development (Development outside a cluster), where nothing but this
     /// machine may reach them: loopback only.
     /// </summary>
     public static void AddTerraBaseListeners(this KestrelServerOptions kestrel, TerraBaseOptions options, IPAddress internalAddress, string environmentName)

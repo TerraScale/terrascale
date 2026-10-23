@@ -234,7 +234,7 @@ public sealed class ContinuousBackupTests
     }
 
     [Test]
-    public async Task A_shipper_cut_off_from_the_dns_stops_and_another_member_takes_over_once_fly_drops_it()
+    public async Task A_shipper_cut_off_from_the_directory_stops_and_another_member_takes_over_once_it_is_removed()
     {
         var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
@@ -259,7 +259,7 @@ public sealed class ContinuousBackupTests
         var first = Status(members[holder], file);
         var otherFirst = Status(members[other], file);
 
-        // Cut the holder off the DNS: it stops shipping once its lease could be stale, while the other still lists it.
+        // Cut the holder off the directory: it stops shipping once its lease could be stale, while the other still lists it.
         store.Partition(holder);
         time.Advance(TimeSpan.FromSeconds(11));
         await PassAsync();

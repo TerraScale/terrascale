@@ -47,7 +47,7 @@ public sealed class RegionTests
     [Arguments("grú")]
     [Arguments("gru 1")]
     [Arguments("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl")]
-    public async Task Invalid_fly_regions_stop_the_real_process_without_echoing_values(string region) =>
+    public async Task Invalid_regions_stop_the_real_process_without_echoing_values(string region) =>
         await AssertStartupRefusedAsync(region);
 
     [Test]

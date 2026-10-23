@@ -1,5 +1,5 @@
-// Local development only: TerraBase and ts-auth on this machine, with the Aspire dashboard. Production runs on Fly.io.
-// Ports are the services' fixed off-Fly ports, so ts-auth finds TerraBase at 127.0.0.1:8081 as it does without Aspire.
+// Local development only: TerraBase and ts-auth on this machine, with the Aspire dashboard. Production runs on OCI under ts-orch.
+// Ports are the services' fixed local ports, so ts-auth finds TerraBase at 127.0.0.1:8081 as it does without Aspire.
 // Everything is disposable: each run starts from an empty TerraBase data directory and a fresh ts-auth master key that is
 // never written to disk.
 
@@ -26,7 +26,7 @@ const terrabase = await builder.addProject('terrabase', '../src/TerraBase/TerraB
 const masterKey = await builder.addParameter('auth-master-key', { value: randomBytes(32).toString('base64'), secret: true });
 
 // The platform issuer's first signing key comes only from this operator command (docs/auth/signing-keys.md). It targets
-// this run's TerraBase (ts-auth off Fly stores at 127.0.0.1:8081) and never starts by itself: start it from the dashboard.
+// this run's TerraBase at 127.0.0.1:8081 and never starts by itself: start it from the dashboard.
 const signingKey = await builder.addProject('auth-signing-key', '../src/TerraScale.Authentication/TerraScale.Authentication.csproj')
     .withArgs(['provision-signing-key'])
     .withEnvironment('TS_AUTH_ENVIRONMENT', 'Development')

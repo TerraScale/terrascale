@@ -1,4 +1,3 @@
-using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
@@ -26,66 +25,17 @@ public static class App
     /// <summary>OpenAPI document title; clients key on it.</summary>
     public const string ApiTitle = "TerraScale Auth API";
 
-    /// <summary>
-    /// The region whose TerraBase takes every ts-auth write and every read but discovery's and the JWKS's, from every region.
-    /// TerraBase checks a precondition only against the copy it is sent to, so single-use codes and tokens, unique claims
-    /// and attempt counters hold only while one copy orders them; reading sessions, tokens, revocations and memberships
-    /// there too makes a revocation or removal take effect everywhere at once. When this region's TerraBase does not answer,
-    /// those operations fail closed (503) instead of moving elsewhere. Replication slice R12 (lattice-native ts-auth)
-    /// removes the need.
-    /// </summary>
-    public const string AuthorityRegion = "gru";
-
     /// <summary>Service key of the authority's <see cref="TerraBaseDatabase"/> and <see cref="HttpClient"/>.</summary>
     public const string StorageAuthority = "terrabase-authority";
 
     /// <summary>
-    /// TerraBase's internal listener on Fly's private network in this machine's region (<c>FLY_REGION</c>), for the reads of
-    /// discovery and the JWKS (<see cref="AuthStore.GetLocalAsync"/>, <c>KeyRing.GetPublishedAsync</c>): app <c>ts-terrabase</c>, which replicates the platform
-    /// databases between regions; in a <c>ts-pr-&lt;n&gt;</c> preview, whose one machine (in another Fly org) runs TerraBase
-    /// next to ts-auth, that machine. When it does not answer, <see cref="TerraBaseOtherRegions"/> do. Off Fly (local
-    /// development), the TerraBase on this machine, whose internal listener is on loopback there, in Development only: a
-    /// production ts-auth off Fly has no storage to fall back on and refuses to start (<see cref="AuthConfigurationException"/>)
-    /// instead of writing to whatever listens there. <see cref="AuthOptions.TerraBaseUrl"/>, when set, wins in any environment:
-    /// a host off Fly names its TerraBase. <paramref name="fly"/> holds Fly's machine environment
-    /// (<c>FLY_APP_NAME</c>, <c>FLY_REGION</c>).
+    /// The explicitly trusted storage endpoint, required outside Development. Every write and authorization read uses
+    /// this authority without fallback: TerraBase preconditions must be ordered by one copy for single-use credentials,
+    /// unique claims and revocations. Development alone may use the loopback default.
     /// </summary>
-    public static Uri TerraBaseOrigin(AuthOptions options, IConfiguration fly) => options.TerraBaseUrl ?? TerraBaseApp(options, fly) switch
-    {
-        null => new("http://127.0.0.1:8081"),
-        var app when fly["FLY_REGION"] is { Length: > 0 } region => new($"http://{region}.{app}.internal:8081"),
-        _ => throw new AuthConfigurationException("FLY_REGION is unset: on Fly ts-auth stores in its own region's TerraBase"),
-    };
-
-    /// <summary>
-    /// Where storage goes when this region's TerraBase does not answer: the nearest started machine of the app, then every
-    /// started machine (the nearest can be this region's own, started but not answering). None off Fly or with
-    /// <see cref="AuthOptions.TerraBaseUrl"/>.
-    /// </summary>
-    public static IReadOnlyList<DnsEndPoint> TerraBaseOtherRegions(AuthOptions options, IConfiguration fly) => options.TerraBaseUrl is not null ? [] : TerraBaseApp(options, fly) switch
-    {
-        null => [],
-        var app => [new($"top1.nearest.of.{app}.internal", 8081), new($"{app}.internal", 8081)],
-    };
-
-    /// <summary>
-    /// The TerraBase that takes every write (<see cref="AuthorityRegion"/>'s), with no fallback; in a preview, its one machine.
-    /// Null off Fly or with <see cref="AuthOptions.TerraBaseUrl"/>, where that one TerraBase takes everything.
-    /// </summary>
-    public static Uri? TerraBaseAuthority(AuthOptions options, IConfiguration fly) =>
-        options.TerraBaseUrl is not null || string.IsNullOrEmpty(fly["FLY_APP_NAME"]) ? null
-        : TerraBaseApp(options, fly) == "ts-terrabase" ? new($"http://{AuthorityRegion}.ts-terrabase.internal:8081")
-        : TerraBaseOrigin(options, fly);
-
-    // The Fly app serving ts-auth's storage; null off Fly in Development (loopback).
-    private static string? TerraBaseApp(AuthOptions options, IConfiguration fly) => fly["FLY_APP_NAME"] switch
-    {
-        null or "" when options.Development => null,
-        null or "" => throw new AuthConfigurationException(
-            "Off Fly (FLY_APP_NAME unset) ts-auth stores in the loopback TerraBase only in Development: set TS_AUTH_TERRABASE_URL, set TS_AUTH_ENVIRONMENT=Development, or run it on Fly"),
-        var app when app.StartsWith("ts-pr-", StringComparison.Ordinal) => app,
-        _ => "ts-terrabase",
-    };
+    public static Uri TerraBaseOrigin(AuthOptions options) => options.TerraBaseUrl
+        ?? (options.Development ? new("http://127.0.0.1:8081")
+            : throw new AuthConfigurationException("TS_AUTH_TERRABASE_URL is required outside Development"));
 
     /// <summary>
     /// The TerraBase project holding the platform's own databases. TerraBase seeds it with this fixed id on every start
@@ -129,21 +79,20 @@ public static class App
         }
 
         builder.Services.AddSingleton(TimeProvider.System);
-        // TerraBase machines' internal listeners: every request carries the supplied peer credential. This region's, for discovery
-        // and JWKS reads, falls back to other regions; the authority, for everything else, never does.
+        // Both clients use the named endpoint without fallback; tests may isolate discovery/JWKS from authority storage.
         builder.Services.AddSingleton(services => new HttpClient(TerraBaseTransport.CreateHandler(
-            TerraBaseOtherRegions(options, services.GetRequiredService<IConfiguration>()),
+            [],
             services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
             peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable])));
         builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
         {
-            BaseAddress = TerraBaseOrigin(options, services.GetRequiredService<IConfiguration>()),
+            BaseAddress = TerraBaseOrigin(options),
         }).Database(StorageProject, StorageDatabase));
         builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) => new HttpClient(TerraBaseTransport.CreateHandler(
             [], services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
             peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable])));
         builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) =>
-            TerraBaseAuthority(options, services.GetRequiredService<IConfiguration>()) is { } authority
+            options.TerraBaseUrl is { } authority
                 ? new TerraBaseDocumentsClient(services.GetRequiredKeyedService<HttpClient>(StorageAuthority), new TerraBaseDocumentsClientOptions
                 {
                     BaseAddress = authority,
@@ -203,11 +152,11 @@ public static class App
 
         configure?.Invoke(builder);
 
-        // On Fly or with a named TerraBase, a missing or malformed peer credential stops the start here, not at the first storage request.
-        if ((!string.IsNullOrEmpty(builder.Configuration["FLY_APP_NAME"]) || options.TerraBaseUrl is not null)
+        // A named TerraBase requires a valid peer credential before the first storage request.
+        if (options.TerraBaseUrl is not null
             && string.IsNullOrEmpty(builder.Configuration[TerraBaseTransport.PeerSecretVariable]))
         {
-            throw new AuthConfigurationException($"{TerraBaseTransport.PeerSecretVariable} is required on Fly and with TS_AUTH_TERRABASE_URL");
+            throw new AuthConfigurationException($"{TerraBaseTransport.PeerSecretVariable} is required with TS_AUTH_TERRABASE_URL");
         }
 
         if (builder.Configuration[TerraBaseTransport.PeerSecretVariable] is { Length: > 0 } peerSecret)

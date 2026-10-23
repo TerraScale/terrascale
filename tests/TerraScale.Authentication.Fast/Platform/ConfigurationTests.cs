@@ -59,22 +59,22 @@ public sealed class ConfigurationTests
     }
 
     [Test]
-    public async Task Production_off_fly_refuses_to_start_instead_of_storing_on_loopback()
+    public async Task Production_requires_an_explicit_storage_url()
     {
-        // No FLY_APP_NAME (off Fly) and no storage of the test's own: only Development may use the loopback TerraBase.
+        // Only Development may use the implicit loopback TerraBase.
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values => values.Remove("environment")));
         var settings = AuthTestServer.DefaultSettings();
         settings.Remove("environment");
         var (exitCode, output) = await RunBinaryAsync("--rate-limit=1000", settings);
 
-        await Assert.That(exception!.Message).IsEqualTo(StorageOffFly);
+        await Assert.That(exception!.Message).IsEqualTo(StorageUrlRequired);
         await Assert.That(exitCode).IsEqualTo(2);
-        await Assert.That(output).Contains(StorageOffFly);
+        await Assert.That(output).Contains(StorageUrlRequired);
         await Assert.That(output).DoesNotContain("   at ");
     }
 
     [Test]
-    public async Task Development_off_fly_stores_in_the_loopback_terrabase()
+    public async Task Development_without_a_storage_url_uses_the_loopback_terrabase()
     {
         var sent = new System.Collections.Concurrent.ConcurrentQueue<Uri>();
         await using var server = await AuthTestServer.StartAsync(services: services =>
@@ -85,47 +85,34 @@ public sealed class ConfigurationTests
     }
 
     [Test]
-    [Arguments("ts-auth", "sjc", "http://sjc.ts-terrabase.internal:8081", "http://gru.ts-terrabase.internal:8081")]
-    [Arguments("ts-auth", "fra", "http://fra.ts-terrabase.internal:8081", "http://gru.ts-terrabase.internal:8081")]
-    [Arguments("ts-auth", "gru", "http://gru.ts-terrabase.internal:8081", "http://gru.ts-terrabase.internal:8081")]
-    [Arguments("ts-pr-42", "sjc", "http://sjc.ts-pr-42.internal:8081", "http://sjc.ts-pr-42.internal:8081")]
-    public async Task On_fly_discovery_and_jwks_read_the_terrabase_of_its_own_region_and_the_rest_the_designated_one(string app, string region, string local, string designated)
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task An_explicit_url_receives_both_local_and_authority_storage_requests(bool development)
     {
-        // Fly's machine environment, per server; RegionalStorageTests covers what goes where and the move to another region.
+        const string storage = "http://127.0.0.1:18081";
         var reads = new System.Collections.Concurrent.ConcurrentQueue<Uri>();
         var rest = new System.Collections.Concurrent.ConcurrentQueue<Uri>();
         await using var server = await AuthTestServer.StartAsync(
-            settings: values => values.Remove("environment"),
+            settings: values =>
+            {
+                if (!development)
+                {
+                    values.Remove("environment");
+                }
+
+                values["terrabase-url"] = storage;
+            },
             services: services =>
             {
                 services.AddSingleton(new HttpClient(new RecordingTransport(reads)));
                 services.AddKeyedSingleton(App.StorageAuthority, new HttpClient(new RecordingTransport(rest)));
-            },
-            configure: builder =>
-            {
-                builder.Configuration["FLY_APP_NAME"] = app;
-                builder.Configuration["FLY_REGION"] = region;
             });
 
         // The JWKS reads signing keys (a GET); startup provisioning writes.
         using var jwks = await server.Client.GetAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json");
         await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(!reads.IsEmpty && !rest.IsEmpty), TimeSpan.FromSeconds(15))).IsTrue();
-        await Assert.That(reads.Select(uri => uri.GetLeftPart(UriPartial.Authority)).Distinct()).IsEquivalentTo([local]);
-        await Assert.That(rest.Select(uri => uri.GetLeftPart(UriPartial.Authority)).Distinct()).IsEquivalentTo([designated]);
-    }
-
-    [Test]
-    public async Task On_fly_without_a_region_refuses_to_start()
-    {
-        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(
-            settings: values => values.Remove("environment"),
-            configure: builder =>
-            {
-                builder.Configuration["FLY_APP_NAME"] = "ts-auth";
-                builder.Configuration["FLY_REGION"] = "";
-            }));
-
-        await Assert.That(exception!.Message).IsEqualTo("FLY_REGION is unset: on Fly ts-auth stores in its own region's TerraBase");
+        await Assert.That(reads.Select(uri => uri.GetLeftPart(UriPartial.Authority)).Distinct()).IsEquivalentTo([storage]);
+        await Assert.That(rest.Select(uri => uri.GetLeftPart(UriPartial.Authority)).Distinct()).IsEquivalentTo([storage]);
     }
 
     [Test]
@@ -378,10 +365,9 @@ public sealed class ConfigurationTests
     }
 
     [Test]
-    public async Task Production_off_fly_starts_against_the_terrabase_its_url_names()
+    public async Task Production_starts_against_the_terrabase_its_url_names()
     {
-        // Both binaries in Production without any FLY_* variable, as on a host off Fly: ts-auth finds TerraBase's
-        // loopback internal listener through TS_AUTH_TERRABASE_URL alone.
+        // Production uses TS_AUTH_TERRABASE_URL alone to reach TerraBase's internal listener.
         var (started, unavailable) = await TerraBaseTestServer.StartProductionAsync();
         await using var terrabase = started ?? throw new InvalidOperationException(unavailable);
         var settings = AuthTestServer.DefaultSettings();
@@ -422,55 +408,47 @@ public sealed class ConfigurationTests
             settings: values => values["terrabase-url"] = "http://127.0.0.1:8081",
             configure: builder => builder.Configuration["TERRABASE_PEER_SECRET"] = string.Empty));
 
-        await Assert.That(exception!.Message).IsEqualTo("TERRABASE_PEER_SECRET is required on Fly and with TS_AUTH_TERRABASE_URL");
-    }
-
-    [Test]
-    public async Task Production_starts_without_storage_settings()
-    {
-        var settings = AuthTestServer.DefaultSettings();
-        settings.Remove("environment");
-        // On Fly: storage comes from the Fly identity alone (App.TerraBaseOrigin), with no setting. Off Fly a production
-        // ts-auth refuses to start (Production_off_fly_refuses_to_start_instead_of_storing_on_loopback).
-        await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string>
-        {
-            ["FLY_APP_NAME"] = "ts-auth",
-            ["FLY_REGION"] = "gru",
-            ["TERRABASE_PEER_SECRET"] = TerraBaseTestServer.PeerSecret,
-        });
-
-        using var health = await service.Client.GetAsync("/healthz");
-
-        await Assert.That(health.StatusCode).IsEqualTo(System.Net.HttpStatusCode.OK);
-        // Exercise startup without sending any request to a production storage endpoint.
+        await Assert.That(exception!.Message).IsEqualTo("TERRABASE_PEER_SECRET is required with TS_AUTH_TERRABASE_URL");
     }
 
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task On_fly_missing_or_malformed_peer_credential_refuses_start_without_echoing_it(bool malformed)
+    public async Task A_named_terrabase_missing_or_malformed_peer_credential_refuses_start_without_echoing_it(bool malformed)
     {
         var secret = malformed ? TerraBaseTestServer.PeerSecret[..62] + "zz" : string.Empty;
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(
-            settings: values => values.Remove("environment"),
-            configure: builder =>
+            settings: values =>
             {
-                builder.Configuration["FLY_APP_NAME"] = "ts-auth";
-                builder.Configuration["FLY_REGION"] = "gru";
-                builder.Configuration["TERRABASE_PEER_SECRET"] = secret;
-            }));
+                values.Remove("environment");
+                values["terrabase-url"] = "http://127.0.0.1:8081";
+            },
+            configure: builder => builder.Configuration["TERRABASE_PEER_SECRET"] = secret));
 
         await Assert.That(exception!.Message).Contains("TERRABASE_PEER_SECRET");
+        var settings = AuthTestServer.DefaultSettings();
+        settings.Remove("environment");
+        settings["terrabase-url"] = "http://127.0.0.1:8081";
+        var (exitCode, output) = await RunBinaryAsync("--rate-limit=1000", settings, environment: new Dictionary<string, string>
+        {
+            ["TERRABASE_PEER_SECRET"] = secret,
+            ["TERRABASE_PEER_SECRET_FILE"] = string.Empty,
+        });
+
+        await Assert.That(exitCode).IsEqualTo(2);
+        await Assert.That(output).Contains(exception.Message);
+        await Assert.That(output).DoesNotContain("   at ");
         if (malformed)
         {
             await Assert.That(exception.Message.Contains(secret, StringComparison.Ordinal)).IsFalse();
+            await Assert.That(output.Contains(secret, StringComparison.Ordinal)).IsFalse();
         }
     }
 
     [Test]
     [Arguments("appsettings.json")]
     [Arguments("appsettings.Production.json")]
-    public async Task On_fly_a_file_cannot_replace_the_missing_peer_secret(string filename)
+    public async Task Appsettings_cannot_replace_the_missing_peer_secret(string filename)
     {
         var directory = Directory.CreateTempSubdirectory("ts-auth-peer-");
         var secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
@@ -479,15 +457,14 @@ public sealed class ConfigurationTests
             await File.WriteAllTextAsync(Path.Combine(directory.FullName, filename), $$"""{"TERRABASE_PEER_SECRET":"{{secret}}"}""");
             var settings = AuthTestServer.DefaultSettings();
             settings.Remove("environment");
+            settings["terrabase-url"] = "http://127.0.0.1:8081";
             var (exitCode, output) = await RunBinaryAsync("--rate-limit=1000", settings, directory.FullName, new Dictionary<string, string>
             {
-                ["FLY_APP_NAME"] = "ts-pr-env-provenance-test",
-                ["FLY_REGION"] = "gru",
                 ["DOTNET_ENVIRONMENT"] = "Production",
             });
 
             await Assert.That(exitCode).IsEqualTo(2);
-            await Assert.That(output).Contains("TERRABASE_PEER_SECRET is required on Fly");
+            await Assert.That(output).Contains("TERRABASE_PEER_SECRET is required with TS_AUTH_TERRABASE_URL");
             await Assert.That(output).DoesNotContain(secret);
             await Assert.That(output).DoesNotContain("   at ");
         }
@@ -548,7 +525,7 @@ public sealed class ConfigurationTests
                 RedirectStandardError = true,
                 RedirectStandardOutput = true,
             };
-            foreach (var name in start.Environment.Keys.Where(key => key.StartsWith("TS_AUTH_", StringComparison.Ordinal) || key.StartsWith("FLY_", StringComparison.Ordinal) || key.StartsWith("OTEL_", StringComparison.Ordinal) || key.StartsWith("Logging__", StringComparison.Ordinal)).ToList())
+            foreach (var name in start.Environment.Keys.Where(key => key.StartsWith("TS_AUTH_", StringComparison.Ordinal) || key.StartsWith("OTEL_", StringComparison.Ordinal) || key.StartsWith("Logging__", StringComparison.Ordinal)).ToList())
             {
                 start.Environment.Remove(name);
             }
@@ -609,8 +586,8 @@ public sealed class ConfigurationTests
         }
     }
 
-    private const string StorageOffFly =
-        "Off Fly (FLY_APP_NAME unset) ts-auth stores in the loopback TerraBase only in Development: set TS_AUTH_TERRABASE_URL, set TS_AUTH_ENVIRONMENT=Development, or run it on Fly";
+    private const string StorageUrlRequired =
+        "TS_AUTH_TERRABASE_URL is required outside Development";
 
     // Answers every TerraBase request with 503 and records where it was sent; nothing leaves the process.
     private sealed class RecordingTransport(System.Collections.Concurrent.ConcurrentQueue<Uri> sent) : HttpMessageHandler
@@ -634,11 +611,11 @@ public sealed class ConfigurationTests
         };
         // Isolate application and host configuration while preserving runtime paths and bundle extraction settings.
         foreach (var name in start.Environment.Keys.Where(key =>
-            key.StartsWith("TS_AUTH_", StringComparison.OrdinalIgnoreCase) || key.StartsWith("FLY_", StringComparison.OrdinalIgnoreCase)
-            || key.StartsWith("ASPNETCORE_", StringComparison.OrdinalIgnoreCase) || key.StartsWith("DOTNET_FLY_", StringComparison.OrdinalIgnoreCase)
+            key.StartsWith("TS_AUTH_", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("ASPNETCORE_", StringComparison.OrdinalIgnoreCase)
             || key.StartsWith("OTEL_", StringComparison.OrdinalIgnoreCase) || key.StartsWith("Logging__", StringComparison.OrdinalIgnoreCase)
             || key.StartsWith("Kestrel__", StringComparison.OrdinalIgnoreCase) || key.StartsWith("Sentry__", StringComparison.OrdinalIgnoreCase)
-            || key.ToUpperInvariant() is "TERRABASE_PEER_SECRET" or "DOTNET_TERRABASE_PEER_SECRET" or "DOTNET_ENVIRONMENT"
+            || key.ToUpperInvariant() is "TERRABASE_PEER_SECRET" or "TERRABASE_PEER_SECRET_FILE" or "DOTNET_TERRABASE_PEER_SECRET" or "DOTNET_ENVIRONMENT"
                 or "DOTNET_CONTENTROOT" or "DOTNET_APPLICATIONNAME" or "ENVIRONMENT" or "CONTENTROOT" or "APPLICATIONNAME"
                 or "URLS" or "HTTP_PORTS" or "HTTPS_PORTS" or "PREFERHOSTINGURLS" or "FORWARDEDHEADERS_ENABLED"
                 or "HOSTINGSTARTUPASSEMBLIES" or "HOSTINGSTARTUPEXCLUDEASSEMBLIES" or "PREVENTHOSTINGSTARTUP").ToList())

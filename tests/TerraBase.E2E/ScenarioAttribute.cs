@@ -1,10 +1,13 @@
 namespace TerraBase.E2E;
 
-/// <summary>Where a test's nodes run. On ts-orch every scenario's nodes are the service's nodes, whatever the local kind.</summary>
+/// <summary>Where a test's nodes run; only environment-selected clusters may use ts-orch.</summary>
 public enum Nodes
 {
-    /// <summary>No TerraBase node: a check of the harness itself (a proxy, a pin), not of a feature.</summary>
+    /// <summary>No TerraBase node: a check of the harness itself, not of a feature.</summary>
     Harness,
+
+    /// <summary>Environment-selected cluster: in-process nodes locally, or the disposable ts-orch service.</summary>
+    Cluster,
 
     /// <summary>In-process nodes of one test host (real Program and listeners, shared process).</summary>
     InProcess,
@@ -42,8 +45,8 @@ public enum Faults
 }
 
 /// <summary>
-/// Declares what a test runs on and what it breaks, so every summary line says whether a result came from separate
-/// processes or one host, and from a simulated partition or a real network fault. A test without it is reported as
+/// Declares what a test runs on and what it breaks, so every summary line names in-process, separate-process or
+/// ts-orch nodes, and distinguishes a simulated partition from a real network fault. A test without it is reported as
 /// undeclared, which the summary check refuses.
 /// </summary>
 [AttributeUsage(AttributeTargets.Method)]

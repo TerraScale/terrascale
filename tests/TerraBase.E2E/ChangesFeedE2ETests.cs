@@ -7,8 +7,8 @@ namespace TerraBase.E2E;
 /// <summary>
 /// The changes feed across regions (docs/terrabase/multi-region-replication.md section 14, slice R8): a cursor taken from
 /// sjc's feed resumes through fra with every later write of gru and sjc exactly once and each origin's events in its write
-/// order: answered by sjc, its issuer, while sjc is up (locally and on ts-orch); answered by fra once sjc is stopped (in-process
-/// nodes, and the ts-orch service's sjc region in the orch-outage run) or SIGKILLed (separate OS processes).
+/// order: answered by the healthy issuer's region through neutral replay, or by fra using its prefix proof when sjc is
+/// stopped (owned local nodes, or the disposable ts-orch service during an outage run) or SIGKILLed (separate processes).
 /// </summary>
 public sealed class ChangesFeedE2ETests
 {
@@ -22,27 +22,19 @@ public sealed class ChangesFeedE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task A_cursor_from_sjc_resumes_on_fra_after_sjc_stops_with_every_later_write_once_in_order()
     {
-        // Before the cluster starts: an unfiltered ts-orch run must fail here, never stop a region or skip as if it passed.
-        if (Cluster.Live)
-        {
-            throw new InvalidOperationException("stops the cursor's issuer: local nodes only; on ts-orch this is the orch-outage scenario");
-        }
-
-        await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
+        await using var cluster = await Cluster.StartLocalAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
         using var fra = await cluster.ViaAsync(Cluster.Fra, Cluster.Fra);
         await ResumeElsewhereAsync(region => cluster[region], fra, cluster.DatabasePath, cluster.Collection, cluster.Document, () => cluster.StopAsync(Cluster.Sjc));
         Expected.Check(!cluster.Replays.Any(replay => replay is { Edge: Cluster.Fra, Target: Cluster.Sjc, FellBack: false } && replay.PathAndQuery.Contains("cursor=", StringComparison.Ordinal)),
             $"fra served the resume itself, never answered by the stopped sjc; replays: {string.Join("; ", cluster.Replays)}");
     }
 
-    // sjc, the cursor's issuer, stays up: the resume presented in fra is replayed to sjc (issuer routing), and only sjc's
-    // answer counts. Locally and on ts-orch.
+    // The issuer stays up: the edge replays the resume from fra to sjc, and only sjc's answer counts.
     [Test]
-    [Scenario(Nodes.InProcess)]
+    [Scenario(Nodes.Cluster)]
     public async Task A_cursor_from_sjc_presented_in_fra_is_replayed_to_sjc_with_every_later_write_once_in_order()
     {
         await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
-        // The cursor comes from the exact sjc machine the resume must be answered by.
         using var issuer = await cluster.ViaAsync(Cluster.Sjc, Cluster.Sjc);
         using var resume = await cluster.ViaAsync(Cluster.Fra, Cluster.Sjc);
         await ResumeElsewhereAsync(region => cluster[region], resume, cluster.DatabasePath, cluster.Collection, cluster.Document, stopSjc: null, issuer);
@@ -52,7 +44,7 @@ public sealed class ChangesFeedE2ETests
     // region, so it runs only in an outage run.
     [Test]
     [Category("orch-outage")]
-    [Scenario(Nodes.InProcess, Faults.NodeStop)]
+    [Scenario(Nodes.Cluster, Faults.NodeStop)]
     public async Task Orch_a_cursor_from_sjc_resumes_on_fra_after_the_sjc_region_stops_with_every_later_write_once_in_order()
     {
         Skip.Unless(Cluster.LiveOutage, Cluster.OutageRun);
@@ -79,22 +71,21 @@ public sealed class ChangesFeedE2ETests
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Separate_processes_a_cursor_from_sjc_resumes_on_fra_after_sjc_is_killed_with_every_later_write_once_in_order()
     {
-        Skip.When(Cluster.Live, "runs local node processes");
         await using var regions = await RegionProcesses.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
         // The database is this test's own, so the feed needs no collection filter.
-        await ResumeElsewhereAsync(region => regions[region], regions[Cluster.Fra], regions.DatabasePath, collection: null, regions.Document, () => regions.KillAsync(Cluster.Sjc));
+        await ResumeElsewhereAsync(region => regions[region], regions[Cluster.Fra], regions.DatabasePath, collection: null, regions.Document, () => regions.KillAsync(Cluster.Sjc), internalListener: true);
     }
 
     // gru and sjc write; a consumer reads sjc's feed and keeps the cursor; gru and sjc write more, which reaches fra; sjc goes
     // away (`stopSjc`, when given) and gru writes again; the consumer resumes through `resume` from the cursor. The cursor is
     // read through `issuer`, sjc's own client unless given.
     private static async Task ResumeElsewhereAsync(Func<string, HttpClient> client, HttpClient resume, string databasePath, string? collection, Func<string, Uri> document, Func<Task>? stopSjc,
-        HttpClient? issuer = null)
+        HttpClient? issuer = null, bool internalListener = false)
     {
         var before = await WriteAsync(client, document, 0, Writes, Cluster.Gru, Cluster.Sjc);
         var changes = $"{databasePath}/changes" + (collection is null ? "" : $"?collections={collection}");
         string cursor;
-        using (var sjc = await Feed.OpenAsync(issuer ?? client(Cluster.Sjc), changes))
+        using (var sjc = await Feed.OpenAsync(issuer ?? client(Cluster.Sjc), changes, internalListener ? null : Cluster.Sjc))
         {
             var seen = await sjc.UntilAsync(events => before.Keys.All(id => events.Any(change => change.DocumentId == id)));
             Expected.Check(seen.Count == before.Count, $"sjc's feed from the start holds each earlier write once; got {seen.Count} events for {before.Count} writes");
@@ -102,7 +93,7 @@ public sealed class ChangesFeedE2ETests
         }
 
         var after = await WriteAsync(client, document, Writes, Writes, Cluster.Gru, Cluster.Sjc);
-        foreach (var (id, write) in after)
+        foreach (var (id, write) in before.Concat(after))
         {
             _ = await Converge.UntilAsync(() => Docs.ReadAsync(client(Cluster.Fra), document(id)), body => body?["step"]?.GetValue<int>() == write.Step, $"{write.Region}'s write on fra");
         }
@@ -117,7 +108,7 @@ public sealed class ChangesFeedE2ETests
             after[id] = write;
         }
 
-        using var fra = await Feed.OpenAsync(resume, changes + (collection is null ? "?" : "&") + $"cursor={Uri.EscapeDataString(cursor)}");
+        using var fra = await Feed.OpenAsync(resume, changes + (collection is null ? "?" : "&") + $"cursor={Uri.EscapeDataString(cursor)}", internalListener ? null : stopSjc is null ? Cluster.Sjc : Cluster.Fra);
         var resumed = await fra.UntilAsync(events => after.Keys.All(id => events.Any(change => change.DocumentId == id)));
         // The next heartbeat follows the page that held them: nothing else was waiting.
         var trailing = await fra.UntilHeartbeatAsync();
@@ -167,7 +158,7 @@ public sealed class ChangesFeedE2ETests
             _reader = reader;
         }
 
-        public static async Task<Feed> OpenAsync(HttpClient client, string uri)
+        public static async Task<Feed> OpenAsync(HttpClient client, string uri, string? expectedRegion)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(uri, UriKind.Relative))
             {
@@ -184,7 +175,21 @@ public sealed class ChangesFeedE2ETests
                 throw new HttpRequestException($"the changes feed answered {(int)response.StatusCode}: {text}", null, response.StatusCode);
             }
 
-            return new Feed(response, new StreamReader(await response.Content.ReadAsStreamAsync()));
+            try
+            {
+                // Only the public client listener identifies the serving region in response headers.
+                if (expectedRegion is not null)
+                {
+                    var answered = response.Headers.TryGetValues("X-TerraBase-Region", out var values) ? string.Join(',', values) : "(missing)";
+                    Expected.Check(answered == expectedRegion, $"the changes feed answers from {expectedRegion}; got {answered}");
+                }
+                return new Feed(response, new StreamReader(await response.Content.ReadAsStreamAsync()));
+            }
+            catch
+            {
+                response.Dispose();
+                throw;
+            }
         }
 
         // Change events until `enough` accepts them.

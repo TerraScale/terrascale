@@ -37,16 +37,15 @@ public sealed partial record AuthOptions
         "terrabase-url",
         "environment");
 
-    /// <summary>Plain-HTTP listen address of the public API (8090, behind Fly Proxy, which terminates TLS). Not 8080: in a PR preview ts-auth shares one machine, and so its ports, with TerraBase.</summary>
+    /// <summary>Plain-HTTP listen address of the public API (8090, behind the ts-orch TLS edge). TerraBase uses port 8080 on the shared host network.</summary>
     public required IPEndPoint Listen { get; init; }
 
     /// <summary>
-    /// Plain-HTTP listen address that serves only Prometheus <c>/metrics</c> (9092; TerraBase has 9091). Fly's scraper reaches it over the
-    /// machine's private IPv4, so it binds every IPv4 interface; no Fly service exposes it publicly.
+    /// Plain-HTTP listen address that serves only Prometheus <c>/metrics</c> (9092; TerraBase has 9091).
     /// </summary>
     public required IPEndPoint MetricsListen { get; init; }
 
-    /// <summary>The global origin of every issuer, <c>https://{origin}/{tenant}</c>, served in every region behind Fly Proxy.</summary>
+    /// <summary>The global origin of every issuer, <c>https://{origin}/{tenant}</c>, served behind the ts-orch TLS edge.</summary>
     public const string GlobalOrigin = "https://auth.terrascale.tech";
 
     /// <summary>The public origin browsers and clients use: <see cref="GlobalOrigin"/> unless a preview or test sets another.</summary>
@@ -99,7 +98,7 @@ public sealed partial record AuthOptions
 
     /// <summary>
     /// Origin of the TerraBase internal listener that holds ts-auth's storage (<c>TS_AUTH_TERRABASE_URL</c>, for example
-    /// <c>http://127.0.0.1:8081</c> on a host off Fly). Unset, storage follows Fly's machine environment.
+    /// <c>http://127.0.0.1:8081</c>). Required outside Development; Development defaults to loopback.
     /// </summary>
     public Uri? TerraBaseUrl { get; init; }
 
@@ -154,7 +153,7 @@ public sealed partial record AuthOptions
             }
         }
 
-        // Cloudflare's own names: these are the fly secrets, not TS_AUTH_* settings.
+        // Cloudflare's credential names are separate from TS_AUTH_* settings.
         if (Environment.GetEnvironmentVariable("CLOUDFLARE_ACCOUNT_ID") is { } accountId)
         {
             values["cloudflare-account-id"] = accountId;

@@ -26,7 +26,7 @@ internal sealed class CatalogFreshness(IMembership membership, AntiEntropy antiE
     public async ValueTask<bool> IsFreshAsync(TimeSpan window, CancellationToken cancellationToken)
     {
         var view = await membership.RefreshAsync(cancellationToken).ConfigureAwait(false);
-        // A read that did not list this machine (Fly's DNS answers a lost name with no records) says nothing about the others.
+        // A directory read that did not list this machine says nothing about the others.
         if (!view.Contains(membership.Self.Name))
         {
             return false;

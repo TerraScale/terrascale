@@ -24,7 +24,7 @@ namespace TerraBase.Slow.Management;
 
 /// <summary>
 /// The real ts-auth application, built from this monorepo and run in process as its own tests run it: its storage is a second
-/// in-process TerraBase from this commit, reached like on Fly (internal listener, no credential), its public origin
+/// in-process TerraBase from this commit, reached through the internal listener with the peer credential, its public origin
 /// <see cref="PublicOrigin"/> is served over TLS on a
 /// loopback port, and one service client gets client-credentials access tokens. Tokens, discovery and JWKS all come from
 /// ts-auth itself; the TerraBase under test reaches them through its production HTTP client, only connected to that port.

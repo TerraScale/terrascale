@@ -9,8 +9,8 @@ using TerraBase.Testing;
 namespace TerraBase.Fast.Management;
 
 /// <summary>
-/// The platform operator: the internal listener, on Fly's private network, acts as the user it names, without a credential
-/// (plan decision: no service auth on 6PN). It bootstraps the Management API before ts-auth exists.
+/// The platform operator: the internal listener authenticates the peer credential and acts as the user it names.
+/// It bootstraps the Management API before ts-auth exists.
 /// </summary>
 public sealed class OperatorTests
 {
@@ -46,9 +46,9 @@ public sealed class OperatorTests
     }
 
     [Test]
-    public async Task The_operator_reads_and_writes_a_projects_documents_on_the_internal_listener_without_a_credential()
+    public async Task The_operator_reads_and_writes_a_projects_documents_on_the_internal_listener_with_the_peer_credential()
     {
-        // ts-auth's own storage: it reaches TerraBase only over Fly's private network, with no key.
+        // ts-auth's own storage: it reaches TerraBase over NetBird with the peer credential.
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync("auth");
         using var storage = PeerTls.CreateClient(api.Server.BaseAddress);

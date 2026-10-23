@@ -6,9 +6,8 @@ using System.Text.Json.Nodes;
 namespace TerraBase.E2E;
 
 /// <summary>
-/// The live outage proof's own calls against a stand-in for a region at the handler level: which refusals a probe write
-/// sends again, the durability it reports, and the tombstone answer. It runs without Fly, so the required local stage (the
-/// local-only category) checks them.
+/// The outage proof's calls against a stand-in for a region at the handler level: which refusals a probe write
+/// sends again, the durability it reports, and the tombstone answer. The required local-only category checks them.
 /// </summary>
 [Category("local-only")]
 public sealed class DocsTests

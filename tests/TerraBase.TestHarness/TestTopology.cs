@@ -6,14 +6,14 @@ using TerraBase.Engine.Cluster;
 namespace TerraBase.Testing;
 
 /// <summary>
-/// A test server's identity and cell. In production Fly supplies both (<c>FLY_*</c> variables and its internal DNS); a test
+/// A test server's identity and cell. In production ts-orch supplies identity and a peers file; a test
 /// names them with these harness keys instead, which never reach the server as settings:
 /// <list type="bullet">
 /// <item><c>region</c> and <c>node-name</c>: the machine's region and ID.</item>
 /// <item><c>peers</c>: <c>name=host:port</c> members of the cell, this one included; <c>peer-addresses</c>: the other members' peer listeners.</item>
 /// </list>
 /// The harness applies the identity to the registered options and registers a static membership of the listed members,
-/// unless the test registered a <see cref="FakeMemberStore"/>: that one lists the server while it runs, as Fly's DNS does.
+/// unless the test registered a <see cref="FakeMemberStore"/>: that fake test directory lists the server while it runs.
 /// </summary>
 internal sealed class TestTopology
 {

@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- The end-to-end replication suite: leaderless writes between gru, sjc and fra over the public HTTP API.
-       Local by default (in-process nodes); set TERRABASE_E2E_ORCH_NODES to run the same scenarios against ts-orch.
+       Environment-selected clusters run locally by default; TERRABASE_E2E_ORCH_NODES selects ts-orch.
+       Explicit local fixtures always own their in-process nodes or separate operating-system processes.
        Test references and conventions come from Directory.Build.targets. -->
   <PropertyGroup>
     <RootNamespace>TerraBase.E2E</RootNamespace>

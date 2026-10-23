@@ -13,8 +13,7 @@ namespace TerraBase.E2E;
 /// <summary>
 /// <see cref="Docs.AdmittedAsync"/>, the retry of the suite's setup, cleanup and document calls. Against a real node's tenant
 /// admission, a 429 tenant_busy (refused before the request ran) is sent again and lands once, and the wait ends with its
-/// token. Any other answer is returned after one send. On Fly an e2e project the operator has not sized is hobby
-/// (docs/terrabase/e2e-request-budget.md), where the suite meets these refusals; it runs in the required local stage (the local-only category).
+/// token. Any other answer is returned after one send. The required local-only category checks these refusals.
 /// </summary>
 [Category("local-only")]
 public sealed class AdmissionRetryTests

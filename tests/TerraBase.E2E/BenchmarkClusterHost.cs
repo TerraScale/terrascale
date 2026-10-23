@@ -23,7 +23,7 @@ public sealed class BenchmarkClusterHost
         var chosen = Environment.GetEnvironmentVariable("TERRABASE_BENCH_REGIONS") is { Length: > 0 } list
             ? list.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             : [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
-        await using var cluster = await Cluster.StartAsync(chosen);
+        await using var cluster = await Cluster.StartLocalAsync(chosen);
         var regions = new JsonObject();
         var dataDirectories = new JsonObject();
         foreach (var region in cluster.Regions)

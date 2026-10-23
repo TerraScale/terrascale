@@ -7,12 +7,9 @@ namespace TerraBase.E2E;
 
 /// <summary>
 /// Replication across gru, sjc and fra under faults: partitions, a region down and back, a restart in the middle of
-/// replication, a replication backlog and clock skew. Partitions and skew need the local nodes, so on ts-orch those tests are
-/// skipped with the reason. Stopping a region on ts-orch touches the shared service, so there those tests run only from the
-/// separate disposable runs described in docs/terrabase/replication/31-live-outage-proof.md, alone on the app. What each scenario
-/// waits on is in <see cref="Gaps"/>.
+/// replication, a replication backlog and clock skew. Each test owns its local nodes. What each scenario waits on is in
+/// <see cref="Gaps"/>.
 /// </summary>
-[Category("orch-outage")]
 public sealed class ThreeRegionFaultE2ETests
 {
     private static readonly string[] All = [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
@@ -21,11 +18,10 @@ public sealed class ThreeRegionFaultE2ETests
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task Regions_with_another_placed_peer_accept_writes_and_converge_after_a_direct_partition_heals()
     {
-        Skip.When(Cluster.Live, "ts-orch has no partition switch; the partition runs on the local nodes only");
         await Gaps.RunAsync("partition-heal", async () =>
         {
             const int each = 200;
-            await using var cluster = await Cluster.StartAsync(All);
+            await using var cluster = await Cluster.StartLocalAsync(All);
             var faker = new Faker();
             var sharedId = EntityIds.New().ToString();
             var shared = cluster.Document(sharedId);
@@ -61,18 +57,17 @@ public sealed class ThreeRegionFaultE2ETests
             _ = await Converge.ListedAsync(cluster, expected, "partition heal");
             Converge.Report($"partition heal, {2 * each} documents", healed);
             Console.WriteLine($"conflict outcome, partitioned same-field writes: {settledShared.Value!["value"]} won");
-        });
+        }, local: true);
     }
 
     [Test]
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task Region_down_then_back_catches_up_on_every_write_made_while_it_was_down()
     {
-        SkipLiveUnlessOutageRun();
         await Gaps.RunAsync("region-down-rejoin", async () =>
         {
             const int count = 300;
-            await using var cluster = await Cluster.StartAsync(All);
+            await using var cluster = await Cluster.StartLocalAsync(All);
             var faker = new Faker();
             await cluster.StopAsync(Cluster.Fra);
             var started = false;
@@ -94,18 +89,17 @@ public sealed class ThreeRegionFaultE2ETests
                     await cluster.StartAgainAsync(Cluster.Fra);
                 }
             }
-        });
+        }, local: true);
     }
 
     [Test]
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task Restart_in_the_middle_of_replication_loses_no_write()
     {
-        SkipLiveUnlessOutageRun();
         await Gaps.RunAsync("restart-mid-replication", async () =>
         {
             const int count = 800;
-            await using var cluster = await Cluster.StartAsync(All);
+            await using var cluster = await Cluster.StartLocalAsync(All);
             var faker = new Faker();
             var documents = Enumerable.Range(0, count).Select(_ => (Id: EntityIds.New().ToString(), Body: ThreeRegionE2ETests.Synthetic(faker))).ToArray();
             var writes = Writes.Start([.. documents.Select(document => document.Id)], 8, (index, token) =>
@@ -119,7 +113,7 @@ public sealed class ThreeRegionFaultE2ETests
             var finished = Stopwatch.GetTimestamp();
             _ = await Converge.ListedAsync(cluster, Docs.Digest(documents.Select(document => (document.Id, Docs.Canonical(document.Body)))), "restart mid-replication");
             Converge.Report($"convergence after an sjc restart during {count} writes", finished);
-        });
+        }, local: true);
     }
 
     // This covers orderly node stops. RemoteAckE2ETests separately proves immediate origin SIGKILL and survivor disk restart.
@@ -127,11 +121,10 @@ public sealed class ThreeRegionFaultE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task Writes_acknowledged_just_before_their_region_stops_reach_every_region_after_it_returns()
     {
-        SkipLiveUnlessOutageRun();
         const int count = 200;
         await Gaps.RunAsync("ack-then-stop", async () =>
         {
-            await using var cluster = await Cluster.StartAsync(All);
+            await using var cluster = await Cluster.StartLocalAsync(All);
             var faker = new Faker();
             var documents = Enumerable.Range(0, count).Select(_ => (Id: EntityIds.New().ToString(), Body: ThreeRegionE2ETests.Synthetic(faker))).ToArray();
             await Parallel.ForEachAsync(documents, new ParallelOptions { MaxDegreeOfParallelism = 16 }, async (document, token) =>
@@ -141,7 +134,7 @@ public sealed class ThreeRegionFaultE2ETests
             var back = Stopwatch.GetTimestamp();
             _ = await Converge.ListedAsync(cluster, Docs.Digest(documents.Select(document => (document.Id, Docs.Canonical(document.Body)))), "acknowledged writes after their region stopped");
             Converge.Report($"{count} writes acknowledged just before gru stopped", back);
-        });
+        }, local: true);
     }
 
     // The writer restarts while a region is away, so its unsent changes must survive the restart and reach that region
@@ -150,11 +143,10 @@ public sealed class ThreeRegionFaultE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task A_restarted_region_replays_its_backlog_to_a_region_that_returns()
     {
-        SkipLiveUnlessOutageRun();
         const int count = 300;
         await Gaps.RunAsync("restarted-sender-backlog", async () =>
         {
-            await using var cluster = await Cluster.StartAsync(All);
+            await using var cluster = await Cluster.StartLocalAsync(All);
             var faker = new Faker();
             var documents = Enumerable.Range(0, count).Select(_ => (Id: EntityIds.New().ToString(), Body: ThreeRegionE2ETests.Synthetic(faker))).ToArray();
             await cluster.StopAsync(Cluster.Fra);
@@ -178,7 +170,7 @@ public sealed class ThreeRegionFaultE2ETests
                     await cluster.StartAgainAsync(Cluster.Fra);
                 }
             }
-        });
+        }, local: true);
     }
 
     // fra is cut off while gru and sjc take 3000 writes, then the backlog drains.
@@ -186,11 +178,10 @@ public sealed class ThreeRegionFaultE2ETests
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task Replication_backlog_of_3000_writes_drains_after_the_region_returns()
     {
-        Skip.When(Cluster.Live, "the backlog builds behind a partition, which runs on the local nodes only");
         await Gaps.RunAsync("backlog", async () =>
         {
             const int count = 3000;
-            await using var cluster = await Cluster.StartAsync(All);
+            await using var cluster = await Cluster.StartLocalAsync(All);
             var faker = new Faker();
             var documents = Enumerable.Range(0, count).Select(_ => (Id: EntityIds.New().ToString(), Body: ThreeRegionE2ETests.Synthetic(faker))).ToArray();
             cluster.Partition(Cluster.Fra, Cluster.Gru);
@@ -202,7 +193,7 @@ public sealed class ThreeRegionFaultE2ETests
             _ = await Converge.ListedAsync(cluster, Docs.Digest(documents.Select(document => (document.Id, Docs.Canonical(document.Body)))), "backlog drain");
             var seconds = Stopwatch.GetElapsedTime(healed).TotalSeconds;
             Console.WriteLine($"backlog of {count} writes drained to fra in {seconds:F1} s ({count / seconds:F0} documents/s)");
-        });
+        }, local: true);
     }
 
     // A causally later write must win however the two writers' clocks disagree: the stamp of a write is above every
@@ -213,10 +204,9 @@ public sealed class ThreeRegionFaultE2ETests
     [Arguments(Cluster.Fra, -2000)]
     public async Task Causally_later_write_wins_everywhere_despite_clock_skew(string skewed, int skewMilliseconds)
     {
-        Skip.When(Cluster.Live, "clock skew is set on the local nodes only");
         await Gaps.RunAsync("skew-causal", async () =>
         {
-            await using var cluster = await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [skewed] = TimeSpan.FromMilliseconds(skewMilliseconds) });
+            await using var cluster = await Cluster.StartLocalAsync(All, new Dictionary<string, TimeSpan> { [skewed] = TimeSpan.FromMilliseconds(skewMilliseconds) });
             // The skewed region writes first and a normal one overwrites, then the reverse.
             foreach (var (first, second) in new[] { (skewed, Cluster.Gru), (Cluster.Gru, skewed) })
             {
@@ -227,7 +217,7 @@ public sealed class ThreeRegionFaultE2ETests
                 var settled = await Converge.SettledAsync(cluster, uri, "causal overwrite under skew");
                 Expected.Check(settled.Value!["value"]!.GetValue<string>() == second, $"{second}'s later write wins with {skewed} at {skewMilliseconds:+0;-0} ms; {settled}");
             }
-        });
+        }, local: true);
     }
 
     // The competing writers are partitioned directly; fra durably confirms both. Additive markers detect any repair
@@ -236,10 +226,9 @@ public sealed class ThreeRegionFaultE2ETests
     [Scenario(Nodes.InProcess, Faults.ClockSkew | Faults.SimulatedPartition)]
     public async Task Concurrent_writes_with_a_clock_2_s_ahead_converge_and_the_writer_ahead_wins()
     {
-        Skip.When(Cluster.Live, "clock skew and partitions are set on the local nodes only");
         await Gaps.RunAsync("skew-concurrent", async () =>
         {
-            await using var cluster = await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [Cluster.Sjc] = TimeSpan.FromSeconds(2) });
+            await using var cluster = await Cluster.StartLocalAsync(All, new Dictionary<string, TimeSpan> { [Cluster.Sjc] = TimeSpan.FromSeconds(2) });
             var uri = cluster.Document(EntityIds.New().ToString());
             await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["value"] = "seed" });
             foreach (var region in new[] { Cluster.Gru, Cluster.Sjc })
@@ -268,9 +257,6 @@ public sealed class ThreeRegionFaultE2ETests
             Expected.Check(settled.Value["value"]!.GetValue<string>() == Cluster.Sjc, $"sjc, 2 s ahead, wins; {settled}");
             Expected.Check(writers.All(region => settled.Value[$"{region}-write"]?.GetValue<bool>() == true),
                 $"both competing writes survive the heal; {settled}");
-        });
+        }, local: true);
     }
-
-    private static void SkipLiveUnlessOutageRun() =>
-        Skip.When(Cluster.Live && !Cluster.LiveOutage, "stops a ts-orch region: run it alone in an outage run (TERRABASE_E2E_ORCH_OUTAGE=1)");
 }

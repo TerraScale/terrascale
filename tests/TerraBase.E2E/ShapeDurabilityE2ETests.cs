@@ -19,7 +19,6 @@ public sealed class ShapeDurabilityE2ETests
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task An_unacknowledged_origin_write_is_never_read_from_a_sealed_chunk_and_dies_with_its_origin()
     {
-        Skip.When(Cluster.Live, "kills disposable local region processes");
         await using var regions = await RegionProcesses.StartAsync(Origin, Remote);
         await ConnectedAsync(regions);
         var shape = Shape.New();
@@ -88,7 +87,6 @@ public sealed class ShapeDurabilityE2ETests
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task The_remote_durable_frontier_survives_the_origins_SIGKILL()
     {
-        Skip.When(Cluster.Live, "kills disposable local region processes");
         await using var regions = await RegionProcesses.StartAsync(Origin, Remote);
         await ConnectedAsync(regions);
         var shape = Shape.New();

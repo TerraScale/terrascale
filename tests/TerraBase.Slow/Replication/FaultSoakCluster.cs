@@ -226,7 +226,7 @@ internal sealed partial class FaultSoakCluster : IAsyncDisposable
         }
 
         foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TERRABASE_", StringComparison.Ordinal)
-            || name.StartsWith("FLY_", StringComparison.Ordinal)).ToArray())
+            || name.StartsWith("TS_", StringComparison.Ordinal)).ToArray())
         {
             start.Environment.Remove(name);
         }

@@ -8,7 +8,7 @@ namespace TerraScale.Authentication.Hosting;
 
 /// <summary>
 /// Outcome counters for the Grafana dashboards (ops/grafana). Every label has a fixed, small set of values: nothing a
-/// client sends reaches a label unmapped. Fly's scraper adds the app, region and instance labels.
+/// client sends reaches a label unmapped.
 /// </summary>
 public static class AuthMetrics
 {

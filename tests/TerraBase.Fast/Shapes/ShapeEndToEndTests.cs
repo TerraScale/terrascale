@@ -59,7 +59,7 @@ public sealed class ShapeEndToEndTests
     [Arguments(18, 60 * 1024)]
     public async Task A_production_size_machine_syncs_a_hobby_shape_instead_of_answering_shape_busy(int documents, int bytes)
     {
-        // A 512 MB Fly machine derives 120,231,936 bytes (a quarter of the memory .NET sees); Hobby admits 1/16 of it.
+        // Model a 120,231,936-byte node memory budget; Hobby admits 1/16 of it.
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "120231936");
         var faker = new Faker();
         HashSet<string> ids = [with(StringComparer.Ordinal)];

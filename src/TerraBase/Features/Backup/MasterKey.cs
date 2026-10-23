@@ -13,8 +13,8 @@ internal interface IMasterKey
 }
 
 /// <summary>
-/// The TerraBase master key (fly secret <c>TERRABASE_MASTER_KEY</c>, 32 bytes base64). It wraps each data key with
-/// AES-256-GCM as base64(nonce | ciphertext | tag); the key never leaves the process.
+/// The TerraBase master key (32 bytes base64), delivered from OCI Vault via <c>TERRABASE_MASTER_KEY_FILE</c>.
+/// It wraps each data key with AES-256-GCM as base64(nonce | ciphertext | tag); the key never leaves the process.
 /// </summary>
 internal sealed class MasterKey(byte[] masterKey) : IMasterKey
 {

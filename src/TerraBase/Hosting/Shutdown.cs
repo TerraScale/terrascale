@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Connections;
 namespace TerraBase.Hosting;
 
 // Requests get two seconds, hosted services eight in total, then storage gets its ten-second close grace.
-// Fly allows thirty seconds. Never dispose storage underneath a worker that has not returned its leases.
+// The total budget is twenty seconds. Never dispose storage underneath a worker that has not returned its leases.
 internal sealed class Shutdown : IDisposable
 {
     internal static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(2);

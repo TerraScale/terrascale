@@ -2,7 +2,7 @@ using Grpc.Net.Client;
 
 namespace TerraBase.Features.Replication;
 
-/// <summary>gRPC channels to another member's internal listener: HTTP/2 without TLS over Fly's private network.</summary>
+/// <summary>gRPC channels to a member's NetBird-bound or local loopback internal listener: h2c with the shared peer credential.</summary>
 internal static class PeerChannel
 {
     /// <summary>A channel to <paramref name="address"/> (<c>http://host:port</c>).</summary>

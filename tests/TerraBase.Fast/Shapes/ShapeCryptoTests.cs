@@ -370,7 +370,7 @@ public sealed class ShapeCryptoTests
         await pair.ProveAsync();
         var listed = await pair.Members.ListAsync(CancellationToken.None);
 
-        // Fly's DNS answers a lost name with no records: a view without this machine proves nothing, even with b just proved.
+        // An empty member directory proves nothing about this machine, even with b just proved.
         foreach (var member in listed)
         {
             pair.Members.Leave(member.Name);

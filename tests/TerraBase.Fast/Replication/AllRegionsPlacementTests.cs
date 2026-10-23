@@ -13,7 +13,7 @@ namespace TerraBase.Fast.Replication;
 /// <summary>
 /// The every-region placement (<c>allRegions</c>, docs/terrabase/management-api.md): a database created while one region
 /// serves takes a full copy into each region that joins later, with no call, and stops streaming to a region that leaves.
-/// Real machines in three regions, discovered through one member directory as Fly's DNS lists them.
+/// Real machines in three regions, discovered through one shared member directory.
 /// </summary>
 public sealed class AllRegionsPlacementTests
 {
