@@ -90,6 +90,8 @@ type Document struct {
 	Siblings []Sibling `json:"siblings,omitempty"`
 	// Distance is set on query results sorted by Near.
 	Distance *float64 `json:"distance,omitempty"`
+	// Score is set on full-text search query results.
+	Score *float64 `json:"score,omitempty"`
 }
 
 // Decode decodes the document body into v, keeping numbers as json.Number.
