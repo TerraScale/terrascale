@@ -9,6 +9,8 @@ using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -201,18 +203,21 @@ internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalo
 
     private async Task PassAsync(CancellationToken cancellationToken)
     {
-        using var reserved = memory.TryReserve(MemoryLane.Bulk, WorkBytes);
-        if (reserved is null || !engine.SystemDatabaseExists)
+        if (!engine.SystemDatabaseExists)
         {
             return;
         }
 
-        var page = await catalog.ReadAsync(async transaction =>
-            await transaction.ListAsync(Dispatches, _after, 32, 64 * 1024, cancellationToken).ConfigureAwait(false),
-            static _ => new DocumentPage([], false), cancellationToken).ConfigureAwait(false);
-        _after = page.HasMore && page.Documents.Count > 0 ? page.Documents[^1].Id : null;
-        var dispatches = page.Documents.Select(document => EntityPayload.Read(document, TerraBaseJsonContext.Default.WebhookDispatch)!)
-            .Where(dispatch => dispatch.Machine == options.MachineId);
+        // Empty dispatch scans consume no buffer budget; retain admission only for rows actually read.
+        using var pageMemory = new QosContext.ResultMemory(memory);
+        var dispatches = await catalog.ReadAsync(async transaction =>
+        {
+            using var scope = QosContext.EnterFlight(ChangeGroups.System, pageMemory);
+            var page = await transaction.ListAsync(Dispatches, _after, 32, 64 * 1024, cancellationToken).ConfigureAwait(false);
+            _after = page.HasMore && page.Documents.Count > 0 ? page.Documents[^1].Id : null;
+            return page.Documents.Select(document => EntityPayload.Read(document, TerraBaseJsonContext.Default.WebhookDispatch)!)
+                .Where(dispatch => dispatch.Machine == options.MachineId).ToArray();
+        }, static _ => [], cancellationToken).ConfigureAwait(false);
         await Parallel.ForEachAsync(dispatches, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
             async (dispatch, token) =>
             {

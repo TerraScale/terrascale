@@ -46,7 +46,8 @@ public sealed class WebhookFeedGapTests
         }
 
         memory.Refuse = true;
-        await fixture.DriveAsync(_ => Task.FromResult(memory.Refusals > 0), token);
+        fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+        await memory.Refused.Task.WaitAsync(TimeSpan.FromSeconds(15), token);
         await Assert.That(fixture.Receiver.Received).IsEqualTo(0);
         await Assert.That((await fixture.JsonAsync($"{fixture.Path}/{registration.GetProperty("id").GetString()}/deliveries", token)).GetArrayLength()).IsEqualTo(0);
         memory.Refuse = false;
@@ -177,21 +178,21 @@ public sealed class WebhookFeedGapTests
 
     private sealed class FeedMemory(IMemoryBudget inner) : IMemoryBudget
     {
-        private int _refusals;
         private int _admitted;
         public bool Refuse { get => Volatile.Read(ref field); set => Volatile.Write(ref field, value); }
-        public int Refusals => Volatile.Read(ref _refusals);
+        public TaskCompletionSource Refused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int Admitted => Volatile.Read(ref _admitted);
 
         public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, QosContext.Current);
 
         public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant)
         {
-            if (lane == MemoryLane.Foreground && tenant is not null && bytes is >= 8192 and < 65536)
+            // Match the 32-row origin buffer, leaving HTTP response admission available during pressure.
+            if (lane == MemoryLane.Foreground && tenant is not null && bytes == 32 * (512 + 4 * (26 + 5)))
             {
                 if (Refuse)
                 {
-                    Interlocked.Increment(ref _refusals);
+                    Refused.TrySetResult();
                     return null;
                 }
 
