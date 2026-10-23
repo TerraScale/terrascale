@@ -66,7 +66,8 @@ complete benchmark repeats and production live verification are separate gates.
 The old security audit describes the replaced NuGet payload; its documented
 crossbeam-epoch risk is not claimed resolved by this change.
 
-Needs format bump. The deploy lane owns `Engine/Turso/StorageFormat.cs`.
+Batch 5 advances `Engine/Turso/StorageFormat.cs` from main's version 12 to 13.
+The deploy lane owns the coordinated reset and production activation.
 
 ## Native request budgets
 

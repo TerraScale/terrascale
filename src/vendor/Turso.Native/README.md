@@ -146,8 +146,8 @@ Assembly is `scripts/vendor/prepare-turso-native-release.sh <x64-output>
 <arm64-output> <empty-release-directory>`; inputs must pass manifests and both
 smokes, with identical shared source/patch receipts.
 
-**Needs format bump.** `Engine/Turso/StorageFormat.cs` matches main; the deploy
-lane owns the integrated on-disk format decision. Native publication does not
+Batch 5 advances `Engine/Turso/StorageFormat.cs` from main's version 12 to 13;
+the deploy lane owns the coordinated reset. Native publication does not
 qualify final feature-head CI, complete benchmarks or production activation.
 Admission estimates are conservative, not strict RSS bounds, and cancellation
 does not establish hard deadlines inside third-party calls.
