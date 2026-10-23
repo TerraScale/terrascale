@@ -15,7 +15,8 @@ public sealed record BillingMcpPlans(IReadOnlyList<BillingMcpPlan> Plans, string
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CurrentInterval);
 public sealed record BillingMcpChange(string PlanKey,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Interval,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? EffectiveAt);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? EffectiveAt,
+    [property: Description("Stripe invoice page where the owner completes the pending payment, such as 3D Secure authentication."), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PaymentUrl = null);
 public sealed record BillingMcpPaymentMethod(bool Validated,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Brand = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? LastFour = null,
@@ -80,7 +81,7 @@ public sealed partial class StripeBilling
             facts.HasSubscription ? changes?.RenewalAt ?? binding?.RenewalAt : null,
             binding?.TrialUsed ?? false, checkoutInProgress,
             changes is { ScheduledPlanKey.Length: > 0 } ? new(changes.ScheduledPlanKey, Empty(changes.ScheduledInterval), changes.ScheduledAt) : null,
-            changes is { PendingPlanKey.Length: > 0 } ? new(changes.PendingPlanKey, Empty(changes.PendingInterval), null) : null,
+            changes is { PendingPlanKey.Length: > 0 } ? new(changes.PendingPlanKey, Empty(changes.PendingInterval), null, owner ? Empty(changes.PaymentUrl) : null) : null,
             owner ? new(org.PaymentMethodValidated, paymentMethod?.Brand, paymentMethod?.LastFour, paymentMethod?.Expiry) : null, owner);
     }
 

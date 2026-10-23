@@ -23,7 +23,7 @@ public static class BillingPlanEndpoints
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountEndpoints.LoginRedirect(http);
             try { return HttpRedirects.SeeOther(await billing.CheckoutReturnAsync(context, http.Request.Query["session_id"].ToString(), http.RequestAborted)); }
-            catch (Exception error) when (BillingFailure(error, http)) { return Failure(error); }
+            catch (Exception error) when (BillingFailure(error, http)) { return Failure(error, http); }
         });
         return endpoints;
     }
@@ -41,14 +41,18 @@ public static class BillingPlanEndpoints
                 : await billing.ChangePlanAsync(context, form["plan"].ToString(), form["interval"].ToString(), http.RequestAborted);
             return HttpRedirects.SeeOther("/organization?tab=billing" + (outcome == "current" ? "" : "&billing=" + outcome));
         }
-        catch (Exception error) when (BillingFailure(error, http)) { return Failure(error); }
+        catch (Exception error) when (BillingFailure(error, http)) { return Failure(error, http); }
     }
     private static bool BillingFailure(Exception error, HttpContext http) => error is AccountAccessException or OnboardingValidationException or StripeException or HttpRequestException or IOException ||
         error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested;
-    private static IResult Failure(Exception error) => error switch
+    private static IResult Failure(Exception error, HttpContext http)
     {
-        AccountAccessException access => Results.Text(access.Message, statusCode: access.StatusCode),
-        OnboardingValidationException validation => Results.Text(validation.Message, statusCode: 400),
-        _ => Results.Text("Stripe could not complete this billing change. Reload billing and try again.", statusCode: 502)
-    };
+        if (error is AccountAccessException access) return Results.Text(access.Message, statusCode: access.StatusCode);
+        if (error is OnboardingValidationException validation) return Results.Text(validation.Message, statusCode: 400);
+        http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BillingPlanEndpoints)).LogWarning("Billing {Path} failed ({ErrorType}: {Error})", http.Request.Path.Value, error.GetType().Name, Describe(error));
+        return Results.Text("Stripe could not complete this billing change. Reload billing and try again.", statusCode: 502);
+    }
+    // Stripe's error type, code and parameter name the cause; its message carries no credentials.
+    internal static string Describe(Exception error) => error is StripeException { StripeError: { } stripe } vendor
+        ? $"HTTP {(int)vendor.HttpStatusCode} {stripe.Type}/{stripe.Code} param={stripe.Param}: {stripe.Message}" : error.Message;
 }
