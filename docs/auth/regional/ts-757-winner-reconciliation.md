@@ -109,13 +109,13 @@ which reads the user directly and `credential:authorization` which reads the
 original device authorization. Approval authorization records use the existing
 authorization schema. No SDK expansion or new collection is used.
 
-**Needs format bump: batch 4.** The deploy lane explicitly authorized each of
-PRs #464, #469 and #473 to advance `StorageFormat.Version` by one over current
-main. This PR currently advances 12 to 13. Enqueue the green head using
-auto-merge; the queue rebuilds against main. If a batch member creates a real
-format conflict, resolve it by advancing from the new main version.
-HANDOFF: send this PR's merge SHA to the batch-4 deploy lane. FR1 owns the
-approved alpha wipe after all three PRs merge, or the lane's 60-minute cutoff.
+**Needs format bump: batch 5.** The deploy lane explicitly authorized each of
+PRs #464, #469, #473 and #462 to advance `StorageFormat.Version` by one over current
+main. This PR currently advances 12 to 13. Immediately before queueing, rebase
+on current main and advance one beyond its format; repeat if another batch
+member lands first. Enqueue only after the resulting head passes CI.
+HANDOFF: send this PR's merge SHA to the batch-5 deploy lane. FR1 owns the
+approved alpha wipe after all four PRs merge, or the lane's 60-minute cutoff.
 This branch does not itself wipe or reset serving data.
 
 API-key records additionally persist `secretBindings` (`SecretBindings`) and
@@ -141,7 +141,7 @@ from a fresh valid sign-in; this change does not infer old ancestry or perform
 that rollout automatically.
 
 This is an auth-record change with no migration. The owning rollout lane
-coordinates the batch-4 reset and outstanding credentials; tests recreate
+coordinates the batch-5 reset and outstanding credentials; tests recreate
 isolated data with this schema. The batch authorization does not authorize
 this branch to change credentials or activate additional production regions.
 
