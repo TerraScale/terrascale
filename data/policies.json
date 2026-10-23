@@ -1,14 +1,9 @@
 {
   "$comment": "Docs-only limits and billing policies. Plan prices, allowances, and metering come from data/canonical/pricing.json (vendored from https://terrascale.tech/pricing.json); never restate them here. Draft; publication requires owner approval.",
   "maxRegions": 3,
-  "pitrRetentionDays": {
-    "hobby": 1,
-    "pro": 7,
-    "enterprise": 30
-  },
   "maxDocument": "1 MiB",
   "engineLimits": {
-    "_note": "TerraBase enforces these per organization, shared by all of its projects, databases and API keys. Rate, concurrency and memory refusals return HTTP 429 with Retry-After. Enterprise has no plan ceiling but still observes document, page, batch and process safety bounds. TerraBase has no Starter tier yet.",
+    "_note": "TerraBase enforces these safety tiers per organization, shared by all its projects, databases and API keys. Rate, concurrency and memory refusals return HTTP 429 with Retry-After. The engine tier names Hobby, Pro and Enterprise are implementation safety tiers, not the commercial Free, Starter, Pro, Team and Enterprise plans. No mapping between commercial plans and engine tiers is published. The Enterprise engine tier still observes document, page, batch and process safety bounds.",
     "tiers": [
       "Hobby",
       "Pro",
@@ -47,15 +42,20 @@
       ]
     ]
   },
-  "hobbyEligibility": "Hobby has no time limit with a valid verified card and automated fraud checks after public launch. Each verified billing customer has one Hobby entitlement across all organizations: creating or joining another organization does not grant another Hobby plan. The first paid month promotion is likewise limited to one entitlement across organizations; only audited owner exceptions may expand eligibility.",
-  "enterpriseNotes": "Enterprise is a paid support and compliance offering and is unavailable during Public Alpha. Available benefits require confirmation before enrollment; priority response, SOC 2, and contractual SLA benefits are not available launch promises.",
-  "sharedAllowances": "Databases and branches share their owning organization’s normal plan allowances and billing cycle. There is no additional branch allowance or separate branch reset. Writes consume operation units once per selected region before allowances. 100 MB stored across three regions consumes 300 MB of included storage.",
+  "enterpriseNotes": "Enterprise requires contact with sales and is unavailable for self-service purchase during Public Alpha. Confirm availability and contract terms before enrollment; priority response, SOC 2, and contractual SLA benefits are not published launch promises.",
+  "sharedAllowances": "Databases and branches share their owning organization’s plan allowances. There is no additional branch allowance. Writes consume operation units once per selected region. Storage is decimal GB-region-month, averaged over time: 100 MB stored across three regions for a full month consumes 0.3 GB-region-month.",
   "billingPolicies": {
-    "Billing cycle and promotion": "Monthly operation-unit allowances reset on the organization’s billing anniversary, including Hobby, with no rollover. Storage remains measured over time; renewal does not erase data or continuing usage. The onboarding first paid month promotion waives only the subscription fee.",
-    "Subscription changes": "Payments, invoices, and spending controls belong to the organization. Upgrades apply immediately with a preview of prorated charges and resulting allowances. Downgrades and cancellation apply at renewal. Preview resulting limits and preserve existing data; cancellation returns to Hobby only when eligible. Neither action silently deletes data.",
-    "Exhausted allowances": "Public Alpha has no paid overages. When an allowance is exhausted, new billable work stops, including concurrent regional usage. Reads, exports, deletion, and usage reduction remain available within safety limits. Reaching an allowance alone neither deletes data nor creates charges. Account/database closure and retention deletion remain separate workflows.",
-    "Unpaid storage": "Storage without eligible allowance or payment coverage receives a 30-day grace period, advance dashboard and email notices, an exact visible deadline, and read/export access within safety limits. Deletion becomes eligible only while storage remains unpaid after the deadline and notice requirements are met. Retries do not reset the deadline. Restored eligible allowance or successful payment removes storage-related deletion eligibility. Exhausted operation units with covered storage do not start this period.",
-    "Card eligibility": "Removing the required card, confirmed expiry, or permanent invalidity ends Hobby eligibility and starts the 30-day deletion grace period, even within the Hobby storage allowance. Warn before removal and show the deadline in dashboard and email. Temporary provider failures and replacement retaining a valid payment method do not establish card loss. Restoring a valid card stops the card-related countdown and restores Hobby access when otherwise eligible, without a paid subscription; outstanding charges and separate unpaid storage still need resolution. An already-paid term retains its coverage; the card-related countdown starts only when that coverage ends unless coverage or Hobby eligibility is restored.",
-    "Deletion protection and completion": "Deletion protection is opt-in and disabled by default. An owner must explicitly disable it before customer deletion. Protection prevents automatic idle-Hobby deletion, but not idle pause, unpaid-storage deletion, or required-card-loss deletion. Once authorized deletion is accepted, access is revoked immediately and further billable usage stops. Previously incurred charges remain payable; asynchronous physical cleanup must not create new usage charges. Deletion progress continues until retained copies are removed. Physical completion timing and final notices require verified retention behavior and owner approval."
-  }
+    "Billing cycle": "Starter is billed yearly only; its monthly price is an equivalent, not a monthly purchase. Pro and Team are billed monthly. Enterprise support plus usage is arranged through sales. Operation-unit and client-egress allowances are monthly, including on Starter; they are not annual usage pools. Storage is averaged over time during the month. Usage charges are not yet collected. No trials or annual Pro/Team discounts are offered.",
+    "Subscription changes": "Confirm the available enrollment and subscription-change workflow before purchase. Published prices do not establish that checkout, proration, invoices or paid usage collection are available. A change of plan must preserve existing data; cancellation is not a deletion request.",
+    "Exhausted allowances": "Free has no automatic overages. Paid plans include allowances followed by pay-as-you-go usage at the approved rates above. Allowances and overage rates are approved; usage charges are not yet collected. Approved pricing does not establish current overage enforcement or payment collection. Reaching an allowance alone does not authorize deletion; account/database closure and retention deletion are separate workflows.",
+    "Unpaid storage": "Proposed policy; confirm availability and enrollment terms. Storage without eligible allowance or payment coverage receives a 30-day grace period, advance dashboard and email notices, an exact visible deadline, and read/export access within safety limits. Deletion becomes eligible only while storage remains unpaid after the deadline and notice requirements are met. Retries do not reset the deadline. Restored eligible allowance or successful payment removes storage-related deletion eligibility. Exhausted operation units with covered storage do not start this period.",
+    "Card eligibility": "Free does not require a payment card. Removing or losing a card does not by itself end Free eligibility or start a card-related deletion countdown. Paid subscriptions require the payment coverage agreed at enrollment.",
+    "Deletion protection and completion": "Deletion protection is opt-in and disabled by default. An owner must explicitly disable it before customer deletion. Protection prevents automatic idle-Free deletion, but not idle pause or unpaid-storage deletion. Once authorized deletion is accepted, access is revoked immediately and further billable usage stops. Previously incurred charges remain payable; asynchronous physical cleanup must not create new usage charges. Deletion progress continues until retained copies are removed. Physical completion timing and final notices require verified retention behavior and owner approval."
+  },
+  "enginePitrRetentionDays": {
+    "hobby": 1,
+    "pro": 7,
+    "enterprise": 30
+  },
+  "freeEligibility": "Free requires no payment card and has no automatic overages. No trial or first-paid-month promotion is offered by this catalog."
 }

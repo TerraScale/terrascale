@@ -1,64 +1,78 @@
 <!-- GENERATED from data/canonical/pricing.json (https://terrascale.tech/pricing.json) and data/policies.json by scripts/generate-pricing.mjs — do not edit. -->
 # Pricing
 
-> **Pre-launch policy.** Public Alpha prices and allowances come from the canonical catalog at
+> **Approved subscription prices, allowances and usage rates.** Prices come from the catalog at
 > [terrascale.tech/pricing.json](https://terrascale.tech/pricing.json); the
 > [pricing page](https://terrascale.tech/pricing) renders the same catalog.
-> All prices are in USD. Confirm approved enrollment terms and
-> serving-release availability; this catalog does not qualify a workflow.
+> All prices are in USD. Allowances and overage rates are approved.
+> Usage charges are not yet collected. Confirm enrollment and service availability before purchase;
+> a published price does not establish that checkout or billing is available.
 
 ## How usage is metered
 
 - **Operation units.** One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Writes count once per selected region; reads count only in the serving region. Failed, denied, invalid, throttled, and not-found requests are not billed.
-- **Storage across regions.** Stored bytes count once in every selected region.
-- **Allowances.** Plans use hard allowances during Public Alpha. New billable work stops at the allowance. Reads, exports, deletion, and usage reduction remain available.
+- **Storage across regions.** Stored bytes count once in every selected region. Storage uses decimal GB-region-month, averaged over time during the month.
+- **Client egress.** Outbound application response bytes to clients, excluding replication traffic; decimal GB.
+- **Allowances.** Free includes small allowances without a card and has no automatic overages. Paid plans include monthly allowances, then pay-as-you-go usage. Usage charges are not yet collected.
 
-## Plans
+## Plans and allowances
 
-|  | Hobby | Starter | Pro | Enterprise |
-| --- | --- | --- | --- | --- |
-| Monthly price | $0 | $5 | $50 | $500 |
-| Annual price | $0 | $50 | $500 | $5,000 |
-| Projects | 1 | 5 | 25 | Custom |
-| Databases | 1 | 5 | 25 | Custom |
-| Members | 1 | 5 | 25 | Custom |
-| Storage across regions | 100 MB | 5 GB | 25 GB | Custom |
-| Operation units / month | 100,000 | 1,000,000 | 100,000,000 | Custom |
-| Regions per database | up to 3 | up to 3 | up to 3 | up to 3 |
-| PITR retention | 1 day | Not published | 7 days | 30 days |
+|  | Free | Starter | Pro | Team | Enterprise |
+| --- | --- | --- | --- | --- | --- |
+| Subscription | $0; no card | $30/year only ($2.50/month equivalent) | $20/month | $50/month | $999/month support + usage; contact sales |
+| Availability | Public Alpha; confirm enrollment | Public Alpha; confirm enrollment | Public Alpha; confirm enrollment | Public Alpha; confirm enrollment | Contact sales; no self-service purchase |
+| Projects | 1 | 5 | 25 | 100 | Custom |
+| Databases | 1 | 5 | 25 | 100 | Custom |
+| Members | 1 | 5 | 25 | 100 | Custom |
+| Storage (GB-region-month) | 100 MB | 1 GB | 10 GB | 25 GB | 100 GB |
+| Operation units / month | 50,000 | 250,000 | 2,000,000 | 5,000,000 | 10,000,000 |
+| Client egress / month | 1 GB | 5 GB | 50 GB | 100 GB | 250 GB |
+| Regions per database | up to 3 | up to 3 | up to 3 | up to 3 | up to 3 |
 
 Launch regions: GRU (São Paulo), SJC (San Jose), FRA (Frankfurt).
 
-Starter and Pro include one eligible 30-day trial per verified payment method and organization.
+No trials or annual Pro/Team discounts are offered.
 
-**Shared organization allowances.** Databases and branches share their owning organization’s normal plan allowances and billing cycle. There is no additional branch allowance or separate branch reset. Writes consume operation units once per selected region before allowances. 100 MB stored across three regions consumes 300 MB of included storage.
+## Pay-as-you-go rates
 
-**Hobby.** Hobby has no time limit with a valid verified card and automated fraud checks after public launch. Each verified billing customer has one Hobby entitlement across all organizations: creating or joining another organization does not grant another Hobby plan. The first paid month promotion is likewise limited to one entitlement across organizations; only audited owner exceptions may expand eligibility.
+Paid plans include the allowances above, then pay-as-you-go usage at the approved rates:
 
-**Enterprise.** Monthly support base plus metered usage. Enterprise is a paid support and compliance offering and is unavailable during Public Alpha. Available benefits require confirmation before enrollment; priority response, SOC 2, and contractual SLA benefits are not available launch promises.
+| Meter | Rate (USD) |
+| --- | --- |
+| Operation units | $5 per million |
+| Storage | $0.50 per GB-region-month |
+| Client egress | $0.10 per decimal GB |
 
-## Billing cycle and promotion
+These allowances and rates are approved. Usage charges are not yet collected.
 
-Monthly operation-unit allowances reset on the organization’s billing anniversary, including Hobby, with no rollover. Storage remains measured over time; renewal does not erase data or continuing usage. The onboarding first paid month promotion waives only the subscription fee.
+**Shared organization allowances.** Databases and branches share their owning organization’s plan allowances. There is no additional branch allowance. Writes consume operation units once per selected region. Storage is decimal GB-region-month, averaged over time: 100 MB stored across three regions for a full month consumes 0.3 GB-region-month.
+
+**Free.** Free requires no payment card and has no automatic overages. No trial or first-paid-month promotion is offered by this catalog.
+
+**Enterprise.** $999 per month support plus usage; contact sales. Enterprise requires contact with sales and is unavailable for self-service purchase during Public Alpha. Confirm availability and contract terms before enrollment; priority response, SOC 2, and contractual SLA benefits are not published launch promises.
+
+## Billing cycle
+
+Starter is billed yearly only; its monthly price is an equivalent, not a monthly purchase. Pro and Team are billed monthly. Enterprise support plus usage is arranged through sales. Operation-unit and client-egress allowances are monthly, including on Starter; they are not annual usage pools. Storage is averaged over time during the month. Usage charges are not yet collected. No trials or annual Pro/Team discounts are offered.
 
 ## Subscription changes
 
-Payments, invoices, and spending controls belong to the organization. Upgrades apply immediately with a preview of prorated charges and resulting allowances. Downgrades and cancellation apply at renewal. Preview resulting limits and preserve existing data; cancellation returns to Hobby only when eligible. Neither action silently deletes data.
+Confirm the available enrollment and subscription-change workflow before purchase. Published prices do not establish that checkout, proration, invoices or paid usage collection are available. A change of plan must preserve existing data; cancellation is not a deletion request.
 
 ## Exhausted allowances
 
-Public Alpha has no paid overages. When an allowance is exhausted, new billable work stops, including concurrent regional usage. Reads, exports, deletion, and usage reduction remain available within safety limits. Reaching an allowance alone neither deletes data nor creates charges. Account/database closure and retention deletion remain separate workflows.
+Free has no automatic overages. Paid plans include allowances followed by pay-as-you-go usage at the approved rates above. Allowances and overage rates are approved; usage charges are not yet collected. Approved pricing does not establish current overage enforcement or payment collection. Reaching an allowance alone does not authorize deletion; account/database closure and retention deletion are separate workflows.
 
 ## Unpaid storage
 
-Storage without eligible allowance or payment coverage receives a 30-day grace period, advance dashboard and email notices, an exact visible deadline, and read/export access within safety limits. Deletion becomes eligible only while storage remains unpaid after the deadline and notice requirements are met. Retries do not reset the deadline. Restored eligible allowance or successful payment removes storage-related deletion eligibility. Exhausted operation units with covered storage do not start this period.
+Proposed policy; confirm availability and enrollment terms. Storage without eligible allowance or payment coverage receives a 30-day grace period, advance dashboard and email notices, an exact visible deadline, and read/export access within safety limits. Deletion becomes eligible only while storage remains unpaid after the deadline and notice requirements are met. Retries do not reset the deadline. Restored eligible allowance or successful payment removes storage-related deletion eligibility. Exhausted operation units with covered storage do not start this period.
 
 ## Card eligibility
 
-Removing the required card, confirmed expiry, or permanent invalidity ends Hobby eligibility and starts the 30-day deletion grace period, even within the Hobby storage allowance. Warn before removal and show the deadline in dashboard and email. Temporary provider failures and replacement retaining a valid payment method do not establish card loss. Restoring a valid card stops the card-related countdown and restores Hobby access when otherwise eligible, without a paid subscription; outstanding charges and separate unpaid storage still need resolution. An already-paid term retains its coverage; the card-related countdown starts only when that coverage ends unless coverage or Hobby eligibility is restored.
+Free does not require a payment card. Removing or losing a card does not by itself end Free eligibility or start a card-related deletion countdown. Paid subscriptions require the payment coverage agreed at enrollment.
 
 ## Deletion protection and completion
 
-Deletion protection is opt-in and disabled by default. An owner must explicitly disable it before customer deletion. Protection prevents automatic idle-Hobby deletion, but not idle pause, unpaid-storage deletion, or required-card-loss deletion. Once authorized deletion is accepted, access is revoked immediately and further billable usage stops. Previously incurred charges remain payable; asynchronous physical cleanup must not create new usage charges. Deletion progress continues until retained copies are removed. Physical completion timing and final notices require verified retention behavior and owner approval.
+Deletion protection is opt-in and disabled by default. An owner must explicitly disable it before customer deletion. Protection prevents automatic idle-Free deletion, but not idle pause or unpaid-storage deletion. Once authorized deletion is accepted, access is revoked immediately and further billable usage stops. Previously incurred charges remain payable; asynchronous physical cleanup must not create new usage charges. Deletion progress continues until retained copies are removed. Physical completion timing and final notices require verified retention behavior and owner approval.
 
 See also: [Limits](./limits.md).

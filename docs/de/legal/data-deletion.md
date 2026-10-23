@@ -39,9 +39,9 @@ Source: [7-day retention](https://github.com/TerraScale/terrascale/blob/49e32e99
 
 ## Backups and point-in-time recovery
 
-The current code's default point-in-time recovery (PITR) windows are:
+The current code's default point-in-time recovery (PITR) windows are listed by engine safety tier below. These tiers do not establish entitlements for commercial Free, Starter, Pro, Team or Enterprise plans; no mapping is published:
 
-| Plan | Default PITR window |
+| Engine safety tier | Default PITR window |
 | --- | --- |
 | Hobby | 1 day |
 | Pro | 7 days |
