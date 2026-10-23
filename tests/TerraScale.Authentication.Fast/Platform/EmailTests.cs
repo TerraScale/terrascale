@@ -92,6 +92,20 @@ public sealed class EmailTests
     }
 
     [Test]
+    public async Task A_permanent_bounce_in_a_success_answer_is_logged_as_a_failed_delivery()
+    {
+        var logs = new CapturingLogs();
+        await using var server = await StartAsync(logs, new FakeCloudflare(
+            body: $$$"""{"success":true,"result":{"delivered":[],"permanent_bounces":["{{{Recipient}}}"],"queued":[]}}"""));
+
+        using var response = await server.Client.PostAsync("/__test/email", null);
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+        await Assert.That(logs.Text).Contains("Email delivery failed: Cloudflare reported a permanent bounce");
+        await AssertNoMessageDataAsync(logs.Text);
+    }
+
+    [Test]
     public async Task An_unreachable_api_is_logged_and_does_not_fail_the_request()
     {
         var logs = new CapturingLogs();
@@ -236,7 +250,7 @@ public sealed class EmailTests
     /// The Cloudflare API as a message handler. It records the request it receives and answers with
     /// <paramref name="status"/>, or fails with <paramref name="failure"/> the way an unreachable or reset connection does.
     /// </summary>
-    private sealed class FakeCloudflare(HttpStatusCode status = HttpStatusCode.OK, Exception? failure = null) : HttpMessageHandler
+    private sealed class FakeCloudflare(HttpStatusCode status = HttpStatusCode.OK, Exception? failure = null, string body = "{\"success\":true}") : HttpMessageHandler
     {
         public string? RequestUrl { get; private set; }
 
@@ -255,7 +269,7 @@ public sealed class EmailTests
             this.RequestUrl = request.RequestUri?.ToString();
             this.Authorization = request.Headers.Authorization?.ToString();
             this.Body = await request.Content!.ReadAsStringAsync(cancellationToken);
-            return new HttpResponseMessage(status) { Content = new StringContent("{\"success\":true}", Encoding.UTF8, "application/json") };
+            return new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
         }
     }
 }

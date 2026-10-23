@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Hosting;
@@ -86,12 +87,25 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
             };
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", email.ApiToken);
             using var response = await http.SendAsync(request, cancellationToken);
-            AuthMetrics.Email(response.IsSuccessStatusCode ? "sent" : "failed");
             if (!response.IsSuccessStatusCode)
             {
+                AuthMetrics.Email("failed");
                 // The response body can quote the recipient, so only the status is logged.
                 logger.ZLogError($"Email delivery failed: Cloudflare answered {(int)response.StatusCode:@Status}");
+                return;
             }
+
+            // A 2xx still lists a suppressed or invalid recipient under permanent_bounces; it never arrives.
+            using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
+            if (body.RootElement.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.Object
+                && result.TryGetProperty("permanent_bounces", out var bounces) && bounces.ValueKind == JsonValueKind.Array && bounces.GetArrayLength() > 0)
+            {
+                AuthMetrics.Email("bounced");
+                logger.ZLogError($"Email delivery failed: Cloudflare reported a permanent bounce");
+                return;
+            }
+
+            AuthMetrics.Email("sent");
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {

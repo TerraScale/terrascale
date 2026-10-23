@@ -201,7 +201,7 @@ counters feed the Grafana dashboards (`ops/grafana`), each with fixed label valu
 - `ts_auth_tokens_total{grant_type, outcome}`: every token response OpenIddict writes; `outcome` is `issued` or the
   OAuth error code (`other` for anything non-standard). 429 and 503 answers written outside OpenIddict show up only
   in `http_server_request_duration_seconds`.
-- `ts_auth_emails_total{outcome}`: `sent`, `failed` or `not_configured`.
+- `ts_auth_emails_total{outcome}`: `sent`, `failed`, `bounced` (Cloudflare accepted the request but listed the recipient under `permanent_bounces`) or `not_configured`. A recipient mail server that accepts and bounces later still counts as `sent`: check the Cloudflare Email Service activity log.
 
 ### Self-service authentication setup
 
