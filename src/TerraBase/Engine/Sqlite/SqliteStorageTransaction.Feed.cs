@@ -1,3 +1,4 @@
+using System.Text;
 using TerraBase.Engine.Lattices;
 
 namespace TerraBase.Engine.Sqlite;
@@ -38,7 +39,11 @@ internal sealed partial class SqliteStorageTransaction
 
     public ValueTask<FeedPage> ReadFeedAsync(
         FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
-        RunAsync(() => ReadFeed(cursor, collections, maxEvents, maxBytes, cancellationToken), cancellationToken);
+        RunAsync(() => ReadFeed(cursor, collections, maxEvents, maxBytes, includeDocuments: true, cancellationToken), cancellationToken);
+
+    public ValueTask<FeedPage> ReadFeedMetadataAsync(
+        FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
+        RunAsync(() => ReadFeed(cursor, collections, maxEvents, maxBytes, includeDocuments: false, cancellationToken), cancellationToken);
 
     public ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken) =>
         RunAsync<IReadOnlyDictionary<ReplicaId, Hlc>>(() =>
@@ -174,7 +179,7 @@ internal sealed partial class SqliteStorageTransaction
 
     // Worker-only. Reads each origin's next rows, merges them by (stamp, origin) up to the lowest last stamp of an origin
     // that has more, and stops between two stamps once a bound is reached; per origin, what it returns is always a prefix.
-    private FeedPage ReadFeed(FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken)
+    private FeedPage ReadFeed(FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, bool includeDocuments, CancellationToken cancellationToken)
     {
         var stamps = cursor?.Stamps ?? new Dictionary<ReplicaId, Hlc>();
         var floors = Floors();
@@ -224,6 +229,11 @@ internal sealed partial class SqliteStorageTransaction
                 prefixes[origin] = PrefixThrough(origin, floor, floor, cancellationToken);
             }
 
+            if (!includeDocuments)
+            {
+                ReserveFeedMetadata(unchecked((long)origin.Value), after, cancellationToken);
+            }
+
             var read = OriginRows(unchecked((long)origin.Value), after, cancellationToken);
             if (read.Count >= FeedOriginRows)
             {
@@ -270,13 +280,36 @@ internal sealed partial class SqliteStorageTransaction
                 continue;
             }
 
-            var document = deleted ? null : FeedDocumentJson(collection, id, tables);
-            bytes += document?.Length ?? 0;
+            var document = deleted || !includeDocuments ? null : FeedDocumentJson(collection, id, tables);
+            bytes += includeDocuments ? document?.Length ?? 0 : (long)Encoding.UTF8.GetByteCount(id) * 6 + 128;
             // Typed as the nullable memory itself: a null byte[] would convert to empty memory, not to an absent document.
             events.Add(new FeedEvent(origin, stamp, collection, id, deleted, document is null ? null : (ReadOnlyMemory<byte>?)document) { Prefix = prefix });
         }
 
         return new FeedPage(events, scanned, more, Expired: false) { Issuer = Member.Id, Prefixes = prefixes, Before = before };
+    }
+
+    // Account for both row lists, keys, prefixes and events before copying any origin's page, even filtered-out rows.
+    private void ReserveFeedMetadata(long origin, Hlc after, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var command = Command("""
+            SELECT count(*), coalesce(sum(octet_length(collection) + octet_length(id)), 0)
+            FROM _tb_feed WHERE origin = $origin AND stamp > $after
+            AND stamp <= coalesce((SELECT stamp FROM _tb_feed WHERE origin = $origin AND stamp > $after
+                ORDER BY stamp, rowid LIMIT 1 OFFSET $skip), 9223372036854775807);
+            """);
+        command.Parameters.AddWithValue("$origin", origin);
+        command.Parameters.AddWithValue("$after", Version(after));
+        command.Parameters.AddWithValue("$skip", (long)FeedOriginRows - 1);
+        CountRead("feed");
+        using var reader = command.ExecuteReader();
+        reader.Read();
+        var rows = reader.GetInt64(0);
+        if (rows > 0)
+        {
+            _stateReadMemory?.Reserve(checked(reader.GetInt64(1) * 4 + rows * 512), store.Tenant);
+        }
     }
 
     // The chain survives retention. Both head cursors and cross-machine validation need one indexed row per origin.

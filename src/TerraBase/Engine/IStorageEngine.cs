@@ -44,6 +44,14 @@ public interface IStorageEngine : IAsyncDisposable
     bool SystemDatabaseExists { get; }
 
     /// <summary>
+    /// Conservatively tracks state in at most 16 named system collections, each at most 1024 characters.
+    /// The first inspection serializes with writers and reads existing storage without creating it; later calls use memory only.
+    /// Writes, including replicated joins, invalidate absence before publication. Rollbacks and GC may leave a positive hint.
+    /// </summary>
+    ValueTask<bool> MayHaveSystemCollectionStateAsync(string collection, CancellationToken cancellationToken);
+
+
+    /// <summary>
     /// Creates a database, optionally copying <paramref name="source"/> within the same organization, after recording
     /// creation ownership. Throws <see cref="IOException"/> before invoking <paramref name="recordIntent"/> when the
     /// destination contains a database file, sidecars or private creation artifacts, including directories and case variants.

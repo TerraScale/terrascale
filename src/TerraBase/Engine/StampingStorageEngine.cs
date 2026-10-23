@@ -36,6 +36,10 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
     public bool SystemDatabaseExists => inner.SystemDatabaseExists;
 
+    public ValueTask<bool> MayHaveSystemCollectionStateAsync(string collection, CancellationToken cancellationToken) =>
+        inner.MayHaveSystemCollectionStateAsync(collection, cancellationToken);
+
+
     public event EventHandler<IDatabaseStore>? DatabaseDeleted
     {
         add => inner.DatabaseDeleted += value;
@@ -212,6 +216,10 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         public ValueTask<FeedPage> ReadFeedAsync(
             FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
             RunAsync(() => inner.ReadFeedAsync(cursor, collections, maxEvents, maxBytes, cancellationToken), cancellationToken);
+
+        public ValueTask<FeedPage> ReadFeedMetadataAsync(
+            FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.ReadFeedMetadataAsync(cursor, collections, maxEvents, maxBytes, cancellationToken), cancellationToken);
 
         public ValueTask<IReadOnlyDictionary<Lattices.ReplicaId, Lattices.Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetFeedHeadAsync(cancellationToken), cancellationToken);
