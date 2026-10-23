@@ -1,5 +1,7 @@
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Primitives;
 using TerraBase.Testing;
@@ -8,6 +10,26 @@ namespace TerraBase.Slow;
 
 public sealed class BenchmarkReadinessTests
 {
+    [Test]
+    public async Task Registration_retries_503_with_the_original_commit(CancellationToken cancellationToken)
+    {
+        var unavailable = new UnavailableRegistration();
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru", services: services =>
+            services.AddSingleton<IStartupFilter>(unavailable), cancellationToken: cancellationToken);
+        var config = new JsonObject
+        {
+            ["region"] = "gru",
+            ["organization"] = EntityIds.New().ToString(),
+            ["project"] = EntityIds.New().ToString(),
+            ["database"] = EntityIds.New().ToString(),
+        };
+        await BenchmarkProcessHost.RegisterAsync(api, config, cancellationToken);
+        await Assert.That(unavailable.Payloads.Count).IsGreaterThan(1);
+        await Assert.That(unavailable.Payloads.All(payload => payload == unavailable.Payloads[0])).IsTrue();
+        await BenchmarkProcessHost.WaitForProjectBindingAsync(api, config["organization"]!.GetValue<string>(),
+            config["project"]!.GetValue<string>(), cancellationToken);
+    }
+
     [Test]
     public async Task Binding_waits_for_the_project_to_be_registered(CancellationToken cancellationToken)
     {
@@ -74,6 +96,33 @@ public sealed class BenchmarkReadinessTests
                 // Join the readiness task even if the assertion or collection creation fails.
             }
         }
+    }
+
+    private sealed class UnavailableRegistration : IStartupFilter
+    {
+        public List<string> Payloads { get; } = [];
+
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, proceed) =>
+            {
+                if (context.Request.Path == "/v1/management/commits" && context.Request.Method == "POST")
+                {
+                    context.Request.EnableBuffering();
+                    using var reader = new StreamReader(context.Request.Body, leaveOpen: true);
+                    Payloads.Add(await reader.ReadToEndAsync(context.RequestAborted));
+                    context.Request.Body.Position = 0;
+                    if (Payloads.Count == 1)
+                    {
+                        context.Response.StatusCode = 503;
+                        return;
+                    }
+                }
+
+                await proceed(context);
+            });
+            next(app);
+        };
     }
 
     private sealed class MissingReadiness(TaskCompletionSource missing) : IStartupFilter

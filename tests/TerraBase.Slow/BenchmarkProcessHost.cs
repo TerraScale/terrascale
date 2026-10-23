@@ -214,7 +214,7 @@ public sealed class BenchmarkProcessHost
         }, TimeSpan.FromMinutes(2));
     }
 
-    private static async Task RegisterAsync(ManagementApi api, JsonObject config, CancellationToken cancellationToken)
+    internal static async Task RegisterAsync(ManagementApi api, JsonObject config, CancellationToken cancellationToken)
     {
         string Get(string name)
         {
@@ -234,14 +234,26 @@ public sealed class BenchmarkProcessHost
                     ["id"] = Get("database"), ["name"] = "canary", ["replica_regions"] = replicas },
             },
         };
+        var payload = commit.ToJsonString();
         using var service = api.Service(api.User);
-        using var content = new StringContent(commit.ToJsonString(), Encoding.UTF8, "application/json");
-        using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), content, cancellationToken);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (response.StatusCode != HttpStatusCode.Conflict || (!body.Contains("\"id_taken\"", StringComparison.Ordinal) && !body.Contains("\"name_taken\"", StringComparison.Ordinal)))
+        await TerraBaseTestServer.EventuallyAsync(async cancel =>
         {
-            response.EnsureSuccessStatusCode();
-        }
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancel, cancellationToken);
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), content, linked.Token);
+            if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
+            {
+                return false;
+            }
+
+            var body = await response.Content.ReadAsStringAsync(linked.Token);
+            if (response.StatusCode != HttpStatusCode.Conflict || (!body.Contains("\"id_taken\"", StringComparison.Ordinal) && !body.Contains("\"name_taken\"", StringComparison.Ordinal)))
+            {
+                response.EnsureSuccessStatusCode();
+            }
+
+            return true;
+        }, TimeSpan.FromMinutes(2));
     }
 
     private static async Task SmokeAsync(CancellationToken cancellationToken)
