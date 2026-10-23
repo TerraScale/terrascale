@@ -79,6 +79,10 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
             }
             catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             { return new(UsageSourceState.Unauthorized); }
+            // TerraBase registers a project with its first database, so a project without databases is 404 there yet has
+            // truly done nothing; counting it as zero keeps one empty project from voiding the organization's month.
+            catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound && databaseId.Length == 0 && project.Databases.Count == 0)
+            { return new(UsageSourceState.Measured, new(project.Id, "", 0, 0, new(first, End(now, bucket), bucket, 0, 0), [], [])); }
             catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound)
             { return new(UsageSourceState.Restricted); }
             catch (TerraBaseException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.ErrorCode == "invalid_query")
@@ -97,11 +101,16 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
 
     private static UsagePeriod Period(TerraBaseUsagePeriod period, DateTimeOffset from, DateTimeOffset now, string bucket)
     {
-        var ticks = bucket == "day" ? TimeSpan.TicksPerDay : TimeSpan.TicksPerHour;
-        var roundedEnd = new DateTimeOffset(checked((now.UtcTicks + ticks - 1) / ticks * ticks), TimeSpan.Zero);
+        var roundedEnd = End(now, bucket);
         if (period.From != from || period.To != roundedEnd || period.To <= period.From || period.Granularity != bucket)
             throw new JsonException("Usage returned an invalid UTC period.");
         return new(period.From, period.To, bucket, Count(period.Reads), Count(period.Writes));
+    }
+
+    private static DateTimeOffset End(DateTimeOffset now, string bucket)
+    {
+        var ticks = bucket == "day" ? TimeSpan.TicksPerDay : TimeSpan.TicksPerHour;
+        return new DateTimeOffset(checked((now.UtcTicks + ticks - 1) / ticks * ticks), TimeSpan.Zero);
     }
 
     private static IReadOnlyList<ActivityPoint> Points(IReadOnlyList<TerraBaseUsagePoint> series, TerraBaseUsagePeriod period, string bucket)
