@@ -16,7 +16,7 @@ The catalog must contain the exact enrolled organization/project/database and su
 
 ## Retained throwaway-tenant rerun
 
-After deploying the merged commit, the rollout owner reruns the same internal request on the retained `fr1-proof4` tenant, with its actual owner's current sign-in token as supplemental proof. All route IDs are ULIDs, including the **database ID**, rather than its name:
+After deploying the merged commit, the rollout owner reruns the same internal request on the retained `fr1-proof5` tenant, with its actual owner's current sign-in token as supplemental proof. All route IDs are ULIDs, including the **database ID**, rather than its name:
 
 `POST /v1/management/organizations/{organization}/projects/{project}/databases/{database}/recovery/retry`
 
