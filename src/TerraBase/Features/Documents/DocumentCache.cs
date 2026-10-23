@@ -115,7 +115,7 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
         var normalized = new JsonObject
         {
             ["filter"] = Filter(query.Filter),
-            ["sort"] = new JsonArray([.. query.Sort.Select(key => (JsonNode)new JsonArray(Path(key.Path), JsonValue.Create(key.Descending)))]),
+            ["sort"] = new JsonArray([.. query.Sort.Select(key => (JsonNode)new JsonArray(Path(key.Path), JsonValue.Create(key.Descending), JsonValue.Create(key.Score)))]),
             ["after"] = query.After is { } after ? new JsonArray(
                 JsonValue.Create(after.Id), new JsonArray([.. after.Keys.Select(Scalar)])) : null,
             ["near"] = query.Near is { } near
@@ -154,6 +154,7 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
         ExistsFilter exists => new JsonArray(JsonValue.Create("exists"), Path(exists.Path)),
         PrefixFilter prefix => new JsonArray(JsonValue.Create("prefix"), Path(prefix.Path), JsonValue.Create(prefix.Prefix)),
         ContainsFilter contains => new JsonArray(JsonValue.Create("contains"), Path(contains.Path), Value(contains.Value)),
+        SearchFilter search => new JsonArray(JsonValue.Create("search"), Path(search.Path), JsonValue.Create(search.Terms)),
         _ => throw new ArgumentOutOfRangeException(nameof(filter)),
     };
 

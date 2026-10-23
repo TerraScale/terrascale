@@ -9,9 +9,11 @@ namespace TerraBase.Features.Documents;
 /// <param name="State">Always <c>value</c>: a single-writer database never holds conflicting siblings.</param>
 /// <param name="Document">The stored JSON object, or its projection.</param>
 /// <param name="Distance">Distance to the query vector, for a near sort.</param>
+/// <param name="Score">Native BM25 relevance for a score sort; higher values rank first.</param>
 public sealed record DocumentBody(
     string Id, string Version, string State, JsonElement Document,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Distance = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Distance = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Score = null);
 
 /// <summary>Result of a document write.</summary>
 /// <param name="Id">Document id.</param>

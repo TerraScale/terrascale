@@ -18,7 +18,7 @@ public sealed class CreateIndexEndpoint(IManagementService management, IIndexSer
         Post(ProjectApiRoute.Indexes);
         Name("createIndex");
         Summary("Builds a secondary index");
-        Description("collection: a collection name. fields: 1 to 4 distinct dotted member paths (not _id or _rev, which the primary key already orders). name (optional): a lowercase letter, then lowercase letters, digits or _, at most 63 characters; derived from the collection and fields when omitted. The index is built before the response." + " " + ProjectApiRoute.IdentityDescription);
+        Description("collection: a collection name. kind: btree (default) or text (native full-text search over string values). fields: 1 to 4 distinct dotted member paths (not _id or _rev, which the primary key already orders). name (optional): a lowercase letter, then lowercase letters, digits or _, at most 63 characters; derived from the collection and fields when omitted. The index is built before the response." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Indexes");
         Produces<IndexBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -81,9 +81,15 @@ public sealed class CreateIndexEndpoint(IManagementService management, IIndexSer
             return new Validation("fields must hold 1 to 4 distinct fields");
         }
 
-        var name = request.Name ?? IndexService.DefaultName(collection.Value, fields);
+        var kind = request.Kind ?? "btree";
+        if (kind is not ("btree" or "text"))
+        {
+            return new Validation("kind must be btree or text");
+        }
+
+        var name = request.Name ?? IndexService.DefaultName(collection.Value, fields, kind);
         return IndexService.IsValidName(name)
-            ? new IndexDefinition(name, collection.Value, fields)
+            ? new IndexDefinition(name, collection.Value, fields, kind)
             : new Validation("name must be a lowercase letter, then lowercase letters, digits or _, at most 63 characters");
     }
 }

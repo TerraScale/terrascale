@@ -53,6 +53,8 @@ RUN --mount=type=cache,target=/root/.local/share/NuGet/http-cache,id=nuget-http 
 
 FROM restored AS source
 COPY . .
+# CI supplies both pinned release architectures; cached bytes are verified again inside the build.
+RUN scripts/vendor/verify-turso-native.sh src/vendor/Turso.Data.Sqlite/native
 
 # One build and one test stage per area; CI runs the areas as parallel jobs. A build stage checks whitespace format,
 # builds its projects in Release with analyzers as errors (libs.slnf, auth.slnf, terrabase.slnf) and runs its static
@@ -88,6 +90,7 @@ FROM build-terrabase AS test-terrabase
 ARG TERRABASE_REVISION
 # Finish Fast's incremental builds before the independent E2E processes read those outputs.
 RUN make -o restore terrabase-test-fast CONFIGURATION=Release \
+    && scripts/vendor/test-turso-native-singlefile.sh \
     && make -j2 -o restore -o terrabase-build terrabase-replication-matrix terrabase-e2e-local CONFIGURATION=Release \
     && touch /passed
 

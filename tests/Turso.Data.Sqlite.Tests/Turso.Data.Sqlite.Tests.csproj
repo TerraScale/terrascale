@@ -5,6 +5,9 @@
     <IsTestProject>true</IsTestProject>
     <IsTestingPlatformApplication>true</IsTestingPlatformApplication>
     <IsPackable>false</IsPackable>
+    <!-- Keep publish settings local so referenced libraries retain their locked dependency graphs. -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <!-- Required for IDE0005 (unused usings) in the build, as in TerraBase. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>

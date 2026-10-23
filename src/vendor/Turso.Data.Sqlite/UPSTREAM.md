@@ -16,15 +16,17 @@ Only these three projects come over: no upstream tests, samples, benchmarks or o
 
 ## Native library
 
-The Rust core (`libturso_sdk_kit`) is not built here: the upstream package `Turso.Data.Native` at the same version as
-the tag (`Directory.Packages.props`) supplies the prebuilt library for every runtime. TerraScale's fixes are in the C#
-driver only, and building the Rust core would add a Rust toolchain and its crates to every build. Keep the package
-version equal to the tag.
+The Rust core (`libturso_sdk_kit`) is built from the pinned commit above with FTS, replacing `Turso.Data.Native`.
+`scripts/vendor/Dockerfile.turso-native` pins the source checksum, Rust image/toolchain and build timestamp. Explicit
+maintenance builds once on each real architecture (linux-x64 and linux-arm64) and runs FTS/encryption smokes. Normal
+CI, Fast, Slow and image builds download the combined pinned release and verify its SHA-256 hashes; they never build
+Rust. Missing or mismatched native assets fail the build. See `src/vendor/Turso.Native/README.md` for delivery and
+qualification evidence, and `docs/terrabase/turso-fts-native.md` for the SQL/runtime contract.
 
 ## What is ours
 
 - `UPSTREAM.md`, `patches/`, `Directory.Build.props`, `Directory.Build.targets` and `locks/`: how the driver builds in
-  this solution (target framework, warnings as errors, lock files, the native package). They replace upstream's
+  this solution (target framework, warnings as errors, lock files, custom native assets). They replace upstream's
   `bindings/dotnet` build files, which are not copied, and keep the repository's own analyzer and style rules, which
   are for TerraScale's code, off upstream's.
 - `patches/*.patch`: TerraScale's changes to upstream files, one fix per patch, applied in name order. Every file
@@ -37,7 +39,7 @@ version equal to the tag.
 scripts/vendor/update-turso-driver.sh v0.8.3 --commit   # pristine import commit, then a commit with the patches
 ```
 
-Then set `Turso.Data.Native` in `Directory.Packages.props` to the same version, restore (`make restore`, which
+Then update the native source/checksum pins to the same version, restore (`make restore`, which
 rewrites `locks/`), build and run `make terrabase-check` and the driver tests, and redo `SECURITY-AUDIT.md` (the
 provenance, package, vulnerability, license and patch checks) for the new tag. Without `--commit` the script only
 changes the working tree. Re-importing the current tag must leave no diff.
