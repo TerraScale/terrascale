@@ -205,7 +205,7 @@ export const en = {
       },
       {
         title: 'Operation units',
-        text: 'Each started 4 KiB read or written; writes count in each selected region',
+        text: 'Each started 4 KiB read or written; writes count once and replication is free',
       },
       {
         title: 'Allowances then usage',
@@ -236,7 +236,7 @@ export const en = {
         {
           item: 'Operation units',
           unit: '/million units',
-          details: 'Each started 4 KiB of each successful read or write counts separately. Writes multiply by selected regions; reads count in the serving region.',
+          details: 'Each started 4 KiB of each successful read or write counts separately. Writes count once regardless of selected regions; reads count in the serving region. Replication is free.',
         },
         {
           item: 'Storage across regions',
@@ -259,7 +259,7 @@ export const en = {
       items: [
         {
           q: 'What is an operation unit?',
-          a: 'One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Writes count once per selected region; reads count only in the serving region. Failed, denied, invalid, throttled, and not-found requests are not billed.',
+          a: 'One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Writes count once regardless of the number of selected regions; reads count only in the serving region. Replication between regions is not billed. Failed, denied, invalid, throttled, and not-found requests are not billed.',
         },
         {
           q: 'What if I need more operations, storage, or egress?',
