@@ -154,7 +154,7 @@ public sealed class LatticeE2ETests
     // documents that stayed deleted (read from each stopped region's file: the proof that GC ran) and bring nothing back.
     [Test]
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
-    public async Task E14_delete_then_gc_then_recreate_leaves_no_ghost_fields_expected_to_fail()
+    public async Task E14_delete_then_gc_then_recreate_leaves_no_ghost_fields()
     {
         Skip.When(Cluster.Live, "reads local nodes' database files to see that GC collected the tombstones");
         await Gaps.RunAsync("E14", async () =>
