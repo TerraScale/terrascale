@@ -143,7 +143,7 @@ public sealed class CollectionAuthorizationAdmissionTests
     }
 
     private static async Task<SqliteDatabaseStore> StoreAsync(DocumentApi api) =>
-        (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<IStorageEngine>()
+        (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>()
             .OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
 
     private static async Task IndexOwnerAsync(SqliteDatabaseStore store)
