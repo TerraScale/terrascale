@@ -36,6 +36,7 @@ public sealed class DemoEnvironment
     private readonly TestIdentity identity = new();
     private readonly TestClock clock = new();
     private readonly TestWorkspace workspace = new();
+    private readonly TestAuthentication authentication = new();
     private readonly TestDocuments documents = new();
     private readonly TestDatabases databases;
     private readonly TestStripeTransport stripe = new();
@@ -103,6 +104,7 @@ public sealed class DemoEnvironment
             builder.Services.Replace(ServiceDescriptor.Singleton<IProjectAccessTokens>(auth));
             builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform>(workspace));
             builder.Services.AddSingleton(workspace);
+            builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthProjects>(authentication));
             builder.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend>(databases));
             builder.Services.Replace(ServiceDescriptor.Singleton<IDocumentBackend>(documents));
             builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new TestMeasurements()));

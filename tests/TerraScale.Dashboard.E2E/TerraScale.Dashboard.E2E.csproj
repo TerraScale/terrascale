@@ -8,6 +8,7 @@
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.Playwright" />
     <PackageReference Include="Deque.AxeCore.Playwright" />
+    <PackageReference Include="Bogus" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Using Include="TerraScale.Dashboard.Demo" />
     <!-- TUnit.Core also has a TestState. -->

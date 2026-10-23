@@ -191,7 +191,7 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
                 await Assert.That(authConsole.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 var html = await authConsole.Content.ReadAsStringAsync();
                 await Assert.That(html).Contains($"id=\"auth-issuer\">https://auth.terrascale.tech/{projectId}</code>");
-                await Assert.That(html).Contains("Authentication management is unavailable for this project.");
+                await Assert.That(html).Contains($"https://auth.terrascale.tech/ui/{projectId}/sign-in");
             }
             await ErrorAsync(replica, "delete_database", new() { ["databaseId"] = databaseId, ["confirmName"] = "wrong-name" });
             await CallAsync(replica, "revoke_api_key", new() { ["keyId"] = keyId });

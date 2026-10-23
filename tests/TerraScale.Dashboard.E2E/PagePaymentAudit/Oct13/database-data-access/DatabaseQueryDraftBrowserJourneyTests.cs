@@ -38,8 +38,8 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
             ("/api-keys?kind=key", 200, "No credentials match these filters."),
             ("/databases/" + id + "/backups", 200, "No restore points yet."),
             ("/subscriptions", 200, "No shared-result configurations yet."),
-            ("/auth/connections", 200, "SSO connections unavailable"),
-            ("/authentication/connections", 200, "SSO connections unavailable")
+            ("/auth/sessions", 200, "Live end-user sessions. Revoking one signs that sign-in out."),
+            ("/authentication/clients", 200, "Applications that sign users in through the authorization code flow with PKCE.")
         })
         {
             var response = await page.GotoAsync(new Uri(scenario.Origin, path).ToString());

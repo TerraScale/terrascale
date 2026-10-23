@@ -38,6 +38,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
     private readonly DemoEnvironment environment = new();
     private readonly ConcurrentQueue<string> cliRequests = new();
     private string root = "";
+    private bool liveProjects;
 
     private AuthProviderScenario() => provider = new(clock, state, environment.Workspace, cliRequests);
 
@@ -46,9 +47,11 @@ public sealed class AuthProviderScenario : IAsyncDisposable
     public Uri ProviderOrigin { get; private set; } = null!;
     public IReadOnlyList<string> CliRequests => cliRequests.ToArray();
 
-    public static async Task<AuthProviderScenario> StartAsync(string root)
+    // liveProjects sends project tenant management through the real TsAuthGateway to this producer, which does
+    // not serve that API, as ts-auth before it ships; otherwise the demo host's in-memory tenant answers.
+    public static async Task<AuthProviderScenario> StartAsync(string root, bool liveProjects = false)
     {
-        var scenario = new AuthProviderScenario();
+        var scenario = new AuthProviderScenario { liveProjects = liveProjects };
         try { await scenario.InitializeAsync(root); return scenario; }
         catch { await scenario.DisposeAsync(); throw; }
     }
@@ -127,6 +130,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         application.Services.Replace(ServiceDescriptor.Singleton<IPlatformRoleGateway>(services => services.GetRequiredService<TsAuthGateway>()));
         application.Services.Replace(ServiceDescriptor.Singleton<IProjectAccessTokens>(services => services.GetRequiredService<TsAuthGateway>()));
         application.Services.Replace(ServiceDescriptor.Singleton<IUsageMeasurements, UsageBackend>());
+        if (liveProjects) application.Services.Replace(ServiceDescriptor.Singleton<ITsAuthProjects>(services => services.GetRequiredService<TsAuthGateway>()));
         if (provider.ReportingExtension is not null)
             application.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Home.IHomeMeasurements, TerraScale.Dashboard.Features.Home.TerraBaseHomeMeasurements>());
         provider.Ownership?.Configure(application);
@@ -270,6 +274,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private int refreshPauses;
         private int codeExchanges;
         private int managementRequests;
+        private int projectManagementRequests;
         private int managementMutations;
         private int revocations;
         private int contractFailures;
@@ -386,6 +391,11 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             {
                 Interlocked.Increment(ref unsupportedIntrospectionRequests);
                 return Results.NotFound();
+            }
+            if (path.Split('/', StringSplitOptions.RemoveEmptyEntries) is ["v1", var tenant, ..] && TerraScaleIds.IsValid(tenant))
+            {
+                Interlocked.Increment(ref projectManagementRequests);
+                return OAuthError("not_found", 404);
             }
             if (path.StartsWith("/v1/terrascale/users/", StringComparison.Ordinal))
             {
@@ -839,6 +849,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 projectRequests = projectRequests.ToArray(),
                 managementMutations = 0,
                 managementRequests,
+                projectManagementRequests,
                 revocations,
                 contractFailures,
                 contractFailureMessages = contractFailureMessages.ToArray(),
