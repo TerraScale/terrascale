@@ -329,8 +329,10 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         using var producer = scenario.CreateProviderClient(); using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
         using var replica = CookieClient(scenario, setup.Cookie, true);
+        // Finish the authenticated form read before timing the mutation's persistence barrier.
+        var csrf = await HttpJourney.CsrfAsync(replica);
         await ControlAsync(producer, new { command = "internal-pause-put", collection = "dashboard_billing", id = setup.Organization, kind = "stripe", after = true });
-        var checkout = CheckoutAsync(replica);
+        var checkout = CheckoutAsync(replica, csrf);
         try
         {
             await PausedAsync(producer, checkout: checkout);
@@ -601,9 +603,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await ActiveAsync(browser);
     }
 
-    private static async Task<HttpResponseMessage> CheckoutAsync(HttpClient browser)
+    private static async Task<HttpResponseMessage> CheckoutAsync(HttpClient browser, string? csrf = null)
     {
-        var csrf = await HttpJourney.CsrfAsync(browser, "/profile");
+        csrf ??= await HttpJourney.CsrfAsync(browser, "/profile");
         return await HttpJourney.PostFormAsync(browser, "/billing/checkout", new()
         { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly", ["return"] = "/organization?tab=billing" });
     }
