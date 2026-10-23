@@ -15,9 +15,10 @@ using TerraBase.Testing;
 namespace TerraBase.Slow.Shapes;
 
 /// <summary>
-/// Free reads tier T1 against a real S3-compatible bucket (<c>make terrabase-test-slow</c>, the bucket-scoped CI
+/// Free reads tiers T1 and T2 against a real S3-compatible bucket (<c>make terrabase-test-slow</c>, the bucket-scoped CI
 /// credentials): the server's own mirror uploads sealed TBS1 objects, the manifest lists them, an anonymous client fetches
-/// each presigned URL straight from the bucket, and the bytes open with the key route's key to exactly what the origin served.
+/// each presigned URL through the shape edge (a miss reads the bucket, a repeat is an edge hit), and the bytes open with the
+/// key route's key to exactly what the origin served.
 /// Only endpoint, bucket and keys name the provider; the same test proves Tigris and R2.
 /// </summary>
 public sealed class S3ShapeMirrorTests
@@ -76,7 +77,9 @@ public sealed class S3ShapeMirrorTests
             for (var index = 0; index < 2; index++)
             {
                 var entry = objects[index];
-                using var fetched = await anonymous.GetAsync(new Uri(entry.GetProperty("url").GetString()!), cancellationToken);
+                var url = new Uri(entry.GetProperty("url").GetString()!);
+                await Assert.That(url.Host).IsEqualTo(ShapeObjectStore.Edge.Host).Because("an HTTPS bucket is linked through the shape edge (T2)");
+                using var fetched = await anonymous.GetAsync(url, cancellationToken);
                 await Assert.That(fetched.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 await CacheControlAssert.EqualAsync(fetched.Headers.CacheControl?.ToString(), ShapeObjectStore.CacheControl);
                 var bytes = await fetched.Content.ReadAsByteArrayAsync(cancellationToken);
@@ -90,6 +93,13 @@ public sealed class S3ShapeMirrorTests
                 opened[index] = ShapeObjects.Open(bytes, handle, entry.GetProperty("offset").GetString()!, long.Parse(epoch, CultureInfo.InvariantCulture),
                     keyId, Base64Url.DecodeFromChars(released.GetProperty("key").GetString()!));
             }
+
+            // The edge caches by path after the first fetch: a later reader is served at the edge without a bucket read.
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+            {
+                using var again = await anonymous.GetAsync(new Uri(objects[1].GetProperty("url").GetString()!), token);
+                return again.StatusCode == HttpStatusCode.OK && again.Headers.TryGetValues("tb-edge-cache", out var cache) && cache.Single() == "HIT";
+            }, MirrorDeadline);
 
             await Assert.That(opened[0].SequenceEqual(pageBytes)).IsTrue().Because("the bucket's snapshot page opens to the page the origin served");
             await Assert.That(opened[1].SequenceEqual(chunkBytes)).IsTrue().Because("the bucket's chunk opens to the chunk the origin served");

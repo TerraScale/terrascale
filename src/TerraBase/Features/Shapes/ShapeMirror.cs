@@ -44,6 +44,9 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 {
     internal const int ManifestObjects = 8;
     private const int QueueItems = 32;
+    // Uploads run concurrently: one shape seals up to a chunk per commit, and a single bucket round trip at a time falls
+    // behind that, refusing (and so never mirroring) the overflow.
+    private const int Workers = 4;
     private const int TrimItems = 64;
     private const long TrimBytes = 1024;
     private const long QueueBytes = 64 * 1024 * 1024;
@@ -54,7 +57,6 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
     private readonly Channel<Pending> _queue = Channel.CreateBounded<Pending>(new BoundedChannelOptions(QueueItems)
     {
         FullMode = BoundedChannelFullMode.Wait,
-        SingleReader = true,
     });
     private readonly Channel<PendingTrim> _trims = Channel.CreateBounded<PendingTrim>(new BoundedChannelOptions(TrimItems)
     {
@@ -398,21 +400,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         var trims = TrimQueueAsync(stoppingToken);
         try
         {
-            await foreach (var pending in _queue.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
-            {
-                try
-                {
-                    await MirrorAsync(pending, stoppingToken).ConfigureAwait(false);
-                }
-                catch (Exception error) when (!stoppingToken.IsCancellationRequested)
-                {
-                    _logger.ZLogWarning(error, $"Shape mirror failed; immutable origin bytes remain available");
-                }
-                finally
-                {
-                    Release(pending);
-                }
-            }
+            await Task.WhenAll(Enumerable.Range(0, Workers).Select(_ => Task.Run(() => DrainAsync(stoppingToken), stoppingToken))).ConfigureAwait(false);
         }
         finally
         {
@@ -441,6 +429,25 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 }
 
                 ClearCaches();
+            }
+        }
+    }
+
+    private async Task DrainAsync(CancellationToken stoppingToken)
+    {
+        await foreach (var pending in _queue.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
+        {
+            try
+            {
+                await MirrorAsync(pending, stoppingToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (!stoppingToken.IsCancellationRequested)
+            {
+                _logger.ZLogWarning(error, $"Shape mirror failed; immutable origin bytes remain available");
+            }
+            finally
+            {
+                Release(pending);
             }
         }
     }
@@ -826,6 +833,13 @@ internal sealed record ShapeObjectHead(string Owner, string ObjectHash, string S
 internal sealed class ShapeObjectStore : IDisposable
 {
     internal const string CacheControl = "public, max-age=31536000, immutable";
+
+    /// <summary>
+    /// The shape edge (free reads T2, src/TerraBase.ShapeEdge): a Cloudflare Worker that caches each TBS1 object by its path,
+    /// so every reader near one Cloudflare location shares one bucket read. It forwards a miss, signature intact, to the
+    /// bucket host named in the path.
+    /// </summary>
+    internal static readonly Uri Edge = new("https://shapes.terrascale.tech/");
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
     private readonly AmazonS3Client _s3;
     private readonly BackupSettings _settings;
@@ -942,8 +956,14 @@ internal sealed class ShapeObjectStore : IDisposable
             Verb = HttpVerb.GET,
             Expires = expires.UtcDateTime,
         });
-        return (url, expires);
+        return (ViaEdge(url), expires);
     }
+
+    // An HTTPS bucket goes through the edge as /<bucket host>/<path>?<signature>, byte for byte; a plain-HTTP bucket (a local
+    // fake) is linked directly.
+    internal static string ViaEdge(string presigned) => presigned.StartsWith("https://", StringComparison.Ordinal)
+        ? Edge.AbsoluteUri + presigned["https://".Length..]
+        : presigned;
 
     public void Dispose() => _s3.Dispose();
 
