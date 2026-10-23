@@ -70,6 +70,7 @@ public sealed class TerraScaleAuthClient
         OAuthClients = new TerraScaleAuthOAuthClientsClient(this);
         Oidc = new TerraScaleAuthOidcClient(this);
         Platform = new TerraScaleAuthPlatformClient(this);
+        Projects = new TerraScaleAuthProjectsClient(this);
         Headless = new TerraScaleAuthHeadlessClient(this);
     }
 
@@ -114,6 +115,9 @@ public sealed class TerraScaleAuthClient
 
     /// <summary>Platform organizations, projects, members and API keys, using a user sign-in token.</summary>
     public TerraScaleAuthPlatformClient Platform { get; }
+
+    /// <summary>Project tenant settings, end users, sessions and OAuth clients under <c>/v1/{project}</c>, using a user sign-in token.</summary>
+    public TerraScaleAuthProjectsClient Projects { get; }
 
     /// <summary>Confidential-client headless enrollment, sign-in and password recovery.</summary>
     public TerraScaleAuthHeadlessClient Headless { get; }
