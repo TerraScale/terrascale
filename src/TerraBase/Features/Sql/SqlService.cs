@@ -100,6 +100,7 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
                 }
 
                 _readOnly = begin.Kind == TransactionKind.BeginReadOnly;
+                _keys = new SqlKeys();
                 return Empty;
             case TransactionSql { Kind: TransactionKind.Commit }:
                 return _readOnly is null ? SqlErrors.Error("cannot commit - no transaction is active") : await CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -182,7 +183,7 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
 
         // A failed statement undoes only itself, as in SQLite: this request's storage transaction (which a refused write
         // may leave uncommittable) is dropped, and the next statement replays the log without it.
-        var outcome = await RunAsync(_request!, statement, command, cancellationToken).ConfigureAwait(false);
+        var outcome = await RunAsync(_request!, statement, command, _keys, cancellationToken).ConfigureAwait(false);
         if (outcome is not SqlResult result)
         {
             await EndRequestAsync().ConfigureAwait(false);
@@ -222,7 +223,7 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
         foreach (var (command, hash) in _log)
         {
             var replayed = SqlParse.Parse(command.Sql) is ParsedSql statement
-                ? await RunAsync(request, statement, command, cancellationToken).ConfigureAwait(false)
+                ? await RunAsync(request, statement, command, _keys, cancellationToken).ConfigureAwait(false)
                 : SqlErrors.Error("the statement no longer parses");
             if (replayed is not SqlResult result || !Hash(result).AsSpan().SequenceEqual(hash))
             {
@@ -269,7 +270,8 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
 
         await using (request.ConfigureAwait(false))
         {
-            var outcome = await RunAsync(request, statement, command, cancellationToken, describe).ConfigureAwait(false);
+            // Autocommit keys are never replayed: a throwaway log.
+            var outcome = await RunAsync(request, statement, command, new SqlKeys(), cancellationToken, describe).ConfigureAwait(false);
             return outcome is SqlResult && request.Lease is { } lease && await CommitAsync(request, lease, cancellationToken).ConfigureAwait(false) is SqlError failed
                 ? failed
                 : outcome;
@@ -315,7 +317,8 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
         }
     }
 
-    private async ValueTask<SqlOutcome> RunAsync(Request request, ParsedSql statement, SqlCommand command, CancellationToken cancellationToken, bool describe = false)
+    private async ValueTask<SqlOutcome> RunAsync(
+        Request request, ParsedSql statement, SqlCommand command, SqlKeys keys, CancellationToken cancellationToken, bool describe = false)
     {
         // Each statement has its own work budget; a request's statements (and a replay) also share one deadline, so a
         // request that holds the writer cannot hold it for 256 budgets.
@@ -326,7 +329,7 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
 
         try
         {
-            return await executor.ExecuteAsync(request.Transaction, statement, command, _keys, request.Tally, describe, cancellationToken).ConfigureAwait(false);
+            return await executor.ExecuteAsync(request.Transaction, statement, command, keys, request.Tally, describe, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (Failure(error) is { } failure)
         {

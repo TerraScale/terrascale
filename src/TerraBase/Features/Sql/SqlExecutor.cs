@@ -426,7 +426,8 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
 
     private static SqlColumnDefinition Column(SqlTableDefinition table, string name) => table.Columns.First(column => column.Name == name);
 
-    // The document id: a single key's canonical integer or text, a composite key's JSON array, or a new ULID.
+    // The document id: a single INTEGER or TEXT key's canonical value, otherwise the JSON array of the key values, or a
+    // new ULID without a key.
     private static string? Key(SqlTableDefinition table, Dictionary<string, SqlValue> values)
     {
         string id;
@@ -434,8 +435,9 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         {
             id = EntityIds.New().ToString();
         }
-        else if (table.PrimaryKey is [var single])
+        else if (table.PrimaryKey is [var single] && Column(table, single).Affinity is SqlAffinity.Integer or SqlAffinity.Text)
         {
+            // INTEGER and TEXT affinity keep one storage class, so the value alone is the id.
             var value = values[single];
             id = value.Kind switch
             {
@@ -446,11 +448,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         }
         else
         {
-            if (table.PrimaryKey.Any(column => values[column].Kind == SqlValueKind.Real))
-            {
-                return null;
-            }
-
+            // Other affinities hold 1 and '1' as different keys: the JSON array of the values keeps their type.
             using var buffer = new MemoryStream();
             using (var writer = new Utf8JsonWriter(buffer))
             {

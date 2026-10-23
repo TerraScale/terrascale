@@ -95,6 +95,34 @@ public sealed class SqlWriteTests
     }
 
     [Test]
+    public async Task Keys_keep_their_type_outside_integer_and_text_affinity_and_generated_keys_stay_fresh()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api, "CREATE TABLE loose (k PRIMARY KEY, v TEXT)", "CREATE TABLE gen (id INTEGER PRIMARY KEY, v TEXT)");
+        await using var session = SqlHarness.Open(api, canWrite: true);
+
+        await OneAsync(api, new { sql = "INSERT INTO loose VALUES (1, 'integer')" });
+        var text = await OneAsync(api, new { sql = "INSERT INTO loose VALUES ('1', 'text')" });
+        await OneAsync(api, new { sql = "REPLACE INTO loose VALUES ('1', 'text again')" });
+        // Generated keys of autocommit inserts are not logged, so a later transaction never reuses them.
+        for (var i = 0; i < 10; i++)
+        {
+            await Assert.That(SqlHarness.Code(await session.ExecuteAsync(SqlHarness.Command("INSERT INTO gen (v) VALUES ('auto')"), CancellationToken.None))).IsNull();
+        }
+
+        await session.ExecuteAsync(SqlHarness.Command("BEGIN"), CancellationToken.None);
+        var inTransaction = await session.ExecuteAsync(SqlHarness.Command("INSERT INTO gen (v) VALUES ('tx')"), CancellationToken.None);
+        var committed = await session.ExecuteAsync(SqlHarness.Command("COMMIT"), CancellationToken.None);
+
+        await Assert.That(text.GetProperty("rows_affected").GetInt64()).IsEqualTo(1);
+        await Assert.That(await RowsAsync(api, "SELECT k, typeof(k), v FROM loose ORDER BY v"))
+            .IsEqualTo("""[[1,"integer","integer"],["1","text","text again"]]""");
+        await Assert.That(SqlHarness.Code(inTransaction)).IsNull();
+        await Assert.That(SqlHarness.Code(committed)).IsNull();
+        await Assert.That(await RowsAsync(api, "SELECT count(*) FROM gen")).IsEqualTo("[[11]]");
+    }
+
+    [Test]
     public async Task A_statement_writing_more_than_1024_rows_is_too_big_and_writes_nothing()
     {
         await using var api = await DocumentApi.StartAsync();

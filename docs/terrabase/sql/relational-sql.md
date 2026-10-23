@@ -59,7 +59,8 @@ are refused.
 
 - Single-column primary key: `INTEGER` → canonical decimal (`42`), `TEXT` → the text. Users choose their keys; nothing
   forces ULIDs (id contract: 1–256 characters, UTF-8, no control characters).
-- Composite primary key: the JSON array of the key values (`[1,"a"]`).
+- Composite primary key, or a single key column of another affinity (none, `NUMERIC`, `REAL`): the JSON array of the
+  key values (`[1,"a"]`, `[1]`, `["1"]`), so `1` and `'1'` stay different keys where SQLite keeps them apart (SQ1-e6).
 - No primary key: a generated ULID, invisible to SQL.
 - `INTEGER PRIMARY KEY` omitted on insert: a generated positive integer below 2^53 (milliseconds since 2026-01-01
   times 4096 plus 12 random bits). A local collision retries; two regions inserting the same generated key in the same
