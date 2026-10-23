@@ -231,26 +231,26 @@ internal sealed partial class UsageMeter
 
     private void Record(TenantContext database, UsageReading reading, DateTimeOffset? at = null) => Record(database, at, reading);
 
-    // Readings of one minute in one update; invalid and zero ones are left out.
+    // Valid, non-zero readings of one minute: additive ones buffered, those with replication state straight to the pending counts.
     private void Record(TenantContext database, DateTimeOffset? at, params ReadOnlySpan<UsageReading> readings)
     {
-        Dictionary<string, UsageReading>? meters = null;
         foreach (var reading in readings)
         {
-            if (ValidDimension(reading.Dimension) && !reading.IsZero)
+            if (!ValidDimension(reading.Dimension) || reading.IsZero)
             {
-                (meters ??= [with(StringComparer.Ordinal)])[reading.Dimension.Key] = reading;
+                continue;
             }
-        }
 
-        if (meters is null)
-        {
-            return;
-        }
+            if (reading.State is null)
+            {
+                Buffer(database, at, reading);
+                continue;
+            }
 
-        var minute = (at ?? time.GetUtcNow()).ToUnixTimeSeconds() / 60;
-        var key = new UsageKey(DatabaseOwner.Of(database), minute / 60, UsageScope.Minute, (int)(minute % 60));
-        Add(key, new(0, 0, meters));
+            var minute = (at ?? time.GetUtcNow()).ToUnixTimeSeconds() / 60;
+            var key = new UsageKey(DatabaseOwner.Of(database), minute / 60, UsageScope.Minute, (int)(minute % 60));
+            Add(key, new(0, 0, new Dictionary<string, UsageReading>(StringComparer.Ordinal) { [reading.Dimension.Key] = reading }));
+        }
     }
 
     private void AddMeasurements(UsageKey key, OpCounts counts)

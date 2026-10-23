@@ -145,7 +145,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
     public void RecordRead(TenantContext database, long units)
     {
-        Add(new(DatabaseOwner.Of(database), CurrentHour()), new OpCounts(1, 0, ReadUnits: units));
+        Buffer(new(DatabaseOwner.Of(database), CurrentHour()), 1, 0, units, 0);
         CountMonth(database, units);
         RecordOperation(database, "read", 1);
         stats.Read(database);
@@ -153,13 +153,20 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
     public void RecordWrites(TenantContext database, int writes, long units)
     {
-        Add(new(DatabaseOwner.Of(database), CurrentHour()), new OpCounts(0, writes, WriteUnits: units));
+        Buffer(new(DatabaseOwner.Of(database), CurrentHour()), 0, writes, 0, units);
         CountMonth(database, units);
         stats.Wrote(database, writes);
     }
 
     /// <summary>Databases with counts in memory.</summary>
-    internal int PendingDatabases => _pending.Count;
+    internal int PendingDatabases
+    {
+        get
+        {
+            Publish();
+            return _pending.Count;
+        }
+    }
 
     /// <summary>Adds counts.</summary>
     public void Add(UsageKey key, OpCounts counts)
@@ -236,6 +243,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            Publish();
             proceed?.Invoke();
             if (_inDoubt is not null)
             {
@@ -293,6 +301,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            Publish();
             await FlushLockedAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -473,6 +482,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            Publish();
             if (await SettleAsync(cancellationToken).ConfigureAwait(false) is Unavailable refused)
             {
                 return refused;
