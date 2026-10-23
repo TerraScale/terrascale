@@ -21,6 +21,7 @@
 - [Customer dashboard and application database workflow](https://docs.terrascale.tech/guides/dashboard)
 - [Connect MCP clients with a personal access token and discover permitted tools](https://docs.terrascale.tech/guides/mcp)
 - [Deletion, changes-feed and backup retention timelines](https://docs.terrascale.tech/legal/data-deletion)
+- [No SLA during Public Alpha; measured uptime and publication prerequisites](https://docs.terrascale.tech/legal/sla)
 - [Public always-on operating contract and secret-store delivery](https://docs.terrascale.tech/guides/zero-configuration)
 - [Write durability and multi-region behavior](https://docs.terrascale.tech/concepts/replication)
 - [Shape reads and legacy live-update compatibility](https://docs.terrascale.tech/concepts/sync)
