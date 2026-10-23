@@ -435,7 +435,7 @@ internal sealed partial class SqliteStorageTransaction(
         ArgumentNullException.ThrowIfNull(query);
         return await RunAsync(() => WithQueryBudget(() =>
         {
-            if (query.Sort.Count > 0 && !query.Sort[0].Path.IsId)
+            if ((query.Sort.Count > 0 && (!query.Sort[0].Path.IsId || query.Sort[0].Score)) || Searches(query.Filter).Any())
             {
                 CheckSortBudget(query.Collection, query.MaxBytes, cancellationToken, observation);
             }
@@ -637,7 +637,7 @@ internal sealed partial class SqliteStorageTransaction(
     {
         // Compiled per request so every new filter shape does not grow the session's command cache.
         using var command = Uncached(query.Collection);
-        command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(query.Collection)).Compile(query, observation is not null);
+        command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(query.Collection), SearchTables(query.Collection, query.Filter, cancellationToken)).Compile(query, observation is not null);
         _queryBudget!.Charge(command.CommandText);
         if (query.Near is not { } near)
         {
@@ -709,7 +709,7 @@ internal sealed partial class SqliteStorageTransaction(
             // A client count examines the collection's state rows: this transaction's writes need theirs.
             FlushStates();
             using var command = Uncached(collection);
-            command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(collection)).CompileCount(filter, maxExamined, observation is not null);
+            command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(collection), SearchTables(collection, filter, cancellationToken)).CompileCount(filter, maxExamined, observation is not null);
             _queryBudget!.Charge(command.CommandText);
             CountRead("query");
             using var reader = command.ExecuteReader();

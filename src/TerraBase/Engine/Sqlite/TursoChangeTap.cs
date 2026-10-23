@@ -404,7 +404,7 @@ internal sealed class TursoChangeTap : IWalTap
         if (type == 1 && image is not null && SqliteRecord.Decode(image) is [string kind, string name, _, _, var sql, ..])
         {
             schema[rowid] = (kind, name);
-            if (sql is string statement)
+            if (sql is string statement && !name.StartsWith("fts_dir_tb_text_", StringComparison.Ordinal))
             {
                 ChangeLog.WriteCreate(buffer, statement);
             }
@@ -414,7 +414,10 @@ internal sealed class TursoChangeTap : IWalTap
 
         if (type == -1 && schema.Remove(rowid, out var dropped))
         {
-            ChangeLog.WriteDrop(buffer, dropped.Type, dropped.Name);
+            if (!dropped.Name.StartsWith("fts_dir_tb_text_", StringComparison.Ordinal))
+            {
+                ChangeLog.WriteDrop(buffer, dropped.Type, dropped.Name);
+            }
             return true;
         }
 
@@ -506,7 +509,8 @@ internal static class ChangeLog
     /// <summary>Tables the engine maintains itself: their changes are not logged and a restore never writes them.</summary>
     public static bool EngineTable(string table) =>
         table.StartsWith("sqlite_", StringComparison.Ordinal) || table.StartsWith("turso_", StringComparison.Ordinal)
-        || table.StartsWith("__turso_", StringComparison.Ordinal);
+        || table.StartsWith("__turso_", StringComparison.Ordinal)
+        || table.StartsWith("fts_dir_tb_text_", StringComparison.Ordinal);
 
     public static void WriteUpsert(IBufferWriter<byte> buffer, string table, long rowid, byte[] record)
     {

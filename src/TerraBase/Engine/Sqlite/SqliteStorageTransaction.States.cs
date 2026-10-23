@@ -157,6 +157,11 @@ internal sealed partial class SqliteStorageTransaction
     // DELETE: the change feed reads after-images only.
     private void PutRow(string collection, string id, string? body)
     {
+        if (!store.IsSystem && !IsMetadata(collection))
+        {
+            PutTextRows(collection, id, body);
+        }
+
         if (body is null)
         {
             TableCommand(store.IsSystem ? SqliteStatements.SystemDeleteRow : SqliteStatements.DeleteRow, collection, id).ExecuteNonQuery();

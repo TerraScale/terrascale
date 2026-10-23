@@ -10,9 +10,10 @@ namespace TerraBase.Features.Management.Indexes;
 /// <param name="Collection">Indexed collection.</param>
 /// <param name="Fields">Key fields in order.</param>
 /// <param name="State">Always <c>active</c>: indexes are built when created.</param>
-public sealed record IndexBody(string Name, string Collection, IReadOnlyList<string> Fields, string State)
+/// <param name="Kind"><c>btree</c> or <c>text</c>.</param>
+public sealed record IndexBody(string Name, string Collection, IReadOnlyList<string> Fields, string State, string Kind = "btree")
 {
-    internal static IndexBody From(IndexDefinition index) => new(index.Name, index.Collection, [.. index.Fields.Select(field => field.Path)], "active");
+    internal static IndexBody From(IndexDefinition index) => new(index.Name, index.Collection, [.. index.Fields.Select(field => field.Path)], "active", index.Kind);
 }
 
 /// <summary>The indexes of a database.</summary>
@@ -23,7 +24,8 @@ public sealed record IndexListBody(IReadOnlyList<IndexBody> Items);
 /// <param name="Collection">Collection to index.</param>
 /// <param name="Fields">1 to 4 key fields.</param>
 /// <param name="Name">Optional name; derived from the collection and fields when omitted.</param>
-public sealed record CreateIndexRequest(string? Collection, IReadOnlyList<string>? Fields, string? Name);
+/// <param name="Kind"><c>btree</c> (default) or <c>text</c>.</param>
+public sealed record CreateIndexRequest(string? Collection, IReadOnlyList<string>? Fields, string? Name, string? Kind = null);
 
 /// <summary>A single-field index the observed queries would benefit from.</summary>
 /// <param name="Id"><c>collection:field</c>.</param>

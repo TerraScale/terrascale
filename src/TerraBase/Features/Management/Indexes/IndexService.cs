@@ -26,7 +26,7 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
         WriteAsync<CreateIndexResult>(database, new NotFound(), async transaction =>
         {
             var indexes = await transaction.ListIndexesAsync(cancellationToken).ConfigureAwait(false);
-            if (indexes.Any(other => other.Name == index.Name || (other.Collection == index.Collection && other.Fields.SequenceEqual(index.Fields)))
+            if (indexes.Any(other => other.Name == index.Name || (other.Kind == index.Kind && other.Collection == index.Collection && other.Fields.SequenceEqual(index.Fields)))
                 || !await transaction.CreateIndexAsync(index, cancellationToken).ConfigureAwait(false))
             {
                 return IndexErrors.Exists;
@@ -55,7 +55,7 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
             };
         }
 
-        var leading = (await ListIndexesAsync(database, cancellationToken).ConfigureAwait(false))
+        var leading = (await ListIndexesAsync(database, cancellationToken).ConfigureAwait(false)).Where(index => index.Kind == "btree")
             .Select(index => (index.Collection, index.Fields[0].Path))
             .ToHashSet();
         return new IndexRecommendationListBody([.. usages
@@ -113,9 +113,9 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
     /// <c>people_ua__email_…</c> and <c>people__a_uemail_…</c>. Distinct definitions get distinct names; only a name cut to
     /// 63 characters (the cut keeps room for the fields) relies on the hash alone.
     /// </summary>
-    internal static string DefaultName(string collection, IEnumerable<DocumentField> fields)
+    internal static string DefaultName(string collection, IEnumerable<DocumentField> fields, string kind = "btree")
     {
-        string[] parts = [collection, .. fields.Select(field => field.Path)];
+        string[] parts = [collection, .. fields.Select(field => field.Path), .. kind == "text" ? new[] { "text" } : Array.Empty<string>()];
         var joined = string.Join('_', parts);
         if (!parts.Any(NotNameCharacter().IsMatch) && IsValidName(joined))
         {
@@ -160,7 +160,7 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
 
     // The index of the usage's collection whose first key is the usage's field.
     private static IndexDefinition? Leading(IReadOnlyList<IndexDefinition> indexes, QueryFieldUsage usage) =>
-        indexes.FirstOrDefault(index => index.Collection == usage.Collection && index.Fields[0].Path == usage.Field);
+        indexes.FirstOrDefault(index => index.Kind == "btree" && index.Collection == usage.Collection && index.Fields[0].Path == usage.Field);
 
     private async ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(TenantContext database, CancellationToken cancellationToken)
     {

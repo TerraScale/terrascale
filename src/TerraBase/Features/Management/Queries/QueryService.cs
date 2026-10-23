@@ -197,7 +197,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
         Collect(query.Filter, filtered);
         var sorted = query.Order.Select(order => order.Field).ToHashSet();
         return [.. filtered.Concat(sorted).Distinct()
-            .Where(field => !field.IsMetadata && !indexes.Any(index => index.Collection == query.Collection && index.Fields[0] == field))
+            .Where(field => !field.IsMetadata && !indexes.Any(index => index.Kind == "btree" && index.Collection == query.Collection && index.Fields[0] == field))
             .Select(field => new IndexSuggestion(field.Path, (filtered.Contains(field), sorted.Contains(field)) switch
             {
                 (true, true) => "filtered and sorted without an index",

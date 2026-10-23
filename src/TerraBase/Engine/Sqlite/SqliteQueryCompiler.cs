@@ -20,7 +20,8 @@ namespace TerraBase.Engine.Sqlite;
 /// range, because the Turso planner uses an expression index for neither <c>IN</c> nor a prefix test
 /// (docs/terrabase/turso-spike.md). Sorts order by JSON type first, so an index serves filters, not sorts.
 /// </remarks>
-internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, RowSource rows)
+internal sealed class SqliteQueryCompiler(
+    SqliteParameterCollection parameters, RowSource rows, IReadOnlyDictionary<SearchFilter, string>? searches = null)
 {
     // Sort rank by JSON type: missing < null < false < true < numbers < strings < arrays/objects.
     private const string RankCases =
@@ -28,6 +29,7 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
         "WHEN 'text' THEN 5 WHEN 'array' THEN 6 WHEN 'object' THEN 6 ELSE 0 END";
 
     private readonly Dictionary<string, string> _paths = [];
+    private readonly Dictionary<SearchFilter, string> _terms = [];
 
     /// <summary>
     /// Columns: id, version, JSON byte length, then per sort key its type rank and scalar value.
@@ -42,13 +44,13 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
         foreach (var (key, index) in query.Sort.Select((key, index) => (key, index)))
         {
             var ordinal = index.ToString(CultureInfo.InvariantCulture);
-            var (rank, value) = (Rank(key.Path), Scalar(key.Path));
+            var (rank, value) = key.Score ? ("4", Score()) : (Rank(key.Path), Scalar(key.Path));
             columns.AppendFormat(", {0} AS k{1}r, {2} AS k{1}v", rank, ordinal, value);
             keys.Add((rank, key.Descending));
             keys.Add((value, key.Descending));
         }
 
-        var leadingId = query.Sort.Count > 0 && query.Sort[0].Path.IsId;
+        var leadingId = query.Sort.Count > 0 && query.Sort[0].Path.IsId && !query.Sort[0].Score;
         var after = leadingId && query.After is { } position
             ? $"id {(query.Sort[0].Descending ? "<" : ">")} {Parameter(position.Id)}"
             : After(keys, query.After);
@@ -141,8 +143,34 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
         ExistsFilter exists => exists.Path.IsId ? "1" : $"({Type(exists.Path)} IS NOT NULL)",
         PrefixFilter prefix => Prefix(prefix),
         ContainsFilter contains => Contains(contains),
+        SearchFilter search => Search(search),
         _ => throw new ArgumentOutOfRangeException(nameof(filter), filter.GetType().Name, "unknown filter"),
     };
+
+    private string Search(SearchFilter search)
+    {
+        var table = searches![search];
+        var terms = Terms(search);
+        return $"id IN (SELECT id FROM {table} WHERE fts_match(text, {terms}) AND tb_qos_scan(octet_length(text)))";
+    }
+
+    private string Score()
+    {
+        var search = searches!.Single();
+        var terms = Terms(search.Key);
+        return $"coalesce((SELECT fts_score(text, {terms}) FROM {search.Value} WHERE fts_match(text, {terms}) AND {search.Value}.id = {rows.From}.id AND tb_qos_scan(octet_length(text))), 0.0)";
+    }
+
+    private string Terms(SearchFilter search)
+    {
+        if (!_terms.TryGetValue(search, out var parameter))
+        {
+            parameter = Parameter(search.Terms);
+            _terms[search] = parameter;
+        }
+
+        return parameter;
+    }
 
     private string Compare(CompareFilter compare)
     {
