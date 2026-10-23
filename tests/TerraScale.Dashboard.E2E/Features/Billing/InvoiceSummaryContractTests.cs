@@ -4,7 +4,7 @@ using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
 
-public sealed class InvoiceSummaryTests
+public sealed class InvoiceSummaryContractTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 23, 18, 0, 0, TimeSpan.Zero);
 
