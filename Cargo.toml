@@ -5,7 +5,7 @@ edition = "2021"
 description = "Typed Rust client for TerraBase documents and TerraScale authentication"
 license = "Apache-2.0"
 repository = "https://github.com/TerraScale/ts-rust"
-exclude = ["AGENTS.md", "CLAUDE.md"]
+exclude = ["AGENTS.md", "CLAUDE.md", ".agents/"]
 
 [features]
 default = []
