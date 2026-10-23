@@ -4,9 +4,10 @@ public static class AccountRequest
 {
     public static async Task<AccountContext?> RequireAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)
     {
-        var session = await sessions.ReadAsync(http);
-        if (session is null) return null;
-        return await accounts.GetContextAsync(session, http.RequestAborted, Scope(http, "organizationId"), Scope(http, "projectId"));
+        // The account context loads while ts-auth confirms the session; it is returned only for an active session.
+        var read = await sessions.ReadWithAsync(http, async session =>
+            await accounts.GetContextAsync(session, http.RequestAborted, Scope(http, "organizationId"), Scope(http, "projectId")));
+        return read?.Value;
     }
 
     private static string? Scope(HttpContext http, string name)

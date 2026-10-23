@@ -40,13 +40,22 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
         });
     }
 
-    public async Task<SessionRecord?> ReadAsync(HttpContext context)
+    public async Task<SessionRecord?> ReadAsync(HttpContext context) => (await ReadWithAsync<object?>(context, _ => Task.FromResult<object?>(null)))?.Session;
+
+    // Starts alongside(session) while ts-auth confirms the session is still active; its result is used
+    // only once that check passes. Each ts-auth call alongside makes is authorized by the same token.
+    public async Task<(SessionRecord Session, T Value)?> ReadWithAsync<T>(HttpContext context, Func<SessionRecord, Task<T>> alongside)
     {
         var token = context.Request.Cookies[Cookie];
         if (token is not { Length: 64 } || token.Any(character => !char.IsAsciiHexDigitLower(character))) return null;
-        var record = await ResolveAsync("sessions", Key(token), context.RequestAborted);
-        if (record is null) context.Response.Cookies.Delete(Cookie);
-        return record;
+        Task<T>? work = null;
+        var record = await ResolveAsync("sessions", Key(token), context.RequestAborted, alongside: session => work = alongside(session));
+        if (record is null)
+        {
+            context.Response.Cookies.Delete(Cookie);
+            return null;
+        }
+        return (record, await work!);
     }
 
     public async Task<SessionRecord?> ReadForPrivilegeAsync(HttpContext context)
@@ -117,7 +126,8 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
         return result.OrderByDescending(item => item.ExpiresAt).ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
     }
 
-    private async Task<SessionRecord?> ResolveAsync(string collection, string id, CancellationToken cancellationToken, bool forceRefresh = false, string? initialAccessToken = null)
+    private async Task<SessionRecord?> ResolveAsync(string collection, string id, CancellationToken cancellationToken, bool forceRefresh = false, string? initialAccessToken = null,
+        Func<SessionRecord, Task>? alongside = null)
     {
         var credentials = await identity.ReadAsync(cancellationToken);
         var waitDeadline = System.Diagnostics.Stopwatch.StartNew();
@@ -209,8 +219,12 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
                 { return null; }
                 record = refreshed;
             }
-            if (!await auth.IsActiveAsync(record, cancellationToken))
+            var active = auth.IsActiveAsync(record, cancellationToken);
+            var work = alongside?.Invoke(record);
+            if (!await active)
             {
+                // Work for a session ts-auth no longer accepts is discarded, failures included.
+                if (work is not null) _ = work.ContinueWith(static task => _ = task.Exception, TaskScheduler.Default);
                 var rejected = await state.GetAsync(collection, id, cancellationToken);
                 if (rejected is not null)
                 {
