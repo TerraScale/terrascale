@@ -96,7 +96,7 @@ public sealed class TsHealthBoundaryRegressionTests20261013
         {
             await health.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await AssertProbeAsync(server.Client, "/healthz", HttpStatusCode.OK, "ok");
-            clock.Advance(TimeSpan.FromSeconds(2));
+            clock.Advance(TimeSpan.FromSeconds(8));
             await health.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await Assert.That(await logs.Failed.Task.WaitAsync(TimeSpan.FromSeconds(30))).Contains("timed out");
             await AssertProbeAsync(server.Client, "/readyz", HttpStatusCode.ServiceUnavailable, "not_ready");

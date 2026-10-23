@@ -33,14 +33,15 @@ public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing 
 public sealed record ReadinessObservation(bool Ready, string? Region, string? Error = null);
 
 /// <summary>
-/// Evaluates readiness on a background loop every five seconds, bounds each evaluation to two
-/// seconds and serves the latest result to <c>/readyz</c> without running checks. A result older
+/// Evaluates readiness on a background loop five seconds after each evaluation ends, bounds each
+/// evaluation to eight seconds and serves the latest result to <c>/readyz</c> without running checks. A result older
 /// than fifteen seconds means the loop is stuck, so readiness fails.
 /// </summary>
 public sealed class ReadinessProbe(IStorageHealth health, TimeProvider clock, ILogger<ReadinessProbe> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
+    // The probe's conditional create and delete each commit across regions; on gru they take up to ~2.5 s apiece.
+    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan StaleAfter = TimeSpan.FromSeconds(15);
     private const string TimedOut = "timed out";
     private const string Stale = "readiness evaluation is stale";
@@ -99,12 +100,13 @@ public sealed class ReadinessProbe(IStorageHealth health, TimeProvider clock, IL
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(Interval, clock);
-        do
+        while (true)
         {
             await this.ProbeAsync(new CancellationTokenSource(ProbeTimeout, clock));
+            // Measured from the end of a pass: the deadline outlasts the interval, and a fixed-rate tick
+            // would start the next pass before a timed-out check has unwound.
+            await Task.Delay(Interval, clock, stoppingToken);
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
     private async Task<ReadinessObservation> ProbeAsync(CancellationTokenSource deadline)

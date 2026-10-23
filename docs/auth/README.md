@@ -385,8 +385,8 @@ SDK-pinned binary. `/readyz` checks the existing `uniques`,
 `invitations`, `audit_events` and `mfa_credentials` collections, then creates, reads
 and conditionally deletes a synthetic document in `storage_health`. It returns
 200 only on success, otherwise 503, without provisioning, repair or in-memory
-fallback. A background check runs every five seconds with a two-second
-deadline, and `/readyz` answers its latest result; a result older than fifteen
+fallback. A background check runs five seconds after the previous one ends,
+with an eight-second deadline, and `/readyz` answers its latest result; a result older than fifteen
 seconds is not ready. Collection checks use the paginated catalog (one request
 for the normal 21 collections), rather than a concurrent request per collection
 against the shared gru authority. The synthetic conditional write/read/delete
@@ -498,8 +498,8 @@ rotation.
   checks the configured database, required collections and synthetic
   create/read/conditional-delete access through Documents v1, this
   replica's startup signing-ring bootstrap and the ring's public metadata. Results are
-  answered from a background check per process, run every five seconds with a
-  two-second deadline. Both JSON bodies include the .NET service `version`;
+  answered from a background check per process, run five seconds after the previous one ends,
+  with an eight-second deadline. Both JSON bodies include the .NET service `version`;
   readiness omits `region` when unknown. Prometheus `GET /metrics` is served
   only on the metrics listener (port 9092), never on the public port 8090.
 

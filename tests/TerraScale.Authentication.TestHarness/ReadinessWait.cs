@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace TerraScale.Authentication.Tests;
 
-/// <summary>Waits across the readiness loop's passes, which run every five seconds.</summary>
+/// <summary>Waits across the readiness loop's passes, which run five seconds after the previous one ends.</summary>
 public static class ReadinessWait
 {
     /// <summary>Long enough for one full pass after a change to finish.</summary>
