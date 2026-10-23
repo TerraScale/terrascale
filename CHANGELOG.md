@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — collection TTL and vector near sort
+
+`collection.putTtl(path)`, `getTtl()` and `deleteTtl()` call
+`PUT/GET/DELETE .../collections/{collection}/ttl` and return `{ path }`
+(`null` when unset). `query({ sort: [{ near: { path, vector, metric } }] })`
+sorts by vector distance and each item carries `distance`.
+
 ## Unreleased — database export
 
 `db.export({ after, signal })` streams TerraBase's

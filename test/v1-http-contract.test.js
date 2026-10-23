@@ -312,3 +312,63 @@ test.each(["document", "collection", "schema", "database"])("does not replay bod
   expect(requests).toHaveLength(1);
   expect(requests[0]?.body).toBe("");
 });
+
+describe("collection TTL", () => {
+  test("putTtl, getTtl and deleteTtl send the documented method, path and body", async () => {
+    const { db, requests } = await fixture((request, response) =>
+      json(response, { path: request.method === "PUT" ? JSON.parse(request.body).path : request.method === "GET" ? "/expiresAt" : null }));
+    const users = db.collection("users");
+    expect(await users.putTtl("/expiresAt")).toEqual({ path: "/expiresAt" });
+    expect(await users.getTtl()).toEqual({ path: "/expiresAt" });
+    expect(await users.deleteTtl()).toEqual({ path: null });
+    expect(requests.map(request => [request.method, request.url.pathname, request.body, request.headers["content-type"]])).toEqual([
+      ["PUT", `${prefix}/collections/users/ttl`, '{"path":"/expiresAt"}', "application/json"],
+      ["GET", `${prefix}/collections/users/ttl`, "", undefined],
+      ["DELETE", `${prefix}/collections/users/ttl`, "", undefined],
+    ]);
+  });
+
+  test.each(["", "expiresAt", `/${Array(17).fill("a").join("/")}`])("rejects TTL path %j before HTTP", async path => {
+    const { db, requests } = await fixture((_request, response) => json(response, { path }));
+    await expect(db.collection("users").putTtl(path)).rejects.toThrow(TypeError);
+    expect(requests).toHaveLength(0);
+  });
+});
+
+describe("vector near sort", () => {
+  test("sends the exact near query and decodes distance", async () => {
+    const { db, requests } = await fixture((_request, response) => response.writeHead(200, { "content-type": "application/json" })
+      .end(`{"items":[${JSON.stringify(document("a")).slice(0, -1)},"distance":0.125},${JSON.stringify(document("b"))}],"next_cursor":null}`));
+    const page = await db.collection("docs").query({
+      filter: { eq: ["/kind", "doc"] },
+      sort: [{ near: { path: "/embedding", vector: [0.1, 0.2], metric: "cosine" } }],
+      limit: 10,
+    });
+    expect(requests[0]?.body).toBe('{"filter":{"eq":["/kind","doc"]},"sort":[{"near":{"path":"/embedding","vector":[0.1,0.2],"metric":"cosine"}}],"limit":10}');
+    expect(page.items[0]).toEqual({ ...document("a"), distance: 0.125 });
+    expect(page.items[1]).not.toHaveProperty("distance");
+    expect(page.nextCursor).toBeNull();
+  });
+
+  test.each([
+    { sort: [{ near: { path: "/e", vector: [1] } }, { path: "/a" }] },
+    { sort: [{ near: { path: "/e", vector: [1] }, order: "asc" }] },
+    { sort: [{ near: { path: "/e", vector: [1] } }], limit: 101 },
+    { sort: [{ near: { path: "/e", vector: [1] } }], cursor: "next" },
+    { sort: [{ near: { path: "/e", vector: [] } }] },
+    { sort: [{ near: { path: "/e", vector: [1e39] } }] },
+    { sort: [{ near: { path: "/e", vector: [Number.NaN] } }] },
+    { sort: [{ near: { path: "/e", vector: [0, 0] } }] },
+    { sort: [{ near: { path: "/e", vector: [1], metric: "dot" } }] },
+  ])("rejects invalid near query %j before HTTP", async query => {
+    const { db, requests } = await fixture((_request, response) => json(response, { items: [], next_cursor: null }));
+    await expect(db.collection("docs").query(/** @type {any} */ (query))).rejects.toThrow(TypeError);
+    expect(requests).toHaveLength(0);
+  });
+
+  test("an all-zero l2 vector is allowed", async () => {
+    const { db, requests } = await fixture((_request, response) => json(response, { items: [], next_cursor: null }));
+    await db.collection("docs").query({ sort: [{ near: { path: "/e", vector: [0, 0], metric: "l2" } }] });
+    expect(requests).toHaveLength(1);
+  });
+});

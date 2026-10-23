@@ -1,6 +1,7 @@
 import { requireId } from "../ids.js";
 import { array, malformed, object, string } from "./decode.js";
 import { requireName } from "./ids.js";
+import { isJsonPointer } from "./filter.js";
 import { isJsonObject, stringifyExactJson } from "./json.js";
 /**
  * @import { JsonInputObject, JsonObject, JsonValue } from "./json.js"
@@ -26,6 +27,7 @@ import { isJsonObject, stringifyExactJson } from "./json.js";
 /** @typedef {{ readonly after?: string | undefined; readonly limit?: number | undefined }} V1DatabaseListRequest */
 /** @typedef {{ readonly items: readonly V1ManagedDatabase[]; readonly next: string | null }} V1DatabasePage */
 /** @typedef {{ readonly schema: JsonObject | boolean | null; readonly dialect?: string | null | undefined }} V1CollectionSchema */
+/** The expiry member, or null when documents never expire. @typedef {{ readonly path: string | null }} V1CollectionTtl */
 
 /** @param {unknown} value @param {readonly string[]} allowed @returns {void} */
 function members(value, allowed) {
@@ -207,4 +209,32 @@ export async function putCollectionSchema(transport, params, schema, options = {
 export async function deleteCollectionSchema(transport, params, options = {}) {
   mutationOptions(options);
   return collectionSchema((await transport.call("deleteCollectionSchema", params, { signal: options.signal })).value);
+}
+
+/** @param {JsonValue | undefined} value @returns {V1CollectionTtl} */
+function collectionTtl(value) {
+  const path = object(value, "collection TTL").path;
+  if (path !== null && typeof path !== "string") malformed("TTL path");
+  return Object.freeze({ path });
+}
+
+/** @param {V1Transport} transport @param {Readonly<Record<string, string>>} params @param {V1RequestOptions} [options] @returns {Promise<V1CollectionTtl>} */
+export async function getCollectionTtl(transport, params, options = {}) {
+  return collectionTtl((await transport.call("getCollectionTtl", params, { signal: options.signal })).value);
+}
+
+/** @param {V1Transport} transport @param {Readonly<Record<string, string>>} params @param {string} path @param {V1RequestOptions} [options] @returns {Promise<V1CollectionTtl>} */
+export async function putCollectionTtl(transport, params, path, options = {}) {
+  mutationOptions(options);
+  if (!isJsonPointer(path))
+    throw new TypeError("A TTL path is a JSON Pointer of 1 to 16 object members.");
+  return collectionTtl((await transport.call("putCollectionTtl", params, {
+    body: stringifyExactJson({ path }, "collection TTL"), signal: options.signal,
+  })).value);
+}
+
+/** @param {V1Transport} transport @param {Readonly<Record<string, string>>} params @param {V1RequestOptions} [options] @returns {Promise<V1CollectionTtl>} */
+export async function deleteCollectionTtl(transport, params, options = {}) {
+  mutationOptions(options);
+  return collectionTtl((await transport.call("deleteCollectionTtl", params, { signal: options.signal })).value);
 }
