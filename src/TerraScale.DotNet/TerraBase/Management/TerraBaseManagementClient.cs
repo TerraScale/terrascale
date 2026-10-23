@@ -17,7 +17,7 @@ public sealed record TerraBaseManagementClientOptions
 
     /// <summary>
     /// A region id such as <c>gru</c>: every request is pinned to that region (<c>X-TerraScale-Region-Pin</c>) and, unless
-    /// BaseAddress or EndpointResolver is set, sent to <c>https://&lt;region&gt;.api.terrascale.tech</c>. Another region
+    /// BaseAddress or EndpointResolver is set, sent to <c>https://api.terrascale.tech</c>. Another region
     /// answers <see cref="TerraBaseWrongRegionException"/> instead of serving it. Unset, requests use the configured origin without a region pin.
     /// </summary>
     public string? Region { get; init; }

@@ -53,7 +53,7 @@ public sealed class TerraBaseProjectContractTests
         {
             await Assert.That(request.Headers.Authorization!.Scheme).IsEqualTo("Bearer");
             await Assert.That(request.Headers.Authorization.Parameter).IsEqualTo("project-user-token");
-            await Assert.That(request.RequestUri!.Host).IsEqualTo("sjc.api.terrascale.tech");
+            await Assert.That(request.RequestUri!.Host).IsEqualTo("api.terrascale.tech");
             await Assert.That(request.Headers.GetValues("X-TerraScale-Region-Pin").Single()).IsEqualTo("sjc");
             await Assert.That(request.Headers.Contains("X-TerraBase-User-Id")).IsFalse();
             requests.Add((request.Method.Method, request.RequestUri.AbsolutePath, request.RequestUri.Query,

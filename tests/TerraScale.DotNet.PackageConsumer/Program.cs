@@ -103,7 +103,7 @@ internal sealed class WrongRegionStub : HttpMessageHandler
 {
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        if (request.RequestUri?.Host != "sjc.api.terrascale.tech" || !request.Headers.TryGetValues(TerraBaseRegion.PinHeader, out var pin) || pin.Single() != "sjc")
+        if (request.RequestUri?.Host != "api.terrascale.tech" || !request.Headers.TryGetValues(TerraBaseRegion.PinHeader, out var pin) || pin.Single() != "sjc")
         {
             throw new InvalidOperationException($"Unexpected request {request.RequestUri} without the sjc pin.");
         }

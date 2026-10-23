@@ -229,7 +229,7 @@ are sent.
 Regions follow TerraBase's regional contract (monorepo `docs/terrabase/region-identity.md`). Without `Region`, a request
 goes to `BaseAddress` (for example `https://api.terrascale.tech`) and
 carries no routing header. With `Region = "gru"` (a lowercase region id), every request is sent to
-`https://gru.api.terrascale.tech` (unless `BaseAddress`/`EndpointResolver` is set) and pinned with
+`https://api.terrascale.tech` (unless `BaseAddress`/`EndpointResolver` is set) and pinned with
 `X-TerraScale-Region-Pin: gru`, so no other region serves it. A region that does not serve the request answers `421`,
 surfaced as `TerraBaseWrongRegionException`: `Region` is the region that answered, `HomeRegion` and `Regions` (from
 `X-TerraBase-Database-Home`/`-Regions`) say where to send it. Nothing is retried or redirected automatically: a write is
