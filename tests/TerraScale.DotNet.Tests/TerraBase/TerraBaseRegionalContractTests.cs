@@ -36,7 +36,7 @@ public sealed class TerraBaseRegionalContractTests
             response.Headers.Add("X-TerraBase-Region", "sjc");
             response.Headers.Add("X-TerraBase-Database-Home", "gru");
             response.Headers.Add("X-TerraBase-Database-Regions", "gru");
-            response.Headers.Add("ts-replay", "region=gru"); // Pending producer PR #353; merge hold in contracts/terrabase/README.md.
+            response.Headers.Add("ts-replay", "region=gru"); // Producer #353's wrong-region response.
             // Misleading hints cannot make a write repeat or disclose its body and credential to another origin.
             response.Headers.Location = new Uri("https://gru.api.terrascale.test/");
             response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(1));

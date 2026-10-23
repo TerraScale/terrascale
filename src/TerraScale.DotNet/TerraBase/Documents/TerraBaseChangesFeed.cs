@@ -27,19 +27,23 @@ internal sealed record TerraBaseStreamErrorDetail(string Code, string? Message);
 
 public sealed partial class TerraBaseDatabase
 {
+    // Producer ChangeCursor: base64url of 18 + 63 + (56 * 256) bytes.
+    private const int MaxChangesCursorLength = 19223;
+
     /// <summary>
     /// Streams change and cursor events with documents:read. No cursor replays retained history; now starts at the head.
     /// LastEventId overrides cursor. Resume with the SAME collections filter and checkpoints from BOTH event kinds.
     /// A clean end (30 minutes or token expiry) requires reconnecting; errors never reset or reconnect automatically.
-    /// 400 invalid_cursor is invalid input; 410 cursor_expired requires an explicit re-read and restart with now.
+    /// 400 invalid_cursor rejects multiple Last-Event-ID values; 410 cursor_expired includes malformed or old cursors.
+    /// For 410, explicitly re-read and restart with now; the SDK never resets the checkpoint itself.
     /// Includes document mutations only, not collection/index metadata or documents removed by a collection drop.
     /// Dispose the enumerator to close the response. RequestTimeout covers acquisition; stalled reads stop after 45 seconds.
     /// </summary>
     public async IAsyncEnumerable<TerraBaseChangesEvent> StreamChangesAsync(string? cursor = null, string? lastEventId = null,
         IReadOnlyList<string>? collections = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (lastEventId is not null && (lastEventId.Length == 0 || lastEventId.Length > 8192 || lastEventId.Any(char.IsControl)))
-            throw new ArgumentException("LastEventId must be one non-empty checkpoint without control characters, at most 8192 characters.", nameof(lastEventId));
+        if (lastEventId is not null && (lastEventId.Length == 0 || lastEventId.Length > MaxChangesCursorLength || lastEventId.Any(char.IsControl)))
+            throw new ArgumentException($"LastEventId must be one non-empty checkpoint without control characters, at most {MaxChangesCursorLength} characters.", nameof(lastEventId));
         if (collections is not null && (collections.Count is 0 or > 64 || collections.Any(name => string.IsNullOrEmpty(name) || name.Contains(',') || name.Any(char.IsControl))))
             throw new ArgumentException("Collections must hold 1 to 64 non-empty names without commas or control characters.", nameof(collections));
         var query = TerraBaseConnection.Query(("cursor", lastEventId is null ? cursor : null), ("collections", collections is null ? null : string.Join(',', collections)));
@@ -72,7 +76,7 @@ public sealed partial class TerraBaseDatabase
             }
             if (type is not ("change" or "cursor")) continue;
             var id = item.EventId ?? parser.LastEventId;
-            if (id.Length > 8192 || item.EventId == "" || (type == "cursor" && item.EventId is null)) throw InvalidStream(region);
+            if (id.Length > MaxChangesCursorLength || item.EventId == "" || (type == "cursor" && item.EventId is null)) throw InvalidStream(region);
             TerraBaseChange? change = null;
             if (type == "change") change = ReadStreamData(data, Json.TerraBaseChange, region);
             else if (ReadStreamData(data, Json.TerraBaseChangeCursor, region).Cursor != id) throw InvalidStream(region);

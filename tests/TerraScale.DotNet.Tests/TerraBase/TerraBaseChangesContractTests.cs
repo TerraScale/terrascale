@@ -164,6 +164,48 @@ public sealed class TerraBaseChangesContractTests
     }
 
     [Test]
+    public async Task The_producers_maximum_checkpoint_round_trips_without_decoding()
+    {
+        var checkpoint = new string('A', 19223);
+        var calls = 0;
+        using var handler = new TerraBaseTestHandler(async (request, _) =>
+        {
+            calls++;
+            await Assert.That(request.Headers.GetValues("Last-Event-ID").Single()).IsEqualTo(checkpoint);
+            return Sse(new MemoryStream(Encoding.UTF8.GetBytes($"event: cursor\nid: {checkpoint}\ndata: {{\"cursor\":\"{checkpoint}\"}}\n\n")));
+        });
+        using var http = new HttpClient(handler);
+        var events = new List<TerraBaseChangesEvent>();
+        await foreach (var item in Database(http).StreamChangesAsync(lastEventId: checkpoint)) events.Add(item);
+        await Assert.That(events.Count).IsEqualTo(1);
+        await Assert.That(events[0].Cursor).IsEqualTo(checkpoint);
+        await Assert.That(calls).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_checkpoint_over_the_producers_bound_is_rejected_in_either_direction(bool fromServer)
+    {
+        var checkpoint = new string('A', 19224);
+        var calls = 0;
+        using var handler = new TerraBaseTestHandler((_, _) =>
+        {
+            calls++;
+            return Task.FromResult(Sse(new MemoryStream(Encoding.UTF8.GetBytes($"event: cursor\nid: {checkpoint}\ndata: {{\"cursor\":\"{checkpoint}\"}}\n\n"))));
+        });
+        using var http = new HttpClient(handler);
+        var stream = Database(http).StreamChangesAsync(lastEventId: fromServer ? null : checkpoint);
+        if (fromServer)
+        {
+            var error = await Assert.ThrowsAsync<TerraBaseException>(() => DrainAsync(stream));
+            await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");
+        }
+        else await Assert.ThrowsAsync<ArgumentException>(() => DrainAsync(stream));
+        await Assert.That(calls).IsEqualTo(fromServer ? 1 : 0);
+    }
+
+    [Test]
     [Arguments(400, "invalid_cursor", typeof(TerraBaseValidationException))]
     [Arguments(410, "cursor_expired", typeof(TerraBaseCursorExpiredException))]
     [Arguments(429, "changes_busy", typeof(TerraBaseRateLimitedException))]
@@ -456,7 +498,7 @@ public sealed class TerraBaseChangesContractTests
             sent.Add(request);
             var response = new HttpResponseMessage(HttpStatusCode.MisdirectedRequest);
             response.Headers.Add("X-TerraBase-Region", "gru");
-            response.Headers.Add("ts-replay", "region=sjc"); // Pending producer PR #353's mismatched-pin response.
+            response.Headers.Add("ts-replay", "region=sjc"); // Producer #353's mismatched-pin response.
             response.Headers.Location = new Uri("https://gru.api.terrascale.test/");
             response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(1));
             return Task.FromResult(response);
