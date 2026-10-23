@@ -9,7 +9,9 @@ import (
 	"iter"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // IDPath is the pseudo-path for the document ID.
@@ -61,7 +63,7 @@ func combine(op string, fs []Filter) Filter {
 		errs = errors.Join(errs, f.err)
 		searches += f.searches
 	}
-	return Filter{node: map[string]any{op: fs}, err: errs, searches: searches}
+	return Filter{node: map[string]any{op: slices.Clone(fs)}, err: errs, searches: searches}
 }
 
 // And matches when every child matches (1-64 children).
@@ -127,8 +129,8 @@ func Search[P Path](path P, terms string) Filter {
 	if !strings.HasPrefix(string(path), "/") {
 		f.err = errors.New("terrabase: search needs a document field pointer")
 	}
-	if len(terms) == 0 || len(terms) > 4096 || strings.ContainsRune(terms, 0) {
-		f.err = errors.Join(f.err, errors.New("terrabase: search terms need 1-4096 UTF-8 bytes and no NUL"))
+	if !utf8.ValidString(terms) || len(terms) == 0 || len(terms) > 4096 || strings.ContainsRune(terms, 0) {
+		f.err = errors.Join(f.err, errors.New("terrabase: search terms need valid UTF-8, 1-4096 bytes and no NUL"))
 	}
 	return f
 }

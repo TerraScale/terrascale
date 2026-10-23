@@ -37,6 +37,28 @@ func TestSearchQueryContracts(t *testing.T) {
 	}
 }
 
+func TestCombinedSearchRetainsCallerFilters(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		combine func(...tb.Filter) tb.Filter
+	}{
+		{"and", tb.And},
+		{"or", tb.Or},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			filters := []tb.Filter{tb.Search("/title", "fox"), tb.Eq("/published", true)}
+			filter := tc.combine(filters...)
+			filters[0] = tb.Search("/title", "dog")
+			filters[1] = tb.Search("/body", "dog")
+			body := `{"filter":{"` + tc.name + `":[{"search":["/title","fox"]},{"eq":["/published",true]}]},"sort":[{"path":"$score","order":"desc"}]}`
+			col := parityClient(t, http.MethodPost, parityDatabase+"/collections/articles/query", "", body, `{"items":[]}`, http.StatusOK).Database(parityProject, "main").Collection("articles")
+			if _, err := col.Query(t.Context(), tb.Query{Filter: filter, Sort: []tb.SortKey{tb.Desc(tb.ScorePath)}}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestSearchRejectsInvalidPathsAndScoreSorts(t *testing.T) {
 	c, err := tb.New(tb.Config{BaseURL: "https://tb.example", Token: "header.project.signature", HTTPClient: &http.Client{Transport: failTransport{t}}})
 	if err != nil {
@@ -51,6 +73,7 @@ func TestSearchRejectsInvalidPathsAndScoreSorts(t *testing.T) {
 		"empty terms":      {Filter: tb.Search("/title", "")},
 		"long terms":       {Filter: tb.Search("/title", strings.Repeat("x", 4097))},
 		"unicode bytes":    {Filter: tb.Search("/title", strings.Repeat("🦊", 1025))},
+		"invalid UTF-8":    {Filter: tb.Search("/title", "quick\xfffox")},
 		"NUL terms":        {Filter: tb.Search("/title", "quick\x00fox")},
 		"score only":       {Sort: []tb.SortKey{tb.Desc(tb.ScorePath)}},
 		"score unrelated":  {Filter: tb.Eq("/title", "fox"), Sort: []tb.SortKey{tb.Desc(tb.ScorePath)}},

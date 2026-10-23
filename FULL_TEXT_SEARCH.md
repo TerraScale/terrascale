@@ -23,7 +23,9 @@ page, err := db.Collection("articles").Query(ctx, v1.Query{
 ```
 
 Terms use native Tantivy syntax; the SDK does not promise advanced query features.
-Terms must contain 1–4096 UTF-8 bytes and no NUL. Search paths are pointers, not
+Terms must be nonblank, contain at most 4096 UTF-8 bytes and no NUL, and nest
+parentheses at most 64 levels. Malformed native Tantivy syntax returns HTTP 400
+with code `invalid_query`. Search paths are pointers, not
 dotted index fields; `$id` and `$score` cannot be searched. Missing text indexes
 return HTTP 400 with `invalid_query` (`v1.ErrInvalidQuery`).
 
