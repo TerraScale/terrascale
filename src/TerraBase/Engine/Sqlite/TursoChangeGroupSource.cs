@@ -470,6 +470,11 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
                     await TrimAsync(store, stoppingToken).ConfigureAwait(false);
                 }
+                catch (ReplicaCopyFaultedException)
+                {
+                    // A refused copy (faulted, under rebuild, or the node failed closed) takes no retention write; its rebuild
+                    // replaces it. Also while stopping, when the catch below would let the refusal end the host.
+                }
                 catch (Exception error) when (!stoppingToken.IsCancellationRequested)
                 {
                     // The retention pass (ack raises, trim, the tail gauge): the next tick tries again. Logged, so a pass that
