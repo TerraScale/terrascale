@@ -28,7 +28,7 @@ collapse and ETag), T1 (bucket objects) and T2 (Cloudflare shape edge). Readers 
 | dev, with the chunk cache | `0d09176f7` (rt2/free-reads-5) | mariogk-dev | load 43 (r1), 17.6 (r2) at step start |
 | cells, main baseline | `888ea413` (image eb0e8e62) | ts-sjc-1 (2 CPUs, arm64) → sjc cell :9465 | **contaminated**: lane B's convergence load ran 03:00–03:31Z, this run 03:13–03:22Z |
 | cells, after, hobby plan | `f06647f22` = rt2/cells-1 = 0d09176f7 + a16947f52 (billing fix, no read-path change) | ts-sjc-1 → sjc cell | load 3.4 on 2 CPUs before the run |
-| cells, after, enterprise plan | `f06647f22` | ts-sjc-1 → sjc cell, 04:14–04:40Z, org on enterprise 04:12–04:57Z, no other lane on the cells | load 3.8–4.2 on 2 CPUs (ts-sjc-1 also runs prod) |
+| cells, after, enterprise plan | `f06647f22` | ts-sjc-1 → sjc cell, load 04:14–04:39Z and catch-up 04:39–04:41Z; org on enterprise 04:12:02–04:41:27Z (lane B), no other lane on the cells | load 3.8–4.2 on 2 CPUs (ts-sjc-1 also runs prod) |
 
 Tool: `benchmark/cmd/shape-bench load` (README "Live load"): readers join over 60 s, then a writer sends 20 documents/s;
 30 s window, 5 s grace, 6 s settle. Storage reads are `terrabase.storage.reads{path}` deltas over the whole step.
@@ -121,6 +121,8 @@ per reader), **1 repeat** (the plan window allowed one), so no spread:
 | t2 | 1000 | 0 (1,000 manifest) | 0 | 6,000 | 61 | 0.990 | 4024 |
 
 **T2 on the live cells: 1000 readers × 6 objects cost the origin no payload read and the bucket 61 GETs.**
+The catch-up ended at about 04:41Z, at the end of the enterprise window (04:41:27Z). Its client repeats a 429 without
+counting it, so a late plan refusal would show as time, not as a read: storage and bucket counts are unaffected.
 
 ## 5. N = 1000 on the dev host: what stops it
 
