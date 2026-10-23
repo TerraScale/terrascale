@@ -87,16 +87,21 @@ public sealed class FieldState : IEquatable<FieldState>
             return new(FieldKind.Set, Elements(baseIsArray));
         }
 
-        var live = Counters.Values.Where(counter => counter.Epoch == epoch).ToArray();
-        if (live.Length > 0)
+        // Most fields hold no counter: skip the enumeration (its iterators were a large share of a write's allocations).
+        Int128? total = null;
+        if (!Counters.IsEmpty)
         {
-            var sum = (Int128)BaseNumber();
-            foreach (var counter in live)
+            foreach (var (_, counter) in Counters)
             {
-                sum += counter.Increments;
-                sum -= counter.Decrements;
+                if (counter.Epoch == epoch)
+                {
+                    total = (total ?? BaseNumber()) + counter.Increments - counter.Decrements;
+                }
             }
+        }
 
+        if (total is { } sum)
+        {
             // Concurrent increments can overflow even when each node's own stayed in range: clamp, the same on every node.
             return new(FieldKind.Counter, Count: (long)Int128.Clamp(sum, long.MinValue, long.MaxValue));
         }
