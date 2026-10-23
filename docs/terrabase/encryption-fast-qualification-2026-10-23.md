@@ -160,14 +160,37 @@ Abort-to-Dispose control was not run. Overall qualification therefore exited
 preserves the primary failure and attaches host-disposal failure as secondary
 evidence; successful test bodies still propagate disposal failures. Budgets,
 assertions, workload and parallelism remain unchanged. This correction has
-not yet been runtime qualified, nor does the earlier proof validate subsequent
-rebases or the regional authentication fixture correction.
+not been runtime qualified at that point. The earlier proof does not validate
+subsequent rebases or the regional authentication fixture correction.
 
 Original reports, commands, native maps, control diffs and root-cause analysis
 are retained on delta and mariogk-dev under
 `~/.t3/test-artifacts/database-encryption/quiet-e62-dev-20261023T211919Z/`.
 All 167 manifested files were independently rehashed on both hosts. Manifest
 SHA-256: `5da11fba6e3a1eeedee9c62be78e08c94c9db8be896fae5552a6ce3bd7285e13`.
+
+## Focused deadline and reader control completion
+
+At literal `40590608c77e20d60bbfa1fb22d149c4e3ee4c1b`, one further
+mariogk-dev admission passed the clean deadline and bounded reader cases
+(2/2, zero failures/skips), then verified both remaining negative controls.
+Removing the internal deadline produced `System.TimeoutException` at the
+eight-second watchdog; replacing raw-reader Abort with Dispose produced the
+finite counter assertion expected 1, found 3. All four builds passed. There
+were four invocations and no retries; focused aggregate exit was 0. The
+35+1 clean passes and one-read control remain inherited at `e62b9d8e5`, not
+rerun or claimed for the later head. Original budget, watchdog, test timeout
+and parallelism remain unchanged.
+
+The SDK, owned clean sibling, normal native download, output digest and actual
+mapped digest were verified again. Both hosts retain the full original reports,
+commands, exits, control diffs and process/lock cleanup evidence under
+`~/.t3/test-artifacts/database-encryption/focused-40590608c-dev-20261023T214036Z/`.
+All 136 manifested files were independently rehashed on delta and mariogk-dev;
+manifest SHA-256:
+`cf5843acf918b5aadd1f41b7d5711ee2dbeb5099d244c7ca669abf458277064d`.
+The prior failed qualification is retained unchanged. Exact-head CI remains
+the integration gate after rebasing onto main's replication-progress fix.
 
 ## Retained evidence
 
