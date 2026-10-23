@@ -95,6 +95,7 @@ internal static class ApiExamples
         "setAutoIndexPolicy" => """{"enabled":false}""",
         "createCollection" => """{"name":"people"}""",
         "putDeclaredCollectionSchema" => DeclaredSchema,
+        "putCollectionTtl" => """{"path":"/expiresAt"}""",
         "declareCollectionSchema" => """{"fields":[{"name":"email","unique":true,"normalization":"lowercase"}],"indexes":[{"name":"tenant_handle","fields":["tenant","handle"],"unique":true}]}""",
         "createDocument" or "putDocument" => """{"name":"Ada"}""",
         "patchDocument" when mediaType == "application/vnd.terrabase.ops+json" =>
@@ -141,6 +142,8 @@ internal static class ApiExamples
         "createCollection" or "getCollection" or "dropCollection" => Collection,
         "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" => "{\"schema\":" + DeclaredSchema + ",\"dialect\":\"https://json-schema.org/draft/2020-12/schema\"}",
         "deleteDeclaredCollectionSchema" => """{"schema":null}""",
+        "getCollectionTtl" or "putCollectionTtl" => """{"path":"/expiresAt"}""",
+        "deleteCollectionTtl" => """{"path":null}""",
         "listCollections" => DataPage(Collection),
         "getDocument" => Document,
         "createDocument" or "putDocument" or "deleteDocument" => Write,
@@ -164,6 +167,7 @@ internal static class ApiExamples
         "400" when id is "getDatabaseSchema" or "getCollectionSchema" or "runSql" or "checkSql" or "explainSql" or "getDatabaseUsage" or "getProjectUsage" =>
             "invalid_request, invalid_query",
         "400" when id == "putDeclaredCollectionSchema" => "invalid_request, invalid_schema",
+        "400" when id == "putCollectionTtl" => "invalid_request, invalid_ttl",
         "400" when id is "createDocument" or "putDocument" => "invalid_request, schema_validation_failed",
         "400" when id == "patchDocument" => "invalid_request, invalid_patch, nested_lattice_path, schema_validation_failed",
         "400" when id == "setAutoIndexPolicy" => "invalid_request, auto_index_policy_limit",
@@ -176,7 +180,8 @@ internal static class ApiExamples
         "403" => "forbidden_scope",
         "404" when id is "createCollection" or "listCollections" => "unknown_database",
         "404" when id is "getDocument" or "patchDocument" or "deleteDocument" or "runTransaction" => "unknown_database, unknown_collection, not_found",
-        "404" when id is "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" or "deleteDeclaredCollectionSchema" => "unknown_database, unknown_collection",
+        "404" when id is "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" or "deleteDeclaredCollectionSchema"
+            or "getCollectionTtl" or "putCollectionTtl" or "deleteCollectionTtl" => "unknown_database, unknown_collection",
         "404" when id is "getCollection" or "dropCollection" or "listDocuments" or "createDocument" or "putDocument" or "queryDocuments" => "unknown_database, unknown_collection",
         "404" when id is "createDatabase" or "getDatabase" or "listDatabases" or "updateDatabase" or "deleteDatabase" or "branchDatabase" or "getDatabaseUsage" or "getProjectUsage" => "unknown_database, unknown_route",
         "404" when id == "createImport" => "unknown_database",

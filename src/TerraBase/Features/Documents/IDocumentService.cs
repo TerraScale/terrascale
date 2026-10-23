@@ -137,6 +137,12 @@ public interface IDocumentService
     /// <summary>Attaches or replaces a declared schema, or detaches it when null; affects future local writes.</summary>
     ValueTask<CollectionSchemaResult> SetCollectionSchemaAsync(TenantContext database, string name, JsonElement? schema, CancellationToken cancellationToken);
 
+    /// <summary>Reads the JSON Pointer of a collection's expiry member; a null path means documents never expire.</summary>
+    ValueTask<CollectionTtlResult> GetCollectionTtlAsync(TenantContext database, string name, CancellationToken cancellationToken);
+
+    /// <summary>Declares a collection's expiry member, or clears it when null; the home region's sweeper deletes expired documents.</summary>
+    ValueTask<CollectionTtlResult> SetCollectionTtlAsync(TenantContext database, string name, string? path, CancellationToken cancellationToken);
+
     /// <summary>Creates a collection; <c>name_taken</c> when it exists.</summary>
     ValueTask<CollectionResult> CreateCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken);
 

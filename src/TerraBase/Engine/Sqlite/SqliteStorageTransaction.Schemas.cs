@@ -140,6 +140,55 @@ internal sealed partial class SqliteStorageTransaction
             return true;
         }, cancellationToken, mutation: true);
 
+    public ValueTask<string?> GetCollectionTtlAsync(string name, CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            if (!IsClient || Command(SqliteStatements.GetCollection, name).ExecuteScalar() is null)
+            {
+                return null;
+            }
+
+            using var reservation = ReserveCollectionMetadata(name, out _);
+            using var metadata = ReadCollectionMetadata(name);
+            return metadata is not null && metadata.RootElement.TryGetProperty(TtlMember, out var path) && path.ValueKind == JsonValueKind.String
+                ? path.GetString()
+                : null;
+        }, cancellationToken);
+
+    public ValueTask<bool> SetCollectionTtlAsync(string name, string? path, CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            ThrowIfReadOnly();
+            if (!IsClient)
+            {
+                throw new InvalidOperationException("collection TTLs belong to client databases");
+            }
+
+            long createdAt;
+            using (var reader = Command(SqliteStatements.GetCollection, name).ExecuteReader())
+            {
+                if (!reader.Read())
+                {
+                    return false;
+                }
+
+                createdAt = reader.GetInt64(1);
+            }
+
+            // Encoded by the writer: the pointer is client text.
+            var buffer = new ArrayBufferWriter<byte>();
+            using (var writer = new Utf8JsonWriter(buffer))
+            {
+                writer.WriteStringValue(path ?? string.Empty);
+            }
+
+            RewriteCollectionMetadata(name, createdAt, static member => member == TtlMember,
+                path is null ? [] : [(TtlMember, buffer.WrittenMemory)], cancellationToken);
+            return true;
+        }, cancellationToken, mutation: true);
+
+    private const string TtlMember = "ttl_path";
+
     // Worker-only: rewrites a collection's metadata document with the members `replaced` selects dropped and `added`
     // appended, keeping every other member (so a schema and a table definition never overwrite each other).
     private void RewriteCollectionMetadata(

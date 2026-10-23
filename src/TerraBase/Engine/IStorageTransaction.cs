@@ -251,6 +251,15 @@ public interface IStorageTransaction : IAsyncDisposable
     /// </summary>
     ValueTask<bool> SetCollectionTableAsync(string name, JsonElement definition, CancellationToken cancellationToken);
 
+    /// <summary>Reads a collection's TTL member (a JSON Pointer), or <see langword="null"/> when none is declared or the collection is absent.</summary>
+    ValueTask<string?> GetCollectionTtlAsync(string name, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Declares the JSON Pointer of a collection's expiry member, or clears it with <see langword="null"/>;
+    /// <see langword="false"/> when the collection is absent. Preserves the rest of the collection metadata.
+    /// </summary>
+    ValueTask<bool> SetCollectionTtlAsync(string name, string? path, CancellationToken cancellationToken);
+
     /// <summary>Lists at most <paramref name="limit"/> collections with names after <paramref name="afterName"/>, in name order.</summary>
     ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(
         string? afterName, int limit, CancellationToken cancellationToken);
