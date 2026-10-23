@@ -406,12 +406,18 @@ jobs:
           exit 1
       - name: Every area that ran passed
         run: '! grep -qE "failure|cancelled" <<< "${{ join(needs.*.result, '' '') }}"'
-      - *checkout
+      - if: github.event_name != 'push'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: terrascale
+          persist-credentials: false
       # Production runs on OCI through ts-orch; only Tigris (its endpoint and `fly storage`) stays. The brackets keep
       # these lines from matching themselves.
       - name: Workflows name no retired hosting provider
+        if: github.event_name != 'push'
         run: '! grep -rniI "fl[y]" terrascale/.github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"'
       - name: Slow report, cache policy, storage train and e2e summary self-checks
+        if: github.event_name != 'push'
         run: |
           python3 terrascale/scripts/ci/slow-report-test.py
           python3 terrascale/scripts/ci/cache-policy-test.py
