@@ -99,6 +99,7 @@ internal static partial class SqlParse
     private static ParsedSql Translate(Statement statement) => statement switch
     {
         Statement.Select { Query: var query } => SqlRead.Read(query),
+        Statement.Insert { InsertOperation: var insert } => SqlWrite.Insert(insert),
         Statement.CreateTable { Element: var create } => CreateTable(create),
         Statement.Drop { ObjectType: ObjectType.Table } drop => DropTable(drop),
         _ => throw new FormatException("this statement is not supported"),
