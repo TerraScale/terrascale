@@ -1,6 +1,12 @@
 # Local database encryption comparison (TS-861)
 
-## Final patched-native measurement — local commit fc27c2186
+The current code consumes shared release `turso-native-v0.8.2-fts-contract1-20261023`.
+The measurements below used the earlier encryption-only library; they do not
+measure the shared FTS/encryption bytes. Final shared-library measurement and
+managed qualification remain separate from the native release's own smoke and
+reproducibility evidence.
+
+## Earlier encryption-only patched-native measurement — local commit fc27c2186
 
 Measured 2026-10-23 on `delta`, SDK `11.0.100-rc.1.26425.128`, runtime `11.0.0`, Release, exact local commit `fc27c2186a344cee1c85497b66981f2ad5a8c152` (not pushed during this verification). The admitted wrapper fetched an older remote branch; its command explicitly changed to the absolute local worktree before every build/test/benchmark. All three plain/aegis256 pairs completed with payload and reopened row-count verification.
 

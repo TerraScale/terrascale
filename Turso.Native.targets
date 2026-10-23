@@ -2,14 +2,14 @@
   <PropertyGroup>
     <_TerraScaleTursoRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_TerraScaleTursoRid>
     <_TerraScaleTursoRid Condition="'$(_TerraScaleTursoRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</_TerraScaleTursoRid>
-    <_TerraScaleTursoRoot>$(MSBuildThisFileDirectory)artifacts/turso-native-v1/</_TerraScaleTursoRoot>
+    <_TerraScaleTursoRoot>$(MSBuildThisFileDirectory)artifacts/turso-native-v0.8.2-fts-contract1-20261023/</_TerraScaleTursoRoot>
     <_TerraScaleTursoFile>$(_TerraScaleTursoRoot)$(_TerraScaleTursoRid)/libturso_sdk_kit.so</_TerraScaleTursoFile>
   </PropertyGroup>
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'Turso.Raw' and ('$(_TerraScaleTursoRid)' == 'linux-x64' or '$(_TerraScaleTursoRid)' == 'linux-arm64')">
     <_TerraScaleTursoNative Include="$(_TerraScaleTursoFile)">
-      <Sha256 Condition="'$(_TerraScaleTursoRid)' == 'linux-x64'">A8E66163067435DE33627E2231F1F409A78FB5E2ED1A10ADE478A815D4AD702F</Sha256>
-      <Sha256 Condition="'$(_TerraScaleTursoRid)' == 'linux-arm64'">C14FE3965580B762FD4F8D128A8B5043C393AD3E0AB98559875175917B8DCCB4</Sha256>
-      <Url>https://github.com/TerraScale/terrascale/releases/download/turso-native-v1/terrascale-turso-$(_TerraScaleTursoRid).so</Url>
+      <Sha256 Condition="'$(_TerraScaleTursoRid)' == 'linux-x64'">EFD5916AA9EE1EEAA04784813B08E250912AE25D89F8A92499A216C2711F3E8B</Sha256>
+      <Sha256 Condition="'$(_TerraScaleTursoRid)' == 'linux-arm64'">1D4F3B552D11EADB703D6ABC13CD8F5F1621C7504642D6F2B875226D88CB5EEF</Sha256>
+      <Url>https://github.com/TerraScale/terrascale/releases/download/turso-native-v0.8.2-fts-contract1-20261023/terrascale-turso-$(_TerraScaleTursoRid).so</Url>
     </_TerraScaleTursoNative>
     <None Include="@(_TerraScaleTursoNative)"
           Link="libturso_sdk_kit.so" TargetPath="libturso_sdk_kit.so"
