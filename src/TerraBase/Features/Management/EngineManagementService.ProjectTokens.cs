@@ -17,7 +17,7 @@ internal sealed partial class EngineManagementService : IProjectCatalog
     // the catalog has not committed since it began, like the database lookups.
     private readonly ConcurrentDictionary<(string Project, string, string), (long Sequence, ProjectMapping Mapping)> _projectMappings = new();
 
-    public async ValueTask<ResolveProjectResult> ResolveProjectAsync(string projectId, string actor, bool create, CancellationToken cancellationToken)
+    public async ValueTask<ResolveProjectResult> ResolveProjectAsync(string projectId, string actor, string? createIn, CancellationToken cancellationToken)
     {
         if (options.AuthIssuer is not { } issuer)
         {
@@ -56,7 +56,7 @@ internal sealed partial class EngineManagementService : IProjectCatalog
             }
         }
 
-        if (mapping.Organization is not null || !create)
+        if (mapping.Organization is not null || createIn is not { } organizationId)
         {
             return mapping is { Verified: true, Organization: not null } ? mapping.Organization : ManagementErrors.NotFound;
         }
@@ -74,16 +74,20 @@ internal sealed partial class EngineManagementService : IProjectCatalog
                 return ManagementErrors.NotFound;
             }
 
-            // Legacy commits let users choose organization ULIDs; equality is not authority over a signed project.
-            var namespaceId = NewId();
-            if (await transaction.GetVersionAsync(Organizations, namespaceId, cancellationToken).ConfigureAwait(false) is not null)
+            // The namespace is the ts-auth organization, shared by all of its projects. Legacy commits let users choose
+            // organization ULIDs, so an organization with members is someone's storage, never this project's owner.
+            var owner = await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
+            if (owner is null)
+            {
+                owner = new Organization(organizationId, organizationId, actor, time.GetUtcNow());
+                await PutAsync(transaction, Organizations, owner.Id, owner, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
+            }
+            else if (await CountAllAsync(transaction, Members(organizationId), cancellationToken).ConfigureAwait(false) > 0)
             {
                 return ManagementErrors.NotFound;
             }
 
-            var owner = new Organization(namespaceId, projectId, actor, time.GetUtcNow());
             var project = new Project(projectId, owner.Id, projectId, time.GetUtcNow());
-            await PutAsync(transaction, Organizations, owner.Id, owner, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, Projects(owner.Id), project.Id, project, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, ProjectOrganizations, project.Id, owner.Id, Id, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, Bindings(project.Id), "ts_auth",

@@ -3,7 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -28,16 +28,16 @@ public sealed class BucketPageTests
         var live = DocumentState.Bottom.Put(new(new Hlc(1000), origin), body.RootElement);
         var deleted = live.Delete(new(new Hlc(2000), origin));
         var ids = Enumerable.Range(0, 4097).Select(index => ManagementApi.DocumentId("bucket-page-" + index)).ToArray();
-        var collision = ids.GroupBy(id => SqliteStorageTransaction.Bucket("items", id)).First(group => group.Count() > 1).Take(2).ToArray();
+        var collision = ids.GroupBy(id => TursoStorageTransaction.Bucket("items", id)).First(group => group.Count() > 1).Take(2).ToArray();
         var seeded = collision.Concat(ids.Except(collision, StringComparer.Ordinal).Take(6))
             .Select((id, index) => new RepairState("items", id, index == 0 ? deleted : live)).ToArray();
         var incarnation = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, token))!.Incarnation;
         await Assert.That(await api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(database, incarnation, seeded, token)).IsEqualTo(seeded.Length);
         int[] selected = sparse
-            ? [SqliteStorageTransaction.Bucket("items", collision[0]), SqliteStorageTransaction.Bucket("items", seeded[^1].Id)]
+            ? [TursoStorageTransaction.Bucket("items", collision[0]), TursoStorageTransaction.Bucket("items", seeded[^1].Id)]
             : [.. Enumerable.Range(0, 4096)];
-        var expected = seeded.Where(state => selected.Contains(SqliteStorageTransaction.Bucket(state.Collection, state.Id)))
-            .OrderBy(state => SqliteStorageTransaction.Bucket(state.Collection, state.Id)).ThenBy(state => state.Collection, StringComparer.Ordinal)
+        var expected = seeded.Where(state => selected.Contains(TursoStorageTransaction.Bucket(state.Collection, state.Id)))
+            .OrderBy(state => TursoStorageTransaction.Bucket(state.Collection, state.Id)).ThenBy(state => state.Collection, StringComparer.Ordinal)
             .ThenBy(state => state.Id, StringComparer.Ordinal).ToArray();
         var states = api.Server.Services.GetRequiredService<IReplicaStates>();
         int[] requested = sparse ? [.. selected.Reverse(), .. selected] : [.. selected.Reverse()];
@@ -53,7 +53,7 @@ public sealed class BucketPageTests
             if (next is not null)
             {
                 var last = page[^1];
-                await Assert.That(next).IsEqualTo(new BucketCursor(SqliteStorageTransaction.Bucket(last.Collection, last.Id), last.Collection, last.Id));
+                await Assert.That(next).IsEqualTo(new BucketCursor(TursoStorageTransaction.Bucket(last.Collection, last.Id), last.Collection, last.Id));
                 await Assert.That(next).IsNotEqualTo(cursor);
             }
             cursor = next;
@@ -68,7 +68,7 @@ public sealed class BucketPageTests
         await Assert.That(empty).IsEmpty();
         await Assert.That(end).IsNull();
         var lastExpected = expected[^1];
-        var afterLast = new BucketCursor(SqliteStorageTransaction.Bucket(lastExpected.Collection, lastExpected.Id), lastExpected.Collection, lastExpected.Id);
+        var afterLast = new BucketCursor(TursoStorageTransaction.Bucket(lastExpected.Collection, lastExpected.Id), lastExpected.Collection, lastExpected.Id);
         var (pastEnd, pastCursor) = await states.ReadBucketsAsync(database, incarnation, selected, afterLast, 2, maxBytes, token)
             ?? throw new InvalidOperationException("the database incarnation is not held");
         await Assert.That(pastEnd).IsEmpty();

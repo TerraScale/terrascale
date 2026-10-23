@@ -9,7 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -252,7 +252,7 @@ namespace TerraBase.Fast.Benchmark
             var digest = await source.Server.Services.GetRequiredService<IReplicaStates>().DigestAsync(database, null, token)
                 ?? throw new InvalidOperationException("source digest missing");
             var name = source.Server.Services.GetRequiredService<IMembership>().Self.Name;
-            var store = (SqliteDatabaseStore)(await receiver.Server.Services.GetRequiredService<SqliteStorageEngine>()
+            var store = (TursoDatabaseStore)(await receiver.Server.Services.GetRequiredService<TursoStorageEngine>()
                 .OpenDatabaseAsync(database, token) ?? throw new InvalidOperationException("benchmark database missing"));
             await store.WithWriterAsync(session =>
             {

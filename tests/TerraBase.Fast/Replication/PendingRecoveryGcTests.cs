@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 
@@ -30,9 +30,9 @@ public sealed class PendingRecoveryGcTests
         var sourceSink = source.Api.Server.Services.GetRequiredService<IChangeGroupSink>();
         _ = await sourceSink.RepairAsync(cluster.Database, await source.IncarnationAsync(),
             [new("items", EntityIds.New().ToString(), old.Delete(At(2000)))], token);
-        var store = (SqliteDatabaseStore)(await source.Api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+        var store = (TursoDatabaseStore)(await source.Api.Server.Services.GetRequiredService<TursoStorageEngine>()
             .OpenDatabaseAsync(cluster.Database, token))!;
-        await using (var collect = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, token))
+        await using (var collect = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, token))
         {
             await Assert.That(await collect.CollectAsync(new Hlc(3000), token)).IsEqualTo(1);
             _ = await collect.CommitAsync(token);
@@ -87,7 +87,7 @@ public sealed class PendingRecoveryGcTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var read = await HeldTransactionAsync(machine);
-        var (states, _) = await read.ReadBucketStatesAsync([SqliteStorageTransaction.Bucket(collection, id)], null,
+        var (states, _) = await read.ReadBucketStatesAsync([TursoStorageTransaction.Bucket(collection, id)], null,
             ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, token);
         return states.SingleOrDefault(state => state.Collection == collection && state.Id == id)?.State;
     }
@@ -95,10 +95,10 @@ public sealed class PendingRecoveryGcTests
     internal static async Task<string?> ReadHeldAsync(PeerStreamTests.Machine machine, string id) =>
         (await HeldStateAsync(machine, "items", id))?.Materialize() is { } body ? Encoding.UTF8.GetString(body) : null;
 
-    internal static async Task<SqliteStorageTransaction> HeldTransactionAsync(PeerStreamTests.Machine machine)
+    internal static async Task<TursoStorageTransaction> HeldTransactionAsync(PeerStreamTests.Machine machine)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
-        var store = (SqliteDatabaseStore)(await machine.Api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+        var store = (TursoDatabaseStore)(await machine.Api.Server.Services.GetRequiredService<TursoStorageEngine>()
             .OpenDatabaseAsync(machine.Cluster.Database, token))!;
         return await store.BeginRebuildTransactionAsync(token);
     }

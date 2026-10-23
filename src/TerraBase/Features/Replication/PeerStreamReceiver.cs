@@ -46,6 +46,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<PeerStreamReceiver> _logger;
     private readonly IMemoryBudget _memory;
+    private readonly ReplicationTimings _timings;
     private int _refilling;
 
     // A test observes a replacement while its predecessor's cancelled repair is still ending.
@@ -55,8 +56,9 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
     public PeerStreamReceiver(
         IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime,
-        ILogger<PeerStreamReceiver> logger, IMemoryBudget memory, Lazy<ICatalogGate> catalogGate, IReplicaCopyFaults faults)
+        ILogger<PeerStreamReceiver> logger, IMemoryBudget memory, Lazy<ICatalogGate> catalogGate, IReplicaCopyFaults faults, ReplicationTimings timings)
     {
+        _timings = timings;
         _catalogGate = catalogGate;
         _memory = memory;
         _logger = logger;
@@ -146,7 +148,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         // Per database, its newest batch or frontier in progress; the next one of the database runs after it.
         var applying = new Dictionary<TenantContext, (Task<AckFrame?> Done, bool Batch)>();
         // Batches and frontiers in arrival order. A database's frames run one after another, so they also complete in this order.
-        var answers = new List<(TenantContext Database, Ulid Incarnation, Task<AckFrame?> Done)>();
+        var answers = new List<(TenantContext Database, Ulid Incarnation, Task<AckFrame?> Done, long Received)>();
         // A client database's batch or refill also follows the catalog's frame in progress: the sender lists the system
         // database first, and a database it registers is refused until that registration commits.
         Task After(TenantContext database)
@@ -174,7 +176,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             cut = _cut.TryRemove(origin, out var carried) ? carried : [];
             // An already-ended predecessor can satisfy WaitAsync after this stream was cancelled.
             stream.Token.ThrowIfCancellationRequested();
-            await responseStream.WriteAsync(new AckFrame { Welcome = new Welcome { Node = _self.Id.Value } }, stream.Token).ConfigureAwait(false);
+            await responseStream.WriteAsync(new AckFrame { Welcome = new Welcome { Node = _self.Id.Value, Protocol = ReplicationProtocol.Version } }, stream.Token).ConfigureAwait(false);
             reading = requestStream.MoveNext(stream.Token);
             while (true)
             {
@@ -213,6 +215,10 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     }
 
                     await responseStream.WriteAsync(response, stream.Token).ConfigureAwait(false);
+                    if (response.Ack is { Refused: false })
+                    {
+                        _ = _timings.Record(ReplicationTimings.ReceiveTotal, answer.Received);
+                    }
                 }
 
                 foreach (var (tenant, (asked, done)) in refills.Where(entry => entry.Value.Done.IsCompleted).ToList())
@@ -250,8 +256,15 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 }
 
                 var frame = requestStream.Current;
+                var received = _timings.Now;
                 silent.CancelAfter(ReplicationProtocol.ProgressTimeout);
                 reading = requestStream.MoveNext(stream.Token);
+                if (frame.KindCase == PushFrame.KindOneofCase.None)
+                {
+                    // A kind of a newer protocol than this build's: its sender knows this machine does not read it.
+                    continue;
+                }
+
                 if (frame.KindCase == PushFrame.KindOneofCase.Heartbeat)
                 {
                     // An empty frame answers it, so the sender's deadline for answers also holds on an idle link.
@@ -282,7 +295,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
                     var recorded = FrontierAsync(at, origin, frontier, stream.Token);
                     applying[at] = (recorded, false);
-                    answers.Add((at, default, recorded));
+                    answers.Add((at, default, recorded, _timings.Now));
                     continue;
                 }
 
@@ -305,7 +318,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
                 if (frame.Batch is not { } batch)
                 {
-                    throw new RpcException(new Status(StatusCode.InvalidArgument, "a push stream carries batches and heartbeats after its hello"));
+                    throw new RpcException(new Status(StatusCode.InvalidArgument, "a push stream carries one hello, first"));
                 }
 
                 // A batch that names no database or incarnation cannot be refused for one: it ends the stream.
@@ -323,9 +336,9 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 }
 
                 var previous = last.GetValueOrDefault(database);
-                var joined = ApplyAsync(After(database), database, incarnation, previous, origin, batch, region, stream.Token);
+                var joined = ApplyAsync(After(database), received, database, incarnation, previous, origin, batch, region, stream.Token);
                 applying[database] = (joined, true);
-                answers.Add((database, incarnation, joined));
+                answers.Add((database, incarnation, joined, received));
             }
         }
         catch (OperationCanceledException) when (stream.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested)
@@ -506,8 +519,8 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     // Reserves the batch's bytes before decoding it and holds them until it applied, not until its ack is written; a batch
     // without them is refused and sent again.
     private async Task<AckFrame?> ApplyAsync(
-        Task before, TenantContext database, Ulid incarnation, (Ulid Incarnation, ulong ChangeId) previous, ReplicaId origin, Batch batch, string region,
-        CancellationToken cancellationToken)
+        Task before, long received, TenantContext database, Ulid incarnation, (Ulid Incarnation, ulong ChangeId) previous, ReplicaId origin, Batch batch,
+        string region, CancellationToken cancellationToken)
     {
         var refused = new AckFrame { Ack = new Ack { Database = batch.Database, Refused = true } };
         using var reservation = _memory.TryReserve(MemoryLane.Replication, BatchBytes(batch), tenant: null);
@@ -517,6 +530,8 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         {
             return refused;
         }
+
+        _ = _timings.Record(ReplicationTimings.ReceiveWait, received);
 
         List<OriginGroup> groups;
         try
@@ -548,7 +563,9 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             applied = await _sink.ApplyAsync(database, origin, groups, new Hlc(batch.Expect), cancellationToken).ConfigureAwait(false);
             if (applied is not null)
             {
+                var stable = _timings.Now;
                 stableAt = await _states.StableAsync(database, cancellationToken).ConfigureAwait(false);
+                _ = _timings.Record(ReplicationTimings.ReceiveStable, stable);
             }
         }
         catch (ReceiverCoverageException)
@@ -570,7 +587,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             return refused;
         }
 
-        if (applied is null)
+        if (applied is not { } appliedAt)
         {
             return refused;
         }
@@ -578,7 +595,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         Observe(groups, region);
         return new AckFrame
         {
-            Ack = new Ack { Database = batch.Database, ChangeId = batch.LastChangeId, Applied = applied.Value.Value, Stable = stableAt.Value },
+            Ack = new Ack { Database = batch.Database, ChangeId = batch.LastChangeId, Applied = appliedAt.Value, Stable = stableAt.Value },
         };
     }
 

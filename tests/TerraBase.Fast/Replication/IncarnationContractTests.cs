@@ -3,7 +3,7 @@ using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
@@ -88,7 +88,7 @@ public sealed class IncarnationContractTests
         await WriteUntilAsync(engine, groups, restored, cursor.Incarnation, "people", stale);
 
         // Turso stamps rows with the wall clock, the host's time is frozen earlier: age every row past the 60 s hold.
-        var store = (SqliteDatabaseStore)(await services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(restored, token))!;
+        var store = (TursoDatabaseStore)(await services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(restored, token))!;
         _ = await store.WithWriterAsync(writer =>
         {
             using var update = writer.Connection.CreateCommand();
@@ -117,7 +117,7 @@ public sealed class IncarnationContractTests
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, await gru.HeadAsync(cluster.Database))).IsTrue();
         var (pin, other) = (await gru.IncarnationAsync(), await sjc.IncarnationAsync());
         await Assert.That(pin).IsNotEqualTo(other);
-        var bucket = SqliteStorageTransaction.Bucket("items", id);
+        var bucket = TursoStorageTransaction.Bucket("items", id);
 
         // Replication bookkeeping advances the CDC head too; hold the writer while comparing separate read snapshots.
         var store = await gru.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(cluster.Database, CancellationToken.None)
@@ -217,7 +217,7 @@ public sealed class IncarnationContractTests
         var incarnation = await gru.IncarnationAsync();
         var peer = ReplicaId.Of(2, 7, 0);
         await Assert.That(await gru.AckedAsync(cluster.Database, peer)).IsEqualTo(0);
-        var store = (SqliteDatabaseStore)(await gru.Api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+        var store = (TursoDatabaseStore)(await gru.Api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
         var first = await gru.HeadAsync(cluster.Database);
         await Assert.That(await AckBehindWriterAsync(gru, store, incarnation, peer, first, renewal: null)).IsTrue();
         await Assert.That(await PeerAsync(store, peer)).IsEqualTo((first, incarnation.ToString()));
@@ -245,8 +245,8 @@ public sealed class IncarnationContractTests
         IChangeGroupSource groups, IServiceProvider services, TenantContext database, Ulid old, Ulid incarnation, ReplicaId peer, long stale, long head)
     {
         await Assert.That(stale).IsLessThanOrEqualTo(head).Because("the old ack names a change id the new file has, which a bound check passes");
-        var engine = services.GetRequiredService<SqliteStorageEngine>();
-        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+        var engine = services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
         // The peer row came with the copy and names the old file: the peer must refill this one, on every read until it acks.
         var refill = new SourceCursor(incarnation, 0) { RequiresRefill = true };
         await Assert.That(await groups.AckedAsync(database, peer, CancellationToken.None)).IsEqualTo(refill);
@@ -257,7 +257,7 @@ public sealed class IncarnationContractTests
         var written = (await groups.ReadAsync(database, incarnation, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None))!.Groups;
         var all = written.Count;
         var key = written.SelectMany(group => group.Deltas).Select(delta => (delta.Collection, delta.Id)).First(pair => pair.Collection is "items" or "people");
-        var bucket = SqliteStorageTransaction.Bucket(key.Collection, key.Id);
+        var bucket = TursoStorageTransaction.Bucket(key.Collection, key.Id);
         var states = services.GetRequiredService<IReplicaStates>();
         var stable = new Hlc((ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16);
 
@@ -325,7 +325,7 @@ public sealed class IncarnationContractTests
 
     // Holds the database's writer, starts the ack, renews the file's incarnation under the writer when asked,
     // then frees the writer and returns the ack's answer.
-    private static async Task<bool> AckBehindWriterAsync(Machine machine, SqliteDatabaseStore store, Ulid incarnation, ReplicaId peer, long changeId, Ulid? renewal)
+    private static async Task<bool> AckBehindWriterAsync(Machine machine, TursoDatabaseStore store, Ulid incarnation, ReplicaId peer, long changeId, Ulid? renewal)
     {
         using var deadline = new CancellationTokenSource(Deadline);
         using var release = new ManualResetEventSlim();
@@ -351,7 +351,7 @@ public sealed class IncarnationContractTests
         return await ack!.WaitAsync(deadline.Token);
     }
 
-    private static int Renew(SqliteSession session, Ulid incarnation)
+    private static int Renew(TursoSession session, Ulid incarnation)
     {
         using var command = session.Connection.CreateCommand();
         command.CommandText = "UPDATE commit_offset SET incarnation = $incarnation WHERE id = 1;";
@@ -359,7 +359,7 @@ public sealed class IncarnationContractTests
         return command.ExecuteNonQuery();
     }
 
-    private static Task<(long Acked, string Incarnation)> PeerAsync(SqliteDatabaseStore store, ReplicaId peer) =>
+    private static Task<(long Acked, string Incarnation)> PeerAsync(TursoDatabaseStore store, ReplicaId peer) =>
         store.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
@@ -370,7 +370,7 @@ public sealed class IncarnationContractTests
         }, "a test reading a peer's ack", CancellationToken.None);
 
     // The change log's extent and every peer row, read on the writer.
-    private static Task<Log> LogAsync(SqliteDatabaseStore store) =>
+    private static Task<Log> LogAsync(TursoDatabaseStore store) =>
         store.WithWriterAsync(session =>
         {
             using var extent = session.Connection.CreateCommand();

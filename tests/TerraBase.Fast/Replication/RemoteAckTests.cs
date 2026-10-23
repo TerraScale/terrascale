@@ -13,7 +13,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
@@ -492,7 +492,7 @@ public sealed class RemoteAckTests
             var marker = await pair.ReachedWait.Task.WaitAsync(pair.Token);
             _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
             // The sender's own writer of db, held as a busy machine holds it: proofs and acks of db need it, the wait does not.
-            holding = (await pair.OriginSqliteAsync()).WithWritersHeldAsync(async () =>
+            holding = (await pair.OriginTursoAsync()).WithWritersHeldAsync(async () =>
             {
                 taken.TrySetResult();
                 await release.Task.WaitAsync(pair.Token);
@@ -681,8 +681,8 @@ public sealed class RemoteAckTests
         using var response = await pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         var store = await pair.OriginStoreAsync();
-        var sqlite = await pair.OriginSqliteAsync();
-        await sqlite.WithWriterAsync(session =>
+        var turso = await pair.OriginTursoAsync();
+        await turso.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
             command.CommandText = "DELETE FROM turso_cdc;";
@@ -771,8 +771,8 @@ public sealed class RemoteAckTests
 
         var store = await pair.OriginStoreAsync();
         var sealer = pair.OriginSealer;
-        var sqlite = await pair.OriginSqliteAsync();
-        var covered = await FeedHeadAsync(sqlite, pair.Token);
+        var turso = await pair.OriginTursoAsync();
+        var covered = await FeedHeadAsync(turso, pair.Token);
         await TerraBaseTestServer.EventuallyAsync(async token => await sealer.FrontierAsync(store, token) >= covered);
         pair.ExpectWait();
         using var held = pair.PeerAck.Hold(unacked);
@@ -781,7 +781,7 @@ public sealed class RemoteAckTests
         {
             await held.Applied.Task.WaitAsync(pair.Token);
             _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
-            await Assert.That(await FeedHeadAsync(sqlite, pair.Token)).IsGreaterThan(covered);
+            await Assert.That(await FeedHeadAsync(turso, pair.Token)).IsGreaterThan(covered);
             var frontier = await sealer.FrontierAsync(store, pair.Token);
             var shape = await ShapeAsync(store);
             _ = await SealBoundedAsync(pair, sealer, store, shape, 0);
@@ -870,7 +870,7 @@ public sealed class RemoteAckTests
             await held.Applied.Task.WaitAsync(pair.Token);
             var waiting = await pair.WaitEntered.Task.WaitAsync(pair.Token);
             await Assert.That(waiting.IsCompleted).IsFalse();
-            var head = await FeedHeadAsync(await pair.OriginSqliteAsync(), pair.Token);
+            var head = await FeedHeadAsync(await pair.OriginTursoAsync(), pair.Token);
             await Assert.That(head).IsGreaterThan(at).Because("the held write committed locally");
 
             // Fresh at F: up to date at the published frontier, with nothing of the held commit.
@@ -1022,7 +1022,7 @@ public sealed class RemoteAckTests
         var probe = "~probe-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8));
         // One autocommit statement with capture on: more images than one pass walks (64 pages of 512), one commit row, no
         // feed row. The rows sit under a handle no shape can name.
-        var (images, commits, captured) = await (await pair.OriginSqliteAsync()).WithWriterAsync(session =>
+        var (images, commits, captured) = await (await pair.OriginTursoAsync()).WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
             command.CommandText = "SELECT coalesce(max(change_id), 0) FROM turso_cdc;";
@@ -1049,7 +1049,7 @@ public sealed class RemoteAckTests
         {
             await TerraBaseTestServer.EventuallyAsync(async token =>
             {
-                await retention.TrimAsync(await pair.OriginSqliteAsync(), token);
+                await retention.TrimAsync(await pair.OriginTursoAsync(), token);
                 return await pair.OriginScannedAsync(token) >= captured;
             }, TimeSpan.FromSeconds(20));
         }
@@ -1236,9 +1236,9 @@ public sealed class RemoteAckTests
 
             var store = await pair.OriginStoreAsync();
             // Force the background retention path while the proof walk must still be stopped.
-            await pair.OriginServer.Services.GetRequiredService<TursoChangeGroupSource>().TrimAsync(await pair.OriginSqliteAsync(), pair.Token);
+            await pair.OriginServer.Services.GetRequiredService<TursoChangeGroupSource>().TrimAsync(await pair.OriginTursoAsync(), pair.Token);
             var sealer = SealerOf(pair.OriginServer, ((ObservedRemote)pair.Remote).Inner);
-            var head = await (await pair.OriginSqliteAsync()).WithWriterAsync(session =>
+            var head = await (await pair.OriginTursoAsync()).WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
                 command.CommandText = "SELECT seq FROM _tb_feed_sequence WHERE id = 1;";
@@ -1309,14 +1309,14 @@ public sealed class RemoteAckTests
         await using var api = await Documents.DocumentApi.StartAsync();
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         _ = await api.PutAsync(EntityIds.New().ToString(), new { n = 1 });
-        var sqlite = await OpenSqliteAsync(api.Server, await api.TenantOfAsync(), token);
+        var turso = await OpenTursoAsync(api.Server, await api.TenantOfAsync(), token);
         // One autocommit: the change log captures every row, so more than FarBehindRows (65536) unwalked changes are young.
-        _ = await PadChangesAsync(sqlite, 65_537, token);
-        var (count, oldest) = await CaptureAsync(sqlite, token);
+        _ = await PadChangesAsync(turso, 65_537, token);
+        var (count, oldest) = await CaptureAsync(turso, token);
         await Assert.That(count).IsGreaterThan(65_536L).Because("the standalone database captures the padded rows as real changes");
         await Assert.That(oldest).IsGreaterThanOrEqualTo(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60)
             .Because("the unwalked changes are younger than the 60 s hold, so only the row bound can end it");
-        await Assert.That(await FrontierHoldAsync(sqlite, token)).IsNull()
+        await Assert.That(await FrontierHoldAsync(turso, token)).IsNull()
             .Because("unwalked changes past the row bound end the hold, however young they are");
     }
 
@@ -1326,10 +1326,10 @@ public sealed class RemoteAckTests
         await using var api = await Documents.DocumentApi.StartAsync();
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         _ = await api.PutAsync(EntityIds.New().ToString(), new { n = 1 });
-        var sqlite = await OpenSqliteAsync(api.Server, await api.TenantOfAsync(), token);
-        var (count, _) = await CaptureAsync(sqlite, token);
+        var turso = await OpenTursoAsync(api.Server, await api.TenantOfAsync(), token);
+        var (count, _) = await CaptureAsync(turso, token);
         await Assert.That(count).IsGreaterThan(0L).Because("the standalone database captures its write");
-        await Assert.That(await FrontierHoldAsync(sqlite, token)).IsEqualTo(0L)
+        await Assert.That(await FrontierHoldAsync(turso, token)).IsEqualTo(0L)
             .Because("with no frontier row, a few young unwalked changes within the bound hold at scanned 0");
     }
 
@@ -1348,14 +1348,14 @@ public sealed class RemoteAckTests
         }
     }
 
-    // The SQLite store itself, as Pair opens it: the engine's own handle, not the IStorageEngine wrapper.
-    private static async Task<SqliteDatabaseStore> OpenSqliteAsync(TerraBaseTestServer server, TenantContext database, CancellationToken cancellationToken) =>
-        (SqliteDatabaseStore)(await server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, cancellationToken)
+    // The Turso store itself, as Pair opens it: the engine's own handle, not the IStorageEngine wrapper.
+    private static async Task<TursoDatabaseStore> OpenTursoAsync(TerraBaseTestServer server, TenantContext database, CancellationToken cancellationToken) =>
+        (TursoDatabaseStore)(await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, cancellationToken)
             ?? throw new InvalidOperationException("the database is missing"));
 
     // The change log's row count and oldest change time, read raw: proves capture happened before a hold is judged.
-    private static Task<(long Count, long Oldest)> CaptureAsync(SqliteDatabaseStore sqlite, CancellationToken cancellationToken) =>
-        sqlite.WithWriterAsync(session =>
+    private static Task<(long Count, long Oldest)> CaptureAsync(TursoDatabaseStore turso, CancellationToken cancellationToken) =>
+        turso.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
             command.CommandText = "SELECT count(*), coalesce(min(change_time), 0) FROM turso_cdc;";
@@ -1364,13 +1364,13 @@ public sealed class RemoteAckTests
             return (reader.GetInt64(0), reader.GetInt64(1));
         }, "a test reading the change log", cancellationToken);
 
-    private static Task<long?> FrontierHoldAsync(SqliteDatabaseStore sqlite, CancellationToken cancellationToken) =>
-        sqlite.WithWriterAsync(session => SqliteStorageTransaction.ShapeFrontierHold(session.Connection, null, DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
+    private static Task<long?> FrontierHoldAsync(TursoDatabaseStore turso, CancellationToken cancellationToken) =>
+        turso.WithWriterAsync(session => TursoStorageTransaction.ShapeFrontierHold(session.Connection, null, DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
             "a test reading the frontier hold", cancellationToken);
 
     // Inserts harmless chunk rows in one statement; the change log captures each of them as a real commit.
-    private static Task<int> PadChangesAsync(SqliteDatabaseStore sqlite, long count, CancellationToken cancellationToken) =>
-        sqlite.WithWriterAsync(session =>
+    private static Task<int> PadChangesAsync(TursoDatabaseStore turso, long count, CancellationToken cancellationToken) =>
+        turso.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
             command.CommandText = """
@@ -1384,7 +1384,7 @@ public sealed class RemoteAckTests
 
     private static ShapeSealer SealerOf(TerraBaseTestServer server, IRemoteDurability durability) => new(
         server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance,
-        new SqliteShapeStorage(server.Services.GetRequiredService<SqliteStorageEngine>()), durability);
+        new TursoShapeStorage(server.Services.GetRequiredService<TursoStorageEngine>()), durability);
 
     private static async Task<IDatabaseStore> OpenStoreAsync(TerraBaseTestServer server, TenantContext database, CancellationToken cancellationToken) =>
         await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, cancellationToken)
@@ -1473,8 +1473,8 @@ public sealed class RemoteAckTests
             || line.StartsWith("terrabase_shape_requests_waiting{", StringComparison.Ordinal))
         .Sum(line => double.Parse(line.Split(' ')[^1], CultureInfo.InvariantCulture));
 
-    private static Task<long> FeedHeadAsync(SqliteDatabaseStore sqlite, CancellationToken cancellationToken) =>
-        sqlite.WithWriterAsync(session =>
+    private static Task<long> FeedHeadAsync(TursoDatabaseStore turso, CancellationToken cancellationToken) =>
+        turso.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
             command.CommandText = "SELECT seq FROM _tb_feed_sequence WHERE id = 1;";
@@ -1566,8 +1566,8 @@ public sealed class RemoteAckTests
 
         public Task<IDatabaseStore> OriginStoreAsync() => OpenStoreAsync(_origin!.Server, Database, Token);
 
-        public async Task<SqliteDatabaseStore> OriginSqliteAsync() =>
-            (SqliteDatabaseStore)(await _origin!.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(Database, Token)
+        public async Task<TursoDatabaseStore> OriginTursoAsync() =>
+            (TursoDatabaseStore)(await _origin!.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(Database, Token)
                 ?? throw new InvalidOperationException("the database is missing"));
 
         public TerraBaseTestServer OriginServer => _origin!.Server;
@@ -1581,7 +1581,7 @@ public sealed class RemoteAckTests
         // The peer's persisted frontier row and the captured rows past it, for a stuck seal's failure message.
         // The origin's persisted chunks of a shape, whatever the read gate serves.
         public async Task<(int Count, long End)> PersistedChunksAsync(string handle) =>
-            await (await OriginSqliteAsync()).WithWriterAsync(session =>
+            await (await OriginTursoAsync()).WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
                 command.CommandText = "SELECT count(*), coalesce(max(end_offset), 0) FROM _tb_shape_chunk WHERE handle = $handle;";
@@ -1599,7 +1599,7 @@ public sealed class RemoteAckTests
 
         // The last commit change id the origin's frontier walked past (the body is "2 incarnation scanned ranges...").
         public async Task<long> OriginScannedAsync(CancellationToken cancellationToken) =>
-            await (await OriginSqliteAsync()).WithWriterAsync(session =>
+            await (await OriginTursoAsync()).WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
                 command.CommandText = "SELECT CAST(body AS TEXT) FROM _tb_shape_chunk WHERE handle = '~frontier';";
@@ -1608,7 +1608,7 @@ public sealed class RemoteAckTests
 
         // Ages every captured row of the origin past retention's 60 s hold, as if the commits were older.
         public async Task AgeOriginCaptureAsync() =>
-            await (await OriginSqliteAsync()).WithWriterAsync(session =>
+            await (await OriginTursoAsync()).WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
                 command.CommandText = "UPDATE turso_cdc SET change_time = $aged;";
@@ -1619,10 +1619,10 @@ public sealed class RemoteAckTests
         // A machine's frontier state and the oldest captured rows, for a stuck seal's failure message.
         private async Task<string> FrontierStateAsync(TerraBaseTestServer server)
         {
-            var sqlite = (SqliteDatabaseStore)(await server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(Database, Token)
+            var turso = (TursoDatabaseStore)(await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(Database, Token)
                 ?? throw new InvalidOperationException("the database is missing"));
             var self = server.Services.GetRequiredService<LocalReplica>().Id;
-            return await sqlite.WithWriterAsync(session =>
+            return await turso.WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
                 string Scalar(string sql)
@@ -1634,7 +1634,7 @@ public sealed class RemoteAckTests
                 var text = new StringBuilder();
                 text.Append(CultureInfo.InvariantCulture, $"self {self.Value:x} region {self.Region}; ");
                 text.Append("frontier ").Append(Scalar("SELECT end_offset || ' (' || CAST(body AS TEXT) || ')' FROM _tb_shape_chunk WHERE handle = '~frontier';"));
-                text.Append("; incarnation ").Append(Scalar(SqliteStatements.Incarnation));
+                text.Append("; incarnation ").Append(Scalar(TursoStatements.Incarnation));
                 text.Append("; feed seq ").Append(Scalar("SELECT seq FROM _tb_feed_sequence WHERE id = 1;"));
                 text.Append("; cdc min/max/count ").Append(Scalar("SELECT min(change_id) || '/' || max(change_id) || '/' || count(*) FROM turso_cdc;"));
                 text.Append("; peers ").Append(Scalar("SELECT group_concat(printf('%x', node) || ' acked ' || acked || ' seen ' || seen, ', ') FROM _tb_peers;"));
@@ -1650,7 +1650,7 @@ public sealed class RemoteAckTests
                         continue;
                     }
 
-                    var record = SqliteRecord.Decode(SqliteSession.Bytes(reader, 3));
+                    var record = SqliteRecord.Decode(TursoSession.Bytes(reader, 3));
                     if (table == "_tb_state" && record is [_, _, _, _, _, long origin, ..])
                     {
                         text.Append(CultureInfo.InvariantCulture, $":origin={unchecked((ulong)origin):x}");

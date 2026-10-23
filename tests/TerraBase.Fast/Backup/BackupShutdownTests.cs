@@ -8,7 +8,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Management;
 using TerraBase.Features.Backup;
 using TerraBase.Hosting;
@@ -89,7 +89,7 @@ public sealed class BackupShutdownTests
             {
                 s3.Route(services);
                 hook.Install(services);
-                services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
+                services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<TursoStorageEngine>()));
                 var registration = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
                     && descriptor.ImplementationFactory?.Method.ReturnType == typeof(ContinuousBackup));
                 services[services.IndexOf(registration)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
@@ -231,7 +231,7 @@ public sealed class BackupShutdownTests
             }, services =>
             {
                 s3.Route(services);
-                services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
+                services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<TursoStorageEngine>()));
                 var registration = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
                     && descriptor.ImplementationFactory?.Method.ReturnType == typeof(ContinuousBackup));
                 services[services.IndexOf(registration)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
@@ -377,7 +377,7 @@ public sealed class BackupShutdownTests
             }, services =>
             {
                 s3.Route(services);
-                services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
+                services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<TursoStorageEngine>()));
                 var registration = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
                     && descriptor.ImplementationFactory?.Method.ReturnType == typeof(ContinuousBackup));
                 services[services.IndexOf(registration)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
@@ -470,7 +470,7 @@ public sealed class BackupShutdownTests
             }, services =>
             {
                 s3.Route(services);
-                services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
+                services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<TursoStorageEngine>()));
                 // Factory disposal rejoins StopAsync. The test observes its failure directly; the host must still dispose.
                 var registration = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
                     && descriptor.ImplementationFactory?.Method.ReturnType == typeof(ContinuousBackup));
@@ -478,7 +478,7 @@ public sealed class BackupShutdownTests
                     new BackupLifetime(provider.GetRequiredService<ContinuousBackup>()));
             }, time);
             backup = api.Server.Services.GetRequiredService<ContinuousBackup>();
-            var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
             await WaitForSnapshotsAsync(api, deadline.Token, "v1/_system");
             var database = await api.CreateManagedDatabaseAsync("main");
             var other = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "other");
@@ -582,14 +582,14 @@ public sealed class BackupShutdownTests
                 s3.Route(services);
                 // The first tap shutdown disposes returns its session and then throws.
                 services.AddSingleton<IWalBackup>(provider =>
-                    taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>(), failFirstDisposal: true));
+                    taps = new TrackedBackup(provider.GetRequiredService<TursoStorageEngine>(), failFirstDisposal: true));
                 var registration = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
                     && descriptor.ImplementationFactory?.Method.ReturnType == typeof(ContinuousBackup));
                 services[services.IndexOf(registration)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
                     new BackupLifetime(provider.GetRequiredService<ContinuousBackup>()));
             }, time);
             var backup = api.Server.Services.GetRequiredService<ContinuousBackup>();
-            var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
             await WaitForSnapshotsAsync(api, token, "v1/_system");
             var database = await api.CreateManagedDatabaseAsync("main");
             var other = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "other");
@@ -676,7 +676,7 @@ public sealed class BackupShutdownTests
             }
         }
 
-        // Disposal can also finish after the engine's shutdown grace while SQLite cleanup still owns the directory.
+        // Disposal can also finish after the engine's shutdown grace while Turso cleanup still owns the directory.
         if (unfinished.Count == 0 && !TerraBaseTestServer.IsDataDirectoryOwned(directory))
         {
             Directory.Delete(directory, recursive: true);

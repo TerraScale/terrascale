@@ -6,10 +6,10 @@ namespace TerraBase.Features.Qos;
 /// <param name="RequestsPerSecond">Token replenishment rate; zero disables the plan limit.</param>
 /// <param name="Burst">Maximum tokens; zero disables the plan limit.</param>
 /// <param name="Concurrency">Simultaneous requests; zero disables the plan limit.</param>
-/// <param name="Weight">Relative SQLite scheduling weight.</param>
+/// <param name="Weight">Relative Turso scheduling weight.</param>
 /// <param name="MemoryShare">Maximum fraction of the process budget reserved by one organization.</param>
 /// <param name="CacheShare">Maximum fraction of the document cache held by one organization.</param>
-/// <param name="QueryTimeout">SQLite execution time allowed, excluding queue and consumer waits.</param>
+/// <param name="QueryTimeout">Turso execution time allowed, excluding queue and consumer waits.</param>
 /// <param name="QueryWork">Engine work limit, in units scaled like SQLite virtual machine instructions.</param>
 /// <param name="ScanRows">Maximum candidate document rows scanned.</param>
 /// <param name="ScanBytes">Maximum candidate JSON bytes scanned.</param>

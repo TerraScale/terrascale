@@ -148,7 +148,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         return engine.ReadMark(frames);
     }
 
-    /// <summary>Deletes a file <see cref="BuildAsync(string, string, SnapshotKey, DateTimeOffset, long?, SnapshotKey?, CancellationToken)"/> returned, with whatever SQLite left next to it.</summary>
+    /// <summary>Deletes a file <see cref="BuildAsync(string, string, SnapshotKey, DateTimeOffset, long?, SnapshotKey?, CancellationToken)"/> returned, with whatever Turso left next to it.</summary>
     public static void Delete(string path)
     {
         foreach (var leftover in new[] { "", "-journal", "-wal", "-shm" })

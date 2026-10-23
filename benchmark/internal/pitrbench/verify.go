@@ -123,7 +123,7 @@ type MarkerCheck struct {
 // AcctIndexCheck: for every one of the AcctValues acct values, the indexed equality query (projected to /acct) pages
 // exactly the oracle's live documents with that value, in id order, each carrying it. Counts are not used: a count
 // examines at most 100,000 documents of the collection in id order, not the index
-// (src/TerraBase/Engine/Sqlite/SqliteQueryCompiler.cs CompileCount), so at scale it is a lower bound.
+// (src/TerraBase/Engine/Turso/TursoQueryCompiler.cs CompileCount), so at scale it is a lower bound.
 type AcctIndexCheck struct {
 	Values     int      `json:"values_queried"`
 	Documents  int64    `json:"documents_matched"`

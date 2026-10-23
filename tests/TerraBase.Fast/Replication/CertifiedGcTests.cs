@@ -3,7 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 
@@ -40,9 +40,9 @@ public sealed class CertifiedGcTests
             await RepairAsync(receiver, new RepairState("items", deleted, old));
         }
         await RepairAsync(stale, new RepairState("items", deleted, old));
-        var engine = source.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var sourceStore = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, token))!;
-        await using (var collect = (SqliteStorageTransaction)await sourceStore.BeginTransactionAsync(write: true, token))
+        var engine = source.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var sourceStore = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, token))!;
+        await using (var collect = (TursoStorageTransaction)await sourceStore.BeginTransactionAsync(write: true, token))
         {
             await Assert.That(await collect.CollectAsync(new Hlc(3000), token)).IsEqualTo(1);
             _ = await collect.CommitAsync(token);

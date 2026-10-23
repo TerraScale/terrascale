@@ -5,7 +5,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -113,7 +113,7 @@ public sealed class RebuildFaultSafetyTests
         var row = await services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None);
         await Assert.That(row?.Phase).IsEqualTo(RebuildPhase.Pending);
         await Assert.That(row?.OldIncarnation).IsEqualTo(Ulid.Parse(crashed.Incarnation));
-        var store = (SqliteDatabaseStore)(await services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+        var store = (TursoDatabaseStore)(await services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
             ?? throw new InvalidOperationException("the crashed copy is missing"));
         await Assert.That(store.CurrentWriter()).IsNull();
         await Assert.That(await services.GetRequiredService<IReplicaCopyFaults>()
@@ -139,7 +139,7 @@ public sealed class RebuildFaultSafetyTests
             .Because("a healthy cached writer still checkpoints at close");
         await using (var reading = await StartAsync(directory.Root))
         {
-            var store = (SqliteDatabaseStore)(await reading.Server.Services.GetRequiredService<SqliteStorageEngine>()
+            var store = (TursoDatabaseStore)(await reading.Server.Services.GetRequiredService<TursoStorageEngine>()
                 .OpenDatabaseAsync(database, CancellationToken.None) ?? throw new InvalidOperationException("the healthy copy is missing"));
             await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
             await Assert.That(await read.GetAsync("damaged", "kept", CancellationToken.None)).IsNotNull();
@@ -171,12 +171,12 @@ public sealed class RebuildFaultSafetyTests
         }
         if (refusal == "read")
         {
-            await CorruptTablePageAsync(path, SqliteStorageTransaction.Table("damaged").Trim('"'));
+            await CorruptTablePageAsync(path, TursoStorageTransaction.Table("damaged").Trim('"'));
         }
 
         await using var api = await StartAsync(directory.Root);
         var services = api.Server.Services;
-        var copy = (SqliteDatabaseStore)(await services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+        var copy = (TursoDatabaseStore)(await services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
             ?? throw new InvalidOperationException("the test copy is missing"));
         await using (var write = await copy.BeginDurableTransactionAsync(CancellationToken.None))
         {
@@ -245,13 +245,13 @@ public sealed class RebuildFaultSafetyTests
         }
         if (lateReadFault)
         {
-            await CorruptTablePageAsync(path, SqliteStorageTransaction.Table("damaged").Trim('"'));
+            await CorruptTablePageAsync(path, TursoStorageTransaction.Table("damaged").Trim('"'));
         }
 
         await using var api = await StartAsync(directory.Root);
         var services = api.Server.Services;
-        var engine = services.GetRequiredService<SqliteStorageEngine>();
-        var copy = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None)
+        var engine = services.GetRequiredService<TursoStorageEngine>();
+        var copy = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None)
             ?? throw new InvalidOperationException("the test copy is missing"));
         await using (var write = await copy.BeginDurableTransactionAsync(CancellationToken.None))
         {
@@ -290,7 +290,7 @@ public sealed class RebuildFaultSafetyTests
         await Assert.That(writer!.Connection.State).IsEqualTo(System.Data.ConnectionState.Closed);
         await Assert.That((await File.ReadAllBytesAsync(side)).SequenceEqual(main)).IsTrue();
         await Assert.That((await File.ReadAllBytesAsync(side + "-wal")).SequenceEqual(wal)).IsTrue();
-        var fresh = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None)
+        var fresh = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None)
             ?? throw new InvalidOperationException("the replacement is missing"));
         await Assert.That(fresh.Incarnation).IsEqualTo(replacement);
         var swapped = pending with { Phase = RebuildPhase.Swapped, NewIncarnation = replacement };
@@ -365,7 +365,7 @@ public sealed class RebuildFaultSafetyTests
         await using var api = await StartAsync(directory.Root);
         var (database, copy) = await CreateAsync(api);
         var services = api.Server.Services;
-        var engine = services.GetRequiredService<SqliteStorageEngine>();
+        var engine = services.GetRequiredService<TursoStorageEngine>();
         var backup = services.GetRequiredService<IWalBackup>();
         await using var tap = (TursoChangeTap)(await backup.OpenTapAsync(database, CancellationToken.None)
             ?? throw new InvalidOperationException("the real backup tap is missing"));
@@ -416,7 +416,7 @@ public sealed class RebuildFaultSafetyTests
         await Assert.That(writer!.Connection.State).IsEqualTo(System.Data.ConnectionState.Closed);
         await Assert.That((await File.ReadAllBytesAsync(side)).SequenceEqual(main)).IsTrue();
         await Assert.That((await File.ReadAllBytesAsync(side + "-wal")).SequenceEqual(wal)).IsTrue();
-        var fresh = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None)
+        var fresh = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None)
             ?? throw new InvalidOperationException("the replacement is missing"));
         await Assert.That(fresh.Incarnation).IsEqualTo(replacement);
         var swapped = pending with { Phase = RebuildPhase.Swapped, NewIncarnation = replacement };
@@ -488,13 +488,13 @@ public sealed class RebuildFaultSafetyTests
             path = store.FilePath;
             incarnation = store.Incarnation;
         }
-        await CorruptTablePageAsync(path, SqliteStorageTransaction.Table("damaged").Trim('"'));
+        await CorruptTablePageAsync(path, TursoStorageTransaction.Table("damaged").Trim('"'));
         await File.WriteAllTextAsync(Path.Combine(root, "read-crash.json"), JsonSerializer.Serialize(new ReadCrash(
             database.OrganizationId, database.ProjectId!, database.DatabaseId!, incarnation.ToString())));
 
         await using var api = await StartAsync(data);
         var services = api.Server.Services;
-        var copy = (SqliteDatabaseStore)(await services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+        var copy = (TursoDatabaseStore)(await services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
             ?? throw new InvalidOperationException("the damaged copy is missing"));
         await Assert.That(copy.CurrentWriter()).IsNull();
         await Assert.That(await services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None)).IsNull();
@@ -516,13 +516,13 @@ public sealed class RebuildFaultSafetyTests
             configure?.Invoke(services);
         }, time: new FakeTimeProvider());
 
-    private static async Task<(TenantContext Database, SqliteDatabaseStore Store)> CreateAsync(ManagementApi api)
+    private static async Task<(TenantContext Database, TursoDatabaseStore Store)> CreateAsync(ManagementApi api)
     {
         var managed = await api.CreateManagedDatabaseAsync();
         var database = await api.Server.Services.GetRequiredService<ITenantDirectory>()
             .FindDatabaseAsync(managed.Organization, managed.Project, managed.Name, CancellationToken.None)
             is TenantContext found ? found : throw new InvalidOperationException("the test database is not registered");
-        var store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+        var store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>()
             .OpenDatabaseAsync(database, CancellationToken.None) ?? throw new InvalidOperationException("the test copy is missing"));
         await using var write = await store.BeginDurableTransactionAsync(CancellationToken.None);
         _ = await write.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);

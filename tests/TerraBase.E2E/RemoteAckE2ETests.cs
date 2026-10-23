@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
@@ -150,7 +150,7 @@ public sealed class RemoteAckE2ETests
         request.Incarnation = digest.Incarnation;
         var buckets = new BucketRequest { Database = request };
         // RegionProcesses provisions the e2e collection.
-        buckets.Buckets.AddRange(ids.Select(id => (uint)SqliteStorageTransaction.Bucket("e2e", id)).Distinct());
+        buckets.Buckets.AddRange(ids.Select(id => (uint)TursoStorageTransaction.Bucket("e2e", id)).Distinct());
         using var call = peer.ReadBucket(buckets, cancellationToken: deadline.Token);
         var documents = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
         while (await call.ResponseStream.MoveNext(deadline.Token))

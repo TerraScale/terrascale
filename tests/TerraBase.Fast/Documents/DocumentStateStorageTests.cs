@@ -5,7 +5,7 @@ using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 
 namespace TerraBase.Fast.Documents;
 
@@ -31,7 +31,7 @@ public sealed class DocumentStateStorageTests
         await Assert.That(patched.State.Fields["b"].Base!.Value.Version.Stamp.Value).IsEqualTo((ulong)patched.Stamp);
         await Assert.That(patched.State.Clear!.Value.Version.Stamp.Value).IsEqualTo((ulong)put.Stamp);
         await Assert.That(patched.Live).IsTrue();
-        await Assert.That(patched.Bucket).IsEqualTo(SqliteStorageTransaction.Bucket(DocumentApi.Collection, id));
+        await Assert.That(patched.Bucket).IsEqualTo(TursoStorageTransaction.Bucket(DocumentApi.Collection, id));
         await Assert.That(patched.Digest).IsEqualTo(DocumentStateEncoding.Digest(DocumentApi.Collection, id, patched.State));
     }
 

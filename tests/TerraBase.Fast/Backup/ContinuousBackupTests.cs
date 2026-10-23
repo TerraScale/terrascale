@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Primitives;
@@ -212,7 +212,7 @@ public sealed class ContinuousBackupTests
 
         // Something else empties the capture table on the file's writer before the shipper read the write.
         var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
-        var store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
+        var store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
         await store.WithWriterAsync(writer =>
         {
             using var delete = writer.Connection.CreateCommand();

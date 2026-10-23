@@ -1,6 +1,6 @@
 using System.Diagnostics.Metrics;
 using Turso.Data.Sqlite;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Primitives;
 
 namespace TerraBase.Testing;
@@ -15,19 +15,19 @@ public static class DocumentFiles
     public static async Task WriteAsync(string path, params (string Collection, string Id, string Body)[] documents)
     {
         using var meter = new Meter("TerraBase.Testing.DocumentFiles");
-        await using var io = new SqliteIoPool(1, 1, meter);
+        await using var io = new TursoIoPool(1, 1, meter);
         var system = Path.GetFileName(path) == "_system.db";
         if (system)
         {
             // A current-format catalog has its node-local operation journal published first.
-            var journal = Path.Combine(Path.GetDirectoryName(path)!, SqliteStorageEngine.IntentName + ".db");
+            var journal = Path.Combine(Path.GetDirectoryName(path)!, TursoStorageEngine.IntentName + ".db");
             if (!File.Exists(journal))
             {
-                await SqliteDatabaseStore.InitializeAsync("_system", journal, io, string.Empty, CancellationToken.None);
+                await TursoDatabaseStore.InitializeAsync("_system", journal, io, string.Empty, CancellationToken.None);
             }
         }
         // The name chooses the schema the file bootstraps: the system database keeps its documents in one table.
-        await SqliteDatabaseStore.InitializeAsync(system ? "_system" : "fixture", path, io, string.Empty, CancellationToken.None);
+        await TursoDatabaseStore.InitializeAsync(system ? "_system" : "fixture", path, io, string.Empty, CancellationToken.None);
         // Built, never interpolated: a path may contain ';' or quotes.
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
         await connection.OpenAsync();
@@ -104,7 +104,7 @@ public static class DocumentFiles
 
             await using (var table = connection.CreateCommand())
             {
-                table.CommandText = SqliteStorageTransaction.CreateTable(collection).Replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", StringComparison.Ordinal);
+                table.CommandText = TursoStorageTransaction.CreateTable(collection).Replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", StringComparison.Ordinal);
                 await table.ExecuteNonQueryAsync();
             }
 

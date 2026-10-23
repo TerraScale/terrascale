@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
@@ -24,7 +24,7 @@ namespace TerraBase.Fast.Shapes;
 /// <summary>
 /// FR-13 snapshots (shape-reads.md sections 3.2 and 6): every page of a snapshot is built in one read transaction whose
 /// feed head is S, pages are written by short uncaptured writer transactions, and only finished snapshots are served.
-/// The snapshot API runs against the decorated production store; the raw SQLite store is used only to inspect and damage rows.
+/// The snapshot API runs against the decorated production store; the raw Turso store is used only to inspect and damage rows.
 /// Reseal policy: 16 chunks per page of the newest snapshot past its offset (at most 4096), or one hour since it was sealed.
 /// </summary>
 public sealed class ShapeSnapshotTests
@@ -225,7 +225,7 @@ public sealed class ShapeSnapshotTests
         var shape = await ShapeAsync(fixture.Store);
         var first = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         var firstModel = Model(model);
-        var sealer = new ShapeSealer(fixture.Memory, NullLogger<ShapeSealer>.Instance, new SqliteShapeStorage(api.Server.Services.GetRequiredService<SqliteStorageEngine>()), new LocalDurability());
+        var sealer = new ShapeSealer(fixture.Memory, NullLogger<ShapeSealer>.Instance, new TursoShapeStorage(api.Server.Services.GetRequiredService<TursoStorageEngine>()), new LocalDurability());
         var chunkShape = await ChunkShapeAsync(fixture.Store, shape);
         // Chunk values are materialized at sealing time, so each checkpoint is sealed before the next writes commit.
         await Assert.That(await sealer.SealUpToHeadAsync(fixture.Store, chunkShape, 0, CancellationToken.None)).IsEqualTo(first.Offset);
@@ -591,7 +591,7 @@ public sealed class ShapeSnapshotTests
         internal const long Limit = 512L * 1024 * 1024;
         private readonly Meter _meter;
 
-        private Fixture(Meter meter, MemoryBudget memory, SqliteDatabaseStore raw, IDatabaseStore store, SqliteShapeSnapshotTransactions transactions)
+        private Fixture(Meter meter, MemoryBudget memory, TursoDatabaseStore raw, IDatabaseStore store, TursoShapeSnapshotTransactions transactions)
         {
             _meter = meter;
             Memory = memory;
@@ -606,23 +606,23 @@ public sealed class ShapeSnapshotTests
         public MemoryBudget Memory { get; }
 
         /// <summary>The engine's store, for SQL inspection only.</summary>
-        public SqliteDatabaseStore Raw { get; }
+        public TursoDatabaseStore Raw { get; }
 
         /// <summary>The decorated production store every snapshot call goes through.</summary>
         public IDatabaseStore Store { get; }
 
-        public SqliteShapeSnapshotTransactions Transactions { get; }
+        public TursoShapeSnapshotTransactions Transactions { get; }
 
         public ShapeSnapshots Snapshots { get; }
 
         public static async Task<Fixture> OpenAsync(DocumentApi api, long limit = Limit)
         {
             var tenant = await api.TenantOfAsync();
-            var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-            var raw = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(tenant, CancellationToken.None))!;
+            var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+            var raw = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(tenant, CancellationToken.None))!;
             var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
             var meter = new Meter("TerraBase.Fast.ShapeSnapshots");
-            return new Fixture(meter, new MemoryBudget(limit, meter), raw, store, new SqliteShapeSnapshotTransactions(engine));
+            return new Fixture(meter, new MemoryBudget(limit, meter), raw, store, new TursoShapeSnapshotTransactions(engine));
         }
 
         public ValueTask DisposeAsync()
@@ -833,7 +833,7 @@ public sealed class ShapeSnapshotTests
     }
 
     /// <summary>The live ids of the shape's collection after replaying feed rows with seq at or below S, in ordinal order.</summary>
-    private static Task<string[]> FeedLiveAsync(SqliteDatabaseStore store, long offset) => store.WithWriterAsync(session =>
+    private static Task<string[]> FeedLiveAsync(TursoDatabaseStore store, long offset) => store.WithWriterAsync(session =>
     {
         using var command = session.Connection.CreateCommand();
         command.CommandText = $"SELECT id, deleted FROM _tb_feed WHERE collection = '{DocumentApi.Collection}' AND seq <= {offset} ORDER BY seq;";
@@ -847,10 +847,10 @@ public sealed class ShapeSnapshotTests
         return live.Where(pair => pair.Value).Select(pair => pair.Key).Order(StringComparer.Ordinal).ToArray();
     }, "a test replaying the feed", CancellationToken.None);
 
-    private static Task<long> CounterAsync(SqliteDatabaseStore store) =>
+    private static Task<long> CounterAsync(TursoDatabaseStore store) =>
         ScalarAsync(store, "SELECT seq FROM _tb_feed_sequence WHERE id = 1;");
 
-    private static Task<long> ScalarAsync(SqliteDatabaseStore store, string sql) => store.WithWriterAsync(session =>
+    private static Task<long> ScalarAsync(TursoDatabaseStore store, string sql) => store.WithWriterAsync(session =>
     {
         using var command = session.Connection.CreateCommand();
         command.CommandText = sql;
@@ -858,11 +858,11 @@ public sealed class ShapeSnapshotTests
     }, "a test inspecting shape rows", CancellationToken.None);
 
     // The same capture-off pragma SuspendCaptureAsync sends; each statement commits on its own.
-    private static Task<bool> RawWriteAsync(SqliteDatabaseStore store, params string[] statements) => store.WithWriterAsync(session =>
+    private static Task<bool> RawWriteAsync(TursoDatabaseStore store, params string[] statements) => store.WithWriterAsync(session =>
     {
         using (var off = session.Connection.CreateCommand())
         {
-            off.CommandText = SqliteSession.CaptureOff;
+            off.CommandText = TursoSession.CaptureOff;
             off.ExecuteNonQuery();
         }
 
@@ -878,7 +878,7 @@ public sealed class ShapeSnapshotTests
         finally
         {
             using var on = session.Connection.CreateCommand();
-            on.CommandText = SqliteSession.CaptureOn;
+            on.CommandText = TursoSession.CaptureOn;
             on.ExecuteNonQuery();
         }
 

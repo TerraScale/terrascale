@@ -6,7 +6,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -61,7 +61,7 @@ public sealed class KeyAwareDigestTests
         await using var pair = await Pair.StartAsync();
         var (gru, sjc) = (pair.Gru, pair.Sjc);
         var (first, second) = SameBucketIds();
-        var bucket = SqliteStorageTransaction.Bucket(Items, first);
+        var bucket = TursoStorageTransaction.Bucket(Items, first);
         var originals = new[]
         {
             new RepairState(Items, first, DocumentState.Bottom.Set(new EntryVersion(new Hlc(1_000), Origin), "x", Json("1"))),
@@ -108,10 +108,10 @@ public sealed class KeyAwareDigestTests
     private static (string First, string Second) SameBucketIds()
     {
         Dictionary<int, string> seen = [];
-        for (var i = 0; i <= SqliteStorageTransaction.Buckets; i++)
+        for (var i = 0; i <= TursoStorageTransaction.Buckets; i++)
         {
             var id = EntityIds.New().ToString();
-            var bucket = SqliteStorageTransaction.Bucket(Items, id);
+            var bucket = TursoStorageTransaction.Bucket(Items, id);
             if (seen.TryGetValue(bucket, out var first))
             {
                 return (first, id);
@@ -183,7 +183,7 @@ public sealed class KeyAwareDigestTests
         public async Task<byte[]> BucketAsync(int bucket)
         {
             var replica = Api.Server.Services.GetRequiredService<IReplicaStates>();
-            var incarnation = ((SqliteDatabaseStore)await OpenAsync()).Incarnation;
+            var incarnation = ((TursoDatabaseStore)await OpenAsync()).Incarnation;
             return await replica.DigestAsync(Database, incarnation, CancellationToken.None) is { } digests
                 ? digests.Buckets.AsSpan(bucket * 16, 16).ToArray()
                 : throw new InvalidOperationException("the database is not held");
@@ -193,7 +193,7 @@ public sealed class KeyAwareDigestTests
         public async Task<DocumentState> StateAsync(string id)
         {
             var replica = Api.Server.Services.GetRequiredService<IReplicaStates>();
-            var incarnation = ((SqliteDatabaseStore)await OpenAsync()).Incarnation;
+            var incarnation = ((TursoDatabaseStore)await OpenAsync()).Incarnation;
             var (states, _) = await replica.ReadBucketsAsync(Database, incarnation, [Bucket(id)], null, 64, ChangeGroups.MaxBatchBytes, CancellationToken.None)
                 ?? throw new InvalidOperationException("the database is not held");
             return states.Single(state => state.Collection == Items && state.Id == id).State;
@@ -204,7 +204,7 @@ public sealed class KeyAwareDigestTests
         // The stored row and its materialized body, as the engine wrote them.
         public async Task<Stored> StoredAsync(string collection, string id)
         {
-            var store = (SqliteDatabaseStore)await OpenAsync();
+            var store = (TursoDatabaseStore)await OpenAsync();
             return await store.WithWriterAsync(session =>
             {
                 using var row = session.Connection.CreateCommand();
@@ -230,7 +230,7 @@ public sealed class KeyAwareDigestTests
         // that key. It bypasses the change feed, as a damaged file would.
         public async Task MisplaceAsync(string id, DocumentState state)
         {
-            var store = (SqliteDatabaseStore)await OpenAsync();
+            var store = (TursoDatabaseStore)await OpenAsync();
             var stored = Base64Url.EncodeToString(DocumentStateEncoding.EncodeStored(state));
             var body = Encoding.UTF8.GetString(state.Materialize() ?? []);
             var digest = DocumentStateEncoding.Digest(Items, id, state);
@@ -262,10 +262,10 @@ public sealed class KeyAwareDigestTests
 
         public ValueTask DisposeAsync() => Api.DisposeAsync();
 
-        private static int Bucket(string id) => SqliteStorageTransaction.Bucket(Items, id);
+        private static int Bucket(string id) => TursoStorageTransaction.Bucket(Items, id);
 
         public async Task<IDatabaseStore> OpenAsync() =>
-            await Api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(Database, CancellationToken.None) is { } store
+            await Api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(Database, CancellationToken.None) is { } store
                 ? store
                 : throw new InvalidOperationException("the database is not held");
 

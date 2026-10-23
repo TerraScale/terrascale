@@ -2,7 +2,7 @@ using System.Buffers.Text;
 using System.Text.Json;
 using Turso.Data.Sqlite;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 
 namespace TerraBase.Testing;
 
@@ -65,8 +65,8 @@ public static class StoredStates
                 INSERT INTO documents (collection, id, body) VALUES ($collection, $id, $body);
                 """
             : $"""
-                DELETE FROM {SqliteStorageTransaction.Table(collection)} WHERE id = $id;
-                INSERT INTO {SqliteStorageTransaction.Table(collection)} (id, doc) VALUES ($id, $body);
+                DELETE FROM {TursoStorageTransaction.Table(collection)} WHERE id = $id;
+                INSERT INTO {TursoStorageTransaction.Table(collection)} (id, doc) VALUES ($id, $body);
                 """) + $"""
             DELETE FROM _tb_state WHERE collection = $collection AND id = $id;
             INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2)
@@ -75,7 +75,7 @@ public static class StoredStates
         insert.Parameters.AddWithValue("$collection", collection);
         insert.Parameters.AddWithValue("$id", id);
         insert.Parameters.AddWithValue("$body", System.Text.Encoding.UTF8.GetString(state.Materialize()!));
-        insert.Parameters.AddWithValue("$bucket", SqliteStorageTransaction.Bucket(collection, id));
+        insert.Parameters.AddWithValue("$bucket", TursoStorageTransaction.Bucket(collection, id));
         insert.Parameters.AddWithValue("$state", Base64Url.EncodeToString(DocumentStateEncoding.EncodeStored(state)));
         insert.Parameters.AddWithValue("$origin", unchecked((long)replica.Value));
         insert.Parameters.AddWithValue("$h1", unchecked((long)(ulong)(digest >> 64)));
@@ -87,7 +87,7 @@ public static class StoredStates
             INSERT INTO _tb_merkle (bucket, h1, h2) VALUES ($bucket, 0, 0) ON CONFLICT (bucket) DO NOTHING;
             UPDATE _tb_merkle SET h1 = (h1 | $h1) & ~(h1 & $h1), h2 = (h2 | $h2) & ~(h2 & $h2) WHERE bucket = $bucket;
             """;
-        fold.Parameters.AddWithValue("$bucket", SqliteStorageTransaction.Bucket(collection, id));
+        fold.Parameters.AddWithValue("$bucket", TursoStorageTransaction.Bucket(collection, id));
         fold.Parameters.AddWithValue("$h1", h1);
         fold.Parameters.AddWithValue("$h2", h2);
         await fold.ExecuteNonQueryAsync();

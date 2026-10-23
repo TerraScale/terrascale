@@ -170,7 +170,7 @@ public static class QosExtensions
         {
             // First-database creation resolves its project after binding; existing projects still share admission.
             return await context.RequestServices.GetRequiredService<IProjectCatalog>()
-                .ResolveProjectAsync(project, context.User.UserId(), create: false, context.RequestAborted).ConfigureAwait(false) switch
+                .ResolveProjectAsync(project, context.User.UserId(), createIn: null, context.RequestAborted).ConfigureAwait(false) switch
             {
                 string organization => await ResolvePlanAsync(context, organization).ConfigureAwait(false),
                 NotFound => new Done(),

@@ -8,7 +8,7 @@ using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Queries;
@@ -35,7 +35,7 @@ public sealed class UsageApiTests
         initialHealth.EnsureSuccessStatusCode();
         var catalog = Path.Combine(server.DataDirectory, "_system.db");
         await Assert.That(File.Exists(catalog)).IsTrue();
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var system = engine.SystemStore ?? throw new InvalidOperationException("startup did not publish SYSTEM");
         var source = server.Services.GetRequiredService<IChangeGroupSource>();
         var head = await source.HeadAsync(ChangeGroups.System, system.Incarnation, token)

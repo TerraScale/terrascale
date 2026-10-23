@@ -3,7 +3,7 @@ using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Testing;
 using Turso.Data.Sqlite;
@@ -18,8 +18,8 @@ public sealed class MerkleDigestTests
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var api = await DocumentApi.StartAsync(cancellationToken: token);
         var database = await api.TenantOfAsync(cancellationToken: token);
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var client = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, token))!;
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var client = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, token))!;
         var id = DocumentApi.NewId();
         await Assert.That((await api.PutAsync(id, new { value = 1 }, cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.Created);
         await ExactAsync(client);
@@ -34,7 +34,7 @@ public sealed class MerkleDigestTests
         }
         await Assert.That((await api.PutAsync(id, new { value = 2 }, cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.OK);
         var committed = await ExactAsync(client);
-        await using (var rollback = (SqliteStorageTransaction)await client.BeginTransactionAsync(write: true, token))
+        await using (var rollback = (TursoStorageTransaction)await client.BeginTransactionAsync(write: true, token))
         {
             _ = await rollback.PutAsync("items", id, "{\"value\":3}"u8.ToArray(), token);
             await rollback.FlushStatesAsync();
@@ -43,7 +43,7 @@ public sealed class MerkleDigestTests
         await Assert.That((await api.SendAsync(HttpMethod.Delete, api.Document(id), cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.OK);
         await ExactAsync(client);
         var horizon = await HorizonAsync();
-        await using (var collect = (SqliteStorageTransaction)await client.BeginTransactionAsync(write: true, token))
+        await using (var collect = (TursoStorageTransaction)await client.BeginTransactionAsync(write: true, token))
         {
             await Assert.That(await collect.CollectAsync(horizon, token)).IsEqualTo(1);
             _ = await collect.CommitAsync(token);
@@ -51,7 +51,7 @@ public sealed class MerkleDigestTests
         await ExactAsync(client);
         await Assert.That((await api.PutAsync(id, new { value = 4 }, cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.Created);
         horizon = await HorizonAsync();
-        await using (var forget = (SqliteStorageTransaction)await client.BeginTransactionAsync(write: true, token))
+        await using (var forget = (TursoStorageTransaction)await client.BeginTransactionAsync(write: true, token))
         {
             await Assert.That(await forget.ForgetAsync([("items", id)], horizon, token)).IsEqualTo(1);
             _ = await forget.CommitAsync(token);
@@ -87,9 +87,9 @@ public sealed class MerkleDigestTests
             }, "a Merkle fixture measuring its collection horizon", token);
         }
 
-        async Task<byte[]> ExactAsync(SqliteDatabaseStore store)
+        async Task<byte[]> ExactAsync(TursoDatabaseStore store)
         {
-            await using var read = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, token);
+            await using var read = (TursoStorageTransaction)await store.BeginTransactionAsync(write: false, token);
             var expected = await read.LedgerAsync(create =>
             {
                 var bytes = new byte[4096 * 16];

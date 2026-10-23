@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -26,13 +26,13 @@ public sealed class ReplicaIdentityCloneTests
             {
                 using var health = await donor.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
                 health.EnsureSuccessStatusCode();
-                original = donor.Services.GetRequiredService<SqliteStorageEngine>().ReplicaId;
+                original = donor.Services.GetRequiredService<TursoStorageEngine>().ReplicaId;
             }
 
             if (sameDirectory)
             {
                 await using var replacement = await StartAsync(donorRoot, cloneName);
-                await Assert.That(replacement.Services.GetRequiredService<SqliteStorageEngine>().ReplicaId.Member)
+                await Assert.That(replacement.Services.GetRequiredService<TursoStorageEngine>().ReplicaId.Member)
                     .IsNotEqualTo(original.Member).Because("a different machine must not inherit ownership at the same path");
                 return;
             }
@@ -49,8 +49,8 @@ public sealed class ReplicaIdentityCloneTests
 
             await using var restarted = await StartAsync(donorRoot, donorName);
             await using var clone = await StartAsync(cloneRoot, cloneName);
-            var donorId = restarted.Services.GetRequiredService<SqliteStorageEngine>().ReplicaId;
-            var cloneId = clone.Services.GetRequiredService<SqliteStorageEngine>().ReplicaId;
+            var donorId = restarted.Services.GetRequiredService<TursoStorageEngine>().ReplicaId;
+            var cloneId = clone.Services.GetRequiredService<TursoStorageEngine>().ReplicaId;
 
             await Assert.That(donorId).IsEqualTo(original).Because("a clean restart on the donor keeps its identity");
             await Assert.That(cloneId.Member).IsNotEqualTo(original.Member)

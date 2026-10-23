@@ -49,6 +49,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private readonly TimeProvider _time;
     private readonly ILogger<PeerStreams> _logger;
     private readonly Counter<long> _unreadable;
+    private readonly Histogram<double> _remoteAckDelay;
+    private readonly ReplicationTimings _timings;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Link> _links = [with(StringComparer.Ordinal)];
 
@@ -56,9 +58,11 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
     public PeerStreams(
         IMembership membership, IChangeGroupSource source, RemoteAckWaiter acks, IReplicaStates states, ITenantDirectory tenants, LocalReplica self, TerraBaseOptions options,
-        TimeProvider time, IMeterFactory meters, ILogger<PeerStreams> logger, Lazy<ICatalogGate> catalogGate, PeerCredential credential, IReplicaCopyFaults faults, IRebuildStorage storage)
+        TimeProvider time, IMeterFactory meters, ILogger<PeerStreams> logger, Lazy<ICatalogGate> catalogGate, PeerCredential credential, IReplicaCopyFaults faults, IRebuildStorage storage,
+        ReplicationTimings timings)
     {
         _credential = credential;
+        _timings = timings;
         (_membership, _source, _acks, _states, _tenants, _self, _options, _time, _logger) =
             (membership, source, acks, states, tenants, self, options, time, logger);
         _catalogGate = catalogGate;
@@ -69,6 +73,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             "Age of the oldest change group not yet acknowledged by the peer region's machines.");
         _unreadable = meter.CreateCounter<long>("terrabase.replication.unreadable_reads", "{read}",
             "Reads of a database's change log that failed (a damaged row is refused), by the peer region the batch was for.");
+        _remoteAckDelay = meter.CreateHistogram<double>("terrabase.replication.remote_ack_delay", "s",
+            "From a change group's stamp on this machine to the peer region's durable ack of it, by the peer region.",
+            advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = ReplicationTimings.Buckets });
         meter.CreateObservableGauge("terrabase.replication.ack_lag", () => Lags(cursor => cursor.InFlight is null ? null : cursor.SentAt), "s",
             "Age of the oldest batch sent to the peer region's machines but not acknowledged.");
     }
@@ -281,7 +288,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         using var call = new V1.Replication.ReplicationClient(channel).Push(cancellationToken: cancellationToken);
         await call.RequestStream.WriteAsync(new PushFrame
         {
-            Hello = new Hello { Node = _self.Id.Value, Hlc = _self.Clock.Tick().Value, Region = _options.Region, Machine = _membership.Self.Name },
+            Hello = new Hello
+            {
+                Node = _self.Id.Value,
+                Hlc = _self.Clock.Tick().Value,
+                Region = _options.Region,
+                Machine = _membership.Self.Name,
+                Protocol = ReplicationProtocol.Version,
+            },
         }, cancellationToken).ConfigureAwait(false);
         if (!await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false) || call.ResponseStream.Current.Welcome is not { Node: not 0 })
         {
@@ -294,18 +308,19 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         _self.Presence.Heard(link.Peer.Name, peer, _self.Clock.Tick().Milliseconds);
         lock (link.Gate)
         {
-            (link.Connected, link.Origin) = (true, peer);
+            (link.Connected, link.Origin, link.Protocol) = (true, peer, ReplicationProtocol.Negotiate(call.ResponseStream.Current.Welcome.Protocol));
             foreach (var cursor in link.Cursors.Values)
             {
-                (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.RequiresRefill, cursor.Refilling, cursor.Live) =
-                    (null, null, null, 0, false, false, null);
+                (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.RequiresRefill, cursor.Refilling, cursor.Live, cursor.Stamps) =
+                    (null, null, null, 0, false, false, null, null);
                 cursor.Confirmed = null;
             }
         }
 
         welcomed();
         using var activity = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var responses = Channel.CreateBounded<AckFrame>(2 * MaxPendingResponses);
+        // Each response with when it arrived, for the ack step's timing.
+        var responses = Channel.CreateBounded<(AckFrame Frame, long At)>(2 * MaxPendingResponses);
         var reading = responses.Reader.ReadAsync(activity.Token).AsTask();
         var pending = 0;
         ExceptionDispatchInfo? failure = null;
@@ -329,12 +344,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     await ReconcileAsync(link, positions, activity.Token).ConfigureAwait(false);
                 }
 
+                var pass = _timings.Now;
                 _ = await ShipAsync(link, writer, positions, InitializeAsync, DrainAsync, activity.Token).ConfigureAwait(false);
+                _ = _timings.Record(ReplicationTimings.SendPass, pass);
 
-                using (var pass = CancellationTokenSource.CreateLinkedTokenSource(activity.Token))
+                using (var idle = CancellationTokenSource.CreateLinkedTokenSource(activity.Token))
                 {
-                    _ = await Task.WhenAny(reading, work.Ready, Task.Delay(work.Delay(_time), _time, pass.Token)).ConfigureAwait(false);
-                    await pass.CancelAsync().ConfigureAwait(false);
+                    _ = await Task.WhenAny(reading, work.Ready, Task.Delay(work.Delay(_time), _time, idle.Token)).ConfigureAwait(false);
+                    await idle.CancelAsync().ConfigureAwait(false);
                 }
 
                 await DrainAsync().ConfigureAwait(false);
@@ -371,7 +388,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         {
             while (reading.IsCompleted)
             {
-                var response = await reading.ConfigureAwait(false);
+                var (response, at) = await reading.ConfigureAwait(false);
                 if (response.Stable is { } report)
                 {
                     var database = ChangeGroups.Tenant(report.Database);
@@ -411,7 +428,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                         throw new InvalidDataException("the peer sent a response with no frame outstanding");
                     }
 
-                    await AckedAsync(link, response.Ack, ledger, activity.Token).ConfigureAwait(false);
+                    await AckedAsync(link, response.Ack, at, ledger, activity.Token).ConfigureAwait(false);
                     pending--;
                 }
 
@@ -458,7 +475,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                         if (frame.Stable is not null)
                         {
                             // Keep half the buffer available for mandatory ACKs; optional stable proofs may be omitted.
-                            _ = responses.Reader.Count < MaxPendingResponses && responses.Writer.TryWrite(frame);
+                            _ = responses.Reader.Count < MaxPendingResponses && responses.Writer.TryWrite((frame, _timings.Now));
                             continue;
                         }
 
@@ -477,7 +494,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                             }
                         }
 
-                        await responses.Writer.WriteAsync(frame, activity.Token).ConfigureAwait(false);
+                        await responses.Writer.WriteAsync((frame, _timings.Now), activity.Token).ConfigureAwait(false);
                     }
                 }
 
@@ -754,6 +771,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 }
 
                 // Read before retention: a cut between them must never ship a batch past a hole.
+                var readAt = _timings.Now;
                 var page = await _source.ReadAsync(database, incarnation, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
                 if (page is not null && page.Incarnation != incarnation)
                 {
@@ -771,6 +789,11 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
                 read = page;
                 retained = retains.Value;
+                if (page.Groups.Count > 0)
+                {
+                    _ = _timings.Record(ReplicationTimings.SendRead, readAt);
+                }
+
                 if (!retained || cursor.RequiresRefill)
                 {
                     if (await _source.HeadAsync(database, incarnation, cancellationToken).ConfigureAwait(false) is not { } heldHead)
@@ -813,7 +836,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     }
 
                     cursor.BehindSince ??= _time.GetTimestamp();
-                    (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (refillResume, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true);
+                    (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling, cursor.Stamps) =
+                        (refillResume, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true, null);
                     cursor.ResponseReceived = false;
                 }
                 await stream.WriteAsync(new PushFrame
@@ -857,6 +881,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 cursor.BehindSince ??= _time.GetTimestamp();
                 (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (last, groups.Count, _time.GetTimestamp(), Math.Max(cursor.Head, last), false);
                 cursor.ResponseReceived = false;
+                cursor.Stamps = Stamps(groups);
             }
             await stream.WriteAsync(new PushFrame
             {
@@ -919,12 +944,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         }
     }
 
-    private async ValueTask AckedAsync(Link link, Ack? ack, Ledger ledger, CancellationToken cancellationToken)
+    private async ValueTask AckedAsync(Link link, Ack? ack, long at, Ledger ledger, CancellationToken cancellationToken)
     {
         var database = ChangeGroups.Tenant(ack?.Database);
         Ulid incarnation;
         bool live;
         long from;
+        long[]? stamps;
         lock (link.Gate)
         {
             var cursor = link.Cursors.GetValueOrDefault(database);
@@ -937,9 +963,11 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
             incarnation = pinned;
             // Capture the original batch kind before clearing it: stored positions and uncertified refills never confirm.
-            live = !cursor.Refilling && link.Peer.Region != _options.Region && link.Placements.GetValueOrDefault(database).Placed;
+            var refilling = cursor.Refilling;
+            live = !refilling && link.Peer.Region != _options.Region && link.Placements.GetValueOrDefault(database).Placed;
             from = cursor.Live is { } run && run.Incarnation == incarnation ? run.From : cursor.Acked ?? inFlight;
-            (cursor.InFlight, cursor.InFlightGroups, cursor.Refilling) = (null, 0, false);
+            stamps = cursor.Stamps;
+            (cursor.InFlight, cursor.InFlightGroups, cursor.Refilling, cursor.Stamps) = (null, 0, false, null);
             if (cursor.Retired)
             {
                 // Rediscover after the final ACK: the removed database may already have been recreated.
@@ -950,7 +978,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             {
                 // Catalog lag only retries; missing coverage requests a pinned refill even without a stored peer scope.
                 cursor.RequiresRefill |= ack.RefillRequired;
-                cursor.RetryAt = _time.GetTimestamp() + (long)(Retry.TotalSeconds * _time.TimestampFrequency);
+                cursor.RetryAt = ack.RefillRequired && !refilling ? 0 : _time.GetTimestamp() + (long)(Retry.TotalSeconds * _time.TimestampFrequency);
                 link.Work.Enqueue(database);
                 return;
             }
@@ -998,6 +1026,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         if (head is not null)
         {
             _acks.Acked(database, incarnation, from, (long)ack.ChangeId);
+        }
+
+        _ = _timings.Record(ReplicationTimings.SendAck, at);
+        var now = _time.GetUtcNow().ToUnixTimeMilliseconds();
+        var region = new KeyValuePair<string, object?>("peer_region", link.Peer.Region);
+        foreach (var stamp in stamps ?? [])
+        {
+            _remoteAckDelay.Record(Math.Max(0, now - stamp) / 1000.0, region);
         }
 
         await ledger.AddAsync(
@@ -1107,6 +1143,21 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         var placed = found is TenantDatabaseRecord record && record.Placement.Includes(link.Peer.Region);
         link.Placements[database] = (placed, _time.GetTimestamp());
         return placed;
+    }
+
+    // Each group's newest stamp, in Unix milliseconds: when it was written on this machine.
+    private static long[] Stamps(IReadOnlyList<OriginGroup> groups)
+    {
+        var stamps = new long[groups.Count];
+        for (var index = 0; index < groups.Count; index++)
+        {
+            foreach (var delta in groups[index].Deltas)
+            {
+                stamps[index] = Math.Max(stamps[index], delta.Stamp.Milliseconds);
+            }
+        }
+
+        return stamps;
     }
 
     private Link? Linked(string name)
@@ -1470,6 +1521,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         // The node the peer welcomed this connection with: the replica id its own commits carry. Null while not connected.
         public ReplicaId? Origin { get; set; }
 
+        // The protocol this connection uses (ReplicationProtocol.Negotiate of the peer's Welcome).
+        public uint Protocol { get; set; }
+
         public Dictionary<TenantContext, Cursor> Cursors { get; } = [];
 
         // Only the link's own loop reads and writes these.
@@ -1513,6 +1567,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         public long FrontierAt { get; set; }
 
         public int InFlightGroups { get; set; }
+
+        // The stamps of the live batch in flight (Stamps), for the remote ack delay; null for a refill.
+        public long[]? Stamps { get; set; }
 
         public long SentAt { get; set; }
 

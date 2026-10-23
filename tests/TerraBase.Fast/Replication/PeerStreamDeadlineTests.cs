@@ -16,7 +16,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
@@ -666,6 +666,51 @@ public sealed class PeerStreamDeadlineTests
 
         await Assert.That(replacement.Hello).IsNotNull();
         await Assert.That(peer.Streams).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Missing_coverage_refills_immediately_but_a_refused_refill_keeps_the_retry_backoff(bool repeatedCoverageRefusal)
+    {
+        var time = new ObservedTime();
+        await using var peer = await FakePeer.StartAsync(silentStreams: 0, coverageRefusal: true, repeatedCoverageRefusal: repeatedCoverageRefusal);
+        var (source, bindSource) = CreateSource();
+        TenantContext database = null!;
+        await using var api = await StartSenderAsync(peer, source, bindSource, time, async api =>
+        {
+            database = await CreateDatabaseAsync(api);
+            _ = source.Add(database, Incompressible(api.Server.Services.GetRequiredService<LocalReplica>().Id, 32));
+        });
+        var started = time.GetUtcNow();
+        await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
+        await Assert.That((await peer.NextAsync()).Batch).IsNotNull();
+        await Assert.That((await peer.NextAsync()).Refill).IsNotNull();
+        await Assert.That(time.GetUtcNow()).IsEqualTo(started).Because("the clock has not advanced");
+
+        // The Stable after the refill refusal crosses the same response queue, proving the refusal was processed.
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await source.AckedAsync(database, ReplicaId.Of(1, 9, 0), token))?.Stable.Value == 1, Deadline);
+        for (var second = 1; second < 5; second++)
+        {
+            var timers = time.Timers;
+            var changes = time.Changes;
+            time.Advance(Idle);
+            await Assert.That((await peer.NextAsync()).Heartbeat).IsNotNull().Because("a failed refill must not retry immediately");
+            await time.UntilChangeAsync(ReplicationProtocol.ProgressTimeout, changes);
+            await time.UntilTimerAsync(Idle, timers, period: Timeout.InfiniteTimeSpan, createdAt: time.GetUtcNow());
+        }
+
+        time.Advance(Idle);
+        var retry = await peer.NextAsync();
+        while (retry.Heartbeat is not null)
+        {
+            retry = await peer.NextAsync();
+        }
+
+        await Assert.That(retry.Refill).IsNotNull();
+        await Assert.That(time.GetUtcNow() - started).IsEqualTo(TimeSpan.FromSeconds(5));
+        await Assert.That(source.AckedBy(database, ReplicaId.Of(1, 9, 0))).IsEqualTo(0);
     }
 
     [Test]
@@ -1378,6 +1423,8 @@ public sealed class PeerStreamDeadlineTests
         private readonly TaskCompletionSource? _frontierRelease;
         private readonly bool _stableBeforeBatches;
         private readonly bool _stableBurst;
+        private readonly bool _coverageRefusal;
+        private readonly bool _repeatedCoverageRefusal;
         private WebApplication? _app;
         private int _streams;
         private int _batchesBeforeRelease;
@@ -1385,7 +1432,7 @@ public sealed class PeerStreamDeadlineTests
 
         private FakePeer(
             int silentStreams, RepairState? repair, TaskCompletionSource? refillRelease, TaskCompletionSource? batchRelease,
-            TaskCompletionSource? frontierRelease, int unansweredStreams, bool stableBeforeBatches, bool stableBurst)
+            TaskCompletionSource? frontierRelease, int unansweredStreams, bool stableBeforeBatches, bool stableBurst, bool coverageRefusal, bool repeatedCoverageRefusal)
         {
             _silentStreams = silentStreams;
             _unansweredStreams = unansweredStreams;
@@ -1395,6 +1442,8 @@ public sealed class PeerStreamDeadlineTests
             _frontierRelease = frontierRelease;
             _stableBeforeBatches = stableBeforeBatches;
             _stableBurst = stableBurst;
+            _coverageRefusal = coverageRefusal;
+            _repeatedCoverageRefusal = repeatedCoverageRefusal;
         }
 
         public string Address { get; private set; } = "";
@@ -1414,9 +1463,9 @@ public sealed class PeerStreamDeadlineTests
 
         public static async Task<FakePeer> StartAsync(
             int silentStreams, RepairState? repair = null, TaskCompletionSource? refillRelease = null, TaskCompletionSource? batchRelease = null,
-            TaskCompletionSource? frontierRelease = null, int unansweredStreams = 0, bool stableBeforeBatches = false, bool stableBurst = false)
+            TaskCompletionSource? frontierRelease = null, int unansweredStreams = 0, bool stableBeforeBatches = false, bool stableBurst = false, bool coverageRefusal = false, bool repeatedCoverageRefusal = false)
         {
-            var peer = new FakePeer(silentStreams, repair, refillRelease, batchRelease, frontierRelease, unansweredStreams, stableBeforeBatches, stableBurst);
+            var peer = new FakePeer(silentStreams, repair, refillRelease, batchRelease, frontierRelease, unansweredStreams, stableBeforeBatches, stableBurst, coverageRefusal, repeatedCoverageRefusal);
             var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
             builder.Configuration.Sources.Clear();
             builder.Logging.ClearProviders();
@@ -1481,13 +1530,20 @@ public sealed class PeerStreamDeadlineTests
                     {
                         PushFrame.KindOneofCase.Hello => new AckFrame { Welcome = new Welcome { Node = ReplicaId.Of(1, 9, 0).Value } },
                         PushFrame.KindOneofCase.Heartbeat => new AckFrame(),
-                        PushFrame.KindOneofCase.Batch => new AckFrame { Ack = new Ack { Database = frame.Batch.Database, Refused = true } },
-                        PushFrame.KindOneofCase.Refill => new AckFrame { Ack = new Ack { Database = frame.Refill.Database, Refused = true } },
+                        PushFrame.KindOneofCase.Batch => new AckFrame { Ack = new Ack { Database = frame.Batch.Database, Refused = true, RefillRequired = _coverageRefusal } },
+                        PushFrame.KindOneofCase.Refill => new AckFrame { Ack = new Ack { Database = frame.Refill.Database, Refused = true, RefillRequired = _repeatedCoverageRefusal } },
                         _ => null,
                     };
                     if (answer is not null && (ordinal > _unansweredStreams || frame.Hello is not null))
                     {
                         await responseStream.WriteAsync(answer, context.CancellationToken);
+                        if (_coverageRefusal && frame.Refill is { } refused)
+                        {
+                            await responseStream.WriteAsync(new AckFrame
+                            {
+                                Stable = new StableReport { Database = refused.Database, Stable = 1 },
+                            }, context.CancellationToken);
+                        }
                     }
 
                     await _frames.Writer.WriteAsync(frame, context.CancellationToken);

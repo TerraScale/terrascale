@@ -4,7 +4,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -211,7 +211,7 @@ public sealed class UniqueConstraintTests
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await DeclareAsync(api, data, database, new { fields = new[] { new { name = "email", unique = true } } });
         var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
-        var store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
+        var store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
         var first = Ulid.NewUlid().ToString();
         var last = Ulid.NewUlid().ToString();
         var invalid = Ulid.NewUlid().ToString();

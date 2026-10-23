@@ -253,7 +253,7 @@ public sealed class ManagementApiTests
         await ErrorAssert.ErrorAsync(branchDuplicate, HttpStatusCode.Conflict, "name_taken", "name is already taken");
         // A rejected create or branch leaves no database behind.
         await Assert.That(list.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(1);
-        // Database files only: an open database also has SQLite -wal and -shm files.
+        // Database files only: an open database also has Turso -wal and -shm files.
         await Assert.That(Directory.EnumerateFiles(Path.Combine(api.Server.DataDirectory, acme, project), "*.db").Count()).IsEqualTo(1);
     }
 

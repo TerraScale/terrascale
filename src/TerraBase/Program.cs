@@ -2,7 +2,7 @@ using System.Net;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.ApiReference;
 using TerraBase.Features.Backup;
@@ -83,7 +83,7 @@ builder.Services.ConfigureHttpClientDefaults(http => http
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2) }));
 builder.Services.ConfigureHttpJsonOptions(json =>
 {
-    // Stored documents can reach SQLite's depth bound; response envelopes add a few levels.
+    // Stored documents can reach Turso's depth bound; response envelopes add a few levels.
     json.SerializerOptions.MaxDepth = TerraBaseJsonContext.Default.Options.MaxDepth;
     json.SerializerOptions.TypeInfoResolverChain.Insert(0, TerraBaseJsonContext.Default);
 });

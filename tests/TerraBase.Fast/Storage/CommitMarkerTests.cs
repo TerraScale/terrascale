@@ -4,7 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -184,8 +184,8 @@ public sealed class CommitMarkerTests
         var token = deadline.Token;
         var armed = 0;
         string? target = null;
-        SqliteDatabaseStore? committing = null;
-        SqliteSession? markedSession = null;
+        TursoDatabaseStore? committing = null;
+        TursoSession? markedSession = null;
         await using var api = await ManagementApi.StartAsync(cancellationToken: token,
             services: services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
             {
@@ -268,8 +268,8 @@ public sealed class CommitMarkerTests
         var token = deadline.Token;
         var armed = 0;
         string? target = null;
-        SqliteDatabaseStore? committing = null;
-        SqliteSession? markedSession = null;
+        TursoDatabaseStore? committing = null;
+        TursoSession? markedSession = null;
         await using var api = await ManagementApi.StartAsync(cancellationToken: token,
             services: services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
             {
@@ -377,42 +377,42 @@ public sealed class CommitMarkerTests
     }
 
     private static async Task AssertFaultedCommitAsync(
-        ManagementApi api, SqliteDatabaseStore store, IChangeGroupSource source, TenantContext tenant, long before, string id, CancellationToken token)
+        ManagementApi api, TursoDatabaseStore store, IChangeGroupSource source, TenantContext tenant, long before, string id, CancellationToken token)
     {
         await Assert.That(await api.Server.Services.GetRequiredService<IReplicaCopyFaults>().RefusedAsync(tenant, store.Incarnation, token)).IsTrue();
         await Assert.That(await source.ReadAsync(tenant, store.Incarnation, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token)).IsNull()
             .Because("a landed commit on a faulted copy cannot be offered to peers");
-        await using (var read = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, token))
+        await using (var read = (TursoStorageTransaction)await store.BeginTransactionAsync(write: false, token))
         {
             var document = await read.GetAsync("items", id, token);
             await Assert.That(document).IsNotNull().Because("the native COMMIT landed before the marker read failed");
             using var body = JsonDocument.Parse(document!.Json);
             await Assert.That(body.RootElement.GetProperty("n").GetInt32()).IsEqualTo(1);
             var (groups, _, _) = await read.ReadChangeGroupsAsync(before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes,
-                api.Server.Services.GetRequiredService<SqliteStorageEngine>().ReplicaId, token);
+                api.Server.Services.GetRequiredService<TursoStorageEngine>().ReplicaId, token);
             await Assert.That(groups.Count(group => group.Deltas.Any(delta => delta.Id == id))).IsEqualTo(1)
                 .Because("the ambiguous mutation was committed once, without replay");
         }
         await Assert.ThrowsAsync<ReplicaCopyFaultedException>(() => PutAsync(store, EntityIds.New().ToString(), token).AsTask());
     }
 
-    private static ValueTask<(long Result, CommitResult Commit)> PutAsync(SqliteDatabaseStore store, string id, CancellationToken token) =>
+    private static ValueTask<(long Result, CommitResult Commit)> PutAsync(TursoDatabaseStore store, string id, CancellationToken token) =>
         store.WriteAsync((transaction, inner) => transaction.PutAsync("items", id, Body, inner), _ => true, token);
 
     // The source's reads of the copy in place, which never refuse its own incarnation.
-    private static async Task<long> HeadAsync(IChangeGroupSource source, SqliteDatabaseStore store, TenantContext tenant, CancellationToken token) =>
+    private static async Task<long> HeadAsync(IChangeGroupSource source, TursoDatabaseStore store, TenantContext tenant, CancellationToken token) =>
         await source.HeadAsync(tenant, store.Incarnation, token) ?? throw new InvalidOperationException("the copy refused its own incarnation");
 
-    private static async Task<IReadOnlyList<OriginGroup>> ReadAsync(IChangeGroupSource source, SqliteDatabaseStore store, TenantContext tenant, long after, CancellationToken token) =>
+    private static async Task<IReadOnlyList<OriginGroup>> ReadAsync(IChangeGroupSource source, TursoDatabaseStore store, TenantContext tenant, long after, CancellationToken token) =>
         (await source.ReadAsync(tenant, store.Incarnation, after, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token)
             ?? throw new InvalidOperationException("the copy refused its own incarnation")).Groups;
 
-    private static async Task<(SqliteDatabaseStore Store, IChangeGroupSource Source, TenantContext Tenant)> OpenAsync(
+    private static async Task<(TursoDatabaseStore Store, IChangeGroupSource Source, TenantContext Tenant)> OpenAsync(
         ManagementApi api, ManagedDatabaseRef managed, CancellationToken token)
     {
         var tenant = await api.Server.Services.GetRequiredService<ITenantDirectory>().FindDatabaseAsync(managed.Organization, managed.Project, managed.Name, token)
             is TenantContext found ? found : throw new InvalidOperationException("the database is not registered");
-        var store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(tenant, token))!;
+        var store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, token))!;
         return (store, api.Server.Services.GetRequiredService<IChangeGroupSource>(), tenant);
     }
 

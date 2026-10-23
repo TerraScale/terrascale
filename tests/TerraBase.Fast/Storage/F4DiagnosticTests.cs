@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Testing;
 
@@ -13,7 +13,7 @@ public sealed class F4DiagnosticTests
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await using var management = await ManagementApi.StartAsync(settings => settings["storage-threads"] = "1");
-        var engine = management.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = management.Server.Services.GetRequiredService<TursoStorageEngine>();
         var source = management.Server.Services.GetRequiredService<IChangeGroupSource>();
         var store = await engine.OpenSystemDatabaseAsync(deadline.Token);
         _ = await source.HeadAsync(ChangeGroups.System, store.Incarnation, deadline.Token) ?? throw new InvalidOperationException("the copy refused its own incarnation");

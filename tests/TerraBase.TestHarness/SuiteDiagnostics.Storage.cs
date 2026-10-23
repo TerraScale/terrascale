@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 
 namespace TerraBase.Testing;
 
@@ -115,8 +115,8 @@ public static partial class SuiteDiagnostics
         private readonly Func<string>? _progress;
         private readonly TestContext _context = TestContext.Current!;
         private readonly Queue<StorageSample> _samples = new(Capacity);
-        private readonly List<(string Name, SqliteStorageEngine Engine, SqliteDatabaseStore? System,
-            SqliteRunnerDiagnostics Io, SqliteRunnerDiagnostics? Writer, double IoStarted, double WriterStarted)> _hosts = [with(4)];
+        private readonly List<(string Name, TursoStorageEngine Engine, TursoDatabaseStore? System,
+            TursoRunnerDiagnostics Io, TursoRunnerDiagnostics? Writer, double IoStarted, double WriterStarted)> _hosts = [with(4)];
         private string _phase = "prepared";
         private long _phaseStarted = Stopwatch.GetTimestamp();
         private readonly bool _enabled;
@@ -149,10 +149,10 @@ public static partial class SuiteDiagnostics
                 return;
             }
 
-            SqliteStorageEngine engine;
+            TursoStorageEngine engine;
             try
             {
-                engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+                engine = server.Services.GetRequiredService<TursoStorageEngine>();
             }
             catch (ObjectDisposedException)
             {
@@ -172,7 +172,7 @@ public static partial class SuiteDiagnostics
                     return;
                 }
 
-                var io = new SqliteRunnerDiagnostics();
+                var io = new TursoRunnerDiagnostics();
                 engine.Io.Diagnostics = io;
                 _hosts.Add((name[..Math.Min(name.Length, 16)], engine, null, io, null, Elapsed.TotalSeconds, -1));
             }
@@ -321,7 +321,7 @@ public static partial class SuiteDiagnostics
                     WriteRunner("io", host.Io, host.IoQueued, host.IoRunning, host.IoStarted);
                     WriteRunner("catalog_writer", host.Writer, host.WriterQueued, host.WriterRunning, host.WriterStarted);
 
-                    void WriteRunner(string lane, SqliteRunnerDiagnostics.Snapshot? timing, int queued, int running, double started)
+                    void WriteRunner(string lane, TursoRunnerDiagnostics.Snapshot? timing, int queued, int running, double started)
                     {
                         _context.OutputWriter.WriteLine(string.Create(CultureInfo.InvariantCulture,
                             $"Storage runner: {sample.Elapsed:F3},{host.Name},{lane},{host.Admitted},{queued},{running},{host.GroupQueued},{timing?.Submitted ?? -1},{timing?.Begun ?? -1},{timing?.Completed ?? -1},{timing?.Resumed ?? -1},{timing?.Cancelled ?? -1},{timing?.CancelledResumed ?? -1},{timing?.Aborted ?? -1},{timing?.Lost ?? -1},{Seconds(timing?.QueueTicks):F6},{Seconds(timing?.CallbackTicks):F6},{Seconds(timing?.ResumeTicks):F6},{Seconds(timing?.OldestQueuedTicks):F6},{Seconds(timing?.OldestRunningTicks):F6},{Seconds(timing?.OldestResumeTicks):F6},{Seconds(timing?.OldestCancelledResumeTicks):F6},{started:F3}"));
@@ -334,6 +334,6 @@ public static partial class SuiteDiagnostics
 
         private readonly record struct StorageSample(double Elapsed, double Pause, string Phase, double PhaseAge, string Progress, HostSample[] Hosts);
         private readonly record struct HostSample(string Name, int Admitted, int IoRunning, int IoQueued, int WriterRunning, int WriterQueued, int GroupQueued,
-            SqliteRunnerDiagnostics.Snapshot Io, SqliteRunnerDiagnostics.Snapshot? Writer, double IoStarted, double WriterStarted);
+            TursoRunnerDiagnostics.Snapshot Io, TursoRunnerDiagnostics.Snapshot? Writer, double IoStarted, double WriterStarted);
     }
 }

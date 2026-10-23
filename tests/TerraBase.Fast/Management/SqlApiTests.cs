@@ -354,7 +354,7 @@ public sealed class SqlApiTests
 
         await Assert.That(read).IsEqualTo(5);
         // The deadline ran on the faked clock, so the 30 seconds the consumer took were seen and not counted.
-        await Assert.That(api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>().Time).IsSameReferenceAs(time);
+        await Assert.That(api.Server.Services.GetRequiredService<TerraBase.Engine.Turso.TursoStorageEngine>().Time).IsSameReferenceAs(time);
     }
 
     [Test]
@@ -378,7 +378,7 @@ public sealed class SqlApiTests
     [Test]
     [Arguments(5, true)]
     [Arguments(120, false)]
-    public async Task A_pause_inside_SQLite_fails_a_query_only_past_the_configured_time_budget(int seconds, bool refused)
+    public async Task A_pause_inside_Turso_fails_a_query_only_past_the_configured_time_budget(int seconds, bool refused)
     {
         var clock = new SteppingClock();
         await using var api = await ManagementApi.StartAsync(
@@ -450,7 +450,7 @@ public sealed class SqlApiTests
             });
 
         // Both bounds are inclusive: the server starts, and its engine runs queries under exactly that budget.
-        var engine = api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TerraBase.Engine.Turso.TursoStorageEngine>();
         await Assert.That(engine.QueryBudget).IsEqualTo(TimeSpan.FromSeconds(seconds));
         var database = await api.CreateManagedDatabaseAsync();
         await SeedPeopleAsync(api, database);

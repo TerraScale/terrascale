@@ -2,7 +2,7 @@ using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -77,7 +77,7 @@ public sealed class StoragePoolTests
         deletedCopy.EnsureSuccessStatusCode();
         using var deletedSource = await owner.DeleteAsync(new Uri(databases + "/" + source, UriKind.Relative));
         deletedSource.EnsureSuccessStatusCode();
-        var engine = management.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = management.Server.Services.GetRequiredService<TursoStorageEngine>();
         await Assert.That(engine.Io.Admitted).IsEqualTo(0);
         using var health = await management.Server.Client.GetAsync(new Uri("/readyz", UriKind.Relative));
         await Assert.That(health.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -100,7 +100,7 @@ public sealed class StoragePoolTests
         var source = await tenant.ContextAsync(management.Server, "source", deadline.Token);
         await StorageFixture.CreateCollectionAsync(tenant, "source", "items", deadline.Token);
         var server = management.Server;
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var pressure = server.Services.GetRequiredService<IStorageEngine>();
         var store = await engine.OpenDatabaseAsync(source, deadline.Token);
         var system = await engine.OpenSystemDatabaseAsync(deadline.Token);
@@ -220,7 +220,7 @@ public sealed class StoragePoolTests
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         const int Rejected = 4;
-        // One SQLite thread and two admitted transactions. Freeze periodic catalog work so only the test takes slots.
+        // One Turso thread and two admitted transactions. Freeze periodic catalog work so only the test takes slots.
         await using var management = await ManagementApi.StartAsync(settings =>
         {
             settings["storage-threads"] = "1";
@@ -236,7 +236,7 @@ public sealed class StoragePoolTests
         var document = new Uri($"/v1/projects/{tenant.ProjectId}/databases/busy/collections/items/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative);
         using var written = await client.PutAsJsonAsync(document, new { n = 1 }, deadline.Token);
         await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var io = engine.Io;
 
         var requests = new List<Task<HttpResponseMessage>>();
@@ -294,9 +294,9 @@ public sealed class StoragePoolTests
         using var written = await client.PutAsJsonAsync(
             new Uri($"/v1/projects/{tenant.ProjectId}/databases/victim/collections/items/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative), new { padding = new string('x', 128 * 1024) }, operationTimeout.Token);
         written.EnsureSuccessStatusCode();
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var victim = await tenant.ContextAsync(management.Server, "victim", operationTimeout.Token);
-        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(victim, operationTimeout.Token))!;
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(victim, operationTimeout.Token))!;
         var closed = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
         var session = engine.Pool.Rent(store)!;
         session.Connection.StateChange += (_, change) =>
@@ -314,7 +314,7 @@ public sealed class StoragePoolTests
             next.EnsureSuccessStatusCode();
         }
 
-        await Assert.That(await closed.Task.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken)).IsEqualTo("terrabase-sqlite");
+        await Assert.That(await closed.Task.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken)).IsEqualTo("terrabase-turso");
         // The data is available again through the real listener after eviction.
         using var read = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/victim/collections/items/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative), operationTimeout.Token);
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -339,7 +339,7 @@ public sealed class StoragePoolTests
         var document = new Uri($"/v1/projects/{tenant.ProjectId}/databases/busy/collections/items/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative);
         using var written = await client.PutAsJsonAsync(document, new { n = 1 }, deadline.Token);
         await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var io = engine.Io;
         var requests = new List<Task<HttpResponseMessage>>();
         Exception? primaryFailure = null;

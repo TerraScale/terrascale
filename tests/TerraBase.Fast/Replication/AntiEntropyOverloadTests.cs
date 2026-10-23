@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Testing;
 
@@ -20,7 +20,7 @@ public sealed class AntiEntropyOverloadTests
         _ = await api.CreateManagedDatabaseAsync("first");
         // A later catalog commit leaves any cached placement of the first database stale, so the round reads the catalog.
         _ = await api.CreateManagedDatabaseAsync("second");
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var antiEntropy = api.Server.Services.GetRequiredService<AntiEntropy>();
 
         var held = 0;

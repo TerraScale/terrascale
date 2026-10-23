@@ -3,7 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -38,9 +38,9 @@ public sealed class MovingCertifiedGcTests
             // The receiver committed the live key; source collection now forces a retry of its bucket.
             await Assert.That(await receiver.ReadAsync(collected)).IsEqualTo("""{"old":true}""");
             await RepairAsync(source, new RepairState("items", collected, live.Delete(At(2000))));
-            var engine = source.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-            var sourceStore = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, cancellationToken))!;
-            await using var collect = (SqliteStorageTransaction)await sourceStore.BeginTransactionAsync(write: true, cancellationToken);
+            var engine = source.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
+            var sourceStore = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, cancellationToken))!;
+            await using var collect = (TursoStorageTransaction)await sourceStore.BeginTransactionAsync(write: true, cancellationToken);
             await Assert.That(await collect.CollectAsync(new Hlc(3000), cancellationToken)).IsEqualTo(1);
             _ = await collect.CommitAsync(cancellationToken);
         };
@@ -77,10 +77,10 @@ public sealed class MovingCertifiedGcTests
         var receiver = cluster["sjc"];
         const string Id = "00000000000000000000000000";
         const string Index = "by_value_2";
-        await Assert.That(SqliteStorageTransaction.Bucket("items", Id))
-            .IsLessThan(SqliteStorageTransaction.Bucket(DocumentDelta.Collections, "items"));
-        await Assert.That(SqliteStorageTransaction.Bucket(DocumentDelta.Indexes, Index))
-            .IsLessThan(SqliteStorageTransaction.Bucket(DocumentDelta.Collections, "items"));
+        await Assert.That(TursoStorageTransaction.Bucket("items", Id))
+            .IsLessThan(TursoStorageTransaction.Bucket(DocumentDelta.Collections, "items"));
+        await Assert.That(TursoStorageTransaction.Bucket(DocumentDelta.Indexes, Index))
+            .IsLessThan(TursoStorageTransaction.Bucket(DocumentDelta.Collections, "items"));
         var metadata = Put(1000, $$"""{"created_at":1,"entity_id":"{{EntityIds.New()}}"}""");
         await RepairAsync(source, new(DocumentDelta.Collections, "items", metadata),
             new("items", Id, Put(survivor ? 2500UL : 1500UL, """{"survivor":true}""")));
@@ -99,9 +99,9 @@ public sealed class MovingCertifiedGcTests
                 await Assert.That(await receiver.HasStateAsync(DocumentDelta.Collections, "items")).IsTrue();
                 await Assert.That(await receiver.ReadAsync(Id)).IsEqualTo("""{"survivor":true}""");
                 await RepairAsync(source, new RepairState(DocumentDelta.Collections, "items", metadata.Delete(At(2000))));
-                var engine = source.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+                var engine = source.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
                 var store = (await engine.OpenDatabaseAsync(database, cancellationToken))!;
-                await using (var collect = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken))
+                await using (var collect = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken))
                 {
                     await Assert.That(await collect.CollectAsync(new Hlc(3000), cancellationToken)).IsEqualTo(1);
                     _ = await collect.CommitAsync(cancellationToken);

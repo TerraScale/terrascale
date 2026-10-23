@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -28,7 +28,7 @@ public sealed class CaptureFrontierMemoryTests
         var response = await api.PutAsync(EntityIds.New().ToString(), document);
         await Assert.That(response.Status).IsEqualTo(HttpStatusCode.Created);
         var tenant = await api.TenantOfAsync();
-        var store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+        var store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>()
             .OpenDatabaseAsync(tenant, token))!;
         var (imageBytes, feed) = await store.WithWriterAsync(session =>
         {
@@ -47,7 +47,7 @@ public sealed class CaptureFrontierMemoryTests
         await Assert.That(await source.ProveAsync(tenant, store.Incarnation, 0, head!.Value,
             FrozenSet<ReplicaId>.Empty, token)).IsTrue();
         await using var transaction = await store.BeginTransactionAsync(write: false, token);
-        var frontier = await ((SqliteStorageTransaction)transaction).ReadShapeFrontierAsync(remote: true, token);
+        var frontier = await ((TursoStorageTransaction)transaction).ReadShapeFrontierAsync(remote: true, token);
         await Assert.That(frontier).IsEqualTo(feed)
             .Because("origin proof needs the captured bytes, without decoding their unused state text");
     }

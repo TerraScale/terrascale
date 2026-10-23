@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Shapes;
 using TerraBase.Fast.Documents;
@@ -334,7 +334,7 @@ public sealed class ShapeEndToEndTests
         await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
         await client.ReadAsync(oldOffset);
         var token = TestContext.Current!.Execution.CancellationToken;
-        var store = (await api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+        var store = (await api.Server.Services.GetRequiredService<TursoStorageEngine>()
             .OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
         var retention = new ShapeRetention(new FakeTimeProvider(DateTimeOffset.UtcNow.AddDays(8)),
             api.Server.Services.GetRequiredService<IShapeStorage>());

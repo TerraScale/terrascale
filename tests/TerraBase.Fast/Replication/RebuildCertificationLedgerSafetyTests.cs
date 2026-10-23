@@ -7,7 +7,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -269,7 +269,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
         _ = await fixture.Copy.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
-            command.CommandText = SqliteStatements.RenewIncarnation;
+            command.CommandText = TursoStatements.RenewIncarnation;
             command.Parameters.AddWithValue("$incarnation", changed.ToString());
             return command.ExecuteNonQuery();
         }, "a test replacing persisted receiver identity", deadline.Token);
@@ -327,7 +327,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
     {
         await using var fixture = await Fixture.StartAsync(salvaged: true);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        SqliteDatabaseStore? replacement = null;
+        TursoDatabaseStore? replacement = null;
         var hits = 0;
         fixture.Checkpoint = (step, database) =>
         {
@@ -342,7 +342,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
             {
                 throw new InvalidOperationException("the deleted database was not recreated");
             }
-            replacement = (SqliteDatabaseStore)(fixture.Engine.OpenDatabaseAsync(fixture.Database, deadline.Token).AsTask().GetAwaiter().GetResult()
+            replacement = (TursoDatabaseStore)(fixture.Engine.OpenDatabaseAsync(fixture.Database, deadline.Token).AsTask().GetAwaiter().GetResult()
                 ?? throw new InvalidOperationException("the replacement did not open"));
         };
         await Assert.That(await fixture.Repair.CompleteRebuildAsync(fixture.Database, fixture.Original, fixture.Rebuilt, deadline.Token)).IsFalse();
@@ -368,9 +368,9 @@ public sealed class RebuildCertificationLedgerSafetyTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         using var caller = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var system = fixture.Engine.SystemStore ?? throw new InvalidOperationException("SYSTEM is missing");
-        var previous = system.AfterSqliteCommit;
+        var previous = system.AfterTursoCommit;
         var failure = new IOException("the withdrawal follow-up failed");
-        SqliteDatabaseStore? healthy = null;
+        TursoDatabaseStore? healthy = null;
         if (withdrawalFails)
         {
             healthy = await fixture.CreateHealthyCopyAsync(deadline.Token);
@@ -390,7 +390,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
                 if (withdrawalFails)
                 {
                     // Installed only after publication committed: this is the withdrawal's actual SYSTEM transaction.
-                    system.AfterSqliteCommit = () =>
+                    system.AfterTursoCommit = () =>
                     {
                         withdrawals++;
                         throw failure;
@@ -420,7 +420,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
         }
         finally
         {
-            system.AfterSqliteCommit = previous;
+            system.AfterTursoCommit = previous;
             fixture.Checkpoint = null;
         }
         await Assert.That(hits).IsEqualTo(1);
@@ -501,7 +501,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
         await Assert.That(pending?.Phase).IsEqualTo(RebuildPhase.Pending);
         await Assert.That(pending?.OldIncarnation).IsEqualTo(original);
         await Assert.That(pending?.AdditionalIncarnation).IsEqualTo(rebuilt);
-        var copy = (SqliteDatabaseStore)(await services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, deadline.Token)
+        var copy = (TursoDatabaseStore)(await services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, deadline.Token)
             ?? throw new InvalidOperationException("the barrier's copy is missing"));
         await Assert.That(copy.RebuildRow?.Refill).IsNull();
         await AssertOrdinaryWriteRefusedAsync(copy, deadline.Token);
@@ -510,7 +510,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
         await Assert.That(Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(side, deadline.Token)))).IsEqualTo(facts[5]);
     }
 
-    private static async Task AssertOrdinaryWriteRefusedAsync(SqliteDatabaseStore copy, CancellationToken cancellationToken)
+    private static async Task AssertOrdinaryWriteRefusedAsync(TursoDatabaseStore copy, CancellationToken cancellationToken)
     {
         _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () =>
         {
@@ -521,7 +521,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
     private static async Task AssertDurablePendingWithoutRefillAsync(Fixture fixture, CancellationToken cancellationToken)
     {
         var system = fixture.Engine.SystemStore ?? throw new InvalidOperationException("SYSTEM is missing");
-        await using var read = (SqliteStorageTransaction)await system.BeginTransactionAsync(write: false, cancellationToken);
+        await using var read = (TursoStorageTransaction)await system.BeginTransactionAsync(write: false, cancellationToken);
         var rows = await read.LedgerAsync(command =>
         {
             using var select = command("""
@@ -563,7 +563,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
         public Ulid Original { get; private set; }
         public Ulid Rebuilt { get; private set; }
         public Ulid Source { get; } = Ulid.NewUlid();
-        public SqliteDatabaseStore Copy { get; private set; } = null!;
+        public TursoDatabaseStore Copy { get; private set; } = null!;
         public RebuildRecord Expected { get; private set; } = null!;
         public RebuildLedger.Refill? ExpectedRefill { get; private set; }
         public string Side { get; private set; } = string.Empty;
@@ -571,7 +571,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
         public Dictionary<string, byte[]> Sidecars { get; } = [];
         public Action<string, TenantContext>? Checkpoint { get; set; }
         private IServiceProvider Services => (_api ?? throw new InvalidOperationException("the fixture is stopped")).Server.Services;
-        public SqliteStorageEngine Engine => Services.GetRequiredService<SqliteStorageEngine>();
+        public TursoStorageEngine Engine => Services.GetRequiredService<TursoStorageEngine>();
         public IRebuildLedger Ledger => Services.GetRequiredService<IRebuildLedger>();
         public IRebuildRepair Repair => Services.GetRequiredService<IRebuildRepair>();
         public IRebuildStorage Storage => Services.GetRequiredService<IRebuildStorage>();
@@ -593,7 +593,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
                 fixture.Database = await fixture.Services.GetRequiredService<ITenantDirectory>()
                     .FindDatabaseAsync(managed.Organization, managed.Project, managed.Name, CancellationToken.None)
                     is TenantContext found ? found : throw new InvalidOperationException("the managed test database is missing");
-                var original = (SqliteDatabaseStore)(await fixture.Engine.OpenDatabaseAsync(fixture.Database, CancellationToken.None)
+                var original = (TursoDatabaseStore)(await fixture.Engine.OpenDatabaseAsync(fixture.Database, CancellationToken.None)
                     ?? throw new InvalidOperationException("the original test copy is missing"));
                 await using (var write = await original.BeginDurableTransactionAsync(CancellationToken.None))
                 {
@@ -632,7 +632,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
                     await fixture.Ledger.SaveAsync(swapped with { Phase = RebuildPhase.Salvaged }, CancellationToken.None);
                 }
                 fixture.Expected = (await fixture.Ledger.GetAsync(fixture.Database, CancellationToken.None))!;
-                fixture.Copy = (SqliteDatabaseStore)(await fixture.Engine.OpenDatabaseAsync(fixture.Database, CancellationToken.None))!;
+                fixture.Copy = (TursoDatabaseStore)(await fixture.Engine.OpenDatabaseAsync(fixture.Database, CancellationToken.None))!;
                 fixture.ExpectedRefill = fixture.Copy.RebuildRow?.Refill;
                 fixture.SideBytes = await File.ReadAllBytesAsync(fixture.Side);
                 foreach (var suffix in SidecarSuffixes.Where(suffix => File.Exists(fixture.Side + suffix)))
@@ -647,7 +647,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
                     fixture._api = null;
                     await CorruptCollectionPageAsync(path);
                     fixture._api = await fixture.OpenAsync();
-                    fixture.Copy = (SqliteDatabaseStore)(await fixture.Engine.OpenDatabaseAsync(fixture.Database, CancellationToken.None))!;
+                    fixture.Copy = (TursoDatabaseStore)(await fixture.Engine.OpenDatabaseAsync(fixture.Database, CancellationToken.None))!;
                     await Assert.That(await fixture.Ledger.GetAsync(fixture.Database, CancellationToken.None)).IsEqualTo(fixture.Expected);
                 }
                 return fixture;
@@ -659,13 +659,13 @@ public sealed class RebuildCertificationLedgerSafetyTests
             }
         }
 
-        public async Task<SqliteDatabaseStore> CreateHealthyCopyAsync(CancellationToken cancellationToken)
+        public async Task<TursoDatabaseStore> CreateHealthyCopyAsync(CancellationToken cancellationToken)
         {
             var managed = await (_api ?? throw new InvalidOperationException("the fixture is stopped")).CreateManagedDatabaseAsync();
             var database = await Services.GetRequiredService<ITenantDirectory>()
                 .FindDatabaseAsync(managed.Organization, managed.Project, managed.Name, cancellationToken)
                 is TenantContext found ? found : throw new InvalidOperationException("the healthy test database is missing");
-            return (SqliteDatabaseStore)(await Engine.OpenDatabaseAsync(database, cancellationToken)
+            return (TursoDatabaseStore)(await Engine.OpenDatabaseAsync(database, cancellationToken)
                 ?? throw new InvalidOperationException("the healthy test copy is missing"));
         }
 
@@ -709,7 +709,7 @@ public sealed class RebuildCertificationLedgerSafetyTests
             command.CommandText = "PRAGMA page_size;";
             var size = Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
             command.CommandText = "SELECT rootpage FROM sqlite_schema WHERE name = $table;";
-            command.Parameters.AddWithValue("$table", SqliteStorageTransaction.Table("damaged").Trim('"'));
+            command.Parameters.AddWithValue("$table", TursoStorageTransaction.Table("damaged").Trim('"'));
             var page = Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
             await Assert.That(page).IsGreaterThan(1);
             offset = (page - 1) * size;

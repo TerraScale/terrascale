@@ -270,7 +270,7 @@ public sealed class TransactionApiTests
         private bool _enabled;
         public bool Enabled { set => Volatile.Write(ref _enabled, value); }
         public override long TimestampFrequency => 1000;
-        public override long GetTimestamp() => Volatile.Read(ref _enabled) && Thread.CurrentThread.Name == "terrabase-sqlite-writer"
+        public override long GetTimestamp() => Volatile.Read(ref _enabled) && Thread.CurrentThread.Name == "terrabase-turso-writer"
             ? _timestamps.Value += 1500 : _timestamps.Value;
         public void Dispose() => _timestamps.Dispose();
     }

@@ -3,7 +3,7 @@ using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
@@ -23,7 +23,7 @@ public sealed class WorkerExecutionContextTests
         var marker = new object();
         var observed = new TaskCompletionSource<(object? Ambient, Thread Worker)>(TaskCreationOptions.RunContinuationsAsynchronously);
         var startingFlowSuppressed = true;
-        SqliteStorageEngine? engine = null;
+        TursoStorageEngine? engine = null;
         Task? probe = null;
         await using var management = await ManagementApi.StartAsync(
             settings => settings["storage-threads"] = "1",
@@ -40,10 +40,10 @@ public sealed class WorkerExecutionContextTests
                         startingFlowSuppressed = ExecutionContext.IsFlowSuppressed();
                     }
 
-                    engine = new SqliteStorageEngine(
+                    engine = new TursoStorageEngine(
                         options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                         provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                        provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace,
+                        provider.GetRequiredService<ILogger<TursoStorageEngine>>(), options.ShutdownGrace,
                         readinessCacheTtl: options.ReadinessCacheTtl,
                         checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                         afterBootstrap: ObserveWorker, queryBudget: options.QueryBudget);
@@ -65,7 +65,7 @@ public sealed class WorkerExecutionContextTests
             await Assert.That(startingFlowSuppressed).IsFalse();
             await Assert.That(worker.IsAlive).IsTrue();
             await Assert.That(worker.IsThreadPoolThread).IsFalse();
-            await Assert.That(worker.Name).IsEqualTo(write ? "terrabase-sqlite-writer" : "terrabase-sqlite");
+            await Assert.That(worker.Name).IsEqualTo(write ? "terrabase-turso-writer" : "terrabase-turso");
             await Assert.That(capturedAmbient).IsNull();
             using var health = await management.Server.Client.GetAsync(new Uri("/healthz", UriKind.Relative), deadline.Token);
             await Assert.That(health.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -100,7 +100,7 @@ public sealed class WorkerExecutionContextTests
             }
         }
 
-        void ObserveWorker(SqliteDatabaseStore store)
+        void ObserveWorker(TursoDatabaseStore store)
         {
             if (store.Tenant is null || probe is not null)
             {
@@ -117,7 +117,7 @@ public sealed class WorkerExecutionContextTests
                     startingFlowSuppressed = ExecutionContext.IsFlowSuppressed();
                 }
 
-                SqliteRunner runner = write ? store.WriteLane : engine!.Io;
+                TursoRunner runner = write ? store.WriteLane : engine!.Io;
                 // Initialization already owns admission; use its actual runner before baseline seeding.
                 probe = runner.RunAsync(() =>
                 {

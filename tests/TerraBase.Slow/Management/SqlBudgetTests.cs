@@ -13,7 +13,7 @@ public sealed class SqlBudgetTests
         var database = await api.CreateManagedDatabaseAsync();
         await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
-        // 10 000 documents under a 256-condition filter cost SQLite well over 5 million instructions, though no row matches.
+        // 10 000 documents under a 256-condition filter cost Turso well over 5 million instructions, though no row matches.
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         foreach (var chunk in Enumerable.Range(0, 10_000).Chunk(32))
         {

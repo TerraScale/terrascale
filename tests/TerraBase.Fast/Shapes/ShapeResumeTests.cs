@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Replication;
@@ -188,7 +188,7 @@ public sealed partial class ShapeResumeTests
         _ = await api.PutAsync(DocumentApi.NewId(), new { index = 1 });
         _ = await FollowAsync(api.Client, path, $"{path}?handle={synced.Handle}&offset={synced.Offset}", []);
         var token = TestContext.Current!.Execution.CancellationToken;
-        var store = (await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
+        var store = (await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
         var retention = new ShapeRetention(new FakeTimeProvider(DateTimeOffset.UtcNow.AddDays(8)), api.Server.Services.GetRequiredService<IShapeStorage>());
         await Assert.That(await retention.RunPassAsync(store, synced.Handle, token)).IsGreaterThan(0);
         await Assert.That(await retention.GetFloorAsync(store, synced.Handle, token)).IsGreaterThan(long.Parse(synced.Offset, CultureInfo.InvariantCulture));

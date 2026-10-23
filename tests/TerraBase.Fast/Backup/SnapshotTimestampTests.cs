@@ -5,7 +5,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -31,7 +31,7 @@ public sealed class SnapshotTimestampTests
             ManualBackupHosting.Configure(services);
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock,
                 new FakeTimeProvider(new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero)));
-            services.AddSingleton<IWalBackup>(provider => new PausedBackup(provider.GetRequiredService<SqliteStorageEngine>(), pause));
+            services.AddSingleton<IWalBackup>(provider => new PausedBackup(provider.GetRequiredService<TursoStorageEngine>(), pause));
         }, time);
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         // Discover the system file before creating the tenant; only explicit passes ship.
@@ -192,7 +192,7 @@ public sealed class SnapshotTimestampTests
         }
     }
 
-    private sealed class PausedBackup(SqliteStorageEngine engine, SnapshotPause pause) : IWalBackup
+    private sealed class PausedBackup(TursoStorageEngine engine, SnapshotPause pause) : IWalBackup
     {
         public async ValueTask<IWalTap?> OpenTapAsync(TenantContext? database, CancellationToken cancellationToken)
         {

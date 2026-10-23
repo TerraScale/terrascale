@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -20,8 +20,8 @@ public sealed class AbandonedStatementTests
         await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "items");
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(
             new TenantContext(database.Organization, PlanTier.Enterprise, database.Project, database.Id), CancellationToken.None))!;
         // A write of a document marked "fail" fails inside its INSERT, as a stopped read or a constraint fails a statement.
         // Created on a connection of its own while no write runs: the provider cannot run a trigger body.

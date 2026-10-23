@@ -1,7 +1,7 @@
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -23,11 +23,11 @@ public sealed class ShipperShutdownAndRetryTests
         await host.PutAsync("people", "seed", Faker.Lorem.Sentence(8), cancellationToken);
         await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
         var now = host.Time.GetUtcNow();
-        var engine = host.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = host.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var holding = ((SqliteDatabaseStore)store).WithWritersHeldAsync(async () =>
+        var holding = ((TursoDatabaseStore)store).WithWritersHeldAsync(async () =>
         {
             entered.SetResult();
             await release.Task.WaitAsync(cancellationToken);
@@ -152,7 +152,7 @@ public sealed class ShipperShutdownAndRetryTests
             // Something else empties the capture table: a hole ends the generation, which cancels its drill.
             await host.PutAsync("people", "outside", Faker.Lorem.Sentence(8), cancellationToken);
             var tenant = new TenantContext(host.Database.Organization, PlanTier.Enterprise, host.Database.Project, host.Database.Id);
-            var store = (SqliteDatabaseStore)(await host.Api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(tenant, cancellationToken))!;
+            var store = (TursoDatabaseStore)(await host.Api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, cancellationToken))!;
             await store.WithWriterAsync(writer =>
             {
                 using var delete = writer.Connection.CreateCommand();

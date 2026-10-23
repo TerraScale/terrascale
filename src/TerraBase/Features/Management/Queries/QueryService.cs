@@ -251,7 +251,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
 
     // Rows are projected as the engine streams them, so the output budget (not stored sizes) decides truncation, and only
     // one stored document is held besides the rows kept. The engine bounds the work: past it the run fails with a
-    // QueryCapacityException, also while SQLite is still scanning or sorting before the first row.
+    // QueryCapacityException, also while Turso is still scanning or sorting before the first row.
     private static async ValueTask<SqlResultBody> RowsAsync(
         IStorageTransaction transaction, SqlStatement statement, QueryObservation observation, CancellationToken cancellationToken)
     {

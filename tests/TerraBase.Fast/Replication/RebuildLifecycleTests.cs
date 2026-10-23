@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -68,13 +68,13 @@ public sealed class RebuildLifecycleTests
             services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) => checkpoint?.Invoke(step, database)));
         var services = api.Server.Services;
         var (database, original) = await FaultedAsync(api);
-        var engine = services.GetRequiredService<SqliteStorageEngine>();
+        var engine = services.GetRequiredService<TursoStorageEngine>();
         var ledger = services.GetRequiredService<IRebuildLedger>();
         var faults = services.GetRequiredService<IReplicaCopyFaults>();
         var key = RebuildLedger.Key.Of(database);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        SqliteStorageTransaction? oldRead = disposal
-            ? (SqliteStorageTransaction)await original.BeginTransactionAsync(write: false, deadline.Token)
+        TursoStorageTransaction? oldRead = disposal
+            ? (TursoStorageTransaction)await original.BeginTransactionAsync(write: false, deadline.Token)
             : null;
         Task? lateFault = null;
         var injectReset = 0;
@@ -172,7 +172,7 @@ public sealed class RebuildLifecycleTests
             services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) => checkpoint?.Invoke(step, database)));
         var services = api.Server.Services;
         var (database, original) = await FaultedAsync(api);
-        var engine = services.GetRequiredService<SqliteStorageEngine>();
+        var engine = services.GetRequiredService<TursoStorageEngine>();
         var ledger = services.GetRequiredService<IRebuildLedger>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await Assert.That(await engine.DeleteDatabaseAsync(database, deadline.Token)).IsTrue();
@@ -345,8 +345,8 @@ public sealed class RebuildLifecycleTests
                 var certified = await ledger.GetAsync(database, CancellationToken.None);
 
                 // Leave an explicit operation intent: completed quiescent writes no longer retain one.
-                var engine = services.GetRequiredService<SqliteStorageEngine>();
-                var currentStore = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+                var engine = services.GetRequiredService<TursoStorageEngine>();
+                var currentStore = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
                 await engine.Ledger.RecordIntentAsync(currentStore, CancellationToken.None);
                 await services.GetRequiredService<IReplicaCopyFaults>().RecordAsync(database, Ulid.NewUlid(), "a third incarnation", CancellationToken.None);
 
@@ -475,14 +475,14 @@ public sealed class RebuildLifecycleTests
     }
 
     // A managed database written once (its intent recorded), then faulted.
-    private static async Task<(TenantContext Database, SqliteDatabaseStore Store)> FaultedAsync(ManagementApi api)
+    private static async Task<(TenantContext Database, TursoDatabaseStore Store)> FaultedAsync(ManagementApi api)
     {
         var services = api.Server.Services;
         var managed = await api.CreateManagedDatabaseAsync();
         var database = await services.GetRequiredService<ITenantDirectory>()
             .FindDatabaseAsync(managed.Organization, managed.Project, managed.Name, CancellationToken.None)
             is TenantContext found ? found : throw new InvalidOperationException("the test database is not registered");
-        var store = (SqliteDatabaseStore)(await services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+        var store = (TursoDatabaseStore)(await services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
             ?? throw new InvalidOperationException("the test database is missing"));
         await using (var write = await store.BeginDurableTransactionAsync(CancellationToken.None))
         {

@@ -3,7 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -116,8 +116,8 @@ public sealed class StorageJoinTests
         _ = await JoinAsync(server, database, ("items", first, Now + 1, Gru, Put(Gru, Now + 1, """{"email":"a@b.c"}""")));
 
         // The peer a refill copies from collected the winner; forgetting it here leaves the loser the only holder of the key.
-        var held = (SqliteDatabaseStore)(await server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
-        await using (var transaction = (SqliteStorageTransaction)await held.BeginDurableTransactionAsync(CancellationToken.None))
+        var held = (TursoDatabaseStore)(await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
+        await using (var transaction = (TursoStorageTransaction)await held.BeginDurableTransactionAsync(CancellationToken.None))
         {
             await Assert.That(await transaction.ForgetAsync([("items", first)], new Hlc(Now + 2), CancellationToken.None)).IsEqualTo(1);
             _ = await transaction.CommitAsync(CancellationToken.None);

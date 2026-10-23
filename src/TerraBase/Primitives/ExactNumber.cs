@@ -14,7 +14,7 @@ internal readonly record struct ExactNumber(BigInteger Mantissa, int Exponent)
 {
     private const int MaxSignificantDigits = 128;
 
-    // Decimal exponent of the leading digit: inside the normal double range, so SQLite never reads an infinity.
+    // Decimal exponent of the leading digit: inside the normal double range, so Turso never reads an infinity.
     private const int MinMagnitude = -307;
     private const int MaxMagnitude = 307;
 

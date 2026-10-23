@@ -37,7 +37,7 @@ public sealed record TerraBaseOptions
 
     private const int MaxReadinessCacheSeconds = 60;
 
-    /// <summary>Default seconds of SQLite execution one query may spend before it is refused as too expensive.</summary>
+    /// <summary>Default seconds of Turso execution one query may spend before it is refused as too expensive.</summary>
     public const int DefaultQueryBudgetSeconds = 5;
 
     private const int MaxQueryBudgetSeconds = 600;
@@ -45,7 +45,7 @@ public sealed record TerraBaseOptions
     /// <summary>Default milliseconds a write waits for its active peers' durable acknowledgment (docs/decisions/0010).</summary>
     public const int DefaultWriteWaitMilliseconds = 2000;
 
-    /// <summary>Default directory for SQLite database files, relative to the working directory.</summary>
+    /// <summary>Default directory for Turso database files, relative to the working directory.</summary>
     public const string DefaultDataDirectory = "data";
 
     private const string EnvironmentPrefix = "TERRABASE_";
@@ -87,7 +87,7 @@ public sealed record TerraBaseOptions
     /// </summary>
     public int PostgresPort { get; init; } = DefaultPostgresPort;
 
-    /// <summary>Directory holding one SQLite file per database.</summary>
+    /// <summary>Directory holding one Turso file per database.</summary>
     public required string DataDirectory { get; init; }
 
     /// <summary>This node's region: <c>TS_REGION</c> from ts-orch, or <c>local</c> outside a cluster.</summary>
@@ -140,7 +140,7 @@ public sealed record TerraBaseOptions
     public TimeSpan ReadinessCacheTtl { get; init; } = TimeSpan.FromSeconds(DefaultReadinessCacheSeconds);
 
     /// <summary>
-    /// The time half of the engine's query work budget: SQLite execution time one query may spend, excluding queueing and
+    /// The time half of the engine's query work budget: Turso execution time one query may spend, excluding queueing and
     /// consumer time between rows. The 5 million VM instruction half is fixed.
     /// </summary>
     public TimeSpan QueryBudget
@@ -168,7 +168,7 @@ public sealed record TerraBaseOptions
         init => field = ValidateInteger(value, "memory-budget", MinMemoryBudget, long.MaxValue);
     }
 
-    /// <summary>Dedicated threads that run SQLite calls; defaults to the processor count.</summary>
+    /// <summary>Dedicated threads that run Turso calls; defaults to the processor count.</summary>
     public required int StorageThreads
     {
         get;

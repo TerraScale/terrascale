@@ -60,7 +60,7 @@ public sealed class ScanBudgetTests
     }
 
     // Requests run one at a time here, so the next one on this database takes the pooled session the rejected one
-    // returned. A write installs no progress handler of its own and runs far more than the 1000 SQLite instructions
+    // returned. A write installs no progress handler of its own and runs far more than the 1000 Turso instructions
     // between handler calls, so a handler left behind, whose budget is spent, would interrupt it.
     private static async Task AssertNoProgressHandlerLeftAsync(HttpClient data, ManagedDatabaseRef database, string rejected)
     {
