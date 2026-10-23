@@ -208,6 +208,17 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/account:
+    delete:
+      operationId: delete_account
+      tags: [Members]
+      summary: Delete your account
+      description: Deletes the caller's account, sessions, tokens and MFA, and frees its email. Organizations where the caller is the only member are deleted with their projects; the others are left. 409 last_owner, deleting nothing, while the caller is the last owner of an organization with other members.
+      responses:
+        '204': { description: 'Deleted.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/organizations/{organization}/invitations:
     parameters:
       - $ref: '#/components/parameters/Organization'

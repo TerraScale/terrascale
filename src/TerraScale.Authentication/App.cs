@@ -158,6 +158,7 @@ public static class App
         builder.Services.AddSingleton<HeadlessAuth>();
         builder.Services.AddSingleton<TotpCredentials>();
         builder.Services.AddSingleton<PlatformDirectory>();
+        builder.Services.AddSingleton<AccountDeletion>();
         builder.Services.AddSingleton<PlatformBootstrap>();
         builder.Services.AddSingleton<PlatformAuthentication>();
         builder.Services.AddSingleton<ApiKeys>();

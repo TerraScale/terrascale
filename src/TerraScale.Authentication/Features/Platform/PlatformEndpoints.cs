@@ -273,6 +273,24 @@ public sealed class LeaveOrganizationEndpoint(PlatformDirectory platform, Platfo
     }
 }
 
+/// <summary><c>DELETE /v1/terrascale/account</c>.</summary>
+public sealed class DeleteAccountEndpoint(AccountDeletion accounts, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Delete("/v1/terrascale/account");
+        this.Document("delete_account", "Delete your account", "Deletes the caller's account, sessions, tokens and MFA, and frees its email. Organizations where the caller is the only member are deleted with their projects; the others are left. 409 last_owner, deleting nothing, while the caller is the last owner of an organization with other members.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true, roleChecked: false, scoped: false);
+    }
+
+    /// <inheritdoc />
+    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    {
+        await accounts.DeleteAsync(caller, cancellationToken);
+        return Results.NoContent();
+    }
+}
+
 /// <summary><c>POST /v1/terrascale/organizations/{organization}/projects</c>.</summary>
 public sealed class CreateProjectEndpoint(PlatformDirectory platform, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
