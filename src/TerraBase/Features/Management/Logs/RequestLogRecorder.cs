@@ -26,7 +26,6 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         "terrabase.request_logs.dropped", "{observation}", "Request observations omitted at bounded memory capacity.");
     private int _count;
     private bool _disposed;
-    private bool _recordingLimited;
 
     public void Record(TenantContext database, string method, string route, int status, TimeSpan elapsed, long operations)
     {
@@ -47,7 +46,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
             }
             if (_count >= MaxPending || memory.TryReserve(MemoryLane.Foreground, 4096, database) is not { } reserved)
             {
-                _recordingLimited = true;
+                RecordingLimited = true;
                 _drops.Add(1);
                 return;
             }
@@ -167,7 +166,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         .Where(log => log.Time >= time.GetUtcNow().AddHours(-24) && log.Time <= time.GetUtcNow())
         .DistinctBy(log => log.Id).OrderByDescending(log => log.Time).ThenByDescending(log => log.Id, StringComparer.Ordinal);
 
-    private bool RecordingLimited { get { lock (_gate) { return _recordingLimited; } } }
+    private bool RecordingLimited { get { lock (_gate) { return field; } } set; }
 
     private static string Records(string databaseId) => DatabaseState(databaseId) + "request_logs";
 
