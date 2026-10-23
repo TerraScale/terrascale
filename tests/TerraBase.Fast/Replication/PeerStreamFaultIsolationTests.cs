@@ -401,6 +401,52 @@ public sealed class PeerStreamFaultIsolationTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_busy_ACK_writer_does_not_replay_confirmed_groups_on_the_same_stream(bool stableReport)
+    {
+        await using var receiver = await Node.StartAsync();
+        HeldSource? held = null;
+        await using var sender = await Node.StartAsync(receiver, services =>
+            services.AddSingleton<IChangeGroupSource>(provider => held = new HeldSource(provider.GetRequiredService<FaultAwareReplicaSource>())),
+            receiver.Api.Server.BaseAddress);
+        var source = held ?? throw new InvalidOperationException("the sender source was not activated");
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(90));
+        await WarmAsync(sender, receiver, deadline.Token);
+        var initialized = source.Initializations;
+        var confirmed = sender.Status(sender.Database)!.Acknowledged;
+        var gate = new BookkeepingGate(sender.Database, stableReport, deadline.Token) { Busy = true };
+        source.Hold(gate);
+        try
+        {
+            if (!stableReport)
+            {
+                await sender.PutAsync(sender.Database, "confirmed-before-busy", deadline.Token);
+                confirmed = await gate.Entered.Task.WaitAsync(deadline.Token);
+                await Assert.That(await receiver.HasAsync(receiver.Database, "confirmed-before-busy", deadline.Token)).IsTrue();
+            }
+            else
+            {
+                _ = await gate.Entered.Task.WaitAsync(deadline.Token);
+            }
+            _ = gate.Release.TrySetResult();
+            await gate.Refused.Task.WaitAsync(deadline.Token);
+            // Only a busy writer failed: its old persisted ACK must not rewind this live stream.
+            await sender.PutAsync(sender.Database, "after-busy", deadline.Token);
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                sender.Status(sender.Database)?.Acknowledged > confirmed
+                && await receiver.HasAsync(receiver.Database, "after-busy", token), TimeSpan.FromSeconds(60));
+            await Assert.That(source.Initializations).IsEqualTo(initialized)
+                .Because("a tenant's writer contention must not restart the shared connection");
+        }
+        finally
+        {
+            _ = gate.Release.TrySetResult();
+        }
+    }
+
+    [Test]
     [Arguments("retains", false)]
     [Arguments("head", false)]
     [Arguments("horizon", false)]
@@ -728,6 +774,7 @@ public sealed class PeerStreamFaultIsolationTests
 
     private sealed class BookkeepingGate(TenantContext database, bool stableReport, CancellationToken cancellationToken)
     {
+        public bool Busy { get; init; }
         public TenantContext Database { get; } = database;
         public bool StableReport { get; } = stableReport;
         public CancellationToken CancellationToken { get; } = cancellationToken;
@@ -884,6 +931,11 @@ public sealed class PeerStreamFaultIsolationTests
             _ = gate.Entered.TrySetResult(changeId);
             // Another stream worker may see the node fault first; keep the held guard observable under the test deadline.
             await gate.Release.Task.WaitAsync(gate.CancellationToken);
+            if (gate.Busy)
+            {
+                _ = gate.Refused.TrySetResult();
+                throw new StorageBusyException();
+            }
             try
             {
                 var recorded = await work(gate.CancellationToken);
