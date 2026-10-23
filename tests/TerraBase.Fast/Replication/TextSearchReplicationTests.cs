@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using TerraBase.Engine;
@@ -9,6 +8,10 @@ namespace TerraBase.Fast.Replication;
 
 public sealed class TextSearchReplicationTests
 {
+    private static readonly string[] TextIndexes = ["text_docs"];
+    private static readonly string[] TitleFields = ["title"];
+    private static readonly string[] HeadingSearch = ["/title", "heading"];
+
     [Test]
     public async Task Replicas_build_text_indexes_from_metadata_and_follow_updates_deletes_and_redefinitions()
     {
@@ -25,8 +28,8 @@ public sealed class TextSearchReplicationTests
         });
         await Assert.That(await sjc.UntilAsync(id, """{"body":"original","title":"heading"}""")).IsTrue();
         await gru.WriteAsync(async transaction => _ = await transaction.CreateIndexAsync(new IndexDefinition("text_docs", "items", [body], "text"), CancellationToken.None));
-        await Assert.That(await sjc.UntilIndexesAsync(["text_docs"])).IsTrue();
-        using var client = sjc.Api.DataClient(await sjc.Api.Server.IssueAsync(cluster.Database.OrganizationId, "documents:read"));
+        await Assert.That(await sjc.UntilIndexesAsync(TextIndexes)).IsTrue();
+        using var client = await sjc.Api.CreateClientAsync(cluster.Database.OrganizationId, "documents:read");
         var query = new Uri($"/v1/projects/{cluster.Database.ProjectId}/databases/main/collections/items/query", UriKind.Relative);
         using var customerCollection = await client.PostAsJsonAsync(
             new Uri($"/v1/projects/{cluster.Database.ProjectId}/databases/main/collections/tb_text_text_docs__0/query", UriKind.Relative), new { limit = 1 });
@@ -42,15 +45,15 @@ public sealed class TextSearchReplicationTests
         await gru.WriteAsync(async transaction => _ = await transaction.DropIndexAsync("text_docs", CancellationToken.None));
         await gru.WriteAsync(async transaction => _ = await transaction.CreateIndexAsync(new IndexDefinition("text_docs", "items", [title], "text"), CancellationToken.None));
         await sjc.StartAsync();
-        await Assert.That(await sjc.UntilIndexAsync("text_docs", "items", ["title"])).IsTrue();
-        using var reopened = sjc.Api.DataClient(await sjc.Api.Server.IssueAsync(cluster.Database.OrganizationId, "documents:read"));
+        await Assert.That(await sjc.UntilIndexAsync("text_docs", "items", TitleFields)).IsTrue();
+        using var reopened = await sjc.Api.CreateClientAsync(cluster.Database.OrganizationId, "documents:read");
         await MatchesAsync(reopened, query, "/title", "heading", id);
         await gru.WriteAsync(async transaction => _ = await transaction.DeleteAsync("items", id, CancellationToken.None));
         await Assert.That(await sjc.UntilAbsentAsync(id)).IsTrue();
         await MatchesAsync(reopened, query, "/title", "heading");
         await gru.WriteAsync(async transaction => _ = await transaction.DropIndexAsync("text_docs", CancellationToken.None));
         await Assert.That(await sjc.UntilIndexesAsync([])).IsTrue();
-        using var missingIndex = await reopened.PostAsJsonAsync(query, new { filter = new { search = new[] { "/title", "heading" } }, sort = new[] { new { path = "$score", order = "desc" } } });
+        using var missingIndex = await reopened.PostAsJsonAsync(query, new { filter = new { search = HeadingSearch }, sort = new[] { new { path = "$score", order = "desc" } } });
         await Assert.That(missingIndex.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         var error = await missingIndex.Content.ReadFromJsonAsync<JsonElement>();
         await Assert.That(error.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("invalid_query");

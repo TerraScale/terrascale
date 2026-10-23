@@ -29,9 +29,7 @@ internal sealed class SqliteQueryCompiler(
         "WHEN 'text' THEN 5 WHEN 'array' THEN 6 WHEN 'object' THEN 6 ELSE 0 END";
 
     private readonly Dictionary<string, string> _paths = [];
-    private string? _candidateParameter;
-
-    private string? CandidateParameter => candidates is null ? null : _candidateParameter ??= Parameter(candidates);
+    private string? CandidateParameter => candidates is null ? null : field ??= Parameter(candidates);
 
     // The bounded hit list drives primary-key seeks instead of scanning the collection. The subquery hides json_each.id.
     private string From => CandidateParameter is { } ids

@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Text.Json;
 using TerraBase.Testing;
 
@@ -7,6 +6,17 @@ namespace TerraBase.Fast.Documents;
 
 public sealed class TextSearchTests
 {
+    private static readonly string[] NativeStrings = ["native"];
+    private static readonly string[] ProfileFields = ["profile.body", "title", "summary", "tags"];
+    private static readonly string[] BodyFields = ["body"];
+    private static readonly string[] BodyTextFields = ["body", "text"];
+    private static readonly string[] BodyTitleFields = ["body", "title"];
+    private static readonly string[] ExtraBodyFields = ["items_extra", "body"];
+    private static readonly string[] NameCollisionCollections = ["items_extra", "text"];
+    private static readonly string[] IndexKinds = ["btree", "text"];
+    private static readonly string[] LargeMatchIds = ["00000000000000000000010001"];
+    private static readonly object[] GuideCategory = ["/category", "guide"];
+
     [Test]
     public async Task Text_indexes_backfill_strings_list_their_kind_and_combine_boolean_filters()
     {
@@ -14,14 +24,14 @@ public sealed class TextSearchTests
         var (first, second) = (DocumentApi.NewId(), DocumentApi.NewId());
         (await api.PutAsync(first, new { profile = new { body = "Native search database" }, category = "guide" })).Status.ShouldBe(HttpStatusCode.Created);
         (await api.PutAsync(second, new { profile = new { body = "Native search" }, category = "note" })).Status.ShouldBe(HttpStatusCode.Created);
-        foreach (var body in new object?[] { null, 42, true, new[] { "native" }, new { text = "native" } })
+        foreach (var body in new object?[] { null, 42, true, NativeStrings, new { text = "native" } })
         {
             (await api.PutAsync(DocumentApi.NewId(), new { profile = new { body } })).Status.ShouldBe(HttpStatusCode.Created);
         }
 
         using var owner = api.Management.As(api.Tenant.User);
         var indexes = await IndexPathAsync(api);
-        using var created = await owner.PostAsJsonAsync(Uri(indexes), new { name = "text_docs", collection = "items", kind = "text", fields = new[] { "profile.body", "title", "summary", "tags" } });
+        using var created = await owner.PostAsJsonAsync(Uri(indexes), new { name = "text_docs", collection = "items", kind = "text", fields = ProfileFields });
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var list = await owner.GetFromJsonAsync<JsonElement>(Uri(indexes));
         var index = list.GetProperty("items")[0];
@@ -33,13 +43,13 @@ public sealed class TextSearchTests
         await Assert.That(all.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(all.Ids).IsEquivalentTo([first, second]);
         await Assert.That(all.Json.GetProperty("count").GetProperty("value").GetString()).IsEqualTo("2");
-        var filtered = await api.QueryAsync(new { filter = new { and = new object[] { search, new { eq = new object[] { "/category", "guide" } } } } });
+        var filtered = await api.QueryAsync(new { filter = new { and = new object[] { search, new { eq = GuideCategory } } } });
         await Assert.That(filtered.Ids).IsEquivalentTo([first]);
         var negated = await api.QueryAsync(new { filter = new { and = new object[] { new { exists = "/category" }, new { not = search } } } });
         await Assert.That(negated.Ids).IsEmpty();
         var either = await api.QueryAsync(new { filter = new { or = new object[] { Search("/title", "absent"), search } } });
         await Assert.That(either.Ids).IsEquivalentTo([first, second]);
-        var mixed = await api.QueryAsync(new { filter = new { or = new object[] { Search("/title", "absent"), new { eq = new object[] { "/category", "guide" } } } }, count = true });
+        var mixed = await api.QueryAsync(new { filter = new { or = new object[] { Search("/title", "absent"), new { eq = GuideCategory } } }, count = true });
         await Assert.That(mixed.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(mixed.Ids).IsEquivalentTo([first]);
         await Assert.That(mixed.Json.GetProperty("count").GetProperty("value").GetString()).IsEqualTo("1");
@@ -55,7 +65,7 @@ public sealed class TextSearchTests
             (await api.PutAsync(id, new { body = "native search" })).Status.ShouldBe(HttpStatusCode.Created);
         }
 
-        await CreateAsync(api, "body");
+        await CreateAsync(api, BodyFields);
         var filter = Search("/body", "native");
         var sort = new[] { new { path = "$score", order = "desc" } };
         var page = await api.QueryAsync(new { filter, sort, limit = 1 });
@@ -89,7 +99,7 @@ public sealed class TextSearchTests
         (await api.PutAsync(ids[0], new { body = "native" })).Status.ShouldBe(HttpStatusCode.Created);
         (await api.PutAsync(ids[1], new { body = "native" })).Status.ShouldBe(HttpStatusCode.Created);
         (await api.PutAsync(ids[2], new { body = "native " + string.Join(' ', Enumerable.Repeat("unrelated", 100)) })).Status.ShouldBe(HttpStatusCode.Created);
-        await CreateAsync(api, "body");
+        await CreateAsync(api, BodyFields);
         var filter = Search("/body", "native");
         var sort = new[] { new { path = "$score", order = "desc" } };
         var all = await api.QueryAsync(new { filter, sort });
@@ -126,21 +136,25 @@ public sealed class TextSearchTests
             INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2)
                 SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM items;
             """, ("$padding", new string('x', 1000)));
-        await CreateAsync(api, "body");
+        await CreateAsync(api, BodyFields);
         var filter = Search("/body", "rareterm");
-        foreach (var sort in new[] { Array.Empty<object>(), new object[] { new { path = "$score", order = "desc" } }, new object[] { new { path = "/body", order = "asc" } } })
+        object[][] sorts = [[], [new { path = "$score", order = "desc" }], [new { path = "/body", order = "asc" }]];
+        foreach (var sort in sorts)
         {
             var page = await api.QueryAsync(new { filter, sort, count = true });
             await Assert.That(page.Status).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(page.Ids).IsEquivalentTo(["00000000000000000000010001"]);
+            await Assert.That(page.Ids).IsEquivalentTo(LargeMatchIds);
             await Assert.That(page.Json.GetProperty("count").GetProperty("value").GetString()).IsEqualTo("1");
         }
 
         var counted = await api.TransactAsync(new { op = "assert_count", collection = "items", filter, gte = 1, lte = 1 });
         await Assert.That(counted.Status).IsEqualTo(HttpStatusCode.OK);
+        // Isolate the global candidate cap from per-organization memory admission.
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var broad = await api.QueryAsync(new { filter = Search("/body", "commonterm"), limit = 1 });
         await Assert.That(broad.Status).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That((await api.QueryAsync(new { filter })).Ids).IsEquivalentTo(["00000000000000000000010001"]);
+        await Assert.That((broad.Code, broad.Message)).IsEqualTo(("invalid_query", "query too expensive"));
+        await Assert.That((await api.QueryAsync(new { filter })).Ids).IsEquivalentTo(LargeMatchIds);
     }
 
     [Test]
@@ -149,29 +163,29 @@ public sealed class TextSearchTests
         await using var api = await DocumentApi.StartAsync();
         using var owner = api.Management.As(api.Tenant.User);
         var path = Uri(await IndexPathAsync(api));
-        using var btree = await owner.PostAsJsonAsync(path, new { collection = "items", fields = new[] { "body", "text" } });
-        using var text = await owner.PostAsJsonAsync(path, new { collection = "items", kind = "text", fields = new[] { "body" } });
+        using var btree = await owner.PostAsJsonAsync(path, new { collection = "items", fields = BodyTextFields });
+        using var text = await owner.PostAsJsonAsync(path, new { collection = "items", kind = "text", fields = BodyFields });
         await Assert.That(btree.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(text.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var indexes = (await owner.GetFromJsonAsync<JsonElement>(path)).GetProperty("items").EnumerateArray().ToArray();
         await Assert.That(indexes.Length).IsEqualTo(2);
-        await Assert.That(indexes.Select(index => index.GetProperty("name").GetString()).Distinct().Count()).IsEqualTo(2);
-        await Assert.That(indexes.Select(index => index.GetProperty("kind").GetString())).IsEquivalentTo(["btree", "text"]);
+        await Assert.That(indexes.Select(index => index.GetProperty("name").GetString()!).Distinct().Count()).IsEqualTo(2);
+        await Assert.That(indexes.Select(index => index.GetProperty("kind").GetString()!)).IsEquivalentTo(IndexKinds);
     }
 
     [Test]
     public async Task Hashed_default_names_distinguish_kind_from_collection_and_field_boundaries()
     {
         await using var api = await DocumentApi.StartAsync();
-        foreach (var name in new[] { "items_extra", "text" })
+        foreach (var name in NameCollisionCollections)
         {
             (await api.SendAsync(HttpMethod.Post, api.Collections, new { name })).Status.ShouldBe(HttpStatusCode.Created);
         }
 
         using var owner = api.Management.As(api.Tenant.User);
         var path = Uri(await IndexPathAsync(api));
-        using var text = await owner.PostAsJsonAsync(path, new { collection = "items_extra", kind = "text", fields = new[] { "body" } });
-        using var btree = await owner.PostAsJsonAsync(path, new { collection = "text", fields = new[] { "items_extra", "body" } });
+        using var text = await owner.PostAsJsonAsync(path, new { collection = "items_extra", kind = "text", fields = BodyFields });
+        using var btree = await owner.PostAsJsonAsync(path, new { collection = "text", fields = ExtraBodyFields });
         await Assert.That(text.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(btree.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var names = (await owner.GetFromJsonAsync<JsonElement>(path)).GetProperty("items").EnumerateArray()
@@ -193,7 +207,7 @@ public sealed class TextSearchTests
             (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = Collection })).Status.ShouldBe(HttpStatusCode.Created);
         }
 
-        await CreateAsync(api, "body");
+        await CreateAsync(api, BodyFields);
         if (!collectionFirst)
         {
             (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = Collection })).Status.ShouldBe(HttpStatusCode.Created);
@@ -216,28 +230,45 @@ public sealed class TextSearchTests
     public async Task Text_indexes_follow_updates_deletes_rollback_drop_and_recreate()
     {
         await using var api = await DocumentApi.StartAsync();
-        await CreateAsync(api, "body");
+        await CreateAsync(api, BodyFields);
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { body = "original" })).Status.ShouldBe(HttpStatusCode.Created);
+        var guardId = DocumentApi.NewId();
+        (await api.PutAsync(guardId, new { guard = true })).Status.ShouldBe(HttpStatusCode.Created);
+        // A failing write after the update exercises rollback; assertions run before writes.
         var failed = await api.TransactAsync(
             new { op = "put", collection = "items", id, document = new { body = "rolledback" } },
-            new { op = "assert", collection = "items", id, absent = true });
+            new { op = "create", collection = "items", id = guardId, document = new { guard = false } });
         await Assert.That(failed.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        await Assert.That((failed.Code, failed.Op)).IsEqualTo(("precondition_failed", 1));
         await Assert.That((await api.QueryAsync(new { filter = Search("/body", "original") })).Ids).IsEquivalentTo([id]);
         await Assert.That((await api.QueryAsync(new { filter = Search("/body", "rolledback") })).Ids).IsEmpty();
         (await api.PutAsync(id, new { body = "replacement" })).Status.ShouldBe(HttpStatusCode.OK);
         await Assert.That((await api.QueryAsync(new { filter = Search("/body", "original") })).Ids).IsEmpty();
         await Assert.That((await api.QueryAsync(new { filter = Search("/body", "replacement") })).Ids).IsEquivalentTo([id]);
-        (await api.SendAsync(HttpMethod.Delete, api.Document(id))).Status.ShouldBe(HttpStatusCode.NoContent);
+        var deleted = await api.SendAsync(HttpMethod.Delete, api.Document(id));
+        deleted.Status.ShouldBe(HttpStatusCode.OK);
+        await Assert.That(deleted.Json.GetProperty("id").GetString()).IsEqualTo(id);
+        await Assert.That(deleted.Version).Matches("^tbv1-[0-9a-f]{32}$");
+        await Assert.That(deleted.ETag).IsEqualTo(deleted.Version);
+        var gone = await api.GetAsync(id);
+        await Assert.That((gone.Status, gone.Code)).IsEqualTo((HttpStatusCode.NotFound, "not_found"));
+        await Assert.That(gone.ETag).IsEqualTo(deleted.Version);
         await Assert.That((await api.QueryAsync(new { filter = Search("/body", "replacement") })).Ids).IsEmpty();
 
         using var owner = api.Management.As(api.Tenant.User);
         using var dropped = await owner.DeleteAsync(Uri($"{await IndexPathAsync(api)}/text_docs"));
         await Assert.That(dropped.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That((await api.QueryAsync(new { filter = Search("/body", "replacement") })).Code).IsEqualTo("invalid_query");
-        await CreateAsync(api, "body");
+        await CreateAsync(api, BodyFields);
         await Assert.That((await api.QueryAsync(new { filter = Search("/body", "replacement") })).Ids).IsEmpty();
-        (await api.SendAsync(HttpMethod.Delete, $"{api.Collections}/items")).Status.ShouldBe(HttpStatusCode.NoContent);
+        var collection = await api.SendAsync(HttpMethod.Get, $"{api.Collections}/items");
+        collection.Status.ShouldBe(HttpStatusCode.OK);
+        var droppedCollection = await api.SendAsync(HttpMethod.Delete, $"{api.Collections}/items");
+        droppedCollection.Status.ShouldBe(HttpStatusCode.OK);
+        await Assert.That(droppedCollection.Json.GetProperty("name").GetString()).IsEqualTo("items");
+        await Assert.That(droppedCollection.Json.GetProperty("id").GetString()).IsEqualTo(collection.Json.GetProperty("id").GetString());
+        (await api.SendAsync(HttpMethod.Get, $"{api.Collections}/items")).Status.ShouldBe(HttpStatusCode.NotFound);
         var indexes = await owner.GetFromJsonAsync<JsonElement>(Uri(await IndexPathAsync(api)));
         await Assert.That(indexes.GetProperty("items").GetArrayLength()).IsEqualTo(0);
     }
@@ -248,7 +279,7 @@ public sealed class TextSearchTests
         await using var api = await DocumentApi.StartAsync();
         var missing = await api.QueryAsync(new { filter = Search("/body", "native") });
         await Assert.That((missing.Status, missing.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query"));
-        await CreateAsync(api, "body");
+        await CreateAsync(api, BodyFields);
         (await api.PutAsync(DocumentApi.NewId(), new { body = "native" })).Status.ShouldBe(HttpStatusCode.Created);
         var where = System.Uri.EscapeDataString("""{"not":{"search":["/body","native"]}}""");
         var shape = await api.SendAsync(HttpMethod.Get, $"{api.Collections}/items/shape?offset=-1&where={where}");
@@ -282,10 +313,10 @@ public sealed class TextSearchTests
         await using var api = await DocumentApi.StartAsync();
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { body = "native" })).Status.ShouldBe(HttpStatusCode.Created);
-        await CreateAsync(api, "body");
+        await CreateAsync(api, BodyFields);
         using var owner = api.Management.As(api.Tenant.User);
         var indexes = await IndexPathAsync(api);
-        using var second = await owner.PostAsJsonAsync(Uri(indexes), new { name = "second_text", collection = "items", kind = "text", fields = new[] { "body", "title" } });
+        using var second = await owner.PostAsJsonAsync(Uri(indexes), new { name = "second_text", collection = "items", kind = "text", fields = BodyTitleFields });
         second.EnsureSuccessStatusCode();
         var request = new { filter = Search("/body", "native"), count = true };
         await Assert.That((await api.QueryAsync(request)).Ids).IsEquivalentTo([id]);

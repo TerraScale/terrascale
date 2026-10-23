@@ -140,10 +140,14 @@ static void expect_count(turso_connection_t *connection, const char *sql, int co
 static void many_clause_admission_smoke(turso_connection_t *connection) {
     execute(connection, "CREATE TABLE tiny_docs(id INTEGER PRIMARY KEY, title TEXT)");
     execute(connection, "CREATE INDEX tiny_fts ON tiny_docs USING fts(title)");
-    execute(connection, "INSERT INTO tiny_docs VALUES (1, 'a')");
-    char terms[4096] = "a";
-    for (int i = 1; i < 500; i++) strcat(terms, " OR a");
-    assert(strlen(terms) == 2496);
+    execute(connection, "INSERT INTO tiny_docs VALUES (1, 'zaa')");
+    char terms[4096] = "";
+    for (int i = 0; i < 500; i++) {
+        char term[4] = {'z', (char)('a' + i / 26), (char)('a' + i % 26), '\0'};
+        if (i) strcat(terms, " OR ");
+        strcat(terms, term);
+    }
+    assert(strlen(terms) == 3496);
     const char *sql = "SELECT id, fts_score(title, ?1) FROM tiny_docs WHERE fts_match(title, ?1) LIMIT 10001";
     /* Measure setup separately: loading/scratch can exceed a fixed small byte ceiling. */
     reset_budget(connection);
@@ -166,7 +170,7 @@ static void many_clause_admission_smoke(turso_connection_t *connection) {
         reset_budget(connection);
         byte_limit = target.before;
         statement = prepare(connection, sql);
-        expect(turso_statement_bind_positional_text(statement, 1, terms, strlen(terms)), TURSO_OK, "bind 500 clauses");
+        expect(turso_statement_bind_positional_text(statement, 1, terms, strlen(terms)), TURSO_OK, "bind 500 distinct clauses");
         turso_status_code_t status = turso_statement_step(statement, &error);
         printf("native smoke: %s refusal status=%d call=%llu prior=%llu charge=%llu limit=%llu work=%llu\n", scorer ? "scorer" : "weight", status,
                (unsigned long long)callback_calls, (unsigned long long)largest_charge.before,
@@ -190,15 +194,24 @@ static void many_clause_admission_smoke(turso_connection_t *connection) {
     turso_statement_deinit(statement);
     puts("native smoke: tiny index refuses unadmitted term weights and per-segment scorers");
 
+    strcpy(terms, "zaa");
+    for (int i = 1; i < 500; i++) strcat(terms, " OR zaa");
+    reset_budget(connection);
+    byte_limit = 128 * 1024 * 1024;
+    search(connection, sql, terms, 1);
+    assert(largest_byte_charge < (uint64_t)500 * 4 * 1024);
+    expect(turso_connection_set_fts_progress_handler(connection, NULL, &error), TURSO_OK, "clear optimized repetition budget");
+    puts("native smoke: identical OR terms preserve matches and collapse before physical allocation");
+
     /* Distinct attachments remain in Turso's transaction registry between these completed statements. */
     execute(connection, "BEGIN");
-    execute(connection, "UPDATE tiny_docs SET title = 'a updated' WHERE id = 1");
+    execute(connection, "UPDATE tiny_docs SET title = 'zaa updated' WHERE id = 1");
     expect_count(connection, "SELECT count(*) FROM tiny_docs WHERE fts_match(title, 'updated')", 1);
     expect_count(connection, "SELECT count(*) FROM budget_docs WHERE fts_match(title, 'native')", 256);
-    expect_count(connection, "SELECT count(*) FROM tiny_docs WHERE fts_match(title, 'a')", 1);
+    expect_count(connection, "SELECT count(*) FROM tiny_docs WHERE fts_match(title, 'zaa')", 1);
     execute(connection, "ROLLBACK");
     expect_count(connection, "SELECT count(*) FROM tiny_docs WHERE fts_match(title, 'updated')", 0);
-    expect_count(connection, "SELECT count(*) FROM tiny_docs WHERE fts_match(title, 'a')", 1);
+    expect_count(connection, "SELECT count(*) FROM tiny_docs WHERE fts_match(title, 'zaa')", 1);
     puts("native smoke: completed reads across indexes in an open transaction preserve rollback");
 }
 
@@ -218,16 +231,21 @@ static void dense_phrase_admission_smoke(turso_connection_t *connection) {
     const char *scored = "SELECT id, fts_score(title, ?1) FROM dense_docs WHERE fts_match(title, ?1) LIMIT 10001";
     const char *counted = "SELECT count(*) FROM dense_docs WHERE fts_match(title, ?1)";
     for (int variant = 0; variant < 5; variant++) {
-        const int clauses = variant == 3 ? 50 : 300;
-        const char *phrase = variant == 1 ? "\"a a\"~2" : variant == 2 ? "\"a a\"*" : "\"a a\"";
+        const int clauses = variant == 3 ? 20 : variant == 1 ? 100 : 300;
         char terms[4096] = "";
-        if (variant == 3) strcat(terms, "(");
         for (int i = 0; i < clauses; i++) {
+            char phrase[64];
+            if (variant == 2) {
+                snprintf(phrase, sizeof(phrase), "\"a %c%c%c\"*", 'a' + i / (26 * 26), 'a' + i / 26 % 26, 'a' + i % 26);
+            } else if (variant == 3) {
+                snprintf(phrase, sizeof(phrase), "\"a a\"^%d", i + 2);
+            } else {
+                snprintf(phrase, sizeof(phrase), "\"a a\"~%d", variant == 1 ? i + 20000 : i);
+            }
             if (i) strcat(terms, " OR ");
             strcat(terms, phrase);
         }
-        if (variant == 3) strcat(terms, ")^2");
-        if (variant == 0) assert(strlen(terms) == 2696);
+        assert(strlen(terms) < 4096);
         reset_budget(connection);
         byte_limit = 128 * 1024 * 1024;
         statement = prepare(connection, variant == 4 ? counted : scored);
@@ -245,9 +263,65 @@ static void dense_phrase_admission_smoke(turso_connection_t *connection) {
         expect(turso_statement_reset(statement, &error), TURSO_OK, "reset dense phrase admission refusal");
         turso_statement_deinit(statement);
     }
+    char optimized[4096] = "\"a a\"";
+    for (int i = 1; i < 300; i++) strcat(optimized, " OR \"a a\"");
+    assert(strlen(optimized) == 2696);
+    reset_budget(connection);
+    byte_limit = 128 * 1024 * 1024;
+    search(connection, scored, optimized, 1);
     expect(turso_connection_set_fts_progress_handler(connection, NULL, &error), TURSO_OK, "clear dense phrase admission");
     search(connection, scored, "\"a a\"", 1);
     puts("native smoke: dense repeated/sloppy/prefix/boosted phrases and count refuse before scorer allocation; recovery passed");
+}
+
+static void carrying_slop_admission_smoke(turso_connection_t *connection) {
+    char body[32770];
+    for (size_t i = 0; i < 8192; i++) { body[i * 2] = 'b'; body[i * 2 + 1] = ' '; }
+    for (size_t i = 8192; i < 16384; i++) { body[i * 2] = 'a'; body[i * 2 + 1] = ' '; }
+    body[32768] = 'c';
+    body[32769] = '\0';
+    execute(connection, "CREATE TABLE slop_docs(id INTEGER PRIMARY KEY, title TEXT)");
+    turso_statement_t *statement = prepare(connection, "INSERT INTO slop_docs VALUES (1, ?1)");
+    expect(turso_statement_bind_positional_text(statement, 1, body, strlen(body)), TURSO_OK, "bind separated token blocks");
+    expect(turso_statement_step(statement, &error), TURSO_DONE, "insert separated token blocks");
+    turso_statement_deinit(statement);
+    execute(connection, "CREATE INDEX slop_fts ON slop_docs USING fts(title)");
+    const char *terms = "\"a b c\"~20000";
+    assert(strlen(terms) == 13);
+    const char *queries[] = {
+        "SELECT id, fts_score(title, ?1) FROM slop_docs WHERE fts_match(title, ?1) LIMIT 10001",
+        "SELECT count(*) FROM slop_docs WHERE fts_match(title, ?1)",
+        "SELECT id, fts_score(title, ?1) AS score FROM slop_docs WHERE fts_match(title, ?1) ORDER BY score DESC LIMIT 10"
+    };
+    uint64_t tokens = 16385;
+    uint64_t carrying_bound = (tokens * tokens + 2 * tokens) * 64;
+    for (size_t i = 0; i < sizeof(queries) / sizeof(queries[0]); i++) {
+        reset_budget(connection);
+        byte_limit = 128 * 1024 * 1024;
+        statement = prepare(connection, queries[i]);
+        expect(turso_statement_bind_positional_text(statement, 1, terms, strlen(terms)), TURSO_OK, "bind carrying slop");
+        turso_status_code_t status = turso_statement_step(statement, &error);
+        printf("native smoke: carrying slop variant=%zu status=%d prior=%llu charge=%llu bound=%llu\n", i, status,
+               (unsigned long long)(charged_bytes - largest_byte_charge), (unsigned long long)largest_byte_charge,
+               (unsigned long long)carrying_bound);
+        fflush(stdout);
+        expect(status, TURSO_INTERRUPT, "refuse carrying-slop scratch before scorer construction");
+        assert(largest_byte_charge >= carrying_bound);
+        assert(charged_bytes - largest_byte_charge <= byte_limit);
+        assert(largest_byte_charge > byte_limit);
+        expect(turso_statement_reset(statement, &error), TURSO_OK, "reset carrying-slop refusal");
+        turso_statement_deinit(statement);
+    }
+    expect(turso_connection_set_fts_progress_handler(connection, NULL, &error), TURSO_OK, "clear carrying-slop admission");
+    execute(connection, "CREATE TABLE small_slop_docs(id INTEGER PRIMARY KEY, title TEXT)");
+    execute(connection, "INSERT INTO small_slop_docs VALUES (1, 'a b c')");
+    execute(connection, "CREATE INDEX small_slop_fts ON small_slop_docs USING fts(title)");
+    reset_budget(connection);
+    byte_limit = 128 * 1024 * 1024;
+    search(connection, "SELECT id, fts_score(title, ?1) FROM small_slop_docs WHERE fts_match(title, ?1) LIMIT 10001", terms, 1);
+    expect_count(connection, "SELECT count(*) FROM small_slop_docs WHERE fts_match(title, '\"a b c\"~20000')", 1);
+    expect(turso_connection_set_fts_progress_handler(connection, NULL, &error), TURSO_OK, "clear healthy carrying-slop admission");
+    puts("native smoke: three-term carrying-slop reader/count/ordered queries refuse scratch; small admitted slop succeeds");
 }
 
 static void candidate_seek_smoke(turso_connection_t *connection) {
@@ -338,6 +412,7 @@ int main(int argc, char **argv) {
         budget_smoke(connection);
         many_clause_admission_smoke(connection);
         dense_phrase_admission_smoke(connection);
+        carrying_slop_admission_smoke(connection);
         candidate_seek_smoke(connection);
     } else {
         /* Expression support is diagnostic: the engine uses ordinary derived text columns. */

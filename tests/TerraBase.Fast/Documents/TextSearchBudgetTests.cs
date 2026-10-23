@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Features.Qos;
@@ -9,6 +8,9 @@ namespace TerraBase.Fast.Documents;
 
 public sealed class TextSearchBudgetTests
 {
+    private static readonly string[] BodyFields = ["body"];
+    private static readonly string[] NativeSearch = ["/body", "native"];
+
     [Test]
     public async Task Native_fts_deadlines_return_invalid_query_for_search_and_assert_count_and_recover()
     {
@@ -19,9 +21,9 @@ public sealed class TextSearchBudgetTests
         (await api.PutAsync(id, new { body = "native budget" })).Status.ShouldBe(HttpStatusCode.Created);
         using var owner = api.Management.As(api.Tenant.User);
         var indexes = $"/v1/management/organizations/{api.Tenant.OrganizationId}/projects/{api.Tenant.ProjectId}/databases/{(await api.TenantOfAsync()).DatabaseId}/indexes";
-        using var created = await owner.PostAsJsonAsync(ManagementApi.Uri(indexes), new { name = "budget_text", collection = "items", kind = "text", fields = new[] { "body" } });
+        using var created = await owner.PostAsJsonAsync(ManagementApi.Uri(indexes), new { name = "budget_text", collection = "items", kind = "text", fields = BodyFields });
         created.EnsureSuccessStatusCode();
-        var filter = new { search = new[] { "/body", "native" } };
+        var filter = new { search = NativeSearch };
         clock.Enabled = true;
         var query = await api.QueryAsync(new { filter, count = true });
         await Assert.That((query.Status, query.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query"));

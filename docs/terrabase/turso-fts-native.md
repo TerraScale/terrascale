@@ -105,15 +105,31 @@ before scorer construction. Weight allocation additionally charges 4 KiB per cla
 per-segment scorer allocation charges 64 KiB per clause before constructing weights
 or scorers. This covers the pinned Tantivy 0.26.2 per-term 1 KiB BM25 table,
 posting decoders/scorer copies and Boolean union score windows, including repeated
-clauses on tiny indexes. Boolean nodes count separately; hidden boosted subtrees
+physical clauses on tiny indexes. Boolean nodes count separately; hidden boosted subtrees
 use bounded source length as a conservative clause count. Phrase-prefix scorers
 add the pinned parser's 50 suffix expansions; opaque boosted subtrees reserve that
 expansion per positional term. Before any weight/scorer construction, each segment
 also reserves 64 bytes per field-wide recorded token per positional term occurrence.
-Repeated phrases are counted separately through Boolean/boost wrappers. Field token
-metadata includes deleted documents and every emitted tokenizer token, including
-n-grams; it bounds the term-frequency-sized position vectors, their growth, sloppy
-phrase scratch and prefix suffix scratch. Prefix suffixes reuse one position buffer;
+Physical phrases are counted separately through Boolean/boost wrappers. Unmerged
+field token metadata includes deleted documents and emitted tokenizer tokens, including
+n-grams. After delete compaction, Tantivy reconstructs approximate totals from
+downward-quantized fieldnorms (for example, 41 live tokens can be recorded as 40).
+The allocation estimates include conservative slack; they are not a strict RSS guarantee.
+Three-or-more-term sloppy phrases can duplicate suffix positions during every
+intermediate carrying join. Their additional reservation starts with `B = T`, where
+`T` is the field's recorded token estimate, then applies `B = B*T + B + T` for each of
+the phrase's `terms - 2` intermediate joins and reserves `64*B` bytes. This accounts for
+each join's `L*R + L + R` appends, the next join's expanded input, both carrying
+position/slop buffers, capacity growth and reallocation. All arithmetic saturates;
+an overflowing estimate refuses finite admission before any weight/scorer exists.
+The public Tantivy grammar AST supplies the positive-slop flag before the same
+AST is converted to a physical query, preserving parser deduplication and errors.
+Because physical PhraseQuery hides its slop and BoostQuery hides its tree, a query
+containing positive slop conservatively applies the recurrence to every physical
+phrase with at least three terms; an opaque boosted subtree uses all its positional
+terms per field as the maximum phrase length. Exact queries without positive slop
+and ordinary terms retain their earlier charges; no query syntax is banned.
+Prefix suffixes reuse one position buffer;
 their separate posting decoders are covered by the expansion reservation. The pinned
 parser creates ordinary/sloppy phrases and phrase-prefix queries; it does not create
 RegexPhraseQuery, and regex syntax is disabled. These are conservative
@@ -125,12 +141,17 @@ guarantee for a single call.
 
 The mandatory C smoke asserts loading-byte refusal, interruption before aggregate
 output, ordered traversal interruption, cancellation after the first native reader
-row, callback clearing/recovery, insufficient weight/scorer admission for 500 repeated
-clauses over one document, and dense repeated/sloppy/prefix/boosted phrase admission
-before scorer construction (including count). The 500-clause smoke first measures
+row, callback clearing/recovery, insufficient weight/scorer admission for 500 distinct
+three-letter terms over one document, and dense sloppy/prefix/boosted physical phrase
+admission before scorer construction (including count). Dense clauses use different
+slops, prefixes or boosts so deduplication preserves their physical allocations;
+identical repeated terms/phrases have separate healthy semantic checks. The 500-clause smoke first measures
 setup and the distinct weight/scorer charge boundaries, then refuses each charge
 with setup already admitted; it asserts and prints the exact refusal charge and
-callback position. It also checks open-transaction distinct-index reads/rollback and an
+callback position. A separated-block document (`b ` 8192 times, `a ` 8192 times,
+then `c`) and `"a b c"~20000` must refuse carrying scratch at 128 MiB for scored
+reader, count and ordered search, while a small admitted three-term slop query works.
+It also checks open-transaction distinct-index reads/rollback and an
 EXPLAIN QUERY PLAN indexed ID seek for
 `json_each($ids) CROSS JOIN collection ON collection.id = hit_id`. It prints the
 actual plan and rejects a collection scan. No seek-plan runtime result is claimed

@@ -65,7 +65,7 @@ index 0591fff..e011085 100644
 
      pub fn identity_of(&self, position: u32) -> Option<DocumentIdentity> {
 diff --git a/core/index_method/fts/mod.rs b/core/index_method/fts/mod.rs
-index bf97450..87b8c52 100644
+index bf97450..f04944f 100644
 --- a/core/index_method/fts/mod.rs
 +++ b/core/index_method/fts/mod.rs
 @@ -37,7 +37,8 @@ use crate::{
@@ -546,7 +546,7 @@ index bf97450..87b8c52 100644
          let data = chunks.remove(&chunk_no).ok_or_else(|| {
              LimboError::Corrupt(format!(
                  "FTS file {} is missing chunk {}",
-@@ -2767,6 +2873,66 @@ impl FtsBackingRowDumper {
+@@ -2767,6 +2873,114 @@ impl FtsBackingRowDumper {
      }
  }
 
@@ -589,6 +589,7 @@ index bf97450..87b8c52 100644
 +    query: &dyn tantivy::query::Query,
 +    segment: &SegmentReader,
 +    fields: &[Field],
++    has_slop: bool,
 +) -> Result<u64> {
 +    fields.iter().try_fold(0u64, |bytes, field| {
 +        let mut occurrences = 0u64;
@@ -604,16 +605,63 @@ index bf97450..87b8c52 100644
 +            .inverted_index(*field)
 +            .map_err(|error| LimboError::InternalError(format!("FTS token count error: {error}")))?
 +            .total_num_tokens();
-+        // Field-wide tokens bound term frequency, even with n-grams/deletes; include Vec growth,
-+        // phrase/slop scratch and prefix suffix scratch for every repeated positional occurrence.
-+        Ok(bytes.saturating_add(tokens.saturating_mul(occurrences).saturating_mul(64)))
++        let linear = tokens.saturating_mul(occurrences).saturating_mul(64);
++        let carrying = if has_slop {
++            fts_query_carrying_bytes(query, *field, tokens)
++        } else {
++            0
++        };
++        Ok(bytes.saturating_add(linear).saturating_add(carrying))
 +    })
++}
++
++fn fts_query_carrying_bytes(query: &dyn tantivy::query::Query, field: Field, tokens: u64) -> u64 {
++    if let Some(boolean) = query.downcast_ref::<tantivy::query::BooleanQuery>() {
++        return boolean.clauses().iter().fold(0u64, |bytes, (_, clause)| {
++            bytes.saturating_add(fts_query_carrying_bytes(clause.as_ref(), field, tokens))
++        });
++    }
++    if !query.is::<tantivy::query::PhraseQuery>() && !query.is::<tantivy::query::BoostQuery>() {
++        return 0;
++    }
++    let mut terms = 0u64;
++    query.query_terms(&mut |term, positions| {
++        if positions && term.field() == field {
++            terms = terms.saturating_add(1);
++        }
++    });
++    if terms < 3 || tokens == 0 {
++        return 0;
++    }
++    let mut entries = tokens;
++    // A carrying join can append L*R + L + R entries; later joins consume that expanded output.
++    for _ in 0..terms - 2 {
++        entries = entries
++            .saturating_mul(tokens)
++            .saturating_add(entries)
++            .saturating_add(tokens);
++        if entries == u64::MAX {
++            return u64::MAX;
++        }
++    }
++    entries.saturating_mul(64)
++}
++
++fn fts_query_has_slop(ast: &tantivy::query_grammar::UserInputAst) -> bool {
++    use tantivy::query_grammar::{UserInputAst, UserInputLeaf};
++    match ast {
++        UserInputAst::Clause(clauses) => clauses.iter().any(|(_, child)| fts_query_has_slop(child)),
++        UserInputAst::Boost(child, _) => fts_query_has_slop(child),
++        UserInputAst::Leaf(leaf) => {
++            matches!(leaf.as_ref(), UserInputLeaf::Literal(literal) if literal.slop > 0)
++        }
++    }
 +}
 +
  // ============================ trait impl ============================
 
  impl Drop for FtsCursor {
-@@ -3004,6 +3170,8 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3004,6 +3218,8 @@ impl IndexMethodCursor for FtsCursor {
      /// Starts an FTS query. Parses the query string and executes the search.
      /// Returns true if there are results, false otherwise.
      fn query_start(&mut self, values: &[Register]) -> IOResultOr<bool> {
@@ -622,7 +670,7 @@ index bf97450..87b8c52 100644
          self.ensure_searcher()?;
          let searcher = self
              .searcher
-@@ -3070,7 +3238,7 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3070,7 +3286,7 @@ impl IndexMethodCursor for FtsCursor {
              }
          };
 
@@ -631,12 +679,18 @@ index bf97450..87b8c52 100644
          self.streaming_hits = None;
          self.hit_pos = 0;
          let query_str = match values[1].get_value() {
-@@ -3111,12 +3279,14 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3111,12 +3327,19 @@ impl IndexMethodCursor for FtsCursor {
                  _ => {}
              }
          }
+-        let (query, parse_errors) = parser.parse_query_lenient(&query_str);
 +        check_fts_work(connection.as_deref(), query_str.len() as u64, 0)?;
-         let (query, parse_errors) = parser.parse_query_lenient(&query_str);
++        let (input_ast, syntax_errors) = tantivy::query_grammar::parse_query_lenient(&query_str);
++        if let Some(error) = syntax_errors.first() {
++            return Err(LimboError::InternalError(format!("FTS parse error: {error:?}")).into());
++        }
++        let has_slop = fts_query_has_slop(&input_ast);
++        let (query, parse_errors) = parser.build_query_from_user_input_ast_lenient(input_ast);
 +        check_fts_work(connection.as_deref(), 1, 0)?;
          if let Some(error) = parse_errors.first() {
              return Err(LimboError::InternalError(format!("FTS parse error: {error:?}")).into());
@@ -647,7 +701,7 @@ index bf97450..87b8c52 100644
          // number of live documents: this preserves unlimited-query semantics
          // and prevents a huge SQL LIMIT from allocating beyond the largest
          // possible result set.
-@@ -3127,12 +3297,35 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3127,12 +3350,36 @@ impl IndexMethodCursor for FtsCursor {
 
          // Unordered patterns can walk Tantivy's per-segment scorers directly.
          // This keeps memory constant for the common MATCH path. Global score
@@ -677,6 +731,7 @@ index bf97450..87b8c52 100644
 +                    query.as_ref(),
 +                    segment,
 +                    &self.default_fields,
++                    has_slop,
 +                )?);
 +            check_fts_work(connection.as_deref(), work, bytes)?;
 +        }
@@ -684,7 +739,7 @@ index bf97450..87b8c52 100644
          if let Some(scores_enabled) = streaming_scores {
              let scoring = if scores_enabled {
                  EnableScoring::enabled_from_searcher(searcher)
-@@ -3142,11 +3335,18 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3142,11 +3389,18 @@ impl IndexMethodCursor for FtsCursor {
              let weight = query
                  .weight(scoring)
                  .map_err(|e| LimboError::InternalError(format!("FTS query weight error: {e}")))?;
@@ -703,7 +758,7 @@ index bf97450..87b8c52 100644
                  segments.push(FtsStreamingSegment {
                      scorer,
                      rowids: self.rowid_readers[segment_ord].clone(),
-@@ -3154,6 +3354,7 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3154,6 +3408,7 @@ impl IndexMethodCursor for FtsCursor {
                  });
              }
              let mut stream = FtsHitStream {
@@ -711,7 +766,7 @@ index bf97450..87b8c52 100644
                  segments,
                  segment_pos: 0,
                  remaining: limit,
-@@ -3165,78 +3366,52 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3165,78 +3420,52 @@ impl IndexMethodCursor for FtsCursor {
              return Ok(IOResult::Done(has_result));
          }
 
@@ -831,7 +886,7 @@ index bf97450..87b8c52 100644
 
          Ok(IOResult::Done(!self.current_hits.is_empty()))
      }
-@@ -3417,9 +3592,14 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3417,9 +3646,14 @@ impl IndexMethodCursor for FtsCursor {
          self.reset_to_init();
      }
 
@@ -848,7 +903,7 @@ index bf97450..87b8c52 100644
 
      fn on_transaction_rolled_back(&mut self, _context: &IndexMethodContext) {
 diff --git a/core/index_method/fts/tests.rs b/core/index_method/fts/tests.rs
-index 05ec657..fb1af2f 100644
+index 05ec657..a4758ac 100644
 --- a/core/index_method/fts/tests.rs
 +++ b/core/index_method/fts/tests.rs
 @@ -401,6 +401,7 @@ fn segment_load_reads_the_identities_the_build_wrote() {
@@ -919,7 +974,7 @@ index 05ec657..fb1af2f 100644
 
      for cursor in [&mut original, &mut cached] {
          for pattern in [FTS_PATTERN_MATCH, FTS_PATTERN_COMBINED] {
-@@ -906,3 +899,144 @@ mod allocation_failures {
+@@ -906,3 +899,220 @@ mod allocation_failures {
          }
      }
  }
@@ -987,23 +1042,43 @@ index 05ec657..fb1af2f 100644
 +}
 +
 +#[test]
-+fn repeated_term_clauses_are_charged_individually_on_a_tiny_index() {
++fn distinct_term_clauses_are_charged_individually_on_a_tiny_index() {
 +    let attachment = test_attachment();
-+    let (segment, _) = build_and_load_segment(&attachment, &[(1, "a")]);
++    let (segment, _) = build_and_load_segment(&attachment, &[(1, "zaa")]);
 +    let mut cursor = FtsCursor::new(&attachment);
 +    cursor.segments = vec![segment];
 +    cursor.ensure_searcher().unwrap();
-+    let terms = std::iter::repeat_n("a", 500)
++    let parser = tantivy::query::QueryParser::for_index(
++        cursor.index.as_ref().unwrap(),
++        vec![cursor.default_fields[0]],
++    );
++    let terms = (0..500u16)
++        .map(|i| {
++            format!(
++                "z{}{}",
++                char::from(b'a' + (i / 26) as u8),
++                char::from(b'a' + (i % 26) as u8)
++            )
++        })
 +        .collect::<Vec<_>>()
 +        .join(" OR ");
-+    assert_eq!(terms.len(), 2496);
-+    let query = cursor
-+        .cached_parser
-+        .as_ref()
-+        .unwrap()
-+        .parse_query(&terms)
-+        .unwrap();
++    assert_eq!(terms.len(), 3496);
++    let (query, errors) = parser.parse_query_lenient(&terms);
++    assert!(errors.is_empty());
++    let mut physical_terms = 0;
++    query.query_terms(&mut |_, _| physical_terms += 1);
++    assert_eq!(physical_terms, 500);
 +    assert!(fts_query_clause_count(query.as_ref(), terms.len() as u64) >= 500);
++
++    let repeated = std::iter::repeat_n("zaa", 500)
++        .collect::<Vec<_>>()
++        .join(" OR ");
++    let (query, errors) = parser.parse_query_lenient(&repeated);
++    assert!(errors.is_empty());
++    let mut physical_terms = 0;
++    query.query_terms(&mut |_, _| physical_terms += 1);
++    assert_eq!(physical_terms, 1);
++    assert!(fts_query_clause_count(query.as_ref(), repeated.len() as u64) < 500);
 +}
 +
 +#[test]
@@ -1028,7 +1103,8 @@ index 05ec657..fb1af2f 100644
 +    ] {
 +        let query = parser.parse_query(terms).unwrap();
 +        assert_eq!(
-+            fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields).unwrap(),
++            fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields, false)
++                .unwrap(),
 +            262144 * positional_occurrences * 64,
 +            "{terms}"
 +        );
@@ -1038,18 +1114,28 @@ index 05ec657..fb1af2f 100644
 +            "{terms}"
 +        );
 +    }
-+    let terms = std::iter::repeat_n(r#""a a""#, 300)
++    let terms = (0..300)
++        .map(|slop| format!("\"a a\"~{slop}"))
 +        .collect::<Vec<_>>()
 +        .join(" OR ");
-+    assert_eq!(terms.len(), 2696);
++    assert!(terms.len() < FTS_MAX_QUERY_BYTES);
 +    let query = parser.parse_query(&terms).unwrap();
 +    assert_eq!(
-+        fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields).unwrap(),
++        fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields, false).unwrap(),
 +        262144 * 600 * 64
++    );
++    let repeated = std::iter::repeat_n(r#""a a""#, 300)
++        .collect::<Vec<_>>()
++        .join(" OR ");
++    let (query, errors) = parser.parse_query_lenient(&repeated);
++    assert!(errors.is_empty());
++    assert_eq!(
++        fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields, false).unwrap(),
++        262144 * 2 * 64
 +    );
 +    let query = parser.parse_query("a").unwrap();
 +    assert_eq!(
-+        fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields).unwrap(),
++        fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields, false).unwrap(),
 +        0
 +    );
 +    let query = cursor
@@ -1060,9 +1146,54 @@ index 05ec657..fb1af2f 100644
 +        .unwrap();
 +    assert_eq!(fts_query_prefix_expansions(query.as_ref()), 100);
 +    assert_eq!(
-+        fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields).unwrap(),
++        fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields, false).unwrap(),
 +        262144 * 64
 +    );
++}
++
++#[test]
++fn carrying_slop_scratch_is_bounded_across_every_intermediate_join() {
++    let attachment = test_attachment();
++    let body = format!("{}{}c", "b ".repeat(8192), "a ".repeat(8192));
++    assert_eq!(body.len(), 32769);
++    let (segment, _) = build_and_load_segment(&attachment, &[(1, body.as_str())]);
++    let mut cursor = FtsCursor::new(&attachment);
++    cursor.segments = vec![segment];
++    cursor.ensure_searcher().unwrap();
++    let segment = &cursor.searcher.as_ref().unwrap().segment_readers()[0];
++    let parser = tantivy::query::QueryParser::for_index(
++        cursor.index.as_ref().unwrap(),
++        vec![cursor.default_fields[0]],
++    );
++    let tokens = 16385u64;
++    let first_join = tokens * tokens + 2 * tokens;
++    let second_join = first_join * tokens + first_join + tokens;
++    for (terms, expected) in [
++        (r#""a b c""#, tokens * 3 * 64),
++        (r#""a b c"~0"#, tokens * 3 * 64),
++        (r#""a b c"~20000"#, (tokens * 3 + first_join) * 64),
++        (r#"("a b c"~20000)^2"#, (tokens * 3 + first_join) * 64),
++        (
++            r#""a b c"~20000 OR "a b c"~20001"#,
++            (tokens * 3 + first_join) * 128,
++        ),
++        (r#""a b c d"~20000"#, (tokens * 4 + second_join) * 64),
++        (r#""a b c d e f g h"~20000"#, u64::MAX),
++        (r#""a b c"*"#, tokens * 2 * 64),
++    ] {
++        let (ast, errors) = tantivy::query_grammar::parse_query_lenient(terms);
++        assert!(errors.is_empty(), "{terms}");
++        let has_slop = fts_query_has_slop(&ast);
++        let (query, errors) = parser.build_query_from_user_input_ast_lenient(ast);
++        assert!(errors.is_empty(), "{terms}");
++        // Estimate only: constructing the unadmitted carrying scorer would allocate hundreds of MiB.
++        let actual =
++            fts_query_position_bytes(query.as_ref(), segment, &cursor.default_fields, has_slop)
++                .unwrap();
++        assert_eq!(actual, expected, "{terms}");
++    }
++    assert!(first_join * 64 > 128 * 1024 * 1024);
++    assert!(first_join * 64 > 33566720 * 5);
 +}
 diff --git a/sdk-kit/src/capi.rs b/sdk-kit/src/capi.rs
 index 2610822..f3944f8 100644
