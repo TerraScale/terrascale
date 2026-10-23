@@ -3,39 +3,56 @@ name: Rust
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches: [main]
-    # Markdown and docs never change what CI checks.
-    paths-ignore: ['**.md', 'docs/**']
+  merge_group:
+  # Keep the default-branch Cargo cache warm without repeating PR validation.
+  schedule:
+    - cron: '11 14 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# A newer PR push cancels the older run. Main runs finish (so main's caches get saved); a newer main push replaces only
-# a pending one. merge_group runs keep their own group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    # Draft PRs run nothing; marking the PR ready runs it.
-    if: ${{ !github.event.pull_request.draft }}
+    if: ${{ !github.event.pull_request.draft && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
+          fetch-depth: 2
           persist-credentials: false
+      - name: Select changes that need Rust validation
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" != pull_request ]] ||
+             ! git diff --quiet HEAD^ HEAD -- '*.rs' 'Cargo.*' 'rust-toolchain*' \
+               .cargo src tests examples .github/workflows/rust.yml ':(exclude)*.md'; then
+            echo 'rust=true' >> "$GITHUB_OUTPUT"
+          fi
       - name: Install pinned Rust toolchain
+        if: steps.changes.outputs.rust == 'true'
         run: rustup show
-      # Cargo registry + target dir, keyed on the toolchain and Cargo.lock. Only main saves; PRs restore main's cache.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.changes.outputs.rust == 'true'
+        id: cache
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Check formatting
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
         run: cargo fmt --all -- --check
       - name: Test with HTTP fakes and conformance fixtures
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
         run: cargo test --locked --all-features
       - name: Clippy
+        if: steps.changes.outputs.rust == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Prime default-branch dependency cache without running tests
+        if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && steps.cache.outputs.cache-hit != 'true'
+        run: cargo test --locked --all-features --no-run
