@@ -29,6 +29,7 @@ type sample struct {
 }
 
 type report struct {
+	Databases  int       `json:"tenant_databases"`
 	Host       string    `json:"host"`
 	Commit     string    `json:"commit"`
 	SourceTree string    `json:"terrabase_source_tree"`
@@ -95,6 +96,7 @@ func (r report) write(base string) error {
 	fmt.Fprintln(&b, "# Local replication baseline")
 	fmt.Fprintf(&b, "\nHost: `%s`; profile: `%s`; commit: `%s`; TerraBase source tree: `%s`.\n", r.Host, r.Profile, r.Commit, r.SourceTree)
 	fmt.Fprintf(&b, "\nStarted: %s. Repetitions: %d; source documents per write/feed phase: %d.\n", r.Started.Format(time.RFC3339), r.Repeats, r.Docs)
+	fmt.Fprintf(&b, "\nTenant databases per worker: %d; active workload database: canary; system catalog additional. Bootstrap verifies physical stores and every active peer cursor through a frozen own-origin cutoff for every database incarnation before measurement.\n", r.Databases)
 	if r.Scenario == "second-region" {
 		fmt.Fprintln(&b, "\nTwo serving regions (gru/sjc), two authenticated OS processes, real SQLite commits and gRPC peers through loopback proxies. Each repetition uses a fresh cluster: 16 concurrent individual PUTs; seed 20261022; document mix 256 B 70%, 1 KiB 25%, 8 KiB 5%. Every loaded document is hash-checked on both replicas. The existing test bootstrap also places fra, but no fra process or alternate confirming region exists.")
 	} else {
