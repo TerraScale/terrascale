@@ -48,9 +48,9 @@ public sealed class ProjectAuthorizationJourneyTests(DashboardRootFixture fixtur
         }
         await Assert.That(reportReads).IsEqualTo(1);
         await Assert.That(reportPaths.Single()).IsEqualTo($"/v1/projects/{projectIdFromDashboard}/analytics");
-        // The session reuses that exchanged token for two minutes; past it, every load asks ts-auth again,
-        // and a refused or invalid answer is never reused.
-        using (var advanced = await provider.PostAsJsonAsync("/__test/control", new { command = "advance", seconds = 121 }))
+        // The session reuses that exchanged token until shortly before it expires (15 minutes here); past it,
+        // every load asks ts-auth again, and a refused or invalid answer is never reused.
+        using (var advanced = await provider.PostAsJsonAsync("/__test/control", new { command = "advance", seconds = 900 }))
             await Assert.That(advanced.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
         // These producer responses violate one required project-token claim,

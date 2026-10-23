@@ -32,20 +32,25 @@ public sealed class TsOrganizationAccess(ITsAuthPlatform platform) : IOrganizati
         deadline.CancelAfter(TimeSpan.FromSeconds(5));
         cancellationToken = deadline.Token;
         var id = Organization(context);
-        var members = (await platform.ListMembersAsync(context.Session, id, cancellationToken)).Select(remote =>
+        // The four ts-auth reads are independent; they run together.
+        var membersRead = platform.ListMembersAsync(context.Session, id, cancellationToken);
+        var invitationsRead = context.CanManage ? platform.ListInvitationsAsync(context.Session, id, cancellationToken) : null;
+        var auditRead = context.CanManage ? platform.ListAuditEventsAsync(context.Session, id, cancellationToken) : null;
+        var transferRead = platform.GetOwnershipTransferAsync(context.Session, id, cancellationToken);
+        var members = (await membersRead).Select(remote =>
         {
             var saved = context.Organization!.Members.GetValueOrDefault(remote.UserId);
             return new MemberRecord { UserId = remote.UserId, Role = remote.Role, Name = saved?.Name is { Length: > 0 } name ? name : remote.Email, Email = remote.Email, CreatedAt = remote.JoinedAt, JoinedOn = saved?.JoinedOn };
         }).ToArray();
         var invitations = new List<InvitationRecord>();
         var audit = new List<AuditRecord>();
-        if (context.CanManage)
+        if (invitationsRead is not null && auditRead is not null)
         {
-            invitations.AddRange((await platform.ListInvitationsAsync(context.Session, id, cancellationToken)).Select(remote => Invitation(id, remote)));
-            audit.AddRange((await platform.ListAuditEventsAsync(context.Session, id, cancellationToken)).Select(item =>
+            invitations.AddRange((await invitationsRead).Select(remote => Invitation(id, remote)));
+            audit.AddRange((await auditRead).Select(item =>
                 new AuditRecord(item.Id, item.Actor, item.Action, item.Target ?? "", item.Detail ?? "", item.OccurredAt, Source: "ts-auth")));
         }
-        var transfer = await platform.GetOwnershipTransferAsync(context.Session, id, cancellationToken);
+        var transfer = await transferRead;
         // ts-auth keeps audit events at least 90 days (its list_audit_events contract) and has no retention setting.
         return new(members, invitations, audit.Concat(context.Organization!.AuditEvents).OrderByDescending(item => item.OccurredAt).ToArray(),
             transfer is null ? null : new(transfer.FromUserId, transfer.ToUserId, transfer.CreatedAt, transfer.ExpiresAt), context.CanManage ? 90 : null);
