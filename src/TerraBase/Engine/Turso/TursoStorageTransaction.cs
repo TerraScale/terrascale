@@ -281,7 +281,7 @@ internal sealed partial class TursoStorageTransaction(
         ClearUniqueConflict(collection, id);
         cancellationToken.ThrowIfCancellationRequested();
         Offset();
-        var version = Store(collection, id, next, at, materialized);
+        var version = Store(collection, id, next, at, materialized, state);
         ReconcileUnique(collection, affected, cancellationToken);
         return version;
     }
@@ -308,7 +308,7 @@ internal sealed partial class TursoStorageTransaction(
             cancellationToken.ThrowIfCancellationRequested();
             Offset();
             var (state, at) = BeginDocument(collection, id, IsClient ? CollectionDrop(collection) : null);
-            var written = Store(collection, id, state.Delete(at), at, null);
+            var written = Store(collection, id, state.Delete(at), at, null, state);
             ReconcileUnique(collection, affected, cancellationToken);
             return written;
         }, cancellationToken, mutation: true).ConfigureAwait(false);

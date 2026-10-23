@@ -374,6 +374,13 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken, QueryObservation? observation = null) => inner.CountAsync(collection, filter, maxExamined, cancellationToken, observation);
         public ValueTask<bool> CreateCollectionAsync(CollectionInfo collection, CancellationToken cancellationToken) => inner.CreateCollectionAsync(collection, cancellationToken);
         public ValueTask<CollectionInfo?> GetCollectionAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionAsync(name, cancellationToken);
+        public ValueTask<CollectionAccessRules?> GetCollectionRulesAsync(string name, CancellationToken cancellationToken) =>
+            inner.GetCollectionRulesAsync(name, cancellationToken);
+        public ValueTask<bool> SetCollectionRulesAsync(string name, CollectionAccessRules rules, CancellationToken cancellationToken) =>
+            inner.SetCollectionRulesAsync(name, rules, cancellationToken);
+        public ValueTask<DocumentOwnerProof?> GetDocumentOwnerProofAsync(string collection, string id, CancellationToken cancellationToken) =>
+            inner.GetDocumentOwnerProofAsync(collection, id, cancellationToken);
+
         public ValueTask<JsonElement?> GetCollectionSchemaAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionSchemaAsync(name, cancellationToken);
         public ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken) => inner.SetCollectionSchemaAsync(name, schema, cancellationToken);
         public ValueTask<JsonElement?> GetCollectionTableAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionTableAsync(name, cancellationToken);

@@ -18,7 +18,7 @@ namespace TerraBase.Engine.Turso;
 internal sealed partial class TursoStorageTransaction
 {
     // The documents this request changed, with the version their operations share; their state rows are not written yet.
-    private readonly Dictionary<(string Collection, string Id), (DocumentState State, EntryVersion At, int BodyBytes)> _pending = [];
+    private readonly Dictionary<(string Collection, string Id), (DocumentState State, EntryVersion At, int BodyBytes, DocumentOwnerProof? BeforeProof)> _pending = [];
 
     // The state rows of this machine's own writes this transaction wrote: the tailer ships them as one change group, so they
     // stay within a group's bounds (the bytes are counted in _changeBytes, which only the system database uses otherwise).
@@ -146,9 +146,12 @@ internal sealed partial class TursoStorageTransaction
 
     // Worker-only: writes the document row of a state an operation at `at` produced, and keeps the state for the end of
     // the request. Returns the version of the write.
-    private long Store(string collection, string id, DocumentState state, EntryVersion at, string? body)
+    private long Store(string collection, string id, DocumentState state, EntryVersion at, string? body, DocumentState? previous = null)
     {
-        _pending[(collection, id)] = (state, at, body is null ? 0 : StrictUtf8.GetByteCount(body));
+        var beforeProof = _pending.TryGetValue((collection, id), out var pending) ? pending.BeforeProof
+            : previous is not null && !store.IsSystem && !IsMetadata(collection) && ReadCollectionRules(collection)?.Owner is not null
+                ? OwnerProof(collection, previous) : null;
+        _pending[(collection, id)] = (state, at, body is null ? 0 : StrictUtf8.GetByteCount(body), beforeProof);
         PutRow(collection, id, body);
         return Version(at.Stamp);
     }
@@ -241,9 +244,11 @@ internal sealed partial class TursoStorageTransaction
     // Worker-only: the _tb_state row of a document, stamped with the operation `at` that last changed it and that
     // operation's node, and its changes feed row. A plain UPDATE, then an INSERT when no row exists: the CDC tailer reads
     // after-images only.
-    private void WriteState(string collection, string id, DocumentState state, EntryVersion at, byte[]? stored = null)
+    private void WriteState(string collection, string id, DocumentState state, EntryVersion at, byte[]? stored = null, DocumentOwnerProof? beforeProof = null)
     {
         store.CollectionStateWritten?.Invoke(collection);
+        var afterProof = !store.IsSystem && !IsMetadata(collection) && ReadCollectionRules(collection)?.Owner is not null
+            ? OwnerProof(collection, state) : null;
         var digest = DocumentStateEncoding.Digest(collection, id, state);
         RemoveMerkleState(collection, id);
         var update = BodyCommand(TursoStatements.UpdateState, collection, id);
@@ -257,7 +262,7 @@ internal sealed partial class TursoStorageTransaction
         }
 
         FoldMerkle(Bucket(collection, id), unchecked((long)(ulong)(digest >> 64)), unchecked((long)(ulong)digest));
-        AppendFeed(collection, id, at, state.Exists);
+        AppendFeed(collection, id, at, state.Exists, beforeProof, afterProof);
 
         void Bind(SqliteCommand command)
         {
@@ -315,11 +320,11 @@ internal sealed partial class TursoStorageTransaction
 
         var proof = store.IsSystem && !_pending.ContainsKey((ManagementCatalog.Collection, ManagementCatalog.VersionId)) ? ReadCatalogVersionProof() : null;
         var proofAt = default(EntryVersion);
-        foreach (var ((collection, id), (state, at, bodyBytes)) in _pending)
+        foreach (var ((collection, id), (state, at, bodyBytes, beforeProof)) in _pending)
         {
             var stored = DocumentStateEncoding.EncodeStored(state);
             Capture(collection, id, stored.Length, bodyBytes);
-            WriteState(collection, id, state, at, stored);
+            WriteState(collection, id, state, at, stored, beforeProof);
             if (proof is not null && at.Stamp.Value > proofAt.Stamp.Value)
             {
                 proofAt = at;

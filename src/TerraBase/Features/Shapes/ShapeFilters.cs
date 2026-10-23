@@ -24,10 +24,12 @@ internal sealed class ShapeFilter
 
     private static readonly JsonWriterOptions Compact = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
-    private ShapeFilter(string canonical, DocumentFilter? filter)
+    private ShapeFilter(string canonical, DocumentFilter? filter, ShapeAccess? access = null, ShapeFilter? userFilter = null)
     {
         Canonical = canonical;
         Filter = filter;
+        Access = access;
+        _userFilter = userFilter;
     }
 
     /// <summary>The shape without a filter: every document.</summary>
@@ -42,6 +44,24 @@ internal sealed class ShapeFilter
     /// Empty for <see cref="All"/>.
     /// </summary>
     public string Canonical { get; }
+
+    /// <summary>The client filter used in continuation URLs, without server authorization identity.</summary>
+    public string RequestCanonical => _userFilter?.Canonical ?? Canonical;
+
+    public ShapeAccess? Access { get; }
+
+    // Authorization hashes hide long filters and policies from the key, but their captured objects still need admission.
+    public long AuthorizationBytes => Access is not { } access ? 0 : 2048 + 2L * (RequestCanonical.Length
+        + access.Identity.Actor.Length + access.Identity.Roles.Sum(role => role.Length) + (access.Rules.Owner?.Length ?? 0)
+        + (access.Rules.Read?.Roles?.Sum(role => role.Length) ?? 0) + (access.Rules.Write?.Roles?.Sum(role => role.Length) ?? 0));
+
+    private readonly ShapeFilter? _userFilter;
+
+    internal ShapeFilter WithAccess(ShapeAccess access)
+    {
+        var user = _userFilter ?? this;
+        return new ShapeFilter(access.Canonical(user.Canonical), user.Filter, access, user);
+    }
 
     /// <summary>The parsed filter, as <c>POST …/query</c> runs it; <see langword="null"/> for <see cref="All"/>.</summary>
     public DocumentFilter? Filter { get; }
@@ -113,6 +133,11 @@ internal sealed class ShapeFilter
     {
         ArgumentNullException.ThrowIfNull(document);
         if (document.Deleted || document.UniqueConflict)
+        {
+            return false;
+        }
+
+        if (Access is { Owner: not null } access && access.Rules.Subject(document.Json) != access.Identity.Actor)
         {
             return false;
         }
@@ -570,7 +595,7 @@ internal sealed class ShapeFilterRegistry(IMemoryBudget budget) : IShapeFilterRe
             throw new ArgumentException("a shape addresses one database", nameof(database));
         }
 
-        return filter.Filter is null ? null : new ShapeFilterKey(id, collection, filter.Canonical);
+        return filter.Canonical.Length == 0 ? null : new ShapeFilterKey(id, collection, filter.Canonical);
     }
 
     private bool Touch(ShapeFilterKey key)

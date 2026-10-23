@@ -23,7 +23,7 @@ public static class ShapesExtensions
         ["307"] = ("offset=-1: Location names snap.<S>.0 of the newest published snapshot, or a resume's local commit boundary.", null, ["Location", "TB-Shape-Handle"]),
         ["400"] = ("Error codes: invalid_request, invalid_query.", Error("invalid_request", "resume cursor is malformed"), []),
         ["401"] = ("Error codes: invalid_key.", Error("invalid_key", "The request cannot be served."), []),
-        ["403"] = ("Error codes: forbidden_scope.", Error("forbidden_scope", "The request cannot be served."), []),
+        ["403"] = ("Error codes: forbidden_scope, forbidden.", Error("forbidden_scope", "The request cannot be served."), []),
         ["404"] = ("Error codes: unknown_database, unknown_collection.", Error("unknown_collection", "the collection does not exist"), []),
         ["409"] = ("Error codes: must_refetch; the body and TB-Shape-Handle name the current handle. Restart at offset=-1.",
             $$$"""{"error":{"code":"must_refetch","message":"shape lineage changed","handle":"{{{Handle}}}"}}""", ["TB-Shape-Handle"]),

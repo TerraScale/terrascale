@@ -55,7 +55,7 @@ internal sealed class ShapeService(
         var identity = ShapeHandle.ComputeCanonical(store, replica.Id, scope.Collection, scope.CanonicalFilter);
         var lineage = new ShapeLineage(identity.ShapeId, identity.Handle);
         var collection = scope.Collection.Name;
-        if (scope.Filter.Filter is not null)
+        if (scope.Filter.Canonical.Length > 0)
         {
             // A bootstrap admits the filter; a continuation must still be admitted, or it refetches (section 8).
             if (!scope.Bootstrap && filters.Check(scope.Database, collection, scope.Filter) is not null)
@@ -78,6 +78,7 @@ internal sealed class ShapeService(
             return stale switch
             {
                 MustRefetch changed => new Evicted(changed.Lineage ?? lineage),
+                Forbidden forbidden => forbidden,
                 NotFound missing => missing,
                 Unavailable unavailable => unavailable,
                 _ => throw new System.Diagnostics.UnreachableException(),
@@ -118,6 +119,11 @@ internal sealed class ShapeService(
             return UnknownDatabase;
         }
 
+        if (CollectionRuleAccess.EndUser)
+        {
+            return ShapeAccess.Denied;
+        }
+
         var unfiltered = ShapeHandle.ComputeCanonical(store, replica.Id, collection, string.Empty);
         var current = new ShapeLineage(unfiltered.ShapeId, unfiltered.Handle);
         if (registry.FilteredShape(database, collection.Name, handle) is not { } filter)
@@ -149,7 +155,8 @@ internal sealed class ShapeService(
             {
                 return stale switch
                 {
-                    MustRefetch changed => changed,
+                    MustRefetch staleLineage => staleLineage,
+                    Forbidden forbidden => forbidden,
                     NotFound missing => missing,
                     Unavailable unavailable => unavailable,
                     _ => throw new System.Diagnostics.UnreachableException(),
@@ -158,6 +165,18 @@ internal sealed class ShapeService(
 
             // Seals at the head when none is due or the newest is below the floor (ShapeSnapshotDueAsync).
             var snapshot = await snapshots.SealIfDueAsync(store, SnapshotDefinition(scope, lineage), cancellationToken).ConfigureAwait(false);
+            if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } changed)
+            {
+                return changed switch
+                {
+                    MustRefetch refetch => refetch,
+                    Forbidden forbidden => forbidden,
+                    NotFound missing => missing,
+                    Unavailable unavailable => unavailable,
+                    _ => throw new System.Diagnostics.UnreachableException(),
+                };
+            }
+
             return snapshot.Offset;
         }
         catch (ShapeSealOffsetException)
@@ -184,7 +203,9 @@ internal sealed class ShapeService(
         }
 
         var request = new ShapeFlightRequest(scope.Database, lineage.Handle, ShapeSnapshots.PageOffset(snapshot, afterId), false);
-        return Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
+        var read = Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
+        return await RecheckAsync(store, scope, lineage, read, cancellationToken).ConfigureAwait(false);
+
 
         async ValueTask<ShapeRead> Read(IDatabaseStore current, CancellationToken token)
         {
@@ -230,6 +251,12 @@ internal sealed class ShapeService(
                     return new MustRefetch(raised.Message);
                 }
 
+                if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } changed)
+                {
+                    page.Dispose();
+                    return changed;
+                }
+
                 // The last page's next_offset is the decimal snapshot offset (section 3.2).
                 var next = page.NextId is null ? DocumentRoute.Decimal(snapshot) : ShapeSnapshots.PageOffset(snapshot, page.NextId);
                 return new ShapeBody(page.Body, next, false, page);
@@ -264,7 +291,9 @@ internal sealed class ShapeService(
         }
 
         var request = new ShapeFlightRequest(scope.Database, lineage.Handle, DocumentRoute.Decimal(offset), false);
-        return Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
+        var read = Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
+        return await RecheckAsync(store, scope, lineage, read, cancellationToken).ConfigureAwait(false);
+
 
         async ValueTask<ShapeRead> Read(IDatabaseStore current, CancellationToken token)
         {
@@ -297,7 +326,8 @@ internal sealed class ShapeService(
                 admitted = true;
                 gate.Admit(group);
             });
-            return Join(await flights.ReadAsync(request, Probe, Read, cancellationToken).ConfigureAwait(false));
+            var read = Join(await flights.ReadAsync(request, Probe, Read, cancellationToken).ConfigureAwait(false));
+            return await RecheckAsync(store, scope, lineage, read, cancellationToken).ConfigureAwait(false);
 
             async ValueTask<bool> Probe(IDatabaseStore current, CancellationToken token)
             {
@@ -378,6 +408,11 @@ internal sealed class ShapeService(
                         body.Lease?.Dispose();
                         return new MustRefetch(raised.Message);
                     }
+                    if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } changed)
+                    {
+                        body.Lease?.Dispose();
+                        return changed;
+                    }
                 }
                 catch
                 {
@@ -410,6 +445,37 @@ internal sealed class ShapeService(
         }
     }
 
+    // Shared flights validate in their starter; each waiter also checks after joining or waking.
+    private async ValueTask<ShapeRead> RecheckAsync(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage, ShapeRead read,
+        CancellationToken cancellationToken)
+    {
+        if (scope.Filter.Access is null && !CollectionRuleAccess.EndUser)
+        {
+            return read;
+        }
+
+        try
+        {
+            if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } changed)
+            {
+                if (read is ShapeBody body)
+                {
+                    body.Lease?.Dispose();
+                }
+                return changed;
+            }
+            return read;
+        }
+        catch
+        {
+            if (read is ShapeBody body)
+            {
+                body.Lease?.Dispose();
+            }
+            throw;
+        }
+    }
+
     // A lineage is current only while its collection is the one the request named: a re-created collection changes the handle.
     private async ValueTask<ShapeRead?> CurrentAsync(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage, CancellationToken cancellationToken)
     {
@@ -425,7 +491,30 @@ internal sealed class ShapeService(
             };
         }
 
-        var identity = ShapeHandle.ComputeCanonical(store, replica.Id, current, scope.CanonicalFilter);
+        var canonical = scope.CanonicalFilter;
+        if (scope.Filter.Access is { } access)
+        {
+            var bound = await ShapeAccess.BindAsync(engine, scope, access.Identity, cancellationToken).ConfigureAwait(false);
+            if (bound is not ShapeScope authorized)
+            {
+                return bound switch
+                {
+                    Forbidden denied => denied,
+                    NotFound missing => missing,
+                    Unavailable unavailable => unavailable,
+                    ShapeScope => throw new System.Diagnostics.UnreachableException(),
+                };
+            }
+
+            current = authorized.Collection;
+            canonical = authorized.CanonicalFilter;
+        }
+        else if (CollectionRuleAccess.EndUser)
+        {
+            return ShapeAccess.Denied;
+        }
+
+        var identity = ShapeHandle.ComputeCanonical(store, replica.Id, current, canonical);
         return identity.Handle == lineage.Handle ? (ShapeRead?)null : new MustRefetch("the shape lineage changed", new ShapeLineage(identity.ShapeId, identity.Handle));
     }
 
@@ -631,12 +720,13 @@ internal sealed class ShapeService(
     }
 
     private static ShapeSealDefinition Definition(ShapeScope scope, ShapeLineage lineage) =>
-        new(lineage.ShapeId, lineage.Handle, scope.Collection.Name, scope.Collection.Id, ResumeScope(scope.Database, scope.Collection, scope.CanonicalFilter), Predicate(scope));
+        new(lineage.ShapeId, lineage.Handle, scope.Collection.Name, scope.Collection.Id, ResumeScope(scope.Database, scope.Collection, scope.CanonicalFilter), Predicate(scope), scope.Filter.Access?.Owner);
 
     private static ShapeSnapshotDefinition SnapshotDefinition(ShapeScope scope, ShapeLineage lineage) =>
-        new(lineage.Handle, lineage.ShapeId, scope.Collection.Name, scope.Collection.Id, ResumeScope(scope.Database, scope.Collection, scope.CanonicalFilter), Predicate(scope));
+        new(lineage.Handle, lineage.ShapeId, scope.Collection.Name, scope.Collection.Id, ResumeScope(scope.Database, scope.Collection, scope.CanonicalFilter), Predicate(scope),
+            scope.Filter.Access is { Owner: not null } access ? access.Rules.OwnerFilter(access.Identity.Actor) : null);
 
-    private static Func<StoredDocument, bool>? Predicate(ShapeScope scope) => scope.Filter.Filter is null ? null : scope.Filter.Matches;
+    private static Func<StoredDocument, bool>? Predicate(ShapeScope scope) => scope.Filter.Filter is null && scope.Filter.Access?.Owner is null ? null : scope.Filter.Matches;
 }
 
 /// <summary>

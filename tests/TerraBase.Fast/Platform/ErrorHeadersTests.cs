@@ -97,6 +97,11 @@ public sealed class ErrorHeadersTests
             IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken, QueryObservation? observation = null) =>
             inner.QueryAsync(transaction, query, countLimit, cancellationToken, observation);
 
+        public ValueTask<CollectionRulesResult> GetCollectionRulesAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+            inner.GetCollectionRulesAsync(database, name, cancellationToken);
+        public ValueTask<CollectionRulesResult> SetCollectionRulesAsync(TenantContext database, string name, CollectionAccessRules rules, CancellationToken cancellationToken) =>
+            inner.SetCollectionRulesAsync(database, name, rules, cancellationToken);
+
         public ValueTask<CollectionSchemaResult> GetCollectionSchemaAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
             inner.GetCollectionSchemaAsync(database, name, cancellationToken);
 

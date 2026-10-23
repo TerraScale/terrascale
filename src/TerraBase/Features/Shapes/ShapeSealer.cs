@@ -10,7 +10,8 @@ namespace TerraBase.Features.Shapes;
 
 /// <summary>A lineage-bound shape; predicates run on the writer and must be pure and bounded.</summary>
 public sealed record ShapeSealDefinition(string ShapeId, string Handle, string Collection,
-    string CollectionGeneration, ReadOnlyMemory<byte> ResumeScope, Func<StoredDocument, bool>? Predicate = null);
+    string CollectionGeneration, ReadOnlyMemory<byte> ResumeScope, Func<StoredDocument, bool>? Predicate = null,
+    DocumentOwnerProof? OwnerAuthorization = null);
 
 /// <summary>The next chunk to seal for an active shape, including its snapshot or resume boundary.</summary>
 public sealed record ShapeSealRequest(ShapeSealDefinition Shape, long Offset);

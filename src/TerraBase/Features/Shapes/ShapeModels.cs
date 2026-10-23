@@ -29,13 +29,13 @@ internal sealed record ShapeBody(ReadOnlyMemory<byte> Json, string NextOffset, b
 /// <summary>The client's state cannot continue on this lineage: <c>409 must_refetch</c> (section 8).</summary>
 internal sealed record MustRefetch(string Message, ShapeLineage? Lineage = null);
 
-internal readonly union LineageResult(ShapeLineage, QuotaExceeded, Evicted, NotFound, Unavailable);
+internal readonly union LineageResult(ShapeLineage, QuotaExceeded, Evicted, Forbidden, NotFound, Unavailable);
 
 /// <summary>The newest published snapshot's offset <c>S</c>, or why there is none.</summary>
-internal readonly union SnapshotResult(long, MustRefetch, QuotaExceeded, NotFound, Unavailable);
+internal readonly union SnapshotResult(long, MustRefetch, QuotaExceeded, Forbidden, NotFound, Unavailable);
 
 /// <summary>A sealed object or fresh body, or why it is not served (<c>shape_busy</c>, <c>shape_too_large</c>, <c>unavailable</c>).</summary>
-internal readonly union ShapeRead(ShapeBody, MustRefetch, QuotaExceeded, NotFound, Unavailable);
+internal readonly union ShapeRead(ShapeBody, MustRefetch, QuotaExceeded, Forbidden, NotFound, Unavailable);
 
 /// <summary>The local commit boundary a proven resume redirects to, or why the resume is refused.</summary>
 internal readonly union ResumeResult(long, MustRefetch, Unavailable);
@@ -114,4 +114,5 @@ internal sealed record ShapeErrorDetail(string Code, string Message, string Hand
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]
 [JsonSerializable(typeof(ShapeResponse))]
 [JsonSerializable(typeof(ShapeErrorBody))]
+[JsonSerializable(typeof(DocumentOwnerProof))]
 internal sealed partial class ShapeJsonContext : JsonSerializerContext;

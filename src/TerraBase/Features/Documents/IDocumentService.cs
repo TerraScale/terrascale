@@ -107,7 +107,7 @@ public sealed record NeverWritten;
 /// A document or its tombstone; that it was never written; an unknown database or collection; or an address that is
 /// outside the caller-supplied key bounds.
 /// </summary>
-public readonly union DocumentRead(StoredDocument, NeverWritten, NotFound, Validation);
+public readonly union DocumentRead(StoredDocument, NeverWritten, NotFound, Validation, Forbidden);
 
 /// <summary>A query page and its count, when one was asked for.</summary>
 /// <param name="Page">The page.</param>
@@ -115,7 +115,7 @@ public readonly union DocumentRead(StoredDocument, NeverWritten, NotFound, Valid
 public sealed record QueryOutcome(QueryPage Page, (long Count, bool Complete)? Count);
 
 /// <summary>A query's page, or why there is none: an unknown database or collection, or a query over the engine budget.</summary>
-public readonly union QueryResult(QueryOutcome, NotFound, Validation);
+public readonly union QueryResult(QueryOutcome, NotFound, Validation, Forbidden);
 
 /// <summary>An atomic write's result, or the operation that refused it.</summary>
 public readonly union WriteOutcome(WriteResult, DocumentRejected);
@@ -131,6 +131,12 @@ public sealed record ExportRow(string Collection, StoredDocument Document);
 /// <summary>JSON document operations for the client API, over <see cref="IStorageEngine"/>, with Documents API v1 failures.</summary>
 public interface IDocumentService
 {
+    /// <summary>Reads the replicated end-user access rules.</summary>
+    ValueTask<CollectionRulesResult> GetCollectionRulesAsync(TenantContext database, string name, CancellationToken cancellationToken);
+
+    /// <summary>Replaces end-user access rules; only project credentials may call this route.</summary>
+    ValueTask<CollectionRulesResult> SetCollectionRulesAsync(TenantContext database, string name, CollectionAccessRules rules, CancellationToken cancellationToken);
+
     /// <summary>Reads the declared collection schema; null schema means optional validation is disabled.</summary>
     ValueTask<CollectionSchemaResult> GetCollectionSchemaAsync(TenantContext database, string name, CancellationToken cancellationToken);
 

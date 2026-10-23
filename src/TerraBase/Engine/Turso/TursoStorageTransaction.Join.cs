@@ -117,8 +117,9 @@ internal sealed partial class TursoStorageTransaction
         ClearUniqueConflict(collection, id);
         cancellationToken.ThrowIfCancellationRequested();
         Offset();
+        var beforeProof = !metadata && ReadCollectionRules(collection)?.Owner is not null ? OwnerProof(collection, state) : null;
         PutRow(collection, id, materialized);
-        WriteState(collection, id, next, at);
+        WriteState(collection, id, next, at, beforeProof: beforeProof);
         if (metadata)
         {
             if (collection == DocumentDelta.Collections)

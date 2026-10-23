@@ -29,7 +29,7 @@ internal sealed class GetShapeManifestEndpoint(
         Name("getShapeManifest");
         Summary("Lists a shape's mirrored sealed objects");
         Description("""
-            Requires documents:read. Lists up to 8 URLs of the immutable TBS1 objects that begin at offset, each followed by its next_offset; a URL is a stable Cloudflare CDN path for an R2 bucket, otherwise a presigned bucket URL. Fetch an object, check its size and sha256, decrypt it with the key from GET …/shape/keys, and apply it only if all of that passes. Otherwise read that offset from the origin with GET …/shape. The list is empty when the offset is not mirrored yet, or is a tail body that is up to date. A stale handle, an offset below retention or an unpublished offset answers 409 must_refetch with the current handle in TB-Shape-Handle and the body; restart at offset=-1 on GET …/shape. Responses are private, no-store; read the manifest again after expires_at, the start of the next epoch, when a presigned URL expires.
+            Requires documents:read. End-user tokens cannot retrieve mirror manifests; use the origin shape endpoint. Lists up to 8 URLs of the immutable TBS1 objects that begin at offset, each followed by its next_offset; a URL is a stable Cloudflare CDN path for an R2 bucket, otherwise a presigned bucket URL. Fetch an object, check its size and sha256, decrypt it with the key from GET …/shape/keys, and apply it only if all of that passes. Otherwise read that offset from the origin with GET …/shape. The list is empty when the offset is not mirrored yet, or is a tail body that is up to date. A stale handle, an offset below retention or an unpublished offset answers 409 must_refetch with the current handle in TB-Shape-Handle and the body; restart at offset=-1 on GET …/shape. Responses are private, no-store; read the manifest again after expires_at, the start of the next epoch, when a presigned URL expires.
             """);
         Tags("Live");
         Produces<ShapeMirrorManifest>();
@@ -61,6 +61,11 @@ internal sealed class GetShapeManifestEndpoint(
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
+        if (CollectionRuleAccess.EndUser)
+        {
+            return ErrorResponse.From(ShapeAccess.Denied);
+        }
+
         return await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
         {
             Validation error => ErrorResponse.From(error),
@@ -92,6 +97,7 @@ internal sealed class GetShapeManifestEndpoint(
             return resolved switch
             {
                 QuotaExceeded error => ErrorResponse.From(error),
+                Forbidden denied => ErrorResponse.From(denied),
                 Evicted evicted => Refetch(evicted.Lineage, "shape lineage changed or filter evicted"),
                 NotFound error => ErrorResponse.From(error),
                 Unavailable error => ErrorResponse.From(error),
@@ -125,6 +131,7 @@ internal sealed class GetShapeManifestEndpoint(
             {
                 MustRefetch refetch => Refetch(refetch.Lineage ?? lineage, refetch.Message),
                 QuotaExceeded error => ErrorResponse.From(error),
+                Forbidden denied => ErrorResponse.From(denied),
                 NotFound error => ErrorResponse.From(error),
                 Unavailable error => ErrorResponse.From(error),
                 ShapeBody => throw new System.Diagnostics.UnreachableException(),

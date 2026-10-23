@@ -36,7 +36,7 @@ internal sealed class GetShapeKeyEndpoint(
         Get(DocumentRoute.Collections + "/{collection}/shape/keys");
         Name("getShapeKey");
         Summary("Gets a shape epoch key");
-        Description("Requires documents:read. Releases the AES-256 epoch key for the current handle and a served epoch/key_id pair. The key opens only that handle and epoch. Epochs last 10 minutes. Future epochs are refused; stale handles and unretained pairs answer 409 must_refetch. Responses are private, no-store. API key revocation prevents further key release; offline JWT acceptance lasts until expiry plus clock skew. Unless this machine listed itself in its last directory read and proved its catalog within one epoch against every listed machine and every other recorded region (checked before tenancy and again before the key is returned), it answers 503 catalog_stale with Retry-After and releases nothing. Previously released keys and read data remain usable.");
+        Description("Requires documents:read. End-user tokens cannot retrieve epoch keys; use the origin shape endpoint. Releases the AES-256 epoch key for the current handle and a served epoch/key_id pair. The key opens only that handle and epoch. Epochs last 10 minutes. Future epochs are refused; stale handles and unretained pairs answer 409 must_refetch. Responses are private, no-store. API key revocation prevents further key release; offline JWT acceptance lasts until expiry plus clock skew. Unless this machine listed itself in its last directory read and proved its catalog within one epoch against every listed machine and every other recorded region (checked before tenancy and again before the key is returned), it answers 503 catalog_stale with Retry-After and releases nothing. Previously released keys and read data remain usable.");
         Tags("Live");
         Produces<ShapeKeyResponse>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -64,6 +64,11 @@ internal sealed class GetShapeKeyEndpoint(
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
+        if (CollectionRuleAccess.EndUser)
+        {
+            return ErrorResponse.From(ShapeAccess.Denied);
+        }
+
         if (!await catalog.IsFreshAsync(CatalogWindow, cancellationToken))
         {
             return ErrorResponse.From(CatalogStale);
@@ -114,6 +119,7 @@ internal sealed class GetShapeKeyEndpoint(
                 {
                     Evicted evicted => Refetch(evicted.Lineage, "the filtered shape was evicted"),
                     QuotaExceeded refused => ErrorResponse.From(refused),
+                    Forbidden denied => ErrorResponse.From(denied),
                     NotFound missing => ErrorResponse.From(missing),
                     Unavailable unavailable => ErrorResponse.From(unavailable),
                     ShapeLineage => throw new System.Diagnostics.UnreachableException(),

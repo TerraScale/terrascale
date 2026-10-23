@@ -64,6 +64,7 @@ public sealed class ListPlatformDocumentsEndpoint(IDocumentService documents, IT
         {
             NotFound error => ErrorResponse.From(error),
             Validation error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
             QueryOutcome outcome => Page(collection, digest, outcome.Page, cancellationToken),
         };
     }

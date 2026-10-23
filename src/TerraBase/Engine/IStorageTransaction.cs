@@ -246,6 +246,15 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <summary>Reads a collection's attached schema, or <see langword="null"/> when none is attached or the collection is absent.</summary>
     ValueTask<JsonElement?> GetCollectionSchemaAsync(string name, CancellationToken cancellationToken);
 
+    /// <summary>Reads the replicated collection access policy; missing rules deny end users.</summary>
+    ValueTask<CollectionAccessRules?> GetCollectionRulesAsync(string name, CancellationToken cancellationToken);
+
+    /// <summary>Replaces the replicated declarative policy.</summary>
+    ValueTask<bool> SetCollectionRulesAsync(string name, CollectionAccessRules rules, CancellationToken cancellationToken);
+
+    /// <summary>Latest retained deletion preimage proof; absent when ownership cannot be proven.</summary>
+    ValueTask<DocumentOwnerProof?> GetDocumentOwnerProofAsync(string collection, string id, CancellationToken cancellationToken);
+
     /// <summary>
     /// Attaches a schema of at most 64 KiB of UTF-8 JSON, or detaches it with <see langword="null"/>;
     /// <see langword="false"/> when the collection is absent. Preserves collection creation time.

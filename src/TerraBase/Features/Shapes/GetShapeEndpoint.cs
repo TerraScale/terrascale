@@ -9,6 +9,7 @@ using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Qos;
+using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -18,7 +19,7 @@ namespace TerraBase.Features.Shapes;
 /// <summary><c>GET …/collections/{collection}/shape</c>: a collection's shape as snapshot pages, chunks and a live tail (shape reads v1).</summary>
 internal sealed class GetShapeEndpoint(
     IDocumentService documents, ITenantDirectory tenants, IShapeLineages lineages, IShapeSnapshots snapshots, IShapeChunks chunks, IShapeLiveTail live,
-    IShapeResume resumes, IShapeMetrics metrics, IShapeFlights<ShapeRead> flights, IShapeMirror mirror) : EndpointWithoutRequest<IResult>
+    IShapeResume resumes, IShapeMetrics metrics, IShapeFlights<ShapeRead> flights, IShapeMirror mirror, IStorageEngine engine) : EndpointWithoutRequest<IResult>
 {
     private const string ResumeHeader = "TB-Shape-Resume";
 
@@ -44,7 +45,7 @@ internal sealed class GetShapeEndpoint(
         Name("getShape");
         Summary("Syncs a collection shape");
         Description("""
-            Requires documents:read. A shape is the collection plus an optional where filter (the filter grammar of POST …/query). offset=-1 answers 307 to the first page of the newest published snapshot on this machine's handle; follow next_offset from there: snap.<S>.<P> pages, then decimal commit boundaries, then live=true long-polls with the TB-Shape-Cursor bucket. handle is required on every request but the bootstrap. A stale handle, an offset below retention or above the sealed head, or an unretained snapshot page answers 409 must_refetch with the current handle in TB-Shape-Handle and the body; restart at offset=-1. offset=-1 without a handle and with an opaque cursor_resume in cursor or the TB-Shape-Resume header resumes on another machine, or answers 409 must_refetch. A continuation target exceeding 8 KiB minus the 64-byte request-line reservation answers 414 uri_too_long. Larger incoming request lines can be rejected by the listener before JSON error handling; use TB-Shape-Resume for large resume tokens. 429 shape_busy and 503 shape_too_large or unavailable: keep state and retry with backoff.
+            Requires documents:read. End-user tokens also require the current collection read rules; owner grants sync only that signed subject's documents. Policy changes invalidate the handle, including during live waits. End-user sync uses this origin endpoint; mirror manifests and epoch keys are refused. A shape is the collection plus an optional where filter (the filter grammar of POST …/query). offset=-1 answers 307 to the first page of the newest published snapshot on this machine's handle; follow next_offset from there: snap.<S>.<P> pages, then decimal commit boundaries, then live=true long-polls with the TB-Shape-Cursor bucket. handle is required on every request but the bootstrap. A stale handle, an offset below retention or above the sealed head, or an unretained snapshot page answers 409 must_refetch with the current handle in TB-Shape-Handle and the body; restart at offset=-1. offset=-1 without a handle and with an opaque cursor_resume in cursor or the TB-Shape-Resume header resumes on another machine, or answers 409 must_refetch. A continuation target exceeding 8 KiB minus the 64-byte request-line reservation answers 414 uri_too_long. Larger incoming request lines can be rejected by the listener before JSON error handling; use TB-Shape-Resume for large resume tokens. 429 shape_busy and 503 shape_too_large or unavailable: keep state and retry with backoff.
             """);
         Tags("Live");
         Produces<ShapeResponse>();
@@ -112,6 +113,58 @@ internal sealed class GetShapeEndpoint(
 
     private async ValueTask<IResult> ServeAsync(ShapeRequest request, CancellationToken cancellationToken)
     {
+        var bound = await ShapeAccess.BindAsync(engine, request.Scope, ProjectAccess.Current, cancellationToken);
+        if (bound is not ShapeScope scope)
+        {
+            return bound switch
+            {
+                Forbidden denied => ErrorResponse.From(denied),
+                NotFound missing => ErrorResponse.From(missing),
+                Unavailable unavailable => ErrorResponse.From(unavailable),
+                ShapeScope => throw new System.Diagnostics.UnreachableException(),
+            };
+        }
+
+        request = request with { Scope = scope };
+        var answer = await ServeAuthorizedAsync(request, cancellationToken);
+        if (scope.Filter.Access is null)
+        {
+            return answer;
+        }
+
+        var checkedAccess = await ShapeAccess.BindAsync(engine, scope, ProjectAccess.Current, cancellationToken);
+        if (checkedAccess is ShapeScope current && current.CanonicalFilter == scope.CanonicalFilter && current.Collection.Id == scope.Collection.Id)
+        {
+            return answer;
+        }
+
+        // No successful-response metadata survives a policy change during a wait or seal.
+        foreach (var header in new[] { "ETag", "TB-Shape-Handle", "TB-Shape-Next-Offset", "TB-Shape-Up-To-Date", "TB-Shape-Cursor" })
+        {
+            HttpContext.Response.Headers.Remove(header);
+        }
+        return checkedAccess switch
+        {
+            Forbidden denied => ErrorResponse.From(denied),
+            NotFound missing => ErrorResponse.From(missing),
+            Unavailable unavailable => ErrorResponse.From(unavailable),
+            ShapeScope changed => await PolicyChangedAsync(changed, cancellationToken),
+        };
+    }
+
+    private async ValueTask<IResult> PolicyChangedAsync(ShapeScope scope, CancellationToken cancellationToken) =>
+        await lineages.ResolveAsync(scope, cancellationToken) switch
+        {
+            ShapeLineage current => Refetch(current, "shape policy changed; restart at offset=-1"),
+            Evicted evicted => Refetch(evicted.Lineage, "shape policy changed; restart at offset=-1"),
+            Forbidden denied => ErrorResponse.From(denied),
+            NotFound missing => ErrorResponse.From(missing),
+            QuotaExceeded busy => ErrorResponse.From(busy),
+            Unavailable unavailable => ErrorResponse.From(unavailable),
+        };
+
+    private async ValueTask<IResult> ServeAuthorizedAsync(ShapeRequest request, CancellationToken cancellationToken)
+    {
         var resolved = await lineages.ResolveAsync(request.Scope, cancellationToken);
         if (resolved is not ShapeLineage lineage)
         {
@@ -119,6 +172,7 @@ internal sealed class GetShapeEndpoint(
             {
                 Evicted evicted => Refetch(evicted.Lineage, "shape lineage changed or filter evicted"),
                 QuotaExceeded error => ErrorResponse.From(error),
+                Forbidden denied => ErrorResponse.From(denied),
                 NotFound missing => ErrorResponse.From(missing),
                 Unavailable error => ErrorResponse.From(error),
                 ShapeLineage => throw new System.Diagnostics.UnreachableException(),
@@ -157,6 +211,7 @@ internal sealed class GetShapeEndpoint(
                 long snapshot => Redirect(request, lineage, $"snap.{DocumentRoute.Decimal(snapshot)}.0"),
                 MustRefetch refetch => Refetch(refetch.Lineage ?? lineage, refetch.Message),
                 QuotaExceeded error => ErrorResponse.From(error),
+                Forbidden denied => ErrorResponse.From(denied),
                 NotFound missing => ErrorResponse.From(missing),
                 Unavailable error => ErrorResponse.From(error),
             },
@@ -175,6 +230,7 @@ internal sealed class GetShapeEndpoint(
             {
                 MustRefetch refetch => Refetch(refetch.Lineage ?? lineage, refetch.Message),
                 QuotaExceeded error => ErrorResponse.From(error),
+                Forbidden denied => ErrorResponse.From(denied),
                 NotFound missing => ErrorResponse.From(missing),
                 Unavailable error => ErrorResponse.From(error),
                 ShapeBody => throw new System.Diagnostics.UnreachableException(),
@@ -195,7 +251,7 @@ internal sealed class GetShapeEndpoint(
         }
 
         var headers = HttpContext.Response.Headers;
-        if (!request.Live && !body.UpToDate && !notModified)
+        if (request.Scope.Filter.Access is null && !request.Live && !body.UpToDate && !notModified)
         {
             mirror.Warm(request.Scope.Database, lineage.ShapeId, lineage.Handle, request.OffsetText, body.NextOffset);
         }
@@ -261,7 +317,7 @@ internal sealed class GetShapeEndpoint(
     // The continuation target: where (canonical), then handle, then offset, so clients converge on identical URLs.
     private string Location(ShapeRequest request, int handleLength, string offset, string? handle = null) =>
         $"/v1/projects/{Uri.EscapeDataString(DocumentRoute.Project(HttpContext))}/databases/{DocumentRoute.Database(HttpContext).Value}/collections/{request.Scope.Collection.Name}/shape?"
-        + (request.Scope.CanonicalFilter.Length == 0 ? "" : $"where={Uri.EscapeDataString(request.Scope.CanonicalFilter)}&")
+        + (request.Scope.Filter.RequestCanonical.Length == 0 ? "" : $"where={Uri.EscapeDataString(request.Scope.Filter.RequestCanonical)}&")
         + $"handle={handle ?? new string('0', handleLength)}&offset={offset}";
 
     private Valid<ShapeRequest> CheckRequest(TenantContext database, CollectionInfo collection)

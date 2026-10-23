@@ -15,7 +15,7 @@ namespace TerraBase.Features.Shapes;
 /// <summary>Identity supplied by the handle lane; the predicate is supplied by the filtered-shape lane.</summary>
 internal sealed record ShapeSnapshotDefinition(
     string Handle, string ShapeId, string Collection, string CollectionGeneration, ReadOnlyMemory<byte> ResumeScope,
-    Func<StoredDocument, bool>? Predicate = null);
+    Func<StoredDocument, bool>? Predicate = null, DocumentFilter? OwnerFilter = null);
 
 internal sealed record ShapeSnapshot(long Offset, long SealedAt)
 {
