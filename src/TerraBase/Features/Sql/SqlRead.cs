@@ -160,11 +160,15 @@ internal static class SqlRead
 
         var statement = (read.Query with { With = null }).ToSql();
         return new SqlProgram(
-            [.. read.Tables.Select(name => new SqlProgramTable(name, [.. tables[name].Columns.Select(column => column.Name)], name == keyed))],
+            [.. read.Tables.Select(name => new SqlProgramTable(name, [.. tables[name].Columns.Select(column => column.Name)], name == keyed, TextKey(tables[name])))],
             read.Query.With is { } with ? string.Join(", ", with.CteTables.Select(cte => cte.ToSql())) : null,
             describe ? $"SELECT * FROM ({statement}) LIMIT 0" : statement,
             parameters, MaxRows, MaxBytes);
     }
+
+    // A single TEXT primary key is the document id verbatim.
+    private static string? TextKey(SqlTableDefinition table) =>
+        table.PrimaryKey is [var key] && table.Columns.First(column => column.Name == key).Affinity == SqlAffinity.Text ? key : null;
 
     // A bound parameter converted by the affinity of the column it is compared with.
     private static object? Bound(SqlAffinity affinity, object? value)
