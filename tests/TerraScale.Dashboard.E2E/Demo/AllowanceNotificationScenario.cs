@@ -91,7 +91,9 @@ internal sealed class AllowanceNotificationScenario(string root) : IAsyncDisposa
             var account = await environment.State.GetAsync(AccountService.AccountsCollection, accountKey, default);
             return Results.Json(new
             {
-                attempts = backend.Attempts.Count, sent = backend.Sent.Count, ledgerExists = ledger is not null,
+                attempts = backend.Attempts.Count,
+                sent = backend.Sent.Count,
+                ledgerExists = ledger is not null,
                 alerts = ledger is null ? [] : AllowanceNotifications.Read(ledger, organizationId).Alerts,
                 inbox = AccountService.Read<AccountRecord>(account!).Notifications
             });

@@ -88,8 +88,16 @@ public sealed class WorkspaceSelectionJourneyTests(DashboardRootFixture fixture)
         await environment.State.PutAsync(AccountService.OrganizationsCollection, paidWizard.Id, JsonSerializer.SerializeToElement(paidWizard),
             TerraScale.DotNet.TerraBase.TerraBasePrecondition.Matches(wizardDocument.Version), default);
         using var wizardProject = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/new-organization" + scope,
-            new() { ["_csrf"] = csrf, ["step"] = "project", ["organizationID"] = wizardOrganization.Id,
-                ["name"] = "Wizard project", ["region"] = "GRU", ["backupRegion"] = "GRU", ["regions"] = "GRU" });
+            new()
+            {
+                ["_csrf"] = csrf,
+                ["step"] = "project",
+                ["organizationID"] = wizardOrganization.Id,
+                ["name"] = "Wizard project",
+                ["region"] = "GRU",
+                ["backupRegion"] = "GRU",
+                ["regions"] = "GRU"
+            });
         await Assert.That(wizardProject.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(wizardOrganization.Projects.Values.Any(project => project.Name == "Wizard project")).IsTrue();
         await Assert.That(organization.Projects.Values.Any(project => project.Name == "Wizard project")).IsFalse();
@@ -108,7 +116,10 @@ public sealed class WorkspaceSelectionJourneyTests(DashboardRootFixture fixture)
         var otherOwner = new TerraScaleIdGenerator().NewId();
         var business = new OrganizationRecord
         {
-            Id = new TerraScaleIdGenerator().NewId(), Name = "Other business", Kind = "business", OwnerUserId = otherOwner,
+            Id = new TerraScaleIdGenerator().NewId(),
+            Name = "Other business",
+            Kind = "business",
+            OwnerUserId = otherOwner,
             Members = new()
             {
                 [user.UserId] = new() { UserId = user.UserId, Email = user.Email, Role = "member" },

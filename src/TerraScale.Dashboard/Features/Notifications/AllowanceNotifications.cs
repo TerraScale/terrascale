@@ -14,10 +14,16 @@ public sealed record AllowanceAlert(string Id, string OrganizationId, string Bil
 {
     public NotificationRecord Notification() => new()
     {
-        Id = Id, OrganizationId = OrganizationId, BillingMonth = BillingMonth, Type = "allowance-" + Metric,
+        Id = Id,
+        OrganizationId = OrganizationId,
+        BillingMonth = BillingMonth,
+        Type = "allowance-" + Metric,
         Title = $"{(Metric == "operations" ? "Operations" : "Storage")} allowance: {Threshold}% reached",
         Body = string.Create(CultureInfo.InvariantCulture, $"{Used:N0} of {Allowance:N0} {(Metric == "operations" ? "operation units" : "bytes")} used for {BillingMonth}. Review usage and your plan."),
-        Severity = Threshold == 100 ? "danger" : "warning", Status = "Unread", Url = "/usage", CreatedAt = CreatedAt
+        Severity = Threshold == 100 ? "danger" : "warning",
+        Status = "Unread",
+        Url = "/usage",
+        CreatedAt = CreatedAt
     };
 }
 public sealed record AllowanceNotificationState(string OrganizationId, List<AllowanceAlert> Alerts);

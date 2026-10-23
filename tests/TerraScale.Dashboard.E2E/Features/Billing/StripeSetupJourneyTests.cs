@@ -32,9 +32,17 @@ public sealed class StripeSetupJourneyTests
         foreach (var plan in new[] { "starter", "pro" })
             stripe.Products.Add(new() { ["id"] = "prod_legacy_" + plan, ["active"] = "true", ["name"] = "TerraScale " + plan, ["metadata[plan]"] = plan });
         foreach (var (plan, interval, amount) in new[] { ("starter", "monthly", "500"), ("starter", "annual", "5000"), ("pro", "monthly", "5000"), ("pro", "annual", "50000") })
-            stripe.Prices.Add(new() { ["id"] = "price_legacy_" + plan + "_" + interval, ["active"] = "true", ["product"] = "prod_legacy_" + plan,
-                ["currency"] = "usd", ["unit_amount"] = amount, ["recurring[interval]"] = interval == "annual" ? "year" : "month", ["recurring[interval_count]"] = "1",
-                ["lookup_key"] = "terrascale_" + plan + "_" + interval });
+            stripe.Prices.Add(new()
+            {
+                ["id"] = "price_legacy_" + plan + "_" + interval,
+                ["active"] = "true",
+                ["product"] = "prod_legacy_" + plan,
+                ["currency"] = "usd",
+                ["unit_amount"] = amount,
+                ["recurring[interval]"] = interval == "annual" ? "year" : "month",
+                ["recurring[interval_count]"] = "1",
+                ["lookup_key"] = "terrascale_" + plan + "_" + interval
+            });
         var legacy = stripe.Prices.Select(price => new Dictionary<string, string>(price)).ToArray();
         Check(await Run(stripe, "sk_test_SETUP") == (0, "{\"mode\":\"test\",\"changes\":[\"price_starter_annual_created\",\"price_pro_monthly_created\",\"product_team_created\",\"price_team_monthly_created\",\"portal_created\"]}"),
             "Legacy products are reused and only approved replacement prices are created");

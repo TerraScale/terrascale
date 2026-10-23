@@ -14,7 +14,8 @@ public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashb
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(origin, "v1/usage/allowances" + (after is null ? "" : "?after=" + Uri.EscapeDataString(after))))
         {
-            Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact
         };
         using var response = await http.CreateClient(TerraBaseDashboardState.ClientName).SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode) throw new IOException("Allowance producer is unavailable.");

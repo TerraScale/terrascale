@@ -23,7 +23,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         var setup = await PrepareAsync(browser, producer);
         var csrf = await HttpJourney.CsrfAsync(browser, "/usage?tab=settings");
         using (var customer = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/internal-spending-cap", new()
-            { ["_csrf"] = csrf, ["spendCap"] = "200.00" }))
+        { ["_csrf"] = csrf, ["spendCap"] = "200.00" }))
             await CheckAsync(customer.StatusCode == HttpStatusCode.NotFound, "An ordinary customer cannot use the internal cap endpoint");
         await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
         var html = await browser.GetStringAsync("/usage?tab=settings");
@@ -35,7 +35,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         using (var noCsrf = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/internal-spending-cap", new() { ["spendCap"] = "200.00" }))
             await CheckAsync(noCsrf.StatusCode == HttpStatusCode.BadRequest, "The internal cap requires CSRF validation");
         using (var legacy = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/internal-spending-cap", new()
-            { ["_csrf"] = csrf, ["spendCap"] = "200.00", ["paidExcess"] = "true" }))
+        { ["_csrf"] = csrf, ["spendCap"] = "200.00", ["paidExcess"] = "true" }))
             await CheckAsync(legacy.StatusCode == HttpStatusCode.SeeOther && legacy.Headers.Location?.OriginalString == "/usage?tab=settings&saved=invalid",
                 "The internal endpoint rejects legacy customer overage controls without applying the cap");
         await CheckAsync(Organization(await ObserveAsync(producer), setup.Organization).GetProperty("SpendCapCents").GetInt64() == 12000,
