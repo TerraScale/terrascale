@@ -28,6 +28,7 @@ Use the [quickstart](/zh-cn/getting-started/) to establish one working applicati
 - [Branches](/zh-cn/guides/branches): copy a database into a new branch database.
 - [Dashboard usage](/zh-cn/guides/dashboard): customer account and database workflow.
 - [Import an existing database](/zh-cn/guides/import) (pending): one-time import of a PostgreSQL or Turso export with dry-run preview and validation.
+- [Import from MongoDB or Firestore](/zh-cn/guides/import-ndjson): mongoexport or a Firestore script into one NDJSON file, then the same import.
 
 The [zero-configuration contract](/zh-cn/guides/zero-configuration) explains the platform's intended operating behavior without disclosing deployment internals.
 

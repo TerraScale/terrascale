@@ -124,7 +124,7 @@ while IFS= read -r line; do
 done < export.ndjson
 ```
 
-The token needs `documents:write` on the destination database. A `PUT` replaces a document with the same id, so restore into a new or empty database. Document versions and history are not part of the export; restored documents get new versions. Writes count toward your plan's quotas and metering, see [pricing](/pt-br/pricing/).
+The token needs `documents:write` on the destination database. A `PUT` replaces a document with the same id, so restore into a new or empty database. To restore with a dry-run preview and validation instead, upload `export.ndjson` as an [NDJSON import](/pt-br/guides/import-ndjson). Document versions and history are not part of the export; restored documents get new versions. Writes count toward your plan's quotas and metering, see [pricing](/pt-br/pricing/).
 
 ## What is not offered
 
