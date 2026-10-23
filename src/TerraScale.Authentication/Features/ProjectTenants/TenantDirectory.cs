@@ -1,10 +1,15 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
+using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
+using static OpenIddict.Abstractions.OpenIddictConstants;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
@@ -15,7 +20,7 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 public sealed record ProjectSession(string Id, SessionRecord Session, string Email);
 
 /// <summary>
-/// A project tenant's end users and sessions, managed by the project's platform members. Every record
+/// A project tenant's end users, sessions and OAuth clients, managed by the project's platform members. Every record
 /// lives in the project's own instance (its id), so no call reaches another tenant's data.
 /// </summary>
 public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessions, PlatformDirectory platform, TimeProvider clock)
@@ -83,6 +88,71 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
             && document.Document.Deserialize(IdentityJson.Default.SessionRecord) is { } session && session.InstanceId == projectId
             && await sessions.RevokeStoredAsync(projectId, session.TokenHash, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>The tenant's OAuth clients.</summary>
+    public async Task<IReadOnlyList<OidcApplication>> ClientsAsync(string projectId, CancellationToken cancellationToken)
+    {
+        List<OidcApplication> clients = [];
+        await foreach (var document in store.QueryAsync(AuthStore.OidcApplicationCollection, projectId, "/instanceId", projectId, cancellationToken).ConfigureAwait(false))
+        {
+            if (document.Document.Deserialize(OidcJson.Default.OidcApplication) is { ClientId: { } clientId } client && client.InstanceId == projectId && client.Id == clientId)
+            {
+                clients.Add(client);
+            }
+        }
+
+        return clients;
+    }
+
+    /// <summary>
+    /// Registers an authorization-code client with S256 PKCE, refresh tokens and logout through OpenIddict's application
+    /// manager, with the request's tenant set to the project so its store writes into the project's instance. A
+    /// confidential client's secret is returned once; OpenIddict keeps only its hash.
+    /// </summary>
+    public async Task<(OidcApplication Client, string? Secret)> CreateClientAsync(HttpContext context, string projectId, string name, string type, IReadOnlyList<Uri> redirectUris, IOpenIddictApplicationManager manager, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(manager);
+        var secret = type == ClientTypes.Confidential ? Tokens.RandomToken(48) : null;
+        var descriptor = new OpenIddictApplicationDescriptor
+        {
+            ClientId = AuthStore.NewId(),
+            ClientSecret = secret,
+            ClientType = type,
+            ApplicationType = ApplicationTypes.Web,
+            ConsentType = ConsentTypes.Implicit,
+            DisplayName = name,
+            Permissions =
+            {
+                Permissions.Endpoints.Authorization, Permissions.Endpoints.Token, Permissions.Endpoints.EndSession,
+                Permissions.GrantTypes.AuthorizationCode, Permissions.GrantTypes.RefreshToken, Permissions.ResponseTypes.Code,
+                Permissions.Prefixes.Scope + Scopes.OpenId, Permissions.Scopes.Email, Permissions.Scopes.Profile, Permissions.Prefixes.Scope + Scopes.OfflineAccess,
+            },
+            Requirements = { Requirements.Features.ProofKeyForCodeExchange },
+        };
+        descriptor.RedirectUris.UnionWith(redirectUris);
+        descriptor.PostLogoutRedirectUris.UnionWith(redirectUris);
+        var previous = context.Items[Tenancy.ItemKey];
+        context.Items[Tenancy.ItemKey] = projectId;
+        try
+        {
+            return ((OidcApplication)await manager.CreateAsync(descriptor, cancellationToken).ConfigureAwait(false), secret);
+        }
+        catch (OpenIddictExceptions.ValidationException error)
+        {
+            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_request", error.Results.FirstOrDefault()?.ErrorMessage ?? "The client is invalid.");
+        }
+        finally
+        {
+            context.Items[Tenancy.ItemKey] = previous;
+        }
+    }
+
+    /// <summary>Deletes the tenant's client; false when there is none.</summary>
+    public async Task<bool> DeleteClientAsync(string projectId, string clientId, CancellationToken cancellationToken) =>
+        await store.GetAsync(AuthStore.OidcApplicationCollection, projectId, clientId, cancellationToken).ConfigureAwait(false) is { } document
+        && document.Document.Deserialize(OidcJson.Default.OidcApplication) is { } client && client.InstanceId == projectId && client.ClientId == clientId
+        && await store.CompareAndDeleteAsync(AuthStore.OidcApplicationCollection, projectId, clientId, document.Version, cancellationToken).ConfigureAwait(false);
 
     // Reads pages of the instance's matching documents in id order, each exactly as large as the items still missing,
     // so the answered cursor never skips an unread document.

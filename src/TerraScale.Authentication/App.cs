@@ -113,6 +113,7 @@ public static class App
         builder.Services.AddSingleton<GitHubActionsKeys>();
         builder.Services.AddSingleton<Invitations>();
         builder.Services.AddSingleton<TenantDirectory>();
+        builder.Services.AddSingleton<ProjectAuthSettings>();
         builder.Services.AddHostedService<SessionPruner>();
         // Ready means this regional copy takes writes.
         builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredService<TerraBaseDatabase>()));
