@@ -4,9 +4,9 @@
     "net10.0": {
       "TerraScale.DotNet": {
         "type": "Direct",
-        "requested": "[0.0.4, )",
-        "resolved": "0.0.4",
-        "contentHash": "GnDJNUubxT3XeOuDeaNWBRg28DFWTtR9B1Bh/unHqpZcqGdrQShTqUK74H4sSN3NC8EYaJ9MG3Iq2YbPEOemPg==",
+        "requested": "[0.0.5, )",
+        "resolved": "0.0.5",
+        "contentHash": "QFlrFrSXarGlqR5wDVNfseYasbElabLzG8ImBKDMUvwavL4NsEvCFkLIabsTSptNQTAiOqK+89ULDpDCG8M6Qw==",
         "dependencies": {
           "Microsoft.Extensions.Http": "10.0.11",
           "NUlid": "1.7.3"

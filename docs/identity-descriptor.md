@@ -60,7 +60,7 @@ Settled against ts-auth source at terrascale `e30ffdc2`:
    end-session endpoint.
 2. Sign-in access tokens carry `aud = [issuer, https://api.terrascale.tech]`.
    Project tokens carry `aud = https://api.terrascale.tech` in every region,
-   `client_id`, `org_id`, `project_id`, `scope`, and live at most 15 minutes.
+   `client_id`, `org_id`, `project_id`, `scope`, and live at most 60 seconds.
 3. The token-exchange response has no `scope` when the granted scopes equal
    the requested ones; the dashboard checks the token's `scope` claim.
 4. Organizations, projects, members, invitations, ownership transfer and audit

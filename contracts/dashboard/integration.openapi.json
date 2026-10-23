@@ -233,7 +233,7 @@
           "Credentials"
         ],
         "summary": "List ts-auth project keys without secrets",
-        "description": "DatabaseName is the canonical restriction. A missing local DatabaseId does not mean unrestricted access. LastFour and issuer-unavailable metadata remain empty.",
+        "description": "DatabaseName is the canonical restriction. A missing local DatabaseId does not mean unrestricted access. LastUsedAt is the key's last successful token exchange at ts-auth (at most five minutes stale), empty when never used. LastFour and issuer-unavailable metadata remain empty.",
         "operationId": "listDashboardCredentials",
         "responses": {
           "200": {
@@ -286,7 +286,7 @@
           "Credentials"
         ],
         "summary": "Create a project key and reveal its secret once",
-        "description": "Uses the original user session at ts-auth. Scopes are documents:read/write and databases:read/write (database:read/write are aliases of documents:read/write). Machine-client kind is unavailable. Secrets are never persisted by the dashboard.",
+        "description": "Uses the original user session at ts-auth. Scopes are documents:read/write and databases:read/write (database:read/write are aliases of documents:read/write). expiresInDays is 0 (default, the key works until revoked), 30, 90 or 365. Machine-client kind is unavailable. Secrets are never persisted by the dashboard.",
         "operationId": "createDashboardCredential",
         "parameters": [
           {
@@ -369,7 +369,7 @@
           "Credentials"
         ],
         "summary": "Revoke a project key",
-        "description": "Deletes the key at ts-auth: token requests then fail with invalid_client. Already-issued tokens are validated offline and stay valid until they expire (15 minutes). A failed revoke call is re-checked, so 204/303 means the key is gone.",
+        "description": "Deletes the key at ts-auth: token requests then fail with invalid_client. Already-issued tokens are validated offline and stay valid until they expire (at most 60 seconds). A failed revoke call is re-checked, so 204/303 means the key is gone.",
         "operationId": "revokeDashboardCredentialById",
         "parameters": [
           {
@@ -758,6 +758,15 @@
               "null",
               "string"
             ]
+          },
+          "expiresInDays": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
           }
         }
       },

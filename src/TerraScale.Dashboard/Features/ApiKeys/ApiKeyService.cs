@@ -33,7 +33,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         return result.OrderBy(key => key.Name, StringComparer.Ordinal).ToArray();
     }
 
-    public async Task<CreatedProjectCredential> CreateAsync(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, CancellationToken cancellationToken)
+    public async Task<CreatedProjectCredential> CreateAsync(AccountContext context, string kind, string name, string databaseId, IEnumerable<string> scopes, int expiresInDays, CancellationToken cancellationToken)
     {
         if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
         name = name.Trim();
@@ -42,11 +42,14 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         var database = databaseId.Length > 0 ? DatabaseService.Database(context, databaseId) : null;
         var permissions = scopes.Select(scope => scope.Trim()).Select(MintedScope).Distinct(StringComparer.Ordinal).ToArray();
         if (permissions.Length == 0 || permissions.Any(scope => scope is not ("documents:read" or "documents:write" or "databases:read" or "databases:write"))) throw new AccountAccessException("Choose read and/or write permission.", 422);
+        if (!ExpiryChoices.Contains(expiresInDays)) throw new AccountAccessException("Choose no expiry, 30 days, 90 days, or 1 year.", 422);
+        // Whole seconds, so the expiry ts-auth echoes back compares exactly.
+        DateTimeOffset? expiresAt = expiresInDays == 0 ? null : DateTimeOffset.FromUnixTimeSeconds(time.GetUtcNow().ToUnixTimeSeconds()).AddDays(expiresInDays);
         var scope = DatabaseService.Scope(context);
         var result = await Client().CreateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId,
-            new(name, permissions, database?.Name), cancellationToken);
+            new(name, permissions, database?.Name, expiresAt), cancellationToken);
         var key = Map(context, result.ApiKey);
-        if (key.Name != name || key.DatabaseName != database?.Name || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(permissions.Order(StringComparer.Ordinal)))
+        if (key.Name != name || key.DatabaseName != database?.Name || key.ExpiresAt != expiresAt || !key.Scopes.Order(StringComparer.Ordinal).SequenceEqual(permissions.Order(StringComparer.Ordinal)))
             throw new HttpRequestException("Credential issuance returned different restrictions.");
         return new(key, result.Key);
     }
@@ -90,12 +93,14 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
     }
 
     public const int MaxPreviousSecretTtl = 86400;
+    // Key lifetimes offered on create, in days; 0 means the key works until it is revoked.
+    public static readonly IReadOnlyList<int> ExpiryChoices = [0, 30, 90, 365];
 
     // The form's database:* choices are aliases of the documents:* scopes ts-auth mints.
     public static string MintedScope(string scope) => scope switch { "database:read" => "documents:read", "database:write" => "documents:write", _ => scope };
 
     public static ProjectApiKeyMetadata Metadata(ProjectCredential key) => new(key.Id, key.ProjectId, key.Name, key.Id + "_", "", key.Scopes,
-        key.DatabaseId ?? "", "", Format(key.CreatedAt), key.ExpiresAt is { } expires ? Format(expires) : "", "", "", key.IsActive)
+        key.DatabaseId ?? "", "", Format(key.CreatedAt), key.ExpiresAt is { } expires ? Format(expires) : "", key.LastUsedAt is { } used ? Format(used) : "", "", key.IsActive)
     { DatabaseName = key.DatabaseName };
     public static ProjectCredentialMetadata CredentialMetadata(ProjectCredential key)
     {
@@ -117,12 +122,12 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
             throw new HttpRequestException("Credential returned invalid metadata or scope identity.");
         var database = context.Project!.Databases.Values.SingleOrDefault(item => item.Name == key.Database);
         return new(key.Id, scope.ProjectId, key.Name, key.Scopes, database?.Id, "", key.CreatedAt)
-        { DatabaseName = key.Database, ExpiresAt = key.ExpiresAt, IsActive = key.ExpiresAt is null || key.ExpiresAt > time.GetUtcNow() };
+        { DatabaseName = key.Database, ExpiresAt = key.ExpiresAt, LastUsedAt = key.LastUsedAt, IsActive = key.ExpiresAt is null || key.ExpiresAt > time.GetUtcNow() };
     }
     private static string Format(DateTimeOffset value) => value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
 }
 
-public sealed record ApiKeysPage(TerraScale.Dashboard.Shared.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Kind = "", string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "")
+public sealed record ApiKeysPage(TerraScale.Dashboard.Shared.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Kind = "", string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "", string DraftExpiresInDays = "")
 {
     public AccountContext Context => Shell.Context;
     public IReadOnlyList<ProjectCredential> Filtered => Keys.Where(key => (Status.Length == 0 || (Status == "active") == key.IsActive) && (Kind.Length == 0 || Kind == "key" || Kind == "api-key") && (DatabaseId.Length == 0 || key.DatabaseId == DatabaseId) && (Search.Length == 0 || key.Name.Contains(Search, StringComparison.OrdinalIgnoreCase) || key.Id.Contains(Search, StringComparison.OrdinalIgnoreCase))).ToArray();

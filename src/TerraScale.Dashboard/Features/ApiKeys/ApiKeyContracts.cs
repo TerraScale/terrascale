@@ -16,7 +16,7 @@ public sealed record ProjectApiKeySecret(ProjectApiKeyMetadata ApiKey, string Se
 }
 
 public sealed record CreateProjectCredentialRequest([property: JsonPropertyName("_csrf")] string Csrf,
-    string Name, string? DatabaseId, string[]? Scope, string? Scopes);
+    string Name, string? DatabaseId, string[]? Scope, string? Scopes, int? ExpiresInDays = null);
 public sealed record RevokeProjectCredentialRequest([property: JsonPropertyName("_csrf")] string Csrf, string? KeyId);
 public sealed record RotateProjectCredentialRequest([property: JsonPropertyName("_csrf")] string Csrf, string KeyId, int? PreviousSecretTtl = null);
 
