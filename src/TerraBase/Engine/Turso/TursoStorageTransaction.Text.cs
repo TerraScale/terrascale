@@ -129,6 +129,13 @@ internal sealed partial class TursoStorageTransaction
 
     private SearchResults PrepareSearch(string collection, DocumentFilter? filter, CancellationToken cancellationToken)
     {
+        // Native FTS scores and accounts against a collection-wide corpus. Owner-scoped reads must not
+        // reveal hidden documents through scores or resource failures; require a collection-wide grant.
+        if (filter is AuthorizedFilter && Searches(filter).Any())
+        {
+            throw new QueryValidationException("search requires collection-wide read access");
+        }
+
         var results = new SearchResults(session, store.SchemaMemory is { } memory ? new QosContext.ResultMemory(memory) : null);
         try
         {
@@ -241,6 +248,7 @@ internal sealed partial class TursoStorageTransaction
         // An AND can seek any required positive child. An OR can seek a union only if every branch is bounded.
         private IEnumerable<string>? Required(DocumentFilter? filter) => filter switch
         {
+            AuthorizedFilter authorized => Required(authorized.ClientFilter),
             SearchFilter search => _hits[search].Keys,
             AndFilter and => and.Children.Select(Required).FirstOrDefault(ids => ids is not null),
             OrFilter or => Union(or.Children),
@@ -278,6 +286,7 @@ internal sealed partial class TursoStorageTransaction
 
     internal static IEnumerable<SearchFilter> Searches(DocumentFilter? filter) => filter switch
     {
+        AuthorizedFilter authorized => Searches(authorized.ClientFilter),
         SearchFilter search => [search],
         AndFilter and => and.Children.SelectMany(Searches),
         OrFilter or => or.Children.SelectMany(Searches),

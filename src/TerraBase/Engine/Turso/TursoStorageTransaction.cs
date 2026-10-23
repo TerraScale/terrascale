@@ -601,21 +601,14 @@ internal sealed partial class TursoStorageTransaction(
     }
 
     // Bound both candidate count and JSON bytes before Turso retains bodies in its temporary sorter.
-    private void CheckSortBudget(string collection, long maxBytes, CancellationToken cancellationToken, QueryObservation? observation = null, string? candidates = null)
+    private void CheckSortBudget(string collection, long maxBytes, CancellationToken cancellationToken,
+        QueryObservation? observation = null, string? candidates = null, DocumentFilter? filter = null)
     {
-        var source = Rows(collection);
         using var command = Uncached(collection);
-        var from = source.From;
-        if (candidates is not null)
-        {
-            command.Parameters.AddWithValue("$hits", candidates);
-            from = TursoQueryCompiler.CandidateFrom(source, "$hits");
-        }
-
-        command.CommandText = $"""
-            SELECT octet_length({source.Json}) FROM {from}
-            WHERE {(observation is not null ? "tb_query_scan(id) AND " : "")}{source.Live} ORDER BY id LIMIT 10001;
-            """;
+        // Owner admission covers the entire readable set, before submitted predicates/candidates.
+        command.CommandText = new TursoQueryCompiler(command.Parameters, Rows(collection),
+            candidates: filter is AuthorizedFilter ? null : candidates)
+            .CompileSortAdmission(filter, observation is not null);
         CountRead("query");
         using var reader = command.ExecuteReader();
         long bytes = 0;
@@ -641,7 +634,7 @@ internal sealed partial class TursoStorageTransaction(
         using var searches = PrepareSearch(query.Collection, query.Filter, cancellationToken);
         if (query.Sort.Count > 0 && (!query.Sort[0].Path.IsId || query.Sort[0].Score))
         {
-            CheckSortBudget(query.Collection, query.MaxBytes, cancellationToken, observation, searches.Candidates);
+            CheckSortBudget(query.Collection, query.MaxBytes, cancellationToken, observation, searches.Candidates, query.Filter);
         }
 
         // Compiled per request so every new filter shape does not grow the session's command cache.
