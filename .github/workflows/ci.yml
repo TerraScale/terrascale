@@ -20,7 +20,7 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -28,32 +28,34 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: .node-version
-          # ~/.npm also serves the two nested `npm ci` runs in `npm test`, so all three lockfiles key the cache.
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            examples/terrabase-js/package-lock.json
-            create-terrascale-app/package-lock.json
+      # PRs reuse main's npm downloads without publishing their own cache.
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        id: npm-cache
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json', 'examples/terrabase-js/package-lock.json', 'create-terrascale-app/package-lock.json') }}
       - run: npm ci
       - run: npm run build
       - run: npm test
-      - name: Verify Workers publication credentials
+      - name: Validate prebuilt Workers publication
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: |
           export PATH="$PWD/node_modules/.bin:$PATH"
-          env -u CLOUDFLARE_API_TOKEN cf auth whoami > "$RUNNER_TEMP/cloudflare-auth.json"
-          node --input-type=module -e 'import fs from "node:fs"; import assert from "node:assert/strict"; assert.equal(JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/cloudflare-auth.json")).authenticated, true)'
-          env -u CLOUDFLARE_API_TOKEN cf deploy --prebuilt --dry-run
+          cf deploy --prebuilt --dry-run
         env:
-          # cf supports this credential alias while CLOUDFLARE_API_TOKEN stays unset.
-          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       - name: Deploy the checked site to Workers
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: npm run deploy:site -- --message "$GITHUB_SHA"
         env:
-          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       - name: Check hosted output
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: node scripts/check-hosted.mjs
+      - uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.npm-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.npm
+          key: ${{ steps.npm-cache.outputs.cache-primary-key }}
