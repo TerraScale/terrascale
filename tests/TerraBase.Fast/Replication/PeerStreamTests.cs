@@ -1894,6 +1894,43 @@ public sealed class PeerStreamTests
     }
 
     [Test]
+    public async Task Shutdown_ends_a_replacement_after_its_predecessor_already_finished()
+    {
+        var shutdown = new ShutdownBarrier();
+        await using var cluster = await Cluster.StartAsync(cdc: false, clock: null,
+            configure: (_, services) => services.AddHostedService(_ => shutdown), "gru");
+        var gru = cluster["gru"];
+        var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gru.Api.Server.Services.GetRequiredService<PeerStreamReceiver>().Replacing = (_, _) =>
+        {
+            _ = observed.TrySetResult();
+            return release.Task;
+        };
+        using var older = await RawPush.StartAsync(gru, gru.Name);
+        try
+        {
+            using var replacement = await RawPush.OpenAsync(gru, gru.Name);
+            await observed.Task.WaitAsync(Deadline);
+            await older.CompleteAsync();
+            _ = await replacement.HeadersAsync().WaitAsync(Deadline);
+            var ending = replacement.WelcomeAsync();
+            shutdown.Hold();
+            gru.Api.Server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
+            release.SetResult();
+            await shutdown.Entered.Task.WaitAsync(Deadline);
+            await Assert.That(await ending).IsFalse();
+            shutdown.Release.SetResult();
+            await gru.Api.Server.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task.WaitAsync(Deadline);
+        }
+        finally
+        {
+            _ = release.TrySetResult();
+            _ = shutdown.Release.TrySetResult();
+        }
+    }
+
+    [Test]
     public async Task Shutdown_ends_a_replacement_waiting_for_its_predecessors_refill()
     {
         var shutdown = new ShutdownBarrier();

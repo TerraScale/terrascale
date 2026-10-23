@@ -171,6 +171,8 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             }
 
             cut = _cut.TryRemove(origin, out var carried) ? carried : [];
+            // An already-ended predecessor can satisfy WaitAsync after this stream was cancelled.
+            stream.Token.ThrowIfCancellationRequested();
             await responseStream.WriteAsync(new AckFrame { Welcome = new Welcome { Node = _self.Id.Value } }, stream.Token).ConfigureAwait(false);
             reading = requestStream.MoveNext(stream.Token);
             while (true)
