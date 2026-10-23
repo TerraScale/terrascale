@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Inspect the actual linked library and the compiler's macro audit, not the host CPU's capabilities.
-set -euo pipefail
+set -Eeuo pipefail
+trap 'printf "crypto proof failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 library=${1:?usage: check-turso-native-crypto.sh <library> <rid> <receipt-directory>}
 rid=${2:?usage: check-turso-native-crypto.sh <library> <rid> <receipt-directory>}
 output=${3:?usage: check-turso-native-crypto.sh <library> <rid> <receipt-directory>}
@@ -11,6 +12,7 @@ case "$rid" in
 esac
 mkdir -p "$output"
 grep -h '^cargo:warning=terrascale-aegis ' target/lib-release/build/aegis-*/output > "$output/$rid-aegis-compiler.txt"
+cat "$output/$rid-aegis-compiler.txt"
 grep -q 'terrascale-aegis compiler=' "$output/$rid-aegis-compiler.txt"
 grep -q 'HAS_HW_AES=undefined; runtime dispatch and portable fallback retained' "$output/$rid-aegis-compiler.txt"
 nm --defined-only "$library" | awk '$3 ~ /^aegis(256_|_runtime|_init)/' > "$output/$rid-aegis-symbols.txt"
