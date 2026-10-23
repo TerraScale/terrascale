@@ -117,6 +117,13 @@ internal interface ISqlSession : IAsyncDisposable
     /// </summary>
     ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// <see cref="ExecuteScriptAsync(string, CancellationToken)"/> refusing with <c>SQLITE_TOOBIG</c>, before running anything,
+    /// a script of more than <paramref name="maxStatements"/> statements. A script's statements share one 5 s deadline
+    /// (added by SQ1-e9).
+    /// </summary>
+    ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, int maxStatements, CancellationToken cancellationToken);
+
     /// <summary>Describes one statement.</summary>
     ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken);
 

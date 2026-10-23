@@ -161,4 +161,49 @@ public sealed class SqlTransactionTests
         await Assert.That(SqlHarness.Code(broken)).IsEqualTo("SQLITE_CONSTRAINT_PRIMARYKEY");
         await Assert.That(await ScalarAsync(session, "SELECT group_concat(id) FROM t")).IsEqualTo("2,3,4");
     }
+
+    [Test]
+    public async Task Scripts_are_capped_before_running_and_share_one_deadline()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        // Pro: each heavy statement stays well inside its own 5 s budget; 200 of them take far longer than 5 s.
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "pro");
+        await SqlApi.OkAsync(api, "CREATE TABLE t (id INTEGER PRIMARY KEY)");
+        await using var session = SqlHarness.Open(api, canWrite: true);
+        const string digits = "(VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9))";
+        var heavy = $"SELECT count(*) FROM {string.Join(", ", Enumerable.Range(0, 5).Select(i => $"{digits} d{i}"))}, (VALUES (0),(1),(2),(3)) e";
+
+        var capped = await session.ExecuteScriptAsync("INSERT INTO t VALUES (1); INSERT INTO t VALUES (2); INSERT INTO t VALUES (3)", 2, CancellationToken.None);
+        var started = DateTime.UtcNow;
+        var long_ = await session.ExecuteScriptAsync(string.Join("; ", Enumerable.Repeat(heavy, 200)), 256, CancellationToken.None);
+
+        await Assert.That(capped is SqlError { Code: "SQLITE_TOOBIG" }).IsTrue();
+        await Assert.That(await ScalarAsync(session, "SELECT count(*) FROM t")).IsEqualTo("0");
+        await Assert.That(long_ is SqlError { Code: "SQLITE_INTERRUPT" }).IsTrue();
+        await Assert.That(DateTime.UtcNow - started).IsLessThan(TimeSpan.FromSeconds(15));
+    }
+
+    [Test]
+    public async Task The_replay_log_holds_one_memory_reservation_released_at_rollback()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await using var session = SqlHarness.Open(api, canWrite: true);
+        var before = await api.ReservedBytesAsync();
+        var text = new string('x', 8000);
+
+        await session.ExecuteAsync(SqlHarness.Command("BEGIN READONLY"), CancellationToken.None);
+        for (var i = 0; i < 50; i++)
+        {
+            await session.ExecuteAsync(new SqlCommand("SELECT length(?)", [SqlValue.Of(text)], new Dictionary<string, SqlValue>()), CancellationToken.None);
+        }
+
+        await session.EndRequestAsync();
+        var during = await api.ReservedBytesAsync();
+        await session.ExecuteAsync(SqlHarness.Command("ROLLBACK"), CancellationToken.None);
+        var after = await api.ReservedBytesAsync();
+
+        // 50 statements of 16 KB (UTF-16) of arguments: the log's reservation covers them, and goes with the transaction.
+        await Assert.That(during - before).IsGreaterThanOrEqualTo(50 * 16_000);
+        await Assert.That(after - before).IsLessThan(64 * 1024);
+    }
 }

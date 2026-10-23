@@ -118,7 +118,11 @@ WITH "t" AS (SELECT json_extract(doc, '$."c1"') AS "c1", … FROM main."t" WHERE
   `constraint`, `conflict`, `auth`, `too_big`, `interrupt`); `ISqlService.ListTablesAsync` lists tables with their
   columns for front ends (PG1 catalog queries).
 - `ISqlSession.ExecuteScriptAsync` (added for Hrana `sequence`) splits text with the same parser and runs each
-  statement without arguments; `BEGIN READONLY` is not available inside a script.
+  statement without arguments; `BEGIN READONLY` is not available inside a script. The overload with `maxStatements`
+  refuses a longer script with `SQLITE_TOOBIG` before running anything, and a script's statements share one 5 s
+  deadline, autocommit included (SQ1-e9).
+- The replay log holds one memory reservation per session (IMemoryBudget), replaced by a larger one as the log grows
+  and released at commit, rollback or disposal; `SQLITE_NOMEM` when the budget is exhausted (SQ1-e9).
 - `…/sql/execute` wraps its statements in `BEGIN` … `COMMIT` (`BEGIN READONLY` when none writes, so reads never take the
   writer) and refuses transaction statements in the body.
 - Sessions live in memory on the node that opened them, bounded (count and bytes); a restart or an expired baton

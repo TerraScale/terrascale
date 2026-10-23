@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using SqlParser;
@@ -7,18 +8,20 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Sql;
 
 /// <summary>Relational SQL over a database's collections (docs/terrabase/sql/relational-sql.md).</summary>
-internal sealed class SqlService(IStorageEngine engine, IDocumentService documents, IStorageQuota quota, IUsageMeter usage, TimeProvider time) : ISqlService
+internal sealed class SqlService(
+    IStorageEngine engine, IDocumentService documents, IStorageQuota quota, IUsageMeter usage, IMemoryBudget memory, TimeProvider time) : ISqlService
 {
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        return new SqlSession(engine, quota, usage, new SqlExecutor(documents, time), time, database, canWrite);
+        return new SqlSession(engine, quota, usage, memory, new SqlExecutor(documents, time), time, database, canWrite);
     }
 
     public async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken)
@@ -67,7 +70,8 @@ internal sealed class SqlService(IStorageEngine engine, IDocumentService documen
 /// in a fresh storage transaction and checks every hash: a mismatch is a conflict (<c>SQLITE_BUSY</c>), and nothing commits.
 /// </summary>
 internal sealed class SqlSession(
-    IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, SqlExecutor executor, TimeProvider time, TenantContext database, bool canWrite)
+    IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IMemoryBudget memory, SqlExecutor executor, TimeProvider time, TenantContext database,
+    bool canWrite)
     : ISqlSession
 {
     private const int MaxStatements = 256;
@@ -80,6 +84,8 @@ internal sealed class SqlSession(
 
     private readonly List<(SqlCommand Command, byte[] Hash)> _log = [];
     private long _logBytes;
+    private long? _scriptStarted;
+    private IMemoryReservation? _logMemory;
     private SqlKeys _keys = new();
     private bool? _readOnly;
     private Request? _request;
@@ -120,26 +126,49 @@ internal sealed class SqlSession(
         }
     }
 
-    public async ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken)
+    public ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken) =>
+        ExecuteScriptAsync(sql, MaxStatements, cancellationToken);
+
+    public async ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, int maxStatements, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(sql);
         SqlParser.Sequence<SqlParser.Ast.Statement> statements;
         try
         {
+            // The whole text passes the literal and name checks before it is split.
+            _ = SqlRead.Number(sql);
             statements = new Parser().ParseSql(sql, new SQLiteDialect());
+        }
+        catch (FormatException error)
+        {
+            return SqlErrors.Error(error.Message);
         }
         catch (Exception error) when (error is ParserException or TokenizeException)
         {
             return SqlErrors.Error("SQL syntax error in the script");
         }
 
-        SqlOutcome last = Empty;
-        foreach (var statement in statements)
+        if (statements.Count > maxStatements)
         {
-            last = await ExecuteAsync(new SqlCommand(statement.ToSql(), [], new Dictionary<string, SqlValue>()), cancellationToken).ConfigureAwait(false);
-            if (last is SqlError)
+            return SqlErrors.TooBig(string.Create(CultureInfo.InvariantCulture, $"a script holds at most {maxStatements} statements"));
+        }
+
+        SqlOutcome last = Empty;
+        _scriptStarted = time.GetTimestamp();
+        try
+        {
+            foreach (var statement in statements)
             {
-                break;
+                last = await ExecuteAsync(new SqlCommand(statement.ToSql(), [], new Dictionary<string, SqlValue>()), cancellationToken).ConfigureAwait(false);
+                if (last is SqlError)
+                {
+                    break;
+                }
             }
+        }
+        finally
+        {
+            _scriptStarted = null;
         }
 
         return last;
@@ -195,6 +224,20 @@ internal sealed class SqlSession(
         {
             await EndRequestAsync().ConfigureAwait(false);
             return SqlErrors.TooBig("a transaction holds at most 256 statements and 1 MiB of statements");
+        }
+
+        // One reservation for the whole log, replaced by a larger one as it grows (never one per statement).
+        if (_logBytes + size > (_logMemory?.Bytes ?? 0))
+        {
+            var grown = memory.TryReserve(MemoryLane.Foreground, Math.Min(MaxLogBytes, Math.Max(_logBytes + size, 2 * (_logMemory?.Bytes ?? 32 * 1024))), database);
+            if (grown is null)
+            {
+                await EndRequestAsync().ConfigureAwait(false);
+                return new SqlError("SQLITE_NOMEM", "the server's memory budget is exhausted; retry");
+            }
+
+            _logMemory?.Dispose();
+            _logMemory = grown;
         }
 
         _log.Add((command, Hash(result)));
@@ -256,6 +299,8 @@ internal sealed class SqlSession(
         _readOnly = null;
         _log.Clear();
         _logBytes = 0;
+        _logMemory?.Dispose();
+        _logMemory = null;
         _keys = new SqlKeys();
     }
 
@@ -322,7 +367,7 @@ internal sealed class SqlSession(
     {
         // Each statement has its own work budget; a request's statements (and a replay) also share one deadline, so a
         // request that holds the writer cannot hold it for 256 budgets.
-        if (time.GetElapsedTime(request.Started) > MaxRequestTime)
+        if (time.GetElapsedTime(Math.Min(request.Started, _scriptStarted ?? long.MaxValue)) > MaxRequestTime)
         {
             return SqlErrors.Interrupt;
         }
