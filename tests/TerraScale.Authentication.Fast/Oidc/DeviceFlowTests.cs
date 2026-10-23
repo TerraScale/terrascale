@@ -12,7 +12,7 @@ public sealed class DeviceFlowTests(TerraBaseFixture fixture)
     private const string DeviceGrant = "urn:ietf:params:oauth:grant-type:device_code";
     private const string Page = $"/ui/{OidcIssuer.Slug}/device";
 
-    private static ManualClock Clock() => new(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600 * 3600));
+    private static ManualClock Clock() => new(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
 
     [Test]
     public async Task A_device_is_signed_in_only_after_an_explicit_approval_and_redeems_once()

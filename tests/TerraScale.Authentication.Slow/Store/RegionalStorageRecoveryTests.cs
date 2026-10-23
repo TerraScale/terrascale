@@ -5,7 +5,7 @@ using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Slow.Store;
 
-/// <summary>After its own region's TerraBase answers again, ts-auth reads discovery there again within one connection lifetime (30 s).</summary>
+/// <summary>After its own region's TerraBase answers again, ts-auth reads discovery there again without falling back to an unrelated region.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class RegionalStorageRecoveryTests(TerraBaseFixture fixture)
 {
@@ -20,10 +20,12 @@ public sealed class RegionalStorageRecoveryTests(TerraBaseFixture fixture)
         await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var auth = await AuthTestServer.StartAsync(
-            services: services => TerraBaseFixture.UseRegionalStorage(services, tenant, own.Address, other, gru.Address, localDatabase: "auth-local"));
+            services: services => TerraBaseFixture.UseRegionalStorage(services, tenant, own.Address, localDatabase: "auth-local"));
 
         own.Stop();
-        await Assert.That(await ReadinessWait.UntilAsync(async () => await AnswersAsync(auth, project) && other.Accepted > 0, TimeSpan.FromSeconds(15))).IsTrue();
+        using var unavailable = await auth.Client.GetAsync($"/{project}/.well-known/openid-configuration");
+        await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(other.Accepted).IsEqualTo(0);
         own.Restart();
         var away = own.Accepted;
 

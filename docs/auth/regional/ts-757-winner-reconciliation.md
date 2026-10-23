@@ -1,0 +1,264 @@
+# TS-757: regional credential winners
+
+This contract supersedes the family-wide revocation proposal in
+`docs/terrabase/replication/17-ts-auth-on-lattices.md` for ts-auth. It does not
+promise globally exclusive success before replication.
+
+Each ts-auth instance reads and conditionally writes its configured regional
+TerraBase copy, through ts-dotnet. There is no gru home, remote fallback, or
+remote authority client. A local outage fails that region's request.
+
+## Winner and credential validation
+
+A local one-use operation atomically creates an immutable `uniques` claim and
+consumes its source record. Concurrent regions can both acknowledge that
+operation. TerraBase joins their claims using its existing `(HLC, replica id)`
+entry ordering; ts-auth never compares application clocks or contender IDs to
+choose a winner. A claim has one scalar `ownerId`; ts-auth never updates or
+reclaims an immutable credential claim. A later stale PUT to a source or child therefore
+cannot promote the losing branch by rewriting the winner pointer.
+
+A `CredentialBinding` identifies the claim kind, issuance key, and contender
+owner. Session rotation and OAuth redemption copy every ancestor binding into
+their successors. Every session resolution and stored OAuth token lookup reads
+all those claims from the regional copy. A missing claim or different owner
+rejects the credential. The `credential:user-state` binding is different: it
+reads the scoped user and email owner and requires the bound `authStamp`.
+A descendant rotated again during a partition still
+retains its losing ancestor. After all relevant deltas arrive, both regions
+make the same decision; no region continues authorizing both branches. Losing
+records can remain stored for expiry/cleanup; their presence grants nothing.
+
+Email lookup and lookup by user ID both verify the current scoped email claim.
+A losing duplicate user therefore cannot authenticate by its ID, and its
+sessions and user grants fail too. One pending sign-up issuance fixes its user
+ID before redemption, so redeeming that same issuance in two regions cannot
+create two different account owners. Account creation assigns a fresh state
+stamp per contender. Signup descendants bind the email owner and user state,
+so the same account ID cannot keep two successful creation branches alive.
+
+Passcode issuance has an `issueId`, independent of the six-digit value. Each
+ordinary issuance atomically claims its predecessor slot and copies all
+issuance ancestors. Concurrent different codes from that slot therefore share
+a permanent winner claim. Later resends add a new claim; they never rewrite an
+earlier claim or invalidate a previously completed ordinary sign-in.
+An ordinary sign-in redemption adds its own winner binding. The internal
+`RedeemAsync` user result carries these proofs plus the user-state binding as
+transient `AuthenticationBindings`; callers opening a
+session or issuing OAuth credentials must preserve it. `StoredChallenge`
+similarly returns `Binding`; an internal caller creating a descendant must
+persist it and call `AreCredentialsCurrentAsync` on use. There are currently no
+production callers of the low-level stored-challenge API.
+
+OAuth references retain private lineage in their encrypted principal and
+persist it on token entries, including sign-in access-token entries. Issuance
+captures lineage before OpenIddict filters private claims from JWT payloads.
+Losing/replayed OAuth credentials return `invalid_grant` at the token endpoint,
+with a notice naming expiration, prior use, or a concurrent regional sign-in or
+rotation and directing the user to sign in again. Userinfo and ts-auth's
+management authentication reject the losing token entry. Replaying a parent
+never revokes the winning authorization. One stored-status validator replaces
+OpenIddict's status handler, avoiding a second read that could revoke the
+winning family if another request redeemed the parent between reads. Valid,
+pending, denied and invalid states retain their protocol decisions; signature,
+issuer, lifetime and authorization validation remain enabled. Explicit RFC
+7009 revocation still
+revokes the authorization. OpenIddict entity caching is disabled so payload
+and authorization lookups observe the current regional storage winners.
+Device approval atomically creates a separate
+subject-bound authorization while consuming the user code. Its ID travels
+only in the encrypted device payload as `ts_auth_device_authorization`;
+the shared subjectless parent authorization is never rewritten. At device
+redemption, the winning payload selects that subject-matching authorization
+for the issued credentials. An inherited `credential:authorization` binding
+requires the original parent to remain valid, including after refresh or API
+key delegation. This proof is deduplicated and counted toward the 64-proof
+budget before approval mutates storage. Redemption into separate child
+credentials additionally adds the ordinary one-use winner binding.
+
+A user authentication-state change also writes a random `authStamp`. Sessions,
+passcodes and user JWT claims bind that value as well as the numeric epoch.
+Two concurrent password resets can both advance epoch N to N+1. Password reset
+uses `ResetPasswordAsync`: one local transaction consumes the source passcode,
+creates its one-use claim, and conditionally replaces the user at the original
+epoch **and** stamp. There is no consume-then-password-write gap. The single
+user LWW record (password, epoch, stamp) is the authoritative reset winner;
+the separate claim's document clock does not choose a different password.
+Reset descendants bind that state stamp, rather than the independent consume
+claim. A delayed same-epoch reset with a different source stamp fails.
+
+Delegated API-key secrets retain their caller's lineage independently for the
+current and grace secrets; missing lineage fails closed. This includes the
+user-state binding: a later password reset, recovery, MFA state change or
+sign-out-everywhere invalidates keys delegated from the old state too.
+Password hashes and API-key digest/grace fields use TerraBase's existing full-document LWW PUT.
+API-key token exchange rereads the current regional digests. After convergence
+only the winning new secret (and the explicitly retained previous secret
+within its existing grace) exchanges successfully. Invalid key errors mention
+revocation, expiration and concurrent rotation without identifying another
+user or tenant.
+
+## Storage and rollout handoff
+
+New persisted fields are `users.authStamp`, `sessions.authStamp` and `bindings`,
+`passcodes.authStamp`, `issueId`, `issuanceBindings`, `resetsAuthentication`
+and `pruned`, `oidc_tokens.bindings`, API-key per-secret bindings, and
+`verification_tokens.binding`. Winner claims live in the existing `uniques`
+collection under immutable `credential:*` kinds, except `credential:user-state`
+which reads the user directly and `credential:authorization` which reads the
+original device authorization. Approval authorization records use the existing
+authorization schema. No SDK expansion or new collection is used.
+
+**Needs format bump: batch 5.** The deploy lane explicitly authorized each of
+PRs #464, #469, #473 and #462 to advance `StorageFormat.Version` by one over current
+main. This PR currently advances 12 to 13. Immediately before queueing, rebase
+on current main and advance one beyond its format; repeat if another batch
+member lands first. Enqueue only after the resulting head passes CI.
+HANDOFF: send this PR's merge SHA to the batch-5 deploy lane. FR1 owns the
+approved alpha wipe after all four PRs merge, or the lane's 60-minute cutoff.
+This branch does not itself wipe or reset serving data.
+
+API-key records additionally persist `secretBindings` (`SecretBindings`) and
+`previousSecretBindings` (`PreviousSecretBindings`) beside their respective
+digest/grace fields. Management authentication returns the stored sign-in
+token's bindings on the transient `UserRecord.AuthenticationBindings`;
+API-key creation and rotation receive that authenticated user, validate its
+tenant and current bindings, and persist them with the newly issued secret.
+Rotation preserves the previous secret's own bindings during its grace.
+The inherited `credential:user-state` binding checks the user's winning
+`authStamp`, so later password resets or sign-out-all also invalidate derived
+key secrets, including previous secrets still within grace.
+Both client lookup and final token issuance validate each digest's bindings
+independently. A losing sign-in's key cannot keep obtaining new JWTs after
+its claim converges, even after the original sign-in JWT expires.
+
+Historical API-key records have no reconstructable sign-in lineage. Missing
+binding fields fail closed during digest resolution; they are not defaulted
+to a safe empty chain. A newly issued secret always stores its actual binding
+list, including an explicit empty list when its authentication has no one-use
+ancestors. Existing keys need an operator-reviewed replacement or rotation
+from a fresh valid sign-in; this change does not infer old ancestry or perform
+that rollout automatically.
+
+This is an auth-record change with no migration. The owning rollout lane
+coordinates the batch-5 reset and outstanding credentials; tests recreate
+isolated data with this schema. The batch authorization does not authorize
+this branch to change credentials or activate additional production regions.
+
+Proof lists are bounded at 64, including state and issuance proofs. Rotation
+never drops ancestors: a session at the bound returns HTTP 401
+`reauthentication_required`; OAuth returns `invalid_grant`, both directing the
+user to sign in again. A normal sign-in code retains at most 62 issuance
+proofs, reserving room for state and redemption. The next request issues a
+fresh email-possession recovery code. Redeeming it atomically advances the
+user epoch/stamp and starts a fresh family; it also signs out older sessions.
+This works for passwordless accounts. Competing recoveries use the same
+authoritative user-state winner as password resets. Hosted code pages state
+that recovery signs out older sessions. No operator reset is needed.
+
+Passcode pruning clears expired code/password/pending-token material and marks
+the record `pruned`, but retains its issuance anchor. Resends reuse one record
+per subject. Immutable claims are intentionally retained; there is no claim
+garbage collector or speculative ancestry compaction. Validation performs at
+most 64 proof checks (the state proof reads user and email owner); resource
+cost per credential is bounded, while historical claim storage is not pruned.
+
+## Regional attempt counters
+
+The limiter reads the fixed serving set gru/sjc/fra. Each subject has at most
+three tenant-scoped HMAC(`purpose:region:subject`) bucket documents, reused on
+rollover. It sums regional `Used` values in the effective window (maximum of
+current and persisted windows), preserving the slower-clock future-window
+rule. Each request conditionally changes only its region's component. This
+assumes one independent TerraBase writer per region; multiple auth replicas
+sharing that writer are supported. Invalid persisted data fails closed;
+cooldown and notice deadlines remain persisted. Replication delay can admit
+duplicate attempts temporarily. Lockout notices are best effort; globally
+exclusive notice delivery is not promised.
+
+## Offline JWT security model: accepted five-minute window
+
+The accepted policy keeps TerraBase JWT authorization offline. Store
+reconciliation stops losing sessions, refresh tokens and key-secret exchanges
+at ts-auth after the required winner deltas arrive. It cannot revoke a JWT
+already issued to an offline consumer. A losing access token may therefore
+continue authorizing until its signed `exp`.
+
+All newly issued ts-auth access JWTs live at most five minutes: ordinary
+sign-in/service tokens use `OidcIssuer.TokenLifetime`; organization/project,
+API-key and GitHub Actions exchanges use `PlatformGrants.Lifetime`. Subject
+exchange also caps this at the subject token's remaining lifetime. Identity
+JWTs use the same five-minute issuer lifetime. Browser sessions and reference
+refresh tokens keep their 14-day lifetime but consult stored winner ancestry
+on use; a losing refresh is rejected after convergence instead of obtaining
+another five-minute access token.
+
+TerraBase's offline consumer is
+`src/TerraBase/Features/UserAuth/UserAuthenticationHandler.cs`, with successful
+signature-validation caching in `ValidatedTokens.cs`. Cold and cached requests
+must reject at `exp`; clock tolerance must not extend expiration. No per-request
+call to ts-auth or winner introspection is introduced. Other offline consumers
+must also enforce `exp` without extending this window; no sibling product is
+edited here.
+
+There is no fixed replication deadline during a partition. Before the local
+winner deltas arrive, a branch can still issue tokens. Once they arrive,
+ts-auth rejects the losing refresh/exchange; its last issued offline access
+JWT has at most five minutes remaining. This accepted expiry window replaces
+the earlier requirement for immediate offline JWT revocation at convergence.
+
+Already-issued JWTs cannot be shortened retroactively: the prior ordinary
+lifetime was one hour and platform exchanges were up to 15 minutes. Rollout
+must allow those outstanding tokens to expire before claiming the new
+five-minute bound across all traffic. Resetting stored auth records alone
+does not revoke an existing offline JWT.
+
+## Evidence boundary
+
+The R6b targeted run completed successfully on delta on 2026-10-23. Both
+auth and TerraBase consumer builds reported zero warnings and errors. It used
+real gru/sjc TerraBase nodes and ts-dotnet, with held replication links for
+concurrency schedules; no production service or data was changed.
+
+| R6b proof | Passed executions | Result |
+| --- | ---: | --- |
+| Offline consumer and unrelated application clocks | 22 | UserAuth 17, StatsMetrics 1, BucketPage 4; warm and cold requests reject exactly at `exp`. |
+| Genuine concurrent OAuth code and refresh redemption | 2 | Both initial requests return 200; after convergence exactly one branch works in both regions. Losing refresh fails warm and after restart with regional recovery guidance. Competing access JWTs live at most 300 seconds. |
+| Delegated API-key lineage | 1 | Both regions reject losing created/rotated keys, preserve each grace secret's lineage, fail closed on absent historical bindings, and enforce sign-out-all. Error responses include regional/latest-credential guidance. |
+| Device approval and warm revocation | 4 | Mirrored approval schedules retain the payload's matching subject authorization; independent root/child revocations reject access and latest refresh in both warm auth replicas. |
+| Existing device flow, production configuration, local storage outage | 3 | The previously failing targeted cases pass. |
+| Independent signing-key request gate | 5 repeats | Security reads finish while the unrelated JWKS request remains held; the test no longer counts multiplexed HTTP/2 transport frames. |
+
+The API-key case stages competing ancestry through real local transactions,
+then exercises genuine management/token HTTP requests and real replication.
+It does not claim sequential multistep issuance can complete while held
+`remote_durable` acknowledgements block HTTP responses. The OAuth cases use
+genuine competing redemptions. Offline signature validation deliberately
+continues accepting the losing JWT before `exp` after convergence; combined
+with the cold/cache boundary tests, this proves the accepted expiry policy
+rather than immediate offline revocation.
+
+R6b artifacts are retained under `artifacts/ts757/` in the development worktree
+and on delta at
+`/home/mariogk/remote-builds/terrascale/main-6ff39bddbc32cd7865493c35c7bfca77c8cd461f297e43b647cae3a04e6d7161/artifacts/ts757/`.
+The executable snapshot is `snapshot-r6b.sh`, SHA-256
+`385659602fe89bee6e468186ec93672cbf7f1d843e14c9882f7794a854397703`;
+its actual overlay manifest is `r6b-actual-overlay-manifest.txt`, SHA-256
+`79ab4ab2a0c2bc7727a71d4262f7512e22d5b941df72719c9f5e374e4cafa447`.
+It overlays the recorded sources onto base `49e32e99c`; this is not a claim
+that final-head CI has passed. Individual `r6b-*.log` files retain each result.
+Earlier failed snapshots remain retained; a later lower-load pass does not
+establish the cause of the earlier pre-partition 503 responses.
+
+Separate earlier snapshots proved real two-region backend conditional
+create/replace convergence (both successful local writes with
+`remote_durable` acknowledgements and an identical winner/ETag), duplicate
+email ownership, session rotation, distinct passcode issuance, atomic reset,
+resend/pruning, recovery and lineage caps. The regional limiter's separate
+2/2 run proved exact replicated sum ten from five attempts per region across
+initialization and rollover. These are distinct runs, not a combined suite.
+
+No multi-region production result is claimed: initial live inspection found
+gru serving, while sjc/fra regional auth DNS and live proof were absent.
+Readiness/global DNS alone do not establish regional serving or convergence.
+The coordinated schema rollout and post-deployment live proof remain open.

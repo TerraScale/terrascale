@@ -44,6 +44,39 @@ public sealed class SessionTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    public async Task Rotation_at_the_lineage_budget_requires_reauthentication_without_mutating_the_live_session()
+    {
+        var (tenant, database) = await fixture.CreateDatabaseAsync();
+        var (users, sessions) = this.Stack(tenant, TimeProvider.System);
+        var user = (await users.CreateAsync("instance", "alice@example.test"))!;
+        var current = await sessions.CreateAsync(user);
+        while (current.Session.Bindings.Count < AuthStore.MaxCredentialBindings)
+        {
+            current = (await sessions.RotateAsync("instance", current.Token))!;
+        }
+
+        var before = (await database.ListDocumentsAsync(AuthStore.SessionCollection, limit: 1000)).Items.Select(item => item.Version).Order(StringComparer.Ordinal).ToArray();
+        ApiException? rejected = null;
+        try
+        {
+            await sessions.RotateAsync("instance", current.Token);
+        }
+        catch (ApiException error)
+        {
+            rejected = error;
+        }
+
+        await Assert.That(rejected?.Status).IsEqualTo(401);
+        await Assert.That(rejected?.Code).IsEqualTo("reauthentication_required");
+        await Assert.That(await sessions.ResolveAsync("instance", current.Token)).IsNotNull();
+        var after = (await database.ListDocumentsAsync(AuthStore.SessionCollection, limit: 1000)).Items;
+        await Assert.That(after.Select(item => item.Version).Order(StringComparer.Ordinal).SequenceEqual(before)).IsTrue();
+        await Assert.That(after.All(item => item.Document.GetProperty("bindings").GetArrayLength() <= AuthStore.MaxCredentialBindings)).IsTrue();
+        var fresh = await sessions.CreateAsync((await users.GetAsync("instance", user.Id))!);
+        await Assert.That(fresh.Session.Bindings.Count).IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments(null)]
     [Arguments("")]
     [Arguments("not-a-session-token")]
@@ -345,7 +378,7 @@ public sealed class SessionTests(TerraBaseFixture fixture)
                     await Assert.That(await mfa.ConfirmAsync(caller, Code(pending!, clock))).IsNotNull();
                     break;
                 case "reset":
-                    await Assert.That(await users.SetPasswordAsync(caller.InstanceId, caller.Id, caller.AuthEpoch, "synthetic-password-hash")).IsTrue();
+                    await Assert.That(await users.SetPasswordAsync(caller, "synthetic-password-hash")).IsTrue();
                     break;
                 case "revoke":
                     await Assert.That(await independent.RevokeAllAsync(caller.InstanceId, caller.Id)).IsTrue();

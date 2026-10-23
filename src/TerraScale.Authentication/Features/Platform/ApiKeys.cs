@@ -38,7 +38,7 @@ public static class TerraBaseScopes
 
 /// <summary>
 /// API keys (TS-598): OAuth client credentials owned by an organization or a project, exchanged at the token endpoint
-/// for 15-minute tokens. A key string is a canonical ULID (its client id), <c>_</c> and 52 base32
+/// for 5-minute tokens. A key string is a canonical ULID (its client id), <c>_</c> and 52 base32
 /// characters (260 random bits); only SHA-256 digests are stored and compared in constant time.
 /// </summary>
 public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory, TimeProvider clock)
@@ -60,17 +60,20 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
     /// Creates an organization key (<paramref name="projectId"/> null; needs the admin organization role) or a project
     /// key (needs the project's member role, and scopes within the caller's). Returns the key and its string, once.
     /// </summary>
-    public Task<(ApiKeyRecord Key, string Secret)> CreateAsync(string userId, string organizationId, string? projectId, string name, IReadOnlyList<string> scopes, string? database, DateTimeOffset? expiresAt, CancellationToken cancellationToken) =>
+    public Task<(ApiKeyRecord Key, string Secret)> CreateAsync(UserRecord caller, string organizationId, string? projectId, string name, IReadOnlyList<string> scopes, string? database, DateTimeOffset? expiresAt, CancellationToken cancellationToken) =>
         directory.CommitAsync(async () =>
         {
-            var authority = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            var authority = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             if (projectId is not null && scopes.Except(TerraBaseScopes.For(authority.Role)).Any())
             {
                 throw PlatformDirectory.Forbidden();
             }
 
             var (id, secret) = Generate();
-            var key = new ApiKeyRecord(id, Instance, organizationId, projectId, database, name, scopes, Tokens.Sha256Hex(secret), null, null, userId, clock.GetUtcNow(), expiresAt);
+            var key = new ApiKeyRecord(id, Instance, organizationId, projectId, database, name, scopes, Tokens.Sha256Hex(secret), null, null, caller.Id, clock.GetUtcNow(), expiresAt)
+            {
+                SecretBindings = caller.AuthenticationBindings,
+            };
             List<StoreOperation> operations = [authority.Assertion, AuthStore.Create(AuthStore.ApiKeyCollection, Instance, id, Serialize(key))];
             if (projectId is not null)
             {
@@ -78,7 +81,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
                 operations.Add(AuthStore.Require(AuthStore.ProjectCollection, Instance, projectId, PlatformDirectory.Filter("exists", "/id")));
             }
 
-            operations.Add(directory.Audit(organizationId, userId, "api_key.created", id, string.Join(' ', scopes)));
+            operations.Add(directory.Audit(organizationId, caller.Id, "api_key.created", id, string.Join(' ', scopes)));
             return new PlatformDirectory.Plan<(ApiKeyRecord, string)>(operations, (key, secret));
         }, cancellationToken);
 
@@ -114,10 +117,10 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
     /// Issues a new key string for the same id. The previous string keeps working for <paramref name="previousTtl"/>
     /// (at most a day), then only the new one does. Another rotation is refused while that grace is still active.
     /// </summary>
-    public Task<(ApiKeyRecord Key, string Secret)> RotateAsync(string userId, string organizationId, string? projectId, string keyId, TimeSpan previousTtl, CancellationToken cancellationToken) =>
+    public Task<(ApiKeyRecord Key, string Secret)> RotateAsync(UserRecord caller, string organizationId, string? projectId, string keyId, TimeSpan previousTtl, CancellationToken cancellationToken) =>
         directory.CommitAsync(async () =>
         {
-            var authority = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            var authority = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
             var now = clock.GetUtcNow();
             if (key.Value.PreviousSecretHash is not null && key.Value.PreviousSecretExpiresAt > now)
@@ -129,11 +132,13 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             var rotated = key.Value with
             {
                 SecretHash = Tokens.Sha256Hex(secret),
+                SecretBindings = caller.AuthenticationBindings,
                 PreviousSecretHash = previousTtl > TimeSpan.Zero ? key.Value.SecretHash : null,
+                PreviousSecretBindings = previousTtl > TimeSpan.Zero ? key.Value.SecretBindings : [],
                 PreviousSecretExpiresAt = previousTtl > TimeSpan.Zero ? now + previousTtl : null,
             };
             return new PlatformDirectory.Plan<(ApiKeyRecord, string)>(
-                [authority.Assertion, AuthStore.Replace(AuthStore.ApiKeyCollection, Instance, keyId, Serialize(rotated), key.Version), directory.Audit(organizationId, userId, "api_key.rotated", keyId)], (rotated, secret));
+                [authority.Assertion, AuthStore.Replace(AuthStore.ApiKeyCollection, Instance, keyId, Serialize(rotated), key.Version), directory.Audit(organizationId, caller.Id, "api_key.rotated", keyId)], (rotated, secret));
         }, cancellationToken);
 
     /// <summary>The key a client id names, unless it is unknown or expired. Callers authenticate its string first.</summary>
@@ -152,10 +157,24 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
     }
 
     /// <summary>The digests a presented key string may match now: the current one, and the previous one in its grace.</summary>
-    public IReadOnlyList<string> Digests(ApiKeyRecord key)
+    public async Task<IReadOnlyList<string>> DigestsAsync(ApiKeyRecord key, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(key);
-        return key.PreviousSecretHash is { } previous && key.PreviousSecretExpiresAt > clock.GetUtcNow() ? [key.SecretHash, previous] : [key.SecretHash];
+        List<string> digests = [];
+        if (key.SecretBindings is { } currentBindings
+            && await store.AreCredentialsCurrentAsync(Instance, currentBindings, cancellationToken).ConfigureAwait(false))
+        {
+            digests.Add(key.SecretHash);
+        }
+
+        if (key.PreviousSecretHash is { } previous && key.PreviousSecretExpiresAt > clock.GetUtcNow()
+            && key.PreviousSecretBindings is { } previousBindings
+            && await store.AreCredentialsCurrentAsync(Instance, previousBindings, cancellationToken).ConfigureAwait(false))
+        {
+            digests.Add(previous);
+        }
+
+        return digests;
     }
 
     private static (string Id, string Secret) Generate()
@@ -165,6 +184,22 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
     }
 
     private static JsonElement Serialize(ApiKeyRecord key) => JsonSerializer.SerializeToElement(key, PlatformJson.Default.ApiKeyRecord);
+
+    private async Task<(string Role, StoreOperation Assertion)> AuthorizeAsync(UserRecord caller, string organizationId, string? projectId, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        if (caller.InstanceId != Instance)
+        {
+            throw PlatformDirectory.Forbidden();
+        }
+
+        if (!await store.AreCredentialsCurrentAsync(Instance, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
+        {
+            throw PlatformDirectory.Conflict("authentication_conflict", "This sign-in lost a concurrent change in another region. Sign in again before issuing an API key secret.");
+        }
+
+        return await this.AuthorizeAsync(caller.Id, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+    }
 
     // Organization keys need the admin organization role; project keys the project's member role.
     private async Task<(string Role, StoreOperation Assertion)> AuthorizeAsync(string userId, string organizationId, string? projectId, CancellationToken cancellationToken)

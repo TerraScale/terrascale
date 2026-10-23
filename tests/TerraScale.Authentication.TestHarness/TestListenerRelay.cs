@@ -37,7 +37,7 @@ internal sealed class TestListenerRelay : IAsyncDisposable
 
     internal Uri Address { get; }
 
-    internal void SetBackend(int port)
+    internal void SetBackend(int port, IPAddress? address = null)
     {
         lock (this.gate)
         {
@@ -47,7 +47,7 @@ internal sealed class TestListenerRelay : IAsyncDisposable
             }
 
             this.forwarding = new CancellationTokenSource();
-            this.backend = new IPEndPoint(IPAddress.Loopback, port);
+            this.backend = new IPEndPoint(address ?? IPAddress.Loopback, port);
         }
     }
 

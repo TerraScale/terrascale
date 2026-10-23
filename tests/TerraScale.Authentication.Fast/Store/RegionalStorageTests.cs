@@ -17,12 +17,7 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Fast.Store;
 
-/// <summary>
-/// Exercises isolated local and authority stores through fixture-provided transports, plus the app's named endpoint.
-/// Every write and authorization read must fail closed without the authority. Regions are relays to the suite's TerraBase; they show where ts-auth
-/// connected, and two databases (<c>auth</c>, the designated copy; <c>auth-local</c>, this region's) show what each copy
-/// holds.
-/// </summary>
+/// <summary>Every storage operation uses the local region and fails closed when that backend is unavailable.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class RegionalStorageTests(TerraBaseFixture fixture)
 {
@@ -51,7 +46,7 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Discovery_and_jwks_read_this_regions_copy_and_every_other_read_the_designated_one()
+    public async Task Every_read_and_write_uses_this_regions_copy_even_when_other_regions_are_unavailable()
     {
         var (tenant, designated) = await fixture.CreateDatabaseAsync();
         var local = await fixture.CreateCopyAsync(tenant, Local);
@@ -60,25 +55,28 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         await using var gru = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
-        await using var auth = await StartAsync(tenant, own.Address, other, gru.Address);
+        await using var auth = await StartAsync(tenant, own.Address);
         var localKey = await KeyAsync(auth, local);
 
         await Assert.That(await JwksAsync(auth)).IsEquivalentTo([localKey]);
         await Assert.That(await DiscoveryAsync(auth, localProject)).IsEqualTo(HttpStatusCode.OK);
-        // A project this region's copy lacks (not replicated yet) is read from the designated region.
-        await Assert.That(await DiscoveryAsync(auth, newProject)).IsEqualTo(HttpStatusCode.OK);
-        // Any other read, a GET's included, comes from the designated region's copy, which lacks the local-only user.
-        await Assert.That(await UserAsync(auth, "local-only@example.test")).IsEqualTo(HttpStatusCode.NotFound);
+        gru.Stop();
+        other.Stop();
+        // Unreplicated remote state cannot authorize a local request.
+        await Assert.That(await DiscoveryAsync(auth, newProject)).IsEqualTo(HttpStatusCode.NotFound);
+        // Authorization reads use the same local copy as conditional writes.
+        await Assert.That(await UserAsync(auth, "local-only@example.test")).IsEqualTo(HttpStatusCode.OK);
         using var created = await auth.Client.PostAsync("/__test/users/created@example.test", null);
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(await UserAsync(auth, "created@example.test")).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await UsersIn(local).FindByEmailAsync(Instance, "created@example.test")).IsNull();
+        await Assert.That(await UsersIn(local).FindByEmailAsync(Instance, "created@example.test")).IsNotNull();
+        await Assert.That(await UsersIn(designated).FindByEmailAsync(Instance, "created@example.test")).IsNull();
         await Assert.That(own.Accepted).IsGreaterThan(0);
         await Assert.That(other.Accepted).IsEqualTo(0);
     }
 
     [Test]
-    public async Task While_the_designated_region_is_down_authorization_fails_closed_and_discovery_and_jwks_go_on()
+    public async Task While_the_local_region_is_down_every_request_fails_closed()
     {
         var (tenant, designated) = await fixture.CreateDatabaseAsync();
         var local = await fixture.CreateCopyAsync(tenant, Local);
@@ -88,11 +86,11 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         await using var gru = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
-        await using var auth = await StartAsync(tenant, own.Address, other, gru.Address);
-        var localKey = await KeyAsync(auth, local);
+        await using var auth = await StartAsync(tenant, own.Address);
+        await KeyAsync(auth, local);
         await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, TimeSpan.FromSeconds(15))).IsTrue();
 
-        gru.Stop();
+        own.Stop();
         using var refused = await auth.Client.PostAsync("/__test/users/new@example.test", null);
 
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
@@ -100,12 +98,14 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         await Assert.That(error.GetProperty("code").GetString()).IsEqualTo("temporarily_unavailable");
         await Assert.That(await UsersIn(local).FindByEmailAsync(Instance, "new@example.test")).IsNull();
         await Assert.That(await UsersIn(designated).FindByEmailAsync(Instance, "new@example.test")).IsNull();
-        // An authorization read never answers from this region's copy, which holds a user the designated one lacks.
+        // Neither stale local state nor a healthy remote copy bypasses the unavailable local backend.
         await Assert.That(await UserAsync(auth, "local-only@example.test")).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(await UserAsync(auth, "known@example.test")).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(await JwksAsync(auth)).IsEquivalentTo([localKey]);
-        await Assert.That(await DiscoveryAsync(auth, project)).IsEqualTo(HttpStatusCode.OK);
-        // Ready means the designated region takes writes.
+        using var jwks = await auth.Client.GetAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json");
+        await Assert.That(jwks.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await DiscoveryAsync(auth, project)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(other.Accepted).IsEqualTo(0);
+        // Ready requires the local backend to take writes.
         await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", TimeSpan.FromSeconds(15))).IsTrue();
     }
 
@@ -129,7 +129,7 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     [Arguments("Query")]
     [Arguments("QueryEquals")]
     [Arguments("Page")]
-    public async Task Outside_discovery_and_jwks_every_storage_call_fails_closed_while_the_designated_region_is_down(string operation)
+    public async Task Every_storage_call_fails_closed_while_the_local_region_is_down(string operation)
     {
         var (tenant, _) = await fixture.CreateDatabaseAsync();
         var local = await fixture.CreateCopyAsync(tenant, Local);
@@ -138,9 +138,9 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         await using var gru = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
-        await using var auth = await StartAsync(tenant, own.Address, other, gru.Address);
+        await using var auth = await StartAsync(tenant, own.Address);
         var store = auth.App.Services.GetRequiredService<AuthStore>();
-        gru.Stop();
+        own.Stop();
         var before = await ContentsAsync(local);
 
         var failure = await Assert.ThrowsAsync<ApiException>(() => RunAsync(store, operation, version));
@@ -163,17 +163,17 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     [Arguments("Transact")]
     [Arguments("CreateChallenge")]
     [Arguments("ConsumeChallenge")]
-    public async Task Every_write_lands_in_the_designated_copy_only(string operation)
+    public async Task Every_write_lands_in_the_local_copy_only(string operation)
     {
         var (tenant, designated) = await fixture.CreateDatabaseAsync();
         var local = await fixture.CreateCopyAsync(tenant, Local);
-        // Both copies hold what every write needs; versions name the designated copy's documents.
-        await SeedAsync(local);
-        var version = await SeedAsync(designated);
+        // Both copies hold what every write needs; versions name the local copy's documents.
+        var version = await SeedAsync(local);
+        await SeedAsync(designated);
         await using var gru = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
-        await using var auth = await StartAsync(tenant, own.Address, other, gru.Address);
+        await using var auth = await StartAsync(tenant, own.Address);
         var store = auth.App.Services.GetRequiredService<AuthStore>();
         var (localBefore, designatedBefore) = (await ContentsAsync(local), await ContentsAsync(designated));
 
@@ -186,8 +186,8 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         };
 
         await Assert.That(succeeded).IsTrue();
-        await Assert.That(await ContentsAsync(local)).IsEquivalentTo(localBefore);
-        await Assert.That(await ContentsAsync(designated)).IsNotEquivalentTo(designatedBefore);
+        await Assert.That(await ContentsAsync(local)).IsNotEquivalentTo(localBefore);
+        await Assert.That(await ContentsAsync(designated)).IsEquivalentTo(designatedBefore);
     }
 
     [Test]
@@ -219,20 +219,17 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         var accepted = elsewhere.Accepted;
         resolved.Clear();
         var failure = await Assert.ThrowsAsync<ApiException>(() =>
-            Through(auth.App.Services.GetRequiredKeyedService<HttpClient>(App.StorageAuthority), origin).PutDocumentAsync(AuthStore.UserCollection, AuthStore.NewId(), Record, TerraBasePrecondition.Absent));
-        var localFailure = await Assert.ThrowsAsync<ApiException>(() =>
             Through(auth.App.Services.GetRequiredService<HttpClient>(), origin).PutDocumentAsync(AuthStore.UserCollection, AuthStore.NewId(), Record, TerraBasePrecondition.Absent));
 
         await Assert.That(accepted).IsGreaterThan(0);
         await Assert.That(failure!.Status).IsEqualTo(StatusCodes.Status503ServiceUnavailable);
-        await Assert.That(localFailure!.Status).IsEqualTo(StatusCodes.Status503ServiceUnavailable);
         await Assert.That(resolved.Distinct()).IsEquivalentTo([origin.Host]);
         await Assert.That(elsewhere.Accepted).IsEqualTo(accepted);
         await Assert.That((await designated.ListDocumentsAsync(AuthStore.UserCollection)).Items.Count).IsEqualTo(1);
     }
 
     [Test]
-    public async Task Discovery_reads_move_to_another_region_when_their_own_stops_answering()
+    public async Task Discovery_fails_closed_when_its_local_region_stops_answering()
     {
         var (tenant, _) = await fixture.CreateDatabaseAsync();
         var local = await fixture.CreateCopyAsync(tenant, Local);
@@ -240,20 +237,19 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         await using var gru = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
-        await using var auth = await StartAsync(tenant, own.Address, other, gru.Address);
+        await using var auth = await StartAsync(tenant, own.Address);
         await Assert.That(await DiscoveryAsync(auth, project)).IsEqualTo(HttpStatusCode.OK);
 
         own.Stop();
 
-        // A request on the dropped connection fails with it (503); the next connection goes to the other region.
-        await Assert.That(await ReadinessWait.UntilAsync(async () => await DiscoveryAsync(auth, project) == HttpStatusCode.OK && other.Accepted > 0,
-            TimeSpan.FromSeconds(15))).IsTrue();
+        await Assert.That(await DiscoveryAsync(auth, project)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(other.Accepted).IsEqualTo(0);
     }
 
     [Test]
-    public async Task A_fixture_transport_can_use_an_alternate_when_its_primary_does_not_resolve()
+    public async Task An_unresolvable_local_backend_does_not_fall_back_to_another_region()
     {
-        // Generic transport behavior remains available to fixtures; the app registers no alternates.
+        // A healthy unrelated region must not silently substitute for an unavailable local backend.
         var (tenant, _) = await fixture.CreateDatabaseAsync();
         var local = await fixture.CreateCopyAsync(tenant, Local);
         var project = await ProjectAsync(local);
@@ -263,10 +259,10 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         Task<IPAddress[]> Resolve(string host, CancellationToken cancellationToken) => host == origin.Host
             ? Task.FromException<IPAddress[]>(new SocketException((int)SocketError.HostNotFound))
             : Dns.GetHostAddressesAsync(host, cancellationToken);
-        await using var auth = await StartAsync(tenant, origin, other, gru.Address, Resolve);
+        await using var auth = await AuthTestServer.StartAsync(services: services => TerraBaseFixture.UseRegionalStorage(services, tenant, origin, localDatabase: Local, resolve: Resolve));
 
-        await Assert.That(await DiscoveryAsync(auth, project)).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(other.Accepted).IsGreaterThan(0);
+        await Assert.That(await DiscoveryAsync(auth, project)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(other.Accepted).IsEqualTo(0);
     }
 
     private static readonly JsonElement Record = TerraBaseFixture.Json($$"""{"instanceId":"{{Instance}}"}""");
@@ -359,11 +355,11 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         return response.StatusCode;
     }
 
-    private static Task<AuthTestServer> StartAsync(TerraBaseTestTenant tenant, Uri ownRegion, TcpRelay other, Uri designatedRegion,
+    private static Task<AuthTestServer> StartAsync(TerraBaseTestTenant tenant, Uri ownRegion,
         TerraBaseTransport.HostResolver? resolve = null) =>
         AuthTestServer.StartAsync(
-            services: services => TerraBaseFixture.UseRegionalStorage(services, tenant, ownRegion, other, designatedRegion, localDatabase: Local, resolve: resolve),
-            // The operator's signing-key provisioning runs first, so /readyz shows whether the designated region takes writes.
+            services: services => TerraBaseFixture.UseRegionalStorage(services, tenant, ownRegion, localDatabase: Local, resolve: resolve),
+            // The operator's signing-key provisioning runs first, so /readyz shows whether the local region takes writes.
             beforeStart: services => SigningKeyProvisioning.ProvisionAsync(services, CancellationToken.None),
             routes: app =>
             {

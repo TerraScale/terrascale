@@ -10,10 +10,10 @@ namespace TerraBase.Features.UserAuth;
 /// the same signature again: verifying was 12 % of the write path's CPU (benchmark/bench/2026-10-12-write-path-cpu.md).
 /// An entry is what the handler derived from the token alone, keyed by the token's SHA-256 (never the token). It answers
 /// only while the issuer keys it was checked against are still the current list, so a refresh that withdraws a key drops
-/// every entry checked with it, and only within the token's lifetime plus the handler's clock skew, as validation would.
+/// every entry checked with it, and only strictly before the token's expiration, as validation would.
 /// Configuration (issuer, audiences) is fixed for the process, so the rest of validation cannot change its answer.
 /// </summary>
-internal sealed class ValidatedTokens
+internal sealed class ValidatedTokens([FromKeyedServices(UserAuthenticationHandler.SchemeName)] TimeProvider? time = null)
 {
     // About 1 KiB per entry: 4 MiB at most, then the whole cache starts over.
     private const int Capacity = 4096;
@@ -30,7 +30,7 @@ internal sealed class ValidatedTokens
     public bool TryGet(string key, IReadOnlyList<SecurityKey> keys, out Accepted accepted)
     {
         if (_entries.TryGetValue(key, out var found) && ReferenceEquals(found.Keys, keys)
-            && DateTime.UtcNow <= found.ValidTo + UserAuthenticationHandler.ClockSkew)
+            && (time ?? TimeProvider.System).GetUtcNow().UtcDateTime < found.ValidTo)
         {
             accepted = found;
             return true;

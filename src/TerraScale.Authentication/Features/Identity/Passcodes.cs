@@ -6,7 +6,6 @@ using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
-using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Features.Identity;
 
@@ -79,7 +78,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
         }
 
         return await users.FindByEmailAsync(instanceId, email, cancellationToken).ConfigureAwait(false) is { } user
-            ? await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, purpose, null, null, cancellationToken).ConfigureAwait(false)
+            ? await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, user.AuthStamp, purpose, null, null, cancellationToken).ConfigureAwait(false)
             : null;
     }
 
@@ -100,15 +99,16 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
         }
 
         return await users.FindByEmailAsync(instanceId, normalized, cancellationToken).ConfigureAwait(false) is { } user
-            ? await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, PasscodePurpose.SignIn, null, null, cancellationToken).ConfigureAwait(false)
-            : await this.IssueAsync(instanceId, SignUpKey + normalized, AuthStore.NewId(), normalized, 0, PasscodePurpose.SignUp, passwordHash,
+            ? await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, user.AuthStamp, PasscodePurpose.SignIn, null, null, cancellationToken).ConfigureAwait(false)
+            : await this.IssueAsync(instanceId, SignUpKey + normalized, AuthStore.NewId(), normalized, 0, null, PasscodePurpose.SignUp, passwordHash,
                 Tokens.Sha256Hex(pendingToken), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Redeems a sign-in code and opens a session. Returns <see langword="null"/> for an unknown email and for a wrong,
     /// expired, used, exhausted or superseded code alike. The code is consumed before the session is written, so a
-    /// failed session write costs the user a new code and never grants a second session.
+    /// failed session write costs the user a new code. Concurrent regions can issue provisional sessions; only the winning
+    /// redemption's sessions remain usable after replication.
     /// </summary>
     public async Task<IssuedSession?> VerifyAsync(string instanceId, string email, string code, CancellationToken cancellationToken = default)
     {
@@ -128,22 +128,37 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     }
 
     /// <summary>
-    /// Redeems a sign-in or password-reset code and returns the account as it was when the code was issued (its
-    /// authentication epoch included). Returns <see langword="null"/> for an unknown email and for a wrong, expired,
+    /// Redeems a sign-in code and returns the authenticated account, including its winner bindings.
+    /// Returns <see langword="null"/> for an unknown email and for a wrong, expired,
     /// used, exhausted, superseded or other-purpose code alike.
     /// </summary>
     public async Task<UserRecord?> RedeemAsync(string instanceId, string email, string code, PasscodePurpose purpose, CancellationToken cancellationToken = default)
     {
-        if (purpose is PasscodePurpose.SignUp || !WellFormed(code)
+        if (purpose is not PasscodePurpose.SignIn || !WellFormed(code)
             || await users.FindByEmailAsync(instanceId, email, cancellationToken).ConfigureAwait(false) is not { } user)
         {
             return null;
         }
 
-        return await this.ConsumeAsync(instanceId, user.Id, code.Trim(), purpose,
-            passcode => passcode.UserId == user.Id && passcode.Email == user.Email && passcode.AuthEpoch == user.AuthEpoch, cancellationToken).ConfigureAwait(false) is not null
-            ? user
-            : null;
+        var consumed = await this.ConsumeAsync(instanceId, user.Id, code.Trim(), purpose,
+            passcode => passcode.UserId == user.Id && passcode.Email == user.Email && passcode.AuthEpoch == user.AuthEpoch && passcode.AuthStamp == user.AuthStamp,
+            cancellationToken).ConfigureAwait(false);
+        return consumed?.AuthenticatedUser ?? (consumed is { Binding: { } binding }
+            ? user with { AuthenticationBindings = [.. user.AuthenticationBindings, .. consumed.IssuanceBindings, binding] } : null);
+    }
+
+    /// <summary>Atomically consumes a reset code and replaces the matching source password and authentication state.</summary>
+    public async Task<UserRecord?> ResetPasswordAsync(string instanceId, string email, string code, string passwordHash, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(passwordHash);
+        if (!WellFormed(code) || await users.FindByEmailAsync(instanceId, email, cancellationToken).ConfigureAwait(false) is not { } user)
+        {
+            return null;
+        }
+
+        return (await this.ConsumeAsync(instanceId, user.Id, code.Trim(), PasscodePurpose.PasswordReset,
+            passcode => passcode.UserId == user.Id && passcode.Email == user.Email && passcode.AuthEpoch == user.AuthEpoch && passcode.AuthStamp == user.AuthStamp,
+            cancellationToken, passwordHash).ConfigureAwait(false))?.AuthenticatedUser;
     }
 
     /// <summary>
@@ -163,21 +178,22 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
             return null;
         }
 
-        return await users.CreateAsync(instanceId, normalized, consumed.PasswordHash, cancellationToken).ConfigureAwait(false);
+        // The issuance fixes the account id: replaying one sign-up in two regions cannot create two different owners.
+        var user = await users.CreateAccountAsync(instanceId, normalized, consumed.PasswordHash, consumed.UserId, cancellationToken).ConfigureAwait(false);
+        // Account creation selects its scoped email owner and user state; separate claim clocks cannot choose its state.
+        return user;
     }
 
     /// <summary>
-    /// Deletes code records whose issue window, and so every code issued in it, has ended (pending sign-ups included) in
-    /// batches of <paramref name="batchSize"/>, each only at the version read. Such a record can neither redeem nor limit
-    /// anything, so deleting it changes no outcome; it keeps storage, and the password hashes of abandoned sign-ups,
-    /// proportional to recent requests. Returns how many this call deleted.
+    /// Clears expired code material in batches of <paramref name="batchSize"/>, preserving the issuance anchor so
+    /// a later request cannot reuse an earlier immutable claim. Returns how many records this call cleared.
     /// </summary>
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
         // Windows start at UTC instants, so their ISO 8601 text orders chronologically. Every code issued in a window
         // expires by its start + IssueWindow + Lifetime.
         var cutoff = JsonSerializer.Serialize(clock.GetUtcNow() - IssueWindow - Lifetime, IdentityJson.Default.DateTimeOffset);
-        using var filter = JsonDocument.Parse($$"""{"lte":["/windowStartedAt",{{cutoff}}]}""");
+        using var filter = JsonDocument.Parse($$$"""{"and":[{"lte":["/windowStartedAt",{{{cutoff}}}]},{"not":{"eq":["/pruned",true]}}]}""");
         var total = 0;
         while (true)
         {
@@ -186,8 +202,10 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
             foreach (var document in batch)
             {
                 if (document.Document.Deserialize(IdentityJson.Default.PasscodeRecord) is { } passcode
-                    && await store.CompareAndDeleteAsync(AuthStore.PasscodeCollection, passcode.InstanceId,
-                        passcode.Purpose == StoredPurpose(PasscodePurpose.SignUp) ? SignUpKey + passcode.Email : passcode.UserId, document.Version, cancellationToken).ConfigureAwait(false))
+                    && await store.CompareAndPutAsync(AuthStore.PasscodeCollection, passcode.InstanceId,
+                        passcode.Purpose == StoredPurpose(PasscodePurpose.SignUp) ? SignUpKey + passcode.Email : passcode.UserId,
+                        JsonSerializer.SerializeToElement(passcode with { CodeHash = string.Empty, PasswordHash = null, PendingTokenHash = null, Consumed = true, Pruned = true }, IdentityJson.Default.PasscodeRecord),
+                        document.Version, cancellationToken).ConfigureAwait(false))
                 {
                     deleted++;
                 }
@@ -216,12 +234,18 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     private static DateTimeOffset IssueWindowStart(DateTimeOffset timestamp) =>
         new(timestamp.UtcTicks / IssueWindow.Ticks * IssueWindow.Ticks, TimeSpan.Zero);
 
-    private async Task<IssuedPasscode?> IssueAsync(string instanceId, string key, string userId, string email, long authEpoch, PasscodePurpose purpose,
+    private async Task<IssuedPasscode?> IssueAsync(string instanceId, string key, string userId, string email, long authEpoch, string? authStamp, PasscodePurpose purpose,
         string? passwordHash, string? pendingTokenHash, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
         var document = await store.GetAsync(AuthStore.PasscodeCollection, instanceId, key, cancellationToken).ConfigureAwait(false);
         var previous = document?.Document.Deserialize(IdentityJson.Default.PasscodeRecord);
+        if (previous is not null && (previous.InstanceId != instanceId || previous.Email != email
+            || (purpose is not PasscodePurpose.SignUp && previous.UserId != userId)))
+        {
+            return null;
+        }
+
         var windowStart = IssueWindowStart(now);
         var previousWindowStart = previous is null ? windowStart : IssueWindowStart(previous.WindowStartedAt);
         var window = previousWindowStart >= windowStart ? previous : null;
@@ -230,29 +254,34 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
             return null;
         }
 
+        var sameState = previous is not null && previous.AuthEpoch == authEpoch && previous.AuthStamp == authStamp;
+        var ancestors = sameState ? previous!.IssuanceBindings : [];
+        // shortcut: reserve two proofs for state and redemption; a fresh code renews state instead of dropping proofs.
+        var recovery = sameState && (previous!.ResetsAuthentication || ancestors.Count >= AuthStore.MaxCredentialBindings - 2
+            || !await store.AreCredentialsCurrentAsync(instanceId, ancestors, cancellationToken).ConfigureAwait(false));
+        var issuance = recovery ? null : AuthStore.NewCredentialBinding("passcode-issuance",
+            AuthStore.NaturalKeyId(instanceId, key, AuthStore.NaturalKeyId(instanceId, authStamp ?? "initial",
+                sameState ? previous!.IssueId.Length > 0 ? previous.IssueId : previous.CodeHash : "initial")));
         var code = Tokens.RandomDigits(6)!;
         var passcode = new PasscodeRecord(instanceId, userId, email, this.Digest(instanceId, userId, code), authEpoch, now + Lifetime,
-            FailedAttempts: 0, Consumed: false, window is null ? windowStart : previousWindowStart, (window?.IssuedInWindow ?? 0) + 1, StoredPurpose(purpose), passwordHash, pendingTokenHash);
+            FailedAttempts: 0, Consumed: false, window is null ? windowStart : previousWindowStart, (window?.IssuedInWindow ?? 0) + 1, StoredPurpose(purpose), passwordHash, pendingTokenHash)
+        {
+            IssueId = issuance?.OwnerId ?? AuthStore.NewId(),
+            AuthStamp = authStamp,
+            IssuanceBindings = issuance is null ? [] : [.. ancestors, issuance],
+            ResetsAuthentication = recovery,
+        };
         var record = JsonSerializer.SerializeToElement(passcode, IdentityJson.Default.PasscodeRecord);
-        bool written;
-        if (document is null)
+        List<StoreOperation> operations = [document is null
+            ? AuthStore.Create(AuthStore.PasscodeCollection, instanceId, key, record)
+            : AuthStore.Replace(AuthStore.PasscodeCollection, instanceId, key, record, document.Version)];
+        if (issuance is not null)
         {
-            try
-            {
-                await store.CreateAsync(AuthStore.PasscodeCollection, instanceId, key, record, cancellationToken).ConfigureAwait(false);
-                written = true;
-            }
-            catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed")
-            {
-                written = false;
-            }
-        }
-        else
-        {
-            written = await store.CompareAndPutAsync(AuthStore.PasscodeCollection, instanceId, key, record, document.Version, cancellationToken).ConfigureAwait(false);
+            operations.Add(AuthStore.CredentialClaim(instanceId, issuance));
         }
 
-        return written ? new IssuedPasscode(email, code, passcode.ExpiresAt, purpose) : null;
+        return await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null
+            ? new IssuedPasscode(email, code, passcode.ExpiresAt, purpose) : null;
     }
 
     /// <summary>
@@ -261,7 +290,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     /// it), or <see langword="null"/>.
     /// </summary>
     private async Task<PasscodeRecord?> ConsumeAsync(string instanceId, string key, string code, PasscodePurpose purpose, Func<PasscodeRecord, bool> belongs,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, string? passwordHash = null)
     {
         // A round loses its write only to another charged guess, a redemption or a reissue, each bounded, so these
         // rounds reach a verdict under any realistic contention. Running out reveals nothing and charges nothing.
@@ -270,21 +299,50 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
             var document = await store.GetAsync(AuthStore.PasscodeCollection, instanceId, key, cancellationToken).ConfigureAwait(false);
             var passcode = document?.Document.Deserialize(IdentityJson.Default.PasscodeRecord);
             if (passcode is null || passcode.Consumed || passcode.FailedAttempts >= MaxAttempts || passcode.ExpiresAt <= clock.GetUtcNow()
-                || passcode.InstanceId != instanceId || passcode.Purpose != StoredPurpose(purpose) || !belongs(passcode))
+                || passcode.InstanceId != instanceId || passcode.Purpose != StoredPurpose(purpose) || !belongs(passcode)
+                || (!passcode.ResetsAuthentication && purpose is not PasscodePurpose.PasswordReset
+                    && !await store.AreCredentialsCurrentAsync(instanceId, passcode.IssuanceBindings, cancellationToken).ConfigureAwait(false)))
             {
                 return null;
             }
 
             var matches = Tokens.FixedTimeEquals(passcode.CodeHash, this.Digest(instanceId, passcode.UserId, code));
             var charged = matches ? passcode with { Consumed = true, PasswordHash = null } : passcode with { FailedAttempts = passcode.FailedAttempts + 1 };
-            if (!await store.CompareAndPutAsync(AuthStore.PasscodeCollection, instanceId, key,
-                    JsonSerializer.SerializeToElement(charged, IdentityJson.Default.PasscodeRecord), document!.Version, cancellationToken).ConfigureAwait(false))
+            var binding = matches ? AuthStore.NewCredentialBinding("passcode", AuthStore.NaturalKeyId(instanceId, key, passcode.IssueId.Length > 0 ? passcode.IssueId : passcode.CodeHash)) : null;
+            List<StoreOperation> operations = [AuthStore.Replace(AuthStore.PasscodeCollection, instanceId, key,
+                JsonSerializer.SerializeToElement(charged, IdentityJson.Default.PasscodeRecord), document!.Version)];
+            if (binding is not null)
+            {
+                operations.Add(AuthStore.CredentialClaim(instanceId, binding));
+            }
+
+            UserRecord? authenticated = null;
+            if (matches && (purpose is PasscodePurpose.PasswordReset || (passcode.ResetsAuthentication && purpose is not PasscodePurpose.SignUp)))
+            {
+                if (await users.GetVersionedAsync(instanceId, passcode.UserId, cancellationToken).ConfigureAwait(false) is not { } current
+                    || current.User.AuthEpoch != passcode.AuthEpoch || current.User.AuthStamp != passcode.AuthStamp)
+                {
+                    return null;
+                }
+
+                // User state is the reset winner; separate document claim clocks do not select the password.
+                authenticated = Users.BindAuthenticationState(current.User with
+                {
+                    PasswordHash = passwordHash ?? current.User.PasswordHash,
+                    AuthEpoch = checked(current.User.AuthEpoch + 1),
+                    AuthStamp = AuthStore.NewId(),
+                });
+                operations.Add(AuthStore.Replace(AuthStore.UserCollection, instanceId, current.User.Id,
+                    JsonSerializer.SerializeToElement(authenticated, IdentityJson.Default.UserRecord), current.Version));
+            }
+
+            if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is not null)
             {
                 continue;
             }
 
             // A write that completes after expiry grants nothing.
-            return matches && passcode.ExpiresAt > clock.GetUtcNow() ? passcode : null;
+            return matches && passcode.ExpiresAt > clock.GetUtcNow() ? passcode with { Binding = binding, AuthenticatedUser = authenticated } : null;
         }
 
         return null;

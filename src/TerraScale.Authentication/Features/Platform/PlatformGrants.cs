@@ -21,7 +21,7 @@ namespace TerraScale.Authentication.Features.Platform;
 /// <summary>
 /// The token endpoint grants of the platform contract (TS-598): an API key's client credentials, and a user's sign-in
 /// access token exchanged (RFC 8693), for a token that acts in one organization or project. The tokens are ES256
-/// <c>at+jwt</c> for the configured audiences, live at most 15 minutes and carry <c>org_id</c>, <c>project_id</c>,
+/// <c>at+jwt</c> for the configured audiences, live at most 5 minutes and carry <c>org_id</c>, <c>project_id</c>,
 /// <c>database</c> and <c>scope</c>; no refresh or identity token comes with them, and no token entry is stored.
 /// </summary>
 public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Users users, TotpCredentials mfa, AttemptLimiter limiter, AuthOptions options, TimeProvider clock,
@@ -37,12 +37,14 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
     public const string DatabaseClaim = "database";
 
     /// <summary>The lifetime of organization and project tokens.</summary>
-    public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(15);
+    public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(5);
 
     private static readonly TimeSpan AuthenticationTimeClockSkew = TimeSpan.FromSeconds(30);
 
     /// <summary>Token requests per API key per minute.</summary>
     public const int KeyRequestsPerMinute = 1000;
+
+    internal const string InvalidApiKeyNotice = "The API key is invalid, revoked, expired, or superseded by a concurrent change in another region. Use the latest credential.";
 
     /// <summary>The <c>client_credentials</c> grant of an API key OpenIddict has authenticated.</summary>
     public async Task<IResult> ApiKeyAsync(HttpContext context, OpenIddictRequest request, CancellationToken cancellationToken)
@@ -52,10 +54,10 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
         // Read the key again and check the presented string against it: whatever OpenIddict saw, a key revoked or rotated
         // since then, on any replica, issues nothing.
         if (await keys.FindAsync(request.ClientId!, cancellationToken) is not { } key
-            || request.ClientSecret is not { } secret || !Matches(secret, keys.Digests(key))
+            || request.ClientSecret is not { } secret || !Matches(secret, await keys.DigestsAsync(key, cancellationToken))
             || await directory.OrganizationAsync(key.OrganizationId, cancellationToken) is null)
         {
-            return OidcResults.Forbid(Errors.InvalidClient, "The API key is unknown, revoked or expired.");
+            return OidcResults.Forbid(Errors.InvalidClient, InvalidApiKeyNotice);
         }
 
         if (!await limiter.TryAcquireAsync(PlatformDirectory.Instance, "api-key-token", key.Id, KeyRequestsPerMinute, cancellationToken))
@@ -101,6 +103,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
             || subject.GetClaim(Claims.Subject) is not { } userId
             || await users.GetAsync(PlatformDirectory.Instance, userId, cancellationToken) is not { } user
             || subject.GetClaim(OidcIssuer.EpochClaim) != user.AuthEpoch.ToString(CultureInfo.InvariantCulture)
+            || subject.GetClaim(OidcIssuer.StateClaim) != user.AuthStamp
             || subject.GetExpirationDate() is not { } expires || expires <= clock.GetUtcNow()
             || request.SubjectToken is not { } encoded
             || !new JsonWebToken(encoded).TryGetPayloadValue<object>(Claims.AuthenticationTime, out var rawAuthenticationTime)
@@ -301,7 +304,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
 }
 
 /// <summary>
-/// Stores no token entry for the 15-minute organization and project tokens and for service clients' tokens: they are
+/// Stores no token entry for the 5-minute organization and project tokens and for service clients' tokens: they are
 /// validated offline and never revoked one by one (revoking the key or the role is the control), so an entry would only
 /// grow storage. Every other token keeps its entry.
 /// </summary>
@@ -318,6 +321,22 @@ public sealed class SkipShortLivedTokenEntries : OpenIddict.Server.IOpenIddictSe
         }
 
         return ValueTask.CompletedTask;
+    }
+}
+
+/// <summary>Preserves API-key recovery guidance when OpenIddict rejects a filtered secret before grant handling.</summary>
+public sealed class ApiKeyFailureNotice(ApiKeys keys) : OpenIddict.Server.IOpenIddictServerHandler<OpenIddict.Server.OpenIddictServerEvents.ApplyTokenResponseContext>
+{
+    /// <inheritdoc />
+    public async ValueTask HandleAsync(OpenIddict.Server.OpenIddictServerEvents.ApplyTokenResponseContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.Response.Error == Errors.InvalidClient && context.Request?.IsClientCredentialsGrantType() == true
+            && context.Request.ClientId is { } clientId
+            && await keys.FindAsync(clientId, context.CancellationToken).ConfigureAwait(false) is not null)
+        {
+            context.Response.ErrorDescription = PlatformGrants.InvalidApiKeyNotice;
+        }
     }
 }
 

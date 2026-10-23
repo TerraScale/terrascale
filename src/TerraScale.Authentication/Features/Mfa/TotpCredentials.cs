@@ -118,7 +118,7 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
             RecoveryHashes = codes.Select(Tokens.Sha256Hex).ToArray(),
             RecoveryExpiresAt = recoveryExpires,
         };
-        var advanced = user.User with { AuthEpoch = checked(user.User.AuthEpoch + 1) };
+        var advanced = Users.BindAuthenticationState(user.User with { AuthEpoch = checked(user.User.AuthEpoch + 1), AuthStamp = AuthStore.NewId() });
         return await this.CommitAsync(user.User, active, current.Version, (advanced, user.Version), authorization, cancellationToken).ConfigureAwait(false)
             ? new IssuedRecoveryCodes(advanced, codes, recoveryExpires)
             : null;
@@ -160,13 +160,13 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
         }
 
         var disabled = current.Record with { SecretBox = null, Enabled = false, EnrollmentExpiresAt = null, LastAcceptedStep = -1, RecoveryHashes = [], RecoveryExpiresAt = null };
-        var advanced = user.User with { AuthEpoch = checked(user.User.AuthEpoch + 1) };
+        var advanced = Users.BindAuthenticationState(user.User with { AuthEpoch = checked(user.User.AuthEpoch + 1), AuthStamp = AuthStore.NewId() });
         return await this.CommitAsync(user.User, disabled, current.Version, (advanced, user.Version), authorization, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<(UserRecord User, string Version)?> CurrentUserAsync(UserRecord caller, CancellationToken cancellationToken) =>
         await users.GetVersionedAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is { } current
-        && current.User.AuthEpoch == caller.AuthEpoch ? current : null;
+        && current.User.AuthEpoch == caller.AuthEpoch && current.User.AuthStamp == caller.AuthStamp ? current : null;
 
     private async Task<(TotpCredentialRecord Record, string Version)?> ReadAsync(UserRecord caller, CancellationToken cancellationToken)
     {

@@ -1,4 +1,6 @@
 using System.Security.Cryptography;
+using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
@@ -54,6 +56,9 @@ public static class OidcIssuer
     /// </summary>
     public const string EpochClaim = "ts_auth_epoch";
 
+    /// <summary>The winning authentication-state identity, independent of concurrent equal numeric epochs.</summary>
+    public const string StateClaim = "ts_auth_state";
+
     /// <summary>The discovery document's path under a tenant's issuer.</summary>
     public const string ConfigurationPath = ".well-known/openid-configuration";
 
@@ -61,7 +66,7 @@ public static class OidcIssuer
     public const string JwksPath = ".well-known/jwks.json";
 
     /// <summary>Lifetime of access and identity tokens; within the key ring's <c>Jwt.MaxLifetime</c>.</summary>
-    public static readonly TimeSpan TokenLifetime = TimeSpan.FromHours(1);
+    public static readonly TimeSpan TokenLifetime = TimeSpan.FromMinutes(5);
 
     /// <summary>The platform issuer, derived only from the configured public origin.</summary>
     public static Uri Issuer(AuthOptions options) => Issuer(options, Slug);
@@ -93,6 +98,8 @@ public static class OidcIssuer
         services.AddOpenIddict()
             .AddCore(core =>
             {
+                // Replicated payload and revocation winners must be read from the current regional store.
+                core.DisableEntityCaching();
                 core.SetDefaultApplicationEntity<OidcApplication>()
                     .SetDefaultAuthorizationEntity<OidcAuthorization>()
                     .SetDefaultTokenEntity<OidcToken>()
@@ -141,12 +148,19 @@ public static class OidcIssuer
                     .AddEncryptionKey(new SymmetricSecurityKey(Derive(options, "ts-auth oidc token encryption")) { KeyId = "ts-auth-internal" })
                     .Configure(server => server.CodeChallengeMethods.Remove(CodeChallengeMethods.Plain))
                     .RemoveEventHandler(OpenIddictServerHandlers.RedeemTokenEntry.Descriptor)
+                    .RemoveEventHandler(OpenIddictServerHandlers.Protection.ValidateTokenEntry.Descriptor)
                     .RemoveEventHandler(OpenIddictServerHandlers.Discovery.AttachSigningKeys.Descriptor)
                     .AddEventHandler<ProcessRequestContext>(handler => handler.UseSingletonHandler<TrustPublicOrigin>()
                         .SetOrder(OpenIddictServerAspNetCoreHandlers.ResolveRequestUri.Descriptor.Order + 1)
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<GenerateTokenContext>(handler => handler.UseSingletonHandler<SkipShortLivedTokenEntries>()
                         .SetOrder(OpenIddictServerHandlers.Protection.CreateTokenEntry.Descriptor.Order - 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<GenerateTokenContext>(handler => handler.UseScopedHandler<BindIssuedCredential>()
+                        .SetOrder(OpenIddictServerHandlers.Protection.CreateTokenEntry.Descriptor.Order + 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ValidateTokenContext>(handler => handler.UseScopedHandler<ValidateCredentialLineage>()
+                        .SetOrder(OpenIddictServerHandlers.Protection.ValidateTokenEntry.Descriptor.Order)
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<GenerateTokenContext>(handler => handler.UseSingletonHandler<SignWithKeyRing>()
                         .SetOrder(OpenIddictServerHandlers.Protection.AttachSecurityCredentials.Descriptor.Order + 1)
@@ -165,6 +179,9 @@ public static class OidcIssuer
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ApplyTokenResponseContext>(handler => handler.UseSingletonHandler<CountTokenResponses>()
                         .SetOrder(int.MinValue)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ApplyTokenResponseContext>(handler => handler.UseSingletonHandler<ApiKeyFailureNotice>()
+                        .SetOrder(OpenIddictServerAspNetCoreHandlers.AttachWwwAuthenticateHeader<ApplyTokenResponseContext>.Descriptor.Order - 1)
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ApplyAuthorizationResponseContext>(handler => handler.UseSingletonHandler<RenderLocalErrorPage<ApplyAuthorizationResponseContext>>()
                         .SetOrder(OpenIddictServerAspNetCoreHandlers.ProcessLocalErrorResponse<ApplyAuthorizationResponseContext>.Descriptor.Order - 1)
@@ -290,7 +307,7 @@ public sealed class SignWithKeyRing(KeyRing ring) : IOpenIddictServerHandler<Gen
 
 /// <summary>
 /// Validates access and identity tokens against every key in the instance's ring, read on each request so every
-/// replica sees a rotation at once. The startup placeholder never validates anything.
+/// replica sees replicated rotations. The startup placeholder never validates anything.
 /// </summary>
 public sealed class ValidateWithKeyRing(KeyRing ring) : IOpenIddictServerHandler<ValidateTokenContext>
 {
@@ -332,15 +349,18 @@ public sealed class PublishKeyRing(KeyRing ring) : IOpenIddictServerHandler<Hand
 /// <summary>
 /// Replaces OpenIddict's redemption step, which ignores a lost redemption for refresh tokens. Here a code, device code,
 /// device user code or refresh token is redeemed by a conditional write on the version this request validated, so of any number of concurrent
-/// redemptions exactly one succeeds. A loser is treated as reuse: the authorization is revoked, which rejects every
-/// token issued under it, the winner's new ones included, wherever ts-auth validates them.
+/// redemptions one succeeds locally. Replicated winner claims invalidate only losing descendants; the winning branch
+/// remains usable, including when the original credential is replayed.
 /// </summary>
-public sealed class RedeemExactlyOnce(IOpenIddictTokenManager tokens, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations) : IOpenIddictServerHandler<ProcessSignInContext>
+public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, AuthStore store, TimeProvider clock) : IOpenIddictServerHandler<ProcessSignInContext>
 {
+    internal const string DeviceAuthorizationClaim = "ts_auth_device_authorization";
+
     /// <inheritdoc />
     public async ValueTask HandleAsync(ProcessSignInContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
+        context.Transaction.SetProperty(CredentialLineage.BindingsProperty, CredentialLineage.Read(context.Principal!));
         if (context.EndpointType is not (OpenIddictServerEndpointType.Token or OpenIddictServerEndpointType.EndUserVerification))
         {
             return;
@@ -358,40 +378,107 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenManager tokens, IOpenIddic
             return;
         }
 
-        // The request-scoped entity cache returns the copy validation read, so the write fails if anything changed it.
         var token = await tokens.FindByIdAsync(identifier, context.CancellationToken).ConfigureAwait(false);
-        if (token is not null && await tokens.HasStatusAsync(token, Statuses.Valid, context.CancellationToken).ConfigureAwait(false)
-            && await tokens.TryRedeemAsync(token, context.CancellationToken).ConfigureAwait(false))
+        if (token is not { Status: Statuses.Valid, Version: not null })
         {
-            // OpenIddict creates the device flow's authorization at the device endpoint, before any user, and keeps it
-            // at approval: bind it to the approving user so subject checks and revocation by subject see it.
-            if (context.EndpointType is OpenIddictServerEndpointType.EndUserVerification
-                && principal.GetAuthorizationId() is { Length: > 0 } id
-                && await authorizations.FindByIdAsync(id, context.CancellationToken).ConfigureAwait(false) is { Subject: null } authorization)
+            context.Reject(Errors.InvalidGrant, CredentialLineage.ConflictNotice);
+            return;
+        }
+
+        var inherited = token.Bindings.Concat(CredentialLineage.Read(context.Principal!)).Distinct().ToArray();
+        var addsBinding = context.EndpointType is not OpenIddictServerEndpointType.EndUserVerification;
+        var binding = AuthStore.NewCredentialBinding("oidc", identifier);
+        List<StoreOperation> operations =
+        [
+            AuthStore.CredentialClaim(OidcIssuer.InstanceId, binding),
+            AuthStore.Replace(AuthStore.OidcTokenCollection, OidcIssuer.InstanceId, identifier,
+                Redeemed(token, clock.GetUtcNow()), token.Version),
+        ];
+        string? approvedAuthorizationId = null;
+        if (!addsBinding)
+        {
+            if (principal.GetAuthorizationId() is not { Length: > 0 } parentId
+                || await authorizations.FindByIdAsync(parentId, context.CancellationToken).ConfigureAwait(false) is not { Status: Statuses.Valid } parent
+                || context.Principal!.GetClaim(Claims.Subject) is not { Length: > 0 } subject)
             {
-                authorization.Subject = context.Principal!.GetClaim(Claims.Subject);
-                await authorizations.UpdateAsync(authorization, context.CancellationToken).ConfigureAwait(false);
+                context.Reject(Errors.InvalidGrant, CredentialLineage.ConflictNotice);
+                return;
+            }
+
+            inherited = [.. inherited.Append(AuthStore.AuthorizationBinding(parentId)).Distinct()];
+            var approval = new OidcAuthorization
+            {
+                Id = AuthStore.NewId(),
+                InstanceId = OidcIssuer.InstanceId,
+                ApplicationId = parent.ApplicationId,
+                CreationDate = clock.GetUtcNow(),
+                Properties = parent.Properties,
+                Scopes = [.. context.Principal!.GetScopes()],
+                Status = Statuses.Valid,
+                Subject = subject,
+                Type = AuthorizationTypes.AdHoc,
+            };
+            approvedAuthorizationId = approval.Id;
+            using var valid = JsonDocument.Parse("""{"eq":["/status","valid"]}""");
+            operations.Add(AuthStore.Require(AuthStore.OidcAuthorizationCollection, OidcIssuer.InstanceId, parentId, valid.RootElement.Clone()));
+            operations.Add(AuthStore.Create(AuthStore.OidcAuthorizationCollection, OidcIssuer.InstanceId, approval.Id,
+                JsonSerializer.SerializeToElement(approval, OidcJson.Default.OidcAuthorization)));
+        }
+        else if (context.Request.IsDeviceCodeGrantType())
+        {
+            if (principal.GetClaim(DeviceAuthorizationClaim) is not { Length: > 0 } approvalId
+                || await authorizations.FindByIdAsync(approvalId, context.CancellationToken).ConfigureAwait(false) is not { Status: Statuses.Valid } approval
+                || approval.Subject != context.Principal!.GetClaim(Claims.Subject) || approval.ApplicationId != token.ApplicationId)
+            {
+                context.Reject(Errors.InvalidGrant, CredentialLineage.ConflictNotice);
+                return;
+            }
+
+            approvedAuthorizationId = approvalId;
+        }
+
+        if (inherited.Length + (addsBinding ? 1 : 0) > AuthStore.MaxCredentialBindings)
+        {
+            context.Reject(Errors.InvalidGrant, "This sign-in reached its rotation limit. Sign in again to continue.");
+            return;
+        }
+
+        if (await store.AreCredentialsCurrentAsync(OidcIssuer.InstanceId, inherited, context.CancellationToken).ConfigureAwait(false)
+            && await store.TransactAsync(operations, context.CancellationToken).ConfigureAwait(false) is null)
+        {
+            // Approval rewrites the existing device-code record; that record's LWW payload selects the approver.
+            // Only redemption that creates distinct successor credentials needs the additional branch binding.
+            var bindings = addsBinding ? [.. inherited, binding] : inherited;
+            CredentialLineage.Attach(context.Principal!, bindings);
+            context.Transaction.SetProperty(CredentialLineage.BindingsProperty, (IReadOnlyList<CredentialBinding>)bindings);
+            if (!addsBinding)
+            {
+                // The encrypted payload selects its own subject-bound authorization; the shared parent stays unchanged.
+                context.Principal!.SetClaim(DeviceAuthorizationClaim, approvedAuthorizationId);
+            }
+            else if (approvedAuthorizationId is not null)
+            {
+                context.Principal!.SetAuthorizationId(approvedAuthorizationId);
             }
 
             return;
         }
 
-        if (principal.GetAuthorizationId() is { Length: > 0 } authorizationId)
-        {
-            await tokens.RevokeByAuthorizationIdAsync(authorizationId, context.CancellationToken).ConfigureAwait(false);
-        }
+        context.Reject(Errors.InvalidGrant, CredentialLineage.ConflictNotice);
+    }
 
-        context.Reject(Errors.InvalidGrant, context.EndpointType is OpenIddictServerEndpointType.EndUserVerification ? "The device code has already been decided."
-            : context.Request.IsAuthorizationCodeGrantType() ? "The authorization code has already been redeemed."
-            : context.Request.IsDeviceCodeGrantType() ? "The device code has already been redeemed."
-            : "The refresh token has already been redeemed.");
+    private static JsonElement Redeemed(OidcToken token, DateTimeOffset now)
+    {
+        token.Status = Statuses.Redeemed;
+        token.RedemptionDate = now;
+        return JsonSerializer.SerializeToElement(token, OidcJson.Default.OidcToken);
     }
 }
 
 /// <summary>
 /// Makes revocation (RFC 7009) end the whole sign-in, as §2.1 recommends: revoking a refresh or access token revokes
 /// its authorization, so every refresh token of that sign-in is refused and ts-auth stops accepting its access tokens.
-/// Access tokens validated offline, as TerraBase does, stay valid until they expire (at most 1 hour).
+/// Access tokens validated offline, as TerraBase does, stay valid until they expire (at most 5 minutes).
 /// </summary>
 public sealed class RevokeTheSignIn(IOpenIddictTokenManager tokens) : IOpenIddictServerHandler<HandleRevocationRequestContext>
 {

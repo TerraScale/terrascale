@@ -12,6 +12,7 @@ case SignInStep.Password:
 break;
 case SignInStep.Code:
 <p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 10 minutes.</p>
+<p class="sub">If this code recovers access after repeated requests, using it signs out your older sessions.</p>
 break;
 case SignInStep.Continue:
 <p class="sub">Returning to the application…</p>
@@ -30,6 +31,7 @@ case SignInStep.SignUp:
 break;
 case SignInStep.SignUpCode:
 <p class="sub">We emailed a six-digit code to <strong>@Model.Email</strong>. It expires in 10 minutes.</p>
+<p class="sub">For an existing account, recovery after repeated code requests signs out your older sessions.</p>
 break;
 case SignInStep.Reset:
 <p class="sub">Enter your account email and we will send you a reset code.</p>

@@ -23,11 +23,12 @@ internal sealed class UserAuthenticationHandler(
     UrlEncoder encoder,
     TerraBaseOptions terraBase,
     IIssuerKeys issuerKeys,
-    ValidatedTokens validated) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    ValidatedTokens validated,
+    [FromKeyedServices(UserAuthenticationHandler.SchemeName)] TimeProvider? time = null) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     public const string SchemeName = UserAuthExtensions.TokenScheme;
 
-    /// <summary>Tolerance for clock differences with ts-auth on <c>exp</c> and <c>nbf</c>.</summary>
+    /// <summary>Tolerance for clock differences with ts-auth on <c>nbf</c>; <c>exp</c> is strict.</summary>
     public static readonly TimeSpan ClockSkew = TimeSpan.FromSeconds(30);
 
     private static readonly JsonWebTokenHandler Tokens = new();
@@ -189,5 +190,11 @@ internal sealed class UserAuthenticationHandler(
         RequireSignedTokens = true,
         RequireExpirationTime = true,
         ClockSkew = ClockSkew,
+        LifetimeValidator = (notBefore, expires, _, _) =>
+        {
+            var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+            return expires is { } end && now < end
+                && (notBefore is not { } start || start <= end && start <= now + ClockSkew);
+        },
     };
 }

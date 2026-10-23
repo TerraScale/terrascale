@@ -70,6 +70,7 @@ public sealed class AuthTestServer : IAsyncDisposable
         var app = TerraScale.Authentication.App.Build(AuthOptions.Load(values), builder =>
         {
             builder.Configuration["TERRABASE_PEER_SECRET"] = TerraBaseTestServer.PeerSecret;
+            builder.Configuration["TS_REGION"] = "gru";
             // Tests change keys behind the server's back; every lookup reads TerraBase unless a test opts in.
             builder.Services.AddSingleton(new KeyRingRefresh(TimeSpan.Zero));
             builder.Services.AddSingleton(provider => new PlatformBootstrap(provider.GetRequiredService<AuthStore>(),

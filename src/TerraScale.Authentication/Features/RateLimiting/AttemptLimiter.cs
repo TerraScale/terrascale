@@ -13,13 +13,15 @@ public readonly record struct AttemptRejection(DateTimeOffset Until, TimeSpan Re
 
 /// <summary>
 /// Fixed attempt windows (one minute unless a caller chooses another) and elapsed cooldowns shared by every replica through conditional writes to
-/// TerraBase, for authentication, recovery, verification and token endpoints. A replica with a
+/// TerraBase, for authentication, recovery, verification and token endpoints. Each region conditionally updates only its
+/// own bucket on its region's single TerraBase node; reads sum the three replicated components.
+/// Delayed replication can admit extra attempts, but never replaces another region's contribution. A replica with a
 /// slower clock never resets a window another replica has already advanced. Storage failure or
 /// persistent contention fails closed with 503; an attempt is never admitted unrecorded.
 /// </summary>
-public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, AuthOptions options)
+public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, AuthOptions options, string region = "gru")
 {
-    /// <summary>The TerraBase collection holding one <see cref="AttemptBucket"/> per limited subject.</summary>
+    /// <summary>The TerraBase collection holding up to three regional <see cref="AttemptBucket"/> documents per limited subject, plus notice claims.</summary>
     public const string Collection = "rate_limits";
 
     private static readonly TimeSpan DefaultWindow = TimeSpan.FromMinutes(1);
@@ -27,6 +29,11 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
     // More rounds than any realistic number of replicas racing on one subject, so only storage
     // that keeps rejecting writes (or a stampede beyond it) reaches the ceiling and fails closed.
     private const int MaxRounds = 64;
+
+    private static readonly string[] Regions = ["gru", "sjc", "fra"];
+
+    private readonly int regionIndex = Array.IndexOf(Regions, region) is var index && index >= 0
+        ? index : throw new ArgumentException("The auth region must be gru, sjc or fra.", nameof(region));
 
     private readonly FailClosedDocumentStore store = new(storage);
 
@@ -60,7 +67,7 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
     /// instance. Returns <see langword="null"/> when admitted; once <paramref name="maximum"/>
     /// attempts were admitted, returns the delay to the persisted window's end, rounded up to whole
     /// seconds (at least one), even when another replica's clock is ahead. Each distinct subject keeps
-    /// one bucket document, so the subject must be an identifier the service already holds (user, client); a caller that
+    /// at most three regional bucket documents, so the subject must be an identifier the service already holds (user, client); a caller that
     /// limits by attacker-chosen text must first <see cref="Fold"/> it. Windows are fixed
     /// multiples of <paramref name="window"/> (whole seconds); one purpose must always use the same window.
     /// </summary>
@@ -151,9 +158,10 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
             ? (DateTimeOffset.MaxValue.UtcTicks - DateTimeOffset.UnixEpoch.UtcTicks - window.Ticks) / TimeSpan.TicksPerMillisecond
             : DateTimeOffset.MaxValue.ToUnixTimeSeconds() / windowSeconds - 1;
 
-        // The address is scoped to the instance; purposes are service-chosen and never contain
-        // ':', and the subject comes last.
-        var key = this.BucketKey(purpose, subject);
+        // shortcut: one TerraBase writer per region; use per-writer components before adding independent same-region writers.
+        // The address is instance-scoped; service-chosen purposes never contain ':', and the subject comes last.
+        var keys = Regions.Select(component => this.BucketKey(purpose, component + ":" + subject)).ToArray();
+        var key = keys[this.regionIndex];
 
         // Every lost conditional write means another attempt was admitted (or the window rolled
         // over, or the bucket was created), so maximum + 2 rounds always reach a decision unless
@@ -162,38 +170,36 @@ public sealed class AttemptLimiter(IDocumentStore storage, TimeProvider clock, A
         {
             var now = clock.GetUtcNow();
             var number = cooldown ? now.ToUnixTimeMilliseconds() : now.ToUnixTimeSeconds() / windowSeconds;
-            var current = await this.store.GetAsync<AttemptBucket>(Collection, instanceId, key, cancellationToken);
-            if (current is null)
+            // Each serving region owns one component. Replication never merges two regions' increments into a
+            // last-writer-wins integer, including when both regions create their first bucket during a partition.
+            var components = await Task.WhenAll(keys.Select(component => this.store.GetAsync<AttemptBucket>(Collection, instanceId, component, cancellationToken)));
+            foreach (var component in components)
             {
-                if (await this.store.TryCreateAsync(Collection, instanceId, key, new AttemptBucket(number, 1), cancellationToken))
+                if (component is not null && (component.Document is not { Window: >= 0, Used: >= 0 }
+                    || component.Document.Window > latestWindow))
                 {
-                    return null;
+                    throw ApiException.Unavailable(new InvalidDataException("A stored attempt bucket holds an invalid window timestamp or count."));
                 }
-
-                continue;
             }
 
-            // Cooldowns store Unix milliseconds; fixed windows store window numbers. Bound each
-            // so its end timestamp is representable before charging anything.
-            if (current.Document is not { Window: >= 0, Used: >= 0 }
-                || current.Document.Window > latestWindow)
-            {
-                throw ApiException.Unavailable(new InvalidDataException("A stored attempt bucket holds an invalid window timestamp or count."));
-            }
-
-            var expired = cooldown
-                ? (number - current.Document.Window) * TimeSpan.TicksPerMillisecond >= window.Ticks
-                : current.Document.Window < number;
-            var bucket = expired ? new AttemptBucket(number, 0) : current.Document;
-            if (bucket.Used >= maximum)
+            var latest = components.Where(component => component is not null).Select(component => component!.Document.Window).DefaultIfEmpty(number).Max();
+            var effective = cooldown
+                ? (number - latest) * TimeSpan.TicksPerMillisecond >= window.Ticks ? number : latest
+                : Math.Max(number, latest);
+            var used = components.Where(component => component?.Document.Window == effective).Sum(component => (long)component!.Document.Used);
+            if (used >= maximum)
             {
                 var end = cooldown
-                    ? DateTimeOffset.FromUnixTimeMilliseconds(bucket.Window) + window
-                    : DateTimeOffset.FromUnixTimeSeconds((bucket.Window + 1) * windowSeconds);
+                    ? DateTimeOffset.FromUnixTimeMilliseconds(effective) + window
+                    : DateTimeOffset.FromUnixTimeSeconds((effective + 1) * windowSeconds);
                 return new AttemptRejection(end, TimeSpan.FromSeconds(Math.Max(1, Math.Ceiling((end - clock.GetUtcNow()).TotalSeconds))));
             }
 
-            if (await this.store.TryReplaceAsync(Collection, instanceId, key, bucket with { Used = bucket.Used + 1 }, current.Version, cancellationToken))
+            var current = components[this.regionIndex];
+            var bucket = new AttemptBucket(effective, current?.Document.Window == effective ? checked(current.Document.Used + 1) : 1);
+            if (current is null
+                ? await this.store.TryCreateAsync(Collection, instanceId, key, bucket, cancellationToken)
+                : await this.store.TryReplaceAsync(Collection, instanceId, key, bucket, current.Version, cancellationToken))
             {
                 return null;
             }

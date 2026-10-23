@@ -438,7 +438,11 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         // Synthetic weak sessions exercise authorization composition, including users with an active factor.
         var token = Tokens.RandomToken(48);
         var key = Tokens.Sha256Hex(token);
-        var session = new IssuedSession(token, new SessionRecord(caller.InstanceId, caller.Id, key, caller.AuthEpoch, clock.UtcNow, clock.UtcNow + Sessions.Lifetime));
+        var session = new IssuedSession(token, new SessionRecord(caller.InstanceId, caller.Id, key, caller.AuthEpoch, clock.UtcNow, clock.UtcNow + Sessions.Lifetime)
+        {
+            AuthStamp = caller.AuthStamp,
+            Bindings = caller.AuthenticationBindings,
+        });
         await store.CreateAsync(AuthStore.SessionCollection, caller.InstanceId, key,
             JsonSerializer.SerializeToElement(session.Session, IdentityJson.Default.SessionRecord));
         var document = (await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, key))!;
@@ -446,6 +450,8 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         await Assert.That(record.InstanceId).IsEqualTo(caller.InstanceId);
         await Assert.That(record.UserId).IsEqualTo(caller.Id);
         await Assert.That(record.AuthEpoch).IsEqualTo(caller.AuthEpoch);
+        await Assert.That(record.AuthStamp).IsEqualTo(caller.AuthStamp);
+        await Assert.That(record.Bindings).IsEquivalentTo(caller.AuthenticationBindings);
         await Assert.That(record.TokenHash).IsEqualTo(key);
         return (session, document, new MfaAuthorization(AuthStore.Delete(AuthStore.SessionCollection, caller.InstanceId, key, document.Version), clock.UtcNow.AddMinutes(5)));
     }

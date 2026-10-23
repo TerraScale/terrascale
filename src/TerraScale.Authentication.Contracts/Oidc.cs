@@ -93,12 +93,15 @@ public sealed class OidcAuthorization
 
 /// <summary>
 /// A token entry (collection <c>oidc_tokens</c>). Status changes, such as redeeming a code or refresh token, are
-/// conditional writes on <see cref="Version"/>, so concurrent redemptions have exactly one winner. A reference token's
+/// conditional writes on <see cref="Version"/> locally; replicated winner claims select one usable branch across regions. A reference token's
 /// <see cref="ReferenceId"/> is OpenIddict's SHA-256 digest of the bearer handle, and <see cref="Payload"/> is the
 /// token encrypted under a key derived from the master key.
 /// </summary>
 public sealed class OidcToken
 {
+    /// <summary>Immutable proof ancestry checked against the regional replicated claims on every use.</summary>
+    public IReadOnlyList<CredentialBinding> Bindings { get; set; } = [];
+
     /// <summary>Canonical ULID.</summary>
     public string? Id { get; set; }
 

@@ -12,8 +12,8 @@ public sealed record Versioned<T>(T Document, string Version);
 /// <summary>
 /// The conditional writes that counter and key-rotation state relies on, addressed by collection,
 /// instance and key. Implementations must make <see cref="TryCreateAsync{T}"/> and
-/// <see cref="TryReplaceAsync{T}"/> atomic at the storage authority, across every replica, and
-/// <see cref="GetAsync{T}"/> must return the latest committed version from that authority.
+/// <see cref="TryReplaceAsync{T}"/> atomic in the configured region, and
+/// <see cref="GetAsync{T}"/> reads that region's replicated copy. Cross-region counters need independently owned components.
 /// </summary>
 public interface IDocumentStore
 {

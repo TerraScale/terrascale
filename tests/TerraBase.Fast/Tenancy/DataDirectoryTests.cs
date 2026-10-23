@@ -201,21 +201,19 @@ public sealed class DataDirectoryTests
     [Test]
     public async Task Evicted_idle_connections_are_closed_before_shutdown_releases_the_data_directory()
     {
-        // Periodic catalog reads rent pooled sessions; freeze their clock while checking the exact idle count.
+        // Keep periodic catalog readers from renting between the controlled returns and the idle-count assertion.
         await using var server = await TerraBaseTestServer.StartAsync(settings => settings["shutdown-grace-seconds"] = "1",
             services => services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow)));
         var engine = server.Services.GetRequiredService<TursoStorageEngine>();
-        var project = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString());
-        var connections = new List<SqliteConnection>();
-        var stores = new List<TursoDatabaseStore>();
-        // More databases than the pool keeps idle connections for: returning the later sessions evicts earlier ones.
+        var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
+        await engine.CreateDatabaseAsync(database, CancellationToken.None);
+        var path = Path.Combine(server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
+        List<SqliteConnection> connections = [];
+        List<TursoDatabaseStore> stores = [];
+        // Untracked stores, one session each: background readers cannot rent these, and the per-database cap does not apply.
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
         {
-            var database = project with { DatabaseId = EntityIds.New().ToString() };
-            await engine.CreateDatabaseAsync(database, CancellationToken.None);
-            var path = Path.Combine(server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
-            // These stores share the live engine's pool, but no background transaction can rent their sessions.
-            var store = new TursoDatabaseStore("eviction", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64;");
+            var store = new TursoDatabaseStore("probe", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;");
             stores.Add(store);
             var connection = new SqliteConnection(Connect(path));
             var session = await OpenSessionAsync(connection);
@@ -225,10 +223,11 @@ public sealed class DataDirectoryTests
             engine.Pool.Return(store, session);
         }
 
-        // Background work cannot rent these stores; only front-eviction can remove their idle sessions.
         await Assert.That(stores.Take(8).All(store => engine.Pool.IdleCountOf(store) == 0)).IsTrue();
+        await Assert.That(engine.Pool.IdleCount).IsEqualTo(engine.Pool.MaxIdle);
+        await Assert.That(connections.Count(connection => connection.State == System.Data.ConnectionState.Closed)).IsEqualTo(8);
 
-        // Production stops workers before their engine; disposing it beneath catalog convergence races its next read.
+        // Stop workers before their engine, matching production shutdown.
         var completion = server.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
         server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
         await completion.WaitAsync(TestContext.Current!.Execution.CancellationToken);

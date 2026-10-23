@@ -102,8 +102,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
 
         // Hashed before the code is consumed, so a busy replica never burns the user's code.
         var hash = await passwords.HashAsync(password, cancellationToken);
-        if (await passcodes.RedeemAsync(OidcIssuer.InstanceId, email, code, PasscodePurpose.PasswordReset, cancellationToken) is not { } user
-            || !await users.SetPasswordAsync(OidcIssuer.InstanceId, user.Id, user.AuthEpoch, hash, cancellationToken))
+        if (await passcodes.ResetPasswordAsync(OidcIssuer.InstanceId, email, code, hash, cancellationToken) is not { } user)
         {
             logger.ZLogInformation($"Audit: hosted {method:@Method} refused");
             return (false, null);

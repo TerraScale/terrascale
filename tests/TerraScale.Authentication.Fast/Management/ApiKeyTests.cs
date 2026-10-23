@@ -106,7 +106,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(exchanged.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(exchanged.Headers.CacheControl!.NoStore).IsTrue();
         var body = await OidcHarness.JsonAsync(exchanged);
-        await Assert.That(body.GetProperty("expires_in").GetInt32()).IsBetween(890, 900);
+        await Assert.That(body.GetProperty("expires_in").GetInt32()).IsBetween(290, 300);
         await Assert.That(body.TryGetProperty("refresh_token", out _)).IsFalse();
         await Assert.That(body.TryGetProperty("id_token", out _)).IsFalse();
         var access = await oidc.ValidateAsync(body.GetProperty("access_token").GetString()!, Audience);
@@ -119,7 +119,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(access.GetClaim("database").Value).IsEqualTo("app");
         await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["documents:read", "documents:write"]);
         await Assert.That(access.TryGetClaim("email", out _)).IsFalse();
-        await Assert.That((access.ValidTo - access.IssuedAt).TotalSeconds).IsEqualTo(900);
+        await Assert.That((access.ValidTo - access.IssuedAt).TotalSeconds).IsEqualTo(300);
 
         // The key string authenticates with client_secret_post too; scopes narrow but never widen.
         using (var posted = await oidc.PostTokenAsync(new() { ["grant_type"] = "client_credentials", ["client_id"] = id, ["client_secret"] = key, ["scope"] = "documents:read" }, null, null))
@@ -479,7 +479,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
             await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(first);
             await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "databases:write", "documents:read", "documents:write"]);
             await Assert.That(access.Audiences.ToArray()).IsEquivalentTo([Audience]);
-            await Assert.That((access.ValidTo - access.IssuedAt).TotalSeconds).IsLessThanOrEqualTo(900);
+            await Assert.That((access.ValidTo - access.IssuedAt).TotalSeconds).IsLessThanOrEqualTo(300);
 
             // Organization and project tokens never open the management API.
             await Assert.That(await oidc.FailAsync(HttpMethod.Get, Organizations, body.GetProperty("access_token").GetString()!)).IsEqualTo((401, "unauthorized"));

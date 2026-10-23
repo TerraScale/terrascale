@@ -343,7 +343,7 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Activating_a_users_factor_preserves_service_and_api_key_client_credentials()
+    public async Task Activating_a_users_factor_revokes_their_delegated_keys_but_preserves_service_and_other_users_keys()
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         await using var oidc = await StartAsync(clock);
@@ -352,6 +352,15 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         var created = await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{artifacts.Organization}/api-keys", artifacts.AccessToken,
             new { name = "backend", scopes = ReadScopes }, HttpStatusCode.Created);
         var key = created.GetProperty("key").GetString()!;
+        using (var before = await oidc.ApiKeyTokenAsync(key))
+        {
+            await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var other = await oidc.CreateUserAsync("bob@example.test");
+        var otherArtifacts = await ArtifactsAsync(oidc, other);
+        var otherCreated = await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{otherArtifacts.Organization}/api-keys", otherArtifacts.AccessToken,
+            new { name = "other backend", scopes = ReadScopes }, HttpStatusCode.Created);
         await ActivateAsync(oidc.Server, user, clock);
 
         foreach (var unavailable in new[] { false, true })
@@ -369,12 +378,16 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
             await Assert.That(serviceTokens.TryGetProperty("id_token", out _)).IsFalse();
             await Assert.That(serviceTokens.TryGetProperty("refresh_token", out _)).IsFalse();
 
-            using var apiKey = await oidc.ApiKeyTokenAsync(key);
+            using var revoked = await oidc.ApiKeyTokenAsync(key);
+            await RefusedAsync(revoked, HttpStatusCode.Unauthorized);
+            await Assert.That(await OidcHarness.ErrorAsync(revoked)).IsEqualTo("invalid_client");
+
+            using var apiKey = await oidc.ApiKeyTokenAsync(otherCreated.GetProperty("key").GetString()!);
             await Assert.That(apiKey.StatusCode).IsEqualTo(HttpStatusCode.OK);
             var apiTokens = await OidcHarness.JsonAsync(apiKey);
             var apiAccess = await oidc.ValidateAsync(apiTokens.GetProperty("access_token").GetString()!, Audience);
-            await Assert.That(apiAccess.Subject).IsEqualTo(created.GetProperty("api_key").GetProperty("id").GetString()!);
-            await Assert.That(apiAccess.GetClaim("org_id").Value).IsEqualTo(artifacts.Organization);
+            await Assert.That(apiAccess.Subject).IsEqualTo(otherCreated.GetProperty("api_key").GetProperty("id").GetString()!);
+            await Assert.That(apiAccess.GetClaim("org_id").Value).IsEqualTo(otherArtifacts.Organization);
             await Assert.That(apiAccess.GetClaim("scope").Value).IsEqualTo("documents:read");
             await Assert.That(apiTokens.TryGetProperty("id_token", out _)).IsFalse();
             await Assert.That(apiTokens.TryGetProperty("refresh_token", out _)).IsFalse();

@@ -24,13 +24,10 @@ public static class App
     /// <summary>OpenAPI document title; clients key on it.</summary>
     public const string ApiTitle = "TerraScale Auth API";
 
-    /// <summary>Service key of the authority's <see cref="TerraBaseDatabase"/> and <see cref="HttpClient"/>.</summary>
-    public const string StorageAuthority = "terrabase-authority";
-
     /// <summary>
-    /// The explicitly trusted storage endpoint, required outside Development. Every write and authorization read uses
-    /// this authority without fallback: TerraBase preconditions must be ordered by one copy for single-use credentials,
-    /// unique claims and revocations. Development alone may use the loopback default.
+    /// The trusted regional storage endpoint, required outside Development. Reads and writes use this copy without
+    /// remote fallback; replicated winner claims reconcile concurrent conditional credentials.
+    /// Development alone may use the loopback default.
     /// </summary>
     public static Uri TerraBaseOrigin(AuthOptions options) => options.TerraBaseUrl
         ?? (options.Development ? new("http://127.0.0.1:8081")
@@ -78,7 +75,7 @@ public static class App
         }
 
         builder.Services.AddSingleton(TimeProvider.System);
-        // Both clients use the named endpoint without fallback; tests may isolate discovery/JWKS from authority storage.
+        // All storage traffic uses the configured regional endpoint without remote fallback.
         builder.Services.AddSingleton(services => new HttpClient(TerraBaseTransport.CreateHandler(
             [],
             services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
@@ -87,18 +84,7 @@ public static class App
         {
             BaseAddress = TerraBaseOrigin(options),
         }).Database(StorageProject, StorageDatabase));
-        builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) => new HttpClient(TerraBaseTransport.CreateHandler(
-            [], services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
-            peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable])));
-        builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) =>
-            options.TerraBaseUrl is { } authority
-                ? new TerraBaseDocumentsClient(services.GetRequiredKeyedService<HttpClient>(StorageAuthority), new TerraBaseDocumentsClientOptions
-                {
-                    BaseAddress = authority,
-                }).Database(StorageProject, StorageDatabase)
-                : services.GetRequiredService<TerraBaseDatabase>());
-        builder.Services.AddSingleton(services => new AuthStore(services.GetRequiredService<TerraBaseDatabase>(),
-            services.GetRequiredKeyedService<TerraBaseDatabase>(StorageAuthority), services.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton(services => new AuthStore(services.GetRequiredService<TerraBaseDatabase>(), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<Users>();
         builder.Services.AddSingleton<Sessions>();
         builder.Services.AddSingleton<Passcodes>();
@@ -115,8 +101,8 @@ public static class App
         builder.Services.AddSingleton<GitHubActionsKeys>();
         builder.Services.AddSingleton<Invitations>();
         builder.Services.AddHostedService<SessionPruner>();
-        // Ready means the authority takes writes.
-        builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredKeyedService<TerraBaseDatabase>(StorageAuthority)));
+        // Ready means this regional copy takes writes.
+        builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredService<TerraBaseDatabase>()));
         builder.Services.AddSingleton<IStorageHealth, SigningKeyReadiness>();
         builder.Services.AddSingleton<ReadinessProbe>();
         builder.Services.AddHostedService(services => services.GetRequiredService<ReadinessProbe>());
@@ -124,7 +110,8 @@ public static class App
         builder.Services.AddSingleton<KeyRing>();
         builder.Services.AddSingleton<SigningKeyRotation>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<SigningKeyRotation>());
-        builder.Services.AddSingleton<AttemptLimiter>();
+        builder.Services.AddSingleton(services => new AttemptLimiter(services.GetRequiredService<IDocumentStore>(), services.GetRequiredService<TimeProvider>(), options,
+            services.GetRequiredService<IConfiguration>()["TS_REGION"] ?? (options.Development ? "gru" : throw new AuthConfigurationException("TS_REGION is required outside Development"))));
         if (options.CloudflareEmail is { } cloudflareEmail)
         {
             builder.Services.AddSingleton(cloudflareEmail);
