@@ -1177,7 +1177,7 @@ public sealed class RemoteAckTests
             await held.Applied.Task.WaitAsync(pair.Token);
             var waiting = await pair.WaitEntered.Task.WaitAsync(pair.Token);
             await Assert.That(waiting.IsCompleted).IsFalse();
-            var actual = await pair.Remote.HeldOriginsAsync(pair.Database, pair.Token);
+            var actual = await ((ObservedRemote)pair.Remote).Inner.HeldOriginsAsync(pair.Database, pair.Token);
             await Assert.That(actual.Contains(pair.PeerNode)).IsTrue().Because("the origin holds the peer's joined row");
             // This ACK's proof sees the peer's joined origin as not held, so it stops at that row and must keep the own range.
             pair.Proof.Blind = true;
@@ -1189,7 +1189,9 @@ public sealed class RemoteAckTests
             await pair.Proof.Committed.Task.WaitAsync(pair.Token);
 
             var store = await pair.OriginStoreAsync();
-            var sealer = pair.OriginSealer;
+            // Force the background retention path while the proof walk must still be stopped.
+            await pair.OriginServer.Services.GetRequiredService<TursoChangeGroupSource>().TrimAsync(await pair.OriginSqliteAsync(), pair.Token);
+            var sealer = SealerOf(pair.OriginServer, ((ObservedRemote)pair.Remote).Inner);
             var head = await (await pair.OriginSqliteAsync()).WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
@@ -2017,14 +2019,16 @@ public sealed class RemoteAckTests
 
     private sealed class ObservedRemote(IRemoteDurability inner, Pair pair) : IRemoteDurability
     {
+        public IRemoteDurability Inner => inner;
+
         public bool Confirms => inner.Confirms;
 
         public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => inner.OtherRegionsAsync(cancellationToken);
 
         public ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) => inner.AdmitAsync(database, cancellationToken);
 
-        public ValueTask<IReadOnlySet<ReplicaId>> HeldOriginsAsync(TenantContext database, CancellationToken cancellationToken) =>
-            inner.HeldOriginsAsync(database, cancellationToken);
+        public async ValueTask<IReadOnlySet<ReplicaId>> HeldOriginsAsync(TenantContext database, CancellationToken cancellationToken) =>
+            new GatedHeld(await inner.HeldOriginsAsync(database, cancellationToken), pair.Proof);
 
         public async ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken)
         {

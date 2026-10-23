@@ -74,9 +74,9 @@ internal sealed partial class SqliteStorageTransaction
                 cancellationToken.ThrowIfCancellationRequested();
                 var bucket = ordered[index];
                 var resume = after is { } from && from.Bucket == bucket ? from : null;
-                // Complete reads share one indexed page across buckets, with the same bounded key preflight.
+                // The explicit lower bound lets Turso seek without sorting the remaining suffix.
                 var predicate = all
-                    ? "bucket > $bucket OR (bucket = $bucket AND ($resume = 0 OR collection > $collection OR (collection = $collection AND id > $id)))"
+                    ? "bucket >= $bucket AND (bucket > $bucket OR (bucket = $bucket AND ($resume = 0 OR collection > $collection OR (collection = $collection AND id > $id))))"
                     : "bucket = $bucket AND ($resume = 0 OR collection > $collection OR (collection = $collection AND id > $id))";
                 var order = all ? "bucket, collection, id" : "collection, id";
                 var sizes = Command($"""

@@ -521,38 +521,59 @@ public sealed class PeerStreamDeadlineTests
 
         await Assert.That(peer.BatchesBeforeRelease).IsEqualTo(32);
         source!.ResetDatabase = databases[0];
-        await PutStoredAsync(api, databases[0], "prepared");
-        await source.Prepared.Task.WaitAsync(Deadline);
-        // Stable is queued before the held page returns; only ReserveAsync can drain it during this prepared send.
-        release.SetResult();
-        await peer.StableSent.Task.WaitAsync(Deadline);
-        source.Release.SetResult();
-        await source.Reset.Task.WaitAsync(Deadline);
-        var stored = api.Server.Services.GetRequiredService<FaultAwareReplicaSource>();
-        await TerraBaseTestServer.EventuallyAsync(async token =>
+        try
         {
-            foreach (var database in databases.Skip(1))
+            await PutStoredAsync(api, databases[0], "prepared");
+            await source.Prepared.Task.WaitAsync(Deadline);
+            // Stable is queued before the held page returns; only ReserveAsync can drain it during this prepared send.
+            release.SetResult();
+            await peer.StableSent.Task.WaitAsync(Deadline);
+            source.Release.SetResult();
+            await source.Reset.Task.WaitAsync(Deadline);
+            var stored = api.Server.Services.GetRequiredService<FaultAwareReplicaSource>();
+            await TerraBaseTestServer.EventuallyAsync(async token =>
             {
-                var pin = await IncarnationAsync(api, database);
-                var head = await stored.HeadAsync(database, pin, token);
-                if ((await stored.AckedAsync(database, replica, token))?.Acked != head)
+                foreach (var database in databases.Skip(1))
                 {
-                    return false;
+                    var pin = await IncarnationAsync(api, database);
+                    var head = await stored.HeadAsync(database, pin, token);
+                    if ((await stored.AckedAsync(database, replica, token))?.Acked != head)
+                    {
+                        return false;
+                    }
                 }
-            }
 
-            return true;
-        }, Deadline);
-        await source.Reinitialized.Task.WaitAsync(Deadline);
-        var abandoned = await stored.AckedAsync(databases[0], replica, CancellationToken.None)
-            ?? throw new InvalidOperationException("the reset source cursor was refused");
-        var preparedHead = await stored.HeadAsync(databases[0], await IncarnationAsync(api, databases[0]), CancellationToken.None)
-            ?? throw new InvalidOperationException("the prepared source head was refused");
-        await Assert.That(abandoned.Acked).IsLessThan(preparedHead)
-            .Because("the prepared frame is abandoned when the matching cursor is reset");
-        await Assert.That(peer.Streams).IsEqualTo(1);
-        await Assert.That(peer.FirstEnded.Task.IsCompleted).IsFalse();
-        await Assert.That(warnings.Failure.Task.IsCompleted).IsFalse();
+                return true;
+            }, Deadline);
+            await source.Reinitialized.Task.WaitAsync(Deadline);
+            // The fresh cursor read is held; a heartbeat orders every earlier prepared write before this observation.
+            await time.UntilTimerAsync(Idle, after: 0, period: Idle);
+            time.Advance(Idle);
+            PushFrame observed;
+            do
+            {
+                observed = await peer.NextAsync();
+                await Assert.That(observed.Hello).IsNull();
+            }
+            while (observed.Heartbeat is null);
+            await Assert.That(peer.BatchesReceived).IsEqualTo(32)
+                .Because("the prepared batch never reached the peer before cursor reinitialization");
+            var abandoned = await stored.AckedAsync(databases[0], replica, CancellationToken.None)
+                ?? throw new InvalidOperationException("the reset source cursor was refused");
+            var preparedHead = await stored.HeadAsync(databases[0], await IncarnationAsync(api, databases[0]), CancellationToken.None)
+                ?? throw new InvalidOperationException("the prepared source head was refused");
+            await Assert.That(abandoned.Acked).IsLessThan(preparedHead)
+                .Because("the prepared frame is abandoned when the matching cursor is reset");
+            await Assert.That(peer.Streams).IsEqualTo(1);
+            await Assert.That(peer.FirstEnded.Task.IsCompleted).IsFalse();
+            await Assert.That(warnings.Failure.Task.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            _ = release.TrySetResult();
+            _ = source.Release.TrySetResult();
+            _ = source.ReinitializeRelease.TrySetResult();
+        }
     }
 
     private static async Task PutStoredAsync(ManagementApi api, TenantContext database, string id)
@@ -998,6 +1019,7 @@ public sealed class PeerStreamDeadlineTests
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Reset { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Reinitialized { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReinitializeRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public async IAsyncEnumerable<TenantContext> ListDatabasesAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
         {
@@ -1026,6 +1048,7 @@ public sealed class PeerStreamDeadlineTests
             if (database == ResetDatabase && Reset.Task.IsCompleted)
             {
                 _ = Reinitialized.TrySetResult();
+                await ReinitializeRelease.Task.WaitAsync(cancellationToken);
             }
 
             return await inner.AckedAsync(database, peer, cancellationToken);
@@ -1301,6 +1324,7 @@ public sealed class PeerStreamDeadlineTests
         private WebApplication? _app;
         private int _streams;
         private int _batchesBeforeRelease;
+        private int _batchesReceived;
 
         private FakePeer(
             int silentStreams, RepairState? repair, TaskCompletionSource? refillRelease, TaskCompletionSource? batchRelease,
@@ -1322,6 +1346,7 @@ public sealed class PeerStreamDeadlineTests
 
         public int Streams => Volatile.Read(ref _streams);
         public int BatchesBeforeRelease => Volatile.Read(ref _batchesBeforeRelease);
+        public int BatchesReceived => Volatile.Read(ref _batchesReceived);
 
         // Completes once a silent stream holds a window's worth of unread frames: the sender cannot write more to it.
         public TaskCompletionSource Stalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1484,6 +1509,7 @@ public sealed class PeerStreamDeadlineTests
                     reading = requests.MoveNext(context.CancellationToken);
                     if (frame.Batch is { } batch)
                     {
+                        _ = Interlocked.Increment(ref _batchesReceived);
                         var ack = new Ack { Database = batch.Database, ChangeId = batch.LastChangeId };
                         if (released.IsCompleted)
                         {

@@ -37,9 +37,11 @@ public sealed class StorageQuotaTests
             await transaction.CommitAsync(CancellationToken.None);
         }
 
-        // Each read-pool timestamp advances beyond both commercial and default safety deadlines.
+        // Each request read-pool timestamp advances beyond both commercial and default safety deadlines.
         // The direct commit invalidated cached usage: cold accounting must total 7 + 21 bytes, not time out.
         clock.Enabled = true;
+        // Background reconciliation must remain outside the request-only artificial deadline.
+        await api.Server.Services.GetRequiredService<EngineManagementService>().ConvergeAsync(CancellationToken.None);
         await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 2 }));
         var foreground = await api.SendAsync(HttpMethod.Post, api.Query, new { limit = 1 });
         await Assert.That((foreground.Status, foreground.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query"));
@@ -265,7 +267,9 @@ public sealed class StorageQuotaTests
         private long _timestamp;
         public bool Enabled { get; set; }
         public override long TimestampFrequency => 1000;
-        public override long GetTimestamp() => Enabled && Thread.CurrentThread.Name == "terrabase-sqlite"
+        // Background catalog queries must not consume this request-only artificial deadline.
+        public override long GetTimestamp() => QosContext.Current is null ? 0
+            : Enabled && Thread.CurrentThread.Name == "terrabase-sqlite"
             ? Interlocked.Add(ref _timestamp, 1_000_000) : Volatile.Read(ref _timestamp);
     }
 
