@@ -417,6 +417,12 @@
     },
     {
       "client": "documents",
+      "operation": "exportDatabase",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/export"
+    },
+    {
+      "client": "documents",
       "operation": "getDeclaredCollectionSchema",
       "method": "GET",
       "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/schema"

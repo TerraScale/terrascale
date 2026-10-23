@@ -39,6 +39,8 @@ Task<TerraBaseDatabaseUsage> GetUsageAsync(string? granularity = null,
 IAsyncEnumerable<TerraBaseChangesEvent> StreamChangesAsync(string? cursor = null,
     string? lastEventId = null, IReadOnlyList<string>? collections = null,
     CancellationToken cancellationToken = default);
+IAsyncEnumerable<TerraBaseExportLine> ExportAsync(TerraBaseExportCursor? after = null,
+    CancellationToken cancellationToken = default);
 Task<TerraBaseManagedDatabase> BranchAsync(string name, CancellationToken cancellationToken = default);
 Task<TerraBaseSqlResult> RunSqlAsync(string sql, CancellationToken cancellationToken = default);
 Task<TerraBaseIndexList> ListIndexesAsync(string? collection = null, CancellationToken cancellationToken = default);
@@ -88,6 +90,10 @@ No cursor replays retained history; `cursor=now` starts at the current head. `La
 **Producer routing limitation (source-derived, not observed live):** a pinned regional `CreateDatabaseAsync(homeRegion: otherRegion)` can return 503 `region_unavailable`, rather than 421, after Fly replays it to the home region while retaining the pinned host (`DatabaseRegions.cs` and `Listeners.cs`). This remains `TerraBaseUnavailableException`, sent once; no SDK reroute/retry is added. The producer owner must qualify that interaction.
 
 Streams use the in-box SSE parser behind a 4 MiB event bound, including unterminated lines and multiline data. There is no background queue. Response acquisition uses RequestTimeout; an active stream outlives it. Each blocked read has a fixed 45-second timeout, allowing the producer's 15-second heartbeat. Consumer cancellation/disposal closes the response and request; backpressure retains only parser buffers/current event. Caller-owned HttpClient timeouts remain the caller's responsibility.
+
+## Database export
+
+`ExportAsync` reads `GET /v1/projects/{project}/databases/{database}/export` (documents:read) from the unmerged producer PR [#412](https://github.com/TerraScale/terrascale/pull/412); it is in `routes.json` but not in the pinned source or `current-public-routes.json` yet. The body is `application/x-ndjson`, one `{collection,id,document}` line per live document, in collection then id order, from one read snapshot. `after` sends `after_collection` and `after_id` together; pass the last received line's `Cursor` to resume, which reads a new snapshot. Lines are parsed incrementally and each is bounded by MaxResponseBytes. A connection lost mid-stream throws; a final line without its newline is `invalid_response`, so a delivered line is always whole. Errors use the usual mapping: 400 validation, 403 forbidden, 404 `unknown_database`, 503 unavailable. RequestTimeout covers acquisition only; the producer sends no heartbeat, so the SDK has no idle timeout and caller cancellation closes the stream. Sent once, never retried.
 
 ## R6-FIX surface design — pending producer, not implemented
 
