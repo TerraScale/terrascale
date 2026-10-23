@@ -339,7 +339,7 @@ public sealed class PublishKeyRing(KeyRing ring) : IOpenIddictServerHandler<Hand
 /// redemptions exactly one succeeds. A loser is treated as reuse: the authorization is revoked, which rejects every
 /// token issued under it, the winner's new ones included, wherever ts-auth validates them.
 /// </summary>
-public sealed class RedeemExactlyOnce(IOpenIddictTokenManager tokens) : IOpenIddictServerHandler<ProcessSignInContext>
+public sealed class RedeemExactlyOnce(IOpenIddictTokenManager tokens, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations) : IOpenIddictServerHandler<ProcessSignInContext>
 {
     /// <inheritdoc />
     public async ValueTask HandleAsync(ProcessSignInContext context)
@@ -367,6 +367,16 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenManager tokens) : IOpenIdd
         if (token is not null && await tokens.HasStatusAsync(token, Statuses.Valid, context.CancellationToken).ConfigureAwait(false)
             && await tokens.TryRedeemAsync(token, context.CancellationToken).ConfigureAwait(false))
         {
+            // OpenIddict creates the device flow's authorization at the device endpoint, before any user, and keeps it
+            // at approval: bind it to the approving user so subject checks and revocation by subject see it.
+            if (context.EndpointType is OpenIddictServerEndpointType.EndUserVerification
+                && principal.GetAuthorizationId() is { Length: > 0 } id
+                && await authorizations.FindByIdAsync(id, context.CancellationToken).ConfigureAwait(false) is { Subject: null } authorization)
+            {
+                authorization.Subject = context.Principal!.GetClaim(Claims.Subject);
+                await authorizations.UpdateAsync(authorization, context.CancellationToken).ConfigureAwait(false);
+            }
+
             return;
         }
 
