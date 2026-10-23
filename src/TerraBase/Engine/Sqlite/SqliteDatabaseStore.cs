@@ -261,8 +261,9 @@ internal sealed partial class SqliteDatabaseStore(
     /// A write transaction of a rebuild's certified refill, salvage or completion barrier: the only writes a copy under
     /// rebuild accepts. The caller checks the file's incarnation inside it (<see cref="RebuildLedger"/>).
     /// </summary>
-    internal ValueTask<SqliteStorageTransaction> BeginRebuildTransactionAsync(CancellationToken cancellationToken) =>
-        BeginAsync(write: true, durable: true, cancellationToken, "a rebuild repair", rebuild: true);
+    /// <remarks>Only the intent journal's ordinary intents pass <paramref name="synced"/> false (decision 0013d).</remarks>
+    internal ValueTask<SqliteStorageTransaction> BeginRebuildTransactionAsync(CancellationToken cancellationToken, bool synced = true) =>
+        BeginAsync(write: true, durable: synced, cancellationToken, "a rebuild repair", rebuild: true);
 
     /// <summary>This node's copy faults and rebuilds; null for stores built outside an engine.</summary>
     internal RebuildLedger? Ledger { get; init; }
@@ -330,7 +331,18 @@ internal sealed partial class SqliteDatabaseStore(
         {
             Ledger?.FailClosed($"the system database faulted: {reason}");
         }
+        else if (Ledger is { } ledger)
+        {
+            Flagged = ledger.FlagAsync(this);
+        }
     }
+
+    /// <summary>The latest <see cref="NoteCopyFault"/>'s durable <c>Faulting</c> mark; it never throws.</summary>
+    internal Task Flagged
+    {
+        get => Volatile.Read(ref field);
+        private set => Volatile.Write(ref field, value);
+    } = Task.CompletedTask;
 
     /// <summary>
     /// Records that a transaction may have left this file uncertain or damaged: a copy fault of a client database, the
@@ -376,7 +388,8 @@ internal sealed partial class SqliteDatabaseStore(
 
         // Every write transaction syncs the write-ahead log at its commit (synchronous = FULL): what a write answers, the
         // system database's catalog and keys (decision 0012) and a client database's documents (0013), survives a power loss.
-        durable |= write;
+        // A rebuild transaction states its own: an ordinary write intent need only survive a process crash (0013d).
+        durable |= write && !rebuild;
         var ownsAdmission = !io.HasAdmission;
         if (ownsAdmission)
         {
@@ -390,7 +403,7 @@ internal sealed partial class SqliteDatabaseStore(
         try
         {
             // Setup and BEGIN can also detect damage; record before opening a native session.
-            operation = await io.WithAdmissionAsync(() => BeginOperationAsync(cancellationToken)).ConfigureAwait(false);
+            operation = await io.WithAdmissionAsync(() => BeginOperationAsync(cancellationToken, intent: write)).ConfigureAwait(false);
             if (write)
             {
                 await AcquireWriterAsync(writer, cancellationToken).ConfigureAwait(false);
@@ -406,26 +419,14 @@ internal sealed partial class SqliteDatabaseStore(
                 beginStarted = true;
                 // BEGIN DEFERRED alone still permits a write upgrade. SQLite enforces read-only
                 // access before BEGIN; both setup and native lock acquisition share the caller's budget.
-                if (!write)
-                {
-                    using var readOnly = connection.CreateCommand();
-                    readOnly.CommandText = "PRAGMA query_only = 1;";
-                    readOnly.ExecuteNonQuery();
-                }
-
-                // SQLite refuses to change it inside a transaction; with FULL the commit syncs the WAL (decision 0010).
-                if (durable)
-                {
-                    using var full = connection.CreateCommand();
-                    full.CommandText = "PRAGMA synchronous = FULL;";
-                    full.ExecuteNonQuery();
-                }
+                // SQLite refuses to change synchronous inside a transaction; with FULL the commit syncs the WAL (decision 0010).
+                session.Settings(queryOnly: !write, full: durable);
 
                 // Writers take the lock up front (BEGIN IMMEDIATE) so they wait instead of failing on upgrade.
                 return connection.BeginTransaction(deferred: !write);
             }, cancellationToken).ConfigureAwait(false);
             return new SqliteStorageTransaction(
-                this, session, transaction, runner, write, durable, write ? Committed : null, ownsAdmission)
+                this, session, transaction, runner, write, write ? Committed : null, ownsAdmission)
             {
                 Operation = operation,
             };
@@ -1275,6 +1276,8 @@ internal sealed partial class SqliteDatabaseStore(
         {
             await session.ExecuteAsync(io, () =>
             {
+                // A pooled session may still be read-only from its last transaction.
+                session.Settings(queryOnly: false, full: false);
                 // Bootstrap is atomic and rolls back before a lock error leaves this scope.
                 Bootstrap(name, session.Connection, cancellationToken);
                 _incarnation = new(Ulid.Parse(

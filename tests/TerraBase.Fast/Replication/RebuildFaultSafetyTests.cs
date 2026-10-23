@@ -98,12 +98,31 @@ public sealed class RebuildFaultSafetyTests
     {
         if (Environment.GetEnvironmentVariable(CrashRoot) is { } childRoot)
         {
-            await ReadCrashChildAsync(childRoot);
+            await ReadCrashChildAsync(childRoot, atOnce: false);
             return;
         }
 
+        await ReadCrashIsRefusedAsync(nameof(A_read_fault_crash_before_disposal_without_a_tenant_writer_is_refused_at_startup));
+    }
+
+    // Reads record no write intent (decision 0013d): the damage's own mark, durable before the error surfaces, is all that
+    // refuses the copy after a crash the instant the read fails.
+    [Test]
+    public async Task A_read_that_crashes_as_soon_as_it_detects_damage_is_refused_at_startup()
+    {
+        if (Environment.GetEnvironmentVariable(CrashRoot) is { } childRoot)
+        {
+            await ReadCrashChildAsync(childRoot, atOnce: true);
+            return;
+        }
+
+        await ReadCrashIsRefusedAsync(nameof(A_read_that_crashes_as_soon_as_it_detects_damage_is_refused_at_startup));
+    }
+
+    private static async Task ReadCrashIsRefusedAsync(string test)
+    {
         using var directory = new TempDirectory();
-        var (exit, output) = await RunChildAsync(directory.Root);
+        var (exit, output) = await RunChildAsync(directory.Root, test);
         await Assert.That(exit).IsNotEqualTo(0).Because(output);
         await Assert.That(output).Contains("crashed at retained read corruption");
         var crashed = JsonSerializer.Deserialize<ReadCrash>(await File.ReadAllTextAsync(Path.Combine(directory.Root, "read-crash.json")))!;
@@ -476,7 +495,7 @@ public sealed class RebuildFaultSafetyTests
         await Assert.That((await File.ReadAllBytesAsync(side + "-wal")).SequenceEqual(wal)).IsTrue();
     }
 
-    private static async Task ReadCrashChildAsync(string root)
+    private static async Task ReadCrashChildAsync(string root, bool atOnce)
     {
         var data = Path.Combine(root, "data");
         TenantContext database;
@@ -500,6 +519,22 @@ public sealed class RebuildFaultSafetyTests
         await Assert.That(await services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None)).IsNull();
         // Retain the damaged read until FailFast: no transaction disposal or tenant writer in this process.
         await using var read = await copy.BeginTransactionAsync(write: false, CancellationToken.None);
+        await Assert.That(await IntentAsync(services.GetRequiredService<SqliteStorageEngine>(), database)).IsFalse()
+            .Because("a read-only transaction records no write intent");
+        if (atOnce)
+        {
+            try
+            {
+                _ = await read.GetAsync("damaged", "kept", CancellationToken.None);
+            }
+            catch (SqliteException)
+            {
+                Environment.FailFast("crashed at retained read corruption");
+            }
+
+            throw new InvalidOperationException("the damaged read did not fail");
+        }
+
         var error = await Assert.ThrowsAsync<SqliteException>(async () =>
             await read.GetAsync("damaged", "kept", CancellationToken.None));
         await Assert.That(error!.SqliteErrorCode).IsEqualTo(11);
@@ -559,7 +594,16 @@ public sealed class RebuildFaultSafetyTests
         file.WriteByte(0xFF);
     }
 
-    private static async Task<(int ExitCode, string Output)> RunChildAsync(string root)
+    private static Task<bool> IntentAsync(SqliteStorageEngine engine, TenantContext database) =>
+        engine.IntentStore!.WithWriterAsync(session =>
+        {
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = "SELECT 1 FROM _tb_write_intent WHERE database = $database;";
+            command.Parameters.AddWithValue("$database", database.DatabaseId);
+            return command.ExecuteScalar() is not null;
+        }, "checking the read's intent", CancellationToken.None);
+
+    private static async Task<(int ExitCode, string Output)> RunChildAsync(string root, string test)
     {
         var executable = Environment.ProcessPath ?? throw new InvalidOperationException("the test executable path is unavailable");
         var start = new ProcessStartInfo(executable) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -570,7 +614,7 @@ public sealed class RebuildFaultSafetyTests
         var type = typeof(RebuildFaultSafetyTests);
         foreach (var argument in new[]
         {
-            "--treenode-filter", $"/{type.Assembly.GetName().Name}/{type.Namespace}/{type.Name}/{nameof(A_read_fault_crash_before_disposal_without_a_tenant_writer_is_refused_at_startup)}",
+            "--treenode-filter", $"/{type.Assembly.GetName().Name}/{type.Namespace}/{type.Name}/{test}",
             "--no-progress", "--disable-logo", "--exit-on-process-exit", Environment.ProcessId.ToString(CultureInfo.InvariantCulture),
             "--results-directory", Directory.CreateDirectory(Path.Combine(root, "results")).FullName,
         })

@@ -21,11 +21,10 @@ namespace TerraBase.Engine.Sqlite;
 /// <param name="transaction">The SQLite transaction.</param>
 /// <param name="runner">Runs every SQLite call of this transaction.</param>
 /// <param name="write">Whether mutations are allowed.</param>
-/// <param name="durable">Whether the session runs with <c>synchronous = FULL</c> until disposal resets it to <c>NORMAL</c>.</param>
 /// <param name="committed">Runs after a commit that changed the database.</param>
 /// <param name="ownsAdmission">Whether disposal releases this transaction's I/O admission.</param>
 internal sealed partial class SqliteStorageTransaction(
-    SqliteDatabaseStore store, SqliteSession session, SqliteTransaction transaction, SqliteRunner runner, bool write, bool durable, Action? committed,
+    SqliteDatabaseStore store, SqliteSession session, SqliteTransaction transaction, SqliteRunner runner, bool write, Action? committed,
     bool ownsAdmission)
     : IStorageTransaction
 {
@@ -47,9 +46,6 @@ internal sealed partial class SqliteStorageTransaction(
     private readonly Lock _disposalGate = new();
     private Task? _disposal;
     private bool _streaming;
-
-    // Body statements live only for this transaction: idle sessions must not retain bound JSON.
-    private readonly Dictionary<string, SqliteCommand> _bodyCommands = [with(StringComparer.Ordinal)];
 
     private long _changeBytes;
 
@@ -471,7 +467,6 @@ internal sealed partial class SqliteStorageTransaction(
         }
     }
 
-    private bool _qosScanRegistered;
     private QueryBudget? _queryBudget;
 
     // The handler and its removal run only on workers while this transaction owns the connection.
@@ -483,31 +478,7 @@ internal sealed partial class SqliteStorageTransaction(
         // The clock is read every 32nd row, about as often as SQLite's handler ran (every 1000 instructions).
         var rows = 0;
         session.StopWhen(() => cancellationToken.IsCancellationRequested || (++rows % 32 == 0 && budget.Exceeded));
-        // octet_length reads the stored byte size without decoding or copying the JSON body.
-        session.Connection.CreateFunction<long, long>("tb_qos_scan", size =>
-        {
-            if (budget.Limited && budget.Scan(size))
-            {
-                throw new OperationCanceledException(SqliteSession.StoppedMessage);
-            }
-
-            session.ThrowIfStopped();
-            return 1;
-        });
-        // One evaluated row combination of a relational read (SqlProgram.RowGuard): engine work only, no scanned bytes.
-        // Its argument names a column of every joined table, so Turso evaluates it per combination, not once.
-        session.Connection.CreateFunction<object?, long>("tb_sql_row", _ =>
-        {
-            if (budget.Limited && budget.Row())
-            {
-                throw new OperationCanceledException(SqliteSession.StoppedMessage);
-            }
-
-            session.ThrowIfStopped();
-            return 1;
-        }, isDeterministic: false);
-        session.Connection.CreateFunction<object?, object?, string?>(SqlProgram.Concat, SqliteText.Concat, isDeterministic: true);
-        _qosScanRegistered = true;
+        session.Charge(size => budget.Limited && budget.Scan(size), () => budget.Limited && budget.Row());
         return _queryBudget = budget;
     }
 
@@ -515,14 +486,7 @@ internal sealed partial class SqliteStorageTransaction(
     {
         _queryBudget = null;
         session.StopWhen(null);
-        if (_qosScanRegistered)
-        {
-            // Turso throws when removing a function that is not registered.
-            session.Connection.CreateFunction<long, long>("tb_qos_scan", null);
-            session.Connection.CreateFunction<object?, long>("tb_sql_row", null);
-            session.Connection.CreateFunction<object?, object?, string?>(SqlProgram.Concat, null);
-            _qosScanRegistered = false;
-        }
+        session.Charge(null, null);
     }
 
     private static QueryCapacityException Exhausted(SqliteException error, CancellationToken cancellationToken)
@@ -644,14 +608,14 @@ internal sealed partial class SqliteStorageTransaction(
             return ReadRows(query, command, cancellationToken);
         }
 
-        session.Connection.CreateFunction<object?, double>("tb_near", new NearDistance(near).Measure, isDeterministic: false);
+        session.Near(new NearDistance(near).Measure);
         try
         {
             return ReadRows(query, command, cancellationToken);
         }
         finally
         {
-            session.Connection.CreateFunction<object?, double>("tb_near", null);
+            session.Near(null);
         }
     }
 
@@ -1540,13 +1504,11 @@ internal sealed partial class SqliteStorageTransaction(
                 {
                     try
                     {
-                        foreach (var command in _bodyCommands.Values)
+                        session.TrimTableCommands();
+                        if (write && !_committed)
                         {
-                            command.Parameters.Clear();
-                            command.Dispose();
+                            session.ForgetSchema();
                         }
-
-                        _bodyCommands.Clear();
                     }
                     finally
                     {
@@ -1568,25 +1530,10 @@ internal sealed partial class SqliteStorageTransaction(
                         capture.ExecuteNonQuery();
                     }
 
-                    if (!write)
+                    if (!write && store.Tenant is { } readingTenant)
                     {
-                        if (store.Tenant is { } readingTenant)
-                        {
-                            store.Checkpoint?.Invoke("reader.reset", readingTenant);
-                        }
-
-                        // Failed read-only reset closes the session instead of reusing it.
-                        using var writable = session.Connection.CreateCommand();
-                        writable.CommandText = "PRAGMA query_only = 0;";
-                        writable.ExecuteNonQuery();
-                    }
-
-                    if (durable)
-                    {
-                        // Likewise a failed reset: pooled sessions go back to NORMAL between write transactions.
-                        using var normal = session.Connection.CreateCommand();
-                        normal.CommandText = "PRAGMA synchronous = NORMAL;";
-                        normal.ExecuteNonQuery();
+                        // Integration tests make the reader's reset fail here: the session is then closed, not pooled.
+                        store.Checkpoint?.Invoke("reader.reset", readingTenant);
                     }
                 }
                 // NoteDamage only notes a damaged file's error, so its fault is recorded before the writer is released.
@@ -1748,6 +1695,17 @@ internal sealed partial class SqliteStorageTransaction(
 
             throw new OperationCanceledException("the storage operation was cancelled", error, cancellationToken);
         }
+        catch when (_copyFault is not null)
+        {
+            // Durable before the caller sees the damage: a read records no intent, so a crash from here still faults the copy.
+            await store.Flagged.ConfigureAwait(false);
+            if (mutation)
+            {
+                _faulted = true;
+            }
+
+            throw;
+        }
         catch when (mutation)
         {
             // Includes pre-cancellation and queue cancellation before the worker callback runs.
@@ -1773,15 +1731,7 @@ internal sealed partial class SqliteStorageTransaction(
 
     private SqliteCommand BodyCommand(string sql, string collection, string id)
     {
-        if (!_bodyCommands.TryGetValue(sql, out var command))
-        {
-            command = session.Connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = sql;
-            _bodyCommands.Add(sql, command);
-        }
-
-        command.Parameters.Clear();
+        var command = session.TableCommand(sql, transaction);
         command.Parameters.AddWithValue("$collection", collection);
         command.Parameters.AddWithValue("$id", id);
         return command;
