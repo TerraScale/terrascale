@@ -213,7 +213,7 @@ public sealed class DataDirectoryTests
         // Untracked stores, one session each: background readers cannot rent these, and the per-database cap does not apply.
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
         {
-            var store = new TursoDatabaseStore("probe", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;");
+            var store = new TursoDatabaseStore("probe", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;", engine.Encryption);
             stores.Add(store);
             var connection = new SqliteConnection(Connect(path));
             var session = await OpenSessionAsync(connection);

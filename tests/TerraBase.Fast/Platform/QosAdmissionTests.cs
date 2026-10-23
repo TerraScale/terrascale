@@ -4,6 +4,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Fast.Management;
 using TerraBase.Fast.Storage;
@@ -65,7 +66,11 @@ public sealed class QosAdmissionTests
     {
         const long Budget = 4 * 1024 * 1024;
         var hook = new UsageCommitHook();
-        await using var api = await RequestLogMemoryFixture.StartAsync(settings => settings["memory-budget"] = "4194304", hook.Install);
+        await using var api = await RequestLogMemoryFixture.StartAsync(settings => settings["memory-budget"] = "4194304", services =>
+        {
+            hook.Install(services);
+            services.AddHttpContextAccessor();
+        });
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         _ = await tenant.ContextAsync(api.Server, "app");
         // Any catalog commit invalidates the warmed plan cache.
@@ -77,7 +82,15 @@ public sealed class QosAdmissionTests
             : tenant.Database("app", "/collections");
         await RequestLogMemoryFixture.DrainAsync(api.Server);
         var reads = 0;
-        hook.BeforeGet = _ => Interlocked.Increment(ref reads);
+        var requests = api.Server.Services.GetRequiredService<IHttpContextAccessor>();
+        // Background catalog convergence must not count as request materialization.
+        hook.BeforeGet = _ =>
+        {
+            if (requests.HttpContext?.Request.Path.Value == uri.OriginalString)
+            {
+                Interlocked.Increment(ref reads);
+            }
+        };
         var budget = api.Server.Services.GetRequiredService<IMemoryBudget>();
         using (var all = budget.TryReserve(MemoryLane.Foreground, Budget, null))
         {
