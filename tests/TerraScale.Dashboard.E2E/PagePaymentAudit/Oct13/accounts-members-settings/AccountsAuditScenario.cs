@@ -125,6 +125,7 @@ public sealed class AccountsAuditScenario : IAsyncInitializer, IAsyncDisposable
         // Serve exact committed sources without generating or rewriting web/static.
         app.MapGet("/js/datastar.js", () => Results.File(Path.Combine(Root, "src/TerraScale.Dashboard/web/assets/js/vendor/datastar.js"), "text/javascript"));
         app.MapGet("/js/button-loading.js", () => Results.File(Path.Combine(Root, "src/TerraScale.Dashboard/web/assets/js/button-loading.js"), "text/javascript"));
+        app.MapGet("/js/workspace.js", () => Results.File(Path.Combine(Root, "src/TerraScale.Dashboard/web/assets/js/workspace.js"), "text/javascript"));
         app.MapGet("/__audit/access-unavailable", () => { access!.FailRead = true; return Results.Ok(); });
         app.MapGet("/__audit/access-recovered", () => { access!.FailRead = false; return Results.Ok(); });
         app.MapGet("/__audit/finish", () => { Finished.TrySetResult(); return Results.Ok(); });
