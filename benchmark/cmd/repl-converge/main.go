@@ -90,6 +90,7 @@ func main() {
 
 	out := json.NewEncoder(os.Stdout)
 	var docs []*doc
+	throttled := 0
 	conv := map[string]*replbench.Latency{}
 	for i, a := range names {
 		for _, b := range names[i+1:] {
@@ -97,6 +98,12 @@ func main() {
 			conv[pair] = replbench.NewLatency()
 			for k := range *n {
 				d := race(ctx, regions, *collection, pair, a, b, k, *converge)
+				// A throttled write never ran, so there was no race: wait out the 429 and race a new document.
+				for try := 0; try < 10 && (d.Status[a] == http.StatusTooManyRequests || d.Status[b] == http.StatusTooManyRequests); try++ {
+					throttled++
+					time.Sleep(time.Second)
+					d = race(ctx, regions, *collection, pair, a, b, k, *converge)
+				}
 				if d.Error == "" {
 					conv[pair].Record(time.Duration(d.ConvergedMs * float64(time.Millisecond)))
 				}
@@ -166,7 +173,7 @@ func main() {
 		}
 		_ = out.Encode(d)
 	}
-	summary := map[string]any{"summary": true, "docs": len(docs), "lww_ok": pass, "feed_errors": feedErrors, "feed_both_writes": coverage}
+	summary := map[string]any{"summary": true, "docs": len(docs), "lww_ok": pass, "feed_errors": feedErrors, "feed_both_writes": coverage, "throttled_retries": throttled}
 	for pair, l := range conv {
 		summary["converged_"+pair] = l.Summary()
 	}
