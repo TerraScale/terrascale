@@ -249,12 +249,21 @@ func (b *bench) retryGet(ctx context.Context, m *measure, target string) (shapeR
 	return shapeResponse{}, fmt.Errorf("%s: still busy after 100 tries", target)
 }
 
+// writeOne writes a new document. A busy node or an unknown outcome (429, 503) is written again as another document:
+// setup only needs writes to seal chunks, so a write that did land is harmless.
 func (b *bench) writeOne(ctx context.Context) error {
-	resp, err := b.writer.Do(ctx, http.MethodPut, "/collections/"+b.collection+"/documents/by-key?id="+ulid.Make().String(), document(time.Now()), "application/json")
-	if err != nil || resp.Status/100 != 2 {
-		return fmt.Errorf("write: %v HTTP %d %s", err, resp.Status, resp.Body)
+	for range 10 {
+		resp, err := b.writer.Do(ctx, http.MethodPut, "/collections/"+b.collection+"/documents/by-key?id="+ulid.Make().String(), document(time.Now()), "application/json")
+		if err == nil && (resp.Status == http.StatusTooManyRequests || resp.Status == http.StatusServiceUnavailable) {
+			sleep(ctx, shapeRetryWait)
+			continue
+		}
+		if err != nil || resp.Status/100 != 2 {
+			return fmt.Errorf("write: %v HTTP %d %s", err, resp.Status, resp.Body)
+		}
+		return nil
 	}
-	return nil
+	return fmt.Errorf("write: still busy after 10 tries")
 }
 
 type manifestObject struct {
