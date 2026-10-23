@@ -38,23 +38,29 @@ public sealed class TenantIssuerTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task A_project_tenant_has_no_oauth_endpoints_until_it_has_clients()
+    public async Task A_project_tenant_knows_none_of_the_platform_clients()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
         var (_, token) = await oidc.SignInUserAsync("alice@example.test");
         var project = await oidc.CreateProjectAsync(token, await oidc.CreateOrganizationAsync(token), "Production");
 
-        // The dashboard client exists only in the platform tenant, so it gets no token from the project's issuer.
+        // The dashboard client exists only in the platform tenant, so the project's issuer neither authorizes it nor
+        // gives it a token.
         using var tokens = await oidc.Client.PostAsync($"/{project}/oauth/token", new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            ["grant_type"] = "client_credentials",
+            ["grant_type"] = "authorization_code",
+            ["code"] = "unknown",
+            ["redirect_uri"] = OidcHarness.RedirectUri,
+            ["code_verifier"] = OidcHarness.Pkce().Verifier,
             ["client_id"] = OidcIssuer.DashboardClientId,
             ["client_secret"] = OidcHarness.ClientSecret,
         }));
-        using var authorize = await oidc.Client.GetAsync($"/{project}/oauth/authorize?client_id={OidcIssuer.DashboardClientId}&response_type=code");
+        var (_, challenge) = OidcHarness.Pkce();
+        using var authorize = await oidc.Client.GetAsync(OidcHarness.AuthorizePath(challenge).Replace($"/{OidcIssuer.Slug}/", $"/{project}/", StringComparison.Ordinal));
 
-        await Assert.That(tokens.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(authorize.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(await OidcHarness.ErrorAsync(tokens)).IsEqualTo("invalid_client");
+        await Assert.That(authorize.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(await authorize.Content.ReadAsStringAsync()).Contains("invalid_request");
     }
 
     [Test]
