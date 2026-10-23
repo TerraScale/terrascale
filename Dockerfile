@@ -53,6 +53,9 @@ RUN --mount=type=cache,target=/root/.local/share/NuGet/http-cache,id=nuget-http 
 
 FROM restored AS source
 COPY . .
+# CI supplies both freshly built architectures; builds cannot fall back to the NuGet native core.
+RUN cd src/vendor/Turso.Data.Sqlite/native \
+    && sha256sum --check SHA256SUMS-linux-x64 SHA256SUMS-linux-arm64
 
 # One build and one test stage per area; CI runs the areas as parallel jobs. A build stage checks whitespace format,
 # builds its projects in Release with analyzers as errors (libs.slnf, auth.slnf, terrabase.slnf) and runs its static

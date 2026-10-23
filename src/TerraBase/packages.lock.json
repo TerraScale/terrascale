@@ -503,10 +503,7 @@
         }
       },
       "turso.raw": {
-        "type": "Project",
-        "dependencies": {
-          "Turso.Data.Native": "[0.8.2, )"
-        }
+        "type": "Project"
       },
       "Microsoft.IdentityModel.JsonWebTokens": {
         "type": "CentralTransitive",
@@ -522,12 +519,6 @@
         "requested": "[2.17.13, )",
         "resolved": "2.17.13",
         "contentHash": "+R0eJtJIIHW9owY61rIOgR2lywjZnjqUPAM7ll+lZYML7mZ4LxokG6wpAmkuyaLS1Ml4fI4kdAC2U6KkdrDDiA=="
-      },
-      "Turso.Data.Native": {
-        "type": "CentralTransitive",
-        "requested": "[0.8.2, )",
-        "resolved": "0.8.2",
-        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
       }
     },
     "net11.0/linux-arm64": {
@@ -640,12 +631,6 @@
         "type": "Transitive",
         "resolved": "0.6.1",
         "contentHash": "sIkjjYJ+z277MvyHTJCFI2dmoifWnQ+EsuULz1ewM15lpARdIpFPmdUhSukBov7HCFdczTIhkQyRmXulU7rang=="
-      },
-      "Turso.Data.Native": {
-        "type": "CentralTransitive",
-        "requested": "[0.8.2, )",
-        "resolved": "0.8.2",
-        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
       }
     },
     "net11.0/linux-x64": {
@@ -758,12 +743,6 @@
         "type": "Transitive",
         "resolved": "0.6.1",
         "contentHash": "sIkjjYJ+z277MvyHTJCFI2dmoifWnQ+EsuULz1ewM15lpARdIpFPmdUhSukBov7HCFdczTIhkQyRmXulU7rang=="
-      },
-      "Turso.Data.Native": {
-        "type": "CentralTransitive",
-        "requested": "[0.8.2, )",
-        "resolved": "0.8.2",
-        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
       }
     }
   }

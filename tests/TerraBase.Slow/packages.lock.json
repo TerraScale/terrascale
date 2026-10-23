@@ -709,10 +709,7 @@
         }
       },
       "turso.raw": {
-        "type": "Project",
-        "dependencies": {
-          "Turso.Data.Native": "[0.8.2, )"
-        }
+        "type": "Project"
       },
       "AWSSDK.S3": {
         "type": "CentralTransitive",
@@ -1049,12 +1046,6 @@
           "Microsoft.Extensions.ObjectPool": "8.0.1"
         }
       },
-      "Turso.Data.Native": {
-        "type": "CentralTransitive",
-        "requested": "[0.8.2, )",
-        "resolved": "0.8.2",
-        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
-      },
       "Ulid": {
         "type": "CentralTransitive",
         "requested": "[1.4.1, )",
@@ -1210,12 +1201,6 @@
         "type": "Transitive",
         "resolved": "11.0.0-rc.1.26425.128",
         "contentHash": "ByF+R8H7CN2iMOE6aB4901+AoNftRMJ5hqU114YI99xG4rj89dlJx3F1+iprQEo1h2YFhDPnJtFfVOUabl0IiQ=="
-      },
-      "Turso.Data.Native": {
-        "type": "CentralTransitive",
-        "requested": "[0.8.2, )",
-        "resolved": "0.8.2",
-        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
       }
     },
     "net11.0/linux-x64": {
@@ -1349,12 +1334,6 @@
         "type": "Transitive",
         "resolved": "11.0.0-rc.1.26425.128",
         "contentHash": "ByF+R8H7CN2iMOE6aB4901+AoNftRMJ5hqU114YI99xG4rj89dlJx3F1+iprQEo1h2YFhDPnJtFfVOUabl0IiQ=="
-      },
-      "Turso.Data.Native": {
-        "type": "CentralTransitive",
-        "requested": "[0.8.2, )",
-        "resolved": "0.8.2",
-        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
       }
     }
   }

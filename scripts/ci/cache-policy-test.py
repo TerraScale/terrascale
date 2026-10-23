@@ -10,7 +10,10 @@ root = Path(__file__).resolve().parents[2]
 workflow = (root / ".github/workflows/ci.yml").read_text()
 dockerfile = (root / "Dockerfile").read_text()
 writers = re.findall(r"^\s+cache-to: (.+)$", workflow, re.M)
-assert writers == ["${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', env.AREA) || '' }}"], writers
+assert writers == [
+    "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope=turso-native-{0}', matrix.arch) || '' }}",
+    "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', env.AREA) || '' }}",
+], writers
 # setup-dotnet saves its NuGet cache after any successful job, pull requests included: no job may enable it.
 assert "cache: true" not in workflow
 assert not re.search(r"uses: actions/cache(?:/save)?@", workflow), "Explicit cache writers need a main-only gate"
@@ -37,7 +40,7 @@ for area in ("libs", "auth", "terrabase"):
 build_check = "src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj"
 assert f"dotnet format whitespace {build_check} --verify-no-changes --no-restore" in stages["build-terrabase"][1]
 assert all_projects <= formatted | {build_check}, all_projects - formatted - {build_check}
-assert "needs: [changes, libs, auth, terrabase]" in workflow, "Slow must not delay required test"
+assert "needs: [changes, native, libs, auth, terrabase]" in workflow, "Native/Fast must gate required test; Slow must not delay it"
 assert "AREA: ${{ github.job }}" not in workflow, "github.job is unavailable in job-level env"
 
 inputs = dockerfile.split("FROM base AS restore-inputs\n", 1)[1].split("\nFROM base AS restored", 1)[0]

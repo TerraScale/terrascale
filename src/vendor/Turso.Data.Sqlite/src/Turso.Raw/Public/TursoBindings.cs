@@ -382,7 +382,7 @@ public static class TursoBindings
     private static IntPtr NewOpenedDatabase(string path, string? cipher, string? hexkey)
     {
         using var pathString = NativeUtf8String.From(path);
-        using var featuresString = NativeUtf8String.From(cipher is null ? null : "encryption");
+        using var featuresString = NativeUtf8String.From(cipher is null ? "index_method" : "index_method,encryption");
         using var cipherString = NativeUtf8String.From(cipher);
         using var hexkeyString = NativeUtf8String.From(hexkey);
 

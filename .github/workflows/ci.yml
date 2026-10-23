@@ -112,8 +112,50 @@ jobs:
           [[ $GITHUB_EVENT_NAME == pull_request ]] || CHANGES=$(jq -c 'if index("auth-server") then . + ["auth"] else . end' <<< "$CHANGES")
           echo "fast=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
 
-  libs:
+  native:
     needs: changes
+    if: needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build the pinned native core once
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: scripts/vendor/Dockerfile.turso-native
+          target: native
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=local,dest=native-output
+          cache-from: type=gha,scope=turso-native-${{ matrix.arch }}
+          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope=turso-native-{0}', matrix.arch) || '' }}
+          push: false
+      - name: Publish this run's SHA-256 for independent-run comparison
+        run: |
+          cd native-output
+          sha256sum --check SHA256SUMS-*
+          cat SHA256SUMS-* >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: turso-native-${{ matrix.arch }}
+          path: native-output/
+          if-no-files-found: error
+
+  libs:
+    needs: [changes, native]
     if: >-
       github.event_name != 'push' && contains(fromJSON(needs.changes.outputs.fast), 'libs')
       && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
@@ -137,6 +179,13 @@ jobs:
           ssh-key: ${{ secrets.TS_DOTNET_DEPLOY_KEY }}
           path: ts-dotnet
           persist-credentials: false
+      - &native-artifacts
+        name: Download this run's verified native cores
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: turso-native-*
+          merge-multiple: true
+          path: terrascale/src/vendor/Turso.Data.Sqlite/native
       - name: Check out the path-filter matcher for regression fixtures
         if: env.AREA == 'libs'
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -170,7 +219,7 @@ jobs:
           cache-from: &cache-from type=gha,scope=${{ env.AREA == 'libs' && 'terrabase' || env.AREA }}
 
   auth:
-    needs: changes
+    needs: [changes, native]
     if: >-
       github.event_name != 'push' && contains(fromJSON(needs.changes.outputs.fast), 'auth')
       && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
@@ -183,7 +232,7 @@ jobs:
     steps: *fast-steps
 
   terrabase:
-    needs: changes
+    needs: [changes, native]
     if: >-
       github.event_name != 'push' && contains(fromJSON(needs.changes.outputs.fast), 'terrabase')
       && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
@@ -196,7 +245,7 @@ jobs:
     steps: *fast-steps
 
   main:
-    needs: changes
+    needs: [changes, native]
     if: >-
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
       && needs.changes.outputs.main != '[]'
@@ -219,6 +268,7 @@ jobs:
     steps:
       - *checkout
       - *checkout-ts-dotnet
+      - *native-artifacts
       - *setup-builder
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -275,7 +325,7 @@ jobs:
 
   # Slow is independent of required Fast: relevant PRs and newest main, never merge groups.
   slow-auth:
-    needs: changes
+    needs: [changes, native]
     if: >-
       !cancelled() && github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
@@ -292,6 +342,7 @@ jobs:
     steps: &slow-steps
       - *checkout
       - *checkout-ts-dotnet
+      - *native-artifacts
       - *setup-builder
       - name: Supply bucket-scoped CI storage credentials
         if: env.AREA == 'terrabase'
@@ -369,7 +420,7 @@ jobs:
           exit "$code"
 
   slow-terrabase:
-    needs: changes
+    needs: [changes, native]
     if: >-
       !cancelled() && github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
@@ -420,7 +471,7 @@ jobs:
     steps: *slow-steps
 
   test:
-    needs: [changes, libs, auth, terrabase]
+    needs: [changes, native, libs, auth, terrabase]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -433,7 +484,7 @@ jobs:
         run: |
           echo 'Fast requires the private SDK checkout; fork PRs cannot receive its deploy key. Qualify the changes on a branch in this repository.' >&2
           exit 1
-      - name: Every area that ran passed
+      - name: Native and every Fast area that ran passed
         run: '! grep -qE "failure|cancelled" <<< "${{ join(needs.*.result, '' '') }}"'
       - if: github.event_name != 'push'
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
