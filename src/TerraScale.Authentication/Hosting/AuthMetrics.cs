@@ -27,7 +27,7 @@ public static class AuthMetrics
     public static void SignIn(string method, string outcome) =>
         SignIns.Add(1, new KeyValuePair<string, object?>("method", method), new KeyValuePair<string, object?>("outcome", outcome));
 
-    /// <summary>Records an email delivery: sent, failed or not_configured.</summary>
+    /// <summary>Records an email delivery: sent, failed, bounced or not_configured.</summary>
     public static void Email(string outcome) => Emails.Add(1, new KeyValuePair<string, object?>("outcome", outcome));
 
     /// <summary>Records a token response: issued, or its OAuth error code (other for anything non-standard).</summary>
