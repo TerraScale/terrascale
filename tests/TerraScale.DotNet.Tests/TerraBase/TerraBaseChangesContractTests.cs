@@ -514,7 +514,7 @@ public sealed class TerraBaseChangesContractTests
         await Assert.That(error.RetryAfter).IsEqualTo(TimeSpan.FromSeconds(1));
         await Assert.That(sent.Count).IsEqualTo(1);
         await Assert.That(sent[0].Method).IsEqualTo(HttpMethod.Get);
-        await Assert.That(sent[0].RequestUri).IsEqualTo(new Uri($"https://sjc.api.terrascale.tech/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app/changes?collections=items"));
+        await Assert.That(sent[0].RequestUri).IsEqualTo(new Uri($"https://api.terrascale.tech/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app/changes?collections=items"));
         await Assert.That(sent[0].Headers.GetValues("X-TerraScale-Region-Pin").Single()).IsEqualTo("sjc");
         await Assert.That(sent[0].Headers.GetValues("Last-Event-ID").Single()).IsEqualTo("previous");
         await Assert.That(sent[0].Headers.Authorization!.Scheme).IsEqualTo("Bearer");
