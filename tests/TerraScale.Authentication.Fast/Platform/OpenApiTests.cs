@@ -39,21 +39,12 @@ public sealed partial class OpenApiTests
         await Assert.That(paths.TryGetProperty("/healthz", out _)).IsTrue();
         await Assert.That(paths.TryGetProperty("/readyz", out _)).IsTrue();
         await Assert.That(paths.TryGetProperty("/admin/{asset}", out _)).IsTrue();
-        foreach (var oidcPath in new[] { "/{slug}/.well-known/openid-configuration", "/{slug}/.well-known/jwks.json", "/{slug}/oauth/authorize", "/{slug}/oauth/token", "/{slug}/oauth/userinfo", "/{slug}/oauth/logout", "/ui/{slug}/sign-in", "/ui/{slug}/sign-in/verify", "/{slug}/oauth/revoke",
-            "/{slug}/headless/v1/email-code/start", "/{slug}/headless/v1/sign-up", "/{slug}/headless/v1/password-reset/start", "/{slug}/headless/v1/password-reset/complete" })
+        foreach (var oidcPath in new[] { "/{slug}/.well-known/openid-configuration", "/{slug}/.well-known/jwks.json", "/{slug}/oauth/authorize", "/{slug}/oauth/token", "/{slug}/oauth/userinfo", "/{slug}/oauth/logout", "/ui/{slug}/sign-in", "/ui/{slug}/sign-in/verify", "/{slug}/oauth/revoke" })
         {
             await Assert.That(paths.TryGetProperty(oidcPath, out _)).IsTrue();
         }
 
         // /metrics is served only on the metrics listener, never in the public API.
-        var emailStart = paths.GetProperty("/{slug}/headless/v1/email-code/start").GetProperty("post");
-        await Assert.That(emailStart.GetProperty("description").GetString()).Contains("60-second cooldown");
-        await Assert.That(emailStart.GetProperty("requestBody").GetProperty("content").GetProperty("application/json")
-            .GetProperty("schema").GetProperty("$ref").GetString()).IsEqualTo("#/components/schemas/HeadlessEmailCodeRequest");
-        var emailSchema = document.GetProperty("components").GetProperty("schemas").GetProperty("HeadlessEmailCodeRequest");
-        await Assert.That(emailSchema.GetProperty("properties").TryGetProperty("pending_token", out _)).IsTrue();
-        await Assert.That(!emailSchema.TryGetProperty("required", out var required) || !required.EnumerateArray().Any(field => field.GetString() == "pending_token")).IsTrue();
-
         await Assert.That(paths.TryGetProperty("/metrics", out _)).IsFalse();
 
         // Probes and bundled assets are public and say so explicitly.
@@ -73,8 +64,7 @@ public sealed partial class OpenApiTests
                 }
 
                 await Assert.That(operation.GetProperty("responses").EnumerateObject().Any()).IsTrue();
-                if ((path.Name is "/{slug}/oauth/token" or "/ui/{slug}/sign-in" or "/ui/{slug}/sign-in/verify"
-                    || path.Name.StartsWith("/{slug}/headless/", StringComparison.Ordinal))
+                if (path.Name is "/{slug}/oauth/token" or "/ui/{slug}/sign-in" or "/ui/{slug}/sign-in/verify"
                     && method == "post")
                 {
                     var retry = operation.GetProperty("responses").GetProperty("429").GetProperty("headers").GetProperty("Retry-After");
@@ -119,10 +109,6 @@ public sealed partial class OpenApiTests
         await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/userinfo").GetProperty("get"))).IsEqualTo("OAuthAccessBearer");
         await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/token").GetProperty("post"))).IsEqualTo("clientBasic");
         await Assert.That(Scheme(paths.GetProperty("/{slug}/oauth/revoke").GetProperty("post"))).IsEqualTo("clientBasic");
-        await Assert.That(Scheme(paths.GetProperty("/{slug}/headless/v1/sign-up").GetProperty("post"))).IsEqualTo("clientBasic");
-        // The headless contract documents its real JSON bodies.
-        await Assert.That(paths.GetProperty("/{slug}/headless/v1/password-reset/complete").GetProperty("post").GetProperty("requestBody")
-            .GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString()).IsEqualTo("#/components/schemas/HeadlessPasswordResetRequest");
         await Assert.That(Scheme(paths.GetProperty("/v1/instances").GetProperty("post"))).IsEqualTo("OperatorBearer");
         await Assert.That(Scheme(paths.GetProperty("/scim/{directory}/__test").GetProperty("post"))).IsEqualTo("bearerAuth");
         // An endpoint's own declaration beats its group's; AllowAnonymous beats both.

@@ -7,7 +7,6 @@ using Microsoft.AspNetCore;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Features.Headless;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SigningKeys;
@@ -122,9 +121,6 @@ public static class OidcIssuer
                     .AllowClientCredentialsFlow()
                     // Organization and project tokens for signed-in users (TS-598).
                     .AllowTokenExchangeFlow()
-                    // The headless grants (TS-582) are permitted only to ts-dashboard; see ClientRegistration.
-                    .AllowCustomFlow(HeadlessGrants.Password)
-                    .AllowCustomFlow(HeadlessGrants.EmailCode)
                     // The bound GitHub Actions workload only (GitHubActionsBinding creates its client).
                     .AllowCustomFlow(GitHubActionsGrant.GrantType)
                     .RequireProofKeyForCodeExchange()
@@ -487,8 +483,6 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
             {
                 Permissions.Endpoints.Authorization, Permissions.Endpoints.Token, Permissions.Endpoints.EndSession, Permissions.Endpoints.Revocation,
                 Permissions.GrantTypes.AuthorizationCode, Permissions.GrantTypes.RefreshToken, Permissions.ResponseTypes.Code,
-                // The first-party headless API (TS-582); the email-code grant also gates its JSON endpoints.
-                Permissions.Prefixes.GrantType + HeadlessGrants.Password, Permissions.Prefixes.GrantType + HeadlessGrants.EmailCode,
                 // Organization and project tokens for its signed-in users (TS-598).
                 Permissions.GrantTypes.TokenExchange,
                 Permissions.Scopes.Email, Permissions.Scopes.Profile,

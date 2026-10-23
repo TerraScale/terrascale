@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Features.Headless;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Oidc;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
@@ -53,7 +53,7 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
         IResult? refusal;
         try
         {
-            refusal = await this.LimitAsync(context) is { } wait ? HeadlessAuth.TooMany(wait) : null;
+            refusal = await this.LimitAsync(context) is { } wait ? HostedAuth.TooMany(wait) : null;
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
@@ -80,7 +80,7 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
         }
 
         var peer = context.Connection.RemoteIpAddress;
-        var subject = HeadlessAuth.Subject(peer?.ToString()) ?? throw ApiException.Unavailable();
+        var subject = HostedAuth.Subject(peer?.ToString()) ?? throw ApiException.Unavailable();
         var maximum = options.RateLimitPerWindow;
         var purpose = clientLimit ? "token-client-ip" : "token-peer-ip";
         if (!clientLimit && options.TrustedProxies.Contains(peer!.IsIPv4MappedToIPv6 ? peer.MapToIPv4() : peer))
@@ -101,7 +101,7 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
             var bytes = address.GetAddressBytes();
             Array.Clear(bytes, 6, bytes.Length - 6);
             // AttemptLimiter accepts Int32 capacities; avoid overflow for a large configured peer budget.
-            var siteMaximum = (int)Math.Min((long)maximum * HeadlessAuth.SiteFactor, int.MaxValue);
+            var siteMaximum = (int)Math.Min((long)maximum * HostedAuth.SiteFactor, int.MaxValue);
             return await limiter.AcquireAsync(OidcIssuer.InstanceId, purpose + "-site", limiter.Fold(new IPAddress(bytes).ToString()), siteMaximum, Window, context.RequestAborted);
         }
 

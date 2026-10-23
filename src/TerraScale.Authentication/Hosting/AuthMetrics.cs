@@ -1,6 +1,5 @@
 using System.Diagnostics.Metrics;
 using OpenIddict.Server;
-using TerraScale.Authentication.Features.Headless;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 using static OpenIddict.Server.OpenIddictServerEvents;
 
@@ -23,7 +22,7 @@ public static class AuthMetrics
 
     private static readonly Counter<long> Emails = Meter.CreateCounter<long>("ts_auth.emails", description: "Transactional email deliveries by outcome.");
 
-    /// <summary>Records a sign-in attempt. <paramref name="method"/> is password, email_code or hosted_code.</summary>
+    /// <summary>Records a sign-in attempt. <paramref name="method"/> is hosted_code, hosted_password or hosted_sign_up.</summary>
     public static void SignIn(string method, string outcome) =>
         SignIns.Add(1, new KeyValuePair<string, object?>("method", method), new KeyValuePair<string, object?>("outcome", outcome));
 
@@ -40,8 +39,6 @@ public static class AuthMetrics
         GrantTypes.RefreshToken => "refresh_token",
         GrantTypes.ClientCredentials => "client_credentials",
         GrantTypes.TokenExchange => "token_exchange",
-        HeadlessGrants.Password => "password",
-        HeadlessGrants.EmailCode => "email_code",
         _ => "other",
     };
 

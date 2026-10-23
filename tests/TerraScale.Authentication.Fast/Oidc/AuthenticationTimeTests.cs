@@ -5,7 +5,6 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
-using TerraScale.Authentication.Features.Headless;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
@@ -21,7 +20,6 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
 {
     private const string Email = "alice@example.test";
     private const string Password = "correct horse battery";
-    private const string Ip = "203.0.113.7";
     private const string Audience = "https://api.terrascale.tech";
     private const string ServiceId = "01M4EQ2FRJ8S8B29E8TQVWNW4K";
     private const string ServiceSecret = "service-test-secret-0123456789abcdefghij";
@@ -30,8 +28,7 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
 
     [Test]
     [Arguments("password")]
-    [Arguments("email-code")]
-    [Arguments("hosted")]
+    [Arguments("code")]
     public async Task User_tokens_carry_numeric_primary_authentication_time_and_ignore_submitted_times_on_sign_in_and_refresh(string method)
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow.AddMinutes(-2) };
@@ -46,69 +43,46 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
             await oidc.CreateUserAsync(Email);
         }
 
-        JsonElement tokens;
-        long authenticatedAt;
-        if (method == "hosted")
+        Dictionary<string, string> credentials;
+        if (method == "password")
+        {
+            credentials = new() { ["email"] = Email, ["password"] = Password, ["auth_time"] = "0" };
+        }
+        else
         {
             using (var start = await oidc.PostFormAsync(SignIn, new() { ["email"] = Email, ["auth_time"] = "0" }))
             {
                 await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.OK);
             }
 
-            var passcode = await oidc.Email.NextCodeAsync(Email);
-            clock.UtcNow = clock.UtcNow.AddSeconds(10);
-            authenticatedAt = clock.UtcNow.ToUnixTimeSeconds();
-            using var verify = await oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = Email, ["code"] = passcode, ["auth_time"] = "0" });
-            await Assert.That(verify.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var session = OidcHarness.SessionCookie(verify);
-            await Assert.That(session).IsNotNull();
-
-            // Authorization and code redemption happen after the original browser authentication.
-            clock.UtcNow = clock.UtcNow.AddSeconds(10);
-            var (verifier, challenge) = OidcHarness.Pkce();
-            using var authorize = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, extra: "&auth_time=0"), session);
-            await Assert.That(authorize.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
-            await Assert.That(authorize.Headers.Location!.GetLeftPart(UriPartial.Path)).IsEqualTo(OidcHarness.RedirectUri);
-            var code = OidcHarness.Query(authorize.Headers.Location!)["code"]!;
-            clock.UtcNow = clock.UtcNow.AddSeconds(10);
-            using var redeemed = await oidc.TokenAsync(new()
-            {
-                ["grant_type"] = "authorization_code",
-                ["code"] = code,
-                ["redirect_uri"] = OidcHarness.RedirectUri,
-                ["code_verifier"] = verifier,
-                ["auth_time"] = "0",
-            });
-            await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            tokens = await OidcHarness.JsonAsync(redeemed);
+            credentials = new() { ["email"] = Email, ["code"] = await oidc.Email.NextCodeAsync(Email), ["auth_time"] = "0" };
         }
-        else
+
+        clock.UtcNow = clock.UtcNow.AddSeconds(10);
+        var authenticatedAt = clock.UtcNow.ToUnixTimeSeconds();
+        using var signedIn = await oidc.PostFormAsync($"{SignIn}/{(method == "password" ? "password" : "verify")}", credentials);
+        await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var session = OidcHarness.SessionCookie(signedIn);
+        await Assert.That(session).IsNotNull();
+
+        // Authorization and code redemption happen after the original browser authentication.
+        clock.UtcNow = clock.UtcNow.AddSeconds(10);
+        var (verifier, challenge) = OidcHarness.Pkce();
+        using var authorize = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, extra: "&auth_time=0"), session);
+        await Assert.That(authorize.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+        await Assert.That(authorize.Headers.Location!.GetLeftPart(UriPartial.Path)).IsEqualTo(OidcHarness.RedirectUri);
+        var code = OidcHarness.Query(authorize.Headers.Location!)["code"]!;
+        clock.UtcNow = clock.UtcNow.AddSeconds(10);
+        using var redeemed = await oidc.TokenAsync(new()
         {
-            var form = new Dictionary<string, string>
-            {
-                ["grant_type"] = method == "password" ? HeadlessGrants.Password : HeadlessGrants.EmailCode,
-                ["email"] = Email,
-                ["ip_address"] = Ip,
-                ["scope"] = "openid email profile offline_access",
-                ["auth_time"] = "0",
-            };
-            if (method == "password")
-            {
-                form["password"] = Password;
-            }
-            else
-            {
-                using var start = await oidc.HeadlessAsync("email-code/start", new { email = Email, ip_address = Ip, auth_time = 0 });
-                await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-                form["code"] = await oidc.Email.NextCodeAsync(Email);
-                clock.UtcNow = clock.UtcNow.AddSeconds(10);
-            }
-
-            authenticatedAt = clock.UtcNow.ToUnixTimeSeconds();
-            using var signedIn = await oidc.TokenAsync(form);
-            await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            tokens = await OidcHarness.JsonAsync(signedIn);
-        }
+            ["grant_type"] = "authorization_code",
+            ["code"] = code,
+            ["redirect_uri"] = OidcHarness.RedirectUri,
+            ["code_verifier"] = verifier,
+            ["auth_time"] = "0",
+        });
+        await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var tokens = await OidcHarness.JsonAsync(redeemed);
 
         await AssertUserAuthenticationTimeAsync(oidc, tokens, authenticatedAt);
         clock.UtcNow = clock.UtcNow.AddSeconds(10);

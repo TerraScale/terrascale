@@ -1,14 +1,13 @@
 using Microsoft.AspNetCore.HttpOverrides;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
-using TerraScale.Authentication.Features.Headless;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Observability;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
-using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
@@ -104,7 +103,7 @@ public static class App
         builder.Services.AddSingleton<Sessions>();
         builder.Services.AddSingleton<Passcodes>();
         builder.Services.AddSingleton<PasswordHasher>();
-        builder.Services.AddSingleton<HeadlessAuth>();
+        builder.Services.AddSingleton<HostedAuth>();
         builder.Services.AddSingleton<TotpCredentials>();
         builder.Services.AddSingleton<PlatformDirectory>();
         builder.Services.AddSingleton<AccountDeletion>();
