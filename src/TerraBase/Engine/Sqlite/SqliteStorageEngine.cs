@@ -252,6 +252,9 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
     internal event Action<TenantContext>? ReplicationChanged;
 
+    // Keep store callbacks from capturing the opening operation's cancellation and lifetime.
+    private Action ReplicationNotification(TenantContext database) => () => NotifyReplicationChanged(database);
+
     internal void NotifyReplicationChanged(TenantContext database)
     {
         database = database.Plan == PlanTier.Hobby ? database : database with { Plan = PlanTier.Hobby };
@@ -881,7 +884,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                     openingSystem = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
                         RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
                     {
-                        ReplicationCommitted = () => NotifyReplicationChanged(ChangeGroups.System),
+                        ReplicationCommitted = ReplicationNotification(ChangeGroups.System),
                         QueryBudget = QueryBudget,
                         Member = Member,
                         Checkpoint = _checkpoint,
@@ -1644,7 +1647,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         var store = new SqliteDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
             RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
         {
-            ReplicationCommitted = () => NotifyReplicationChanged(tenant),
+            ReplicationCommitted = ReplicationNotification(tenant),
             QueryBudget = QueryBudget,
             Member = Member,
             Checkpoint = _checkpoint,
