@@ -1,10 +1,91 @@
 # Local database encryption comparison (TS-861)
 
-The current code consumes shared release `turso-native-v0.8.2-fts-contract1-20261023`.
-The measurements below used the earlier encryption-only library; they do not
-measure the shared FTS/encryption bytes. Final shared-library measurement and
-managed qualification remain separate from the native release's own smoke and
-reproducibility evidence.
+## Shared FTS/encryption native measurement — pushed commit 1c3b609f6
+
+Measured 2026-10-23 on `delta`, exact pushed commit `1c3b609f65588ed712b41a81dfb1d807b00f44a4`, Release, SDK `11.0.100-rc.1.26425.128` through `/home/mariogk/.local/share/mise/dotnet-root/dotnet`; runtime `11.0.0`. SDK sibling: `bcd20603f11f3aa54dc54cec6e410b4fe9e24151`. The admitted disposable checkout and sibling were clean at completion.
+
+Shared release: `turso-native-v0.8.2-fts-contract1-20261023`. Pinned linux-x64 SHA-256: `efd5916aa9ee1eeaa04784813b08e250912ae25d89f8a92499a216c2711f3e8b`; pinned linux-arm64 SHA-256: `1d4f3b552d11eadb703d6abc13cd8f5f1621c7504642d6f2b875226d88cb5eef`. Normal MSBuild targets downloaded/verified this release; no native rebuild or release action occurred.
+
+The actual benchmark library `/home/mariogk/remote-builds/terrascale/feat-database-encryption-7e16f5f66283f2812bd2abf77ced0226c970da80c976738eb28283c0931884bb/benchmark/dotnet/DatabaseEncryption/bin/Release/net11.0/libturso_sdk_kit.so` matched the x64 pin. The benchmark assembly contains the exact commit; SHA-256 `63058d4c4e0a9662b19fa1f628b2273975f7d8c57dcca0b47786d08f4e4e6cd4`.
+
+One benchmark process supplied all three pairs, without extra warmup/repetition. UTC `2026-10-23T18:18:42.062748+00:00` to `2026-10-23T18:18:48.424849+00:00`; wall 6.362 s; exit 0. Host load averages (1/5/15 minute) were `[10.509765625, 12.66162109375, 13.18310546875]` at start and `[9.908203125, 12.5009765625, 13.1279296875]` at end. Every mode completed all 10,000 payload checks, truncating checkpoint validation and reopened row-count verification before its row was printed.
+
+Actual execution order, milliseconds:
+
+| Repeat | Cipher | Write ms | Read ms | Checkpoint ms | Reopen ms | DB bytes | WAL bytes before checkpoint |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | plain | 273.558 | 198.431 | 35.747 | 1.015 | 14086144 | 22618832 |
+| 1 | aegis256 | 962.771 | 244.932 | 34.504 | 3.535 | 14090240 | 22622952 |
+| 2 | aegis256 | 1373.187 | 202.265 | 350.707 | 3.848 | 14090240 | 22622952 |
+| 2 | plain | 162.614 | 127.997 | 19.427 | 1.207 | 14086144 | 22618832 |
+| 3 | plain | 163.387 | 129.418 | 33.361 | 1.017 | 14086144 | 22618832 |
+| 3 | aegis256 | 952.571 | 196.221 | 36.192 | 2.724 | 14090240 | 22622952 |
+
+Three-sample medians; difference is encrypted minus plain, percent is `(encrypted / plain - 1) * 100`:
+
+| Operation | Plain median ms | aegis256 median ms | Difference ms | Difference % |
+| --- | ---: | ---: | ---: | ---: |
+| Write with commit | 163.387 | 962.771 | +799.384 | +489.26% |
+| 10,000 point reads | 129.418 | 202.265 | +72.847 | +56.29% |
+| Truncating checkpoint | 33.361 | 36.192 | +2.831 | +8.49% |
+| Reopen and count | 1.017 | 3.535 | +2.518 | +247.59% |
+
+Observed ranges (milliseconds):
+
+| Operation | Plain min–max | aegis256 min–max |
+| --- | ---: | ---: |
+| Write with commit | 162.614–273.558 | 952.571–1373.187 |
+| 10,000 point reads | 127.997–198.431 | 196.221–244.932 |
+| Truncating checkpoint | 19.427–35.747 | 34.504–350.707 |
+| Reopen and count | 1.015–1.207 | 2.724–3.848 |
+
+Every encrypted database is 4,096 bytes larger than its plain counterpart; its pre-checkpoint WAL is 4,120 bytes larger in all three pairs.
+
+These are three warm-filesystem-cache samples per mode on a shared host, including scheduling/storage contention. They establish the displayed observations only. They cannot establish stable production overhead, isolate the cost of FTS/encryption changes from host variation, or prove a performance regression/speedup against the retained historical runs. The workload and key handling below remain unchanged.
+
+### Focused managed qualification on the same unified bytes
+
+**172 passed, 0 failed, 0 skipped**, one invocation per requested filter; normal TerraBase parallelism 16, auth 4 and vendor runner default. All focused builds passed once with 0 warnings/errors. Exact source SHA was verified in built server, test and benchmark assemblies; every output native library matched the x64 pin.
+
+| Filter | Passed/total | Runner duration | Exit |
+| --- | ---: | --- | ---: |
+| EncryptionTests | 16/16 | 277ms | 0 |
+| DatabaseEncryptionTests | 6/6 | 2s 672ms | 0 |
+| DatabaseRecoveryTests | 89/89 | 11s 924ms | 0 |
+| CopySourceFaultTests | 4/4 | 4s 263ms | 0 |
+| RebuildLedgerRecoveryTests | 12/12 | 2s 133ms | 0 |
+| RebuildCertificationLedgerSafetyTests | 26/26 | 6s 075ms | 0 |
+| RebuildFaultSafetyTests | 13/13 | 4s 388ms | 0 |
+| StorageRecoveryTests | 4/4 | 29s 331ms | 0 |
+| QosAdmissionTests (memory-refusal bools only) | 2/2 | 1s 600ms | 0 |
+
+Vendor coverage retains both genuine native page-tamper cases and all SQL CHECK/RAISE spoof assertions. SQL RAISE reports typed raw constraint 129 / facade 1; genuine encrypted-page damage reports raw 133 / facade 11. QoS ran only `Process_memory_refusal_precedes_cold_plan_or_membership_materialization` both bools with the existing `RequestLogMemoryFixture` and drain. No assertion, timeout or parallelism was weakened.
+
+### x64 single-file and isolated native-pin qualification
+
+Normal `nice -n 19 make terrabase-publish RUNTIME=linux-x64` passed with the project’s single-file/native extraction properties. Published output had no Turso sidecar. The owned published test child reached HTTP health 200; nonempty SYSTEM/intents databases had encrypted headers and valid wrapped-only key records. Its extracted and mapped native library matched the new x64 pin and exported contract marker 1. The synthetic test master was delivered only through the child environment, never argv, logs or a master-key file. The child was stopped and temporary data/extraction removed.
+
+Dedicated disposable native cache: clean target exit 0; one-byte XOR tampering rejected with the expected digest-mismatch error (exit 1); exact bytes restored and accepted (exit 0). The real cache was verified unchanged. No native build, ARM managed execution, production host, format activation, CI or merge claim is made.
+
+### Reproduction and retained evidence
+
+Admitted launch (the launcher pins PATH/DOTNET_ROOT to SDK 11, exports the SDK sibling and verifies the exact pushed SHA inside the managed checkout):
+
+```sh
+bash /home/mariogk/.t3/test-artifacts/database-encryption/unified-native-1c3b-20261023T181523Z/launch.sh
+```
+
+Benchmark subprocess, executed once through the external Makefile:
+
+```sh
+nice -n 19 dotnet run --configuration Release --project benchmark/dotnet/DatabaseEncryption --no-build
+```
+
+Evidence outside Git: `/home/mariogk/.t3/test-artifacts/database-encryption/unified-native-1c3b-20261023T181523Z`. `results.json` retains exact commands, exits, durations and start/end loads; original per-filter TUnit JSON/HTML, raw benchmark output, assembly/native digests, bundle proof and clean/corrupt/restored pin receipts are retained. Completed files and directories were fsynced. Overall qualification aggregate/wrapper exit 0. Admission reported beta unreachable and skipped its supersede check; execution occurred on delta. This is focused local proof, not a full-suite or CI result.
+
+## Retained history — earlier encryption-only runs
+
+The rest of this document preserves earlier measurements and qualification of the old encryption-only artifact. Those numbers and proofs do not describe the shared native bytes measured above.
 
 ## Earlier encryption-only patched-native measurement — local commit fc27c2186
 
@@ -53,7 +134,7 @@ Final medians, three samples per mode; percent is `(encrypted / plain - 1) * 100
 
 The measured median write difference is +824.530 ms; reopen adds 1.041 ms. Every encrypted database is 4,096 bytes larger and its pre-checkpoint WAL is 4,120 bytes larger. Encrypted writes range from 278.891 to 4,065.919 ms, while plain writes range from 139.782 to 302.825 ms. This uncontrolled shared-host, warm-cache run establishes these observations only: three samples with this variation cannot establish stable production overhead or a performance regression relative to the earlier run. No speedup is claimed. Workload, timing boundaries and key handling remain as documented below.
 
-## Final focused regression proof
+## Historical encryption-only focused regression proof
 
 Same local commit and x64 native pin: **170 passed, 0 failed, 0 skipped**. Vendor encryption: 16; TerraBase classes: 89 DatabaseRecoveryTests, 6 DatabaseEncryptionTests, 4 CopySourceFaultTests, 12 RebuildLedgerRecoveryTests, 26 RebuildCertificationLedgerSafetyTests, 13 RebuildFaultSafetyTests; auth StorageRecoveryTests: 4. All relevant builds succeeded with zero warnings/errors. Vendor coverage includes both real native page-tamper paths, SQL CHECK spoofing, and all seven SQL RAISE spoof strings (including forged primary/extended damage codes).
 
@@ -71,7 +152,7 @@ make auth-test-fast CONFIGURATION=Release 'TEST_ARGS=--treenode-filter /*/*/Stor
 
 SDK sibling commit: `bcd20603f11f3aa54dc54cec6e410b4fe9e24151`. Logs are retained in `artifacts/final-validation/`. This is focused local verification, not a full-suite or CI result. No branch push or CI rerun was performed.
 
-## Final single-file and pin proof
+## Historical encryption-only single-file and pin proof
 
 `make terrabase-publish RUNTIME=linux-x64 PUBLISH_DIR="$PWD/artifacts/final-validation/publish"` succeeded with the normal project single-file/native extraction properties and `--self-contained`. Published output contained no `libturso` sidecar. The isolated published child reached HTTP health 200 with all listener ports assigned from 0. Ambient `TS_`, `TERRABASE_`, `AWS_`, bucket and region settings were cleared; Development used only the test harness SHA-256 synthetic master in the child environment, never in argv or a master-key file.
 

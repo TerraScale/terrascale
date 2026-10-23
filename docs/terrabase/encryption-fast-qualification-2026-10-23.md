@@ -1,7 +1,14 @@
 # Encryption Fast qualification, 2026-10-23
 
 These are focused development-host results, not a passing complete Fast gate.
-Final unified FTS/encryption native delivery and live activation remain pending.
+The final unified FTS/encryption native bytes passed focused qualification at
+`1c3b609f65588ed712b41a81dfb1d807b00f44a4`: 172 passed, zero failures/skips.
+Single-file encrypted startup and clean/corrupt/restored cache checks passed.
+Three benchmark pairs are published in `benchmark/bench/2026-10-23-encryption.md`.
+The durable unified report SHA-256 is
+`3d0bd5a3e0e7fb985a53454210d57333f4c06ef1b9ba1a82f078fbc5c8d8bcaa`.
+Exact-head CI and live activation remain pending; the orch format hold remains.
+The earlier focused runs below used the historical encryption-only native asset.
 Execution used admitted `ts-heavy-any` on delta, `nice -n 19`, Release, SDK
 `11.0.100-rc.1.26425.128`, and the existing Makefile parallelism: TerraBase 16,
 auth 4. The SDK sibling was clean at
