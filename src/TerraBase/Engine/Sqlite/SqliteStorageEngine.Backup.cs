@@ -128,7 +128,14 @@ internal sealed partial class SqliteStorageEngine
     }
 
     /// <remarks>ponytail: sorts every table by all its columns, a full scan each; fine for a daily drill of small databases.</remarks>
-    public async ValueTask<byte[]> ChecksumAsync(string file, CancellationToken cancellationToken)
+    public ValueTask<byte[]> ChecksumAsync(string file, CancellationToken cancellationToken) =>
+        ChecksumAsync(file, normalizePeerBookkeeping: false, cancellationToken);
+
+    /// <summary>Same-cut live drill digest, excluding only uncaptured peer bookkeeping and bookkeeping-only rows.</summary>
+    internal ValueTask<byte[]> RestoreDrillChecksumAsync(string file, CancellationToken cancellationToken) =>
+        ChecksumAsync(file, normalizePeerBookkeeping: true, cancellationToken);
+
+    private async ValueTask<byte[]> ChecksumAsync(string file, bool normalizePeerBookkeeping, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(file);
         Io.Admit();
@@ -136,6 +143,7 @@ internal sealed partial class SqliteStorageEngine
         {
             return await Io.RunAsync(() =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
                 {
                     DataSource = file,
@@ -151,6 +159,7 @@ internal sealed partial class SqliteStorageEngine
                     using var rows = schema.ExecuteReader();
                     while (rows.Read())
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         Append(hash, rows);
                         // The engine's own tables (change capture, statistics) differ between a file and its restore.
                         if (rows.GetString(0) == "table" && !ChangeLog.EngineTable(rows.GetString(1)))
@@ -162,10 +171,18 @@ internal sealed partial class SqliteStorageEngine
 
                 foreach (var table in tables)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var name = "\"" + table.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
                     using var command = connection.CreateCommand();
                     // File incarnations deliberately differ after restore; compare the logical commit offset instead.
                     var projection = table == "commit_offset" ? "id, value" : "*";
+                    // Stable/ack reports suspend capture, can create rows, and never advance applied progress.
+                    var peers = normalizePeerBookkeeping && table == "_tb_peers";
+                    if (peers)
+                    {
+                        projection = "node, applied";
+                    }
+
                     command.CommandText = $"SELECT {projection} FROM {name} LIMIT 0;";
                     int columns;
                     using (var shape = command.ExecuteReader())
@@ -173,15 +190,18 @@ internal sealed partial class SqliteStorageEngine
                         columns = shape.FieldCount;
                     }
 
-                    command.CommandText = $"SELECT {projection} FROM {name} ORDER BY {string.Join(", ", Enumerable.Range(1, columns).Select(column => column.ToString(CultureInfo.InvariantCulture)))};";
+                    var filter = peers ? " WHERE applied <> 0" : "";
+                    command.CommandText = $"SELECT {projection} FROM {name}{filter} ORDER BY {string.Join(", ", Enumerable.Range(1, columns).Select(column => column.ToString(CultureInfo.InvariantCulture)))};";
                     using var rows = command.ExecuteReader();
                     hash.AppendData(Encoding.UTF8.GetBytes(table + "\0"));
                     while (rows.Read())
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         Append(hash, rows);
                     }
                 }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 return hash.GetHashAndReset();
             }, cancellationToken).ConfigureAwait(false);
         }
