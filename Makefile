@@ -16,7 +16,7 @@ lint: check-css
 	python3 scripts/verify-e2e.py
 	python3 scripts/report-slow-failure.py --self-check
 	node scripts/check-document-changes.mjs
-	$(DOTNET) format $(SOLUTION) --verify-no-changes --no-restore
+	DOTNET="$(DOTNET)" bash scripts/ci/format.sh
 
 security:
 	$(DOTNET) restore $(SOLUTION) --locked-mode -p:NuGetAudit=true -p:NuGetAuditMode=all -p:NuGetAuditLevel=low

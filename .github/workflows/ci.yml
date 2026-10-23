@@ -40,6 +40,8 @@ jobs:
         uses: ./.github/actions/dashboard-setup
       - name: Build and check once
         if: steps.changes.outputs.changed == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: bash scripts/ci/check.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.changes.outputs.changed == 'true'
