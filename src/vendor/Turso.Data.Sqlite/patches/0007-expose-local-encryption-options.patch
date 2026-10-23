@@ -87,23 +87,25 @@ index 0bb94642f..56b1046ec 100644
              "Recursive Triggers" => false,
              "Default Timeout" => 30,
 diff --git a/src/Turso.Data/TursoConnection.cs b/src/Turso.Data/TursoConnection.cs
-index 0680e2b8c..b4043beaf 100644
+index 0680e2b8c..acdb78ca9 100644
 --- a/src/Turso.Data/TursoConnection.cs
 +++ b/src/Turso.Data/TursoConnection.cs
-@@ -90,10 +90,11 @@ public class TursoConnection : DbConnection
+@@ -90,11 +90,13 @@ public class TursoConnection : DbConnection
          var cipher = _connectionOptions.GetEncryptionCipher();
          var hexkey = _connectionOptions["Encryption Key"];
  
-+        if (cipher.HasValue != !string.IsNullOrWhiteSpace(hexkey))
++        if (!cipher.HasValue && !string.IsNullOrWhiteSpace(hexkey))
 +            throw new InvalidOperationException("Encryption Cipher and Encryption Key must be specified together.");
 +
          if (cipher.HasValue)
          {
--            if (string.IsNullOrWhiteSpace(hexkey))
+             if (string.IsNullOrWhiteSpace(hexkey))
 -                throw new InvalidOperationException("Encryption Key is required when Encryption Cipher is specified.");
- 
+-
++                throw new InvalidOperationException("Encryption Cipher and Encryption Key must be specified together.");
              _turso = TursoBindings.OpenDatabaseWithEncryption(filename, cipher.Value, hexkey);
          }
+         else
 diff --git a/src/Turso.Data/TursoConnectionStringBuilder.cs b/src/Turso.Data/TursoConnectionStringBuilder.cs
 index 44ef2451f..b37dfa5dc 100644
 --- a/src/Turso.Data/TursoConnectionStringBuilder.cs
