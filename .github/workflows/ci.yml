@@ -36,7 +36,7 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == schedule || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
             echo 'check=false' >> "$GITHUB_OUTPUT"
             echo "cache=$([[ "$GITHUB_REF" == refs/heads/main ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          elif git diff --quiet HEAD^ HEAD -- '*.go' go.mod go.sum .github/workflows/ci.yml; then
+          elif git diff --quiet HEAD^ HEAD -- '*.go' '*.json' go.mod go.sum .github/workflows/ci.yml; then
             echo 'check=false' >> "$GITHUB_OUTPUT"
             echo 'cache=false' >> "$GITHUB_OUTPUT"
           else
