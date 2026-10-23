@@ -208,7 +208,8 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
     }
 
     // terrascale e30ffdc2 HealthzEndpoint and region-identity.md: /healthz names its region in the body and the
-    // X-TerraBase-Region header. An answer that does not name one valid region, or a refused one, provisions nothing.
+    // X-TerraBase-Region header. Without the /v1/regions catalog, an answer that does not name one valid region, or a
+    // refused one, provisions nothing.
     [Test]
     [Arguments("missing-region")]
     [Arguments("invalid-region")]
@@ -222,8 +223,10 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         var invalid = false;
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
         {
-            if (!Volatile.Read(ref invalid) || http.Request.Host.Host != "api.terrascale.tech" || http.Request.Path != "/healthz")
+            if (!Volatile.Read(ref invalid) || http.Request.Host.Host != "api.terrascale.tech" || http.Request.Path.Value is not ("/healthz" or "/v1/regions"))
                 return Task.FromResult<IResult?>(null);
+            // A TerraBase without the region catalog: the healthz region is the only one the dashboard can verify.
+            if (http.Request.Path.Value == "/v1/regions") return Task.FromResult<IResult?>(Results.NotFound());
             if (defect != "missing-header") http.Response.Headers["X-TerraBase-Region"] = defect == "header-mismatch" ? "sfo" : "gru";
             if (defect == "rate-limited")
             {

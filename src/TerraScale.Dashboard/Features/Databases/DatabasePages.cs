@@ -107,12 +107,16 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
         string.Join('&', Activity!.Cards.Select(card => card.Key + "=" + (card.Key == key ? range : card.Range))) + "#activity";
     public AccountContext Context => Shell.Context;
     public IReadOnlyList<DatabaseRecord> Branches => Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal).ToArray();
-    public string Placement => DatabaseService.Regions(Database).Count == 0 ? DatabasesPage.RegionDisplay("")
-        : string.Join(", ", DatabaseService.Regions(Database).Select(DatabasesPage.RegionDisplay));
+    // An all-regions database serves every region in TerraBase's catalog (Choices); its record names only the home.
+    public IReadOnlyList<string> Serving => Database.AllRegions
+        ? [.. DatabaseService.Regions(Database).Concat(Choices.Select(region => region.Code)).Distinct(StringComparer.OrdinalIgnoreCase)]
+        : DatabaseService.Regions(Database);
+    public string Placement => Serving.Count == 0 ? DatabasesPage.RegionDisplay("")
+        : string.Join(", ", Serving.Select(DatabasesPage.RegionDisplay));
     public (string Tone, string Title, string Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
     {
-        "success" => ("success", Database.Name + " is ready", DatabaseService.Regions(Database).Count == 1
-            ? "It serves " + Placement + ". Add a collection in Documents, or connect with an API key."
+        "success" => ("success", Database.Name + " is ready", Serving.Count == 1 || Database.AllRegions
+            ? "It serves " + Placement + ". " + (Serving.Count > 1 ? "Replica progress is shown in Replication. " : "") + "Add a collection in Documents, or connect with an API key."
             : "Its home region is ready. Replica progress is shown in Replication. Add a collection in Documents, or connect with an API key."),
         "danger" => ("danger", Database.Name + " could not be created", "The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing."),
         _ => ("info", Database.Name + " is being created", "The data plane is still placing it in " + Placement + ". Its status changes to ready when it can take requests.")
@@ -121,14 +125,14 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
     {
         get
         {
-            var configured = DatabaseService.Regions(Database);
+            var configured = Serving;
             var labels = configured.Select(DatabasesPage.RegionDisplay).ToList();
             if (Context.Project?.BackupRegion is { Length: > 0 } backup && !configured.Contains(backup, StringComparer.OrdinalIgnoreCase))
                 labels.Add(DatabasesPage.RegionDisplay(backup) + " · backup region");
             return labels;
         }
     }
-    public string Replication => DatabaseService.Regions(Database) switch
+    public string Replication => Serving switch
     {
         { Count: 0 } => "Not reported",
         { Count: 1 } regions => "Single region · " + regions[0].ToUpperInvariant() + " only",

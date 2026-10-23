@@ -172,6 +172,10 @@ public static class DatabaseEndpoints
         }
         if (tab == "overview")
         {
+            // An all-regions database serves every catalog region; without the catalog it shows its recorded regions.
+            if (database.AllRegions)
+                try { choices = await backend.RegionsAsync(http.RequestAborted); }
+                catch (HttpRequestException) { }
             try
             {
                 contents = await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), id, http.RequestAborted);

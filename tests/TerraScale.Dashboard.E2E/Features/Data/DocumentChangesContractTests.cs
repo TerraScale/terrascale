@@ -209,6 +209,8 @@ public sealed class DocumentChangesContractTests
         public HttpClient CreateClient(string name) => new(this, false);
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.RequestUri!.AbsolutePath == "/v1/regions")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"regions\":[\"gru\"]}", Encoding.UTF8, "application/json") });
             if (request.RequestUri!.AbsolutePath == "/healthz")
             {
                 var health = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"region\":\"gru\"}", Encoding.UTF8, "application/json") };

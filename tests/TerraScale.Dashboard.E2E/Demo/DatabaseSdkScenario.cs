@@ -345,6 +345,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         public Func<HttpContext, Task<IResult?>>? Extension { get; set; }
         // The region reported by the public TerraBase origin.
         public string ApiRegion { get; set; } = "gru";
+        // TerraBase's /v1/regions catalog; unset, it names only the answering region, as /healthz does.
+        public string[]? Catalog { get; set; }
 
         public void Release() { ApiKeys?.ReleaseLists(); createGate?.TrySetResult(); State?.ReleaseQuotaCommits(); }
 
@@ -381,6 +383,11 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     return Error(421, "misdirected_request");
                 if (path == "/healthz")
                     return Results.Json(new { status = "ok", version = "test", region = answering, storageFormat = "test", revision = (string?)null, machine = "local" });
+                if (path == "/v1/regions")
+                {
+                    Require(http.Request.Method == "GET" && http.Request.Headers.Authorization.Count == 0, "The region catalog is read anonymously");
+                    return Results.Json(new { regions = Catalog ?? [answering] });
+                }
                 var token = http.Request.Headers.Authorization.ToString();
                 if (path.StartsWith("/v1/management/", StringComparison.Ordinal))
                 {
@@ -444,6 +451,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 case "backup-failure": backupFailure = body.GetProperty("value").GetString()!; break;
                 // Another TerraBase client placed a replica: the producer's placement is wider than the dashboard asked for.
                 case "api-region": ApiRegion = body.GetProperty("value").GetString()!; break;
+                case "catalog": Catalog = [.. body.GetProperty("value").EnumerateArray().Select(value => value.GetString()!)]; break;
                 case "add-replica":
                     var added = body.GetProperty("value").GetString()!;
                     lock (gate)
@@ -767,7 +775,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     Require(body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "replicaRegions" }),
                         "Placement updates send only the complete producer replicaRegions list or allRegions");
                     var replicas = body.GetProperty("replicaRegions").EnumerateArray().Select(value => value.GetString()!).ToArray();
-                    Require(replicas.All(value => value is "sfo" or "gru") && !replicas.Contains(current.HomeRegion, StringComparer.Ordinal) &&
+                    Require(replicas.All(value => value is "sfo" or "gru" || Catalog?.Contains(value) == true) && !replicas.Contains(current.HomeRegion, StringComparer.Ordinal) &&
                         replicas.Distinct(StringComparer.Ordinal).Count() == replicas.Length, "Placement preserves its home and unique discovered replicas");
                     lock (gate) { var changed = current with { ReplicaRegions = replicas, AllRegions = false }; databases[current.Id] = changed; return Results.Json(Wire(changed, answering)); }
                 case (5, "DELETE", _):

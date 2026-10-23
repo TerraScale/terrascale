@@ -19,10 +19,14 @@ public sealed class DatabaseAllRegionsJourneyTests(DashboardRootFixture fixture)
         var organizationId = identity.GetProperty("organizationId").GetString()!;
         var projectId = identity.GetProperty("projectId").GetString()!;
         await Control(new { command = "api-region", value = "sfo" });
+        // TerraBase's /v1/regions catalog lists every serving region, including one this dashboard never named before.
+        await Control(new { command = "catalog", value = new[] { "fra", "gru", "sfo" } });
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         var list = WebUtility.HtmlDecode(await (await client.GetAsync("/databases")).Content.ReadAsStringAsync());
         await Assert.That(list).Contains("All regions: copies follow new regions automatically");
         await Assert.That(list).Contains("data-attr:disabled=\"$_allRegions\"");
+        foreach (var code in new[] { "FRA", "GRU", "SFO" })
+            await Assert.That(Regex.IsMatch(list, "<input type=\"checkbox\" name=\"region\" value=\"" + code + "\"")).IsTrue().Because("New database offers " + code);
 
         var secret = await HttpJourney.CreatePatAsync(client, "All regions MCP", account.Password);
         // Both choices together are refused before anything is provisioned.
@@ -44,8 +48,10 @@ public sealed class DatabaseAllRegionsJourneyTests(DashboardRootFixture fixture)
             databaseId = body.GetProperty("id").GetString()!;
             await Assert.That(body.GetProperty("allRegions").GetBoolean()).IsTrue();
         }
-        var page = await PageAsync("");
+        var page = await PageAsync("?created=1");
         await Assert.That(page).Contains("<span class=\"ts-badge ts-badge-info\">All regions</span>");
+        await Assert.That(page).Contains("It serves sfo · San Francisco, gru · São Paulo, fra · Frankfurt.");
+        await Assert.That(page).Contains("data-region=\"fra\"");
         var placement = await PageAsync("/replication");
         await Assert.That(Regex.Match(placement, "<input[^>]+name=\"allRegions\"[^>]*>").Value).Contains("checked");
         await Assert.That(Regex.Match(placement, "<fieldset class=\"ts-field ts-db-regions\"[^>]*>").Value).Contains("disabled");
@@ -56,6 +62,9 @@ public sealed class DatabaseAllRegionsJourneyTests(DashboardRootFixture fixture)
             await Assert.That(regions.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(await AllRegionsAsync()).IsFalse();
         await Assert.That((await PageAsync("")).Contains(">All regions</span>", StringComparison.Ordinal)).IsFalse();
+        // A removed region can be chosen again: the catalog still lists it.
+        using (var readded = await ChangeAsync(["SFO", "FRA"], allRegions: false))
+            await Assert.That(readded.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because(await readded.Content.ReadAsStringAsync());
         using (var everywhere = await ChangeAsync([], allRegions: true))
             await Assert.That(everywhere.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(await AllRegionsAsync()).IsTrue();

@@ -1,6 +1,7 @@
 namespace TerraScale.Dashboard.Shared.Databases;
 
-public sealed record DatabaseFrameModel(DatabaseRecord Database, string Tab, string Collection = "")
+// Serving: the regions the database serves, when the page knows more than its record (an all-regions database).
+public sealed record DatabaseFrameModel(DatabaseRecord Database, string Tab, string Collection = "", IReadOnlyList<string>? Serving = null)
 {
     public static readonly (string Key, string Label)[] Tabs = [("overview", "Overview"), ("documents", "Documents"), ("sql", "SQL"), ("schema", "Schema"), ("indexes", "Indexes"), ("webhooks", "Webhooks"), ("replication", "Replication"), ("logs", "Logs"), ("backups", "Backups"), ("branches", "Branches"), ("import", "Import and export"), ("danger", "Danger zone")];
     public static string Title(string section) => section switch

@@ -64,10 +64,31 @@ public interface IDatabaseBackend
 // Canonical data operations use the official SDK with current action-scoped authority.
 public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTokens tokens) : IDatabaseBackend
 {
-    // No producer publishes a region catalog: Atlas /v1/discovery was never served and is gone, and TerraBase has no catalog
-    // route yet. The one verified region is the one answering api.terrascale.tech, named by both its /healthz body and its
-    // X-TerraBase-Region header. It is not necessarily the nearest, a database's home, or every serving region.
+    // TerraBase's anonymous GET /v1/regions answers {"regions":[...]}: the id of every region it serves now, from any region,
+    // so a new region appears without a change here. gru, fra and sjc keep their display order; others follow by id. While
+    // that route is not deployed, or answers anything but a valid list, the one verified region is the healthz region.
     public async Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken)
+    {
+        try { return await CatalogAsync(cancellationToken); }
+        catch (Exception error) when (error is HttpRequestException or JsonException) { return await AnsweringRegionAsync(cancellationToken); }
+    }
+
+    private async Task<IReadOnlyList<DatabaseRegion>> CatalogAsync(CancellationToken cancellationToken)
+    {
+        using var response = await factory.CreateClient("platform").GetAsync(new Uri(TerraBaseDiscovery.Origin, "/v1/regions"), HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        using var document = await PlatformJson.ReadAsync(response.Content, cancellationToken);
+        if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("regions", out var ids) || ids.ValueKind != JsonValueKind.Array)
+            throw new HttpRequestException("TerraBase returned an invalid region catalog.");
+        var regions = ids.EnumerateArray().Select(id => id.ValueKind == JsonValueKind.String ? DatabaseRegion.FromId(id.GetString()) : null).ToArray();
+        if (regions.Length == 0 || regions.Any(region => region is null) || regions.DistinctBy(region => region!.Id).Count() != regions.Length)
+            throw new HttpRequestException("TerraBase returned an invalid region catalog.");
+        return regions.OfType<DatabaseRegion>().OrderBy(region => TerraScale.Dashboard.Shared.UI.Regions.Rank(region.Id)).ThenBy(region => region.Id, StringComparer.Ordinal).ToArray();
+    }
+
+    // The region answering api.terrascale.tech, named by both its /healthz body and its X-TerraBase-Region header. It is not
+    // necessarily the nearest, a database's home, or every serving region.
+    private async Task<IReadOnlyList<DatabaseRegion>> AnsweringRegionAsync(CancellationToken cancellationToken)
     {
         using var response = await factory.CreateClient("platform").GetAsync(new Uri(TerraBaseDiscovery.Origin, "/healthz"), HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
