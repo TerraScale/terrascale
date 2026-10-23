@@ -146,7 +146,7 @@ public sealed class ShapeMirrorTests
     [Test]
     public async Task Trim_below_the_floor_deletes_the_remote_objects_and_refuses_their_keys()
     {
-        await using var harness = await Harness.StartAsync();
+        await using var harness = await Harness.StartAsync(new FakeTimeProvider(DateTimeOffset.UtcNow));
         var start = await harness.Db.HeadAsync();
         // Two chunks upload in the first epoch; after the clock moves a full epoch, the third upload is sealed under the next one.
         for (var commit = 0; commit < 3; commit++)
@@ -238,6 +238,9 @@ public sealed class ShapeMirrorTests
     public async Task A_presigned_url_serves_the_ciphertext_and_refuses_tampering_and_expiry()
     {
         await using var harness = await Harness.StartAsync();
+        var wallTime = DateTimeOffset.UtcNow;
+        await Assert.That(harness.Time.GetUtcNow()).IsGreaterThanOrEqualTo(wallTime)
+            .Because("manifest expiry must follow the AWS signer's wall clock after server startup");
         var start = await harness.Db.HeadAsync();
         _ = await harness.CommitLargeAsync();
         var chunk = await harness.SealAsync(start);
@@ -613,9 +616,9 @@ public sealed class ShapeMirrorTests
 
         public CancellationToken Cancellation { get; } = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
 
-        public static async Task<Harness> StartAsync()
+        public static async Task<Harness> StartAsync(FakeTimeProvider? time = null)
         {
-            var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+            time ??= new MirrorClock();
             var s3 = new FakeS3 { Time = time };
             var puts = new ConcurrentDictionary<string, int>(StringComparer.Ordinal);
             var mirrored = new SemaphoreSlim(0);
@@ -744,6 +747,19 @@ public sealed class ShapeMirrorTests
             return new ShapeSealDefinition(Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)),
                 "h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), Collection, collection.Id, RandomNumberGenerator.GetBytes(16));
         }
+    }
+
+    // AWS presigning uses wall time; keep manual advances without freezing expiry during server startup.
+    private sealed class MirrorClock : FakeTimeProvider
+    {
+        private readonly DateTimeOffset _initialTime;
+
+        public MirrorClock() : base(DateTimeOffset.UtcNow)
+        {
+            _initialTime = base.GetUtcNow();
+        }
+
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + (base.GetUtcNow() - _initialTime);
     }
 
     /// <summary>The production shape metrics, with the mirror's completion reported to the test.</summary>

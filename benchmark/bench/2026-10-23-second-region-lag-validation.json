@@ -1,0 +1,93 @@
+{
+  "measured_code_commit": "e9ce5587fc9b561f2cd1408d3d019129eda94c22",
+  "terrabase_source_tree": "5e4c6be4945bfb98fecad878e7d0bfaed6fade99",
+  "host": "mariogk-dev",
+  "started": "2026-10-23T11:58:32.776228098Z",
+  "finished": "2026-10-23T12:01:39.613327254Z",
+  "sha256": {
+    "benchmark/bench/2026-10-23-second-region-lag-raw.json": "026e1a1504ece38673fdc732836e735cef2cd6f519f35133f29d221192ce8e4c",
+    "benchmark/bin/repl-local": "90aa76cd2adbf0dcdd41f8d2370d51f9ee2886a4e1d0c42efc2c7f4125554437",
+    "tests/TerraBase.Slow/bin/Release/net11.0/TerraBase.Slow.dll": "b6596249263cf5e64ce71e8b09d758ec2ad1b954f363a63aade100a626d39869"
+  },
+  "verification": "Independent Python integer-timestamp pairing and nearest-rank recomputation; no percentile subtraction",
+  "repeats": [
+    {
+      "repeat": 1,
+      "documents": 1000,
+      "source_groups": 202,
+      "all_published_timing_statistics_recomputed": true,
+      "load_retries": 0,
+      "exact_two_region_digests": true,
+      "partition_assertions_passed": true,
+      "p99_rank": 990,
+      "p99_example": {
+        "marker": 287,
+        "document": "01M5MA1PYMK970PSFZF0XYNJ4G",
+        "group_documents": 14,
+        "lag_ms": 1660.833386,
+        "before_receiver_ms": 837.482432,
+        "receiver_to_native_commit_ms": 823.350954,
+        "cleanup_ms": 1.063634
+      }
+    },
+    {
+      "repeat": 2,
+      "documents": 1000,
+      "source_groups": 203,
+      "all_published_timing_statistics_recomputed": true,
+      "load_retries": 0,
+      "exact_two_region_digests": true,
+      "partition_assertions_passed": true,
+      "p99_rank": 990,
+      "p99_example": {
+        "marker": 1730,
+        "document": "01M5MA4361AGTYXY9KDZEEKAAC",
+        "group_documents": 8,
+        "lag_ms": 2902.693291,
+        "before_receiver_ms": 36.600715,
+        "receiver_to_native_commit_ms": 2866.092576,
+        "cleanup_ms": 0.265162
+      }
+    },
+    {
+      "repeat": 3,
+      "documents": 1000,
+      "source_groups": 200,
+      "all_published_timing_statistics_recomputed": true,
+      "load_retries": 0,
+      "exact_two_region_digests": true,
+      "partition_assertions_passed": true,
+      "p99_rank": 990,
+      "p99_example": {
+        "marker": 185,
+        "document": "01M5MA5S2DVWPGSWF7PTZYV1CD",
+        "group_documents": 12,
+        "lag_ms": 410.986248,
+        "before_receiver_ms": 158.175817,
+        "receiver_to_native_commit_ms": 252.810431,
+        "cleanup_ms": 0.649478
+      }
+    }
+  ],
+  "executed_checks": [
+    {
+      "command": "nice -n 19 go test ./cmd/repl-local ./internal/repllocal ./internal/replbench",
+      "result": "passed"
+    },
+    {
+      "command": "nice -n 19 go build -trimpath -o bin/repl-local ./cmd/repl-local",
+      "result": "passed"
+    },
+    {
+      "command": "nice -n 19 env TsDotnetRoot=/home/mariogk/Projects/TerraScale/ts-dotnet dotnet build tests/TerraBase.Slow/TerraBase.Slow.csproj --configuration Release --no-restore --no-dependencies",
+      "result": "passed; zero warnings and errors"
+    }
+  ],
+  "prior_correctness_evidence": "2026-10-23-second-region-tests.json; 44 cases at f9590ee3, not rerun for timing extension",
+  "limits": [
+    "Shared-host loopback evidence; no production or WAN target claim",
+    "Callback timestamps after native COMMIT returns; no calibrated hook scheduling error or physical power-loss experiment",
+    "Source marker lookup and test instrumentation overhead retained, never subtracted",
+    "Timing stages do not isolate scheduling, writer admission, SQLite execution or sync; R10 owns runtime diagnosis"
+  ]
+}

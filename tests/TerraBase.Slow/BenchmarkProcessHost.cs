@@ -12,6 +12,7 @@ using Microsoft.Extensions.Options;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -108,7 +109,7 @@ public sealed class BenchmarkProcessHost
             }, services =>
             {
                 services.AddSingleton<IMemberDirectory>(new DirectoryOfMembers(members));
-                MeasureDurability(services);
+                MeasureDurability(services, directory);
             }, userId: Get("user"), cancellationToken: cancellationToken, failedStartCleanup: task => failedStartCleanup = task);
             await WriteAsync(listening, new JsonObject { ["peer_url"] = api.Server.PeerAddress!.ToString() }.ToJsonString(), cancellationToken);
             await WriteAsync(member, $"{region}\n{advertised ?? api.Server.PeerAddress!.ToString()}", cancellationToken);
@@ -124,6 +125,11 @@ public sealed class BenchmarkProcessHost
             await WaitForWritesAsync(client, new Uri($"/v1/projects/{Get("project")}/databases/canary/collections", UriKind.Relative),
                 config["readiness_collection"]?.GetValue<string>(), cancellationToken);
             await Assert.That(api.Server.Services.GetRequiredService<IRemoteDurability>().Confirms).IsTrue();
+            var timing = api.Server.Services.GetRequiredService<CommitTiming>();
+            timing.Attach((SqliteDatabaseStore?)await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(
+                new TenantContext(Get("organization"), PlanTier.Hobby, Get("project"), Get("database")), cancellationToken)
+                ?? throw new InvalidOperationException("benchmark database not open"));
+            timing.Origin = api.Server.Services.GetRequiredService<LocalReplica>().Id.ToString();
             await WriteAsync(target, new JsonObject
             {
                 ["kind"] = "local-process",
@@ -162,6 +168,7 @@ public sealed class BenchmarkProcessHost
                     if (EntityIds.IsValid(id) && id != sampled)
                     {
                         var snapshot = api.Server.Services.GetRequiredService<BenchmarkLocalAck>().Snapshot(id);
+                        snapshot["commit_timing"] = timing.Snapshot();
                         await WriteAsync(Path.Combine(directory, "sample.json"), snapshot.ToJsonString(), cancellationToken);
                         sampled = id;
                     }
@@ -365,7 +372,7 @@ public sealed class BenchmarkProcessHost
     private static async Task SmokeAsync(CancellationToken cancellationToken)
     {
         await using var api = await ManagementApi.StartAsync(settings =>
-            settings["node-name"] = EntityIds.New().ToString().ToLowerInvariant(), services: MeasureDurability, cancellationToken: cancellationToken);
+            settings["node-name"] = EntityIds.New().ToString().ToLowerInvariant(), services: services => MeasureDurability(services), cancellationToken: cancellationToken);
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await WaitForWritesAsync(data, new Uri($"{database.Data}/collections", UriKind.Relative), null, cancellationToken);
@@ -402,7 +409,7 @@ public sealed class BenchmarkProcessHost
         await Assert.That(scrape).Contains("terrabase_benchmark_admission_duration");
     }
 
-    private static void MeasureDurability(IServiceCollection services)
+    private static void MeasureDurability(IServiceCollection services, string? directory = null)
     {
         services.AddHttpContextAccessor();
         services.AddSingleton<BenchmarkLocalAck>();
@@ -412,6 +419,13 @@ public sealed class BenchmarkProcessHost
         services.AddSingleton<IRemoteDurability>(provider => new TimedDurability(
             (IRemoteDurability)original.ImplementationFactory!(provider), provider.GetRequiredService<IMeterFactory>(),
             provider.GetRequiredService<BenchmarkLocalAck>()));
+        if (directory is not null)
+        {
+            services.AddSingleton<CommitTiming>();
+            services.AddSingleton<DatabaseLifecycleCheckpoint>(provider => provider.GetRequiredService<CommitTiming>().Checkpoint);
+            services.AddSingleton<IChangeGroupSink>(provider => new HeldAckSink(
+                ActivatorUtilities.CreateInstance<StorageChangeGroupSink>(provider), directory, provider.GetRequiredService<CommitTiming>()));
+        }
     }
 
     private static void ValidatePeer(string address)
@@ -475,6 +489,184 @@ public sealed class BenchmarkProcessHost
         }
     }
 
+    private sealed class HeldAckSink(IChangeGroupSink inner, string directory, CommitTiming timing) : IChangeGroupSink
+    {
+        public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken)
+        {
+            var entered = Stopwatch.GetTimestamp();
+            var nativeCommits = timing.BeginApply(database);
+            Hlc? applied;
+            try
+            {
+                applied = await inner.ApplyAsync(database, origin, groups, expected, cancellationToken);
+            }
+            finally
+            {
+                timing.EndApply();
+            }
+            var completed = Stopwatch.GetTimestamp();
+            if (applied is not null && database == timing.Store?.Tenant)
+            {
+                timing.Applied(origin, groups, entered, completed, nativeCommits!);
+            }
+            var hold = Path.Combine(directory, "ack.hold");
+            if (applied is not null && File.Exists(hold)
+                && groups.Any(group => group.Deltas.Any(delta => delta.Id == File.ReadAllText(hold))))
+            {
+                // The real receiver committed; only delivery of its ACK is held by the disposable benchmark.
+                await WriteAsync(Path.Combine(directory, "ack.reached"), Environment.ProcessId.ToString(CultureInfo.InvariantCulture), cancellationToken);
+                while (File.Exists(hold))
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
+                }
+            }
+
+            return applied;
+        }
+
+        public ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
+            inner.RepairAsync(database, incarnation, states, cancellationToken);
+
+        public ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
+            inner.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
+    }
+
+    // Same-host Linux monotonic timestamps; no per-commit file I/O and no runtime instrumentation changes.
+    private sealed class CommitTiming
+    {
+        private readonly Lock _gate = new();
+        private readonly JsonArray _commits = [];
+        private readonly JsonArray _applies = [];
+        private readonly AsyncLocal<List<long>?> _applyCommits = new();
+        private long _nativeCommit;
+        private long _dropped;
+        public SqliteDatabaseStore? Store { get; private set; }
+        public string? Origin { get; set; }
+
+        public void Attach(SqliteDatabaseStore store)
+        {
+            Store = store;
+            var previous = store.AfterSqliteCommit;
+            store.AfterSqliteCommit = () =>
+            {
+                Volatile.Write(ref _nativeCommit, Stopwatch.GetTimestamp());
+                previous?.Invoke();
+            };
+        }
+
+        public List<long>? BeginApply(TenantContext database) =>
+            _applyCommits.Value = database == Store?.Tenant ? [] : null;
+
+        public void EndApply() => _applyCommits.Value = null;
+
+        public void Checkpoint(string step, TenantContext database)
+        {
+            var at = Stopwatch.GetTimestamp();
+            if (Store is not { } store || database != store.Tenant)
+            {
+                return;
+            }
+
+            if (step == "replication.apply.committed")
+            {
+                // This checkpoint still holds the exclusive writer, so another commit cannot replace the timestamp.
+                _applyCommits.Value?.Add(Volatile.Read(ref _nativeCommit));
+                return;
+            }
+
+            if (step != "writer.marker")
+            {
+                return;
+            }
+
+            using var command = store.CurrentWriter()!.Connection.CreateCommand();
+            command.CommandText = "SELECT change_id FROM turso_cdc ORDER BY change_id DESC LIMIT 1;";
+            var marker = Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+            var identified = Stopwatch.GetTimestamp();
+            lock (_gate)
+            {
+                if (_commits.Count >= 65_536)
+                {
+                    _dropped++;
+                    return;
+                }
+
+                _commits.Add(new JsonObject { ["marker"] = marker, ["committed"] = at, ["identified"] = identified });
+            }
+        }
+
+        public void Applied(ReplicaId origin, IReadOnlyList<OriginGroup> groups, long entered, long completed, List<long> nativeCommits)
+        {
+            lock (_gate)
+            {
+                var chunk = 0;
+                var deltas = 0;
+                foreach (var group in groups)
+                {
+                    // Match StorageChangeGroupSink's whole-group transaction boundaries.
+                    if (deltas != 0 && deltas + group.Deltas.Count > ChangeGroups.MaxDeltasOf(Store!.Tenant!))
+                    {
+                        chunk++;
+                        deltas = 0;
+                    }
+                    deltas += group.Deltas.Count;
+                    if (chunk >= nativeCommits.Count)
+                    {
+                        throw new InvalidOperationException("benchmark apply commit timestamp missing");
+                    }
+                    if (_applies.Count >= 65_536)
+                    {
+                        _dropped++;
+                        return;
+                    }
+
+                    var documents = new JsonArray();
+                    foreach (var delta in group.Deltas)
+                    {
+                        documents.Add(new JsonObject { ["collection"] = delta.Collection, ["id"] = delta.Id });
+                    }
+
+                    _applies.Add(new JsonObject
+                    {
+                        ["origin"] = origin.ToString(),
+                        ["marker"] = group.ChangeId,
+                        ["entered"] = entered,
+                        ["native_completed"] = nativeCommits[chunk],
+                        ["completed"] = completed,
+                        ["documents"] = documents
+                    });
+                }
+                if (nativeCommits.Count != chunk + 1)
+                {
+                    throw new InvalidOperationException("benchmark apply commit timestamp count differs");
+                }
+            }
+        }
+
+        public JsonObject Snapshot()
+        {
+            if (!OperatingSystem.IsLinux() || Stopwatch.Frequency != 1_000_000_000)
+            {
+                throw new InvalidOperationException("commit timing requires Linux CLOCK_MONOTONIC nanoseconds");
+            }
+
+            lock (_gate)
+            {
+                return new JsonObject
+                {
+                    ["frequency"] = Stopwatch.Frequency,
+                    ["boot_id"] = File.ReadAllText("/proc/sys/kernel/random/boot_id").Trim(),
+                    ["time_namespace"] = new FileInfo("/proc/self/ns/time").LinkTarget,
+                    ["incarnation"] = Store!.Incarnation.ToString(),
+                    ["origin"] = Origin,
+                    ["dropped"] = _dropped,
+                    ["commits"] = _commits.DeepClone(),
+                    ["applies"] = _applies.DeepClone()
+                };
+            }
+        }
+    }
+
     private sealed class TimedDurability(IRemoteDurability inner, IMeterFactory meters, BenchmarkLocalAck local) : IRemoteDurability
     {
         private readonly Histogram<double> _admission = meters.Create(Telemetry.MeterName).CreateHistogram<double>("terrabase.benchmark.admission.duration", "s");
@@ -483,6 +675,7 @@ public sealed class BenchmarkProcessHost
         public bool Confirms => inner.Confirms;
         public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => inner.OtherRegionsAsync(cancellationToken);
         public ValueTask<IReadOnlySet<ReplicaId>> HeldOriginsAsync(TenantContext database, CancellationToken cancellationToken) => inner.HeldOriginsAsync(database, cancellationToken);
+        public ValueTask<DatabasePlacement?> PlacementAsync(TenantContext database, CancellationToken cancellationToken) => inner.PlacementAsync(database, cancellationToken);
 
         public async ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken)
         {

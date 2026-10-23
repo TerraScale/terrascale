@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -106,7 +107,7 @@ func TestVisibilityPollsBeforeACKAndRequiresSuccessfulMatchingWrite(t *testing.T
 
 func TestProbeRequestRetries503WithSameDocumentAndHonorsDeadline(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"put-retry", "get-retry", "persistent-503", "terminal-400"} {
+	for _, mode := range []string{"put-retry", "put-confirmation-busy", "put-unknown-then-success", "put-untyped-then-success", "put-malformed-then-success", "put-storage-busy-then-success", "get-retry", "persistent-503", "terminal-400"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			var calls atomic.Int32
@@ -116,7 +117,7 @@ func TestProbeRequestRetries503WithSameDocumentAndHonorsDeadline(t *testing.T) {
 				if r.URL.Query().Get("id") != id {
 					t.Error("retry changed document ID")
 				}
-				if mode == "put-retry" {
+				if strings.HasPrefix(mode, "put-") {
 					got, err := io.ReadAll(r.Body)
 					if err != nil || string(got) != body || r.Method != http.MethodPut {
 						t.Error("retry changed PUT body or method")
@@ -126,7 +127,20 @@ func TestProbeRequestRetries503WithSameDocumentAndHonorsDeadline(t *testing.T) {
 				case mode == "terminal-400":
 					w.WriteHeader(http.StatusBadRequest)
 				case mode == "persistent-503" || attempt <= 2:
+					w.Header().Set("Retry-After", "1")
 					w.WriteHeader(http.StatusServiceUnavailable)
+					switch mode {
+					case "put-retry":
+						fmt.Fprint(w, `{"error":{"code":"remote_region_unavailable"}}`)
+					case "put-confirmation-busy":
+						fmt.Fprint(w, `{"error":{"code":"confirmation_busy"}}`)
+					case "put-unknown-then-success":
+						fmt.Fprint(w, `{"error":{"code":"write_outcome_unknown"}}`)
+					case "put-storage-busy-then-success":
+						fmt.Fprint(w, `{"error":{"code":"storage_busy"}}`)
+					case "put-malformed-then-success":
+						fmt.Fprint(w, `{"error":`)
+					}
 				default:
 					w.WriteHeader(http.StatusOK)
 				}
@@ -145,7 +159,7 @@ func TestProbeRequestRetries503WithSameDocumentAndHonorsDeadline(t *testing.T) {
 				defer deadline()
 			}
 			method := http.MethodGet
-			if mode == "put-retry" {
+			if strings.HasPrefix(mode, "put-") {
 				method = http.MethodPut
 			}
 			resp, err := probeRequest(ctx, region, method, replbench.DocPath("items", id), []byte(body), "application/json")
@@ -153,6 +167,10 @@ func TestProbeRequestRetries503WithSameDocumentAndHonorsDeadline(t *testing.T) {
 			case "persistent-503":
 				if !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatalf("persistent 503 did not stop at deadline: %v", err)
+				}
+			case "put-unknown-then-success", "put-untyped-then-success", "put-malformed-then-success", "put-storage-busy-then-success":
+				if err != nil || resp.Status != http.StatusServiceUnavailable || calls.Load() != 1 {
+					t.Fatalf("unsafe PUT retried: calls=%d status=%d err=%v", calls.Load(), resp.Status, err)
 				}
 			case "terminal-400":
 				if err != nil || resp.Status != http.StatusBadRequest || calls.Load() != 1 {

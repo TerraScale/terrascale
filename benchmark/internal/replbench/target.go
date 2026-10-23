@@ -104,9 +104,10 @@ func NewRegion(name string, t Targets, conns int) (*Region, error) {
 
 // Response is a finished call: status, body and the server's Retry-After, if any.
 type Response struct {
-	Status     int
-	Body       []byte
-	RetryAfter time.Duration
+	Status        int
+	Body          []byte
+	RetryAfter    time.Duration
+	HasRetryAfter bool
 }
 
 // Do sends one request below the database path. path starts with "/".
@@ -138,7 +139,7 @@ func (r *Region) Do(ctx context.Context, method, path string, body []byte, conte
 	if err != nil {
 		return Response{}, err
 	}
-	out := Response{Status: resp.StatusCode, Body: b}
+	out := Response{Status: resp.StatusCode, Body: b, HasRetryAfter: resp.Header.Get("Retry-After") != ""}
 	if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {
 		out.RetryAfter = time.Duration(s) * time.Second
 	}

@@ -30,7 +30,7 @@ func run() (runErr error) {
 	profile := flag.String("profile", "loopback", "loopback (WAN requires isolated network namespaces)")
 	docs := flag.Int("docs", 100000, "source documents per write/feed phase")
 	repeats := flag.Int("repeats", 3, "independent cluster repetitions")
-	scenario := flag.String("scenario", "all", "all, writes, feeds, catchup, rebuild")
+	scenario := flag.String("scenario", "all", "all, writes, feeds, catchup, rebuild, second-region")
 	out := flag.String("out", "benchmark/bench/"+time.Now().UTC().Format("2006-01-02")+"-repl-baseline", "output base path without extension")
 	flag.Parse()
 	if *profile != "loopback" {
@@ -39,7 +39,7 @@ func run() (runErr error) {
 	if *docs < 1 || *repeats < 1 {
 		return errors.New("docs and repeats must be positive")
 	}
-	if !strings.Contains("|all|writes|feeds|catchup|rebuild|", "|"+*scenario+"|") {
+	if !strings.Contains("|all|writes|feeds|catchup|rebuild|second-region|", "|"+*scenario+"|") {
 		return errors.New("unknown scenario")
 	}
 	host, err := os.Hostname()
@@ -68,8 +68,12 @@ func run() (runErr error) {
 	}()
 	for repeat := 1; repeat <= *repeats; repeat++ {
 		measure := func(phase func(*repllocal.Cluster) (sample, error)) (phaseErr error) {
-			log.Printf("repeat %d/%d: starting fresh three-process cluster", repeat, *repeats)
-			c, err := repllocal.StartCluster(ctx, root)
+			start := repllocal.StartCluster
+			if *scenario == "second-region" {
+				start = repllocal.StartPair
+			}
+			log.Printf("repeat %d/%d: starting fresh process cluster", repeat, *repeats)
+			c, err := start(ctx, root)
 			if err != nil {
 				return err
 			}
@@ -83,6 +87,18 @@ func run() (runErr error) {
 			s, err := phase(c)
 			r.Samples = append(r.Samples, s)
 			return errors.Join(err, r.write(*out))
+		}
+		if *scenario == "second-region" {
+			if err := measure(func(c *repllocal.Cluster) (sample, error) {
+				s, err := writePhase(ctx, c, repeat, "second-region", *docs, 1, 0)
+				if err == nil {
+					err = partitionProof(ctx, c, s.Metrics)
+				}
+				return s, err
+			}); err != nil {
+				return err
+			}
+			continue
 		}
 		for _, phase := range []struct {
 			name           string
@@ -214,6 +230,22 @@ func writePhase(ctx context.Context, c *repllocal.Cluster, repeat int, name stri
 	s.Result = raw
 	if !raw.Passed() || raw.Writes["gru"].Created != int64(docs) || raw.Writes["gru"].Failed != 0 || raw.Convergence.Expected != docs {
 		return s, errors.New("write load incomplete or exact convergence failed")
+	}
+	if name == "second-region" {
+		if raw.Writes["gru"].Retried != 0 {
+			return s, errors.New("second-region proof cannot accept replayed load requests")
+		}
+		s.CommitTiming, err = c.CommitTimings(ctx)
+		if err != nil {
+			return s, err
+		}
+		lag, e := repllocal.CommitLag(s.CommitTiming["gru"], s.CommitTiming["sjc"], raw.Collection, docs)
+		if e != nil {
+			return s, e
+		}
+		for key, value := range lag {
+			s.Metrics[key] = value
+		}
 	}
 	s.Metrics["throughput.docs_per_second"] = raw.Writes["gru"].DocsPerSec
 	s.Metrics["remote_ack.p50_ms"], s.Metrics["remote_ack.p99_ms"] = raw.Writes["gru"].Create.P50, raw.Writes["gru"].Create.P99
