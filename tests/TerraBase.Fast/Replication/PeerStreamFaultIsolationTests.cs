@@ -416,7 +416,7 @@ public sealed class PeerStreamFaultIsolationTests
         await WarmAsync(sender, receiver, deadline.Token);
         var initialized = source.Initializations;
         var confirmed = sender.Status(sender.Database)!.Acknowledged;
-        var gate = new BookkeepingGate(sender.Database, stableReport, deadline.Token) { Busy = true };
+        var gate = new BookkeepingGate(sender.Database, stableReport, deadline.Token) { Busy = true, After = confirmed };
         source.Hold(gate);
         try
         {
@@ -428,6 +428,7 @@ public sealed class PeerStreamFaultIsolationTests
             }
             else
             {
+                // Stable-only bookkeeping has no pending ACK; this case verifies that its failure stays neutral.
                 _ = await gate.Entered.Task.WaitAsync(deadline.Token);
             }
             _ = gate.Release.TrySetResult();
@@ -775,6 +776,7 @@ public sealed class PeerStreamFaultIsolationTests
     private sealed class BookkeepingGate(TenantContext database, bool stableReport, CancellationToken cancellationToken)
     {
         public bool Busy { get; init; }
+        public long After { get; init; }
         public TenantContext Database { get; } = database;
         public bool StableReport { get; } = stableReport;
         public CancellationToken CancellationToken { get; } = cancellationToken;
@@ -922,7 +924,7 @@ public sealed class PeerStreamFaultIsolationTests
         private async ValueTask<bool> BookkeepingAsync(TenantContext database, bool stableReport, long changeId, Func<CancellationToken, ValueTask<bool>> work, CancellationToken cancellationToken)
         {
             var gate = Volatile.Read(ref _held);
-            if (gate is null || gate.Database != database || gate.StableReport != stableReport
+            if (gate is null || gate.Database != database || gate.StableReport != stableReport || (!stableReport && changeId <= gate.After)
                 || Interlocked.CompareExchange(ref _held, null, gate) != gate)
             {
                 return await work(cancellationToken);
