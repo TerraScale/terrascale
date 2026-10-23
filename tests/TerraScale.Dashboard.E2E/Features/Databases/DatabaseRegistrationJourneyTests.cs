@@ -113,7 +113,7 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardRootFixture fixtur
         var canonical = (await ReadAsync(replica, "/api/v1/dashboard/databases"))[0];
         await Assert.That(canonical.GetProperty("id").GetString()).IsEqualTo(databaseId);
         await Assert.That(canonical.GetProperty("projectId").GetString()).IsEqualTo(projectId);
-        await Assert.That(string.Join(',', canonical.GetProperty("regions").EnumerateArray().Select(value => value.GetString()))).IsEqualTo(string.Join(',', regions));
+        await Assert.That(string.Join(',', canonical.GetProperty("regions").EnumerateArray().Select(value => value.GetString()))).IsEqualTo("GRU,SFO").Because("TerraBase places a home-only create in every other serving region");
         if (fault == "project-missing")
         {
             using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()

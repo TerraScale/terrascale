@@ -448,7 +448,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     var added = body.GetProperty("value").GetString()!;
                     lock (gate)
                         foreach (var placed in databases.Values.ToArray())
-                            databases[placed.Id] = placed with { ReplicaRegions = [.. placed.ReplicaRegions ?? [], added] };
+                            databases[placed.Id] = placed with { ReplicaRegions = [.. (placed.ReplicaRegions ?? []).Where(region => region != added), added] };
                     break;
                 case "fail-database-metadata":
                 case "database-status":
@@ -731,7 +731,9 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 var home = body.TryGetProperty("homeRegion", out var named) ? named.GetString()! : answering;
                 var all = body.TryGetProperty("allRegions", out var every) && every.GetBoolean();
                 if (all && body.TryGetProperty("replicaRegions", out _)) return Error(400, "placement_conflict");
-                var replicas = body.TryGetProperty("replicaRegions", out var listed) ? listed.EnumerateArray().Select(value => value.GetString()!).ToArray() : [];
+                // As production TerraBase: without replicaRegions (and not allRegions) it places the database in every other serving region.
+                var replicas = body.TryGetProperty("replicaRegions", out var listed) ? listed.EnumerateArray().Select(value => value.GetString()!).ToArray()
+                    : all ? [] : new[] { "gru", "sfo" }.Where(region => region != home).ToArray();
                 // As production TerraBase on a cell (decision 0013a): an explicit empty list places the database in one region only.
                 if (listed.ValueKind == JsonValueKind.Array && replicas.Length == 0) return Error(400, "placement_needs_two_regions");
                 if (home != answering) return WrongRegion(http, new(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas));
