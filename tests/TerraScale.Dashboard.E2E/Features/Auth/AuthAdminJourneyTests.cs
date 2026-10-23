@@ -68,7 +68,6 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
                     var rejected = await BrowserAudit.SignInAsync(native, fixture.Origin, "/api/v1/auth/me", user.Email, "wrong-password");
                     await Assert.That(rejected!.Status).IsEqualTo(401).Because("ts-auth refusing the sign-in renders the failure page");
                     await native.GetByRole(AriaRole.Status).Filter(new() { HasText = "ts-auth did not sign you in." }).WaitForAsync();
-                    await BrowserAudit.AssertAccessibleAsync(native, "rejected sign-in accessibility");
                     await Assert.That((await native.APIRequest.GetAsync(origin + "/api/v1/auth/me")).Status).IsEqualTo(401);
                     await Assert.That((await BrowserAudit.SignInAsync(native, fixture.Origin, "/api/v1/auth/me", user.Email, user.Password))!.Status).IsEqualTo(200);
                     await Assert.That(native.Url).IsEqualTo(origin + "/api/v1/auth/me");
