@@ -34,6 +34,17 @@ public sealed class HostedSignInJourneyTests(DashboardRootFixture fixture)
     }
 
     [Test]
+    public async Task HeadLoginAlsoRedirectsToHostedAuthorize()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var browser = scenario.CreateClient();
+        // Uptime probes and `curl -I` send HEAD; they must see the same redirect as a browser.
+        using var start = await browser.SendAsync(new HttpRequestMessage(HttpMethod.Head, "/login"));
+        await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+        await Assert.That(start.Headers.Location!.GetLeftPart(UriPartial.Path)).IsEqualTo("https://auth.terrascale.tech/terrascale/oauth/authorize");
+    }
+
+    [Test]
     public async Task CallbackCreatesTheSessionAndALaterLoginDoesNotLoop()
     {
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
