@@ -87,7 +87,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
 
     /// <summary>
     /// Every collection the service needs; provisioning creates them and readiness requires them. <c>rate_limits</c> belongs to the TS-488 attempt limiter,
-    /// which every headless call (TS-582) and email test send (TS-583) charges; and <c>email_configs</c> and
+    /// which every hosted sign-in call and email test send (TS-583) charges; and <c>email_configs</c> and
     /// <c>email_config_versions</c> to TS-583 email branding.
     /// </summary>
     public static IReadOnlyList<string> RequiredCollections { get; } =

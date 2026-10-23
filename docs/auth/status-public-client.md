@@ -15,7 +15,7 @@ registrar as the dashboard. No client secret or additional configuration is need
 Use the tenant's discovery document at
 `/terrascale/.well-known/openid-configuration`. Authorization and token endpoints
 are `/terrascale/oauth/authorize` and `/terrascale/oauth/token`. The status client
-has no refresh, client-credentials, headless or token-exchange grant. Sign-in access
+has no refresh, client-credentials or token-exchange grant. Sign-in access
 tokens expire after one hour; the status service must require sign-in again when
 its access token expires. Protect the callback with state and nonce validation,
 keep the verifier and tokens on the server, and store no bearer token in browser storage.

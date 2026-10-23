@@ -6,11 +6,10 @@ using OpenIddict.Server;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Features.Headless;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.RateLimiting;
-using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
@@ -110,7 +109,7 @@ public static class DeviceFlow
 /// session to sign in (no lookup happens for them), and charges each lookup to the IP's sign-in budget and to the user.
 /// Refusals skip OpenIddict and leave the outcome for <see cref="DeviceFlow.PageAsync"/>.
 /// </summary>
-public sealed class DeviceGate(Sessions sessions, HeadlessAuth headless, AttemptLimiter limiter, AuthOptions options) : IOpenIddictServerHandler<ValidateEndUserVerificationRequestContext>
+public sealed class DeviceGate(Sessions sessions, HostedAuth hosted, AttemptLimiter limiter, AuthOptions options) : IOpenIddictServerHandler<ValidateEndUserVerificationRequestContext>
 {
     /// <summary>The <see cref="HttpContext.Items"/> key of the <see cref="Result"/>.</summary>
     public static readonly object Key = new();
@@ -153,7 +152,7 @@ public sealed class DeviceGate(Sessions sessions, HeadlessAuth headless, Attempt
         }
 
         if (!string.IsNullOrEmpty(context.Request.UserCode)
-            && (await headless.LimitIpAsync(SignInFlow.Ip(http), mails: false, context.CancellationToken)
+            && (await hosted.LimitIpAsync(SignInFlow.Ip(http), mails: false, context.CancellationToken)
                 ?? await limiter.AcquireAsync(OidcIssuer.InstanceId, "device-code-user", live.User.Id, DeviceFlow.LookupsPerUser, DeviceFlow.LookupWindow, context.CancellationToken)) is { } wait)
         {
             Skip(new Result(Outcome.Limited, Wait: wait));

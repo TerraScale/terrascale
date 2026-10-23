@@ -203,10 +203,9 @@ sign-in, rotation and sign-out over real HTTP through test-only routes
   concurrent requests cannot exceed the limit or redeem a code twice. A code is
   consumed before its session is written.
 
-Per-user limits live on the passcode document. The hosted sign-in routes have
-no per-client or per-route limit (the TS-488 `AttemptLimiter` limits only the
-TS-582 headless API); they do give generic responses and send email after the
-response. Rust
+Per-user limits live on the passcode document; the hosted sign-in routes also
+charge the shared [limits](#limits). They give generic responses and send email
+after the response. Rust
 stored SHA-256 of the code and throttled resends to one per 30 seconds; C# uses
 the keyed HMAC and the hourly issue cap instead. Password sign-in and reset,
 magic links, email verification, account pages and the management API remain in
@@ -282,7 +281,7 @@ access tokens, and the server stack validates those.
 
 The page uses the TS-490 email passcodes: six digits, 10 minutes, 5 wrong
 guesses, 5 codes per account per hour. It signs in existing accounts only;
-accounts are created by the [headless sign-up](#headless-api-ts-582). The page is the same whether or not the address has an account, and
+accounts are created by the hosted sign-up ([accounts and limits](#accounts-passwords-and-limits)). The page is the same whether or not the address has an account, and
 the email is sent after the response, so its timing does not reveal it either.
 `SignInMail`, a hosted service, queues at most 256 codes and sends them one at
 a time. Lockout notices use a separate bounded queue and worker, so a slow
@@ -387,7 +386,7 @@ token.
 ### Limitations and follow-ups
 
 - TS-704 now limits every token request by peer IP before client authentication,
-  and hosted sign-in shares the headless IP and normalized-email budgets.
+  and hosted sign-in charges the shared IP and normalized-email budgets.
   Account-budget refusals now queue deduplicated lockout notices. Explicit
   trusted-proxy support is opt-in; production ingress verification remains a follow-up.
 - Expired tokens and authorizations are not pruned.
@@ -400,59 +399,21 @@ than OpenIddict, calls `userinfo`, and checks that an identity token is
 rejected there. No interoperability with a third-party client library or
 production validation is claimed.
 
-## Headless API (TS-582)
+## Accounts, passwords and limits
 
-TS-582 lets ts-dashboard sign users in on its own pages, the way apps use the
-WorkOS User Management API or the Clerk Backend API: the dashboard's Go backend
-collects the email, password or emailed code and calls ts-auth
-server-to-server. SSO and social sign-in keep the redirect flow. The code is
-in `src/TerraScale.Authentication/Features/Headless/`.
-
-### Contract
-
-Every call authenticates the confidential client with HTTP Basic
-(`client_secret_basic`, as at the token endpoint). Only clients holding the
-headless grant permissions may call it, and only `ts-dashboard` is registered
-with them; other slugs answer 404. `ip_address` is the end user's IP address as
-the dashboard saw it; rate limits key on it, and it is trusted only because the
-caller is an authenticated first-party client.
-
-Tokens come from the standard token endpoint, so they are exactly the redirect
-flow's (`at+jwt` access token with the configured audiences and email claims,
-identity token for the client, rotating refresh token with reuse revocation):
-
-| Grant (`POST /terrascale/oauth/token`, form) | Parameters |
-| --- | --- |
-| `urn:terrascale:params:oauth:grant-type:password` | `email`, `password`, `ip_address`, `scope` |
-| `urn:terrascale:params:oauth:grant-type:email-code` | `email`, `code`, `ip_address`, `scope`, and `pending_token` for a sign-up code: a sign-in code, or a sign-up code, which creates the account |
-| `refresh_token` | unchanged |
-
-Every wrong email, password or code, an unknown account and an account
-without a password answer `400 invalid_grant` with one body. The other
-steps are JSON (`{"error":{"code","message"}}` on failure):
-
-| Route (`POST /terrascale/headless/v1/…`) | Body | Success |
-| --- | --- | --- |
-| `email-code/start` | `email`, `ip_address`, optional `pending_token` | 202; resends the token-bound pending sign-up verification code, or mails a sign-in code if the account exists |
-| `sign-up` | `email`, `password`, `ip_address` | 202 `{"pending_token"}`; mails a verification code, or a sign-in code if the address has an account |
-| `password-reset/start` | `email`, `ip_address` | 202; mails a reset code if the account exists |
-| `password-reset/complete` | `email`, `code`, `new_password`, `ip_address` | 204; password set, user signed out everywhere |
-
-Failures: 400 `invalid_request` (malformed email, IP or body), 400
-`invalid_password` (not 8 to 1024 UTF-8 bytes of well-formed text), 400
-`invalid_code`, 401 `invalid_client`, 429 `rate_limited` with `Retry-After`,
-503 `temporarily_unavailable`. Sign-out is `POST /terrascale/oauth/revoke`
-(RFC 7009); revoking a refresh or access token revokes its whole sign-in
-(`RevokeTheSignIn`), so every refresh token of it is refused and `userinfo`
-refuses its access tokens; TerraBase validates access tokens offline, so they
-live out their hour.
+The TS-582 headless sign-in API (password and email-code extension grants and
+the `/{slug}/headless/v1/*` routes) was removed by user order 2026-10-22:
+ts-dashboard is a plain OIDC client of the hosted pages, which are the only way
+to sign in. What it introduced and the hosted sign-up, password sign-in and
+reset pages still use lives in
+`src/TerraScale.Authentication/Features/SignIn/HostedAuth.cs`.
 
 ### Accounts, codes and passwords
 
 - Sign-up never creates an unverified account. The pending sign-up is a code
   document in `passcodes` keyed by the normalized email, holding the Argon2id
   hash of the chosen password and the SHA-256 of a random `pending_token` that
-  only the requester receives; redeeming its code needs both the code (the
+  only the requester's sign-up page receives; redeeming its code needs both the code (the
   inbox) and the token (the requester), creates the account with the
   create-only email claim, and clears the password hash from the consumed
   record. So nobody can pre-register someone else's address or attach their
@@ -467,14 +428,6 @@ live out their hour.
   sign-up) per hour. A user has one current code whatever its purpose; the
   record's `purpose` binds it, so a reset code never signs in and a sign-in
   code never resets. Records written before TS-582 read as sign-in codes.
-- TS-631 resends use the original `pending_token` at `email-code/start` and
-  preserve the pending sign-up's password hash and token hash. For addresses
-  without an account, a wrong token or missing pending record still answers
-  202 and sends nothing; existing accounts receive sign-in codes. The resend
-  replaces only the version read, so it cannot revive a consumed signup or
-  overwrite a concurrent replacement. It invalidates the previous code and
-  charges the existing hourly issue budget. Expired or exhausted codes can be
-  renewed while their unconsumed pending record remains stored.
 - Users gain an optional `passwordHash` (Argon2id PHC, the TS-488 parameters).
   Accounts created before TS-582 have none: they sign in with codes, or set a
   password through the reset. A password reset sets the hash and advances
@@ -498,13 +451,13 @@ mailboxes), so storage stays bounded and nobody can target a victim's bucket.
 
 | Budget | Limit | Purpose |
 | --- | --- | --- |
-| Every hosted/headless sign-in call per IP (IPv6 per /64) | 30 per minute | `headless-ip` |
-| Every hosted/headless sign-in call per IPv6 /48 | 120 per minute | `headless-ip-site` |
+| Every hosted sign-in call per IP (IPv6 per /64) | 30 per minute | `headless-ip` |
+| Every hosted sign-in call per IPv6 /48 | 120 per minute | `headless-ip-site` |
 | Mail-sending calls per IP (IPv6 per /64) | 10 per 15 minutes | `headless-ip-mail` |
 | Mail-sending calls per IPv6 /48 | 40 per 15 minutes | `headless-ip-site-mail` |
-| Mail-start calls per normalized email, with or without an account | One per 60 elapsed seconds, shared by email-code/start, sign-up and password-reset/start across all clients and replicas | `headless-mail-email` |
+| Mail-start calls per normalized email, with or without an account | One per 60 elapsed seconds, shared by the sign-up and reset pages across all replicas | `headless-mail-email` |
 | Password attempts per email, with or without an account | 10 per 15 minutes | `headless-password-email` |
-| Hosted/headless sign-in code attempts per email | 5 per 15 minutes | `sign-in-code-email` |
+| Sign-in code attempts per email | 5 per 15 minutes | `sign-in-code-email` |
 | Password-reset code attempts per email | 5 per 15 minutes | `reset-code-email` |
 | Code requests per email, across all mail starts | 5 per UTC clock hour | `code-mail-email` |
 | Every token request per ordinary peer IP (IPv6 per /64) | `TS_AUTH_RATE_LIMIT` per minute (default 1,000) | `token-peer-ip` |
@@ -513,6 +466,8 @@ mailboxes), so storage stays bounded and nobody can target a victim's bucket.
 | Every token request per trusted proxy IPv6 /48 | Four times the proxy-IP limit | `token-proxy-ip-site` |
 | Token requests through an explicitly trusted proxy per resolved client IP (IPv6 per /64) | `TS_AUTH_RATE_LIMIT` per minute | `token-client-ip` |
 | Token requests through an explicitly trusted proxy per resolved client IPv6 /48 | Four times the client-IP limit | `token-client-ip-site` |
+
+The `headless-*` purposes keep their stored names from TS-582.
 
 The normalized-email request budget and the passcode issued-code budget both
 reset on UTC clock-hour boundaries. Stored issue timestamps identify their
@@ -525,13 +480,12 @@ Unknown emails spend the same budgets as existing accounts, and replacing a
 code never renews its email budget. Reset redemption has its own budget, so a
 sign-in throttle does not consume recovery attempts. `Retry-After` rounds up to
 whole seconds until the persisted window or cooldown ends, including state
-advanced by a replica whose clock is ahead. A headless mail start admitted by
+advanced by a replica whose clock is ahead. A mail start admitted by
 the cooldown but rejected by the hourly budget reports at least 60 seconds,
 covering both constraints even just before an hour boundary. Cooldown refusals
 do not spend the hourly allowance. Hosted and general token guards use the socket
 peer address by default, sharing a proxy's budget. Explicit trusted peers can
-supply client addresses under the policy below. End-user headless limits still
-trust `ip_address` only after authenticating the first-party client. Since TS-582
+supply client addresses under the policy below. Since TS-582
 `rate_limits` is one of `AuthStore.RequiredCollections`: `/readyz` answers 503
 while it is missing, and the limiter fails closed with 503 on any storage
 failure.
@@ -543,8 +497,7 @@ no email. IP refusals, mail cooldowns and hourly issuance caps do not notify.
 Each method is paused only until the original fixed window ends; every
 attempt counts, and another method's budget remains available. The English
 and Portuguese notice states the absolute UTC deadline without implying a
-successful sign-in. Hosted verification uses its `Accept-Language`; headless
-notices use English, as headless code emails do.
+successful sign-in. Hosted verification uses its `Accept-Language`.
 
 The limiter preserves the exact persisted deadline alongside `Retry-After`.
 The worker conditionally creates or replaces one `AttemptBucket` per actual
@@ -596,7 +549,7 @@ are separate from ordinary peer purposes, so sharing an IPv6 /64 or /48 does
 not mix their different capacities. Both levels retain IPv4-mapped
 normalization and IPv6 /64 and /48 limits, persisted through the existing
 TerraBase limiter. Hosted sign-in request and verification use the resolved
-address; headless submitted IP handling is unchanged.
+address.
 
 Production trust is **not enabled or claimed verified by this change**. Before
 configuring it through ts-orchestrator, verify the intended region and service:
@@ -616,23 +569,11 @@ peers or current network enforcement. No deployment values are inferred from it.
 
 ### Security decisions
 
-- **Password grant.** The repository rules forbid the resource-owner password
-  grant for interactive client authorization. TS-582 is an explicit product
-  decision (2026-10-06) for a WorkOS/Clerk-style first-party API, and the
-  password grant here is that: an extension grant permitted only to the
-  confidential first-party `ts-dashboard`, never to service clients or any
-  other registration, behind client authentication and the limits above. The
-  authorization code flow stays the only flow for every other client and for
-  SSO and social sign-in.
-- **No enumeration.** Starts within their budgets answer 202 and leave issuing and mail to the
-  `SignInMail` worker, grants answer one `invalid_grant`, and limits apply to
+- **No enumeration.** Starts within their budgets answer the same page and leave issuing and mail to the
+  `SignInMail` worker, wrong credentials answer one 401 page, and limits apply to
   unknown emails the same way. The Argon2id timing equalizer is hashed at
   startup, so the first unknown account costs no more than later ones.
-- **Errors at the token endpoint** stay OAuth errors: a busy Argon2id pool or
-  a storage failure answers `503 temporarily_unavailable` in RFC 6749 form;
-  the JSON routes answer the same code in the `{"error":{…}}` envelope.
-- **Not applicable:** CSRF (no cookies; server-to-server only) and CORS.
-- **Audit events** are structured log lines (`Audit: headless …`) with the
+- **Audit events** are structured log lines (`Audit: hosted …`) with the
   method, the outcome and the user id when known, never the email, password,
   code or IP. Persisted, signed audit events wait for the TS-439 audit log.
 
@@ -794,7 +735,7 @@ one organization or project. Both are in
   `invalid_target`. Only `ts-dashboard` holds the token-exchange permission
   and the TerraBase scope permissions so far; `OidcResults.SignIn` refuses
   (`invalid_scope`) any scope beyond `openid email profile offline_access`, so
-  no sign-in, refresh or headless grant can carry them.
+  no sign-in or refresh grant can carry them.
 - **Fresh key check.** `ApiKeyAsync` re-reads the key and compares the
   presented key string with its current digests itself, whatever OpenIddict
   authenticated, so a key revoked or rotated on another replica issues nothing.

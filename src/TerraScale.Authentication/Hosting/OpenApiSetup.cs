@@ -99,7 +99,6 @@ public static partial class OpenApiSetup
         ["Admin"] = "Hosted administrator portal and its bundled assets.",
         ["OAuth"] = "OpenID Connect provider for the issuer {public origin}/{slug} (authorization code with S256 PKCE, rotating refresh tokens).",
         ["Sign-in"] = "Hosted email passcode sign-in pages.",
-        ["Headless"] = "Headless authentication for first-party confidential clients (ts-dashboard): sign-up, emailed codes and password reset; tokens come from the token endpoint's headless grants.",
         ["Email"] = "Email branding, copy, previews, test sends and version history, for the ts-dashboard client (HTTP Basic).",
         ["Organizations"] = "Organizations of the terrascale tenant (TS-598). The caller is a signed-in platform user.",
         ["Members"] = "Organization members and their organization roles (viewer, member, admin, owner).",
@@ -179,8 +178,7 @@ public static partial class OpenApiSetup
                 }
 
                 operation.Responses ??= [];
-                if ((path is "/{slug}/oauth/token" or "/ui/{slug}/sign-in" or "/ui/{slug}/sign-in/verify"
-                    || path.StartsWith("/{slug}/headless/", StringComparison.Ordinal))
+                if (path is "/{slug}/oauth/token" or "/ui/{slug}/sign-in" or "/ui/{slug}/sign-in/verify"
                     && operation.Responses.TryGetValue("429", out var limited) && limited is OpenApiResponse response)
                 {
                     (response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal))["Retry-After"] = new OpenApiHeader

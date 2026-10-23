@@ -386,9 +386,7 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Existing_issue_timestamps_identify_their_UTC_hour_and_slower_clocks_preserve_newer_windows(bool resend)
+    public async Task Existing_issue_timestamps_identify_their_UTC_hour_and_slower_clocks_preserve_newer_windows()
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         var clock = new StoreTestClock();
@@ -409,9 +407,7 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
                 JsonSerializer.SerializeToElement(record, IdentityJson.Default.PasscodeRecord), document.Version)).IsTrue();
         }
 
-        Task<IssuedPasscode?> IssueAsync() => resend
-            ? passcodes.ResendSignUpAsync("instance", Email, "pending-token")
-            : passcodes.RequestSignUpAsync("instance", Email, "argon2-hash", "pending-token");
+        Task<IssuedPasscode?> IssueAsync() => passcodes.RequestSignUpAsync("instance", Email, "argon2-hash", "pending-token");
 
         // Existing non-rounded timestamps belong to their containing UTC hour, even ahead of this replica's clock.
         await StoreTimestampAsync();

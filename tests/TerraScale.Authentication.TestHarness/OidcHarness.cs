@@ -222,7 +222,7 @@ public sealed class OidcHarness : IAsyncDisposable
     }
 
     /// <summary>A same-origin form post, as a browser on the hosted page sends it.</summary>
-    public Task<HttpResponseMessage> PostFormAsync(string path, Dictionary<string, string> fields, string? origin = PublicOrigin)
+    public Task<HttpResponseMessage> PostFormAsync(string path, Dictionary<string, string> fields, string? origin = PublicOrigin, HttpClient? client = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(fields) };
         if (origin is not null)
@@ -230,7 +230,7 @@ public sealed class OidcHarness : IAsyncDisposable
             request.Headers.Add("Origin", origin);
         }
 
-        return this.Client.SendAsync(request);
+        return (client ?? this.Client).SendAsync(request);
     }
 
     public static string? SessionCookie(HttpResponseMessage response) =>
@@ -298,42 +298,6 @@ public sealed class OidcHarness : IAsyncDisposable
         return response.StatusCode == HttpStatusCode.OK
             ? (user, session, JsonSerializer.Deserialize<JsonElement>(body))
             : throw new InvalidOperationException($"The token endpoint answered {response.StatusCode}: {body}");
-    }
-
-    /// <summary>Posts a JSON body to <c>/{slug}/headless/v1/{path}</c> as a client authenticated with HTTP Basic.</summary>
-    public Task<HttpResponseMessage> HeadlessAsync(string path, object body, string clientId = OidcIssuer.DashboardClientId, string? secret = ClientSecret, string slug = OidcIssuer.Slug)
-    {
-        var request = new HttpRequestMessage(HttpMethod.Post, $"/{slug}/headless/v1/{path}") { Content = JsonContent.Create(body) };
-        if (secret is not null)
-        {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{secret}")));
-        }
-
-        return this.Client.SendAsync(request);
-    }
-
-    /// <summary>Redeems a headless extension grant at the token endpoint.</summary>
-    public Task<HttpResponseMessage> GrantAsync(string grantType, string email, string secret, string? ipAddress, string scope = "openid email profile offline_access",
-        HttpClient? client = null, string? pendingToken = null)
-    {
-        var form = new Dictionary<string, string>
-        {
-            ["grant_type"] = grantType,
-            ["email"] = email,
-            [grantType.EndsWith(":password", StringComparison.Ordinal) ? "password" : "code"] = secret,
-            ["scope"] = scope,
-        };
-        if (ipAddress is not null)
-        {
-            form["ip_address"] = ipAddress;
-        }
-
-        if (pendingToken is not null)
-        {
-            form["pending_token"] = pendingToken;
-        }
-
-        return this.TokenAsync(form, client: client);
     }
 
     /// <summary>Revokes a token at the RFC 7009 endpoint.</summary>

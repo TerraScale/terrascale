@@ -1,6 +1,7 @@
 using System.Net;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.Authentication.Features.Headless;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.RateLimiting;
@@ -12,6 +13,8 @@ namespace TerraScale.Authentication.Fast.Oidc;
 public sealed class AuthThrottleTests(TerraBaseFixture fixture)
 {
     private const string SignIn = $"/ui/{OidcIssuer.Slug}/sign-in";
+    private const string SignUp = $"/ui/{OidcIssuer.Slug}/sign-up";
+    private const string Reset = $"/ui/{OidcIssuer.Slug}/reset";
     private const string Next = $"/{OidcIssuer.Slug}/oauth/authorize?client_id=01M4EQ2FRJ8S8B29E8TQVWNW4J&response_type=code";
 
     private static ManualClock Clock() => new(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600 * 3600));
@@ -33,10 +36,11 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
 
         foreach (var email in new[] { "alice@example.test", UnknownEmail(oidc) })
         {
-            for (var attempt = 0; attempt < HeadlessAuth.CodePerEmail; attempt++)
+            for (var attempt = 0; attempt < HostedAuth.CodePerEmail; attempt++)
             {
-                using var wrong = await oidc.GrantAsync(HeadlessGrants.EmailCode, email, "000000", $"198.51.100.{attempt}", client: replica.Client);
-                await Assert.That(await OidcHarness.ErrorAsync(wrong)).IsEqualTo("invalid_grant");
+                // Sign-in and sign-up verification spend the same budget.
+                using var wrong = await oidc.PostFormAsync(attempt % 2 == 0 ? $"{SignIn}/verify" : $"{SignUp}/verify", new() { ["email"] = email, ["code"] = "000000" }, client: replica.Client);
+                await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
             }
 
             using var limited = await oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = email.ToUpperInvariant(), ["code"] = "123456", ["next"] = Next });
@@ -53,9 +57,8 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
             await Assert.That(page).Contains($"<strong>Too many attempts</strong><p>Try again in {limited.Headers.GetValues("Retry-After").Single()} seconds.</p>");
 
             // The reset budget is independent, even for the same normalized email.
-            using var recovery = await oidc.HeadlessAsync("password-reset/complete", new { email, code = "not-a-code", new_password = "new password", ip_address = "192.0.2.5" });
-            await Assert.That(recovery.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-            await Assert.That(await OidcHarness.EnvelopeCodeAsync(recovery)).IsEqualTo("invalid_code");
+            using var recovery = await oidc.PostFormAsync($"{Reset}/complete", new() { ["email"] = email, ["code"] = "not-a-code", ["password"] = "new password" });
+            await Assert.That(recovery.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         }
     }
 
@@ -69,26 +72,29 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
 
         foreach (var email in new[] { "alice@example.test", UnknownEmail(oidc) })
         {
+            if (email != "alice@example.test")
+            {
+                // A fresh per-IP mail window: every call here comes from one socket peer.
+                clock.Advance(HostedAuth.MailWindow);
+            }
+
             for (var attempt = 0; attempt < Passcodes.MaxIssuesPerWindow; attempt++)
             {
-                // Hosted mail has no headless cooldown, but still spends the same hourly budget.
+                // Sign-in code mail has no cooldown, but still spends the same hourly budget as reset mail.
                 if (attempt > 1)
                 {
-                    clock.Advance(HeadlessAuth.MailCooldown);
+                    clock.Advance(HostedAuth.MailCooldown);
                 }
 
-                var path = attempt == 2 ? "password-reset/start" : "email-code/start";
-                using var start = attempt == 1
-                    ? await oidc.PostFormAsync(SignIn, new() { ["email"] = email.ToUpperInvariant() })
-                    : await oidc.HeadlessAsync(path, new { email, ip_address = $"198.51.100.{attempt}" });
-                await Assert.That(start.StatusCode).IsEqualTo(attempt == 1 ? HttpStatusCode.OK : HttpStatusCode.Accepted);
+                using var start = await oidc.PostFormAsync(attempt == 2 ? Reset : SignIn, new() { ["email"] = attempt == 1 ? email.ToUpperInvariant() : email });
+                await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 if (email == "alice@example.test")
                 {
                     await oidc.Email.NextCodeAsync(email);
                 }
             }
 
-            clock.Advance(HeadlessAuth.MailCooldown);
+            clock.Advance(HostedAuth.MailCooldown);
             var remaining = Passcodes.IssueWindow - (clock.GetUtcNow() - windowStart);
             using var hosted = await oidc.PostFormAsync(SignIn, new() { ["email"] = email.ToUpperInvariant(), ["next"] = Next });
             await Assert.That(hosted.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
@@ -105,58 +111,54 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
             await Assert.That(page).Contains($"value=\"{email.ToUpperInvariant()}\"");
             await Assert.That(page).Contains($"name=\"next\" value=\"{WebUtility.HtmlEncode(Next)}\"");
             await Assert.That(page).Contains($"<strong>Too many attempts</strong><p>Try again in {hosted.Headers.GetValues("Retry-After").Single()} seconds.</p>");
-            using var reset = await oidc.HeadlessAsync("password-reset/start", new { email, ip_address = "192.0.2.8" });
+            using var reset = await oidc.PostFormAsync(Reset, new() { ["email"] = email });
             await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-            await Assert.That(await OidcHarness.EnvelopeCodeAsync(reset)).IsEqualTo("rate_limited");
             await Assert.That(reset.Headers.RetryAfter!.Delta).IsEqualTo(remaining);
         }
     }
 
     [Test]
-    public async Task Resending_a_pending_signup_does_not_reset_the_shared_code_attempt_budget()
+    public async Task Restarting_a_pending_sign_up_does_not_reset_the_shared_code_attempt_budget()
     {
         var clock = Clock();
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
         await using var replica = await oidc.StartReplicaAsync(clock: clock);
         const string email = "pending@example.test";
-        using var signup = await oidc.HeadlessAsync("sign-up", new { email, password = "correct horse battery", ip_address = "192.0.2.1" });
-        await Assert.That(signup.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-        var pending = (await OidcHarness.JsonAsync(signup)).GetProperty("pending_token").GetString()!;
+        var pending = await StartSignUpAsync(oidc, email);
         var code = await oidc.Email.NextCodeAsync(email);
         var wrong = code == "000000" ? "111111" : "000000";
-        for (var attempt = 0; attempt < HeadlessAuth.CodePerEmail - 1; attempt++)
+        for (var attempt = 0; attempt < HostedAuth.CodePerEmail - 1; attempt++)
         {
-            using var refused = await oidc.GrantAsync(HeadlessGrants.EmailCode, email, wrong, $"198.51.100.{attempt}", client: replica.Client, pendingToken: pending);
-            await Assert.That(await OidcHarness.ErrorAsync(refused)).IsEqualTo("invalid_grant");
+            using var refused = await oidc.PostFormAsync($"{SignUp}/verify", new() { ["email"] = email, ["code"] = wrong, ["pending_token"] = pending }, client: replica.Client);
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         }
 
-        clock.Advance(HeadlessAuth.MailCooldown);
-        using (var resend = await oidc.HeadlessAsync("email-code/start", new { email, ip_address = "192.0.2.2", pending_token = pending }))
-        {
-            await Assert.That(resend.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-        }
-
+        clock.Advance(HostedAuth.MailCooldown);
+        pending = await StartSignUpAsync(oidc, email);
         code = await oidc.Email.NextCodeAsync(email);
-        using (var fifth = await oidc.GrantAsync(HeadlessGrants.EmailCode, email, code == "000000" ? "111111" : "000000", "198.51.100.5", pendingToken: pending))
+        using (var fifth = await oidc.PostFormAsync($"{SignUp}/verify", new() { ["email"] = email, ["code"] = code == "000000" ? "111111" : "000000", ["pending_token"] = pending }))
         {
-            await Assert.That(await OidcHarness.ErrorAsync(fifth)).IsEqualTo("invalid_grant");
+            await Assert.That(fifth.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         }
 
-        using (var limited = await oidc.GrantAsync(HeadlessGrants.EmailCode, email.ToUpperInvariant(), code, "192.0.2.3", client: replica.Client, pendingToken: pending))
+        using (var limited = await oidc.PostFormAsync($"{SignUp}/verify", new() { ["email"] = email.ToUpperInvariant(), ["code"] = code, ["pending_token"] = pending }, client: replica.Client))
         {
             await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-            await Assert.That(await OidcHarness.ErrorAsync(limited)).IsEqualTo("rate_limited");
-            await Assert.That(limited.Headers.RetryAfter!.Delta).IsEqualTo(HeadlessAuth.CodeWindow - HeadlessAuth.MailCooldown);
+            await Assert.That(limited.Headers.RetryAfter!.Delta).IsEqualTo(HostedAuth.CodeWindow - HostedAuth.MailCooldown);
+            await Assert.That(OidcHarness.SessionCookie(limited)).IsNull();
         }
 
-        clock.Advance(HeadlessAuth.CodeWindow - HeadlessAuth.MailCooldown);
-        using (var renewed = await oidc.HeadlessAsync("email-code/start", new { email, ip_address = "192.0.2.4", pending_token = pending }))
-        {
-            await Assert.That(renewed.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-        }
+        clock.Advance(HostedAuth.CodeWindow - HostedAuth.MailCooldown);
+        pending = await StartSignUpAsync(oidc, email);
+        using var created = await oidc.PostFormAsync($"{SignUp}/verify", new() { ["email"] = email, ["code"] = await oidc.Email.NextCodeAsync(email), ["pending_token"] = pending }, client: replica.Client);
+        await Assert.That(OidcHarness.SessionCookie(created)).IsNotNull();
+    }
 
-        using var created = await oidc.GrantAsync(HeadlessGrants.EmailCode, email, await oidc.Email.NextCodeAsync(email), "192.0.2.4", client: replica.Client, pendingToken: pending);
-        await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    private static async Task<string> StartSignUpAsync(OidcHarness oidc, string email)
+    {
+        using var signUp = await oidc.PostFormAsync(SignUp, new() { ["email"] = email, ["password"] = "correct horse battery" });
+        await Assert.That(signUp.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        return Regex.Match(await signUp.Content.ReadAsStringAsync(), "name=\"pending_token\" value=\"([^\"]+)\"").Groups[1].Value;
     }
 
     [Test]
@@ -167,27 +169,27 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
         await oidc.CreateUserAsync();
         foreach (var email in new[] { "alice@example.test", UnknownEmail(oidc) })
         {
-            for (var attempt = 0; attempt < HeadlessAuth.CodePerEmail; attempt++)
+            for (var attempt = 0; attempt < HostedAuth.CodePerEmail; attempt++)
             {
-                using var wrong = await oidc.HeadlessAsync("password-reset/complete", new { email, code = "not-a-code", new_password = "new password", ip_address = $"198.51.100.{attempt}" });
-                await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+                using var wrong = await oidc.PostFormAsync($"{Reset}/complete", new() { ["email"] = email, ["code"] = "not-a-code", ["password"] = "new password" });
+                await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
             }
 
-            using var limited = await oidc.HeadlessAsync("password-reset/complete", new { email, code = "123456", new_password = "new password", ip_address = "192.0.2.2" });
+            using var limited = await oidc.PostFormAsync($"{Reset}/complete", new() { ["email"] = email, ["code"] = "123456", ["password"] = "new password" });
             await Assert.That(limited.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
-            await Assert.That(limited.Headers.RetryAfter!.Delta).IsEqualTo(HeadlessAuth.CodeWindow);
+            await Assert.That(limited.Headers.RetryAfter!.Delta).IsEqualTo(HostedAuth.CodeWindow);
         }
 
-        clock.Advance(HeadlessAuth.CodeWindow);
-        using var renewed = await oidc.HeadlessAsync("password-reset/complete", new { email = UnknownEmail(oidc), code = "not-a-code", new_password = "new password", ip_address = "192.0.2.2" });
-        await Assert.That(renewed.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        clock.Advance(HostedAuth.CodeWindow);
+        using var renewed = await oidc.PostFormAsync($"{Reset}/complete", new() { ["email"] = UnknownEmail(oidc), ["code"] = "not-a-code", ["password"] = "new password" });
+        await Assert.That(renewed.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
     [Test]
     public async Task Hosted_calls_have_an_ip_budget_and_ignore_spoofed_forwarding_headers()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: Clock());
-        for (var attempt = 0; attempt < HeadlessAuth.PerIp; attempt++)
+        for (var attempt = 0; attempt < HostedAuth.PerIp; attempt++)
         {
             using var counted = await oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = $"stranger{attempt}@example.test", ["code"] = "000000" });
             await Assert.That(counted.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);

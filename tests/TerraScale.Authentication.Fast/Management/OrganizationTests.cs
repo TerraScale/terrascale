@@ -99,13 +99,16 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task A_headless_sign_in_without_a_refresh_token_ends_when_its_access_token_is_revoked()
+    public async Task A_sign_in_without_a_refresh_token_ends_when_its_access_token_is_revoked()
     {
         // No offline_access: no refresh token, and only the access token's own entry to revoke.
         await using var oidc = await OidcHarness.StartAsync(fixture);
-        _ = await oidc.Server.App.Services.GetRequiredService<TerraScale.Authentication.Features.Identity.Users>()
-            .CreateAsync(TerraScale.Authentication.Features.Oidc.OidcIssuer.InstanceId, "erin@example.test", TerraScale.Authentication.Security.Passwords.Hash("correct horse battery"), CancellationToken.None);
-        using var granted = await oidc.GrantAsync(TerraScale.Authentication.Features.Headless.HeadlessGrants.Password, "erin@example.test", "correct horse battery", "203.0.113.7", scope: "openid email");
+        await oidc.CreateUserAsync("erin@example.test");
+        var session = await oidc.SignInAsync("erin@example.test");
+        var (verifier, challenge) = OidcHarness.Pkce();
+        using var authorize = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, scope: "openid email"), session);
+        using var granted = await oidc.RedeemCodeAsync(OidcHarness.Query(authorize.Headers.Location!)["code"]!, verifier);
+        await Assert.That(granted.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var tokens = await OidcHarness.JsonAsync(granted);
         await Assert.That(tokens.TryGetProperty("refresh_token", out _)).IsFalse();
         var access = tokens.GetProperty("access_token").GetString()!;

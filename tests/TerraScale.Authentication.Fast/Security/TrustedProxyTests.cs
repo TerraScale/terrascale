@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.Authentication.Features.Headless;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Tests;
@@ -49,10 +49,10 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
         await AssertTokenAsync(alsoLimited, HttpStatusCode.TooManyRequests, "rate_limited", TimeSpan.FromSeconds(55));
 
         var limiter = first.App.Services.GetRequiredService<AttemptLimiter>();
-        var independent = Clients(limiter, ipv6: false).First(address => limiter.Fold(address) != limiter.Fold(HeadlessAuth.Subject(firstAddress)!));
+        var independent = Clients(limiter, ipv6: false).First(address => limiter.Fold(address) != limiter.Fold(HostedAuth.Subject(firstAddress)!));
         using var otherClient = await InvalidClientAsync(second, independent, Capacity + 2);
         await AssertTokenAsync(otherClient, HttpStatusCode.Unauthorized, "invalid_client");
-        // Unauthenticated headless grants never charge their attacker-submitted ip_address or email.
+        // Unauthenticated token requests never charge their attacker-submitted ip_address or email.
         var ipv6 = IPAddress.Parse(proxy).AddressFamily == AddressFamily.InterNetworkV6 && !IPAddress.Parse(proxy).IsIPv4MappedToIPv6;
         await Assert.That(await target.CountAsync(AttemptLimiter.Collection)).IsEqualTo(ipv6 ? 5 : 3);
 
@@ -132,7 +132,7 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
         await using var first = await StartAsync(target, clock, new PeerAddress(IPAddress.Parse(Proxy)), Proxy + ";" + secondProxy, capacity);
         await using var second = await StartAsync(target, clock, new PeerAddress(IPAddress.Parse(ipv6Site ? secondProxy : Proxy)), Proxy + ";" + secondProxy, capacity);
         var limiter = first.App.Services.GetRequiredService<AttemptLimiter>();
-        var factor = ipv6Site ? HeadlessAuth.SiteFactor : TokenRateLimitMiddleware.ProxyFactor;
+        var factor = ipv6Site ? HostedAuth.SiteFactor : TokenRateLimitMiddleware.ProxyFactor;
         var aggregateCapacity = (int)Math.Min((long)capacity * factor, int.MaxValue);
         const int saturationClientCount = 4;
         var neededClients = capacity == int.MaxValue ? saturationClientCount : (ipv6Site ? factor : aggregateCapacity) + 1;
@@ -192,16 +192,16 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
         await using var second = await StartAsync(target, clock, secondPeer, proxies);
         var replicas = new[] { (Server: first, Peer: firstPeer), (Server: second, Peer: secondPeer) };
         var limiter = first.App.Services.GetRequiredService<AttemptLimiter>();
-        var peerCount = ipv6Site ? HeadlessAuth.SiteFactor + 1 : 1;
-        var trustedPeers = configuredProxies.DistinctBy(address => limiter.Fold(HeadlessAuth.Subject(address)!))
+        var peerCount = ipv6Site ? HostedAuth.SiteFactor + 1 : 1;
+        var trustedPeers = configuredProxies.DistinctBy(address => limiter.Fold(HostedAuth.Subject(address)!))
             .Take(peerCount).Select(IPAddress.Parse).ToArray();
-        var trustedFolds = trustedPeers.Select(address => limiter.Fold(HeadlessAuth.Subject(address.ToString())!)).ToHashSet(StringComparer.Ordinal);
+        var trustedFolds = trustedPeers.Select(address => limiter.Fold(HostedAuth.Subject(address.ToString())!)).ToHashSet(StringComparer.Ordinal);
         // Separate /64s isolate the shared /48; a fresh final /64 must reach the site guard.
         var ordinaryPeers = ipv6Site
             ? Clients(limiter, ipv6: true).Where(address => !trustedFolds.Contains(limiter.Fold(address)))
                 .Take(peerCount).Select(address => IPAddress.Parse(address + "2")).ToArray()
-            : [IPAddress.Parse(HeadlessAuth.Subject(trustedPeers[0].ToString()) + "2")];
-        var siteFactor = ipv6Site ? HeadlessAuth.SiteFactor : 1;
+            : [IPAddress.Parse(HostedAuth.Subject(trustedPeers[0].ToString()) + "2")];
+        var siteFactor = ipv6Site ? HostedAuth.SiteFactor : 1;
         var proxyCapacity = Capacity * TokenRateLimitMiddleware.ProxyFactor * siteFactor;
         var clients = Clients(limiter, ipv6: false).Take(proxyCapacity + replicas.Length).ToArray();
         await Assert.That(trustedPeers.Length).IsEqualTo(peerCount);
@@ -293,7 +293,7 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
         }, clock: clock, services: services => services.AddSingleton<IStartupFilter>(new PeerAddress(socket)));
         var limiter = oidc.Server.App.Services.GetRequiredService<AttemptLimiter>();
         var clients = Clients(limiter, ipv6: false).Where(address => limiter.Fold(address) != limiter.Fold(socket.ToString())).Take(2).ToArray();
-        var maximum = verify ? HeadlessAuth.PerIp : HeadlessAuth.MailPerIp;
+        var maximum = verify ? HostedAuth.PerIp : HostedAuth.MailPerIp;
         for (var attempt = 0; attempt < maximum; attempt++)
         {
             using var response = await HostedAsync(oidc.Server, clients[0], verify, attempt);
@@ -307,14 +307,8 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
         using var independent = await HostedAsync(oidc.Server, clients[1], verify, maximum + 1);
         await Assert.That(independent.StatusCode).IsEqualTo(trusted ? verify ? HttpStatusCode.Unauthorized : HttpStatusCode.OK : HttpStatusCode.TooManyRequests);
 
-        // Only after client authentication does a submitted IP select the headless budget.
-        // It shares the hosted budget exactly when that IP was resolved from a trusted peer.
-        using var headless = await oidc.HeadlessAsync("email-code/start", new { email = "other@example.test", ip_address = clients[0] });
-        await Assert.That(headless.StatusCode).IsEqualTo(trusted ? HttpStatusCode.TooManyRequests : HttpStatusCode.Accepted);
         if (trusted)
         {
-            await Assert.That(await OidcHarness.EnvelopeCodeAsync(headless)).IsEqualTo("rate_limited");
-
             // A missing final hop must use the socket, never the preceding, already exhausted client.
             // Mix literal/quoted empty tails and actual repeated header lines into one socket allowance.
             var path = "/ui/terrascale/sign-in" + (verify ? "/verify" : string.Empty);
@@ -382,9 +376,9 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
         {
             Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["grant_type"] = HeadlessGrants.Password,
+                ["grant_type"] = "refresh_token",
+                ["refresh_token"] = "invalid",
                 ["email"] = $"unknown-{attempt}@example.test",
-                ["password"] = "wrong-password-0123456789",
                 ["ip_address"] = $"192.0.2.{attempt + 1}",
             }),
         };

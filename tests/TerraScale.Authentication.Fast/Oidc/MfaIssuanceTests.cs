@@ -2,11 +2,12 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 using OtpNet;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Features.Headless;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
@@ -22,59 +23,34 @@ namespace TerraScale.Authentication.Fast.Oidc;
 public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
 {
     private const string Password = "correct horse battery";
-    private const string Ip = "203.0.113.7";
     private const string Audience = "https://api.terrascale.tech";
     private const string ServiceId = "01M4EQ2FRJ8S8B29E8TQVWNW4K";
     private const string ServiceSecret = "service-test-secret-0123456789abcdefghij";
     private static readonly string[] ReadScopes = ["documents:read"];
 
     [Test]
-    public async Task Active_totp_refuses_password_email_code_existing_email_sign_up_and_hosted_sign_in()
+    public async Task Active_totp_refuses_hosted_password_code_and_existing_email_sign_up()
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         await using var oidc = await StartAsync(clock);
         var user = await CreateUserAsync(oidc);
         var active = await ActivateAsync(oidc.Server, user, clock);
 
-        using var password = await oidc.GrantAsync(HeadlessGrants.Password, user.Email, Password, Ip);
-        await RefusedAsync(password, HttpStatusCode.BadRequest);
-        await Assert.That(await OidcHarness.ErrorAsync(password)).IsEqualTo("invalid_grant");
-        using var unknown = await oidc.GrantAsync(HeadlessGrants.Password, "unknown@example.test", Password, Ip);
-        await Assert.That(await password.Content.ReadAsStringAsync()).IsEqualTo(await unknown.Content.ReadAsStringAsync());
+        using var password = await PasswordAsync(oidc, user.Email, Password);
+        await RefusedAsync(password, HttpStatusCode.Unauthorized);
+        using var unknown = await PasswordAsync(oidc, "unknown@example.test", Password);
+        await Assert.That(unknown.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That((await password.Content.ReadAsStringAsync()).Replace(user.Email, "{email}", StringComparison.Ordinal))
+            .IsEqualTo((await unknown.Content.ReadAsStringAsync()).Replace("unknown@example.test", "{email}", StringComparison.Ordinal));
 
-        using (var start = await oidc.HeadlessAsync("email-code/start", new { email = user.Email, ip_address = Ip }))
+        using (var code = await CodeSignInAsync(oidc, user.Email))
         {
-            await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+            await RefusedAsync(code, HttpStatusCode.Unauthorized);
         }
 
-        using (var email = await oidc.GrantAsync(HeadlessGrants.EmailCode, user.Email, await oidc.Email.NextCodeAsync(user.Email), Ip))
-        {
-            await RefusedAsync(email, HttpStatusCode.BadRequest);
-            await Assert.That(await OidcHarness.ErrorAsync(email)).IsEqualTo("invalid_grant");
-        }
-
-        clock.UtcNow += HeadlessAuth.MailCooldown;
-        using (var signUp = await oidc.HeadlessAsync("sign-up", new { email = user.Email, password = "another valid password", ip_address = Ip }))
-        {
-            await Assert.That(signUp.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-            var pending = (await OidcHarness.JsonAsync(signUp)).GetProperty("pending_token").GetString()!;
-            using var email = await oidc.GrantAsync(HeadlessGrants.EmailCode, user.Email, await oidc.Email.NextCodeAsync(user.Email), Ip, pendingToken: pending);
-            await RefusedAsync(email, HttpStatusCode.BadRequest);
-            await Assert.That(await OidcHarness.ErrorAsync(email)).IsEqualTo("invalid_grant");
-        }
-
-        clock.UtcNow += HeadlessAuth.MailCooldown;
-        using (var start = await oidc.PostFormAsync("/ui/terrascale/sign-in", new() { ["email"] = user.Email }))
-        {
-            await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-
-        using var hosted = await oidc.PostFormAsync("/ui/terrascale/sign-in/verify", new()
-        {
-            ["email"] = user.Email,
-            ["code"] = await oidc.Email.NextCodeAsync(user.Email),
-        });
-        await RefusedAsync(hosted, HttpStatusCode.Unauthorized);
+        clock.UtcNow += HostedAuth.MailCooldown;
+        using var signUp = await ExistingSignUpAsync(oidc, user.Email);
+        await RefusedAsync(signUp, HttpStatusCode.Unauthorized);
         await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.SessionCollection)).Items.Count).IsEqualTo(0);
         await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.OidcTokenCollection)).Items.Count).IsEqualTo(0);
         var current = (await oidc.Server.App.Services.GetRequiredService<Users>().GetAsync(user.InstanceId, user.Id))!;
@@ -144,23 +120,14 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
             await Assert.That(await mfa.BeginAsync(user)).IsNotNull();
         }
 
-        using (var password = await oidc.GrantAsync(HeadlessGrants.Password, user.Email, Password, Ip))
-        {
-            await Assert.That(password.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That((await OidcHarness.JsonAsync(password)).TryGetProperty("access_token", out _)).IsTrue();
-        }
-
-        using (var start = await oidc.HeadlessAsync("email-code/start", new { email = user.Email, ip_address = Ip }))
-        {
-            await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-        }
-
-        using (var email = await oidc.GrantAsync(HeadlessGrants.EmailCode, user.Email, await oidc.Email.NextCodeAsync(user.Email), Ip))
+        await Assert.That(await PasswordAccessTokenAsync(oidc, user.Email)).IsNotEmpty();
+        using (var email = await CodeSignInAsync(oidc, user.Email))
         {
             await Assert.That(email.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(OidcHarness.SessionCookie(email)).IsNotNull();
         }
 
-        clock.UtcNow += HeadlessAuth.MailCooldown;
+        clock.UtcNow += HostedAuth.MailCooldown;
         var artifacts = await ArtifactsAsync(oidc, user);
         using (var userInfo = await oidc.UserInfoAsync(artifacts.AccessToken))
         {
@@ -182,12 +149,10 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
             await Assert.That(refresh.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
 
-        clock.UtcNow += HeadlessAuth.MailCooldown;
-        using var signUp = await oidc.HeadlessAsync("sign-up", new { email = user.Email, password = "another valid password", ip_address = Ip });
-        await Assert.That(signUp.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-        var pending = (await OidcHarness.JsonAsync(signUp)).GetProperty("pending_token").GetString()!;
-        using var existing = await oidc.GrantAsync(HeadlessGrants.EmailCode, user.Email, await oidc.Email.NextCodeAsync(user.Email), Ip, pendingToken: pending);
+        clock.UtcNow += HostedAuth.MailCooldown;
+        using var existing = await ExistingSignUpAsync(oidc, user.Email);
         await Assert.That(existing.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(OidcHarness.SessionCookie(existing)).IsNotNull();
         await Assert.That((await oidc.Server.App.Services.GetRequiredService<Users>().GetAsync(user.InstanceId, user.Id))!.PasswordHash).IsEqualTo(user.PasswordHash);
     }
 
@@ -200,23 +165,12 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         var active = await ActivateAsync(oidc.Server, user, clock);
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var before = (await store.GetAsync(AuthStore.MfaCollection, user.InstanceId, user.Id))!;
-        using (var start = await oidc.HeadlessAsync("password-reset/start", new { email = user.Email, ip_address = Ip }))
-        {
-            await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-        }
-
         const string newPassword = "a different valid password";
-        using (var reset = await oidc.HeadlessAsync("password-reset/complete", new
+        using (var reset = await ResetAsync(oidc, user.Email, newPassword))
         {
-            email = user.Email,
-            code = await oidc.Email.NextCodeAsync(user.Email),
-            new_password = newPassword,
-            ip_address = Ip,
-        }))
-        {
-            await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(OidcHarness.SessionCookie(reset)).IsNull();
-            await Assert.That(await reset.Content.ReadAsStringAsync()).IsEmpty();
+            await Assert.That(await reset.Content.ReadAsStringAsync()).Contains("<h1>Password updated</h1>");
         }
 
         var current = (await oidc.Server.App.Services.GetRequiredService<Users>().GetAsync(user.InstanceId, user.Id))!;
@@ -226,9 +180,8 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         await Assert.That(after.Version).IsEqualTo(before.Version);
         await Assert.That(after.Document.GetRawText()).IsEqualTo(before.Document.GetRawText());
         await Assert.That(after.Document.GetProperty("enabled").GetBoolean()).IsTrue();
-        using var password = await oidc.GrantAsync(HeadlessGrants.Password, user.Email, newPassword, Ip);
-        await RefusedAsync(password, HttpStatusCode.BadRequest);
-        await Assert.That(await OidcHarness.ErrorAsync(password)).IsEqualTo("invalid_grant");
+        using var password = await PasswordAsync(oidc, user.Email, newPassword);
+        await RefusedAsync(password, HttpStatusCode.Unauthorized);
     }
 
     [Test]
@@ -245,7 +198,6 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         var mfa = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();
         await Assert.That(await mfa.BeginAsync(user)).IsNotNull();
         var passcodes = oidc.Server.App.Services.GetRequiredService<Passcodes>();
-        var headlessCode = (await passcodes.RequestAsync(user.InstanceId, user.Email))!;
 
         if (failure == "unavailable")
         {
@@ -273,20 +225,10 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
                 JsonSerializer.SerializeToElement(corrupted), factor.Version)).IsTrue();
         }
 
-        using (var password = await oidc.GrantAsync(HeadlessGrants.Password, user.Email, Password, Ip))
+        using (var password = await PasswordAsync(oidc, user.Email, Password))
         {
             await RefusedAsync(password, HttpStatusCode.ServiceUnavailable);
-            await Assert.That(password.Headers.CacheControl?.NoStore).IsTrue();
-            await Assert.That(password.Headers.Pragma.Any(header => header.Name == "no-cache")).IsTrue();
-            await Assert.That(await OidcHarness.ErrorAsync(password)).IsEqualTo("temporarily_unavailable");
-        }
-
-        using (var email = await oidc.GrantAsync(HeadlessGrants.EmailCode, user.Email, headlessCode.Code, Ip))
-        {
-            await RefusedAsync(email, HttpStatusCode.ServiceUnavailable);
-            await Assert.That(email.Headers.CacheControl?.NoStore).IsTrue();
-            await Assert.That(email.Headers.Pragma.Any(header => header.Name == "no-cache")).IsTrue();
-            await Assert.That(await OidcHarness.ErrorAsync(email)).IsEqualTo("temporarily_unavailable");
+            await Assert.That(await OidcHarness.EnvelopeCodeAsync(password)).IsEqualTo("temporarily_unavailable");
         }
 
         var hostedCode = (await passcodes.RequestAsync(user.InstanceId, user.Email))!;
@@ -298,16 +240,11 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
 
         // Exercise the factor guard before the mail cooldown advance expires the one-minute authorization code.
         await ArtifactsRefusedAsync(oidc, artifacts, HttpStatusCode.ServiceUnavailable, HttpStatusCode.ServiceUnavailable);
-        clock.UtcNow += HeadlessAuth.MailCooldown;
-        using (var signUp = await oidc.HeadlessAsync("sign-up", new { email = user.Email, password = "another valid password", ip_address = Ip }))
+        clock.UtcNow += HostedAuth.MailCooldown;
+        using (var signUp = await ExistingSignUpAsync(oidc, user.Email))
         {
-            await Assert.That(signUp.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-            var pending = (await OidcHarness.JsonAsync(signUp)).GetProperty("pending_token").GetString()!;
-            using var email = await oidc.GrantAsync(HeadlessGrants.EmailCode, user.Email, await oidc.Email.NextCodeAsync(user.Email), Ip, pendingToken: pending);
-            await RefusedAsync(email, HttpStatusCode.ServiceUnavailable);
-            await Assert.That(email.Headers.CacheControl?.NoStore).IsTrue();
-            await Assert.That(email.Headers.Pragma.Any(header => header.Name == "no-cache")).IsTrue();
-            await Assert.That(await OidcHarness.ErrorAsync(email)).IsEqualTo("temporarily_unavailable");
+            await RefusedAsync(signUp, HttpStatusCode.ServiceUnavailable);
+            await Assert.That(await OidcHarness.EnvelopeCodeAsync(signUp)).IsEqualTo("temporarily_unavailable");
         }
 
         await Assert.That((await oidc.Server.App.Services.GetRequiredService<Users>().GetAsync(user.InstanceId, user.Id))!.AuthEpoch).IsEqualTo(user.AuthEpoch);
@@ -321,9 +258,7 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         await using var oidc = await StartAsync(clock);
         var user = await CreateUserAsync(oidc);
-        using var signIn = await oidc.GrantAsync(HeadlessGrants.Password, user.Email, Password, Ip);
-        await Assert.That(signIn.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var access = (await OidcHarness.JsonAsync(signIn)).GetProperty("access_token").GetString()!;
+        var access = await PasswordAccessTokenAsync(oidc, user.Email);
         using (var before = await oidc.UserInfoAsync(access))
         {
             await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -333,16 +268,8 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         await using var replica = await oidc.StartReplicaAsync(clock: clock);
         if (passwordReset)
         {
-            using var start = await oidc.HeadlessAsync("password-reset/start", new { email = user.Email, ip_address = Ip });
-            await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-            using var reset = await oidc.HeadlessAsync("password-reset/complete", new
-            {
-                email = user.Email,
-                code = await oidc.Email.NextCodeAsync(user.Email),
-                new_password = "a different valid password",
-                ip_address = Ip,
-            });
-            await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            using var reset = await ResetAsync(oidc, user.Email, "a different valid password");
+            await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
         else
         {
@@ -382,15 +309,14 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         string? access = null;
         if (path == "userinfo")
         {
-            using var signIn = await oidc.GrantAsync(HeadlessGrants.Password, user.Email, Password, Ip);
-            await Assert.That(signIn.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            access = (await OidcHarness.JsonAsync(signIn)).GetProperty("access_token").GetString()!;
+            access = await PasswordAccessTokenAsync(oidc, user.Email);
         }
 
         var tokenCount = (await oidc.Database.ListDocumentsAsync(AuthStore.OidcTokenCollection)).Items.Count;
+        var sessionCount = (await oidc.Database.ListDocumentsAsync(AuthStore.SessionCollection)).Items.Count;
         await using var replica = await oidc.StartReplicaAsync(clock: clock);
         var held = await pause.HoldNextAsync(() => path == "password"
-            ? oidc.GrantAsync(HeadlessGrants.Password, user.Email, Password, Ip)
+            ? PasswordAsync(oidc, user.Email, Password)
             : oidc.UserInfoAsync(access!));
         if (change == "activation")
         {
@@ -402,12 +328,8 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         }
 
         using var refused = await pause.ReleaseAsync(held);
-        await RefusedAsync(refused, path == "password" ? HttpStatusCode.BadRequest : HttpStatusCode.Unauthorized);
-        if (path == "password")
-        {
-            await Assert.That(await OidcHarness.ErrorAsync(refused)).IsEqualTo("invalid_grant");
-        }
-        else
+        await RefusedAsync(refused, HttpStatusCode.Unauthorized);
+        if (path == "userinfo")
         {
             var body = await refused.Content.ReadAsStringAsync();
             await Assert.That(body.Contains("\"sub\"", StringComparison.Ordinal)).IsFalse();
@@ -415,6 +337,10 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         }
 
         await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.OidcTokenCollection)).Items.Count).IsEqualTo(tokenCount);
+        if (path == "password")
+        {
+            await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.SessionCollection)).Items.Count).IsEqualTo(sessionCount);
+        }
     }
 
     [Test]
@@ -461,6 +387,62 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         values["access-token-audiences"] = Audience;
         values["service-clients"] = $"{ServiceId}:{ServiceSecret}";
     }, clock: clock, services: services);
+
+    private static Task<HttpResponseMessage> PasswordAsync(OidcHarness oidc, string email, string password) =>
+        oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-in/password", new() { ["email"] = email, ["password"] = password });
+
+    /// <summary>Signs in on the hosted password page and redeems an authorization code for the session.</summary>
+    private static async Task<string> PasswordAccessTokenAsync(OidcHarness oidc, string email)
+    {
+        using var signIn = await PasswordAsync(oidc, email, Password);
+        await Assert.That(signIn.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var (verifier, challenge) = OidcHarness.Pkce();
+        using var redeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(OidcHarness.SessionCookie(signIn)!, challenge), verifier);
+        await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        return (await OidcHarness.JsonAsync(redeemed)).GetProperty("access_token").GetString()!;
+    }
+
+    /// <summary>Requests a hosted sign-in code and posts it to the verify page.</summary>
+    private static async Task<HttpResponseMessage> CodeSignInAsync(OidcHarness oidc, string email)
+    {
+        using (var start = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-in", new() { ["email"] = email }))
+        {
+            await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        return await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-in/verify", new() { ["email"] = email, ["code"] = await oidc.Email.NextCodeAsync(email) });
+    }
+
+    /// <summary>Signs up on the hosted page with an address that has an account, then posts the emailed sign-in code.</summary>
+    private static async Task<HttpResponseMessage> ExistingSignUpAsync(OidcHarness oidc, string email)
+    {
+        using var start = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up", new() { ["email"] = email, ["password"] = "another valid password" });
+        await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var pending = Regex.Match(await start.Content.ReadAsStringAsync(), "name=\"pending_token\" value=\"([^\"]+)\"").Groups[1].Value;
+        await Assert.That(pending).IsNotEmpty();
+        return await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up/verify", new()
+        {
+            ["email"] = email,
+            ["code"] = await oidc.Email.NextCodeAsync(email),
+            ["pending_token"] = pending,
+        });
+    }
+
+    /// <summary>Resets the password on the hosted reset pages with the emailed code.</summary>
+    private static async Task<HttpResponseMessage> ResetAsync(OidcHarness oidc, string email, string password)
+    {
+        using (var start = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset", new() { ["email"] = email }))
+        {
+            await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        return await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset/complete", new()
+        {
+            ["email"] = email,
+            ["code"] = await oidc.Email.NextCodeAsync(email),
+            ["password"] = password,
+        });
+    }
 
     private static async Task<UserRecord> CreateUserAsync(OidcHarness oidc) =>
         (await oidc.Server.App.Services.GetRequiredService<Users>()

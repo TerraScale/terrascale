@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
-using TerraScale.Authentication.Features.Headless;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Ui;
@@ -47,7 +46,7 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
 /// <c>POST /ui/{slug}/sign-in</c>: emails a code when the address has an account. The page and its timing are the same
 /// either way: <see cref="SignInMail"/> delivers after the response.
 /// </summary>
-public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail, HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -55,7 +54,7 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
         Post("/ui/{slug}/sign-in");
         Name("ui_sign_in_request_code");
         Summary("Email a sign-in code");
-        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared hosted/headless limits: 30 calls per IP per minute, 10 mail calls per IP per 15 minutes, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After. A new code replaces the previous one.");
+        Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared sign-in limits: 30 calls per IP per minute, 10 mail calls per IP per 15 minutes, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After. A new code replaces the previous one.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -75,13 +74,13 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
         }
 
         var address = form.Email?.Trim() ?? string.Empty;
-        if (HeadlessAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
+        if (HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
         {
             throw ApiException.Unavailable();
         }
 
-        if ((await headless.LimitIpAsync(ip, mails: true, cancellationToken)
-            ?? await headless.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: true, cancellationToken)) is { } wait)
+        if ((await hosted.LimitIpAsync(ip, mails: true, cancellationToken)
+            ?? await hosted.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: true, cancellationToken)) is { } wait)
         {
             return SignInFlow.Limited(this.HttpContext, SignInStep.Email, wait, address, SignInFlow.SafeNext(form.Next));
         }
@@ -99,7 +98,7 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
 /// <c>POST /ui/{slug}/sign-in/verify</c>: redeems the code, opens a fresh session and sets the session cookie, then
 /// resumes the authorization request.
 /// </summary>
-public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions sessions, HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions sessions, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -107,7 +106,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         Post("/ui/{slug}/sign-in/verify");
         Name("ui_sign_in_verify_code");
         Summary("Sign in with an emailed code");
-        Description("Same-origin form post. A code works once, for 10 minutes, and dies after 5 wrong guesses. Hosted and headless sign-in share 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
+        Description("Same-origin form post. A code works once, for 10 minutes, and dies after 5 wrong guesses. Hosted sign-in pages share 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
             + " Active MFA users receive the same generic credential refusal without a session cookie; corrupt or unavailable MFA state fails closed.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
@@ -130,13 +129,13 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
 
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(form.Next);
-        if (HeadlessAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
+        if (HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
         {
             throw ApiException.Unavailable();
         }
 
-        if ((await headless.LimitIpAsync(ip, mails: false, cancellationToken)
-            ?? await headless.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: false, cancellationToken,
+        if ((await hosted.LimitIpAsync(ip, mails: false, cancellationToken)
+            ?? await hosted.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: false, cancellationToken,
                 AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage))) is { } wait)
         {
             AuthMetrics.SignIn("hosted_code", "rate_limited");
@@ -158,7 +157,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
 /// <c>POST /ui/{slug}/sign-in/password</c>: without a password, shows the password step for the address; with one,
 /// checks it, opens a fresh session and resumes like the code sign-in.
 /// </summary>
-public sealed class PasswordSignInEndpoint(Sessions sessions, HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class PasswordSignInEndpoint(Sessions sessions, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -166,7 +165,7 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, HeadlessAuth headl
         Post("/ui/{slug}/sign-in/password");
         Name("ui_sign_in_password");
         Summary("Sign in with a password");
-        Description("Same-origin form post. A post without password shows the password step. With email and password it shares the headless password budgets: 30 calls per IP per minute and 10 attempts per normalized email per 15 minutes, including unknown emails; exhaustion answers 429 with Retry-After and queues one best-effort lockout email notice per real account. A wrong email or password, an account without a password and an active MFA user all answer the same 401 page. Success sets the tsauth_session cookie and continues to next.");
+        Description("Same-origin form post. A post without password shows the password step. With email and password it charges the password budgets: 30 calls per IP per minute and 10 attempts per normalized email per 15 minutes, including unknown emails; exhaustion answers 429 with Retry-After and queues one best-effort lockout email notice per real account. A wrong email or password, an account without a password and an active MFA user all answer the same 401 page. Success sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -194,13 +193,13 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, HeadlessAuth headl
         }
 
         var ip = SignInFlow.Ip(this.HttpContext);
-        if (await headless.LimitIpAsync(ip, mails: false, cancellationToken) is { } ipWait)
+        if (await hosted.LimitIpAsync(ip, mails: false, cancellationToken) is { } ipWait)
         {
             AuthMetrics.SignIn("hosted_password", "rate_limited");
             return SignInFlow.Limited(this.HttpContext, SignInStep.Password, ipWait, address, next);
         }
 
-        var (user, wait) = await headless.CheckPasswordAsync(address, form.Password, cancellationToken);
+        var (user, wait) = await hosted.CheckPasswordAsync(address, form.Password, cancellationToken);
         if (wait is { } retry)
         {
             AuthMetrics.SignIn("hosted_password", "rate_limited");
@@ -243,10 +242,10 @@ public sealed class SignUpPageEndpoint : EndpointWithoutRequest<IResult>
 }
 
 /// <summary>
-/// <c>POST /ui/{slug}/sign-up</c>: starts a sign-up as the headless API does and asks for the emailed code. The page is
+/// <c>POST /ui/{slug}/sign-up</c>: starts a sign-up and asks for the emailed code. The page is
 /// the same whether or not the address has an account; an existing account is mailed a sign-in code instead.
 /// </summary>
-public sealed class StartSignUpEndpoint(HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -254,7 +253,7 @@ public sealed class StartSignUpEndpoint(HeadlessAuth headless, AuthOptions optio
         Post("/ui/{slug}/sign-up");
         Name("ui_sign_up_start");
         Summary("Start a sign-up");
-        Description("Same-origin form post with email and password (8 to 1024 UTF-8 bytes). Shares the headless sign-up limits: the IP call and mail budgets, a 60-second cooldown per normalized email across every mail start, and 5 codes per normalized email per UTC clock hour; exhaustion answers 429 with Retry-After. A new address is mailed a verification code bound to a random pending token the page carries; an address with an account is mailed a sign-in code and the password is discarded.");
+        Description("Same-origin form post with email and password (8 to 1024 UTF-8 bytes). Shares the mail-start limits: the IP call and mail budgets, a 60-second cooldown per normalized email across every mail start, and 5 codes per normalized email per UTC clock hour; exhaustion answers 429 with Retry-After. A new address is mailed a verification code bound to a random pending token the page carries; an address with an account is mailed a sign-in code and the password is discarded.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -283,7 +282,7 @@ public sealed class StartSignUpEndpoint(HeadlessAuth headless, AuthOptions optio
             { ErrorTitle = "Check your details" }, StatusCodes.Status400BadRequest);
         }
 
-        var (pending, wait) = await headless.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext), cancellationToken);
+        var (pending, wait) = await hosted.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext), cancellationToken);
         return wait is { } retry
             ? SignInFlow.Limited(this.HttpContext, SignInStep.SignUp, retry, address, next)
             : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUpCode, OidcIssuer.Slug, address, next) { PendingToken = pending });
@@ -294,7 +293,7 @@ public sealed class StartSignUpEndpoint(HeadlessAuth headless, AuthOptions optio
 /// <c>POST /ui/{slug}/sign-up/verify</c>: redeems the emailed code. A sign-up code with its pending token creates the
 /// account; a sign-in code (the address already had one) signs that account in. Either way a session opens.
 /// </summary>
-public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions, HeadlessAuth headless, AuthOptions options, ILogger<VerifySignUpEndpoint> logger) : EndpointWithoutRequest<IResult>
+public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions, HostedAuth hosted, AuthOptions options, ILogger<VerifySignUpEndpoint> logger) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -325,8 +324,8 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(form.Next);
         var code = form.Code ?? string.Empty;
-        if ((await headless.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken)
-            ?? await headless.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: false, cancellationToken,
+        if ((await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken)
+            ?? await hosted.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: false, cancellationToken,
                 AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage))) is { } wait)
         {
             AuthMetrics.SignIn("hosted_sign_up", "rate_limited");
@@ -375,7 +374,7 @@ public sealed class ResetPageEndpoint : EndpointWithoutRequest<IResult>
 }
 
 /// <summary><c>POST /ui/{slug}/reset</c>: emails a reset code when the address has an account; the page is the same either way.</summary>
-public sealed class StartResetEndpoint(HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -383,7 +382,7 @@ public sealed class StartResetEndpoint(HeadlessAuth headless, AuthOptions option
         Post("/ui/{slug}/reset");
         Name("ui_password_reset_start");
         Summary("Email a password reset code");
-        Description("Same-origin form post with email. Shares the headless password-reset/start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After. The response never reveals whether the address has an account.");
+        Description("Same-origin form post with email. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After. The response never reveals whether the address has an account.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -404,14 +403,14 @@ public sealed class StartResetEndpoint(HeadlessAuth headless, AuthOptions option
 
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(form.Next);
-        return await headless.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext), cancellationToken) is { } wait
+        return await hosted.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext), cancellationToken) is { } wait
             ? SignInFlow.Limited(this.HttpContext, SignInStep.Reset, wait, address, next)
             : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, OidcIssuer.Slug, address, next));
     }
 }
 
 /// <summary><c>POST /ui/{slug}/reset/complete</c>: sets a new password with the emailed reset code.</summary>
-public sealed class CompleteResetEndpoint(HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -419,7 +418,7 @@ public sealed class CompleteResetEndpoint(HeadlessAuth headless, AuthOptions opt
         Post("/ui/{slug}/reset/complete");
         Name("ui_password_reset_complete");
         Summary("Set a new password with a reset code");
-        Description("Same-origin form post with email, code and password. As headless password-reset/complete: 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and shows a link back to sign-in.");
+        Description("Same-origin form post with email, code and password. Limits: 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and shows a link back to sign-in.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -449,7 +448,7 @@ public sealed class CompleteResetEndpoint(HeadlessAuth headless, AuthOptions opt
             { ErrorTitle = "Password too short" }, StatusCodes.Status400BadRequest);
         }
 
-        var (reset, wait) = await headless.CompletePasswordResetAsync(address, form.Code ?? string.Empty, form.Password!, SignInFlow.Ip(this.HttpContext), cancellationToken);
+        var (reset, wait) = await hosted.CompletePasswordResetAsync(address, form.Code ?? string.Empty, form.Password!, SignInFlow.Ip(this.HttpContext), cancellationToken);
         return wait is { } retry ? SignInFlow.Limited(this.HttpContext, SignInStep.ResetCode, retry, address, next)
             : reset ? SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetDone, OidcIssuer.Slug, address, next))
             : SignInFlow.WrongCode(this.HttpContext, SignInStep.ResetCode, address, next);
@@ -478,7 +477,7 @@ internal static class SignInFlow
 
     /// <summary>The browser's rate-limit subject; a request without a peer address cannot be limited, so it is refused.</summary>
     public static string Ip(HttpContext context) =>
-        HeadlessAuth.Subject(context.Connection.RemoteIpAddress?.ToString()) ?? throw ApiException.Unavailable();
+        HostedAuth.Subject(context.Connection.RemoteIpAddress?.ToString()) ?? throw ApiException.Unavailable();
 
     /// <summary>A primary-only session for <paramref name="user"/>, or null when MFA or a newer epoch refuses one.</summary>
     public static async Task<IssuedSession?> OpenSessionAsync(Sessions sessions, UserRecord user, CancellationToken cancellationToken)

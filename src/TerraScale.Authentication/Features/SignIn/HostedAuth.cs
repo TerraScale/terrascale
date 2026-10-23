@@ -1,44 +1,25 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
-using OpenIddict.Abstractions;
-using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
-using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.RateLimiting;
-using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Security;
 using ZLogger;
-using static OpenIddict.Abstractions.OpenIddictConstants;
 
-namespace TerraScale.Authentication.Features.Headless;
-
-/// <summary>The extension grants (RFC 6749 §4.5) a first-party confidential client redeems at the token endpoint.</summary>
-public static class HeadlessGrants
-{
-    /// <summary>Email and password: <c>email</c>, <c>password</c>, <c>ip_address</c>.</summary>
-    public const string Password = "urn:terrascale:params:oauth:grant-type:password";
-
-    /// <summary>
-    /// An emailed sign-in or sign-up code: <c>email</c>, <c>code</c>, <c>ip_address</c>, and for a sign-up code the
-    /// <c>pending_token</c> the sign-up answered.
-    /// </summary>
-    public const string EmailCode = "urn:terrascale:params:oauth:grant-type:email-code";
-}
+namespace TerraScale.Authentication.Features.SignIn;
 
 /// <summary>
-/// The headless authentication API (TS-582): a first-party confidential client (ts-dashboard) collects credentials on
-/// its own pages and redeems them server-to-server, for the same tokens as the redirect flow. Every call is limited per
-/// end-user IP, as the client reports it (an IPv6 address per /64, and per /48 at <see cref="SiteFactor"/> times the
-/// budget), and calls that send mail have a tighter per-IP budget; password attempts are also limited per email. Limits are shared by every replica and apply alike to addresses with and without an account,
-/// and every failure answers the same whatever the account state, so nothing tells an account from a stranger.
+/// The credential checks and attempt budgets behind the hosted sign-in, sign-up and password-reset pages and the device
+/// verification page. Every call is limited per end-user IP (an IPv6 address per /64, and per /48 at
+/// <see cref="SiteFactor"/> times the budget), and calls that send mail have a tighter per-IP budget; password attempts
+/// are also limited per email. Limits are shared by every replica and apply alike to addresses with and without an
+/// account, and every failure answers the same whatever the account state, so nothing tells an account from a stranger.
 /// </summary>
-public sealed class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentials mfa, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail,
-    TimeProvider clock, AuthOptions options, ILogger<HeadlessAuth> logger)
+public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail, ILogger<HostedAuth> logger)
 {
     /// <summary>Calls per end-user IP per minute.</summary>
     public const int PerIp = 30;
@@ -61,102 +42,13 @@ public sealed class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentia
     /// <summary>Minimum interval between mail-start requests for one normalized email, shared across routes and replicas.</summary>
     public static readonly TimeSpan MailCooldown = TimeSpan.FromSeconds(60);
 
-    /// <summary>Code redemption attempts per email, shared by hosted and headless sign-in.</summary>
+    /// <summary>Code redemption attempts per email, shared by every sign-in page.</summary>
     public const int CodePerEmail = Passcodes.MaxAttempts;
 
     /// <summary>The code budget's window; password reset has its own budget.</summary>
     public static readonly TimeSpan CodeWindow = TimeSpan.FromMinutes(15);
 
     private static readonly TimeSpan IpWindow = TimeSpan.FromMinutes(1);
-
-    /// <summary>
-    /// Redeems a <see cref="HeadlessGrants"/> request that OpenIddict has already authenticated and permission-checked:
-    /// signs the user in with the requested scopes, or answers an OAuth error.
-    /// </summary>
-    public async Task<IResult> GrantAsync(OpenIddictRequest request, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        try
-        {
-            return await this.RedeemAsync(request, cancellationToken);
-        }
-        catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
-        {
-            // Storage or Argon2id capacity: an OAuth error the client can retry, not the JSON API envelope.
-            return Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, error.Message), statusCode: StatusCodes.Status503ServiceUnavailable);
-        }
-    }
-
-    private async Task<IResult> RedeemAsync(OpenIddictRequest request, CancellationToken cancellationToken)
-    {
-        var email = (string?)request["email"];
-        var secret = (string?)(request.GrantType == HeadlessGrants.Password ? request["password"] : request["code"]);
-        if (Subject((string?)request["ip_address"]) is not { } ip || email is null || secret is null)
-        {
-            return OidcResults.Forbid(Errors.InvalidRequest, "email, ip_address and the grant's password or code are required; ip_address is the end user's IP address.");
-        }
-
-        var method = request.GrantType == HeadlessGrants.Password ? "password" : "email-code";
-        var metric = request.GrantType == HeadlessGrants.Password ? "password" : "email_code";
-        if (await this.LimitIpAsync(ip, mails: false, cancellationToken) is { } wait)
-        {
-            AuthMetrics.SignIn(metric, "rate_limited");
-            return TooMany(wait);
-        }
-
-        UserRecord? user;
-        if (request.GrantType == HeadlessGrants.Password)
-        {
-            (user, var passwordWait) = await this.CheckPasswordAsync(email, secret, cancellationToken);
-            if (passwordWait is { } passwordRetry)
-            {
-                AuthMetrics.SignIn(metric, "rate_limited");
-                return TooMany(passwordRetry);
-            }
-        }
-        else
-        {
-            if (await this.LimitCodeAsync(email, PasscodePurpose.SignIn, issuing: false, cancellationToken) is { } codeWait)
-            {
-                AuthMetrics.SignIn(metric, "rate_limited");
-                return TooMany(codeWait);
-            }
-
-            user = await passcodes.RedeemAsync(OidcIssuer.InstanceId, email, secret, PasscodePurpose.SignIn, cancellationToken);
-            if (user is null && (string?)request["pending_token"] is { } pending
-                && await passcodes.RedeemSignUpAsync(OidcIssuer.InstanceId, email, secret, pending, cancellationToken) is { } created)
-            {
-                logger.ZLogInformation($"Audit: headless sign-up created user {created.Id:@UserId}");
-                user = created;
-            }
-        }
-
-        if (user is null || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
-        {
-            logger.ZLogInformation($"Audit: headless {method:@Method} refused");
-            AuthMetrics.SignIn(metric, "refused");
-            return OidcResults.Forbid(Errors.InvalidGrant, "The email, password or code is wrong, or the code has expired.");
-        }
-
-        logger.ZLogInformation($"Audit: headless {method:@Method} sign-in succeeded for user {user.Id:@UserId}");
-        AuthMetrics.SignIn(metric, "succeeded");
-        return OidcResults.SignIn(user, clock.GetUtcNow(), request.GetScopes(), OidcIssuer.SignInAudiences(options));
-    }
-
-    /// <summary>Emails a sign-in code, or resends a sign-up bound to <paramref name="pendingToken"/>. Null, or how long to wait.</summary>
-    public async Task<TimeSpan?> StartEmailCodeAsync(string email, string ip, CancellationToken cancellationToken, string? pendingToken = null)
-    {
-        if (await this.LimitMailAsync(email, ip, cancellationToken) is { } wait)
-        {
-            return wait;
-        }
-
-        // Issued on the mail worker, so the response takes the same work whether or not the address has an account.
-        mail.EnqueueIssue(() => pendingToken is null
-            ? passcodes.RequestAsync(OidcIssuer.InstanceId, email, PasscodePurpose.SignIn, CancellationToken.None)
-            : passcodes.ResendSignUpAsync(OidcIssuer.InstanceId, email, pendingToken, CancellationToken.None));
-        return null;
-    }
 
     /// <summary>
     /// Emails a sign-up code, or a sign-in code when the address has an account, and returns the pending token that
@@ -204,7 +96,7 @@ public sealed class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentia
 
         if (!Passcodes.WellFormed(code))
         {
-            logger.ZLogInformation($"Audit: headless {method:@Method} refused");
+            logger.ZLogInformation($"Audit: hosted {method:@Method} refused");
             return (false, null);
         }
 
@@ -213,11 +105,11 @@ public sealed class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentia
         if (await passcodes.RedeemAsync(OidcIssuer.InstanceId, email, code, PasscodePurpose.PasswordReset, cancellationToken) is not { } user
             || !await users.SetPasswordAsync(OidcIssuer.InstanceId, user.Id, user.AuthEpoch, hash, cancellationToken))
         {
-            logger.ZLogInformation($"Audit: headless {method:@Method} refused");
+            logger.ZLogInformation($"Audit: hosted {method:@Method} refused");
             return (false, null);
         }
 
-        logger.ZLogInformation($"Audit: headless password reset for user {user.Id:@UserId}; every session and refresh token is refused");
+        logger.ZLogInformation($"Audit: hosted password reset for user {user.Id:@UserId}; every session and refresh token is refused");
         return (true, null);
     }
 
@@ -287,7 +179,7 @@ public sealed class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentia
         if (Users.NormalizeEmail(email) is { } normalized
             && await limiter.AcquireCooldownAsync(OidcIssuer.InstanceId, "headless-mail-email", limiter.Fold(normalized), MailCooldown, cancellationToken) is { } cooldownWait)
         {
-            logger.ZLogWarning($"Audit: headless request rate-limited by the {"headless-mail-email":@Purpose} budget");
+            logger.ZLogWarning($"Audit: hosted request rate-limited by the {"headless-mail-email":@Purpose} budget");
             return cooldownWait;
         }
 
@@ -320,7 +212,7 @@ public sealed class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentia
         {
             if (await limiter.AcquireAsync(OidcIssuer.InstanceId, purpose, limiter.Fold(subject), maximum, window, cancellationToken) is { } wait)
             {
-                logger.ZLogWarning($"Audit: headless request rate-limited by the {purpose:@Purpose} budget");
+                logger.ZLogWarning($"Audit: hosted request rate-limited by the {purpose:@Purpose} budget");
                 return wait;
             }
         }
@@ -349,7 +241,7 @@ public sealed class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentia
             return null;
         }
 
-        logger.ZLogWarning($"Audit: headless request rate-limited by the {purpose:@Purpose} budget");
+        logger.ZLogWarning($"Audit: hosted request rate-limited by the {purpose:@Purpose} budget");
         if (notify)
         {
             // Both known and unknown addresses enqueue the same work; only the worker looks up the account.

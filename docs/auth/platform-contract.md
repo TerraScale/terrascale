@@ -471,7 +471,7 @@ without a signed-in user.
 
 | Client | Type | Grants |
 | --- | --- | --- |
-| `ts-dashboard` | confidential | authorization code + S256 PKCE, refresh token, the headless grants (TS-582), token exchange |
+| `ts-dashboard` | confidential | authorization code + S256 PKCE, refresh token, token exchange |
 | `ts-cli` (client id `00000000000000000000000007`) | public | device code (RFC 8628), refresh token, token exchange |
 | service clients (`TS_AUTH_SERVICE_CLIENTS`) | confidential | client credentials |
 | API keys (ULID clients) | confidential | client credentials |

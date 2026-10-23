@@ -34,8 +34,6 @@ tags:
     description: Audit events of an organization's identity changes.
   - name: Platform
     description: Operations of the platform itself, without a user - project suspension (ts-dashboard) and platform administrators (operator).
-  - name: Headless
-    description: Headless endpoints for ts-dashboard, which signs users in and approves devices on its own pages.
   - name: OAuth
     description: Token endpoint grants for API keys (client credentials) and user organization or project tokens (token exchange).
 paths:
@@ -903,8 +901,8 @@ paths:
       tags: [OAuth]
       summary: Token endpoint
       description: |
-        The grants this contract adds. The existing ones (authorization_code, refresh_token, the TS-582 headless
-        grants) are unchanged and described in the served OpenAPI. Tokens are ES256 JWTs with typ at+jwt;
+        The grants this contract adds. The existing ones (authorization_code, refresh_token, device_code)
+        are unchanged and described in the served OpenAPI. Tokens are ES256 JWTs with typ at+jwt;
         docs/platform-contract.md section 6.3 lists their claims. Token exchange refuses primary-only sign-in
         tokens for users with active MFA; unavailable or corrupt MFA state answers 503 temporarily_unavailable.
         User tokens preserve server-issued numeric auth_time (Unix seconds) through refresh and exchange;

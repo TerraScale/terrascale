@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
-using TerraScale.Authentication.Features.Headless;
+using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Tests;
@@ -103,7 +103,7 @@ public sealed class TokenRateLimitTests(TerraBaseFixture fixture)
         var limiter = server.App.Services.GetRequiredService<AttemptLimiter>();
         // A deliberate keyed-fold collision shares a budget; select distinct folds to test the /48 budget itself.
         var subnets = Enumerable.Range(1, 128).Select(number => IPAddress.Parse($"2001:db8:704:{number:x}::1"))
-            .DistinctBy(address => limiter.Fold(HeadlessAuth.Subject(address.ToString())!)).Take(5).ToArray();
+            .DistinctBy(address => limiter.Fold(HostedAuth.Subject(address.ToString())!)).Take(5).ToArray();
         await Assert.That(subnets.Length).IsEqualTo(5);
         foreach (var address in subnets.Take(4))
         {
@@ -119,7 +119,7 @@ public sealed class TokenRateLimitTests(TerraBaseFixture fixture)
         using var siteLimited = await InvalidClientAsync(server);
         await AssertOAuthErrorAsync(siteLimited, HttpStatusCode.TooManyRequests, "rate_limited", TimeSpan.FromSeconds(55));
 
-        var usedFolds = subnets.Select(address => limiter.Fold(HeadlessAuth.Subject(address.ToString())!)).ToHashSet(StringComparer.Ordinal);
+        var usedFolds = subnets.Select(address => limiter.Fold(HostedAuth.Subject(address.ToString())!)).ToHashSet(StringComparer.Ordinal);
         peer.Address = Enumerable.Range(1, 128).Select(number => IPAddress.Parse($"203.0.113.{number}"))
             .First(address => !usedFolds.Contains(limiter.Fold(address.ToString())));
         using var independentPeer = await InvalidClientAsync(server);

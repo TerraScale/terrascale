@@ -1,10 +1,14 @@
 using System.Net;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Net.Http.Headers;
 using Microsoft.Playwright;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SignIn;
+using TerraScale.Authentication.Security;
+using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Oidc;
@@ -199,6 +203,244 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await Assert.That(await PasswordSignInAsync(oidc, Address, Password)).IsNull();
         await Assert.That(await PasswordSignInAsync(oidc, Address, "a brand new passphrase")).IsNotNull();
     }
+
+    [Test]
+    public async Task A_third_party_cannot_attach_a_password_to_someone_elses_sign_up()
+    {
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        const string Address = "frank@example.test";
+        var owner = await SignUpAsync(oidc, Address, "the owner's password");
+        var ownerCode = await oidc.Email.NextCodeAsync(Address);
+
+        // A stranger signs the same address up with their own password: the owner's inbox receives the new code.
+        clock.Advance(HostedAuth.MailCooldown);
+        var stranger = await SignUpAsync(oidc, Address, "the stranger's password");
+        var strangerCode = await oidc.Email.NextCodeAsync(Address);
+
+        // The owner, redeeming the newest code with their own token, cannot complete the stranger's sign-up; their
+        // own code was superseded. The stranger holds the token but not the inbox, so a guess fails too.
+        foreach (var (code, token) in new[] { (strangerCode, owner), (ownerCode, owner), (strangerCode == "000000" ? "111111" : "000000", stranger) })
+        {
+            using var refused = await SignUpVerifyAsync(oidc, Address, code, token);
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            await Assert.That(OidcHarness.SessionCookie(refused)).IsNull();
+        }
+
+        // Signing up again gives the owner a fresh code and token, and the account gets the owner's password only.
+        clock.Advance(HostedAuth.MailCooldown);
+        var again = await SignUpAsync(oidc, Address, "the owner's password");
+        using (var created = await SignUpVerifyAsync(oidc, Address, await oidc.Email.NextCodeAsync(Address), again))
+        {
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        await Assert.That(await PasswordSignInAsync(oidc, Address, "the stranger's password")).IsNull();
+        await Assert.That(await PasswordSignInAsync(oidc, Address, "the owner's password")).IsNotNull();
+    }
+
+    [Test]
+    public async Task Answers_never_tell_an_account_from_a_stranger()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        const string Password = "correct horse battery";
+        await oidc.Server.App.Services.GetRequiredService<Users>().CreateAsync(OidcIssuer.InstanceId, "alice@example.test", Passwords.Hash(Password), CancellationToken.None);
+        await oidc.CreateUserAsync("nopassword@example.test");
+
+        // Unknown address, wrong password, an account without a password and a malformed address are one failure.
+        var pages = new List<string>();
+        foreach (var (address, password) in new[] { ("nobody@example.test", Password), ("alice@example.test", Password + "x"), ("nopassword@example.test", Password), ("not-an-email", Password) })
+        {
+            using var refused = await oidc.PostFormAsync($"{SignIn}/password", new() { ["email"] = address, ["password"] = password, ["next"] = string.Empty });
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            await Assert.That(OidcHarness.SessionCookie(refused)).IsNull();
+            pages.Add((await refused.Content.ReadAsStringAsync()).Replace(address, "{email}", StringComparison.Ordinal));
+        }
+
+        await Assert.That(pages.Distinct().Count()).IsEqualTo(1);
+
+        // Signing up with a taken address mails that account a sign-in code and keeps its password.
+        var pending = await SignUpAsync(oidc, "alice@example.test", "another password");
+        var (recipient, mail) = await oidc.Email.NextAsync();
+        await Assert.That(recipient).IsEqualTo("alice@example.test");
+        await Assert.That(mail.Subject).Contains("sign-in code");
+        using (var signedIn = await SignUpVerifyAsync(oidc, "alice@example.test", Regex.Match(mail.Text, @"\b[0-9]{6}\b").Value, pending))
+        {
+            await Assert.That(signedIn.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        await Assert.That(await PasswordSignInAsync(oidc, "alice@example.test", Password)).IsNotNull();
+        await Assert.That(await PasswordSignInAsync(oidc, "alice@example.test", "another password")).IsNull();
+
+        // A reset start mails only real accounts, with the same page; completing one for an unknown address fails like a wrong code.
+        using (var unknownStart = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset", new() { ["email"] = "nobody@example.test" }))
+        {
+            await Assert.That(unknownStart.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(await unknownStart.Content.ReadAsStringAsync()).Contains("<h1>Choose a new password</h1>");
+        }
+
+        using var unknownReset = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset/complete", new() { ["email"] = "nobody@example.test", ["code"] = "123456", ["password"] = "brand new password" });
+        await Assert.That(unknownReset.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(oidc.Email.HasPending).IsFalse();
+    }
+
+    [Test]
+    public async Task A_password_reset_code_works_once_for_its_purpose_and_signs_the_user_out_everywhere()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        const string Address = "alice@example.test";
+        var (_, _, tokens) = await oidc.SignInAndRedeemAsync(Address);
+        var earlier = tokens.GetProperty("refresh_token").GetString()!;
+
+        using (var start = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset", new() { ["email"] = Address }))
+        {
+            await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var (_, mail) = await oidc.Email.NextAsync();
+        await Assert.That(mail.Subject).Contains("password reset code");
+        var code = Regex.Match(mail.Text, @"\b[0-9]{6}\b").Value;
+        var complete = new Dictionary<string, string> { ["email"] = Address, ["code"] = code, ["password"] = "brand new password" };
+
+        // A reset code never signs in, and a password outside the policy keeps the code alive.
+        using (var notSignIn = await oidc.PostFormAsync($"{SignIn}/verify", new() { ["email"] = Address, ["code"] = code, ["next"] = string.Empty }))
+        {
+            await Assert.That(notSignIn.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        }
+
+        foreach (var weak in new[] { "short", new string('x', PasswordHasher.MaxBytes + 1) })
+        {
+            using var refused = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset/complete", new(complete) { ["password"] = weak });
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        }
+
+        using (var reset = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset/complete", complete))
+        {
+            await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        using (var again = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset/complete", new(complete) { ["password"] = "a third password" }))
+        {
+            await Assert.That(again.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        }
+
+        using (var stale = await oidc.RefreshAsync(earlier))
+        {
+            await Assert.That(await OidcHarness.ErrorAsync(stale)).IsEqualTo("invalid_grant");
+        }
+
+        // A sign-in code cannot reset the password either.
+        using (var signInStart = await oidc.PostFormAsync(SignIn, new() { ["email"] = Address, ["next"] = string.Empty }))
+        {
+            await Assert.That(signInStart.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var signInCode = await oidc.Email.NextCodeAsync(Address);
+        using (var wrongPurpose = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset/complete", new(complete) { ["code"] = signInCode, ["password"] = "a third password" }))
+        {
+            await Assert.That(wrongPurpose.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        }
+
+        await Assert.That(await PasswordSignInAsync(oidc, Address, "brand new password")).IsNotNull();
+    }
+
+    [Test]
+    public async Task Concurrent_redemptions_of_one_sign_up_code_across_replicas_create_one_account()
+    {
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        await using var replica = await oidc.StartReplicaAsync(clock: clock);
+        const string Password = "correct horse battery";
+        var pending = await SignUpAsync(oidc, "erin@example.test", Password);
+        var code = await oidc.Email.NextCodeAsync("erin@example.test");
+        var responses = await Task.WhenAll(Enumerable.Range(0, 6).Select(index =>
+            SignUpVerifyAsync(oidc, "erin@example.test", code, pending, index % 2 == 0 ? oidc.Client : replica.Client)));
+        try
+        {
+            // One creates the account; the code then fails; the sixth attempt exceeds the email's code budget.
+            await Assert.That(responses.Count(response => response.StatusCode == HttpStatusCode.OK)).IsEqualTo(1);
+            await Assert.That(responses.Count(response => response.StatusCode == HttpStatusCode.Unauthorized)).IsEqualTo(4);
+            await Assert.That(responses.Count(response => response.StatusCode == HttpStatusCode.TooManyRequests)).IsEqualTo(1);
+        }
+        finally
+        {
+            foreach (var response in responses)
+            {
+                response.Dispose();
+            }
+        }
+
+        var accounts = (await oidc.Database.ListDocumentsAsync(AuthStore.UserCollection)).Items;
+        await Assert.That(accounts.Count).IsEqualTo(2);
+        await Assert.That(accounts.Count(account => account.Document.GetProperty("email").GetString() == AuthTestServer.BootstrapOwnerEmail)).IsEqualTo(1);
+        var signedUp = accounts.Single(account => account.Document.GetProperty("email").GetString() == "erin@example.test");
+        await Assert.That(signedUp.Document.GetRawText()).DoesNotContain(Password);
+        var consumed = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single().Document;
+        await Assert.That(consumed.TryGetProperty("passwordHash", out var hash) && hash.ValueKind != JsonValueKind.Null).IsFalse();
+    }
+
+    [Test]
+    public async Task Mail_cooldown_is_shared_across_routes_replicas_and_unknown_addresses_for_sixty_elapsed_seconds()
+    {
+        // Start one millisecond before a fixed minute boundary: crossing it must not reset the cooldown.
+        var clock = new ManualClock(DateTimeOffset.FromUnixTimeMilliseconds(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 60000 * 60000 + 59999));
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        await using var replica = await oidc.StartReplicaAsync(clock: clock);
+        await oidc.CreateUserAsync("known@example.test");
+
+        // Five mail starts per address keep both addresses within one IP's mail budget.
+        foreach (var email in new[] { "known@example.test", "unknown@example.test" })
+        {
+            await SignUpAsync(oidc, email, "correct horse battery");
+            foreach (var path in new[] { "sign-up", "reset" })
+            {
+                using var repeated = await MailStartAsync(oidc, path, $" {email.ToUpperInvariant()} ", replica.Client);
+                await Assert.That(repeated.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+                await Assert.That(repeated.Headers.RetryAfter!.Delta).IsEqualTo(HostedAuth.MailCooldown);
+            }
+
+            clock.Advance(HostedAuth.MailCooldown - TimeSpan.FromMilliseconds(1));
+            using (var tooSoon = await MailStartAsync(oidc, "reset", email))
+            {
+                await Assert.That(tooSoon.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
+                await Assert.That(tooSoon.Headers.RetryAfter!.Delta).IsEqualTo(TimeSpan.FromSeconds(1));
+            }
+
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+            using var allowed = await MailStartAsync(oidc, "reset", email);
+            await Assert.That(allowed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+    }
+
+    [Test]
+    public async Task Concurrent_mail_starts_on_two_replicas_admit_one_request_across_routes()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await using var replica = await oidc.StartReplicaAsync();
+        var statuses = await Task.WhenAll(Enumerable.Range(0, 6).Select(async index =>
+        {
+            using var response = await MailStartAsync(oidc, index % 3 == 0 ? "reset" : "sign-up", "concurrent@example.test", index % 2 == 0 ? oidc.Client : replica.Client);
+            return response.StatusCode;
+        }));
+        await Assert.That(statuses.Count(status => status == HttpStatusCode.OK)).IsEqualTo(1);
+        await Assert.That(statuses.Count(status => status == HttpStatusCode.TooManyRequests)).IsEqualTo(5);
+    }
+
+    // Starts a hosted sign-up and returns the pending token its verify page carries.
+    private static async Task<string> SignUpAsync(OidcHarness oidc, string address, string password)
+    {
+        using var response = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up", new() { ["email"] = address, ["password"] = password, ["next"] = string.Empty });
+        return response.StatusCode == HttpStatusCode.OK
+            ? PendingToken().Match(await response.Content.ReadAsStringAsync()).Groups[1].Value
+            : throw new InvalidOperationException($"Sign-up answered {response.StatusCode}.");
+    }
+
+    private static Task<HttpResponseMessage> SignUpVerifyAsync(OidcHarness oidc, string address, string code, string pending, HttpClient? client = null) =>
+        oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up/verify", new() { ["email"] = address, ["code"] = code, ["pending_token"] = pending, ["next"] = string.Empty }, client: client);
+
+    // A sign-up or reset start, the two hosted routes behind the shared mail cooldown.
+    private static Task<HttpResponseMessage> MailStartAsync(OidcHarness oidc, string path, string address, HttpClient? client = null) =>
+        oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/{path}", new() { ["email"] = address, ["password"] = "correct horse battery", ["next"] = string.Empty }, client: client);
 
     private static async Task<string?> PasswordSignInAsync(OidcHarness oidc, string address, string password)
     {

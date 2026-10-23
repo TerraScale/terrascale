@@ -23,7 +23,7 @@ Nothing here implies acceptance against a live TerraBase deployment.
 | Key ring, email, operator instances, rate limiting | TS-431 | Partly ported (TS-488): per-instance ES256 key ring with startup bootstrap and scheduled rotation (TS-703: a new key every 30 days, published two days before it signs; keys retire two days after their successor activates; at most 16 keys), the shared attempt limiter (one-minute windows), Cloudflare Email Sending over HTTPS (replacing SMTP) with the logging fallback; observability landed in TS-426. Lookup and rotation validate the ring's count and timestamps. Malformed, oversized and unreadable rings fail closed unchanged. Each signing key lives in its own TerraBase `signing_keys` document, sealed under `TS_AUTH_MASTER_KEY` from OCI Vault; retirement uses version-conditional deletes. The limiter uses conditional writes on the TS-489 store (`rate_limits`); any storage failure other than caller cancellation answers 503. Fast and slow tests run against the real pinned TerraBase, including two replicas racing. Limiter bucket ids are HMAC-keyed from the master key; callers pass identifiers the service already holds, and a caller limiting by attacker-chosen text (Rust's guest-mailbox folding) ports with that caller. Without Cloudflare email settings outside Development, email is logged and a startup warning is emitted; whether flows that need delivery must refuse to start is decided with the first flow (TS-490). Operator instances, the management-key gate (with management keys, TS-490) and Data Protection keys in TerraBase are not yet ported |
 | Users, sessions and email passcodes | TS-490 (TS-432 design) | Implemented on the TerraBase store; served only through the TS-491 hosted sign-in page (see below) |
 | Hosted email-passcode sign-in for existing accounts | TS-491 | Served at `/ui/terrascale/sign-in` for the `terrascale` instance; fast test covers a passcode sign-in that resumes `authorize` |
-| Headless API for ts-dashboard: sign-up with email verification, password sign-in, email-code sign-in, password reset, RFC 7009 revocation | TS-582 | Served for the `terrascale` instance and the `ts-dashboard` client until the dashboard uses the hosted pages (HA1); removal follows |
+| Headless API for ts-dashboard: sign-up with email verification, password sign-in, email-code sign-in, password reset, RFC 7009 revocation | TS-582 | Removed (user order 2026-10-22); ts-dashboard signs in through the hosted pages as a plain OIDC client. RFC 7009 revocation stays served |
 | Hosted sign-in (email code, password), sign-up and password-reset pages, signed-out page, v3 design | HA1 | Served for the `terrascale` instance |
 | Email links, account and session-list pages, management users/sessions/keys | TS-432 design | Not implemented |
 | Auth email templates, branding and copy API | TS-583 | Served: HTML + plain-text emails in `en` and `pt-BR` for every kind (the sign-in code, email verification and password reset are sent today), and `/v1/{slug}/email/*` for the `ts-dashboard` client: branding, per-kind copy with `{{ name }}` placeholders only, previews, rate-limited test sends, versions and restore. Fast tests cover authentication, validation, encoding, conflicts under concurrent saves, rollback, snapshots of every kind and the next code email using the saved branding. Sender domains (custom From addresses with sender-domain DNS authentication) are not implemented |
@@ -165,7 +165,7 @@ Differences from Rust: Rust stored SHA-256 of the code and had a 30-second resen
 throttle. C# stores the keyed HMAC and uses the hourly issue cap instead.
 
 Per-code limits live on the passcode document. TS-704 adds shared IP and
-normalized-email budgets to hosted and headless sign-in through the TerraBase
+normalized-email budgets to hosted sign-in through the TerraBase
 attempt limiter, including unknown emails. Code replacement never resets the
 email budget. Exceeding a budget returns 429 with Retry-After.
 
@@ -175,7 +175,7 @@ reports 503 until an operator runs `ProvisionAsync` again.
 
 Not in TS-490 (remaining TS-432 surface; TS-491 adds the hosted sign-in page):
 hosted sign-up and reset pages, magic links, account and session-list pages
-(TS-582 serves sign-up, password sign-in and reset to ts-dashboard headlessly), the management API for users, sessions, impersonation,
+(HA1 serves hosted sign-up, password sign-in and reset), the management API for users, sessions, impersonation,
 instances and API keys.
 
 ## TS-491 OpenID Connect
@@ -214,21 +214,11 @@ The [port guide](csharp-port.md#openid-connect-ts-491) has the details.
 
 ## TS-582 headless API
 
-ts-dashboard signs users in on its own pages and calls ts-auth server-to-server
-with its client credentials, for the same tokens as the redirect flow:
-sign-up with email verification, password sign-in, email-code sign-in,
-password reset and RFC 7009 revocation. SSO and social sign-in keep the
-redirect flow. Fast tests drive every flow over real HTTP on the real
-TerraBase, including enumeration, brute-force and rate-limit cases, a third
-party attaching a password to someone else's sign-up, log redaction, code
-pruning and a cross-replica sign-up race. The [port guide](csharp-port.md#headless-api-ts-582)
-has the contract, limits and security decisions. TS-631 adds token-bound pending
-sign-up resends at `email-code/start`, preserving the original password hash
-and token binding with a single version-checked write, and a persisted
-60-second mail cooldown shared by all headless mail-start routes, clients and
-replicas, including unknown addresses. Fast integration tests cover resend,
-token rejection, hourly budgets, cooldown boundaries and races against
-consumption and replacement.
+Removed by user order 2026-10-22: the password and email-code grants and the
+`/{slug}/headless/v1/*` routes are no longer served, and TS-631's pending
+sign-up resend went with them. ts-dashboard is a plain OIDC client of the
+hosted pages. The sign-up, password, reset and limit logic the hosted pages
+use stays; the [port guide](csharp-port.md#accounts-passwords-and-limits) has it.
 
 ## TS-598 platform organizations and projects
 

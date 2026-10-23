@@ -53,7 +53,7 @@ organization permission checks) is in
 
 All token requests have a TerraBase-backed peer-IP admission limit before
 client authentication (`TS_AUTH_RATE_LIMIT`, default 1,000 per minute).
-Hosted and headless sign-in share IP budgets and normalized-email code
+Hosted sign-in pages share IP budgets and normalized-email code
 budgets; password reset has a separate redemption budget. Exhaustion returns
 429 and `Retry-After`; unavailable storage returns 503. Unknown emails spend
 the same budget as accounts, and replacing a code does not reset it. Code
@@ -195,8 +195,8 @@ bodies or credentials. See [the current port inventory](csharp-port.md)
 for implementation details and remaining gates. Besides the HTTP, HTTP client and .NET runtime series, three outcome
 counters expose outcomes with fixed label values only:
 
-- `ts_auth_sign_ins_total{method, outcome}`: `method` is `password`, `email_code` (headless grants) or `hosted_code`
-  (the hosted page); `outcome` is `succeeded`, `refused` or `rate_limited`.
+- `ts_auth_sign_ins_total{method, outcome}`: `method` is `hosted_code`, `hosted_password` or `hosted_sign_up`
+  (the hosted pages); `outcome` is `succeeded`, `refused` or `rate_limited`.
 - `ts_auth_tokens_total{grant_type, outcome}`: every token response OpenIddict writes; `outcome` is `issued` or the
   OAuth error code (`other` for anything non-standard). 429 and 503 answers written outside OpenIddict show up only
   in `http_server_request_duration_seconds`.
@@ -242,12 +242,10 @@ The TS-491 OAuth provider accepts `openid`, `email`, `profile` and
 as userinfo does. The user-facing client is the confidential `ts-dashboard`,
 registered from `TS_AUTH_DASHBOARD_*`. It authenticates at the token endpoint
 with `client_secret_basic` or `client_secret_post`, must use PKCE with S256
-(`plain` is disabled for every client), and gets implicit consent. It is also the
-only client allowed the TS-582 headless API: its own sign-up, password,
-email-code and password-reset pages call ts-auth server-to-server and receive
-the same tokens ([port guide](csharp-port.md#headless-api-ts-582)); it stays
-served until the dashboard runs on the hosted pages (HA1), then a follow-up
-removes it. The public `ts-cli` client (id `00000000000000000000000007`) may
+(`plain` is disabled for every client), and gets implicit consent. It signs
+users in only through the hosted pages, as a plain OIDC client; the TS-582
+headless API was removed (user order 2026-10-22,
+[port guide](csharp-port.md#accounts-passwords-and-limits)). The public `ts-cli` client (id `00000000000000000000000007`) may
 use only the device-code and refresh-token grants and the token exchange. Service
 clients from `TS_AUTH_SERVICE_CLIENTS` may use only the client-credentials
 grant: their access token has `sub` = the client id, the same `typ` and `aud`,
@@ -432,7 +430,7 @@ OpenID Connect routes for the slug `terrascale` (other slugs answer 404):
   `GET /terrascale/oauth/userinfo`, `GET /terrascale/oauth/logout`
   (RP-initiated logout: always the hosted Signed out page, which continues to a
   validated `post_logout_redirect_uri` by link and a 2-second meta refresh) and
-  `POST /terrascale/oauth/revoke` (RFC 7009, TS-582)
+  `POST /terrascale/oauth/revoke` (RFC 7009)
 - `POST /terrascale/oauth/device` (RFC 8628 device authorization for `ts-cli`;
   `verification_uri` is `{public origin}/ui/terrascale/device`, codes live 10
   minutes, `interval` 5 with `slow_down` enforced; the token endpoint redeems
@@ -444,20 +442,14 @@ OpenID Connect routes for the slug `terrascale` (other slugs answer 404):
   `POST /ui/terrascale/reset`, `POST /ui/terrascale/reset/complete`, and `GET`
   and `POST /ui/terrascale/device` (sign in first, then explicit Approve or
   Deny; opening the link never approves)
-- The TS-582 headless API for ts-dashboard: `POST
-  /terrascale/headless/v1/email-code/start`, `/sign-up`,
-  `/password-reset/start` and `/password-reset/complete`, plus the token
-  endpoint's headless grants (see [the port guide](csharp-port.md#headless-api-ts-582))
 
-TS-631: send the original sign-up `pending_token` to `email-code/start` to
-resend its verification code without choosing another password or token. All
-headless mail-start routes share a persisted 60-second cooldown per normalized
+The sign-up and reset mail starts share a persisted 60-second cooldown per normalized
 email, including unknown addresses; earlier repeats answer 429 with
 `Retry-After` for the remaining cooldown. The five-code hourly request budget
-is shared with hosted sign-in and applies to unknown emails too.
+is shared by those pages and applies to unknown emails too.
 
-All of them appear in `/openapi/v1.json` under the `OAuth`, `Sign-in` and
-`Headless` tags. Introspection is not served. The
+All of them appear in `/openapi/v1.json` under the `OAuth` and `Sign-in`
+tags. Introspection is not served. The
 target surface below is the contract the
 port streams restore (from the Rust service); each stream keeps its paths,
 methods and operation ids. [The port guide](csharp-port.md#openid-connect-ts-491)
