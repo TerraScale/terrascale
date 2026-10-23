@@ -507,7 +507,8 @@ public sealed class PeerStreamTests
         await Assert.That(await gru.RetainsAsync(cluster.Database, acked)).IsTrue();
         var missing = await gru.HeadAsync(cluster.Database);
         // Turso timestamps CDC with real UTC; age only the disconnected history, keeping recovery rows fresh.
-        var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)await gru.StoreAsync();
+        var engine = gru.Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+        var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
         _ = await store.WithWriterAsync(session =>
         {
             using var age = session.Connection.CreateCommand();
