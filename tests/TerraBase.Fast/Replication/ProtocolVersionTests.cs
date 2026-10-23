@@ -53,6 +53,7 @@ public sealed class ProtocolVersionTests
     [Test]
     [Arguments(0u, 1u)]
     [Arguments(1u, 1u)]
+    [Arguments(2u, 2u)]
     [Arguments(99u, ReplicationProtocol.Version)]
     public async Task A_stream_uses_the_lower_version_and_a_peer_that_names_none_speaks_1(uint announced, uint used) =>
         await Assert.That(ReplicationProtocol.Negotiate(announced)).IsEqualTo(used);

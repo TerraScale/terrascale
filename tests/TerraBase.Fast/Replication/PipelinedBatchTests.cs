@@ -1,6 +1,8 @@
+using System.Text;
 using System.Text.Json;
 using Google.Protobuf;
 using Grpc.Core;
+using Grpc.Core.Interceptors;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
@@ -13,12 +15,127 @@ using TerraBase.Testing;
 namespace TerraBase.Fast.Replication;
 
 /// <summary>
-/// Protocol 2's pipelined batches (docs/terrabase/replication/23-protocol-version-and-pipelining.md): the receiver applies a
-/// database's batches in their chain only, so an ack never covers a batch that did not apply, and a protocol 1 sender keeps
-/// one batch per database in flight.
+/// Protocol 2's pipelined batches (docs/terrabase/replication/23-protocol-version-and-pipelining.md): a sender keeps more
+/// than one batch of a database in flight while the first waits for its remote apply, the receiver applies them in their
+/// chain only, an ack never covers a batch that did not apply, a reconnect mid-window resends from the last ack, and a
+/// protocol 1 peer on either side keeps one batch per database in flight.
 /// </summary>
 public sealed class PipelinedBatchTests
 {
+    [Test]
+    public async Task Writes_behind_a_held_apply_ship_as_further_batches_and_none_is_acked_before_all_applied_in_order()
+    {
+        var gate = new ApplyGate();
+        await using var cluster = await PeerStreamTests.Cluster.StartAsync(cdc: true, clock: null, (region, services) =>
+        {
+            if (region == "sjc")
+            {
+                services.AddSingleton<IChangeGroupSink>(provider => new GatedSink(ActivatorUtilities.CreateInstance<StorageChangeGroupSink>(provider), gate));
+            }
+        }, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var ids = await HoldThreeWritesAsync(cluster, gate);
+
+        // All three groups went while the first waits; the ack stays where it was.
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Toward(gru, cluster.Database)?.DurableLag == 3));
+        var held = Toward(gru, cluster.Database)!;
+        await Assert.That(held.Acknowledged).IsLessThan(held.Head).Because("nothing after the held batch is acknowledged");
+        await Assert.That(await sjc.ReadAsync(ids[2])).IsNull().Because("a later batch never applies before the one it follows");
+
+        double delays = 0;
+        _ = await gru.UntilMetricAsync("terrabase_replication_remote_ack_delay_seconds_count", value => (delays = value) >= 0, "peer_region=\"sjc\"");
+        gate.Release();
+        foreach (var (id, index) in ids.Select((id, index) => (id, index)))
+        {
+            await Assert.That(await sjc.UntilAsync(id, $$"""{"n":{{index}}}""")).IsTrue();
+        }
+
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Toward(gru, cluster.Database) is { DurableLag: 0 } caught && caught.Acknowledged == caught.Head));
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_remote_ack_delay_seconds_count", value => value >= delays + 3, "peer_region=\"sjc\"")).IsTrue()
+            .Because("every batch in flight keeps its own groups' stamps for the remote ack delay");
+    }
+
+    [Test]
+    public async Task A_batch_refused_mid_window_refuses_the_ones_after_it_and_the_sender_resends_them_from_its_ack()
+    {
+        var gate = new ApplyGate();
+        await using var cluster = await PeerStreamTests.Cluster.StartAsync(cdc: true, clock: null, (region, services) =>
+        {
+            if (region == "sjc")
+            {
+                services.AddSingleton<IChangeGroupSink>(provider => new GatedSink(ActivatorUtilities.CreateInstance<StorageChangeGroupSink>(provider), gate));
+            }
+        }, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var ids = await HoldThreeWritesAsync(cluster, gate);
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Toward(gru, cluster.Database)?.DurableLag == 3));
+
+        // The second batch fails to apply once: it is refused, the third (behind it) too, and both are sent again.
+        gate.FailOnce(ids[1]);
+        gate.Release();
+        foreach (var (id, index) in ids.Select((id, index) => (id, index)))
+        {
+            await Assert.That(await sjc.UntilAsync(id, $$"""{"n":{{index}}}""")).IsTrue();
+        }
+
+        await Assert.That(gate.Failed).IsTrue();
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Toward(gru, cluster.Database) is { DurableLag: 0 } caught && caught.Acknowledged == caught.Head));
+    }
+
+    [Test]
+    public async Task A_reconnect_mid_window_resends_from_the_last_ack_and_every_write_arrives()
+    {
+        var gate = new ApplyGate();
+        await using var cluster = await PeerStreamTests.Cluster.StartAsync(cdc: true, clock: null, (region, services) =>
+        {
+            if (region == "sjc")
+            {
+                services.AddSingleton<IChangeGroupSink>(provider => new GatedSink(ActivatorUtilities.CreateInstance<StorageChangeGroupSink>(provider), gate));
+            }
+        }, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var ids = await HoldThreeWritesAsync(cluster, gate);
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Toward(gru, cluster.Database)?.DurableLag == 3));
+
+        // The receiver goes away with the window in flight and comes back without the gate.
+        await sjc.StopAsync();
+        await sjc.StartAsync();
+        foreach (var (id, index) in ids.Select((id, index) => (id, index)))
+        {
+            await Assert.That(await sjc.UntilAsync(id, $$"""{"n":{{index}}}""")).IsTrue();
+        }
+
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Toward(gru, cluster.Database) is { DurableLag: 0 } caught && caught.Acknowledged == caught.Head));
+    }
+
+    [Test]
+    public async Task A_receiver_that_welcomes_without_a_version_gets_one_batch_per_database_at_a_time()
+    {
+        var gate = new ApplyGate();
+        await using var cluster = await PeerStreamTests.Cluster.StartAsync(cdc: true, clock: null, (region, services) =>
+        {
+            if (region == "sjc")
+            {
+                services.AddSingleton<IChangeGroupSink>(provider => new GatedSink(ActivatorUtilities.CreateInstance<StorageChangeGroupSink>(provider), gate));
+                services.AddGrpc(options => options.Interceptors.Add<UnversionedWelcome>());
+            }
+        }, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var ids = await HoldThreeWritesAsync(cluster, gate);
+
+        // Two ship passes after the last write still keep only the held batch in flight.
+        double passes = 0;
+        _ = await gru.UntilMetricAsync("terrabase_replication_step_duration_seconds_count", value => (passes = value) >= 0, "step=\"send.pass\"");
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_step_duration_seconds_count", value => value >= passes + 2, "step=\"send.pass\"")).IsTrue();
+        await Assert.That(Toward(gru, cluster.Database)?.DurableLag).IsEqualTo(1L);
+
+        gate.Release();
+        foreach (var (id, index) in ids.Select((id, index) => (id, index)))
+        {
+            await Assert.That(await sjc.UntilAsync(id, $$"""{"n":{{index}}}""")).IsTrue();
+        }
+    }
+
     [Test]
     public async Task The_receiver_applies_a_chain_only_and_a_batch_after_a_refused_one_is_refused_until_the_chain_restarts()
     {
@@ -135,12 +252,43 @@ public sealed class PipelinedBatchTests
         await Assert.That(string.Join(", ", await AnswersAsync(call, 1, deadline.Token))).IsEqualTo("(1, False)");
     }
 
+    // Holds sjc's applies of the cluster's database, then writes three documents in three commits on gru: the first batch
+    // waits in the receiver's apply. The collection is created and replicated first.
+    private static async Task<string[]> HoldThreeWritesAsync(PeerStreamTests.Cluster cluster, ApplyGate gate)
+    {
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var ready = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", ready, Json("""{"ready":true}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(ready, """{"ready":true}""")).IsTrue();
+
+        gate.Hold(cluster.Database);
+        string[] ids = [.. Enumerable.Range(0, 3).Select(_ => EntityIds.New().ToString())];
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", ids[0], Json("""{"n":0}"""), CancellationToken.None));
+        await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(60));
+        foreach (var index in new[] { 1, 2 })
+        {
+            await gru.WriteAsync(async transaction => await transaction.PutAsync("items", ids[index], Json($$"""{"n":{{index}}}"""), CancellationToken.None));
+        }
+
+        return ids;
+    }
+
+    private static ReplicationDatabaseStatus? Toward(PeerStreamTests.Machine machine, TenantContext database) =>
+        machine.Api.Server.Services.GetRequiredService<IReplicationStatus>().Snapshot().Peers.Where(peer => peer.Region == "sjc")
+            .SelectMany(peer => peer.Databases).FirstOrDefault(status => status.DatabaseId == database.DatabaseId);
+
     private static PushFrame Batch(Features.Replication.V1.Database database, ulong after, ulong last, ReplicaId origin, string id)
     {
         var at = new EntryVersion(new Hlc((ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16), origin);
         OriginGroup[] groups = [new((long)last, [new ChangeDelta("items", id, at.Stamp, DocumentState.Bottom.Put(at, JsonElement.Parse("""{"n":1}""")).DeltaAt(at.Stamp))])];
         return new PushFrame { Batch = new Batch { Database = database, After = after, LastChangeId = last, Groups = ChangeGroups.Encode(groups) } };
     }
+
+    private static ReadOnlyMemory<byte> Json(string json) => Encoding.UTF8.GetBytes(json);
 
     // The next `count` acks in arrival order: change id (0 for a refusal) and whether each was refused.
     private static async Task<List<(ulong ChangeId, bool Refused)>> AnswersAsync(AsyncDuplexStreamingCall<PushFrame, AckFrame> call, int count, CancellationToken cancellationToken)
@@ -166,7 +314,24 @@ public sealed class PipelinedBatchTests
 
         public void Hold(TenantContext database) => Volatile.Write(ref _held, database with { Plan = PlanTier.Hobby });
 
+        private string? _failing;
+
+        public bool Failed { get; private set; }
+
         public void Release() => _release.TrySetResult();
+
+        // The next apply holding this document fails, once.
+        public void FailOnce(string id) => Volatile.Write(ref _failing, id);
+
+        public void ThrowIfFailing(IReadOnlyList<OriginGroup> groups)
+        {
+            if (Volatile.Read(ref _failing) is { } id && groups.Any(group => group.Deltas.Any(delta => delta.Id == id))
+                && Interlocked.CompareExchange(ref _failing, null, id) == id)
+            {
+                Failed = true;
+                throw new IOException("the apply failed");
+            }
+        }
 
         public async Task WaitAsync(TenantContext database, CancellationToken cancellationToken)
         {
@@ -184,6 +349,7 @@ public sealed class PipelinedBatchTests
             TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken, ApplyProgress? progress = null)
         {
             await gate.WaitAsync(database, cancellationToken);
+            gate.ThrowIfFailing(groups);
             return await inner.ApplyAsync(database, origin, groups, expected, cancellationToken, progress);
         }
 
@@ -193,5 +359,47 @@ public sealed class PipelinedBatchTests
         public ValueTask<Ulid?> RecordFrontierAsync(
             TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
             inner.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
+    }
+
+    // An old receiver: it never reads Hello.protocol, and its Welcome names none.
+    private sealed class UnversionedWelcome : Interceptor
+    {
+        public override Task DuplexStreamingServerHandler<TRequest, TResponse>(
+            IAsyncStreamReader<TRequest> requestStream, IServerStreamWriter<TResponse> responseStream,
+            ServerCallContext context, DuplexStreamingServerMethod<TRequest, TResponse> continuation) =>
+            continuation(new Reader<TRequest>(requestStream), new Writer<TResponse>(responseStream), context);
+
+        private sealed class Reader<T>(IAsyncStreamReader<T> inner) : IAsyncStreamReader<T>
+        {
+            public T Current => inner.Current;
+
+            public async Task<bool> MoveNext(CancellationToken cancellationToken)
+            {
+                var more = await inner.MoveNext(cancellationToken);
+                if (more && inner.Current is PushFrame { Hello: { } hello })
+                {
+                    hello.Protocol = 0;
+                }
+
+                return more;
+            }
+        }
+
+        private sealed class Writer<T>(IServerStreamWriter<T> inner) : IServerStreamWriter<T>
+        {
+            public WriteOptions? WriteOptions { get => inner.WriteOptions; set => inner.WriteOptions = value; }
+
+            public Task WriteAsync(T message) => WriteAsync(message, CancellationToken.None);
+
+            public Task WriteAsync(T message, CancellationToken cancellationToken)
+            {
+                if (message is AckFrame { Welcome: { } welcome })
+                {
+                    welcome.Protocol = 0;
+                }
+
+                return inner.WriteAsync(message, cancellationToken);
+            }
+        }
     }
 }
