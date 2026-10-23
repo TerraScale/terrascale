@@ -141,7 +141,10 @@ public sealed class Cluster : IAsyncDisposable
 
     internal Task ShipBackupAsync(CancellationToken token) => RequireLocal().ShipBackupAsync(token);
 
-    /// <summary>gru, sjc and fra whose shapes mirror to one shared fake object-store bucket (FR-22).</summary>
+    /// <summary>
+    /// gru, sjc and fra whose shapes mirror to one shared fake object-store bucket (FR-22). As in production, each machine
+    /// anchors its catalog head in that bucket, so a region restarted while another is down opens from a majority.
+    /// </summary>
     internal static Task<Cluster> StartMirroredAsync() =>
         StartLocalCoreAsync([Gru, Sjc, Fra], new Dictionary<string, TimeSpan>(), new FakeS3());
 

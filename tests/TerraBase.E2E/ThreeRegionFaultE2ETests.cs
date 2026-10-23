@@ -146,7 +146,8 @@ public sealed class ThreeRegionFaultE2ETests
         const int count = 300;
         await Gaps.RunAsync("restarted-sender-backlog", async () =>
         {
-            await using var cluster = await Cluster.StartLocalAsync(All);
+            // gru restarts while fra is down: only its catalog anchor lets it open from gru and sjc, a majority.
+            await using var cluster = await Cluster.StartMirroredAsync();
             var faker = new Faker();
             var documents = Enumerable.Range(0, count).Select(_ => (Id: EntityIds.New().ToString(), Body: ThreeRegionE2ETests.Synthetic(faker))).ToArray();
             await cluster.StopAsync(Cluster.Fra);
