@@ -67,7 +67,8 @@ public sealed record TerraScaleAuthPlatformApiKey(
     [property: JsonPropertyName("created_by")] string CreatedBy,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
     [property: JsonPropertyName("expires_at")] DateTimeOffset? ExpiresAt,
-    [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt);
+    [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt,
+    [property: JsonPropertyName("last_used_at")] DateTimeOffset? LastUsedAt = null);
 
 /// <summary>Wire DTO for the producer ApiKeySecretBody. See contracts/auth/dtos.json.</summary>
 public sealed record TerraScaleAuthPlatformApiKeySecret(

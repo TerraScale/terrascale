@@ -333,6 +333,12 @@
           "type": "DateTimeOffset?",
           "nullable": true,
           "default": null
+        },
+        {
+          "name": "last_used_at",
+          "type": "DateTimeOffset?",
+          "nullable": true,
+          "default": "null"
         }
       ]
     },
