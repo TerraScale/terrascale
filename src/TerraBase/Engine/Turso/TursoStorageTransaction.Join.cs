@@ -14,7 +14,9 @@ internal sealed partial class TursoStorageTransaction
     public async ValueTask<bool> JoinAsync(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(delta);
-        return await RunAsync(() => Join(collection, id, delta, at, cancellationToken), cancellationToken, mutation: true).ConfigureAwait(false);
+        var changed = await RunAsync(() => Join(collection, id, delta, at, cancellationToken), cancellationToken, mutation: true).ConfigureAwait(false);
+        _ = Interlocked.Increment(ref _work);
+        return changed;
     }
 
     internal ValueTask<bool> JoinBaselineAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken) =>

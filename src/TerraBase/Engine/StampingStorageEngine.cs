@@ -153,6 +153,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
     private sealed class Transaction(StampingStorageEngine engine, TenantContext? database, IStorageTransaction inner) : IStorageTransaction
     {
+        public long Work => inner.Work;
+
         // Every operation joins the same gate before returning, so reads cannot overtake queued writes.
         private readonly SemaphoreSlim _gate = new(1, 1);
         private readonly Lock _disposalGate = new();

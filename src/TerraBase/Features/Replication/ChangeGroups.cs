@@ -120,7 +120,7 @@ public interface IChangeGroupSink
     /// nothing a join already holds. Each writer refuses coverage below <paramref name="expected"/> before joining.
     /// Null, with nothing applied, when this machine does not hold the database.
     /// </summary>
-    ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken);
+    ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken, ApplyProgress? progress = null);
 
     /// <summary>
     /// Joins whole states anti-entropy read from a peer, as repairs (origin 0: never shipped again, and no origin's applied

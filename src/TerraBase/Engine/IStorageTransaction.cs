@@ -58,6 +58,9 @@ public static class DocumentDelta
 /// <summary>Document and collection operations inside one engine transaction.</summary>
 public interface IStorageTransaction : IAsyncDisposable
 {
+    /// <summary>Monotonic completed join work, including documents processed by derived collection clears; never a durability signal.</summary>
+    long Work { get; }
+
     /// <summary>Most document changes one captured write transaction may commit.</summary>
     const int MaxChangeGroupChanges = 1024;
 

@@ -53,3 +53,4 @@ elsewhere ("section 15") are the file number prefixes.
 - [22. Shape snapshots reseal at 16 chunks per page](replication/22-shape-snapshot-reseal-per-page.md)
 - [22. Open questions and risks](replication/22-open-questions-and-risks.md)
 - [23. Peer stream protocol version and pipelining](replication/23-protocol-version-and-pipelining.md)
+- [Receiver apply progress and the batch inactivity deadline](replication/receiver-apply-progress.md)

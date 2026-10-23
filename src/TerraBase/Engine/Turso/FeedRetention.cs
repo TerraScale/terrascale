@@ -46,9 +46,10 @@ internal sealed class FeedRetention(TursoStorageEngine engine, ILogger<FeedReten
                 }
                 while (deleted == Batch);
             }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 // A deleted, busy or closing database: the next pass tries again; one that keeps failing grows its feed.
+                // A concurrent database deletion can surface after shutdown starts; only cancellation ends the pass.
                 logger.ZLogWarning(error, $"Changes feed retention of a database failed; the next pass retries");
             }
         }

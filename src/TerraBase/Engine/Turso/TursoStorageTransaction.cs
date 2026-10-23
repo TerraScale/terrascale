@@ -47,6 +47,10 @@ internal sealed partial class TursoStorageTransaction(
     private Task? _disposal;
     private bool _streaming;
 
+    private long _work;
+
+    public long Work => Volatile.Read(ref _work);
+
     private long _changeBytes;
 
     // A refused or failed write makes this transaction able only to roll back.
@@ -1025,6 +1029,14 @@ internal sealed partial class TursoStorageTransaction(
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
+    private void DropProgress()
+    {
+        if (Interlocked.Increment(ref _work) % 512 == 0 && store.Tenant is { } tenant)
+        {
+            store.Checkpoint?.Invoke("storage.drop.progress", tenant);
+        }
+    }
+
     // A collection clear dominates the same entries as a document clear; last-applied row stamps are not lattice versions.
     private void DropCoveredCollection(string name, ClearEntry drop, CancellationToken cancellationToken)
     {
@@ -1045,6 +1057,7 @@ internal sealed partial class TursoStorageTransaction(
             if (next.Equals(state) && !next.Equals(clear))
             {
                 retained = true;
+                DropProgress();
                 continue;
             }
 
@@ -1068,6 +1081,7 @@ internal sealed partial class TursoStorageTransaction(
             }
 
             ReconcileUnique(name, affected, cancellationToken);
+            DropProgress();
         }
 
         foreach (var index in ReadIndexes(cancellationToken).Where(index => index.Collection == name
