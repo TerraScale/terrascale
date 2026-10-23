@@ -494,6 +494,18 @@ internal sealed partial class SqliteStorageTransaction(
             session.ThrowIfStopped();
             return 1;
         });
+        // One evaluated row combination of a relational read (SqlProgram.RowGuard): engine work only, no scanned bytes.
+        // Its argument names a column of every joined table, so Turso evaluates it per combination, not once.
+        session.Connection.CreateFunction<object?, long>("tb_sql_row", _ =>
+        {
+            if (budget.Limited && budget.Row())
+            {
+                throw new OperationCanceledException(SqliteSession.StoppedMessage);
+            }
+
+            session.ThrowIfStopped();
+            return 1;
+        }, isDeterministic: false);
         _qosScanRegistered = true;
         return _queryBudget = budget;
     }
@@ -506,6 +518,7 @@ internal sealed partial class SqliteStorageTransaction(
         {
             // Turso throws when removing a function that is not registered.
             session.Connection.CreateFunction<long, long>("tb_qos_scan", null);
+            session.Connection.CreateFunction<object?, long>("tb_sql_row", null);
             _qosScanRegistered = false;
         }
     }
@@ -545,6 +558,14 @@ internal sealed partial class SqliteStorageTransaction(
         // Execution time, engine work and scanned candidates bound a statement.
         public bool Exceeded => ScanExceeded
             || (policy?.QueryTimeout ?? defaultDeadline) is var deadline && deadline != Timeout.InfiniteTimeSpan && Spent >= deadline;
+
+        /// <summary>Charges one row combination of a relational read; true once the work limit is spent.</summary>
+        public bool Row()
+        {
+            _work += RowWork;
+            ScanExceeded |= _work > _workLimit;
+            return ScanExceeded;
+        }
 
         public bool Scan(long size)
         {

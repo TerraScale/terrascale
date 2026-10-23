@@ -17,7 +17,14 @@ public sealed record SqlProgramTable(string Name, IReadOnlyList<string> Columns,
 /// <param name="MaxRows">Most rows to read.</param>
 /// <param name="MaxBytes">Most bytes of values to read (8 per number).</param>
 public sealed record SqlProgram(
-    IReadOnlyList<SqlProgramTable> Tables, string? Ctes, string Statement, IReadOnlyList<object?> Parameters, int MaxRows, long MaxBytes);
+    IReadOnlyList<SqlProgramTable> Tables, string? Ctes, string Statement, IReadOnlyList<object?> Parameters, int MaxRows, long MaxBytes)
+{
+    /// <summary>
+    /// The function every SELECT of <see cref="Statement"/> calls in its WHERE, with an argument naming a column of each
+    /// FROM item: the engine charges one unit of the work budget per call, so every evaluated row combination counts.
+    /// </summary>
+    public const string RowGuard = "tb_sql_row";
+}
 
 /// <summary>What a <see cref="SqlProgram"/> returned.</summary>
 /// <param name="Columns">Result column names.</param>

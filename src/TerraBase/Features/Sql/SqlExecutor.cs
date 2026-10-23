@@ -111,7 +111,18 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             return SqlErrors.Error(string.Create(CultureInfo.InvariantCulture, $"the statement takes {read.Params.Count} arguments"));
         }
 
-        var result = await transaction.ExecuteSqlAsync(SqlRead.Program(read, tables, parameters, describe, keyed), cancellationToken).ConfigureAwait(false);
+        SqlProgram program;
+        try
+        {
+            program = SqlRead.Program(read, tables, parameters, describe, keyed);
+        }
+        catch (FormatException error)
+        {
+            // The row guard needs a column of every joined item.
+            return SqlErrors.Error(error.Message);
+        }
+
+        var result = await transaction.ExecuteSqlAsync(program, cancellationToken).ConfigureAwait(false);
         if (result.Truncated)
         {
             return SqlErrors.TooBig("a result holds at most 10000 rows and 8 MiB; add a LIMIT");

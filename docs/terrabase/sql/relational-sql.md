@@ -80,9 +80,12 @@ WITH "t" AS (SELECT json_extract(doc, '$."c1"') AS "c1", … FROM main."t" WHERE
 - Parameters are renumbered `$p1`, `$p2`, … in SQLite's order (`?` = largest so far + 1, `?NNN`, names on first use) before
   parsing; positional arguments bind by number, named arguments (with or without prefix) by name, unbound ones are NULL.
 - shortcut: CTEs are not flattened by Turso, so every read scans each referenced table and no index serves it; the
-  work budget caps a read at roughly 150,000 rows. The scan guard runs once per table row, not per join combination, so
-  a cross join's fan-out is bounded only by the statement and the result bounds. Upgrade to column rewriting over
-  `json_extract` (index-served, guard inside the join loops) when a customer table passes that.
+  work budget caps a read at roughly 150,000 rows. Upgrade to column rewriting over `json_extract` (index-served) when a
+  customer table passes that.
+- Join fan-out: every SELECT of a statement (top level, subqueries, CTE bodies, both sides of a compound) gets
+  `WHERE tb_sql_row(coalesce(<a column of each FROM item>, 0)) AND (…)`, which charges one work unit per evaluated row
+  combination (Turso evaluates a function of constants once, so the argument names every joined item). A joined
+  subquery or CTE whose first column has no name is refused (SQ1-e3).
 
 ## 5. Transactions
 

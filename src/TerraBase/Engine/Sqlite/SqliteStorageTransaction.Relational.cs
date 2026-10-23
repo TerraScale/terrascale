@@ -9,10 +9,10 @@ namespace TerraBase.Engine.Sqlite;
 /// A relational read (docs/terrabase/sql/relational-sql.md section 4): each table becomes a CTE of the same name over its
 /// collection's table, written <c>main."t"</c> so the CTE shadows it, with one <c>json_extract</c> column per field and the
 /// scan guard that charges the work budget. Column names are identifiers, so they embed safely.
-/// shortcut: CTEs are not flattened by Turso, so every read scans each referenced table and no index serves it, and the
-/// scan guard runs once per table row, not per join combination: a cross join's fan-out is bounded only by the statement
-/// and the 10,000 result rows. Rewrite columns to json_extract over the tables (index-served, guard in the join loops) when a
-/// customer table passes about 150,000 rows or joins need their combinations charged.
+/// shortcut: CTEs are not flattened by Turso, so every read scans each referenced table and no index serves it; the
+/// row guard (SqlProgram.RowGuard) charges each evaluated join combination, so the budget bounds joins, but the scans make
+/// reads cap at roughly 150,000 table rows. Rewrite columns to json_extract over the tables (index-served) when a customer
+/// table passes that.
 /// </remarks>
 internal sealed partial class SqliteStorageTransaction
 {

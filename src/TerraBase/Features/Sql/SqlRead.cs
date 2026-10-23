@@ -134,6 +134,7 @@ internal static class SqlRead
     public static SqlProgram Program(
         ReadSql read, IReadOnlyDictionary<string, SqlTableDefinition> tables, IReadOnlyList<object?> parameters, bool describe, string? keyed = null)
     {
+        SqlGuard.Apply(read.Query, tables);
         var statement = (read.Query with { With = null }).ToSql();
         return new SqlProgram(
             [.. read.Tables.Select(name => new SqlProgramTable(name, [.. tables[name].Columns.Select(column => column.Name)], name == keyed))],
