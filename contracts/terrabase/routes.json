@@ -471,6 +471,12 @@
     },
     {
       "client": "documents",
+      "operation": "executeSql",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/sql/execute"
+    },
+    {
+      "client": "documents",
       "operation": "listIndexes",
       "method": "GET",
       "path": "/v1/projects/{project}/databases/{database}/indexes"

@@ -15,7 +15,7 @@ public sealed class TerraBasePublicInventoryTests
         using var inventory = JsonDocument.Parse(TerraBaseIntegrationFixture.ReadContract("current-public-routes.json"));
         await Assert.That(inventory.RootElement.GetProperty("serverCommit").GetString()).IsEqualTo("e7fa366ddb289f5612c93d316b316fb92c568151");
         var expected = inventory.RootElement.GetProperty("operations").EnumerateArray().ToDictionary(r => r.GetProperty("operation").GetString()!, r => r);
-        await Assert.That(expected.Count).IsEqualTo(83);
+        await Assert.That(expected.Count).IsEqualTo(84);
         (string Method, string Path)? sent = null;
         using var handler = new TerraBaseTestHandler((request, _) =>
         {
@@ -106,6 +106,7 @@ public sealed class TerraBasePublicInventoryTests
             ("restorePointInTime", () => db.RestorePointInTimeAsync(DateTimeOffset.UnixEpoch)),
             ("resumeImport", () => db.ResumeImportAsync()),
             ("runSql", () => db.RunSqlAsync("SELECT * FROM items LIMIT 1")),
+            ("executeSql", () => db.ExecuteSqlAsync("SELECT 1")),
             ("runTransaction", () => db.TransactAsync([TerraBaseTransactionOperation.Put("items", "01JA00000000000000000000D1", json)])),
             ("setAutoIndexPolicy", () => db.SetAutoIndexPolicyAsync("items", false)),
             ("setBackupDestination", () => project.SetBackupDestinationAsync(new("https://s3.example.test", "region", "bucket", "fake-id", "fake-secret", "both"))),

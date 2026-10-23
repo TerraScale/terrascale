@@ -51,7 +51,8 @@ public class TerraBaseException : HttpRequestException
         var content = response.Content;
         string? code = null;
         string? message = null;
-        int? op = null;
+        int? op = null, statement = null;
+        string? sqliteCode = null;
         string? machine = null, outcomeRegion = null;
         var details = new List<TerraBaseValidationDetail>();
         try
@@ -81,6 +82,8 @@ public class TerraBaseException : HttpRequestException
                                 details.Add(new(path.GetString()!, keyword.GetString()!));
                         }
                     }
+                    statement = error.TryGetProperty("statement", out var s) && s.ValueKind == JsonValueKind.Number && s.TryGetInt32(out var index0) ? index0 : null;
+                    sqliteCode = error.TryGetProperty("sqlite_code", out var sc) && sc.ValueKind == JsonValueKind.String ? Clean(sc.GetString()) : null;
                     op = error.TryGetProperty("op", out var o) && o.ValueKind == JsonValueKind.Number && o.TryGetInt32(out var index) ? index : null;
                 }
             }
@@ -94,6 +97,9 @@ public class TerraBaseException : HttpRequestException
         var text = Clean(message) ?? $"TerraBase answered HTTP {(int)status}{(code is null ? null : $" ({Clean(code)})")}.";
         TerraBaseException exception = (int)status switch
         {
+            // Only the SQL execute route names a statement and its SQLite code.
+            400 or 403 or 409 or 413 when code is not null && statement is { } failed && sqliteCode is not null =>
+                new TerraBaseSqlException(status, text, code, failed, sqliteCode),
             400 or 413 or 415 => new TerraBaseValidationException(status, text, code, op),
             401 => new TerraBaseAuthenticationException(status, text, code, op),
             403 => new TerraBaseForbiddenException(status, text, code, op),

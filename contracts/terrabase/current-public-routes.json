@@ -70,6 +70,7 @@
     {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/schema/{collection}", "operation": "getCollectionSchema", "source": "src/TerraBase/Features/Management/Schema/GetCollectionSchemaEndpoint.cs", "line": 16},
     {"method": "PUT", "path": "/v1/projects/{project}/databases/{database}/schema/{collection}", "operation": "declareCollectionSchema", "source": "src/TerraBase/Features/Management/Schema/PutCollectionSchemaEndpoint.cs", "line": 16},
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/sql", "operation": "runSql", "source": "src/TerraBase/Features/Management/Queries/RunSqlEndpoint.cs", "line": 16},
+    {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/sql/execute", "operation": "executeSql", "contract": "sql-execute.md"},
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/sql/check", "operation": "checkSql", "source": "src/TerraBase/Features/Management/Queries/CheckSqlEndpoint.cs", "line": 16},
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/sql/explain", "operation": "explainSql", "source": "src/TerraBase/Features/Management/Queries/ExplainSqlEndpoint.cs", "line": 24},
     {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/transactions", "operation": "runTransaction", "source": "src/TerraBase/Features/Documents/TransactionEndpoint.cs", "line": 23},
