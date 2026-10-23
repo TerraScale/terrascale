@@ -96,6 +96,11 @@ Query::new().filter(f).sort(SortKey::desc("/created_at")).project(["/email"]).li
 coll.query::<T>(&Query) -> Result<QueryPage<T> { items, next_cursor, count: Option<Count { value, exact }>, explain }>
 coll.pages::<T>(Query) -> Pages<T>;  pages.next_page().await -> Result<Option<QueryPage<T>>>
 coll.query_all::<T>(Query, max_items) -> Result<Vec<Document<T>>>
+Query::new().filter(f).near(Near::new("/embedding", vec![0.1, 0.2]).metric(Metric::L2)).limit(10)
+  // near is the only sort key: no sort/cursor, limit <= 100, Metric::{Cosine (default), L2};
+  // each item gets document.distance: Option<f64>
+coll.set_ttl("/expiresAt") -> Result<()>;  coll.get_ttl() -> Result<Option<String>>;  coll.clear_ttl() -> Result<()>
+  // documents expire once the member holds a past RFC 3339 UTC time; an hourly sweep deletes them
 ```
 
 ## IDs
