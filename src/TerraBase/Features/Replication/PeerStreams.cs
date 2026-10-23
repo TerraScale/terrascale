@@ -306,6 +306,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         var pending = 0;
         ExceptionDispatchInfo? failure = null;
         var ledger = new Ledger();
+        var positions = new Dictionary<TenantContext, Task<SourceCursor?>>();
+        var positionReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var writer = new LinkWriter(call.RequestStream, _time, ReserveAsync, () => pending--);
         var receiving = ReceiveAsync();
         var heartbeats = HeartbeatAsync();
@@ -317,13 +319,17 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             while (true)
             {
                 activity.Token.ThrowIfCancellationRequested();
+                if (positionReady.Task.IsCompleted)
+                {
+                    Volatile.Write(ref positionReady, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+                }
                 // Asked for before the pass reads, so a commit during the pass wakes the next one.
                 changed = changed is null || changed.IsCompleted ? _source.ChangedAsync(activity.Token) : changed;
-                _ = await ShipAsync(link, writer, peer, DrainAsync, activity.Token).ConfigureAwait(false);
+                _ = await ShipAsync(link, writer, positions, InitializeAsync, DrainAsync, activity.Token).ConfigureAwait(false);
 
                 using (var pass = CancellationTokenSource.CreateLinkedTokenSource(activity.Token))
                 {
-                    _ = await Task.WhenAny(reading, changed, Task.Delay(Idle, _time, pass.Token)).ConfigureAwait(false);
+                    _ = await Task.WhenAny(reading, changed, positionReady.Task, Task.Delay(Idle, _time, pass.Token)).ConfigureAwait(false);
                     await pass.CancelAsync().ConfigureAwait(false);
                 }
 
@@ -345,6 +351,15 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             await progress.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             await bookkeeping.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             await ((Task)reading).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await ((Task)Task.WhenAll(positions.Values)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+
+        Task<SourceCursor?> InitializeAsync(TenantContext database)
+        {
+            var position = _source.AckedAsync(database, peer, activity.Token).AsTask();
+            _ = position.ContinueWith(_ => Volatile.Read(ref positionReady).TrySetResult(),
+                CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            return position;
         }
 
         // Process each database's responses before shipping the next one: a large placement cannot fill the queue while
@@ -597,9 +612,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     }
 
     // Sends the next batch of every database placed in the peer's region with none in flight; whether any was sent.
-    private async ValueTask<bool> ShipAsync(Link link, LinkWriter stream, ReplicaId peer, Func<ValueTask> drain, CancellationToken cancellationToken)
+    private async ValueTask<bool> ShipAsync(
+        Link link, LinkWriter stream, Dictionary<TenantContext, Task<SourceCursor?>> positions,
+        Func<TenantContext, Task<SourceCursor?>> initialize, Func<ValueTask> drain, CancellationToken cancellationToken)
     {
         var sent = false;
+        link.Seen.Clear();
         await using var databases = _source.ListDatabasesAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
         while (true)
         {
@@ -610,9 +628,16 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
 
             var database = databases.Current;
+            link.Seen.Add(database);
             if (database == ChangeGroups.System && !_catalogGate.Value.Trusted
                 || !await PlacedAsync(link, database, cancellationToken).ConfigureAwait(false))
             {
+                if (positions.TryGetValue(database, out var skipped) && skipped.IsCompleted)
+                {
+                    await ((Task)skipped).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                    positions.Remove(database);
+                }
+
                 continue;
             }
 
@@ -631,9 +656,34 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             var frontier = _self.Clock.Tick();
             try
             {
-                var position = cursor is { Incarnation: { } pinned, Acked: { } resume }
-                    ? new SourceCursor(pinned, resume) { RequiresRefill = cursor.RequiresRefill }
-                    : await _source.AckedAsync(database, peer, cancellationToken).ConfigureAwait(false);
+                SourceCursor? position;
+                if (cursor is { Incarnation: { } pinned, Acked: { } resume })
+                {
+                    position = new SourceCursor(pinned, resume) { RequiresRefill = cursor.RequiresRefill };
+                }
+                else
+                {
+                    if (!positions.TryGetValue(database, out var initializing))
+                    {
+                        if (positions.Count == MaxPendingResponses)
+                        {
+                            continue;
+                        }
+
+                        // Initial retention registration may need this tenant's writer; other tenants keep shipping.
+                        initializing = initialize(database);
+                        positions.Add(database, initializing);
+                        continue;
+                    }
+
+                    if (!initializing.IsCompleted)
+                    {
+                        continue;
+                    }
+
+                    positions.Remove(database);
+                    position = await initializing.ConfigureAwait(false);
+                }
                 if (position is not (var found, var acked))
                 {
                     await HoldOrResetAsync(link, database, cursor, cancellationToken).ConfigureAwait(false);
@@ -765,6 +815,35 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }, cancellationToken).ConfigureAwait(false);
 
             sent = true;
+        }
+
+        lock (link.Gate)
+        {
+            // Keep outstanding batches scoped until their ACK arrives, even after their database disappears.
+            foreach (var (database, cursor) in link.Cursors)
+            {
+                if (!link.Seen.Contains(database) && cursor.InFlight is null)
+                {
+                    link.Cursors.Remove(database);
+                }
+            }
+        }
+
+        foreach (var database in link.Placements.Keys)
+        {
+            if (!link.Seen.Contains(database))
+            {
+                link.Placements.Remove(database);
+            }
+        }
+
+        foreach (var (database, position) in positions)
+        {
+            if (!link.Seen.Contains(database) && position.IsCompleted)
+            {
+                await ((Task)position).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                positions.Remove(database);
+            }
         }
 
         return sent;
@@ -1094,6 +1173,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
         // Only the link's own loop reads and writes these.
         public Dictionary<TenantContext, (bool Placed, long ReadAt)> Placements { get; } = [];
+
+        public HashSet<TenantContext> Seen { get; } = [];
     }
 
     private sealed class Cursor

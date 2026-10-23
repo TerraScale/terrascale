@@ -244,6 +244,50 @@ public sealed class PeerStreamDeadlineTests
     }
 
     [Test]
+    public async Task A_held_cold_cursor_does_not_hold_back_a_later_databases_batch_or_ack()
+    {
+        var time = new ObservedTime();
+        var answered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        answered.SetResult();
+        await using var peer = await FakePeer.StartAsync(silentStreams: 0, batchRelease: answered);
+        var (source, bindSource) = CreateSource();
+        var held = new HeldSource(source) { HoldCursor = true };
+        TenantContext[] databases = [];
+        await using var api = await StartSenderAsync(peer, held, bindSource, time, async api =>
+        {
+            databases = await CreateDatabasesAsync(api, 2);
+            held.Database = databases[0];
+            var node = api.Server.Services.GetRequiredService<LocalReplica>().Id;
+            foreach (var database in databases)
+            {
+                _ = source.Add(database, Incompressible(node, 32));
+            }
+        });
+        await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
+        await held.Entered.Task.WaitAsync(Deadline);
+        await Assert.That(await held.OtherCursorReady.Task.WaitAsync(Deadline)).IsEqualTo(databases[1]);
+        var healthy = await peer.NextAsync();
+        await Assert.That(healthy.Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[1], await IncarnationAsync(api, databases[1])));
+        using var deadline = new CancellationTokenSource(Deadline);
+        await source.UntilAckedAsync(databases[1], ReplicaId.Of(1, 9, 0), (long)healthy.Batch.LastChangeId, deadline.Token);
+        await Assert.That(source.AckedBy(databases[0], ReplicaId.Of(1, 9, 0))).IsEqualTo(0);
+        await Assert.That(held.Release.Task.IsCompleted).IsFalse();
+        await Assert.That(peer.Streams).IsEqualTo(1);
+
+        held.Release.SetResult();
+        await held.CursorReady.Task.WaitAsync(Deadline);
+        var expected = ChangeGroups.Wire(databases[0], await IncarnationAsync(api, databases[0]));
+        PushFrame resumed;
+        do
+        {
+            resumed = await peer.NextAsync();
+        }
+        while (resumed.Batch?.Database.Equals(expected) is not true);
+        await source.UntilAckedAsync(databases[0], ReplicaId.Of(1, 9, 0), (long)resumed.Batch.LastChangeId, deadline.Token);
+        await Assert.That(peer.Streams).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task The_sender_bounds_delayed_database_responses_and_keeps_heartbeats_live_during_a_later_held_read()
     {
         var time = new ObservedTime();
@@ -281,7 +325,7 @@ public sealed class PeerStreamDeadlineTests
         release.SetResult();
         for (var index = 32; index < 70; index++)
         {
-            await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[index], await IncarnationAsync(api, databases[index])));
+            await Assert.That((await NextBatchAsync(index)).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[index], await IncarnationAsync(api, databases[index])));
         }
 
         await held.Entered.Task.WaitAsync(Deadline);
@@ -300,10 +344,28 @@ public sealed class PeerStreamDeadlineTests
         await Assert.That(source.AckedBy(databases[^1], ReplicaId.Of(1, 9, 0))).IsEqualTo(0);
 
         held.Release.SetResult();
-        await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[^1], await IncarnationAsync(api, databases[^1])));
+        await Assert.That((await NextBatchAsync(70)).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[^1], await IncarnationAsync(api, databases[^1])));
         using var deadline = new CancellationTokenSource(Deadline);
         await Task.WhenAll(databases.Select(database => source.UntilAckedAsync(database, ReplicaId.Of(1, 9, 0), 1, deadline.Token)));
         await Assert.That(peer.Streams).IsEqualTo(1);
+
+        async Task<PushFrame> NextBatchAsync(int index)
+        {
+            while (true)
+            {
+                var frame = await peer.NextAsync();
+                if (frame.Frontier is not { } frontier)
+                {
+                    await Assert.That(frame.KindCase).IsEqualTo(PushFrame.KindOneofCase.Batch);
+                    return frame;
+                }
+
+                // Independent cold initialization can finish across passes; caught-up databases report their frontier.
+                var database = ChangeGroups.Tenant(frontier.Database);
+                await Assert.That(databases.Take(index).Contains(database)).IsTrue();
+                await Assert.That(frontier.Database).IsEqualTo(ChangeGroups.Wire(database, await IncarnationAsync(api, database)));
+            }
+        }
     }
 
     [Test]
@@ -446,9 +508,15 @@ public sealed class PeerStreamDeadlineTests
         }, warnings, provider => source = new ResetSource(provider.GetRequiredService<FaultAwareReplicaSource>()));
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
         await Assert.That((await peer.NextAsync()).Frontier.Database).IsEqualTo(ChangeGroups.Wire(databases[0], await IncarnationAsync(api, databases[0])));
-        for (var index = 1; index < databases.Length; index++)
+        // Cold registrations finish independently; the budget needs one batch per database, in any database order.
+        var waiting = databases.Skip(1).ToHashSet();
+        while (waiting.Count != 0)
         {
-            await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[index], await IncarnationAsync(api, databases[index])));
+            var batch = (await peer.NextAsync()).Batch;
+            await Assert.That(batch).IsNotNull();
+            var database = ChangeGroups.Tenant(batch.Database);
+            await Assert.That(waiting.Remove(database)).IsTrue();
+            await Assert.That(batch.Database).IsEqualTo(ChangeGroups.Wire(database, await IncarnationAsync(api, database)));
         }
 
         await Assert.That(peer.BatchesBeforeRelease).IsEqualTo(32);
@@ -499,14 +567,16 @@ public sealed class PeerStreamDeadlineTests
     }
 
     [Test]
-    public async Task An_unacknowledged_batch_expires_while_another_database_read_is_held_despite_live_heartbeats()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task An_unacknowledged_batch_expires_while_another_database_read_is_held_despite_live_heartbeats(bool holdCursor)
     {
         var time = new ObservedTime();
         var warnings = new PeerWarnings(time);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var peer = await FakePeer.StartAsync(silentStreams: 0, batchRelease: release);
         var (source, bindSource) = CreateSource();
-        var held = new HeldSource(source);
+        var held = new HeldSource(source) { HoldCursor = holdCursor };
         TenantContext[] databases = [];
         await using var api = await StartSenderAsync(peer, held, bindSource, time, async api =>
         {
@@ -860,38 +930,61 @@ public sealed class PeerStreamDeadlineTests
     private sealed class HeldSource(IChangeGroupSource source) : IChangeGroupSource
     {
         public TenantContext? Database { get; set; }
+        public bool HoldCursor { get; init; }
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource CursorReady { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<TenantContext> OtherCursorReady { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken) => source.ListDatabasesAsync(cancellationToken);
         public ValueTask<bool> ProveAsync(TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken) =>
             source.ProveAsync(database, incarnation, from, through, held, cancellationToken);
         public async ValueTask<SourceGroups?> ReadAsync(TenantContext database, Ulid incarnation, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
         {
-            if (Database is null || database == Database)
+            if (!HoldCursor && (Database is null || database == Database))
             {
-                _ = Entered.TrySetResult();
-                try
-                {
-                    await Release.Task.WaitAsync(cancellationToken);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    _ = Cancelled.TrySetResult();
-                    throw;
-                }
+                await HoldAsync(cancellationToken);
             }
 
             return await source.ReadAsync(database, incarnation, after, maxGroups, maxBytes, cancellationToken);
         }
 
-        public ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) => source.AckedAsync(database, peer, cancellationToken);
+        public async ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken)
+        {
+            if (HoldCursor && database == Database)
+            {
+                await HoldAsync(cancellationToken);
+            }
+
+            var cursor = await source.AckedAsync(database, peer, cancellationToken);
+            if (HoldCursor)
+            {
+                _ = database == Database ? CursorReady.TrySetResult() : OtherCursorReady.TrySetResult(database);
+            }
+
+            return cursor;
+        }
+
         public ValueTask<bool> AckAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken) => source.AckAsync(database, incarnation, peer, changeId, stable, cancellationToken);
         public ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) => source.RecordStableAsync(database, incarnation, peer, stable, cancellationToken);
         public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) => source.RetainsAsync(database, incarnation, after, cancellationToken);
         public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) => source.HeadAsync(database, incarnation, cancellationToken);
         public Task ChangedAsync(CancellationToken cancellationToken) => source.ChangedAsync(cancellationToken);
+
+        private async Task HoldAsync(CancellationToken cancellationToken)
+        {
+            _ = Entered.TrySetResult();
+            try
+            {
+                await Release.Task.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                _ = Cancelled.TrySetResult();
+                throw;
+            }
+        }
     }
 
     // Storage stays real; only the prepared read boundary and one tenant-local bookkeeping error are controlled.

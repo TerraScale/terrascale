@@ -464,6 +464,29 @@ public sealed class PeerStreamTests
     }
 
     [Test]
+    public async Task An_idle_stream_acknowledges_up_to_the_head_past_rows_without_groups_of_its_own()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
+
+        // Frontier bookkeeping grows the CDC head without adding a local group for the peer to acknowledge.
+        var before = await gru.HeadAsync(cluster.Database);
+        var stamp = gru.Api.Server.Services.GetRequiredService<LocalReplica>().Clock.Tick();
+        await gru.Api.Server.Services.GetRequiredService<IChangeGroupSink>()
+            .RecordFrontierAsync(cluster.Database, sjc.Node, stamp, CancellationToken.None);
+        var head = await gru.HeadAsync(cluster.Database);
+        await Assert.That(head).IsGreaterThan(before);
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, head)).IsTrue();
+    }
+
+    [Test]
     public async Task A_peer_silent_for_24_hours_stops_holding_change_groups_and_refills_when_it_returns()
     {
         var clock = new ShiftedTime();
