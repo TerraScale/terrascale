@@ -49,7 +49,7 @@ public sealed class TerraBaseRegionalContractTests
 
         await Assert.That(sent.Count).IsEqualTo(1);
         await Assert.That(sent[0].Method).IsEqualTo(HttpMethod.Put);
-        await Assert.That(sent[0].RequestUri).IsEqualTo(new Uri("https://api.terrascale.test/v1/projects/project/databases/app/collections/items/documents/by-key?id=a"));
+        await Assert.That(sent[0].RequestUri).IsEqualTo(new Uri("https://api.terrascale.test/v1/projects/project/databases/app/collections/items/documents/by-key?id=01JA00000000000000000000D1"));
         await AssertOnlyExpectedHeadersAsync(sent[0]);
         await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
         await Assert.That(error.ErrorCode).IsEqualTo("wrong_region");
