@@ -65,6 +65,9 @@ func catchup(args []string) error {
 	chunks := fs.Int("chunks", 100, "sealed chunks behind the snapshot")
 	repeats := fs.Int("repeats", 3, "repeats of every step")
 	out := fs.String("out", "", "report base path (writes .md and .json)")
+	origin := fs.String("origin", "", "a running node's client URL (empty: the local host); its key is TS_BENCH_API_KEY")
+	project, database := fs.String("project", "", "project id, with -origin"), fs.String("database", "", "database id, with -origin")
+	metrics := fs.String("metrics", "", "comma-separated /metrics URLs of the nodes, with -origin")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -80,24 +83,34 @@ func catchup(args []string) error {
 	if slices.ContainsFunc(ts, func(t string) bool { return t != "t0" && t != "t1" && t != "t2" }) {
 		return fmt.Errorf("-tiers: %q", *tiers)
 	}
-	if os.Getenv("BUCKET_NAME") == "" && slices.ContainsFunc(ts, func(t string) bool { return t != "t0" }) {
-		return fmt.Errorf("t1 and t2 need a bucket: BUCKET_NAME and the AWS_* variables of a private ts-*-test bucket")
-	}
 	ctx := context.Background()
-	work, err := os.MkdirTemp("", "shape-bench-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(work)
-	h, err := startHost(ctx, work)
-	if err != nil {
-		return err
-	}
-	defer h.stop()
-	t := h.targets
-	nodes, _, err := metricsListeners(ctx, t.PID)
-	if err != nil {
-		return err
+	var t replbench.Targets
+	var nodes []string
+	if *origin != "" {
+		// A running cluster mirrors to its own bucket; its nodes' metrics are scraped directly.
+		t = replbench.Targets{Project: *project, Database: *database, Regions: map[string]replbench.RegionTarget{region: {URL: *origin, Token: os.Getenv("TS_BENCH_API_KEY")}}}
+		nodes = strings.Split(*metrics, ",")
+		if *project == "" || *database == "" || *metrics == "" || t.Regions[region].Token == "" {
+			return fmt.Errorf("-origin needs -project, -database, -metrics and TS_BENCH_API_KEY")
+		}
+	} else {
+		if os.Getenv("BUCKET_NAME") == "" && slices.ContainsFunc(ts, func(t string) bool { return t != "t0" }) {
+			return fmt.Errorf("t1 and t2 need a bucket: BUCKET_NAME and the AWS_* variables of a private ts-*-test bucket")
+		}
+		work, err := os.MkdirTemp("", "shape-bench-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(work)
+		h, err := startHost(ctx, work)
+		if err != nil {
+			return err
+		}
+		defer h.stop()
+		t = h.targets
+		if nodes, _, err = metricsListeners(ctx, t.PID); err != nil {
+			return err
+		}
 	}
 	w, err := replbench.NewRegion(region, t, writeRate*4)
 	if err != nil {

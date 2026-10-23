@@ -127,5 +127,7 @@ object's size and sha256 are checked against the manifest.
   metadata, both nodes, from just before the first reader to 2 s after the last), origin shape requests, manifest calls,
   object GETs, bucket GETs (every object GET on t1, edge misses on t2), the edge hit ratio, bucket PUTs (mirror uploads
   during the readers) and bytes.
+- Against running nodes (an OCI test cell): `-origin <client URL> -project <id> -database <id> -metrics <url,url>` with
+  `TS_BENCH_API_KEY`; the cell mirrors to its own bucket.
 - The edge counts toward the Cloudflare account's Workers requests: a full run is about 3 × 1111 × (chunks + 1) object
   GETs on t2.
