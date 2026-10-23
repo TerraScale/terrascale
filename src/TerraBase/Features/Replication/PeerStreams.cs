@@ -310,35 +310,33 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         ExceptionDispatchInfo? failure = null;
         var ledger = new Ledger();
         var positions = new Dictionary<TenantContext, Task<SourceCursor?>>();
-        var positionReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var work = new ShippingWork();
+        link.Work = work;
+        using var subscription = _source.Subscribe(work.Changed);
         using var writer = new LinkWriter(call.RequestStream, _time, ReserveAsync, () => pending--);
         var receiving = ReceiveAsync();
         var heartbeats = HeartbeatAsync();
         var progress = ProgressAsync();
         var bookkeeping = BookkeepAsync();
-        Task? changed = null;
         try
         {
             while (true)
             {
                 activity.Token.ThrowIfCancellationRequested();
-                if (positionReady.Task.IsCompleted)
+                if (work.TakeReconciliation())
                 {
-                    Volatile.Write(ref positionReady, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+                    await ReconcileAsync(link, positions, activity.Token).ConfigureAwait(false);
                 }
-                // Asked for before the pass reads, so a commit during the pass wakes the next one.
-                changed = changed is null || changed.IsCompleted ? _source.ChangedAsync(activity.Token) : changed;
+
                 _ = await ShipAsync(link, writer, positions, InitializeAsync, DrainAsync, activity.Token).ConfigureAwait(false);
 
                 using (var pass = CancellationTokenSource.CreateLinkedTokenSource(activity.Token))
                 {
-                    _ = await Task.WhenAny(reading, changed, positionReady.Task, Task.Delay(Idle, _time, pass.Token)).ConfigureAwait(false);
+                    _ = await Task.WhenAny(reading, work.Ready, Task.Delay(work.Delay(_time), _time, pass.Token)).ConfigureAwait(false);
                     await pass.CancelAsync().ConfigureAwait(false);
                 }
 
                 await DrainAsync().ConfigureAwait(false);
-
-                CheckProgress();
             }
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested && Volatile.Read(ref failure) is not null)
@@ -360,7 +358,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         Task<SourceCursor?> InitializeAsync(TenantContext database)
         {
             var position = _source.AckedAsync(database, peer, activity.Token).AsTask();
-            _ = position.ContinueWith(_ => Volatile.Read(ref positionReady).TrySetResult(),
+            _ = position.ContinueWith(_ => work.Enqueue(database),
                 CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             return position;
         }
@@ -566,7 +564,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                                 if (due.Acked is not null)
                                 {
                                     // A newer in-flight batch keeps its scope; its ACK and the next source read recheck faults.
-                                    Reset(link, cursor, incarnation);
+                                    Reset(link, database, cursor, incarnation);
                                 }
                                 else
                                 {
@@ -590,7 +588,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                                     {
                                         if (cursor.Incarnation == incarnation)
                                         {
-                                            Reset(link, cursor, incarnation);
+                                            Reset(link, database, cursor, incarnation);
                                             cursor.RetryAt = _time.GetTimestamp() + (long)(MaxBackoff.TotalSeconds * _time.TimestampFrequency);
                                         }
                                     }
@@ -634,27 +632,31 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         }
     }
 
-    // Sends the next batch of every database placed in the peer's region with none in flight; whether any was sent.
+    // A pass is bounded by its initial dirty count; quiet maintenance gets one slot per eight dirty operations.
     private async ValueTask<bool> ShipAsync(
         Link link, LinkWriter stream, Dictionary<TenantContext, Task<SourceCursor?>> positions,
         Func<TenantContext, Task<SourceCursor?>> initialize, Func<ValueTask> drain, CancellationToken cancellationToken)
     {
         var sent = false;
-        link.Seen.Clear();
-        await using var databases = _source.ListDatabasesAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
-        while (true)
+        var work = link.Work;
+        var count = work.Count;
+        var maintenance = count == 0;
+        for (var index = 0; index < (maintenance ? 1 : count); index++)
         {
             await drain().ConfigureAwait(false);
-            if (!await databases.MoveNextAsync().ConfigureAwait(false))
+            if (!work.Take(maintenance, _time.GetTimestamp(), out var database))
             {
                 break;
             }
 
-            var database = databases.Current;
-            link.Seen.Add(database);
             if (database == ChangeGroups.System && !_catalogGate.Value.Trusted
                 || !await PlacedAsync(link, database, cancellationToken).ConfigureAwait(false))
             {
+                if (database == ChangeGroups.System)
+                {
+                    work.Later(database, _time.GetTimestamp() + (long)(Retry.TotalSeconds * _time.TimestampFrequency));
+                }
+
                 if (positions.TryGetValue(database, out var skipped) && skipped.IsCompleted)
                 {
                     await ((Task)skipped).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
@@ -668,6 +670,17 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             lock (link.Gate)
             {
                 cursor = link.Cursors.TryGetValue(database, out var known) ? known : link.Cursors[database] = new Cursor();
+            }
+
+            if (cursor.InFlight is not null)
+            {
+                continue;
+            }
+
+            if (_time.GetTimestamp() < cursor.RetryAt)
+            {
+                work.Later(database, cursor.RetryAt);
+                continue;
             }
 
             Ulid incarnation;
@@ -690,6 +703,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     {
                         if (positions.Count == MaxPendingResponses)
                         {
+                            work.Later(database, _time.GetTimestamp() + (long)(Idle.TotalSeconds * _time.TimestampFrequency));
                             continue;
                         }
 
@@ -716,23 +730,18 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 incarnation = found;
                 if (cursor.Incarnation is { } previous && previous != incarnation)
                 {
-                    Reset(link, cursor);
+                    Reset(link, database, cursor);
                 }
                 lock (link.Gate)
                 {
                     (cursor.Incarnation, cursor.Acked, cursor.RequiresRefill, cursor.Stable) = (incarnation, acked, position.Value.RequiresRefill, position.Value.Stable);
                 }
 
-                if (cursor.InFlight is not null || _time.GetTimestamp() < cursor.RetryAt)
-                {
-                    continue;
-                }
-
                 // Read before retention: a cut between them must never ship a batch past a hole.
                 var page = await _source.ReadAsync(database, incarnation, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
                 if (page is not null && page.Incarnation != incarnation)
                 {
-                    Reset(link, cursor);
+                    Reset(link, database, cursor);
                     continue;
                 }
 
@@ -815,6 +824,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     cursor.BehindSince = null;
                 }
 
+                work.Later(database, cursor.FrontierAt + (long)(FrontierEvery.TotalSeconds * _time.TimestampFrequency));
                 continue;
             }
 
@@ -840,12 +850,34 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             sent = true;
         }
 
+        return sent;
+    }
+
+    // Discovery and Seen cleanup belong only to startup, catalog changes and bounded queue overflow.
+    private async ValueTask ReconcileAsync(
+        Link link, Dictionary<TenantContext, Task<SourceCursor?>> positions, CancellationToken cancellationToken)
+    {
+        link.Seen.Clear();
+        await foreach (var database in _source.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
+        {
+            link.Seen.Add(database);
+        }
+
+        // Expire placement reads without erasing the placement scope of ACKs already in flight.
+        var stale = _time.GetTimestamp() - (long)(DirectoryMembership.Heartbeat.TotalSeconds * _time.TimestampFrequency);
+        foreach (var (database, placement) in link.Placements)
+        {
+            link.Placements[database] = (placement.Placed, stale);
+        }
+
+        link.Work.Reconcile(link.Seen, _time.GetTimestamp());
         lock (link.Gate)
         {
             // Keep outstanding batches scoped until their ACK arrives, even after their database disappears.
             foreach (var (database, cursor) in link.Cursors)
             {
-                if (!link.Seen.Contains(database) && cursor.InFlight is null)
+                cursor.Retired = !link.Seen.Contains(database);
+                if (cursor.Retired && cursor.InFlight is null)
                 {
                     link.Cursors.Remove(database);
                 }
@@ -868,8 +900,6 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 positions.Remove(database);
             }
         }
-
-        return sent;
     }
 
     private async ValueTask AckedAsync(Link link, Ack? ack, Ledger ledger, CancellationToken cancellationToken)
@@ -893,17 +923,25 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             live = !cursor.Refilling && link.Peer.Region != _options.Region && link.Placements.GetValueOrDefault(database).Placed;
             from = cursor.Live is { } run && run.Incarnation == incarnation ? run.From : cursor.Acked ?? inFlight;
             (cursor.InFlight, cursor.InFlightGroups, cursor.Refilling) = (null, 0, false);
+            if (cursor.Retired)
+            {
+                // Rediscover after the final ACK: the removed database may already have been recreated.
+                link.Work.Changed(ChangeGroups.System);
+            }
+
             if (ack.Refused)
             {
                 // Catalog lag only retries; missing coverage requests a pinned refill even without a stored peer scope.
                 cursor.RequiresRefill |= ack.RefillRequired;
                 cursor.RetryAt = _time.GetTimestamp() + (long)(Retry.TotalSeconds * _time.TimestampFrequency);
+                link.Work.Enqueue(database);
                 return;
             }
 
             cursor.Stable = new Hlc(Math.Max(cursor.Stable.Value, ack.Stable));
             // The stream goes on from the peer's ack in memory; the ledger persists it behind the stream.
             (cursor.Acked, cursor.Live, cursor.RequiresRefill) = (inFlight, live ? (incarnation, from) : null, false);
+            link.Work.Enqueue(database);
         }
 
         // The peer holds the range durably whatever this machine's bookkeeping does: a client wait needs only placement and
@@ -930,7 +968,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     cursor = link.Cursors.GetValueOrDefault(database);
                     if (cursor?.Incarnation == incarnation)
                     {
-                        Reset(link, cursor);
+                        Reset(link, database, cursor);
                         cursor.RetryAt = _time.GetTimestamp() + (long)(MaxBackoff.TotalSeconds * _time.TimestampFrequency);
                     }
                 }
@@ -986,7 +1024,15 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
         if (!knownTenantRefusal)
         {
-            Reset(link, cursor, expected);
+            lock (link.Gate)
+            {
+                if (cursor.InFlight is null && (expected is null || cursor.Incarnation == expected))
+                {
+                    Reset(link, database, cursor, expected);
+                    cursor.RetryAt = _time.GetTimestamp() + (long)(Idle.TotalSeconds * _time.TimestampFrequency);
+                }
+            }
+
             return;
         }
 
@@ -999,11 +1045,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
             cursor.BehindSince ??= _time.GetTimestamp();
             cursor.RetryAt = _time.GetTimestamp() + (long)(MaxBackoff.TotalSeconds * _time.TimestampFrequency);
+            link.Work.Enqueue(database);
         }
     }
 
     // Forgets a cursor's incarnation and position: the next pass reads both again from the copy in place.
-    private static void Reset(Link link, Cursor cursor, Ulid? expected = null)
+    private static void Reset(Link link, TenantContext database, Cursor cursor, Ulid? expected = null)
     {
         lock (link.Gate)
         {
@@ -1015,6 +1062,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
             (cursor.Incarnation, cursor.Acked, cursor.Head, cursor.RequiresRefill, cursor.Live, cursor.Stable) = (null, null, 0, false, null, default);
             (cursor.FrontierAt, cursor.BehindSince, cursor.Convergence) = (0, null, null);
+            link.Work.Enqueue(database);
         }
     }
 
@@ -1182,6 +1230,161 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         public ulong Stable { get; set; }
     }
 
+    // Notifications retain at most 1024 database identities (three fixed-size ULIDs each), independently per peer.
+    // Overflow requests discovery instead of losing a database; one quiet timer slot per eight dirty items prevents starvation.
+    private sealed class ShippingWork
+    {
+        private const int MaxDirty = 1024;
+        private static readonly Comparer<(long At, TenantContext Database)> DueOrder = Comparer<(long At, TenantContext Database)>.Create((left, right) =>
+        {
+            var order = left.At.CompareTo(right.At);
+            order = order != 0 ? order : StringComparer.Ordinal.Compare(left.Database.OrganizationId, right.Database.OrganizationId);
+            order = order != 0 ? order : StringComparer.Ordinal.Compare(left.Database.ProjectId, right.Database.ProjectId);
+            return order != 0 ? order : StringComparer.Ordinal.Compare(left.Database.DatabaseId, right.Database.DatabaseId);
+        });
+        private readonly Lock _gate = new();
+        private readonly Queue<TenantContext> _dirty = [];
+        private readonly HashSet<TenantContext> _queued = [];
+        private SortedSet<(long At, TenantContext Database)> _due = [with(DueOrder)];
+        private Dictionary<TenantContext, long> _scheduled = [];
+        private TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private bool _reconcile = true;
+        private int _dirtyTaken;
+
+        public int Count
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _dirty.Count;
+                }
+            }
+        }
+
+        public Task Ready
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _dirty.Count > 0 || _reconcile ? Task.CompletedTask : _ready.Task;
+                }
+            }
+        }
+
+        public void Changed(TenantContext database)
+        {
+            database = database.Plan == PlanTier.Hobby ? database : database with { Plan = PlanTier.Hobby };
+            lock (_gate)
+            {
+                _reconcile |= database == ChangeGroups.System;
+                Enqueue(database);
+            }
+        }
+
+        public void Enqueue(TenantContext database)
+        {
+            lock (_gate)
+            {
+                if (_queued.Contains(database))
+                {
+                    return;
+                }
+
+                if (_dirty.Count == MaxDirty)
+                {
+                    _reconcile = true;
+                }
+                else
+                {
+                    _queued.Add(database);
+                    _dirty.Enqueue(database);
+                }
+
+                _ready.TrySetResult();
+                _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+        }
+
+        public bool TakeReconciliation()
+        {
+            lock (_gate)
+            {
+                var requested = _reconcile;
+                _reconcile = false;
+                return requested;
+            }
+        }
+
+        public void Reconcile(HashSet<TenantContext> databases, long now)
+        {
+            // Only the sender loop mutates timers; preserve deadlines so repeated overflow cannot restart their order.
+            var scheduled = databases.ToDictionary(database => database, database => _scheduled.GetValueOrDefault(database, now));
+            var due = new SortedSet<(long At, TenantContext Database)>(scheduled.Select(entry => (entry.Value, entry.Key)), DueOrder);
+            lock (_gate)
+            {
+                (_due, _scheduled) = (due, scheduled);
+            }
+        }
+
+        public bool Take(bool maintenance, long now, out TenantContext database)
+        {
+            lock (_gate)
+            {
+                if ((maintenance || _dirtyTaken >= 8) && _due.Count > 0 && _due.Min.At <= now)
+                {
+                    var due = _due.Min;
+                    _due.Remove(due);
+                    database = due.Database;
+                    _scheduled.Remove(database);
+                    _dirtyTaken = 0;
+                    return true;
+                }
+
+                if (_dirty.TryDequeue(out database!))
+                {
+                    // Remove before the source read: another commit during it must queue a second pass.
+                    _queued.Remove(database);
+                    _dirtyTaken = Math.Min(_dirtyTaken + 1, 8);
+                    return true;
+                }
+
+                database = null!;
+                return false;
+            }
+        }
+
+        public void Later(TenantContext database, long at)
+        {
+            lock (_gate)
+            {
+                if (_scheduled.TryGetValue(database, out var known))
+                {
+                    if (at >= known)
+                    {
+                        return;
+                    }
+
+                    _due.Remove((known, database));
+                }
+
+                _scheduled[database] = at;
+                _due.Add((at, database));
+            }
+        }
+
+        public TimeSpan Delay(TimeProvider time)
+        {
+            lock (_gate)
+            {
+                return _due.Count > 0
+                    ? TimeSpan.FromSeconds(Math.Clamp((double)(_due.Min.At - time.GetTimestamp()) / time.TimestampFrequency, 0, Idle.TotalSeconds))
+                    : Idle;
+            }
+        }
+    }
+
     private sealed class Link(ClusterMember peer)
     {
         public ClusterMember Peer { get; } = peer;
@@ -1199,6 +1402,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         public Dictionary<TenantContext, (bool Placed, long ReadAt)> Placements { get; } = [];
 
         public HashSet<TenantContext> Seen { get; } = [];
+
+        public ShippingWork Work { get; set; } = new();
     }
 
     private sealed class Cursor
@@ -1214,6 +1419,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         public long? Acked { get; set; }
 
         public long? InFlight { get; set; }
+
+        // Discovery removed this database while a batch still needed its incarnation for ACK validation.
+        public bool Retired { get; set; }
 
         // The peer answered, but the single consumer may still be waiting on local durable ACK processing.
         public bool ResponseReceived { get; set; }

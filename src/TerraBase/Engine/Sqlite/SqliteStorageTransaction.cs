@@ -1255,6 +1255,7 @@ internal sealed partial class SqliteStorageTransaction(
             {
                 // The commit landed but its final CDC row could not be read: the log of this file is not what it wrote.
                 NoteCopyFault("the commit marker could not be read after COMMIT");
+                NotifyReplicationCommitted();
                 if (_offset is not null || _feedChanged)
                 {
                     Follow("the commit notification", committed);
@@ -1279,6 +1280,7 @@ internal sealed partial class SqliteStorageTransaction(
             return result;
         }, cancellationToken).ConfigureAwait(false);
 
+        NotifyReplicationCommitted();
         // A failed wake-up only delays its waiter, which also wakes on its own timeout.
         if (_offset is not null || _feedChanged)
         {
@@ -1326,6 +1328,15 @@ internal sealed partial class SqliteStorageTransaction(
         }
 
         return new CommitMarker(store.Incarnation, reader.GetInt64(0));
+    }
+
+    private void NotifyReplicationCommitted()
+    {
+        // Remote catalog joins can change placement; ordinary joined states are never shipped again.
+        if (_offset is not null && (store.IsSystem || (_captured > 0 && !_captureSuspended)))
+        {
+            Follow("the replication notification", store.ReplicationCommitted);
+        }
     }
 
     // The first step after the commit that failed: CommitAsync throws it once every step ran.

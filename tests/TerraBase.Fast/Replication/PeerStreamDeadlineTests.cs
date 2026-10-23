@@ -993,6 +993,7 @@ public sealed class PeerStreamDeadlineTests
         public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) => source.RetainsAsync(database, incarnation, after, cancellationToken);
         public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) => source.HeadAsync(database, incarnation, cancellationToken);
         public Task ChangedAsync(CancellationToken cancellationToken) => source.ChangedAsync(cancellationToken);
+        public IDisposable Subscribe(Action<TenantContext> changed) => source.Subscribe(changed);
 
         private async Task HoldAsync(CancellationToken cancellationToken)
         {
@@ -1069,6 +1070,15 @@ public sealed class PeerStreamDeadlineTests
         public ValueTask<bool> ProveAsync(TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken) => inner.ProveAsync(database, incarnation, from, through, held, cancellationToken);
         public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) => inner.RetainsAsync(database, incarnation, after, cancellationToken);
         public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) => inner.HeadAsync(database, incarnation, cancellationToken);
+        public IDisposable Subscribe(Action<TenantContext> changed) => inner.Subscribe(database =>
+        {
+            // This test suppresses commit wakes until its frontier rounds finish.
+            if (Wakes.IsCompletedSuccessfully)
+            {
+                changed(database);
+            }
+        });
+
         public async Task ChangedAsync(CancellationToken cancellationToken)
         {
             await inner.ChangedAsync(cancellationToken);

@@ -752,6 +752,7 @@ public sealed class PeerStreamFaultIsolationTests
 
         public IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken) => inner.ListDatabasesAsync(cancellationToken);
         public Task ChangedAsync(CancellationToken cancellationToken) => inner.ChangedAsync(cancellationToken);
+        public IDisposable Subscribe(Action<TenantContext> changed) => inner.Subscribe(changed);
         public async ValueTask<SourceGroups?> ReadAsync(TenantContext database, Ulid incarnation, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
         {
             if (Volatile.Read(ref _nativeInitializations) == Initializations)

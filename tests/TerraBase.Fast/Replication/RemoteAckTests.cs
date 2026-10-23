@@ -1933,6 +1933,7 @@ public sealed class RemoteAckTests
         }
 
         public Task ChangedAsync(CancellationToken cancellationToken) => inner.ChangedAsync(cancellationToken);
+        public IDisposable Subscribe(Action<TenantContext> changed) => inner.Subscribe(changed);
 
         public ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) =>
             inner.RecordStableAsync(database, incarnation, peer, stable, cancellationToken);
