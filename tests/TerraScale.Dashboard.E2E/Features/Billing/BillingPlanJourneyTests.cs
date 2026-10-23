@@ -509,6 +509,44 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(organizations.Single(org => org.GetProperty("id").GetString() == businessId).GetProperty("planId").GetString()).IsEqualTo("443RCMMF70MNP6S1QMT230NF99");
     }
 
+    [Test]
+    public async Task ReloadingBillingGrantsACheckoutWhoseReturnNeverRan()
+    {
+        using var client = fixture.CreateClient();
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        await SignUpPaidAsync(client, "plan-stuck-" + suffix + "@example.test", "E2E-plan-stuck-" + suffix, suffix);
+        var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
+        using var creation = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/new-organization", new()
+        { ["_csrf"] = csrf, ["step"] = "organization", ["name"] = "Stuck checkout " + suffix });
+        await Assert.That(creation.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        using var business = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
+        var businessId = business.RootElement.GetProperty("organizationId").GetString()!;
+        using var started = await HttpJourney.PostFormAsync(client, "/billing/checkout", new()
+        { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "monthly", ["return"] = "/organization?tab=billing" });
+        await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        // Stripe completes the checkout, but the browser never reaches the return URL.
+        using var paid = await client.GetAsync(started.Headers.Location);
+        await Assert.That(paid.StatusCode).IsEqualTo(HttpStatusCode.Found);
+
+        using var other = new HttpRequestMessage(HttpMethod.Post, "/billing/checkout")
+        { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "annual", ["return"] = "/organization?tab=billing" }) };
+        other.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
+        other.Headers.Accept.ParseAdd("text/html");
+        using var blocked = await client.SendAsync(other);
+        await Assert.That(blocked.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because("a browser form post gets a page, not problem+json");
+        await Assert.That(blocked.Headers.Location!.OriginalString).IsEqualTo("/organization?tab=billing&payment=blocked");
+        using var notice = await client.GetAsync(blocked.Headers.Location);
+        await Assert.That(await notice.Content.ReadAsStringAsync()).Contains("Checkout did not open");
+
+        using var context = JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/context"));
+        var org = context.RootElement.GetProperty("organizations").EnumerateArray().Single(item => item.GetProperty("id").GetString() == businessId);
+        await Assert.That(org.GetProperty("billingStatus").GetString()).IsEqualTo("active").Because("reloading billing reconciles the completed checkout");
+        await Assert.That(org.GetProperty("paymentMethodValidated").GetBoolean()).IsTrue();
+        using var cancel = await HttpJourney.PostFormAsync(client, "/billing/checkout/cancel", new() { ["_csrf"] = csrf });
+        await Assert.That(cancel.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because("canceling a paid checkout reconciles instead of dead-ending");
+        await Assert.That(cancel.Headers.Location!.OriginalString).Contains("payment=success");
+    }
+
     internal static async Task SignUpPaidAsync(HttpClient client, string email, string password, string suffix, string interval = "monthly")
     {
         var csrf = await HttpJourney.CsrfAsync(client, "/onboarding?plan=starter");

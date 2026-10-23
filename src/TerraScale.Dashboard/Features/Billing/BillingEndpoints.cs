@@ -73,7 +73,10 @@ public static class BillingEndpoints
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
             try { return HttpRedirects.SeeOther(await billing.StartCheckoutAsync(context, form["plan"].ToString(), form["interval"].ToString(), form["return"].ToString(), http.RequestAborted)); }
             catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
-            { return Results.Problem(error.Message, statusCode: error is AccountAccessException access ? access.StatusCode : 422); }
+            {
+                if (DatabaseEndpoints.WantsHtml(http)) return HttpRedirects.SeeOther("/organization?tab=billing&payment=blocked");
+                return Results.Problem(error.Message, statusCode: error is AccountAccessException access ? access.StatusCode : 422);
+            }
             catch (Exception error) when (error is StripeException or HttpRequestException or IOException ||
                 error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
             {

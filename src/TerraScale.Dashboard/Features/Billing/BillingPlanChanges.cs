@@ -148,7 +148,9 @@ public sealed partial class StripeBilling
         var client = await ClientAsync(cancellationToken);
         var checkout = await client.V1.Checkout.Sessions.GetAsync(binding.CheckoutId, cancellationToken: cancellationToken);
         ValidateCheckout(binding, checkout);
-        if (checkout.Status == "complete") throw Conflict("This checkout already completed. Reload billing.");
+        // A paid checkout cannot be canceled; reconcile it instead of dead-ending.
+        if (checkout.Status == "complete")
+            return PaymentOutcome(binding.ReturnPath, await RefreshAsync(orgId, cancellationToken) ? "success" : "pending");
         if (checkout.Status == "open")
         {
             checkout = await client.V1.Checkout.Sessions.ExpireAsync(binding.CheckoutId, requestOptions: Idempotent("expire-" + binding.RequestId), cancellationToken: cancellationToken);
