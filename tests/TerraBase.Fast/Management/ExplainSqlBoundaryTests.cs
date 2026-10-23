@@ -160,7 +160,7 @@ public sealed class ExplainSqlBoundaryTests
             await Assert.That(headers[0]).StartsWith("HTTP/1.1 503 ");
         }
 
-        var afterRefusal = ReservedBytes(api);
+        var afterRefusal = await SettledBytesAsync(api, reserved);
         var refusalLive = tracker.LiveSince(mark);
         string framing;
         using (var response = await client.PostAsJsonAsync(Path(database), new { sql = Sql }))
@@ -169,7 +169,7 @@ public sealed class ExplainSqlBoundaryTests
             await response.Content.ReadAsByteArrayAsync();
         }
 
-        var after = ReservedBytes(api);
+        var after = await SettledBytesAsync(api, reserved);
         var live = tracker.LiveSince(mark);
         if (Environment.GetEnvironmentVariable("DIAG_ALL") == "1" || after != reserved || afterRefusal != reserved)
         {
@@ -676,7 +676,23 @@ public sealed class ExplainSqlBoundaryTests
     }
 
     private static async Task AssertMemoryReleasedAsync(ManagementApi api, long baseline) =>
-        await Assert.That(ReservedBytes(api)).IsEqualTo(baseline);
+        await Assert.That(await SettledBytesAsync(api, baseline)).IsEqualTo(baseline);
+
+    // Background services (usage sampling and flushes) hold short reservations of their own while they write: a leak never
+    // returns to the baseline, their writes do within the deadline.
+    private static async Task<long> SettledBytesAsync(ManagementApi api, long baseline)
+    {
+        try
+        {
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(ReservedBytes(api) == baseline), TimeSpan.FromSeconds(10));
+        }
+        catch (OperationCanceledException)
+        {
+            // Still above the baseline: the caller reports what is held.
+        }
+
+        return ReservedBytes(api);
+    }
 
     // Everything the server sent before it closed the connection; Kestrel resets one whose request body it never read.
     private static async Task<string> ReadUntilClosedAsync(Stream stream, CancellationToken cancellationToken)
