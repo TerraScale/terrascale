@@ -441,6 +441,32 @@ public sealed class ShapeEndToEndTests
     }
 
     [Test]
+    public async Task A_reader_fan_out_after_a_catalog_commit_reads_the_catalog_once_instead_of_once_per_reader()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
+        var client = new ShapeClient(api, query: null);
+        await client.SyncAsync();
+        var closedAt = client.NextOffset!;
+        await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
+        await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
+        await Assert.That((await client.Get(client.Uri(closedAt, live: false))).Status).IsEqualTo(HttpStatusCode.OK);
+        var token = TestContext.Current!.Execution.CancellationToken;
+
+        // Any catalog commit invalidates every cached plan and database lookup; 64 readers (an organization's most joined
+        // shape requesters, ShapeFlights.MaxRequestersPerOrganization: more answer 429 shape_busy) then miss together.
+        _ = await api.Management.CreateOrganizationAsync("Invalidate the catalog caches");
+        var before = await Scrape(api.Server, token);
+        var answers = await Task.WhenAll(Enumerable.Range(0, 64).Select(_ => client.Get(client.Uri(closedAt, live: false))));
+        var after = await Scrape(api.Server, token);
+
+        await Assert.That(answers.All(answer => answer.Status == HttpStatusCode.OK)).IsTrue();
+        // One plan read is three point reads; one per reader would be 192. Background catalog commits may add a round or two.
+        await Assert.That(Delta(before, after, "terrabase_storage_reads_total", "path=\"point\"")).IsLessThan(60d);
+    }
+
+    [Test]
     public async Task The_metrics_scrape_retains_all_five_storage_paths_after_feed_query_and_shape_reads()
     {
         await using var api = await DocumentApi.StartAsync();
