@@ -3,7 +3,6 @@ using System.Net.Http.Headers;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
@@ -20,7 +19,7 @@ namespace TerraScale.Authentication.Features.Platform;
 /// is refused at once on every replica; so is a token from before the user signed out everywhere or reset its password,
 /// whose authentication epoch no longer matches the user's.
 /// </summary>
-public sealed class PlatformAuthentication(KeyRing ring, Users users, TotpCredentials mfa, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, IOpenIddictTokenStore<OidcToken> tokens, AuthOptions options)
+public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, IOpenIddictTokenStore<OidcToken> tokens, AuthOptions options)
 {
     private const int MaxTokenLength = 8 * 1024;
 
@@ -50,12 +49,17 @@ public sealed class PlatformAuthentication(KeyRing ring, Users users, TotpCreden
             }
         }
 
-        return claims is not null && Claim(claims, Claims.Subject) is { } userId
-            && await users.GetAsync(OidcIssuer.InstanceId, userId, cancellationToken).ConfigureAwait(false) is { } user
-            && Claim(claims, OidcIssuer.EpochClaim) == user.AuthEpoch.ToString(CultureInfo.InvariantCulture)
-            && Claim(claims, OidcIssuer.StateClaim) == user.AuthStamp
-            && await this.LiveAsync(claims, userId, cancellationToken).ConfigureAwait(false) is { } entry
-            && await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken).ConfigureAwait(false)
+        if (claims is null || Claim(claims, Claims.Subject) is not { } userId)
+        {
+            return null;
+        }
+
+        // The sign-in and token entry reads run alongside the factor read and the user read that follows it: two storage
+        // round trips instead of five.
+        var userRead = mfa.PrimaryUserAsync(OidcIssuer.InstanceId, userId, Claim(claims, OidcIssuer.EpochClaim), Claim(claims, OidcIssuer.StateClaim), cancellationToken);
+        var liveRead = this.LiveAsync(claims, userId, cancellationToken);
+        await Task.WhenAll(userRead, liveRead).ConfigureAwait(false);
+        return await liveRead.ConfigureAwait(false) is { } entry && await userRead.ConfigureAwait(false) is { } user
             ? user with { AuthenticationBindings = entry.Bindings }
             : null;
     }
@@ -68,15 +72,20 @@ public sealed class PlatformAuthentication(KeyRing ring, Users users, TotpCreden
     // them. A token naming no entry cannot be checked, so it is refused.
     private async Task<OidcToken?> LiveAsync(IDictionary<string, object> claims, string userId, CancellationToken cancellationToken)
     {
-        if (Claim(claims, "oi_au_id") is { } authorizationId
-            && (await authorizations.FindByIdAsync(authorizationId, cancellationToken).ConfigureAwait(false) is not { } authorization
-                || authorization.Status != Statuses.Valid || authorization.Subject != userId))
+        if (Claim(claims, "oi_tkn_id") is not { } tokenId)
         {
             return null;
         }
 
-        return Claim(claims, "oi_tkn_id") is { } tokenId
-            && await tokens.FindByIdAsync(tokenId, cancellationToken).ConfigureAwait(false) is { } entry
-            && entry.Status == Statuses.Valid && entry.Subject == userId ? entry : null;
+        // Both entries are named by the token, so they are read together.
+        var authorizationId = Claim(claims, "oi_au_id");
+        var authorizationRead = authorizationId is null ? Task.FromResult<OidcAuthorization?>(null) : authorizations.FindByIdAsync(authorizationId, cancellationToken).AsTask();
+        var entryRead = tokens.FindByIdAsync(tokenId, cancellationToken).AsTask();
+        await Task.WhenAll(authorizationRead, entryRead).ConfigureAwait(false);
+        return (authorizationId is null
+                || await authorizationRead.ConfigureAwait(false) is { } authorization && authorization.Status == Statuses.Valid && authorization.Subject == userId)
+            && await entryRead.ConfigureAwait(false) is { } entry && entry.Status == Statuses.Valid && entry.Subject == userId
+                ? entry
+                : null;
     }
 }

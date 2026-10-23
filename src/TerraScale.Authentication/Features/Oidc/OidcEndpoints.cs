@@ -159,7 +159,7 @@ public sealed class AuthorizeEndpoint(Sessions sessions, TimeProvider clock, Aut
 /// client-credentials access token. Each code and refresh token works once: a second presentation, even a concurrent
 /// one in the same region, fails; after replication only the winning branch remains usable. Tokens are refused once the user signed out everywhere.
 /// </summary>
-public sealed class TokenEndpoint(Users users, TotpCredentials mfa, PlatformGrants platform, AuthOptions options, IOpenIddictApplicationStore<OidcApplication> applications) : EndpointWithoutRequest<IResult>
+public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, AuthOptions options, IOpenIddictApplicationStore<OidcApplication> applications) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -239,11 +239,10 @@ public sealed class TokenEndpoint(Users users, TotpCredentials mfa, PlatformGran
 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal
             ?? throw new InvalidOperationException("OpenIddict passed a token request without a principal.");
-        var user = principal.GetClaim(Claims.Subject) is { } subject ? await users.GetAsync(OidcIssuer.InstanceId, subject, cancellationToken) : null;
-        if (user is null || principal.GetClaim(OidcIssuer.EpochClaim) != user.AuthEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            || principal.GetClaim(OidcIssuer.StateClaim) != user.AuthStamp
-            || !long.TryParse(principal.GetClaim(Claims.AuthenticationTime), System.Globalization.CultureInfo.InvariantCulture, out var authenticatedAt)
-            || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
+        var user = principal.GetClaim(Claims.Subject) is { } subject
+            ? await mfa.PrimaryUserAsync(OidcIssuer.InstanceId, subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim), cancellationToken)
+            : null;
+        if (user is null || !long.TryParse(principal.GetClaim(Claims.AuthenticationTime), System.Globalization.CultureInfo.InvariantCulture, out var authenticatedAt))
         {
             return OidcResults.Forbid(Errors.InvalidGrant, "The user is no longer signed in.");
         }
@@ -253,7 +252,7 @@ public sealed class TokenEndpoint(Users users, TotpCredentials mfa, PlatformGran
 }
 
 /// <summary><c>GET /{slug}/oauth/userinfo</c>: claims about the user of a valid access token.</summary>
-public sealed class UserInfoEndpoint(Users users, TotpCredentials mfa) : EndpointWithoutRequest<IResult>
+public sealed class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -291,10 +290,8 @@ public sealed class UserInfoEndpoint(Users users, TotpCredentials mfa) : Endpoin
         }
 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal;
-        if (principal?.GetClaim(Claims.Subject) is not { } subject || await users.GetAsync(OidcIssuer.InstanceId, subject, cancellationToken) is not { } user
-            || principal.GetClaim(OidcIssuer.EpochClaim) != user.AuthEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            || principal.GetClaim(OidcIssuer.StateClaim) != user.AuthStamp
-            || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
+        if (principal?.GetClaim(Claims.Subject) is not { } subject
+            || await mfa.PrimaryUserAsync(OidcIssuer.InstanceId, subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim), cancellationToken) is not { } user)
         {
             return Results.Challenge(OidcResults.Error(Errors.InvalidToken, "The access token no longer identifies a user."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }

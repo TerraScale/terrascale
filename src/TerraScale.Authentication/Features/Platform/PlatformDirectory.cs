@@ -144,9 +144,17 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
     /// <summary>The caller's place in an organization; 404 when it has none, as for an unknown id.</summary>
     public async Task<OrganizationAccess> OrganizationAccessAsync(string userId, string organizationId, CancellationToken cancellationToken)
     {
-        if (!IsId(organizationId)
-            || await this.OrganizationAsync(organizationId, cancellationToken).ConfigureAwait(false) is not { } organization
-            || await this.MembershipAsync(organizationId, userId, cancellationToken).ConfigureAwait(false) is not { } membership
+        if (!IsId(organizationId))
+        {
+            throw NotFound();
+        }
+
+        // Both reads name their documents up front, so they share one storage round trip.
+        var organizationRead = this.OrganizationAsync(organizationId, cancellationToken);
+        var membershipRead = this.MembershipAsync(organizationId, userId, cancellationToken);
+        await Task.WhenAll(organizationRead, membershipRead).ConfigureAwait(false);
+        if (await organizationRead.ConfigureAwait(false) is not { } organization
+            || await membershipRead.ConfigureAwait(false) is not { } membership
             || membership.Value.Role is null && !await this.CollaboratesAsync(userId, organizationId, null, cancellationToken).ConfigureAwait(false))
         {
             throw NotFound();
@@ -410,16 +418,26 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
     /// <summary>The caller's effective role on a project; 404 when it has none, as for an unknown id.</summary>
     public async Task<ProjectAccess> ProjectAccessAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken)
     {
-        if (!IsId(organizationId) || !IsId(projectId)
-            || await this.OrganizationAsync(organizationId, cancellationToken).ConfigureAwait(false) is not { } organization
-            || await this.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) is not { } project
+        if (!IsId(organizationId) || !IsId(projectId))
+        {
+            throw NotFound();
+        }
+
+        // Every read names its document up front, so they share one storage round trip.
+        var organizationRead = this.OrganizationAsync(organizationId, cancellationToken);
+        var projectRead = this.ProjectAsync(projectId, cancellationToken);
+        var membershipRead = this.MembershipAsync(organizationId, userId, cancellationToken);
+        var grantRead = this.ProjectMemberAsync(projectId, userId, cancellationToken);
+        await Task.WhenAll(organizationRead, projectRead, membershipRead, grantRead).ConfigureAwait(false);
+        if (await organizationRead.ConfigureAwait(false) is not { } organization
+            || await projectRead.ConfigureAwait(false) is not { } project
             || project.Value.OrganizationId != organizationId)
         {
             throw NotFound();
         }
 
-        var membership = await this.MembershipAsync(organizationId, userId, cancellationToken).ConfigureAwait(false);
-        var grant = await this.ProjectMemberAsync(projectId, userId, cancellationToken).ConfigureAwait(false);
+        var membership = await membershipRead.ConfigureAwait(false);
+        var grant = await grantRead.ConfigureAwait(false);
         return membership?.Value.Role is null && grant is null ? throw NotFound() : new(membership, organization, project, grant);
     }
 

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -9,6 +10,7 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
+using TerraScale.DotNet;
 
 namespace TerraScale.Authentication.Features.Mfa;
 
@@ -32,10 +34,33 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
     public async Task<bool> AllowsPrimaryAuthenticationAsync(UserRecord caller, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
+        return await this.PrimaryUserAsync(caller.InstanceId, caller.Id, caller.AuthEpoch.ToString(CultureInfo.InvariantCulture), caller.AuthStamp, cancellationToken)
+            .ConfigureAwait(false) is not null;
+    }
+
+    /// <summary>
+    /// The user as TerraBase holds it now, when it still has the authentication epoch <paramref name="authEpoch"/> and
+    /// state <paramref name="authStamp"/> (a token's claims) and may authenticate with only its primary credential;
+    /// otherwise null. The user is read after its factor, never before or alongside it, so an activation or a sign-out
+    /// everywhere that lands during the factor read is seen. One user read replaces a caller's own read before this
+    /// check. Invalid or unavailable factor state fails closed with 503.
+    /// </summary>
+    public async Task<UserRecord?> PrimaryUserAsync(string instanceId, string userId, string? authEpoch, string? authStamp, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(instanceId);
+        ArgumentNullException.ThrowIfNull(userId);
+        if (authEpoch is null || !TerraScaleIds.IsValid(userId))
+        {
+            return null;
+        }
+
         try
         {
-            return (await this.ReadAsync(caller, cancellationToken).ConfigureAwait(false))?.Record.Enabled != true
-                && await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not null;
+            return (await this.ReadAsync(instanceId, userId, cancellationToken).ConfigureAwait(false))?.Record.Enabled != true
+                && await users.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is { User: var user }
+                && user.AuthEpoch.ToString(CultureInfo.InvariantCulture) == authEpoch && user.AuthStamp == authStamp
+                    ? user
+                    : null;
         }
         catch (Exception error) when (error is HttpRequestException or TimeoutException)
         {
@@ -168,9 +193,12 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
         await users.GetVersionedAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is { } current
         && current.User.AuthEpoch == caller.AuthEpoch && current.User.AuthStamp == caller.AuthStamp ? current : null;
 
-    private async Task<(TotpCredentialRecord Record, string Version)?> ReadAsync(UserRecord caller, CancellationToken cancellationToken)
+    private Task<(TotpCredentialRecord Record, string Version)?> ReadAsync(UserRecord caller, CancellationToken cancellationToken) =>
+        this.ReadAsync(caller.InstanceId, caller.Id, cancellationToken);
+
+    private async Task<(TotpCredentialRecord Record, string Version)?> ReadAsync(string instanceId, string userId, CancellationToken cancellationToken)
     {
-        var document = await store.GetAsync(AuthStore.MfaCollection, caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false);
+        var document = await store.GetAsync(AuthStore.MfaCollection, instanceId, userId, cancellationToken).ConfigureAwait(false);
         if (document is null)
         {
             return null;
@@ -179,7 +207,7 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
         try
         {
             var record = document.Document.Deserialize(MfaJson.Default.TotpCredentialRecord);
-            if (record is null || record.InstanceId != caller.InstanceId || record.UserId != caller.Id || record.EnrollmentEpoch < 0
+            if (record is null || record.InstanceId != instanceId || record.UserId != userId || record.EnrollmentEpoch < 0
                 || record.LastAcceptedStep < -1 || record.RecoveryHashes is null || record.RecoveryHashes.Count > RecoveryCount
                 || record.RecoveryHashes.Any(hash => hash is not { Length: 64 } || !hash.All(char.IsAsciiHexDigitLower))
                 || record.RecoveryHashes.Distinct(StringComparer.Ordinal).Count() != record.RecoveryHashes.Count
@@ -193,7 +221,7 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
             // Validate ciphertext even for recovery proofs: corrupt factor state never behaves as a disabled factor.
             if (record.SecretBox is not null)
             {
-                var secret = SecretBox.Open(options.MasterKey, record.SecretBox, Context(caller));
+                var secret = SecretBox.Open(options.MasterKey, record.SecretBox, Context(instanceId, userId));
                 try
                 {
                     if (secret.Length != 20)
@@ -291,7 +319,9 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
         }
     }
 
-    private static string Context(UserRecord user) => "totp:" + AuthStore.NaturalKeyId(user.InstanceId, AuthStore.MfaCollection, user.Id);
+    private static string Context(UserRecord user) => Context(user.InstanceId, user.Id);
+
+    private static string Context(string instanceId, string userId) => "totp:" + AuthStore.NaturalKeyId(instanceId, AuthStore.MfaCollection, userId);
 }
 
 /// <summary>A trusted caller's validated, expiring authorization transition, committed with the MFA change.</summary>
