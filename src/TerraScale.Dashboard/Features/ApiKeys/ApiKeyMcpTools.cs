@@ -3,7 +3,6 @@ using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Platform.Mcp;
-using static TerraScale.Dashboard.Platform.Mcp.McpScope;
 
 namespace TerraScale.Dashboard.Features.ApiKeys;
 
@@ -31,13 +30,11 @@ public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys
     public Task<ProjectApiKeySecret> CreateM2mClient(string name, string[] scopes, string databaseId = "", string? organizationId = null, string? projectId = null) =>
         CreateCredentialAsync(Scope(organizationId, projectId), "m2m", name, scopes, databaseId);
 
-    [McpServerTool(Name = "rotate_api_key", Title = "Rotate API key", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Replace an API key's secret. Requires an owner or admin role and a producer rotation contract.")]
-    public async Task<ProjectApiKeySecret> RotateApiKey(string keyId, string? organizationId = null, string? projectId = null)
+    [McpServerTool(Name = "rotate_api_key", Title = "Rotate API key", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Replace an API key's secret and return the new secret once; store it securely. The old secret keeps working for previousSecretTtlSeconds (0 to 86400, default 0 = stops immediately); another rotation is refused while that grace period lasts. Requires an owner or admin role.")]
+    public async Task<ProjectApiKeySecret> RotateApiKey(string keyId, int previousSecretTtlSeconds = 0, string? organizationId = null, string? projectId = null)
     {
-        var context = Scope(organizationId, projectId);
-        DemandManagement(context);
-        if (!(await keys.ListAsync(context, Cancellation)).Any(key => key.Id == keyId)) throw new AccountAccessException("Credential is unavailable.", 404);
-        throw new AccountAccessException("Credential rotation is unavailable in this dashboard view. Create a replacement key.", 503);
+        var result = await keys.RotateAsync(Scope(organizationId, projectId), keyId, previousSecretTtlSeconds, Cancellation);
+        return new(ApiKeyService.Metadata(result.Key), result.Secret);
     }
 
     [McpServerTool(Name = "revoke_api_key", Title = "Revoke API key", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Revoke a project API key to prevent new token issuance. Previously issued short-lived tokens remain valid until expiry.")]

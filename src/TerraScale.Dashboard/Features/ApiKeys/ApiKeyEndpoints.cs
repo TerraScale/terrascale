@@ -76,13 +76,21 @@ public static class ApiKeyEndpoints
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
-            if (!context.CanManage) return Results.StatusCode(403);
-            const string message = "Key rotation is unavailable in this view. Create a new key and revoke the old one instead. Already issued tokens remain valid until expiry.";
-            return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, message, status: 503) : Results.Problem(message, statusCode: 503);
+            try
+            {
+                var ttl = form["previousSecretTtl"].ToString();
+                var previousSecretTtl = 0;
+                if (ttl.Length > 0 && !int.TryParse(ttl, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out previousSecretTtl))
+                    throw new AccountAccessException("The old secret's grace period must be between 0 and 86400 seconds.", 422);
+                var credential = await keys.RotateAsync(context, form["keyId"].ToString(), previousSecretTtl, http.RequestAborted);
+                return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret);
+            }
+            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
         }).WithGroupName("integration").WithName("rotateDashboardCredential").WithTags("Credentials")
-            .WithSummary("Report that key rotation is unavailable in this view")
-            .Accepts<RevokeProjectCredentialRequest>("application/x-www-form-urlencoded")
-            .Produces(401).Produces(403).Produces(503, contentType: "text/html").ProducesProblem(503);
+            .WithSummary("Rotate a project key and reveal its new secret once")
+            .WithDescription("Replaces the key's secret at ts-auth with the original user session; the key ID, name, scopes and database restriction stay the same. previousSecretTtl (0 to 86400 seconds, default 0) keeps the old secret working for that grace period; 0 stops it immediately. While a grace period is active another rotation answers 409. A browser form post re-renders the API keys page with the new secret instead of JSON. Secrets are never persisted by the dashboard.")
+            .Accepts<RotateProjectCredentialRequest>("application/x-www-form-urlencoded")
+            .Produces<ProjectApiKeySecret>().Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(409).ProducesProblem(422).ProducesProblem(503);
         return endpoints;
     }
 

@@ -18,10 +18,12 @@ public sealed record ProjectApiKeySecret(ProjectApiKeyMetadata ApiKey, string Se
 public sealed record CreateProjectCredentialRequest([property: JsonPropertyName("_csrf")] string Csrf,
     string Name, string? DatabaseId, string[]? Scope, string? Scopes);
 public sealed record RevokeProjectCredentialRequest([property: JsonPropertyName("_csrf")] string Csrf, string? KeyId);
+public sealed record RotateProjectCredentialRequest([property: JsonPropertyName("_csrf")] string Csrf, string KeyId, int? PreviousSecretTtl = null);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(ProjectCredentialMetadata[]))]
 [JsonSerializable(typeof(ProjectApiKeySecret))]
 [JsonSerializable(typeof(CreateProjectCredentialRequest))]
 [JsonSerializable(typeof(RevokeProjectCredentialRequest))]
+[JsonSerializable(typeof(RotateProjectCredentialRequest))]
 internal sealed partial class ApiKeyContractJson : JsonSerializerContext;

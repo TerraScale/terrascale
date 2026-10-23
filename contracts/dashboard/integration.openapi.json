@@ -509,24 +509,72 @@
         "tags": [
           "Credentials"
         ],
-        "summary": "Report that key rotation is unavailable in this view",
+        "summary": "Rotate a project key and reveal its new secret once",
+        "description": "Replaces the key's secret at ts-auth with the original user session; the key ID, name, scopes and database restriction stay the same. previousSecretTtl (0 to 86400 seconds, default 0) keeps the old secret working for that grace period; 0 stops it immediately. While a grace period is active another rotation answers 409. A browser form post re-renders the API keys page with the new secret instead of JSON. Secrets are never persisted by the dashboard.",
         "operationId": "rotateDashboardCredential",
         "requestBody": {
           "content": {
             "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/RevokeProjectCredentialRequest"
+                "$ref": "#/components/schemas/RotateProjectCredentialRequest"
               }
             }
           },
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectApiKeySecret"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized"
           },
           "403": {
-            "description": "Forbidden"
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           },
           "503": {
             "description": "Service Unavailable",
@@ -956,6 +1004,30 @@
               "null",
               "string"
             ]
+          }
+        }
+      },
+      "RotateProjectCredentialRequest": {
+        "required": [
+          "_csrf",
+          "keyId"
+        ],
+        "type": "object",
+        "properties": {
+          "_csrf": {
+            "type": "string"
+          },
+          "keyId": {
+            "type": "string"
+          },
+          "previousSecretTtl": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
           }
         }
       },
