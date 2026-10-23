@@ -235,12 +235,11 @@ public sealed class ShapeMirrorTests
     }
 
     [Test]
-    public async Task A_presigned_url_serves_the_ciphertext_and_refuses_tampering_and_expiry()
+    [Arguments("2026-10-07T12:00:00Z")]
+    [Arguments("2026-10-07T12:09:59.999Z")]
+    public async Task A_presigned_url_serves_the_ciphertext_and_refuses_tampering_and_expiry(string startAt)
     {
-        await using var harness = await Harness.StartAsync();
-        var wallTime = DateTimeOffset.UtcNow;
-        await Assert.That(harness.Time.GetUtcNow()).IsGreaterThanOrEqualTo(wallTime)
-            .Because("manifest expiry must follow the AWS signer's wall clock after server startup");
+        await using var harness = await Harness.StartAsync(new FakeTimeProvider(DateTimeOffset.Parse(startAt, CultureInfo.InvariantCulture)));
         var start = await harness.Db.HeadAsync();
         _ = await harness.CommitLargeAsync();
         var chunk = await harness.SealAsync(start);
@@ -279,6 +278,8 @@ public sealed class ShapeMirrorTests
         // The signed window ends no later than the manifest's expiry.
         var signedAt = DateTimeOffset.ParseExact(Query(url, "X-Amz-Date")!, "yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
         var lifetime = long.Parse(Query(url, "X-Amz-Expires")!, CultureInfo.InvariantCulture);
+        await Assert.That(signedAt).IsEqualTo(DateTimeOffset.FromUnixTimeSeconds(harness.Time.GetUtcNow().ToUnixTimeSeconds()));
+        await Assert.That(lifetime).IsGreaterThan(0).And.IsLessThanOrEqualTo(ShapeCrypto.EpochSeconds);
         await Assert.That(signedAt.AddSeconds(lifetime)).IsLessThanOrEqualTo(expiresAt);
         await Assert.That(tenantIds.Any(id => url.Contains(id, StringComparison.Ordinal))).IsFalse().Because("the presigned path is shape-scoped, not tenant-scoped");
 
@@ -618,7 +619,7 @@ public sealed class ShapeMirrorTests
 
         public static async Task<Harness> StartAsync(FakeTimeProvider? time = null)
         {
-            time ??= new MirrorClock();
+            time ??= new FakeTimeProvider(DateTimeOffset.UtcNow);
             var s3 = new FakeS3 { Time = time };
             var puts = new ConcurrentDictionary<string, int>(StringComparer.Ordinal);
             var mirrored = new SemaphoreSlim(0);
@@ -747,19 +748,6 @@ public sealed class ShapeMirrorTests
             return new ShapeSealDefinition(Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)),
                 "h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), Collection, collection.Id, RandomNumberGenerator.GetBytes(16));
         }
-    }
-
-    // AWS presigning uses wall time; keep manual advances without freezing expiry during server startup.
-    private sealed class MirrorClock : FakeTimeProvider
-    {
-        private readonly DateTimeOffset _initialTime;
-
-        public MirrorClock() : base(DateTimeOffset.UtcNow)
-        {
-            _initialTime = base.GetUtcNow();
-        }
-
-        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + (base.GetUtcNow() - _initialTime);
     }
 
     /// <summary>The production shape metrics, with the mirror's completion reported to the test.</summary>
