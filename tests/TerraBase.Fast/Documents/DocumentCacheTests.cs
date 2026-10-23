@@ -402,6 +402,38 @@ public sealed class DocumentCacheTests
         await Assert.That(afterDelete.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
+    // The entry bound counts each entry as 4 KiB of the byte bound: a hot set of more than 4,096 small documents stays cached.
+    [Test]
+    public async Task A_hot_set_of_small_documents_larger_than_4096_entries_stays_cached()
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await using var management = await ManagementApi.StartAsync(settings =>
+            settings["memory-budget"] = (256L * 1024 * 1024).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var tenant = await CreateTenantAsync(management, "hot", enterprise: true, cancellationToken: deadline.Token);
+        var database = await tenant.ContextAsync(management.Server, "hot", deadline.Token);
+        var store = (await management.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
+        var cache = management.Server.Services.GetRequiredService<DocumentCache>();
+        var keys = Enumerable.Range(0, 6000).Select(key => new DocumentKey(database, "small", StorageFixture.Id($"hot{key}"))).ToList();
+        var reads = 0;
+        async Task ReadAllAsync()
+        {
+            foreach (var key in keys)
+            {
+                _ = await cache.GetAsync(key, store.Incarnation, () =>
+                {
+                    reads++;
+                    return ValueTask.FromResult<StoredDocument?>(new StoredDocument(key.Id, 1, Encoding.UTF8.GetBytes("""{"name":"first"}"""), Guid.Empty));
+                });
+            }
+        }
+
+        await ReadAllAsync();
+        await Assert.That(reads).IsEqualTo(keys.Count);
+        // Nothing wrote since: every document comes back from the cache, none from storage.
+        await ReadAllAsync();
+        await Assert.That(reads).IsEqualTo(keys.Count);
+    }
+
     [Test]
     public async Task List_pages_are_cached_until_the_collection_changes()
     {
