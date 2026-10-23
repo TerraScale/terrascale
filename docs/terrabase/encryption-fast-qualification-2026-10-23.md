@@ -139,6 +139,36 @@ One Release build passed with zero warnings/errors. The subsequent QoS conflict
 resolution preserves main's request-log drain and request-scoped read counting;
 that union passed static review and awaits CI on the rebased head.
 
+## Split shutdown proof and control cleanup
+
+On mariogk-dev, literal `e62b9d8e57396b6b679388d894c8190d247eb905`
+passed five complete seven-case `BackupBacklogRecoveryTests` repetitions:
+35 passed, zero failures/skips. Runner exits were all 0; wall durations were
+67.123, 44.654, 45.978, 35.274 and 39.068 seconds. The bounded raw-reader
+abort regression also passed once (1/1). Both Release builds passed, with
+SDK `11.0.100-rc.1.26425.128` and the owned clean ts-dotnet sibling
+`bcd20603f11f3aa54dc54cec6e410b4fe9e24151`. Normal native downloads and
+actual process mappings matched runtime-AEGIS x64 SHA-256
+`7464a29f3fc9bce603a1e0881720b309a276455a778937d6a9ffc2ed680bd76d`.
+
+The one-read shutdown control failed at the required delivered-read assertion
+(expected two, received one). The deadline control exited nonzero, but host
+teardown rethrew cleanup cancellation and masked its primary eight-second
+watchdog exception. Its exact failure criterion remains unproved; the
+Abort-to-Dispose control was not run. Overall qualification therefore exited
+1 and remains incomplete despite the 36 clean passes. A fixture-only correction
+preserves the primary failure and attaches host-disposal failure as secondary
+evidence; successful test bodies still propagate disposal failures. Budgets,
+assertions, workload and parallelism remain unchanged. This correction has
+not yet been runtime qualified, nor does the earlier proof validate subsequent
+rebases or the regional authentication fixture correction.
+
+Original reports, commands, native maps, control diffs and root-cause analysis
+are retained on delta and mariogk-dev under
+`~/.t3/test-artifacts/database-encryption/quiet-e62-dev-20261023T211919Z/`.
+All 167 manifested files were independently rehashed on both hosts. Manifest
+SHA-256: `5da11fba6e3a1eeedee9c62be78e08c94c9db8be896fae5552a6ce3bd7285e13`.
+
 ## Retained evidence
 
 Raw logs are outside Git under

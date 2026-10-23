@@ -123,85 +123,106 @@ public sealed class BackupBacklogRecoveryTests
     [Test]
     public async Task Shutdown_deadline_keeps_the_acknowledged_segment_restorable_and_cancels_the_next_upload(CancellationToken cancellationToken)
     {
-        await using var host = await BackupShippingHost.StartAsync();
-        await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
-        await host.ShipAsync(TimeSpan.Zero, cancellationToken);
-        var generation = host.Status().Generation!;
-        var prefix = $"{host.File}/wal/{generation}/";
-        var text = new Faker().Lorem.Sentence();
-        await host.PutAsync("people", "acknowledged", text, cancellationToken);
-        // Retain a genuine marked segment for Stop to retry before reading the next write.
-        host.S3.FailPut = key => key.StartsWith(prefix, StringComparison.Ordinal);
-        await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
-        await Assert.That(host.Status().LastError).IsNotNull();
-        await Assert.That(host.Segments(generation)).IsEmpty();
-        host.S3.FailPut = _ => false;
-        await host.PutAsync("people", "unacknowledged", new Faker().Lorem.Sentence(), cancellationToken);
-        host.Time.Advance(TimeSpan.FromSeconds(2));
-        var now = host.Time.GetUtcNow();
-        var backup = host.Api.Server.Services.GetRequiredService<IContinuousBackup>();
-        var blocked = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        string? acknowledged = null;
-        byte[]? stored = null;
-        Task? stop = null;
-        host.S3.BeforePut = async (key, token) =>
-        {
-            if (!key.StartsWith(prefix, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            if (acknowledged is null)
-            {
-                acknowledged = key;
-                return;
-            }
-
-            stored = [.. host.S3.Objects[acknowledged]];
-            blocked.TrySetResult(key);
-            try
-            {
-                await release.Task.WaitAsync(token);
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-                cancelled.TrySetResult();
-                throw;
-            }
-        };
+        var host = await BackupShippingHost.StartAsync();
+        Exception? failure = null;
         try
         {
-            stop = ((IHostedService)backup).StopAsync(shutdown.Token);
-            // This watchdog is not the shipping budget: only production's real four-second timer can release the upload.
-            await stop.WaitAsync(TimeSpan.FromSeconds(8), cancellationToken);
-            await Assert.That(blocked.Task.IsCompletedSuccessfully).IsTrue();
-            await Assert.That(cancelled.Task.IsCompletedSuccessfully).IsTrue();
-            await Assert.That(release.Task.IsCompleted).IsFalse();
-            await Assert.That(shutdown.IsCancellationRequested).IsFalse();
-            await Assert.That(host.Time.GetUtcNow()).IsEqualTo(now);
-            await Assert.That(backup.Status.Files).IsEmpty();
-            await Assert.That(Directory.EnumerateFiles(Path.Combine(host.Api.Server.DataDirectory, ".backup"))).IsEmpty();
-            await Assert.That(host.S3.Objects.ContainsKey(await blocked.Task)).IsFalse();
-            var segment = host.Segments(generation).Single();
-            await Assert.That(segment.Key).IsEqualTo(acknowledged);
-            await Assert.That(host.S3.Objects[segment.Key].AsSpan().SequenceEqual(stored)).IsTrue();
-            await host.RestoreAsync(segment.At, "deadline-acknowledged", cancellationToken);
-            await Assert.That(await host.ReadAsync("deadline-acknowledged", "people", "acknowledged", cancellationToken)).IsEqualTo(text);
-            await Assert.That(await host.ReadAsync("deadline-acknowledged", "people", "unacknowledged", cancellationToken)).IsNull();
+            await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            await host.ShipAsync(TimeSpan.Zero, cancellationToken);
+            var generation = host.Status().Generation!;
+            var prefix = $"{host.File}/wal/{generation}/";
+            var text = new Faker().Lorem.Sentence();
+            await host.PutAsync("people", "acknowledged", text, cancellationToken);
+            // Retain a genuine marked segment for Stop to retry before reading the next write.
+            host.S3.FailPut = key => key.StartsWith(prefix, StringComparison.Ordinal);
+            await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+            await Assert.That(host.Status().LastError).IsNotNull();
+            await Assert.That(host.Segments(generation)).IsEmpty();
+            host.S3.FailPut = _ => false;
+            await host.PutAsync("people", "unacknowledged", new Faker().Lorem.Sentence(), cancellationToken);
+            host.Time.Advance(TimeSpan.FromSeconds(2));
+            var now = host.Time.GetUtcNow();
+            var backup = host.Api.Server.Services.GetRequiredService<IContinuousBackup>();
+            var blocked = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            string? acknowledged = null;
+            byte[]? stored = null;
+            Task? stop = null;
+            host.S3.BeforePut = async (key, token) =>
+            {
+                if (!key.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                if (acknowledged is null)
+                {
+                    acknowledged = key;
+                    return;
+                }
+
+                stored = [.. host.S3.Objects[acknowledged]];
+                blocked.TrySetResult(key);
+                try
+                {
+                    await release.Task.WaitAsync(token);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    cancelled.TrySetResult();
+                    throw;
+                }
+            };
+            try
+            {
+                stop = ((IHostedService)backup).StopAsync(shutdown.Token);
+                // This watchdog is not the shipping budget: only production's real four-second timer can release the upload.
+                await stop.WaitAsync(TimeSpan.FromSeconds(8), cancellationToken);
+                await Assert.That(blocked.Task.IsCompletedSuccessfully).IsTrue();
+                await Assert.That(cancelled.Task.IsCompletedSuccessfully).IsTrue();
+                await Assert.That(release.Task.IsCompleted).IsFalse();
+                await Assert.That(shutdown.IsCancellationRequested).IsFalse();
+                await Assert.That(host.Time.GetUtcNow()).IsEqualTo(now);
+                await Assert.That(backup.Status.Files).IsEmpty();
+                await Assert.That(Directory.EnumerateFiles(Path.Combine(host.Api.Server.DataDirectory, ".backup"))).IsEmpty();
+                await Assert.That(host.S3.Objects.ContainsKey(await blocked.Task)).IsFalse();
+                var segment = host.Segments(generation).Single();
+                await Assert.That(segment.Key).IsEqualTo(acknowledged);
+                await Assert.That(host.S3.Objects[segment.Key].AsSpan().SequenceEqual(stored)).IsTrue();
+                await host.RestoreAsync(segment.At, "deadline-acknowledged", cancellationToken);
+                await Assert.That(await host.ReadAsync("deadline-acknowledged", "people", "acknowledged", cancellationToken)).IsEqualTo(text);
+                await Assert.That(await host.ReadAsync("deadline-acknowledged", "people", "unacknowledged", cancellationToken)).IsNull();
+            }
+            finally
+            {
+                await shutdown.CancelAsync();
+                release.TrySetResult();
+                if (stop is not null)
+                {
+                    await stop.WaitAsync(TimeSpan.FromSeconds(8), CancellationToken.None).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                }
+
+                host.S3.BeforePut = null;
+            }
+        }
+        catch (Exception error)
+        {
+            failure = error;
+            throw;
         }
         finally
         {
-            await shutdown.CancelAsync();
-            release.TrySetResult();
-            if (stop is not null)
+            try
             {
-                await stop.WaitAsync(TimeSpan.FromSeconds(8), CancellationToken.None).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                await host.DisposeAsync();
             }
-
-            host.S3.BeforePut = null;
+            catch (Exception error) when (failure is not null)
+            {
+                // Host shutdown can rethrow Stop's cleanup cancellation; retain the original watchdog/assertion failure.
+                failure.Data["FixtureCleanupFailure"] = error;
+            }
         }
     }
 
