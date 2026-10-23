@@ -141,6 +141,72 @@ internal static class SqlRead
             parameters, MaxRows, MaxBytes);
     }
 
+    /// <summary>
+    /// Declared types of the result columns that name a table column directly (<c>*</c>, <c>t.*</c>, <c>c</c>, <c>t.c</c>,
+    /// aliased or not), as SQLite reports them; null for every other column, or for all when the shape is not a plain SELECT.
+    /// </summary>
+    public static string?[] DeclTypes(ReadSql read, IReadOnlyDictionary<string, SqlTableDefinition> tables, int count)
+    {
+        var types = new string?[count];
+        if (read.Query.Body is not SetExpression.SelectExpression { Select: { From: { } from } select })
+        {
+            return types;
+        }
+
+        // Each FROM table by its alias (or name), in order; derived tables and CTEs have no declared types.
+        var sources = new List<(string Alias, SqlTableDefinition? Table)>();
+        foreach (var factor in from.SelectMany(join => (join.Joins ?? []).Select(item => item.Relation).Prepend(join.Relation)))
+        {
+            var table = factor is TableFactor.Table { Name.Values: [var name] } ? name.Value.ToLowerInvariant() : null;
+            var alias = factor?.Alias?.Name.Value.ToLowerInvariant() ?? table;
+            sources.Add((alias ?? "", table is not null && read.Tables.Contains(table) ? tables[table] : null));
+        }
+
+        var result = new List<string?>();
+        foreach (var item in select.Projection)
+        {
+            switch (item)
+            {
+                case SelectItem.Wildcard:
+                    result.AddRange(sources.SelectMany(source => source.Table?.Columns.Select(Type) ?? [null]));
+                    break;
+                case SelectItem.QualifiedWildcard { Name.Values: [var qualifier] }:
+                    result.AddRange(sources.Where(source => string.Equals(source.Alias, qualifier.Value, StringComparison.OrdinalIgnoreCase)).SelectMany(source => source.Table?.Columns.Select(Type) ?? [null]));
+                    break;
+                case SelectItem.UnnamedExpression { Expression: var expression }:
+                    result.Add(Column(expression));
+                    break;
+                case SelectItem.ExpressionWithAlias { Expression: var expression }:
+                    result.Add(Column(expression));
+                    break;
+                default:
+                    return types;
+            }
+        }
+
+        // A source whose columns are unknown (a CTE or subquery under *) makes positions unreliable.
+        return result.Count == count ? [.. result] : types;
+
+        string? Column(Expression expression)
+        {
+            var (qualifier, name) = expression switch
+            {
+                Expression.Identifier { Ident: var ident } => (null, ident.Value),
+                Expression.CompoundIdentifier { Idents: [var table, var ident] } => (table.Value.ToLowerInvariant(), ident.Value),
+                _ => ((string?)null, (string?)null),
+            };
+            var matches = sources.Where(source => qualifier is null || source.Alias == qualifier)
+                .Select(source => source.Table?.Columns.FirstOrDefault(column => column.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                .Where(column => column is not null).ToList();
+            return name is not null && matches.Count == 1 ? Type(matches[0]) : null;
+        }
+
+        static string? Type(SqlColumnDefinition? column)
+        {
+            return column is { Type.Length: > 0 } ? column.Type : null;
+        }
+    }
+
     private sealed class Validator : Visitor
     {
         public List<string> Tables { get; } = [];

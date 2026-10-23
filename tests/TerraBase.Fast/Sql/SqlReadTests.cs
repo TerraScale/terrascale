@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using TerraBase.Fast.Documents;
+using TerraBase.Features.Sql;
 
 namespace TerraBase.Fast.Sql;
 
@@ -61,6 +62,28 @@ public sealed class SqlReadTests
         {
             await Assert.That(await RowsAsync(api, statement)).IsEqualTo(rows).Because(JsonSerializer.Serialize(statement));
         }
+    }
+
+    [Test]
+    public async Task Columns_report_names_and_declared_types_and_describe_lists_parameters_in_sqlite_order()
+    {
+        await using var api = await SeedAsync();
+        var all = (await SqlApi.OkAsync(api, "SELECT * FROM people WHERE id = 1"))[0];
+        var mixed = (await SqlApi.OkAsync(api, "SELECT p.name AS who, count(*) AS n, t.* FROM people p JOIN teams t ON t.code = p.team GROUP BY p.name ORDER BY 1 LIMIT 1"))[0];
+        await using var session = SqlHarness.Open(api, canWrite: false);
+        var described = await session.DescribeAsync(SqlHarness.Command("SELECT name AS n FROM people WHERE id = :id AND age > ? AND name = ?5 OR :id IS NULL"), CancellationToken.None);
+        var ddl = await session.DescribeAsync(SqlHarness.Command("CREATE TABLE x (a TEXT)"), CancellationToken.None);
+
+        await Assert.That(all.GetProperty("columns").GetRawText()).IsEqualTo(
+            """[{"name":"id","decltype":"INTEGER"},{"name":"name","decltype":"TEXT"},{"name":"team","decltype":"TEXT"},{"name":"age","decltype":"INTEGER"},{"name":"score","decltype":"REAL"}]""");
+        await Assert.That(all.GetProperty("rows").GetRawText()).IsEqualTo("""[[1,"ann","a",31,1.5]]""");
+        await Assert.That(mixed.GetProperty("columns").GetRawText()).IsEqualTo(
+            """[{"name":"who","decltype":"TEXT"},{"name":"n","decltype":null},{"name":"code","decltype":"TEXT"},{"name":"title","decltype":"TEXT"}]""");
+        var description = described is SqlDescription value ? value : throw new InvalidOperationException("describe failed");
+        await Assert.That(description.Params).IsEquivalentTo([":id", null, null, null, "?5"]);
+        await Assert.That(description.Columns.Select(column => column.Name)).IsEquivalentTo(["n"]);
+        await Assert.That(description.IsReadOnly).IsTrue();
+        await Assert.That(ddl is SqlDescription { Columns.Count: 0, IsReadOnly: false }).IsTrue();
     }
 
     [Test]

@@ -31,6 +31,13 @@ internal static class SqlHarness
         }
     }
 
+    /// <summary>A session of database <c>db</c>.</summary>
+    public static ISqlSession Open(DocumentApi api, bool canWrite) =>
+        api.Server.Services.GetRequiredService<ISqlService>().Open(api.TenantOfAsync().GetAwaiter().GetResult(), canWrite);
+
+    /// <summary>A statement without arguments.</summary>
+    public static SqlCommand Command(string sql) => new(sql, [], new Dictionary<string, SqlValue>());
+
     /// <summary>Runs one statement with write access.</summary>
     public static async Task<SqlOutcome> RunAsync(DocumentApi api, string sql) => (await RunAsync(api, canWrite: true, sql))[0];
 

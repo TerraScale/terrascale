@@ -34,14 +34,21 @@ internal sealed class SqlSession(IStorageEngine engine, TimeProvider time, Tenan
         };
     }
 
-    public ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken)
+    public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return ValueTask.FromResult<SqlDescribeOutcome>(SqlParse.Parse(command.Sql) switch
+        return SqlParse.Parse(command.Sql) switch
         {
             SqlError error => error,
+            // Columns come from the statement run with no rows: names and declared types exactly as execution reports them.
+            ReadSql read => await RunAsync(read, command with { Args = [], Named = new Dictionary<string, SqlValue>() }, cancellationToken, describe: true)
+                .ConfigureAwait(false) switch
+            {
+                SqlResult result => new SqlDescription(read.Params, result.Columns, IsExplain: false, IsReadOnly: true),
+                SqlError error => error,
+            },
             ParsedSql statement => new SqlDescription(statement.Params, [], IsExplain: false, IsReadOnly: !statement.IsWrite),
-        });
+        };
     }
 
     public ValueTask EndRequestAsync() => ValueTask.CompletedTask;
@@ -139,7 +146,8 @@ internal sealed class SqlSession(IStorageEngine engine, TimeProvider time, Tenan
             rows.Add(values);
         }
 
-        return new SqlResult([.. result.Columns.Select(name => new SqlColumn(name, null))], rows, 0, null);
+        var types = SqlRead.DeclTypes(read, tables, result.Columns.Count);
+        return new SqlResult([.. result.Columns.Select((name, i) => new SqlColumn(name, types[i]))], rows, 0, null);
     }
 
     /// <summary>
