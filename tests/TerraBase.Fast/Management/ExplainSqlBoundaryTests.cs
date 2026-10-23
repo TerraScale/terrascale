@@ -152,7 +152,7 @@ public sealed class ExplainSqlBoundaryTests
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
         var budget = api.Server.Services.GetRequiredService<IMemoryBudget>();
-        var reserved = ReservedBytes(api);
+        var reserved = await QuietBytesAsync(api);
         var mark = tracker!.Mark();
         using (var held = budget.TryReserve(MemoryLane.Foreground, Budget - reserved - 1024 * 1024 + 1))
         {
@@ -160,7 +160,7 @@ public sealed class ExplainSqlBoundaryTests
             await Assert.That(headers[0]).StartsWith("HTTP/1.1 503 ");
         }
 
-        var afterRefusal = ReservedBytes(api);
+        var afterRefusal = await SettledBytesAsync(api, reserved);
         var refusalLive = tracker.LiveSince(mark);
         string framing;
         using (var response = await client.PostAsJsonAsync(Path(database), new { sql = Sql }))
@@ -169,7 +169,7 @@ public sealed class ExplainSqlBoundaryTests
             await response.Content.ReadAsByteArrayAsync();
         }
 
-        var after = ReservedBytes(api);
+        var after = await SettledBytesAsync(api, reserved);
         var live = tracker.LiveSince(mark);
         if (Environment.GetEnvironmentVariable("DIAG_ALL") == "1" || after != reserved || afterRefusal != reserved)
         {
@@ -676,7 +676,38 @@ public sealed class ExplainSqlBoundaryTests
     }
 
     private static async Task AssertMemoryReleasedAsync(ManagementApi api, long baseline) =>
-        await Assert.That(ReservedBytes(api)).IsEqualTo(baseline);
+        await Assert.That(await SettledBytesAsync(api, baseline)).IsEqualTo(baseline);
+
+    // The server's background services (usage sampling and flushes, state reads) reserve briefly too: wait up to 10 s for
+    // the reserved bytes to come back to the baseline. A request that keeps its reservation never does.
+    private static async Task<long> SettledBytesAsync(ManagementApi api, long baseline)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        var reserved = ReservedBytes(api);
+        while (reserved != baseline && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+            reserved = ReservedBytes(api);
+        }
+
+        return reserved;
+    }
+
+    // A baseline taken while no background reservation comes or goes: the same value four reads in a row, 25 ms apart.
+    private static async Task<long> QuietBytesAsync(ManagementApi api)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var reserved = ReservedBytes(api);
+        for (var same = 1; same < 4 && DateTime.UtcNow < deadline;)
+        {
+            await Task.Delay(25);
+            var next = ReservedBytes(api);
+            same = next == reserved ? same + 1 : 1;
+            reserved = next;
+        }
+
+        return reserved;
+    }
 
     // Everything the server sent before it closed the connection; Kestrel resets one whose request body it never read.
     private static async Task<string> ReadUntilClosedAsync(Stream stream, CancellationToken cancellationToken)
