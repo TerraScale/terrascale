@@ -1,0 +1,162 @@
+---
+title: Realtime changes
+---
+
+<!-- i18n:fallback:ja -->
+> **翻訳レビュー待ち。** このページはまだ日本語の人力レビューがなく、英語の原文を表示しています。
+
+<div lang="en" dir="ltr">
+
+# Realtime changes
+
+TerraScale offers two read paths for live data. The changes feed streams every committed change in a database over Server-Sent Events (SSE). A shape syncs one collection, optionally filtered, as snapshot pages followed by long-polled changes. Both need a token with the `documents:read` scope.
+
+## Stream the changes feed
+
+```bash
+# TERRASCALE_ACCESS_TOKEN comes from your secret manager, never a command-line argument.
+D="https://api.terrascale.tech/v1/projects/$PROJECT/databases/$DATABASE"
+headers() { printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN"; }
+curl -N -sS -H @<(headers) -H 'Accept: text/event-stream' "$D/changes?cursor=now&collections=posts"
+```
+
+Query parameters:
+
+- `cursor`: a cursor from a previous event, or `now` to start at the current head. Without it, the stream starts at the oldest retained change.
+- `collections`: comma-separated collection names, at most 64. A cursor is only valid with the same filter.
+
+Any other query parameter returns `400`.
+
+## Event format
+
+The stream sends three event types:
+
+```text
+event: cursor
+id: <opaque cursor>
+data: {"cursor":"<opaque cursor>"}
+
+event: change
+id: <opaque cursor>
+data: {"collection":"posts","id":"01JB7Q3V0Z8K4M2N6P9R5T1W6A","op":"upsert","version":"1729587600000123","origin":"3f9a0c2d4b1e8a77","document":{"title":"Hello"}}
+```
+
+- `cursor` is sent when the stream starts and every 15 seconds. It is also the keepalive.
+- `change` carries `collection`, `id`, `op` (`upsert` or `delete`), `version` (a decimal string), `origin` (16 hex digits) and `document`.
+- `document` is the document's current value, or `null` when it no longer exists. Several changes to one document can show the same current value.
+- `error` is sent once before the server ends a stream it already started. Its data is the usual error body, such as `{"error":{"code":"cursor_expired","message":"..."}}`.
+
+Every `id` is an opaque cursor. Store the latest one and do not parse it. When several events belong to one commit, only the last one carries an `id`.
+
+Delivery is at least once. Deduplicate by `(origin, version, collection, id)`, or apply changes idempotently: store `document` under `id`, and remove the document when it is `null`. Changes from one origin arrive in commit order. Changes from different origins can interleave.
+
+Collection and index changes are not in the feed. Neither are the documents of a dropped collection.
+
+## Resume with Last-Event-ID
+
+Reconnect with the latest event id in the `Last-Event-ID` header. It takes precedence over the `cursor` query parameter. Keep the same `collections` filter.
+
+```bash
+curl -N -sS -H @<(headers) -H 'Accept: text/event-stream' \
+  -H "Last-Event-ID: $LAST_EVENT_ID" "$D/changes?collections=posts"
+```
+
+A stream ends after 30 minutes, or when the access token expires. Reconnect with a fresh token and `Last-Event-ID`.
+
+## Errors and retention
+
+| Status | Code | What to do |
+| --- | --- | --- |
+| `400` | `invalid_cursor` | Send exactly one `Last-Event-ID` header. |
+| `410` | `cursor_expired` | Re-read your data, then start again with `cursor=now`. |
+| `429` | `changes_busy` | Wait for `Retry-After` (1 second), then reconnect with backoff. |
+
+The feed keeps changes for 7 days. A cursor older than 7 days, or one that cannot be decoded, returns `410 cursor_expired`. The same code can arrive as an `error` event during a stream. A database allows at most 32 open streams per server, so close streams you no longer read.
+
+## Follow the feed in JavaScript
+
+The SDK has no changes-feed helper. This plain `fetch` loop runs in Node.js 24 or newer and in browsers. A browser `EventSource` cannot send an `Authorization` header, so use `fetch`.
+
+```js
+const base = `https://api.terrascale.tech/v1/projects/${project}/databases/${database}`
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function followChanges({ getToken, onChange, onReset, signal }) {
+  let lastEventId = null
+  let delay = 1000
+  while (!signal.aborted) {
+    const headers = { Authorization: `Bearer ${await getToken()}`, Accept: 'text/event-stream' }
+    if (lastEventId) headers['Last-Event-ID'] = lastEventId
+    let expired = false
+    try {
+      const res = await fetch(`${base}/changes?cursor=now&collections=posts`, { headers, signal })
+      if (res.status < 500 && ![200, 410, 429].includes(res.status)) {
+        throw Object.assign(new Error(`changes feed: HTTP ${res.status}`), { fatal: true }) // Do not retry.
+      }
+      if (res.status === 410) expired = true
+      else if (!res.ok) await sleep(Number(res.headers.get('Retry-After') ?? 0) * 1000)
+      else {
+        delay = 1000
+        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
+        let buffer = ''
+        for (let chunk; !(chunk = await reader.read()).done;) {
+          buffer += chunk.value
+          for (let end; (end = buffer.indexOf('\n\n')) >= 0; buffer = buffer.slice(end + 2)) {
+            const event = {}
+            for (const line of buffer.slice(0, end).split('\n')) {
+              const colon = line.indexOf(': ')
+              event[line.slice(0, colon)] = line.slice(colon + 2)
+            }
+            const data = JSON.parse(event.data)
+            if (event.event === 'change') await onChange(data)
+            if (event.event === 'error' && data.error.code === 'cursor_expired') expired = true
+            if (event.id) lastEventId = event.id
+          }
+        }
+      }
+    } catch (error) {
+      if (signal.aborted || error.fatal) throw error
+    }
+    if (expired) {
+      lastEventId = null // The next request starts again at cursor=now.
+      await onReset()
+      continue
+    }
+    await sleep(delay)
+    delay = Math.min(delay * 2, 30_000)
+  }
+}
+```
+
+`onReset` re-reads your data with a [query](/ja/guides/queries). `getToken` returns a current access token, so a reconnect after expiry uses a fresh one.
+
+## Sync a filtered shape
+
+A shape is a collection plus an optional `where` filter in the [query filter grammar](/ja/guides/queries). Start with `offset=-1`. The server answers `307` to the first snapshot page and sets the shape's handle.
+
+```bash
+S="$D/collections/posts/shape"
+curl -sS -L -H @<(headers) -G "$S" \
+  --data-urlencode 'where={"eq":["/status","active"]}' --data-urlencode 'offset=-1'
+```
+
+```json
+{"shape_id":"a07ef7c2873b7b4c4fcbb88c9e682ca5","handle":"h1-5c1e0a9b7d2f4e36","offset":"2","next_offset":"4","covered_offset":"4","values_at":"4","up_to_date":false,"cursor_resume":"<opaque>","changes":[{"offset":"4","ops":[{"op":"upsert","id":"01JB7Q3V0Z8K4M2N6P9R5T1W6A","version":"<opaque>","document":{"status":"active"}},{"op":"delete","id":"01JB7Q3V0Z8K4M2N6P9R5T1W6B"}]}]}
+```
+
+Then repeat with the same `where`, `handle=<handle>` and `offset=<next_offset>`. Offsets move from snapshot pages (`snap.<S>.<P>`) to decimal commit boundaries. A `delete` op means the document was deleted or no longer matches the filter. Treat your copy as consistent only when `up_to_date` is `true`.
+
+For live updates at a decimal offset, add `live=true`. The request waits up to 20 seconds for a commit. Send the `TB-Shape-Cursor` response header of the previous live response as `cursor`. The `TB-Shape-Handle`, `TB-Shape-Next-Offset` and `TB-Shape-Up-To-Date` headers mirror the body. `If-None-Match` with the `ETag` returns `304`.
+
+To resume on another server without a handle, send `offset=-1` and the last `cursor_resume` as `cursor`. Use the `TB-Shape-Resume` header instead when the URL would be too long.
+
+| Status | Code | What to do |
+| --- | --- | --- |
+| `409` | `must_refetch` | Discard the shape and restart at `offset=-1`. The body and `TB-Shape-Handle` name the current handle. |
+| `414` | `uri_too_long` | Use a shorter filter. |
+| `429` | `shape_busy` | Keep your state and retry with backoff. |
+| `503` | `shape_too_large`, `unavailable` | Keep your state and retry with backoff. |
+
+`GET …/shape/manifest` and `GET …/shape/keys` serve encrypted, presigned copies of the same shape bodies. They are optional: reading every offset from `GET …/shape` gives the same result.
+
+</div>
