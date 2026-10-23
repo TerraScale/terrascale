@@ -1,70 +1,79 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using TerraBase.Errors;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
+/// <summary>An organization's operation units this month, or why they cannot be read now.</summary>
+internal readonly union MonthUnitsCheck(long, Unavailable);
+
 internal sealed partial class UsageMeter
 {
-    // Per organization, each database read this UTC month: its saved and pending operations at that read plus those counted since.
-    private readonly ConcurrentDictionary<string, ConcurrentDictionary<DatabaseOwner, StrongBox<long>>> _month = new(StringComparer.Ordinal);
+    // Per organization, its operation units this UTC month in every region as of the last refresh, plus those this node counted since.
+    private readonly ConcurrentDictionary<string, StrongBox<long>> _month = new(StringComparer.Ordinal);
     private long _monthOf = -1;
 
-    // Databases whose saved month the next seeding pass reads, with the tenant to read it as.
-    private readonly ConcurrentDictionary<DatabaseOwner, TenantContext> _unseeded = new();
-
     /// <summary>
-    /// Reads and writes this UTC month of the organization's databases this process has served this month, including
-    /// <paramref name="database"/>. A request never reads storage for it: each database's saved month is added by the
-    /// next <see cref="SeedMonthsAsync"/> pass, and until then only operations counted since are included.
+    /// Read and write operation units this UTC month of the organization of <paramref name="database"/>, in every region:
+    /// <see cref="GetMonthAsync"/> as of the last <see cref="RefreshMonthsAsync"/> pass, plus the units this node counted
+    /// since. The organization's first check this month on this node reads it before answering.
     /// </summary>
-    internal long MonthOperations(TenantContext database)
+    internal async ValueTask<MonthUnitsCheck> MonthUnitsAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        RollOver();
+        return _month.TryGetValue(database.OrganizationId, out var units)
+            ? Interlocked.Read(ref units.Value)
+            : await RefreshAsync(database.OrganizationId, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Reads every checked organization's month again, adding what other regions flushed; a failed read keeps the last.</summary>
+    internal async ValueTask RefreshMonthsAsync(CancellationToken cancellationToken)
+    {
+        RollOver();
+        foreach (var organizationId in _month.Keys)
+        {
+            _ = await RefreshAsync(organizationId, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask<MonthUnitsCheck> RefreshAsync(string organizationId, CancellationToken cancellationToken)
+    {
+        var read = await GetMonthAsync(organizationId, projectId: null, cancellationToken).ConfigureAwait(false);
+        if (read is not UsageTotals units)
+        {
+            return read switch
+            {
+                Unavailable error => error,
+                UsageTotals => throw new UnreachableException(),
+            };
+        }
+
+        // shortcut: units this node counts while the read runs may be missed until the next refresh (one 10 s tick).
+        var total = units.Reads + units.Writes;
+        _month.AddOrUpdate(organizationId, _ => new(total), (_, box) =>
+        {
+            Interlocked.Exchange(ref box.Value, total);
+            return box;
+        });
+        return total;
+    }
+
+    private void RollOver()
     {
         var now = time.GetUtcNow();
         if (Interlocked.Exchange(ref _monthOf, (now.Year * 12) + now.Month) != (now.Year * 12) + now.Month)
         {
             _month.Clear();
-            _unseeded.Clear();
-        }
-
-        var owner = DatabaseOwner.Of(database);
-        var databases = _month.GetOrAdd(owner.OrganizationId, _ => new());
-        if (databases.TryAdd(owner, new(0)))
-        {
-            _unseeded.TryAdd(owner, database);
-        }
-
-        return databases.Values.Sum(count => Interlocked.Read(ref count.Value));
-    }
-
-    /// <summary>Adds each newly served database's saved and pending operations this month; a failed read is retried next pass.</summary>
-    internal async ValueTask SeedMonthsAsync(CancellationToken cancellationToken)
-    {
-        foreach (var (owner, database) in _unseeded)
-        {
-            var now = time.GetUtcNow();
-            var first = (new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero) - DateTimeOffset.UnixEpoch).Ticks / TimeSpan.TicksPerDay;
-            var today = (now - DateTimeOffset.UnixEpoch).Ticks / TimeSpan.TicksPerDay;
-            var read = await GetAsync(database, new UsageWindow(UsageWindow.Day, first, (int)(today - first + 1)), cancellationToken).ConfigureAwait(false);
-            if (read is not UsageCounts counts)
-            {
-                continue;
-            }
-
-            if (_unseeded.TryRemove(owner, out _) && _month.TryGetValue(owner.OrganizationId, out var databases) && databases.TryGetValue(owner, out var count))
-            {
-                // The read already holds what the entry counted before it: replace those with the read's total.
-                // shortcut: operations counted between the read and this line are missed, a few at most, once per database and month.
-                Interlocked.Add(ref count.Value, counts.Series.Sum(bucket => bucket.Reads + bucket.Writes) - Interlocked.Read(ref count.Value));
-            }
         }
     }
 
-    private void CountMonth(TenantContext database, long operations)
+    private void CountMonth(TenantContext database, long units)
     {
-        if (_month.TryGetValue(database.OrganizationId, out var databases) && databases.TryGetValue(DatabaseOwner.Of(database), out var count))
+        if (_month.TryGetValue(database.OrganizationId, out var count))
         {
-            Interlocked.Add(ref count.Value, operations);
+            Interlocked.Add(ref count.Value, units);
         }
     }
 }

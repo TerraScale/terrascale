@@ -403,7 +403,8 @@ internal sealed class SqlSession(
 
             await request.Transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             lease.Committed(request.Tally.Delta);
-            usage.RecordWrites(database, Math.Max(1, _log.Count));
+            // shortcut: SQL wire writes bill one unit per logged change, not its 4 KiB; size them once the log records bytes.
+            usage.RecordWrites(database, Math.Max(1, _log.Count), Math.Max(1, _log.Count));
             return Empty;
         }
         catch (Exception error) when (Failure(error) is { } failure)

@@ -141,7 +141,10 @@ public sealed class Cluster : IAsyncDisposable
 
     internal Task ShipBackupAsync(CancellationToken token) => RequireLocal().ShipBackupAsync(token);
 
-    /// <summary>gru, sjc and fra whose shapes mirror to one shared fake object-store bucket (FR-22).</summary>
+    /// <summary>
+    /// gru, sjc and fra whose shapes mirror to one shared fake object-store bucket (FR-22). As in production, each machine
+    /// anchors its catalog head in that bucket, so a region restarted while another is down opens from a majority.
+    /// </summary>
     internal static Task<Cluster> StartMirroredAsync() =>
         StartLocalCoreAsync([Gru, Sjc, Fra], new Dictionary<string, TimeSpan>(), new FakeS3());
 
@@ -266,6 +269,12 @@ public sealed class Cluster : IAsyncDisposable
     /// the peer addresses this needs; until then it throws.
     /// </summary>
     public LossyLink RouteThrough(string a, string b, Func<IPEndPoint, LossyLink> link) => RequireLocal().RouteThrough(a, b, link);
+
+    /// <summary>
+    /// Local nodes only: every byte between <paramref name="a"/> and <paramref name="b"/> takes <paramref name="oneWay"/> each
+    /// way, from now on; open peer connections reconnect to take it up.
+    /// </summary>
+    public void Delay(string a, string b, TimeSpan oneWay) => RequireLocal().Delay(a, b, oneWay);
 
     private Local RequireLocal() => _local ?? throw new NotSupportedException("this fault needs local nodes");
 
@@ -559,6 +568,23 @@ public sealed class Cluster : IAsyncDisposable
         private readonly Lock _linksGate = new();
         private readonly Dictionary<(string From, string To, string Address), PeerLink> _links = [];
         private readonly HashSet<(string, string)> _cuts = [];
+        private readonly Dictionary<(string, string), TimeSpan> _delays = [];
+
+        public void Delay(string a, string b, TimeSpan oneWay)
+        {
+            lock (_linksGate)
+            {
+                (_delays[(a, b)], _delays[(b, a)]) = (oneWay, oneWay);
+                foreach (var ((from, to, _), link) in _links)
+                {
+                    if ((from, to) == (a, b) || (from, to) == (b, a))
+                    {
+                        link.Delay = oneWay;
+                        link.Reset();
+                    }
+                }
+            }
+        }
 
         // Machine id -> region, for the directory views; filled before a node starts, read by running nodes.
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _regions = new(StringComparer.Ordinal);
@@ -619,7 +645,11 @@ public sealed class Cluster : IAsyncDisposable
                 if (!_links.TryGetValue(key, out var link))
                 {
                     // The peer listens on every address of this host: its loopback reaches it.
-                    link = _links[key] = new PeerLink(new IPEndPoint(IPAddress.Loopback, address.Port)) { Cut = _cuts.Contains((from, member.Region)) };
+                    link = _links[key] = new PeerLink(new IPEndPoint(IPAddress.Loopback, address.Port))
+                    {
+                        Cut = _cuts.Contains((from, member.Region)),
+                        Delay = _delays.GetValueOrDefault((from, member.Region)),
+                    };
                 }
 
                 return member with { PeerAddress = link.Address };

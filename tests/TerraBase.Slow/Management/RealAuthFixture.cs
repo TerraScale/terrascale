@@ -32,7 +32,7 @@ namespace TerraBase.Slow.Management;
 /// </summary>
 internal sealed class RealAuthFixture : IAsyncDisposable
 {
-    public const string Audience = "https://terrabase.test";
+    public const string Audience = GitHubActionsGrant.ApiAudience;
     private const string PublicOrigin = "https://auth.test.invalid";
 
     private readonly string _clientSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
@@ -105,23 +105,46 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         return await TokenAsync(request, token);
     }
 
-    /// <summary>
-    /// What ci.yml's e2e job gets: the GitHub Actions workload is bound (as an operator does once), then a GitHub-signed token
-    /// of the e2e job on a push to main is exchanged at the token endpoint. Returns the access token and the bound project.
-    /// </summary>
-    public async Task<(string AccessToken, string Project)> GitHubActionsTokenAsync(CancellationToken token)
+    /// <summary>A separate fixture-only project key used to seed real target data.</summary>
+    public async Task<(string Organization, string Project, string Token)> SeedProjectAsync(CancellationToken token)
     {
-        var (_, project, _) = await GitHubActionsBinding.BindAsync(_auth!.Services, token);
+        var services = _auth!.Services;
+        var user = (await services.GetRequiredService<tsauth::TerraScale.Authentication.Features.Identity.Users>()
+            .CreateAsync(PlatformDirectory.Instance, $"e2e-{EntityIds.New()}@example.test", token))!;
+        var directory = services.GetRequiredService<PlatformDirectory>();
+        var organization = await directory.CreateOrganizationAsync(user, "Isolated E2E", token);
+        var project = await directory.CreateProjectAsync(user.Id, organization.Id, "E2E", token);
+        var deadline = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds());
+        var (key, secret) = await services.GetRequiredService<ApiKeys>().CreateAsync(user.Id, organization.Id, project.Id, "fixture seed",
+            [TerraBaseScopes.DatabasesRead, TerraBaseScopes.DatabasesWrite, TerraBaseScopes.DocumentsRead, TerraBaseScopes.DocumentsWrite], null, deadline, token);
+        using var seedRequest = new HttpRequestMessage(HttpMethod.Post, new Uri("/terrascale/oauth/token", UriKind.Relative))
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["grant_type"] = "client_credentials",
+                ["client_id"] = key.Id,
+                ["client_secret"] = secret,
+            }),
+        };
+        return (organization.Id, project.Id, await TokenAsync(seedRequest, token));
+    }
+
+    /// <summary>A real read-only bound workload token, plus a separate fixture credential for seeding data.</summary>
+    public async Task<(string AccessToken, string Project, string SeedToken)> GitHubActionsTokenAsync(CancellationToken token)
+    {
+        var (organization, project, seed) = await SeedProjectAsync(token);
+        var deadline = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds());
+        await GitHubActionsBinding.BindAsync(_auth!.Services, organization, project, "ci-e2e", deadline, token);
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/terrascale/oauth/token", UriKind.Relative))
         {
             Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["grant_type"] = GitHubActionsGrant.GrantType,
                 ["client_id"] = GitHubActionsGrant.ClientId,
-                ["subject_token"] = GitHub.Mint(Issuer),
+                ["subject_token"] = GitHub.Mint(GitHubActionsGrant.Audience),
             }),
         };
-        return (await TokenAsync(request, token), project);
+        return (await TokenAsync(request, token), project, seed);
     }
 
     private async Task<string> TokenAsync(HttpRequestMessage request, CancellationToken token)

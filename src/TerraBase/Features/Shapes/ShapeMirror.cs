@@ -7,6 +7,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using Amazon.Runtime;
+using Amazon.Runtime.Internal;
+using Amazon.Runtime.Internal.Auth;
 using Amazon.S3;
 using Amazon.S3.Model;
 using TerraBase.Configuration;
@@ -933,15 +935,20 @@ internal sealed class ShapeObjectStore : IDisposable
 
     public (string Url, DateTimeOffset ExpiresAt) Presign(string key)
     {
-        var now = _time.GetUtcNow().ToUnixTimeSeconds();
-        var expires = DateTimeOffset.FromUnixTimeSeconds((now / ShapeCrypto.EpochSeconds + 1) * ShapeCrypto.EpochSeconds);
-        var url = _s3.GetPreSignedURL(new GetPreSignedUrlRequest
+        // Signing and expiry share one whole-second clock snapshot, including at the epoch boundary.
+        var now = DateTimeOffset.FromUnixTimeSeconds(_time.GetUtcNow().ToUnixTimeSeconds());
+        var expires = DateTimeOffset.FromUnixTimeSeconds((now.ToUnixTimeSeconds() / ShapeCrypto.EpochSeconds + 1) * ShapeCrypto.EpochSeconds);
+        var request = new DefaultRequest(new GetObjectRequest(), "s3")
         {
-            BucketName = _settings.Bucket,
-            Key = key,
-            Verb = HttpVerb.GET,
-            Expires = expires.UtcDateTime,
-        });
+            Endpoint = _settings.Endpoint,
+            ResourcePath = "/" + _settings.Bucket + "/" + key,
+            HttpMethod = "GET",
+            UseQueryString = true,
+        };
+        request.Parameters.Add("X-Amz-Expires", Number(expires.ToUnixTimeSeconds() - now.ToUnixTimeSeconds()));
+        var signature = AWS4PreSignedUrlSigner.SignRequest(request, _s3.Config, metrics: null,
+            _settings.AccessKeyId, _settings.SecretKey, "s3", _settings.Region, now.UtcDateTime);
+        var url = AmazonServiceClient.ComposeUrl(request).AbsoluteUri + "&" + signature.ForQueryParameters;
         return (url, expires);
     }
 

@@ -266,12 +266,12 @@ public sealed class CatalogLatticeTests
             await Assert.That(await read.GetAsync("pending_database_cleanup", database.Id, CancellationToken.None)).IsNotNull();
         }
 
-        await Assert.That(await Until(async () =>
+        // Await the whole pass: intent deletion commits before its in-memory reservation is released.
+        await api.Server.Services.GetRequiredService<EngineManagementService>().ConvergeAsync(CancellationToken.None);
+        await using (var read = await system.BeginTransactionAsync(write: false, CancellationToken.None))
         {
-            clock.Advance(TimeSpan.FromSeconds(2));
-            await using var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
-            return await read.GetAsync("pending_database_cleanup", database.Id, CancellationToken.None) is null;
-        })).IsTrue();
+            await Assert.That(await read.GetAsync("pending_database_cleanup", database.Id, CancellationToken.None)).IsNull();
+        }
         // A leftover in-memory ownership reservation would refuse this fixture-only recreation.
         await Assert.That(await engine.CreateDatabaseAsync(tenant, CancellationToken.None)).IsTrue();
     }
@@ -308,12 +308,13 @@ public sealed class CatalogLatticeTests
             await Assert.That(await read.GetVersionAsync($"projects/{database.Project}/databases", database.Id, CancellationToken.None) is { Deleted: true }).IsTrue();
         }
 
-        await Assert.That(await Until(async () =>
+        // Await the whole pass: intent deletion commits before its in-memory reservation is released.
+        await api.Server.Services.GetRequiredService<EngineManagementService>().ConvergeAsync(CancellationToken.None);
+        await Assert.That(File.Exists(PathOf(deleted))).IsFalse();
+        await using (var read = await system.BeginTransactionAsync(write: false, CancellationToken.None))
         {
-            clock.Advance(TimeSpan.FromSeconds(2));
-            await using var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
-            return !File.Exists(PathOf(deleted)) && await read.GetAsync("pending_database_cleanup", database.Id, CancellationToken.None) is null;
-        })).IsTrue();
+            await Assert.That(await read.GetAsync("pending_database_cleanup", database.Id, CancellationToken.None)).IsNull();
+        }
         await Assert.That(await File.ReadAllBytesAsync(PathOf(retained))).IsEquivalentTo(corrupt);
         await Assert.That(await File.ReadAllBytesAsync(PathOf(unknown))).IsEquivalentTo(corrupt);
         // A completed cleanup also releases its engine reservation when no readable store could be opened.

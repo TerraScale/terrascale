@@ -4,30 +4,72 @@ Plans use hard allowances during Public Alpha ([pricing.json](https://terrascale
 `metering.allowances`): new billable work stops at the allowance, and reads, exports, deletion and
 usage reduction remain available.
 
-| Plan | Operations per UTC month |
+| Plan | Operation units per UTC month |
 |---|---|
 | hobby | 100,000 |
+| starter | 1,000,000 |
 | pro | 100,000,000 |
 | enterprise | unlimited |
 
 Values live in `QosPolicy.MonthlyOperations` (`src/TerraBase/Features/Qos/QosPolicy.cs`).
 
+## Operation units
+
+One unit is each started 4 KiB (4,096 bytes) of a document successfully read or written
+(`metering.operationUnit`, `OperationUnits.Of`):
+
+- A put or patch bills its stored document's units; a delete bills one unit.
+- A get bills the document's units; a not-found get bills none. List, query and export pages bill
+  each returned document. SQL query runs bill each returned row's value.
+- Refused, failed and invalid writes bill nothing. Replication (peer stream applies, refills,
+  anti-entropy) bills nothing (user decision 2026-10-23), so a write counts once, in the region
+  that served it.
+- Example: 10 writes of 9 KiB documents are 30 units.
+
+## One month, every region
+
+Each node adds the units it served to its own documents `yyyy-MM~node` of the replicated catalog
+collections `projects/{project}/usage-months` and `organizations/{organization}/usage-months`, in
+the same usage flush (every 10 s) that saves operation counts. A month reads the sum of every
+node's document plus this node's unflushed units, so every region answers the same total once the
+catalog has replicated. Units of databases deleted since stay in the month.
+
+`GET /v1/management/organizations/{organization}/projects/{project}/usage` returns them in
+`month`:
+
+| Field | Meaning |
+|---|---|
+| `month` | The UTC month, `yyyy-MM` |
+| `readUnits`, `writeUnits`, `units` | The project's read, write and total units this month |
+| `organizationUnits` | Total units of every project of the organization: what the allowance counts |
+
+### Every organization, for the dashboard
+
+`GET /v1/usage/allowances[?after=<organization id>]` on the internal listener (shared peer
+credential, the same identity as `PUT /admin/projects/{project}/plan`) pages every organization,
+25 at a time in id order: `periodStart`, `observedAt`, `items[{organizationId, operations,
+logicalBytes}]`, `next`, `operationsContract` (`operation-units-4kib-global-v1`)
+and `storageContract`. `operations` equals `organizationUnits`. Storage is not reported yet:
+`logicalBytes` is null and `storageContract` is `none`.
+`periodStart` and `observedAt` are taken before the scan; a scan that crosses into another UTC
+month or runs past 30 seconds answers `503`, and the caller retries. Responses carry
+`Cache-Control: no-store`.
+
 ## Behavior
 
-- Every document read and write the usage meter counts (gets, list and query pages, SQL runs,
-  puts, patches, deletes) counts toward the organization's month.
-- A write request that holds a put or patch is refused once the month reaches the allowance:
-  `429` with code `operation_allowance`, a message naming the plan and allowance, and the upgrade
-  path (`https://dash.terrascale.tech/organization?tab=billing`). Nothing in the request runs.
+- A write request that holds a put or patch is refused once the organization's units this month
+  reach the allowance: `429` with code `operation_allowance`, a message naming the plan and
+  allowance, and the upgrade path (`https://dash.terrascale.tech/organization?tab=billing`).
+  Nothing in the request runs.
 - Deletes, assertion-only transactions and reads still succeed. The month resets at 00:00 UTC on
   the first day of the next calendar month.
+- A node reads the organization's month on its first write check of the month, then again on
+  every usage flush tick, adding the units it serves in between. Units another region served reach
+  it within about one flush tick plus catalog replication.
 
 ## Limits of this version
 
-- Counts are per node: each region enforces the allowance on the operations it served.
-- One document operation counts as one unit; the 4 KiB operation-unit size is not yet applied.
-- After a restart a node adds each database's saved month on the usage flush service's next tick
-  (every 10 s) after it first serves the database again (`UsageMeter.SeedMonthsAsync`). Requests
-  never read storage for the allowance, so a few writes can pass before that tick.
+- SQL wire writes bill one unit per logged change, not its size.
 
-Covered by `tests/TerraBase.Fast/Qos/OperationAllowanceTests.cs`.
+Covered by `tests/TerraBase.Fast/Qos/OperationAllowanceTests.cs` and
+`tests/TerraBase.Fast/Replication/FreeReplicationUsageTests.cs`.

@@ -20,6 +20,7 @@ using TerraBase.Features.Replication;
 using TerraBase.Features.Sql;
 using TerraBase.Features.Stats;
 using TerraBase.Features.UserAuth;
+using TerraBase.Features.Webhooks;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -101,6 +102,7 @@ builder.Services.AddTerraBaseQos();
 builder.Services.AddTerraBaseEngine(options);
 builder.Services.AddTerraBaseApiKeys();
 builder.Services.AddTerraBaseDocuments();
+builder.Services.AddTerraBaseWebhooks();
 builder.Services.AddTerraBaseSql();
 builder.Services.AddTerraBaseUserAuth();
 builder.Services.AddTerraBaseManagement();

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Schema;
@@ -6,9 +7,20 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
-internal sealed class UsageService(IStorageEngine engine, IManagementService management, ISchemaService schema, UsageMeter meter, TimeProvider time)
+internal sealed class UsageService(IStorageEngine engine, IManagementService management, ISchemaService schema, UsageMeter meter, TimeProvider time, SystemCatalog catalog)
     : IUsageService
 {
+    /// <summary>
+    /// What <see cref="AllowanceUsage.Operations"/> counts: 4 KiB operation units, each read and write once in the region
+    /// that served it (replication is not billed), summed over every region and node.
+    /// </summary>
+    internal const string OperationsContract = "operation-units-4kib-global-v1";
+
+    private const int AllowancePageSize = 25;
+
+    // One allowance page reads at most this long; a slower one answers 503 and the caller retries.
+    private static readonly TimeSpan AllowanceScanBudget = TimeSpan.FromSeconds(30);
+
     // Databases or projects one catalog read lists.
     private const int PageSize = 10;
 
@@ -181,10 +193,72 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
 
         // The last tenant lookup or usage read can itself end past the deadline.
         ThrowPastDeadline(budget.Started);
+        var month = time.GetUtcNow().ToString("yyyy-MM", CultureInfo.InvariantCulture);
+        if (await meter.GetMonthAsync(organizationId, projectId, cancellationToken).ConfigureAwait(false) is not UsageTotals project
+            || await meter.GetMonthAsync(organizationId, projectId: null, cancellationToken).ConfigureAwait(false) is not UsageTotals organization)
+        {
+            return new Unavailable("usage accounting is unavailable; retry");
+        }
+
         var series = Sum(window, items.Select(item => item.Series));
         return new ProjectUsage(
             projectId, items.Count, items.Sum(item => item.StorageBytes), items.Sum(item => item.LogicalBytes), items.Sum(item => item.Documents),
-            items.Sum(item => item.Reads), items.Sum(item => item.Writes), Period(window, series), series, [.. items.Select(item => item with { Series = [] })]);
+            items.Sum(item => item.Reads), items.Sum(item => item.Writes), Period(window, series), series, [.. items.Select(item => item with { Series = [] })],
+            new UsageMonth(month, project.Reads, project.Writes, project.Reads + project.Writes, organization.Reads + organization.Writes));
+    }
+
+    public async ValueTask<AllowanceUsageResult> ListAllowanceUsageAsync(string? after, CancellationToken cancellationToken)
+    {
+        // The page is labelled with the month and instant it started in; a scan that ends in another month is refused.
+        var observedAt = time.GetUtcNow();
+        var month = new DateTimeOffset(observedAt.Year, observedAt.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        using var budget = new CancellationTokenSource(AllowanceScanBudget, time);
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, budget.Token);
+        try
+        {
+            // The catalog keeps one document per organization, named by its id.
+            var listed = await catalog.ReadAsync<OrganizationPage>(async transaction =>
+            {
+                var page = await transaction.ListAsync("organizations", after, AllowancePageSize, 1024 * 1024, bounded.Token).ConfigureAwait(false);
+                return new OrganizationIds([.. page.Documents.Select(document => document.Id)], page.HasMore);
+            }, static error => error, bounded.Token).ConfigureAwait(false);
+            if (listed is not OrganizationIds organizations)
+            {
+                return listed switch
+                {
+                    Unavailable error => error,
+                    OrganizationIds => throw new UnreachableException(),
+                };
+            }
+
+            var items = new List<AllowanceUsage>(organizations.Ids.Count);
+            foreach (var organizationId in organizations.Ids)
+            {
+                if (await meter.GetMonthAsync(organizationId, projectId: null, bounded.Token).ConfigureAwait(false) is not UsageTotals units)
+                {
+                    return new Unavailable("usage accounting is unavailable; retry");
+                }
+
+                items.Add(new AllowanceUsage(organizationId, checked(units.Reads + units.Writes), null));
+            }
+
+            var ended = time.GetUtcNow();
+            if (ended.Year != month.Year || ended.Month != month.Month)
+            {
+                return new Unavailable("the UTC month changed during the usage scan; retry");
+            }
+
+            return new AllowanceUsagePage(month, observedAt, items,
+                organizations.More && items.Count > 0 ? items[^1].OrganizationId : null, OperationsContract, "none");
+        }
+        catch (OperationCanceledException) when (budget.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            return new Unavailable("the usage scan exceeded its time budget; retry");
+        }
+        catch (OverflowException)
+        {
+            return new Unavailable("an organization's usage exceeds the countable range");
+        }
     }
 
     private static void Count(Budget budget, int listed)
@@ -225,6 +299,10 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
 
         public int Listed { get; set; }
     }
+
+    private sealed record OrganizationIds(List<string> Ids, bool More);
+
+    private readonly union OrganizationPage(OrganizationIds, Unavailable);
 
     // Every database of a project, or why they cannot be listed.
     private readonly union ProjectDatabases(List<ManagedDatabase>, NotFound, Unavailable);

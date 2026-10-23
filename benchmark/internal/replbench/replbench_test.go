@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/oklog/ulid/v2"
 )
 
 func TestCanonicalSortsKeysAndKeepsNumbers(t *testing.T) {
@@ -117,6 +119,12 @@ func (f *fakeCluster) handler(region string) http.Handler {
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "next_cursor": nil})
 		case len(parts) == 5: // /collections/{c}/documents/by-key
 			coll, id := parts[2], r.URL.Query().Get("id")
+			if r.Method == http.MethodPut && string(body) == `{"end":true}` {
+				if _, err := ulid.ParseStrict(id); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+			}
 			f.mu.Lock()
 			cur, ok := f.docs[region][coll][id]
 			f.mu.Unlock()

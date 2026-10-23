@@ -89,9 +89,9 @@ public sealed class HealthTests
             services.AddSingleton<IStorageHealth>(health);
         });
 
-        // The first pass gives up at its two-second deadline and records not ready.
+        // The first pass gives up at its eight-second deadline and records not ready.
         await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls == 1), TimeSpan.FromSeconds(15))).IsTrue();
-        clock.Advance(TimeSpan.FromSeconds(2));
+        clock.Advance(TimeSpan.FromSeconds(8));
         await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(logs.Entries.Length == 1), TimeSpan.FromSeconds(15))).IsTrue();
         await Assert.That(logs.Entries[0].Message).IsEqualTo("Readiness check failed: timed out");
         using var response = await server.Client.GetAsync("/readyz");
@@ -140,9 +140,9 @@ public sealed class HealthTests
             services.AddSingleton<IStorageHealth>(health);
         });
 
-        // Two passes: one at startup, one five seconds later; each ends at its two-second deadline.
+        // Two passes: one at startup, one five seconds after it ends; each ends at its eight-second deadline.
         await TimedOutPassAsync(1);
-        clock.Advance(TimeSpan.FromSeconds(3));
+        clock.Advance(TimeSpan.FromSeconds(5));
         await TimedOutPassAsync(2);
 
         using var response = await server.Client.GetAsync("/readyz");
@@ -155,9 +155,19 @@ public sealed class HealthTests
         async Task TimedOutPassAsync(int pass)
         {
             await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls == pass), TimeSpan.FromSeconds(15))).IsTrue();
-            clock.Advance(TimeSpan.FromSeconds(2));
+            clock.Advance(TimeSpan.FromSeconds(8));
             await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(logs.Entries.Length == pass), TimeSpan.FromSeconds(15))).IsTrue();
-            // The deadline cancelled the check; once it has finished, the next pass is not stacked on it.
+            var check = server.App.Services.GetRequiredService<ReadinessProbe>().OutstandingCheck!;
+            // The fake's finally precedes completion of Task.Run's unwrapped task, which the no-stacking guard checks.
+            try
+            {
+                await check.WaitAsync(TimeSpan.FromSeconds(15));
+            }
+            catch (OperationCanceledException) when (check.IsCanceled)
+            {
+                // The eight-second probe deadline cancelled this check.
+            }
+
             await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Completed == pass), TimeSpan.FromSeconds(15))).IsTrue();
         }
     }

@@ -68,7 +68,10 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
         var operations = paths.EnumerateObject().Where(path => path.Name.StartsWith("/v1/{slug}/email/", StringComparison.Ordinal))
             .SelectMany(path => path.Value.EnumerateObject().Select(operation => (Path: path.Name, Method: operation.Name, Operation: operation.Value)))
             .ToList();
-        await Assert.That(operations.Count).IsEqualTo(10);
+        await Assert.That(operations.Count).IsEqualTo(11);
+        var allowance = operations.Single(operation => operation.Path == "/v1/{slug}/email/allowance");
+        await Assert.That(allowance.Method).IsEqualTo("post");
+        await Assert.That(allowance.Operation.GetProperty("operationId").GetString()).IsEqualTo("email_allowance_send");
         foreach (var (path, method, operation) in operations)
         {
             var security = operation.GetProperty("security").EnumerateArray().Single().EnumerateObject().Single().Name;
@@ -77,7 +80,14 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
             if (method is "put" or "post")
             {
                 var schema = operation.GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString();
-                await Assert.That(schema).Matches("^#/components/schemas/Email[A-Za-z]+Request$").Because($"{method} {path}");
+                if (path == "/v1/{slug}/email/allowance")
+                {
+                    await Assert.That(schema).IsEqualTo("#/components/schemas/AllowanceEmailRequest");
+                }
+                else
+                {
+                    await Assert.That(schema).Matches("^#/components/schemas/Email[A-Za-z]+Request$").Because($"{method} {path}");
+                }
             }
         }
 

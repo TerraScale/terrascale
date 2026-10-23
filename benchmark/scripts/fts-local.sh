@@ -26,7 +26,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-TERRABASE_BENCH_CLUSTER_PATH="$targets" TERRABASE_BENCH_REGIONS=gru,sjc \
+TERRABASE_BENCH_TARGETS="$targets" TERRABASE_BENCH_REGIONS=gru,sjc \
   dotnet run --project "$root/tests/TerraBase.E2E" --configuration Release --no-build -- \
   --treenode-filter '/*/*/BenchmarkClusterHost/*' >"$work/host.log" 2>&1 &
 host=$!

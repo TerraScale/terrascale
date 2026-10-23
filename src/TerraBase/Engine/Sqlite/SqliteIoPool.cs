@@ -178,12 +178,12 @@ internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
             throw new ObjectDisposedException(nameof(SqliteIoPool));
         }
 
-        // Reserve a quarter for Pro/Enterprise/system, and an eighth for Enterprise/system.
+        // Reserve a quarter for Starter/Pro/Enterprise/system, and an eighth for Enterprise/system.
         // With a one-slot pool every plan can still make progress.
         var limit = QosContext.Current?.Plan switch
         {
             PlanTier.Hobby when _maxAdmitted > 1 => _maxAdmitted - Math.Max(_maxAdmitted > 2 ? 2 : 1, _maxAdmitted / 4),
-            PlanTier.Pro when _maxAdmitted > 2 => _maxAdmitted - Math.Max(1, _maxAdmitted / 8),
+            PlanTier.Starter or PlanTier.Pro when _maxAdmitted > 2 => _maxAdmitted - Math.Max(1, _maxAdmitted / 8),
             _ => _maxAdmitted,
         };
         if (admitted > limit)

@@ -291,6 +291,7 @@ public sealed class TenantIsolationTests
                 .Replace("{key}", tooling.Key, StringComparison.Ordinal)
                 .Replace("{query}", tooling.Query, StringComparison.Ordinal)
                 .Replace("{backup}", tooling.Backup, StringComparison.Ordinal)
+                .Replace("{webhook}", DocumentId, StringComparison.Ordinal)
                 .Replace("{index}", tooling.Index, StringComparison.Ordinal)
                 .Replace("{recommendation}", tooling.Recommendation, StringComparison.Ordinal)
                 .Replace("{version}", "v3", StringComparison.Ordinal);

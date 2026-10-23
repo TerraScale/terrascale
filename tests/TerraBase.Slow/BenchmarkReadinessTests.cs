@@ -5,13 +5,19 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
+using TerraBase.Features.Replication;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow;
 
 public sealed class BenchmarkReadinessTests
 {
+    private static readonly string[] RemoteRegions = ["sjc", "fra"];
+
     [Test]
     public async Task Quiescence_joins_backgrounds_while_the_peer_listener_remains_live(CancellationToken cancellationToken)
     {
@@ -134,10 +140,21 @@ public sealed class BenchmarkReadinessTests
             ["organization"] = EntityIds.New().ToString(),
             ["project"] = EntityIds.New().ToString(),
             ["database"] = EntityIds.New().ToString(),
+            ["extra_databases"] = new JsonArray([.. Enumerable.Range(0, 17).Select(_ => (JsonNode?)JsonValue.Create(EntityIds.New().ToString()))]),
         };
         await BenchmarkProcessHost.RegisterAsync(api, config, cancellationToken);
-        await Assert.That(unavailable.Payloads.Count).IsGreaterThan(1);
-        await Assert.That(unavailable.Payloads.All(payload => payload == unavailable.Payloads[0])).IsTrue();
+        await Assert.That(unavailable.Payloads.Count).IsEqualTo(6);
+        await Assert.That(unavailable.Payloads.GroupBy(payload => payload).All(group => group.Count() == 2)).IsTrue();
+        await Assert.That(unavailable.Payloads.Distinct().Select(payload => JsonNode.Parse(payload)!["ops"]!.AsArray().Count).SequenceEqual([4, 16, 1])).IsTrue();
+        await Assert.That(BenchmarkProcessHost.DatabaseIds(config).Count).IsEqualTo(18);
+        JsonArray[] invalidDatabases = [["idle-1"], [config["database"]!.GetValue<string>()],
+            ["01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAV"]];
+        foreach (var invalid in invalidDatabases)
+        {
+            var badConfig = (JsonObject)config.DeepClone();
+            badConfig["extra_databases"] = invalid;
+            await Assert.That(() => BenchmarkProcessHost.DatabaseIds(badConfig)).Throws<InvalidOperationException>();
+        }
         await BenchmarkProcessHost.WaitForProjectBindingAsync(api, config["organization"]!.GetValue<string>(),
             config["project"]!.GetValue<string>(), cancellationToken);
     }
@@ -210,6 +227,110 @@ public sealed class BenchmarkReadinessTests
         }
     }
 
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task Bootstrap_requires_physical_databases_and_all_peer_acks_through_a_frozen_cutoff(int regions, CancellationToken cancellationToken)
+    {
+        await using var api = await ManagementApi.StartAsync(cancellationToken: cancellationToken);
+        var database = await api.CreateManagedDatabaseAsync("canary");
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise", cancellationToken);
+        using var client = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        var collections = new Uri($"{database.Data}/collections", UriKind.Relative);
+        await BenchmarkProcessHost.WaitForWritesAsync(client, collections, null, cancellationToken);
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        var source = api.Server.Services.GetRequiredService<IChangeGroupSource>();
+        var self = api.Server.Services.GetRequiredService<LocalReplica>().Id;
+        var peers = Enumerable.Range(1, 3).Select(id => ReplicaId.Of((ushort)id, 1, 1)).Where(peer => peer.Region != self.Region).Take(regions - 1).ToArray();
+        var extra = EntityIds.New().ToString();
+        var root = Directory.CreateTempSubdirectory("benchmark-bootstrap-").FullName;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromMinutes(2));
+        Task ready = Task.CompletedTask;
+        try
+        {
+            foreach (var (index, region) in RemoteRegions.Take(regions - 1).Index())
+            {
+                Directory.CreateDirectory(Path.Combine(root, region));
+                await File.WriteAllTextAsync(Path.Combine(root, region, "bootstrap.json"),
+                    new JsonObject { ["replica"] = peers[index].Value }.ToJsonString(), deadline.Token);
+            }
+            var directory = Directory.CreateDirectory(Path.Combine(root, "gru")).FullName;
+            ready = BenchmarkProcessHost.WaitForBootstrapAsync(api, root, directory, [database.Id, extra], deadline.Token);
+            async Task WaitForReasonAsync(string reason, ulong? peer = null)
+            {
+                await TerraBaseTestServer.EventuallyAsync(async cancel =>
+                {
+                    using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancel, deadline.Token);
+                    var path = Path.Combine(directory, "bootstrap-progress.json");
+                    if (!File.Exists(path))
+                    {
+                        return false;
+                    }
+                    var progress = JsonNode.Parse(await File.ReadAllTextAsync(path, linked.Token))!;
+                    return progress["reason"]!.GetValue<string>() == reason
+                        && (peer is null || progress["peer"]!.GetValue<ulong>() == peer);
+                }, TimeSpan.FromSeconds(30));
+                await Assert.That(ready.IsCompleted).IsFalse();
+            }
+            await WaitForReasonAsync("physical");
+            using (var service = api.Service(api.User))
+            using (var created = await service.PostAsJsonAsync(new Uri("/v1/management/commits", UriKind.Relative), new
+            {
+                id = EntityIds.New().ToString(),
+                ops = new[] { new { op = "create_database", organization = database.Organization, project = database.Project,
+                    id = extra, name = "idle-1", replica_regions = Array.Empty<string>() } },
+            }, deadline.Token))
+            {
+                created.EnsureSuccessStatusCode();
+            }
+            await BenchmarkProcessHost.WaitForWritesAsync(client,
+                new Uri($"/v1/projects/{database.Project}/databases/idle-1/collections", UriKind.Relative), null, deadline.Token);
+            await WaitForReasonAsync("own-prefix");
+            var bounds = new List<(TenantContext Database, Ulid Incarnation, long Head)>();
+            await foreach (var tenant in engine.ListDatabasesAsync(deadline.Token))
+            {
+                var store = (await engine.OpenDatabaseAsync(tenant, deadline.Token))!;
+                bounds.Add((tenant, store.Incarnation, (await source.HeadAsync(tenant, store.Incarnation, deadline.Token))!.Value));
+            }
+            var system = await engine.OpenSystemDatabaseAsync(deadline.Token);
+            bounds.Add((ChangeGroups.System, system.Incarnation, (await source.HeadAsync(ChangeGroups.System, system.Incarnation, deadline.Token))!.Value));
+            // A later local write must not move the already frozen bootstrap requirement.
+            await BenchmarkProcessHost.WaitForWritesAsync(client, collections, "bench-ready", deadline.Token);
+            foreach (var peer in peers)
+            {
+                if (peer != peers[0])
+                {
+                    await WaitForReasonAsync("own-prefix", peer.Value);
+                }
+                foreach (var (tenant, incarnation, head) in bounds)
+                {
+                    await Assert.That(await source.AckAsync(tenant, EntityIds.New(), peer, head, default, deadline.Token)).IsFalse();
+                    await Assert.That(await source.AckAsync(tenant, incarnation, peer, head, default, deadline.Token)).IsTrue();
+                }
+            }
+            await ready;
+            var (canary, canaryIncarnation, canaryHead) = bounds.Single(bound => bound.Database.DatabaseId == database.Id);
+            await Assert.That((await source.HeadAsync(canary, canaryIncarnation, deadline.Token))!.Value).IsGreaterThan(canaryHead);
+        }
+        finally
+        {
+            await deadline.CancelAsync();
+            try
+            {
+                await ready;
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+            {
+                // Join bootstrap before removing its private discovery files.
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
     private sealed class UnavailableRegistration : IStartupFilter
     {
         public List<string> Payloads { get; } = [];
@@ -224,7 +345,7 @@ public sealed class BenchmarkReadinessTests
                     using var reader = new StreamReader(context.Request.Body, leaveOpen: true);
                     Payloads.Add(await reader.ReadToEndAsync(context.RequestAborted));
                     context.Request.Body.Position = 0;
-                    if (Payloads.Count == 1)
+                    if (Payloads.Count(payload => payload == Payloads[^1]) == 1)
                     {
                         context.Response.StatusCode = 503;
                         return;

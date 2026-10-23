@@ -14,14 +14,17 @@ namespace TerraBase.Features.Documents;
 /// Read-through cache of documents and list pages. Each entry keeps the <see cref="IWriteStamps"/> stamp taken
 /// before its storage read. Tenant keys also pin the certified storage incarnation, so an old in-flight read cannot
 /// populate a replacement copy's cache. An entry is served only while its stamp is unchanged, so no read returns a version older
-/// than a write this node acknowledged. Tenant CLOCK rings share a 4096-entry and quarter-memory-budget bound.
+/// than a write this node acknowledged. Tenant CLOCK rings share a quarter-memory-budget bound, and one entry per 4 KiB of it.
 /// Each organization evicts only its own snapshots; every entry is also charged to <see cref="IMemoryBudget"/>.
 /// </summary>
 internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
 {
     // Rough per-entry overhead: entry, key, value objects and the cache's own bookkeeping.
     private const long EntryOverhead = 256;
-    private const int EntryLimit = 4096;
+
+    // The entry bound counts every entry as at least this many bytes of the byte bound, so tiny entries (empty pages) cannot
+    // fill the index with millions of entries, while a hot set of documents fills the byte bound.
+    private const long EntryBytes = 4096;
 
     // Rough per-document overhead beyond its JSON and id characters: the StoredDocument, array and string
     // headers, and its slot in a page's list.
@@ -30,6 +33,7 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
     private readonly IMemoryBudget _budget;
     private readonly IWriteStamps _stamps;
     private readonly long _sizeLimit;
+    private readonly int _entryLimit;
     private readonly Dictionary<object, LinkedListNode<Entry>> _entries = [];
     private readonly Dictionary<string, Partition> _partitions = [];
     private readonly Counter<long> _lookups;
@@ -46,6 +50,7 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
         _budget = budget;
         _stamps = stamps;
         _sizeLimit = options.MemoryBudget / 4;
+        _entryLimit = (int)Math.Clamp(_sizeLimit / EntryBytes, 1, Array.MaxLength);
         var meter = meters.Create(Telemetry.MeterName);
         _lookups = meter.CreateCounter<long>(
             "terrabase.document_cache.lookups", description: "Document and list-page cache lookups by cache and result (hit, miss).");
@@ -66,7 +71,7 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
         var share = QosPolicy.For(tenant.Plan).CacheShare;
         lock (_gate)
         {
-            Trim(tenant.OrganizationId, (long)(_sizeLimit * share), Math.Max(1, (int)(EntryLimit * share)));
+            Trim(tenant.OrganizationId, (long)(_sizeLimit * share), Math.Max(1, (int)(_entryLimit * share)));
         }
     }
 
@@ -181,7 +186,7 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
         var organization = tenant?.OrganizationId ?? string.Empty;
         var share = tenant is null ? 1 : QosPolicy.For(tenant.Plan).CacheShare;
         var byteLimit = (long)(_sizeLimit * share);
-        var countLimit = Math.Max(1, (int)(EntryLimit * share));
+        var countLimit = Math.Max(1, (int)(_entryLimit * share));
         var stamp = currentStamp();
         T? hit = null;
         lock (_gate)
@@ -244,14 +249,14 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
             {
                 while (partition.Clock.Count > 0
                     && (partition.Clock.Count >= countLimit || bytes > byteLimit - partition.Bytes
-                        || _entries.Count >= EntryLimit || bytes > _sizeLimit - _bytes))
+                        || _entries.Count >= _entryLimit || bytes > _sizeLimit - _bytes))
                 {
                     Evict(partition);
                 }
             }
 
             // Global pressure never displaces another organization's retained snapshots.
-            if (_entries.Count >= EntryLimit || bytes > _sizeLimit - _bytes)
+            if (_entries.Count >= _entryLimit || bytes > _sizeLimit - _bytes)
             {
                 return value;
             }

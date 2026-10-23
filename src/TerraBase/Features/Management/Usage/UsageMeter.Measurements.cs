@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -50,8 +51,11 @@ internal sealed partial class UsageMeter
     private readonly Counter<long> _replicationBytes = meters.Create(Telemetry.MeterName).CreateCounter<long>(
         "replication_bytes", "By", "Encoded replication message bytes, including repeated attempts and protocol control messages.");
 
-    public void RecordOperation(TenantContext database, string kind, int count) =>
+    public void RecordOperation(TenantContext database, string kind, int count)
+    {
+        RequestLogOperations.Current.Value?.Add(database, count);
         Record(database, new(new("ops", options.Region, "", kind), count));
+    }
 
     public void RecordRequest(TenantContext database, string method, int status, TimeSpan elapsed, long received, long sent)
     {

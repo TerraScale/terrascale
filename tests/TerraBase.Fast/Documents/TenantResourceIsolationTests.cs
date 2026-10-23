@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Fast.Management;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
@@ -20,7 +21,7 @@ public sealed class TenantResourceIsolationTests
     [Test]
     public async Task Dashboard_catalog_results_use_process_memory_and_release_after_rejection()
     {
-        await using var management = await ManagementApi.StartAsync(settings =>
+        await using var management = await RequestLogMemoryFixture.StartAsync(settings =>
             settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
         using var tenant = await management.CreateTenantAsync("documents:read");
         using var owner = management.As(tenant.User);
@@ -30,6 +31,7 @@ public sealed class TenantResourceIsolationTests
             initial.EnsureSuccessStatusCode();
         }
 
+        await RequestLogMemoryFixture.DrainAsync(management.Server);
         var budget = management.Server.Services.GetRequiredService<IMemoryBudget>();
         using (var held = budget.TryReserve(MemoryLane.Bulk, Budget - 16 * 1024, null))
         {
@@ -44,6 +46,7 @@ public sealed class TenantResourceIsolationTests
 
         using var recovered = await owner.GetAsync(route);
         recovered.EnsureSuccessStatusCode();
+        await RequestLogMemoryFixture.DrainAsync(management.Server);
         using var all = budget.TryReserve(MemoryLane.Foreground, Budget, null);
         await Assert.That(all).IsNotNull();
     }
@@ -127,12 +130,13 @@ public sealed class TenantResourceIsolationTests
     [Test]
     public async Task Request_memory_rejection_is_scoped_to_the_organization_and_releases_after_retry()
     {
-        await using var management = await ManagementApi.StartAsync(settings =>
+        await using var management = await RequestLogMemoryFixture.StartAsync(settings =>
             settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
         using var hobby = await management.CreateTenantAsync("documents:read", "documents:write");
         using var other = await management.CreateTenantAsync("documents:read", "documents:write");
         var database = await hobby.ContextAsync(management.Server, "shop");
         await other.ContextAsync(management.Server, "shop");
+        await RequestLogMemoryFixture.DrainAsync(management.Server);
         var budget = management.Server.Services.GetRequiredService<IMemoryBudget>();
         using (var held = budget.TryReserve(MemoryLane.Bulk, Budget / 16, database))
         {
@@ -146,6 +150,7 @@ public sealed class TenantResourceIsolationTests
         }
         using var recovered = await hobby.Data.GetAsync(hobby.Database("shop", "/collections"));
         recovered.EnsureSuccessStatusCode();
+        await RequestLogMemoryFixture.DrainAsync(management.Server);
         using var reusable = budget.TryReserve(MemoryLane.Foreground, Budget / 16, database);
         await Assert.That(reusable).IsNotNull();
     }
@@ -155,7 +160,7 @@ public sealed class TenantResourceIsolationTests
     [Arguments(true)]
     public async Task A_downgrade_releases_old_cache_before_request_admission(bool commit)
     {
-        await using var management = await ManagementApi.StartAsync(settings =>
+        await using var management = await RequestLogMemoryFixture.StartAsync(settings =>
             settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         using var owner = management.As(tenant.User);
@@ -180,6 +185,7 @@ public sealed class TenantResourceIsolationTests
             using var warmed = await tenant.Data.GetAsync(tenant.Database("shop", $"/collections/items/documents/by-key?id={StorageFixture.Id($"b{i}")}"));
             warmed.EnsureSuccessStatusCode();
         }
+        await RequestLogMemoryFixture.DrainAsync(management.Server);
         var budget = management.Server.Services.GetRequiredService<IMemoryBudget>();
         using (var oldRetention = budget.TryReserve(MemoryLane.Foreground, Budget - Budget / 16, database))
         {
@@ -210,6 +216,7 @@ public sealed class TenantResourceIsolationTests
         {
             recovered.EnsureSuccessStatusCode();
         }
+        await RequestLogMemoryFixture.DrainAsync(management.Server);
         using var released = budget.TryReserve(MemoryLane.Foreground, Budget / 16 - Budget / 64, database with { Plan = PlanTier.Hobby });
         await Assert.That(released).IsNotNull();
     }
@@ -222,7 +229,7 @@ public sealed class TenantResourceIsolationTests
     public async Task Result_memory_is_admitted_before_cold_or_cached_point_and_page_materialization(bool warm, bool page)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        await using var management = await ManagementApi.StartAsync(settings =>
+        await using var management = await RequestLogMemoryFixture.StartAsync(settings =>
             settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
         using var hobby = await management.CreateTenantAsync("documents:read", "documents:write");
         using var paid = await management.CreateTenantAsync("documents:read", "documents:write");
@@ -249,6 +256,7 @@ public sealed class TenantResourceIsolationTests
             using var warmed = await hobby.Data.GetAsync(hobby.Database("shop", path), deadline.Token);
             warmed.EnsureSuccessStatusCode();
         }
+        await RequestLogMemoryFixture.DrainAsync(management.Server);
         var budget = management.Server.Services.GetRequiredService<IMemoryBudget>();
         using (var held = budget.TryReserve(MemoryLane.Bulk, Budget / 16 - 64 * 1024, database))
         {
@@ -262,6 +270,7 @@ public sealed class TenantResourceIsolationTests
         }
         using var recovered = await hobby.Data.GetAsync(hobby.Database("shop", path), deadline.Token);
         recovered.EnsureSuccessStatusCode();
+        await RequestLogMemoryFixture.DrainAsync(management.Server);
         using var returned = budget.TryReserve(MemoryLane.Foreground, Budget / 16 - Budget / 64, database);
         await Assert.That(returned).IsNotNull();
     }
@@ -272,7 +281,7 @@ public sealed class TenantResourceIsolationTests
     public async Task Hobby_cache_churn_evicts_only_its_own_documents_and_pages(bool page)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        await using var management = await ManagementApi.StartAsync(settings =>
+        await using var management = await RequestLogMemoryFixture.StartAsync(settings =>
             settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
         using var hobby = await management.CreateTenantAsync("documents:read", "documents:write");
         using var paid = await management.CreateTenantAsync("documents:read", "documents:write");

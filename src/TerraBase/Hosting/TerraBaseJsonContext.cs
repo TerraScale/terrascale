@@ -12,6 +12,7 @@ using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management.Credentials;
 using TerraBase.Features.Management.Indexes;
 using TerraBase.Features.Management.Queries;
+using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Platform;
@@ -19,11 +20,23 @@ using TerraBase.Features.Pressure;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
+using TerraBase.Features.Webhooks;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Hosting;
 
 /// <summary>Source-generated JSON metadata for every request and response type (fast startup, no reflection-based serialization).</summary>
+[JsonSerializable(typeof(CreateWebhookRequest))]
+[JsonSerializable(typeof(CreatedWebhookBody))]
+[JsonSerializable(typeof(WebhookBody[]))]
+[JsonSerializable(typeof(WebhookDeliveryBody[]))]
+[JsonSerializable(typeof(WebhookPayload))]
+[JsonSerializable(typeof(WebhookRegistration))]
+[JsonSerializable(typeof(WebhookState))]
+[JsonSerializable(typeof(WebhookDispatch))]
+[JsonSerializable(typeof(WebhookDeliveryRecord))]
+[JsonSerializable(typeof(DatabaseRequestLogs))]
+[JsonSerializable(typeof(RequestLogRecord))]
 [JsonSerializable(typeof(Ulid))]
 [JsonSerializable(typeof(ReplicaRecoveryRequest))]
 [JsonSerializable(typeof(Features.Replication.CatalogGateStatus))]
@@ -142,6 +155,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ProjectApiKey))]
 [JsonSerializable(typeof(ProjectKeyEntry))]
 [JsonSerializable(typeof(ProjectUsage))]
+[JsonSerializable(typeof(AllowanceUsagePage))]
 [JsonSerializable(typeof(ProjectAnalytics))]
 [JsonSerializable(typeof(ProjectReplication))]
 [JsonSerializable(typeof(QueryFieldUsage))]

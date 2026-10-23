@@ -19,6 +19,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -43,19 +45,27 @@ func main() {
 	database := flag.String("database", "", "database name")
 	collection := flag.String("collection", "", "collection (must exist)")
 	keyFile := flag.String("key-file", "", "file holding the API key")
+	localKeyFile := flag.String("local-key-file", "", "file holding this region's API key, when it differs (local cells)")
 	n := flag.Int("n", 100, "probes")
 	every := flag.Duration("every", 200*time.Millisecond, "gap between probes")
 	poll := flag.Duration("poll", 2*time.Millisecond, "local poll interval")
 	rttSamples := flag.Int("rtt-samples", 21, "TCP connects to the origin for the RTT")
+	load := flag.Int("load", 0, "writers that PUT new documents to the origin back to back while the probes run")
 	flag.Parse()
 
 	key, err := os.ReadFile(*keyFile)
 	if err != nil {
 		log.Fatal(err)
 	}
+	localKey := key
+	if *localKeyFile != "" {
+		if localKey, err = os.ReadFile(*localKeyFile); err != nil {
+			log.Fatal(err)
+		}
+	}
 	t := replbench.Targets{Project: *project, Database: *database, Regions: map[string]replbench.RegionTarget{
 		"origin": {URL: *origin, Token: strings.TrimSpace(string(key))},
-		"local":  {URL: *local, Token: strings.TrimSpace(string(key))},
+		"local":  {URL: *local, Token: strings.TrimSpace(string(localKey))},
 	}}
 	from, err := replbench.NewRegion("origin", t, 4)
 	if err != nil {
@@ -72,6 +82,25 @@ func main() {
 	floor := rtt / 2
 	lat, over, ack := replbench.NewLatency(), replbench.NewLatency(), replbench.NewLatency()
 	missing := 0
+	// Sustained load beside the probes, on clients of its own so probes never queue behind it.
+	loadCtx, stopLoad := context.WithCancel(ctx)
+	var loaded atomic.Int64
+	var writers sync.WaitGroup
+	for range *load {
+		loader, err := replbench.NewRegion("origin", t, 1)
+		if err != nil {
+			log.Fatal(err)
+		}
+		writers.Go(func() {
+			for loadCtx.Err() == nil {
+				r, err := loader.Do(loadCtx, http.MethodPut, replbench.DocPath(*collection, ulid.Make().String()), []byte(`{"load":true}`), "application/json")
+				if err == nil && r.Status/100 == 2 {
+					loaded.Add(1)
+				}
+			}
+		})
+	}
+	loadStart := time.Now()
 	ms := func(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 	for i := range *n {
 		id := ulid.Make().String()
@@ -113,7 +142,10 @@ func main() {
 		_ = out.Encode(s)
 		time.Sleep(*every)
 	}
+	stopLoad()
+	writers.Wait()
 	_ = out.Encode(map[string]any{"summary": true, "label": *label, "rtt_tcp_ms": ms(rtt), "floor_ms": ms(floor), "poll_ms": ms(*poll),
+		"load_writers": *load, "load_writes_per_s": float64(loaded.Load()) / time.Since(loadStart).Seconds(),
 		"latency": lat.Summary(), "overhead": over.Summary(), "origin_ack": ack.Summary(), "missing": missing})
 }
 

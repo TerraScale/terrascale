@@ -1,6 +1,7 @@
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Management.Queries;
+using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -13,7 +14,7 @@ namespace TerraBase.Features.Management.Usage;
 /// </summary>
 internal sealed class UsageFlushService(
     UsageMeter meter, QueryFieldRecorder recorder, QueryShapeRecorder shapes, TimeProvider time, TerraBaseOptions options, ILogger<UsageFlushService> logger,
-    IStorageEngine engine, IReplicationStatus replication) : BackgroundService
+    IStorageEngine engine, IReplicationStatus replication, IRequestLogs logs) : BackgroundService
 {
     // Storage is sampled once per minute bucket, so an idle node neither lists databases nor writes usage every tick.
     private const int MaxSamplesPerMinute = 128;
@@ -53,7 +54,7 @@ internal sealed class UsageFlushService(
 
     // Storage sampling lists every database, so it runs on its own loop: a slow volume never delays usage delivery.
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
-        Task.WhenAll(LoopAsync(FlushAsync, stoppingToken), LoopAsync(SampleStorageAsync, stoppingToken), LoopAsync(SeedMonthsAsync, stoppingToken));
+        Task.WhenAll(LoopAsync(FlushAsync, stoppingToken), LoopAsync(SampleStorageAsync, stoppingToken), LoopAsync(RefreshMonthsAsync, stoppingToken));
 
     private async Task LoopAsync(Func<CancellationToken, Task> work, CancellationToken stoppingToken)
     {
@@ -123,12 +124,12 @@ internal sealed class UsageFlushService(
         }
     }
 
-    // Monthly allowance counts read saved usage here, on their own loop, never on a request.
-    private async Task SeedMonthsAsync(CancellationToken cancellationToken)
+    // Monthly allowance counts read every region's saved usage here, on their own loop.
+    private async Task RefreshMonthsAsync(CancellationToken cancellationToken)
     {
         try
         {
-            await meter.SeedMonthsAsync(cancellationToken).ConfigureAwait(false);
+            await meter.RefreshMonthsAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
@@ -136,7 +137,7 @@ internal sealed class UsageFlushService(
         }
     }
 
-    private Func<CancellationToken, ValueTask>[] Flushes => [meter.FlushAsync, recorder.FlushAsync, shapes.FlushAsync];
+    private Func<CancellationToken, ValueTask>[] Flushes => [meter.FlushAsync, recorder.FlushAsync, shapes.FlushAsync, logs.FlushAsync];
 
     private ValueTask ReportActive(CancellationToken cancellationToken)
     {

@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
@@ -12,8 +13,9 @@ public sealed class CacheEntryBoundTests
     public async Task Many_small_query_pages_evict_by_entry_count_before_the_byte_budget()
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        // Background catalog flushes can collide with a cache stamp and correctly bypass an in-flight promotion.
         await using var management = await ManagementApi.StartAsync(settings =>
-            settings["memory-budget"] = (64L * 1024 * 1024).ToString(CultureInfo.InvariantCulture));
+            settings["memory-budget"] = (64L * 1024 * 1024).ToString(CultureInfo.InvariantCulture), time: new FakeTimeProvider(DateTimeOffset.UtcNow));
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         await management.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise", deadline.Token);
         using (var database = await tenant.Data.PutAsync(tenant.Database("bounded"), null, deadline.Token))

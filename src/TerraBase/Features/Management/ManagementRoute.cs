@@ -191,9 +191,10 @@ internal static class ManagementRoute
     public static Valid<PlanTier> CheckPlan(PlanRequest request) => request.Plan switch
     {
         "hobby" => PlanTier.Hobby,
+        "starter" => PlanTier.Starter,
         "pro" => PlanTier.Pro,
         "enterprise" => PlanTier.Enterprise,
-        _ => new Validation("plan must be hobby, pro or enterprise"),
+        _ => new Validation("plan must be hobby, starter, pro or enterprise"),
     };
 
     /// <summary>A database name, or the rule it breaks.</summary>

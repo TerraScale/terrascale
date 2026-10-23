@@ -87,25 +87,28 @@ public sealed class ReplicaRebuildTests
         await Assert.That(await pair.Sjc.ReadAsync(kept)).IsEqualTo("""{"n":1}""");
     }
 
+    // Only verified states join (RT2 review 2.1-6): one that does not match its digest is skipped, and the rebuild completes
+    // instead of being refused on every retry.
     [Test]
-    public async Task A_side_copy_state_that_does_not_match_its_digest_refuses_the_rebuild_and_keeps_the_side_copy()
+    public async Task A_side_copy_state_that_does_not_match_its_digest_is_skipped_and_the_rebuild_completes()
     {
         await using var pair = await Pair.StartAsync();
-        var (_, only) = await pair.SeedAsync();
+        var (kept, only) = await pair.SeedAsync();
         await pair.Sjc.CorruptDigestAsync(only);
         var faulted = await pair.Sjc.IncarnationAsync();
         var adapter = new StandIn(pair);
 
         var outcome = await pair.Sjc.Rebuild(adapter).RebuildAsync(pair.Database, faulted, CancellationToken.None);
 
-        await Assert.That(outcome is RebuildOutcome.Refused).IsTrue().Because(outcome.ToString());
-        await Assert.That(adapter.Ledger.Get(pair.Database)?.Phase).IsEqualTo(RebuildPhase.Swapped);
-        await Assert.That(pair.Sjc.SideExists(faulted)).IsTrue();
-        await Assert.That(adapter.Certified).IsFalse();
+        await Assert.That(outcome is RebuildOutcome.Completed).IsTrue().Because(outcome.ToString());
+        await Assert.That(adapter.Certified).IsTrue();
+        await Assert.That(pair.Sjc.SideExists(faulted)).IsFalse();
+        await Assert.That(await pair.Sjc.ReadAsync(kept)).IsEqualTo("""{"n":1}""");
+        await Assert.That(await pair.Sjc.ReadAsync(only)).IsNull().Because("its state does not verify");
     }
 
     [Test]
-    public async Task A_side_copy_state_moved_to_another_key_with_its_digest_refuses_the_rebuild()
+    public async Task A_side_copy_state_moved_to_another_key_with_its_digest_is_skipped_and_the_rebuild_completes()
     {
         await using var pair = await Pair.StartAsync();
         var (_, only) = await pair.SeedAsync();
@@ -117,10 +120,9 @@ public sealed class ReplicaRebuildTests
 
         var outcome = await pair.Sjc.Rebuild(adapter).RebuildAsync(pair.Database, faulted, CancellationToken.None);
 
-        await Assert.That(outcome is RebuildOutcome.Refused).IsTrue().Because(outcome.ToString());
-        await Assert.That(adapter.Ledger.Get(pair.Database)?.Phase).IsEqualTo(RebuildPhase.Swapped);
-        await Assert.That(pair.Sjc.SideExists(faulted)).IsTrue();
-        await Assert.That(adapter.Certified).IsFalse();
+        await Assert.That(outcome is RebuildOutcome.Completed).IsTrue().Because(outcome.ToString());
+        await Assert.That(adapter.Certified).IsTrue();
+        await Assert.That(pair.Sjc.SideExists(faulted)).IsFalse();
         await Assert.That(await pair.Sjc.ReadAsync(misplaced)).IsNull();
     }
 

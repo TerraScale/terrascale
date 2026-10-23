@@ -150,8 +150,8 @@ expiry cannot grant authorization.
 synthetic create-only write, version/content-checked read and conditional
 delete in `storage_health`. `/readyz` returns 200 only on success and 503 on
 missing state, permission failure, outage or timeout. Concurrent observations
-come from a background check run every five seconds; the latest result is
-served, and it is not ready once older than fifteen seconds. The deadline is two seconds. `region` is omitted when unknown, as it is for this
+come from a background check run five seconds after the previous one ends; the latest result is
+served, and it is not ready once older than fifteen seconds. The deadline is eight seconds. `region` is omitted when unknown, as it is for this
 probe.
 
 The application and probe never provision or repair state. An operator/test

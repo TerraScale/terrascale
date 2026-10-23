@@ -25,7 +25,7 @@
     <PackageReference Include="Microsoft.Playwright" />
     <PackageReference Include="Bogus" />
     <PackageReference Include="ZLogger" />
-    <!-- FakeTimeProvider: drives the readiness loop's five-second passes and two-second deadline. -->
+    <!-- FakeTimeProvider: drives the readiness loop's five-second passes and eight-second deadline. -->
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
   </ItemGroup>
   <ItemGroup>

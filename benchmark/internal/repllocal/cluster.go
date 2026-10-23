@@ -21,15 +21,16 @@ import (
 )
 
 type workerConfig struct {
-	RunDirectory        string `json:"run_directory"`
-	Region              string `json:"region"`
-	Machine             string `json:"machine"`
-	Organization        string `json:"organization"`
-	Project             string `json:"project"`
-	Database            string `json:"database"`
-	User                string `json:"user"`
-	AdvertisedPeerURL   string `json:"advertised_peer_url"`
-	ReadinessCollection string `json:"readiness_collection,omitempty"`
+	ExtraDatabases      []string `json:"extra_databases,omitempty"`
+	RunDirectory        string   `json:"run_directory"`
+	Region              string   `json:"region"`
+	Machine             string   `json:"machine"`
+	Organization        string   `json:"organization"`
+	Project             string   `json:"project"`
+	Database            string   `json:"database"`
+	User                string   `json:"user"`
+	AdvertisedPeerURL   string   `json:"advertised_peer_url"`
+	ReadinessCollection string   `json:"readiness_collection,omitempty"`
 }
 
 type WorkerTarget struct {
@@ -58,7 +59,18 @@ type Cluster struct {
 	Preserve           bool
 }
 
-func StartCluster(ctx context.Context, Root string) (*Cluster, error) {
+func StartCluster(ctx context.Context, Root string, databases int) (*Cluster, error) {
+	return startCluster(ctx, Root, databases, []string{"gru", "sjc", "fra"})
+}
+
+func StartPair(ctx context.Context, root string, databases int) (*Cluster, error) {
+	return startCluster(ctx, root, databases, []string{"gru", "sjc"})
+}
+
+func startCluster(ctx context.Context, Root string, databases int, regions []string) (*Cluster, error) {
+	if databases < 1 {
+		return nil, errors.New("databases must be positive")
+	}
 	Work, err := os.MkdirTemp("", "repl-local-")
 	if err != nil {
 		return nil, err
@@ -69,10 +81,18 @@ func StartCluster(ctx context.Context, Root string) (*Cluster, error) {
 	}
 	c := &Cluster{Work: Work, Root: Root, secret: hex.EncodeToString(secret), Nodes: map[string]*Worker{}}
 	base := workerConfig{RunDirectory: Work, Organization: ulid.Make().String(), Project: ulid.Make().String(), Database: ulid.Make().String(), User: ulid.Make().String()}
+	for range databases - 1 {
+		base.ExtraDatabases = append(base.ExtraDatabases, ulid.Make().String())
+	}
 	if err := os.Mkdir(filepath.Join(Work, "members"), 0o700); err != nil {
 		return nil, errors.Join(err, c.Close())
 	}
-	for _, region := range []string{"gru", "sjc", "fra"} {
+	for _, region := range regions {
+		if err := os.MkdirAll(filepath.Join(Work, region), 0o700); err != nil {
+			return nil, errors.Join(err, c.Close())
+		}
+	}
+	for _, region := range regions {
 		p, err := StartWireProxy(ctx)
 		if err != nil {
 			return nil, errors.Join(err, c.Close())
@@ -135,7 +155,7 @@ func (c *Cluster) Launch(w *Worker) error {
 }
 
 func (c *Cluster) Ready(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	for {
 		ready := 0

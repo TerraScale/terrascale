@@ -40,7 +40,7 @@ func startHost(ctx context.Context, work string) (*host, error) {
 	defer log.Close()
 	cmd := exec.Command("dotnet", "run", "--project", project, "--configuration", "Release", "--no-build", "--",
 		"--treenode-filter", "/*/*/BenchmarkClusterHost/*")
-	cmd.Env = append(os.Environ(), "TERRABASE_BENCH_CLUSTER_PATH="+file, "TERRABASE_BENCH_REGIONS="+hostRegions)
+	cmd.Env = append(os.Environ(), "TERRABASE_BENCH_TARGETS="+file, "TERRABASE_BENCH_REGIONS="+hostRegions)
 	cmd.Stdout, cmd.Stderr = log, log
 	// Its own process group: an interrupt reaches this process only, and a kill reaches dotnet run's child too.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

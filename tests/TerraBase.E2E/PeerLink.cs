@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading.Channels;
 
 namespace TerraBase.E2E;
 
@@ -7,7 +9,7 @@ namespace TerraBase.E2E;
 /// One local machine's way to one peer: a TCP proxy on the real peer path (gRPC over h2c), which the machine's own view of
 /// the member directory names instead of the peer's listener. <see cref="Cut"/> resets the open connections and refuses
 /// new ones until it is cleared, as a network partition does; <see cref="Via"/> sends new connections through another
-/// hop, such as a <see cref="LossyLink"/>.
+/// hop, such as a <see cref="LossyLink"/>; <see cref="Delay"/> gives new connections a fixed one-way delay, as a long route does.
 /// </summary>
 internal sealed class PeerLink : IAsyncDisposable
 {
@@ -33,6 +35,9 @@ internal sealed class PeerLink : IAsyncDisposable
 
     /// <summary>The next hop of new connections, or null for <see cref="Target"/>.</summary>
     public IPEndPoint? Via { get; set; }
+
+    /// <summary>The one-way delay of every byte, both ways, on new connections.</summary>
+    public TimeSpan Delay { get; set; }
 
     /// <summary>Whether the link is cut: setting it resets every open connection.</summary>
     public bool Cut
@@ -114,8 +119,10 @@ internal sealed class PeerLink : IAsyncDisposable
                 _open.Add(upstream);
             }
 
-            var (down, up) = (client.GetStream(), upstream.GetStream());
-            await Task.WhenAny(down.CopyToAsync(up, _stop.Token), up.CopyToAsync(down, _stop.Token));
+            var (down, up, delay) = (client.GetStream(), upstream.GetStream(), Delay);
+            await (delay > TimeSpan.Zero
+                ? Task.WhenAny(DelayAsync(down, up, delay, _stop.Token), DelayAsync(up, down, delay, _stop.Token))
+                : Task.WhenAny(down.CopyToAsync(up, _stop.Token), up.CopyToAsync(down, _stop.Token)));
         }
         catch (Exception error) when (error is IOException or SocketException or OperationCanceledException or ObjectDisposedException)
         {
@@ -130,6 +137,41 @@ internal sealed class PeerLink : IAsyncDisposable
             }
 
             Abort(client);
+        }
+    }
+
+    // Each chunk leaves `delay` after it arrived, in order; reading goes on meanwhile, so the delay is latency, not a rate cap.
+    private static async Task DelayAsync(Stream from, Stream to, TimeSpan delay, CancellationToken cancellationToken)
+    {
+        var chunks = Channel.CreateUnbounded<(long At, byte[] Bytes)>();
+        var writing = WriteAsync();
+        try
+        {
+            var buffer = new byte[64 * 1024];
+            int read;
+            while ((read = await from.ReadAsync(buffer, cancellationToken)) > 0)
+            {
+                _ = chunks.Writer.TryWrite((Stopwatch.GetTimestamp(), buffer[..read]));
+            }
+        }
+        finally
+        {
+            chunks.Writer.TryComplete();
+        }
+
+        await writing;
+
+        async Task WriteAsync()
+        {
+            await foreach (var (at, bytes) in chunks.Reader.ReadAllAsync(cancellationToken))
+            {
+                if (delay - Stopwatch.GetElapsedTime(at) is { Ticks: > 0 } left)
+                {
+                    await Task.Delay(left, cancellationToken);
+                }
+
+                await to.WriteAsync(bytes, cancellationToken);
+            }
         }
     }
 

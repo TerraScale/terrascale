@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -39,20 +40,27 @@ internal sealed record UsageTotals(long Reads, long Writes)
 /// <param name="Reads">Document reads.</param>
 /// <param name="Writes">Document writes.</param>
 /// <param name="Meters">Regional meter observations keyed by their bounded dimensions.</param>
-internal sealed record OpCounts(long Reads, long Writes, IReadOnlyDictionary<string, UsageReading>? Meters = null)
+/// <param name="ReadUnits">Operation units (<see cref="OperationUnits"/>) of the reads.</param>
+/// <param name="WriteUnits">Operation units of the writes.</param>
+internal sealed record OpCounts(long Reads, long Writes, IReadOnlyDictionary<string, UsageReading>? Meters = null, long ReadUnits = 0, long WriteUnits = 0)
 {
     public static OpCounts Zero { get; } = new(0, 0);
 
     public static OpCounts operator +(OpCounts left, OpCounts right)
     {
-        return new(left.Reads + right.Reads, left.Writes + right.Writes, UsageReading.Combine(left.Meters, right.Meters, 1));
+        return new(left.Reads + right.Reads, left.Writes + right.Writes, UsageReading.Combine(left.Meters, right.Meters, 1),
+            left.ReadUnits + right.ReadUnits, left.WriteUnits + right.WriteUnits);
     }
 
     public static OpCounts operator -(OpCounts left, OpCounts right)
     {
-        return new(left.Reads - right.Reads, left.Writes - right.Writes, UsageReading.Combine(left.Meters, right.Meters, -1));
+        return new(left.Reads - right.Reads, left.Writes - right.Writes, UsageReading.Combine(left.Meters, right.Meters, -1),
+            left.ReadUnits - right.ReadUnits, left.WriteUnits - right.WriteUnits);
     }
 }
+
+/// <summary>Operation units of a UTC month, or why they cannot be read now.</summary>
+internal readonly union MonthUnitsResult(UsageTotals, Unavailable);
 
 /// <summary>Which buckets counts belong in.</summary>
 internal enum UsageScope
@@ -121,8 +129,6 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     // Bucket documents are a few dozen bytes; this only bounds a page if one ever is not.
     private const long MaxPageBytes = 1024 * 1024;
 
-    private static readonly OpCounts Read = new(1, 0);
-
     // Best-effort dashboard usage, not billing: counts live only here until a flush saves them, so a crash loses at most
     // those counted since the last successful flush. A failed flush keeps them for the next; a clean shutdown flushes.
     private readonly ConcurrentDictionary<DatabaseOwner, ConcurrentDictionary<UsageKey, OpCounts>> _pending = new();
@@ -137,18 +143,18 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     // counts stay pending until its id, saved with them, shows whether they were saved. Guarded by _flush.
     private (string Id, KeyValuePair<UsageKey, OpCounts>[] Batch)? _inDoubt;
 
-    public void RecordRead(TenantContext database)
+    public void RecordRead(TenantContext database, long units)
     {
-        Add(new(DatabaseOwner.Of(database), CurrentHour()), Read);
-        CountMonth(database, 1);
+        Add(new(DatabaseOwner.Of(database), CurrentHour()), new OpCounts(1, 0, ReadUnits: units));
+        CountMonth(database, units);
         RecordOperation(database, "read", 1);
         stats.Read(database);
     }
 
-    public void RecordWrites(TenantContext database, int writes)
+    public void RecordWrites(TenantContext database, int writes, long units)
     {
-        Add(new(DatabaseOwner.Of(database), CurrentHour()), new OpCounts(0, writes));
-        CountMonth(database, writes);
+        Add(new(DatabaseOwner.Of(database), CurrentHour()), new OpCounts(0, writes, WriteUnits: units));
+        CountMonth(database, units);
         stats.Wrote(database, writes);
     }
 
@@ -396,6 +402,15 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         var minute = CurrentMinute();
         return catalog.WriteAsync<FlushResult>(async transaction =>
         {
+            // Billed months keep the units of databases deleted since. Lifetime-only entries are past every kept day.
+            foreach (var month in batch.Where(entry => entry.Key.Scope != UsageScope.Lifetime && entry.Value.ReadUnits + entry.Value.WriteUnits != 0)
+                .GroupBy(entry => (entry.Key.Database.OrganizationId, entry.Key.Database.ProjectId, Month: MonthId(entry.Key.Hour))))
+            {
+                var units = new UsageTotals(month.Sum(entry => entry.Value.ReadUnits), month.Sum(entry => entry.Value.WriteUnits));
+                await AddUnitsAsync(transaction, ProjectMonths(month.Key.ProjectId), Own(month.Key.Month), units, cancellationToken).ConfigureAwait(false);
+                await AddUnitsAsync(transaction, OrganizationMonths(month.Key.OrganizationId), Own(month.Key.Month), units, cancellationToken).ConfigureAwait(false);
+            }
+
             var dropped = 0;
             foreach (var entries in batch.GroupBy(entry => entry.Key.Database))
             {
@@ -439,6 +454,82 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     {
         var saved = await SystemCatalog.GetAsync(transaction, collection, id, TerraBaseJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false);
         await PutAsync(transaction, collection, id, (saved ?? OpCounts.Zero) + counts, TerraBaseJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask AddUnitsAsync(IStorageTransaction transaction, string collection, string id, UsageTotals units, CancellationToken cancellationToken)
+    {
+        var saved = await SystemCatalog.GetAsync(transaction, collection, id, TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, collection, id, new UsageTotals((saved?.Reads ?? 0) + units.Reads, (saved?.Writes ?? 0) + units.Writes),
+            TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Read and write operation units this UTC month of an organization, or of one of its projects when
+    /// <paramref name="projectId"/> is set: every node's saved month plus this node's pending counts.
+    /// </summary>
+    internal async ValueTask<MonthUnitsResult> GetMonthAsync(string organizationId, string? projectId, CancellationToken cancellationToken)
+    {
+        var month = MonthId(CurrentHour());
+        await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (await SettleAsync(cancellationToken).ConfigureAwait(false) is Unavailable refused)
+            {
+                return refused;
+            }
+
+            var read = await catalog.ReadAsync<MonthUnitsResult>(async transaction =>
+            {
+                var collection = projectId is null ? OrganizationMonths(organizationId) : ProjectMonths(projectId);
+                var units = new UsageTotals(0, 0);
+                // Ids sort by month then node: a month's documents follow its bare id, one per node that flushed.
+                var after = month;
+                while (true)
+                {
+                    var page = await transaction.ListAsync(collection, after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+                    foreach (var document in page.Documents)
+                    {
+                        if (Name(document.Id) != month)
+                        {
+                            return units;
+                        }
+
+                        var saved = JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.UsageTotals)!;
+                        units = new(units.Reads + saved.Reads, units.Writes + saved.Writes);
+                    }
+
+                    if (!page.HasMore)
+                    {
+                        return units;
+                    }
+
+                    after = page.Documents[^1].Id;
+                }
+            }, static error => error, cancellationToken).ConfigureAwait(false);
+            if (read is not UsageTotals total)
+            {
+                return read switch
+                {
+                    Unavailable error => error,
+                    UsageTotals => throw new UnreachableException(),
+                };
+            }
+
+            foreach (var (key, counts) in Entries())
+            {
+                if (key.Database.OrganizationId == organizationId && (projectId is null || key.Database.ProjectId == projectId)
+                    && key.Scope != UsageScope.Lifetime && MonthId(key.Hour) == month)
+                {
+                    total = new(total.Reads + counts.ReadUnits, total.Writes + counts.WriteUnits);
+                }
+            }
+
+            return total;
+        }
+        finally
+        {
+            _flush.Release();
+        }
     }
 
     // Bucket ids sort by time, so the oldest come first. Bounded by what one database can hold (see WriteAsync).
@@ -596,6 +687,13 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     }
 
     private static string UsageCollection(string databaseId) => DatabaseState(databaseId) + "usage";
+
+    // One document month~node per UTC month and node, of units (UsageTotals: reads and writes in operation units).
+    private static string ProjectMonths(string projectId) => ProjectState(projectId) + "usage-months";
+
+    private static string OrganizationMonths(string organizationId) => $"organizations/{organizationId}/usage-months";
+
+    private static string MonthId(long hour) => DateTimeOffset.UnixEpoch.AddHours(hour).ToString("yyyy-MM", CultureInfo.InvariantCulture);
 
     // This node's document of a name.
     private string Own(string name) => name + NodeSeparator + options.MachineId;

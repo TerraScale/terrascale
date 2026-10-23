@@ -146,7 +146,7 @@ public sealed class ShapeMirrorTests
     [Test]
     public async Task Trim_below_the_floor_deletes_the_remote_objects_and_refuses_their_keys()
     {
-        await using var harness = await Harness.StartAsync();
+        await using var harness = await Harness.StartAsync(new FakeTimeProvider(DateTimeOffset.UtcNow));
         var start = await harness.Db.HeadAsync();
         // Two chunks upload in the first epoch; after the clock moves a full epoch, the third upload is sealed under the next one.
         for (var commit = 0; commit < 3; commit++)
@@ -235,9 +235,11 @@ public sealed class ShapeMirrorTests
     }
 
     [Test]
-    public async Task A_presigned_url_serves_the_ciphertext_and_refuses_tampering_and_expiry()
+    [Arguments("2026-10-07T12:00:00Z")]
+    [Arguments("2026-10-07T12:09:59.999Z")]
+    public async Task A_presigned_url_serves_the_ciphertext_and_refuses_tampering_and_expiry(string startAt)
     {
-        await using var harness = await Harness.StartAsync();
+        await using var harness = await Harness.StartAsync(new FakeTimeProvider(DateTimeOffset.Parse(startAt, CultureInfo.InvariantCulture)));
         var start = await harness.Db.HeadAsync();
         _ = await harness.CommitLargeAsync();
         var chunk = await harness.SealAsync(start);
@@ -276,6 +278,8 @@ public sealed class ShapeMirrorTests
         // The signed window ends no later than the manifest's expiry.
         var signedAt = DateTimeOffset.ParseExact(Query(url, "X-Amz-Date")!, "yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
         var lifetime = long.Parse(Query(url, "X-Amz-Expires")!, CultureInfo.InvariantCulture);
+        await Assert.That(signedAt).IsEqualTo(DateTimeOffset.FromUnixTimeSeconds(harness.Time.GetUtcNow().ToUnixTimeSeconds()));
+        await Assert.That(lifetime).IsGreaterThan(0).And.IsLessThanOrEqualTo(ShapeCrypto.EpochSeconds);
         await Assert.That(signedAt.AddSeconds(lifetime)).IsLessThanOrEqualTo(expiresAt);
         await Assert.That(tenantIds.Any(id => url.Contains(id, StringComparison.Ordinal))).IsFalse().Because("the presigned path is shape-scoped, not tenant-scoped");
 
@@ -613,9 +617,9 @@ public sealed class ShapeMirrorTests
 
         public CancellationToken Cancellation { get; } = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
 
-        public static async Task<Harness> StartAsync()
+        public static async Task<Harness> StartAsync(FakeTimeProvider? time = null)
         {
-            var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+            time ??= new FakeTimeProvider(DateTimeOffset.UtcNow);
             var s3 = new FakeS3 { Time = time };
             var puts = new ConcurrentDictionary<string, int>(StringComparer.Ordinal);
             var mirrored = new SemaphoreSlim(0);

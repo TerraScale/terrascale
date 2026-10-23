@@ -9,6 +9,7 @@ using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -249,6 +250,27 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// <summary>Completes at the next committed write to any database.</summary>
     internal Task NextCommitAsync(CancellationToken cancellationToken) => Volatile.Read(ref _commitSignal).Task.WaitAsync(cancellationToken);
 
+    internal event Action<TenantContext>? ReplicationChanged;
+
+    // Keep store callbacks from capturing the opening operation's cancellation and lifetime.
+    private Action ReplicationNotification(TenantContext database) => () => NotifyReplicationChanged(database);
+
+    internal void NotifyReplicationChanged(TenantContext database)
+    {
+        database = database.Plan == PlanTier.Hobby ? database : database with { Plan = PlanTier.Hobby };
+        foreach (var subscriber in Delegate.EnumerateInvocationList(ReplicationChanged))
+        {
+            try
+            {
+                subscriber(database);
+            }
+            catch (Exception error)
+            {
+                _logger.ZLogError(error, $"A replication notification for database {database.DatabaseId:@Database} failed; the change itself is committed");
+            }
+        }
+    }
+
     private void RecordCommittedWrite()
     {
         Interlocked.Exchange(ref _commitSignal, new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
@@ -332,6 +354,70 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     }
 
     public bool SystemDatabaseExists => File.Exists(LocateSystem());
+
+    private readonly ConcurrentDictionary<string, CollectionPresence> _systemCollectionPresence = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _collectionProbe = new(1, 1);
+
+    private sealed class CollectionPresence
+    {
+        public int State = -1;
+    }
+
+    public async ValueTask<bool> MayHaveSystemCollectionStateAsync(string collection, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(collection);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(collection.Length, 1024);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
+        if (_systemCollectionPresence.TryGetValue(collection, out var presence) && Volatile.Read(ref presence.State) >= 0)
+        {
+            return Volatile.Read(ref presence.State) != 0;
+        }
+
+        await _collectionProbe.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!_systemCollectionPresence.TryGetValue(collection, out presence))
+            {
+                if (_systemCollectionPresence.Count == 16)
+                {
+                    throw new InvalidOperationException("at most 16 system collection presence probes are tracked");
+                }
+
+                presence = new CollectionPresence();
+                _systemCollectionPresence[collection] = presence;
+            }
+
+            if (Volatile.Read(ref presence.State) < 0)
+            {
+                var exists = false;
+                if (SystemDatabaseExists)
+                {
+                    var store = await OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+                    // Earlier writers may have notified before this entry existed: await them before taking its snapshot.
+                    await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+                    exists = await transaction.HasCollectionStateAsync(collection, prefix: false, cancellationToken).ConfigureAwait(false);
+                }
+
+                // A concurrent write can turn the hint positive while this older snapshot is being inspected.
+                _ = Interlocked.CompareExchange(ref presence.State, exists ? 1 : 0, -1);
+            }
+
+            return Volatile.Read(ref presence.State) != 0;
+        }
+        finally
+        {
+            _collectionProbe.Release();
+        }
+    }
+
+    private void NoteSystemCollectionState(string collection)
+    {
+        if (_systemCollectionPresence.TryGetValue(collection, out var presence))
+        {
+            Volatile.Write(ref presence.State, 1);
+        }
+    }
+
 
     public event EventHandler<IDatabaseStore>? DatabaseDeleted;
 
@@ -740,6 +826,11 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                         DeleteIfEmpty(Path.Combine(_dataDirectory, key.Organization));
                         return true;
                     }, CancellationToken.None).ConfigureAwait(false);
+                    if (existed)
+                    {
+                        NotifyReplicationChanged(ChangeGroups.System);
+                    }
+
                     return existed;
                 }
 
@@ -814,7 +905,15 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     {
         // Unlocked fast check; OpenStoreAsync checks lifecycle state again under the lock.
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
-        var (key, path) = Locate(database);
+        var (key, path) = Place(database);
+        // An open store keeps its file handles, so only an opening checks the path for links (as the system database's):
+        // this runs several times per request, and the checks are seven readlink calls.
+        if (_stores.TryGetValue(key, out var open))
+        {
+            return File.Exists(path) ? open : null;
+        }
+
+        RejectDatabaseLinks(path);
         return File.Exists(path) ? await OpenStoreAsync(key, path, cancellationToken).ConfigureAwait(false) : null;
     }
 
@@ -857,10 +956,12 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                     openingSystem = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
                         RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
                     {
+                        ReplicationCommitted = ReplicationNotification(ChangeGroups.System),
                         QueryBudget = QueryBudget,
                         Member = Member,
                         Checkpoint = _checkpoint,
                         Ledger = Ledger,
+                        CollectionStateWritten = NoteSystemCollectionState,
                     };
                     await openingSystem.BootstrapAsync(openingToken).ConfigureAwait(false);
                     await openingSystem.SeedClockAsync(openingToken).ConfigureAwait(false);
@@ -871,6 +972,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                         return true;
                     }).ConfigureAwait(false);
                     Volatile.Write(ref _system, openingSystem);
+                    NotifyReplicationChanged(ChangeGroups.System);
                 }
                 catch
                 {
@@ -1248,11 +1350,17 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     // name a parent, another tenant's directory or the system database.
     private ((string Organization, string Project, string Database) Key, string Path) Locate(TenantContext database)
     {
+        var located = Place(database);
+        RejectDatabaseLinks(located.Path);
+        return located;
+    }
+
+    // The database's key and file path, without checking the path for links.
+    private ((string Organization, string Project, string Database) Key, string Path) Place(TenantContext database)
+    {
         ArgumentNullException.ThrowIfNull(database);
         (string Organization, string Project, string Database) key = (Id(database.OrganizationId), Id(database.ProjectId), Id(database.DatabaseId));
-        var path = Path.Combine(_dataDirectory, key.Organization, key.Project, key.Database + FileExtension);
-        RejectDatabaseLinks(path);
-        return (key, path);
+        return (key, Path.Combine(_dataDirectory, key.Organization, key.Project, key.Database + FileExtension));
     }
 
     private string LocateSystem()
@@ -1618,6 +1726,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         var store = new SqliteDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
             RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
         {
+            ReplicationCommitted = ReplicationNotification(tenant),
             QueryBudget = QueryBudget,
             Member = Member,
             Checkpoint = _checkpoint,
@@ -1663,6 +1772,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 _logger.ZLogWarning($"A database's rebuild record could not be read again after it opened; its writes retry it: {error.GetType().Name:@Error}");
             }
 
+            // Creation, import and replacement may publish a copy without a new local group.
+            NotifyReplicationChanged(tenant);
             return store;
         }
         finally

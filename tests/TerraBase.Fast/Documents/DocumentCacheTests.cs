@@ -10,10 +10,9 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Errors;
+using TerraBase.Fast.Management;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
-using TerraBase.Features.Management.Queries;
-using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -29,7 +28,7 @@ public sealed class DocumentCacheTests
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         const long Budget = 4 * 1024 * 1024;
-        await using var management = await ManagementApi.StartAsync(settings =>
+        await using var management = await RequestLogMemoryFixture.StartAsync(settings =>
             settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture));
         using var tenant = await CreateTenantAsync(management, "clock", enterprise: true, cancellationToken: deadline.Token);
         var padding = new string('x', 300 * 1024);
@@ -58,7 +57,7 @@ public sealed class DocumentCacheTests
         await Assert.That((await GetAsync(tenant, "clock", "items", "b", deadline.Token)).Name).IsEqualTo("first");
         await Assert.That((await GetAsync(tenant, "clock", "items", "c", deadline.Token)).Name).IsEqualTo("disk");
         await Assert.That((await GetAsync(tenant, "clock", "items", "a", deadline.Token)).Name).IsEqualTo("disk");
-        await management.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(deadline.Token);
+        await RequestLogMemoryFixture.DrainAsync(management.Server, deadline.Token);
         using var rest = management.Server.Services.GetRequiredService<IMemoryBudget>()
             .TryReserve(MemoryLane.Foreground, Budget - (Budget / 4));
         await Assert.That(rest).IsNotNull();
@@ -277,7 +276,7 @@ public sealed class DocumentCacheTests
         var completed = new CompletedCacheRead();
         // This reservation check owns telemetry flushing; hosted ticks must not retain new observations.
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await using var management = await ManagementApi.StartAsync(settings =>
+        await using var management = await RequestLogMemoryFixture.StartAsync(settings =>
         {
             settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }, services => services.AddSingleton<IStartupFilter>(completed), clock);
@@ -342,9 +341,8 @@ public sealed class DocumentCacheTests
 
             // Authentication also cached an API-key document; disposal must release it synchronously,
             // and the completed storage read must retain no reservation.
-            // Persist the separate query statistics so their pending reservation does not mask a cache leak.
-            await server.Services.GetRequiredService<QueryShapeRecorder>().FlushAsync(operationTimeout.Token);
-            await server.Services.GetRequiredService<UsageMeter>().FlushAsync(operationTimeout.Token);
+            // Persist observations so their pending reservations do not mask a cache leak.
+            await RequestLogMemoryFixture.DrainAsync(server, operationTimeout.Token);
             var budget = server.Services.GetRequiredService<IMemoryBudget>();
             using var recoveredBudget = budget.TryReserve(MemoryLane.Foreground, Budget);
             await Assert.That(recoveredBudget).IsNotNull();
@@ -400,6 +398,57 @@ public sealed class DocumentCacheTests
         await Assert.That(cachedAgain).IsEqualTo((written, "second"));
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(afterDelete.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
+    // The entry bound counts each entry as 4 KiB of the byte bound: a hot set of more than 4,096 small documents stays cached.
+    [Test]
+    public async Task A_hot_set_of_small_documents_larger_than_4096_entries_stays_cached()
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await using var management = await ManagementApi.StartAsync(settings =>
+            settings["memory-budget"] = (256L * 1024 * 1024).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var tenant = await CreateTenantAsync(management, "hot", enterprise: true, cancellationToken: deadline.Token);
+        var database = await tenant.ContextAsync(management.Server, "hot", deadline.Token);
+        var store = (await management.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
+        var cache = management.Server.Services.GetRequiredService<DocumentCache>();
+        var keys = Enumerable.Range(0, 6000).Select(key => new DocumentKey(database, "small", StorageFixture.Id($"hot{key}"))).ToList();
+        var reads = 0;
+        async Task ReadAllAsync()
+        {
+            foreach (var key in keys)
+            {
+                _ = await cache.GetAsync(key, store.Incarnation, () =>
+                {
+                    reads++;
+                    return ValueTask.FromResult<StoredDocument?>(new StoredDocument(key.Id, 1, Encoding.UTF8.GetBytes("""{"name":"first"}"""), Guid.Empty));
+                });
+            }
+        }
+
+        await ReadAllAsync();
+        await Assert.That(reads).IsEqualTo(keys.Count);
+        // Nothing wrote since: every document comes back from the cache, none from storage.
+        await ReadAllAsync();
+        await Assert.That(reads).IsEqualTo(keys.Count);
+    }
+
+    // A cache hit skips the storage read and the refusal check after it, never the one before the lookup.
+    [Test]
+    public async Task A_faulted_copy_refuses_a_document_it_has_cached()
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await using var management = await ManagementApi.StartAsync();
+        using var tenant = await CreateTenantAsync(management, "faulted", cancellationToken: deadline.Token);
+        await PutAsync(tenant, "faulted", "items", "hot", "first", deadline.Token);
+        var database = await tenant.ContextAsync(management.Server, "faulted", deadline.Token);
+        var documents = management.Server.Services.GetRequiredService<IDocumentService>();
+        var key = new DocumentKey(database, "items", StorageFixture.Id("hot"));
+        await Assert.That(await documents.GetAsync(key, deadline.Token) is StoredDocument).IsTrue();
+        await Assert.That(await documents.GetAsync(key, deadline.Token) is StoredDocument).IsTrue();
+
+        var store = (await management.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
+        await management.Server.Services.GetRequiredService<IReplicaCopyFaults>().RecordAsync(database, store.Incarnation, "a test fault", deadline.Token);
+        await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () => await documents.GetAsync(key, deadline.Token));
     }
 
     [Test]
@@ -568,7 +617,7 @@ public sealed class DocumentCacheTests
         const int DocumentBytes = 64 * 1024;
         const long Budget = 4 * 1024 * 1024;
         // A 4 MiB budget leaves the cache 1 MiB: at most 16 of these 48 documents.
-        await using var management = await ManagementApi.StartAsync(settings =>
+        await using var management = await RequestLogMemoryFixture.StartAsync(settings =>
         {
             settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture);
         });
@@ -598,7 +647,7 @@ public sealed class DocumentCacheTests
 
         // Measured through the budget: capacity eviction releases reservations synchronously and the
         // tier holds at most its quarter immediately after the last read.
-        await server.Services.GetRequiredService<UsageMeter>().FlushAsync(CancellationToken.None);
+        await RequestLogMemoryFixture.DrainAsync(server);
         var budget = server.Services.GetRequiredService<IMemoryBudget>();
         using (var everything = budget.TryReserve(MemoryLane.Foreground, Budget))
         {
@@ -619,7 +668,7 @@ public sealed class DocumentCacheTests
         ObservedMemoryBudget? observed = null;
         // Periodic catalog writes can share an invalidation stripe with the cached entry.
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await using var management = await ManagementApi.StartAsync(settings =>
+        await using var management = await RequestLogMemoryFixture.StartAsync(settings =>
         {
             settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }, services =>
@@ -640,11 +689,11 @@ public sealed class DocumentCacheTests
 
         var client = tenant.Data;
         var file = await tenant.FileAsync(server, "oversized");
-        // Leave HTTP/catalog admission and pending usage observation headroom alongside a page's transient result and this
-        // useful cached entry. Each test warms either a point read or a list page.
+        // Leave HTTP/catalog admission, pending usage observation and up to 16 pending 4 KiB request-log records of headroom
+        // alongside a page's transient result and this useful cached entry. Each test warms either a point read or a list page.
         using (var response = await client.PutAsJsonAsync(
             new Uri($"/v1/projects/{tenant.ProjectId}/databases/oversized/collections/small/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative),
-            new { name = "first", padding = new string('x', 960 * 1024) }))
+            new { name = "first", padding = new string('x', 896 * 1024) }))
         {
             response.EnsureSuccessStatusCode();
         }
@@ -660,8 +709,11 @@ public sealed class DocumentCacheTests
             response.EnsureSuccessStatusCode();
         }
 
+        // Persist setup observations before warming; no catalog writes may invalidate the useful entry afterwards.
+        await RequestLogMemoryFixture.DrainAsync(server);
         async Task<List<string>> ReadAsync(string collection)
         {
+            await RequestLogMemoryFixture.WaitForRequestsAsync(server, TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             return list
                 ? await ListAsync(tenant, "oversized", collection)
                 : [$"{StorageFixture.Id("a")}:{(await GetAsync(tenant, "oversized", collection, "a")).Name}"];

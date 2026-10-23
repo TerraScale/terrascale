@@ -82,6 +82,36 @@ public sealed class ProjectTokenTests
         await Assert.That(preserved.GetProperty("document").GetProperty("name").GetString()).IsEqualTo("Preserved");
     }
 
+    [Test]
+    public async Task Project_token_requests_reuse_the_project_lookup_while_the_catalog_is_unchanged()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var project = EntityIds.New().ToString();
+        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project, AllScopes));
+        using (var created = await client.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"), new { name = "main" }))
+        {
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        }
+
+        var collections = Uri($"/v1/projects/{project}/databases/main/collections");
+        (await client.GetAsync(collections)).EnsureSuccessStatusCode();
+        var before = await PointReadsAsync(api);
+        for (var request = 0; request < 50; request++)
+        {
+            using var listed = await client.GetAsync(collections);
+            listed.EnsureSuccessStatusCode();
+        }
+
+        // Uncached, admission and authorization each read the project's organization and binding: about 8 per request, 400 here.
+        // Background catalog commits may each add one shared re-read.
+        await Assert.That(await PointReadsAsync(api) - before).IsLessThan(100d);
+    }
+
+    private static async Task<double> PointReadsAsync(ManagementApi api) =>
+        (await api.Server.Client.GetStringAsync(Uri("/metrics"))).Split('\n')
+            .Where(line => line.StartsWith("terrabase_storage_reads_total{", StringComparison.Ordinal) && line.Contains("path=\"point\"", StringComparison.Ordinal))
+            .Sum(line => double.Parse(line.Split(' ')[^1], System.Globalization.CultureInfo.InvariantCulture));
+
     // An enrolled project's organization has no owner to set its plan; the internal listener's operator sizes it, and
     // admission applies the new plan at once. Projects bound to an owned organization keep the owner route.
     [Test]
@@ -114,7 +144,7 @@ public sealed class ProjectTokenTests
             }
 
             await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{project}/plan"), new { plan = "unlimited" }),
-                HttpStatusCode.BadRequest, "invalid_request", "plan must be hobby, pro or enterprise");
+                HttpStatusCode.BadRequest, "invalid_request", "plan must be hobby, starter, pro or enterprise");
             using (var set = await api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{project}/plan"), new { plan = "enterprise" }))
             {
                 await Assert.That(set.StatusCode).IsEqualTo(HttpStatusCode.OK);

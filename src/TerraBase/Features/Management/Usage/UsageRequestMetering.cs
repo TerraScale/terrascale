@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using TerraBase.Features.Management.Logs;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -24,6 +25,7 @@ public static class UsageRequestMetering
         ArgumentNullException.ThrowIfNull(app);
         var meter = app.Services.GetRequiredService<IUsageMeter>();
         var time = app.Services.GetRequiredService<TimeProvider>();
+        var logs = app.Services.GetRequiredService<IRequestLogs>();
         app.Use(async (context, next) =>
         {
             if (Listeners.ArrivedOn(context) != TerraBaseListener.Client)
@@ -34,7 +36,10 @@ public static class UsageRequestMetering
 
             var input = context.Request.Body;
             var output = context.Response.Body;
-            using var transfer = new Transfer(context, meter, time);
+            using var transfer = new Transfer(context, meter, time, logs);
+            var previousOperations = RequestLogOperations.Current.Value;
+            var operations = new RequestLogOperations();
+            RequestLogOperations.Current.Value = operations;
             context.Request.Body = transfer.Received;
             context.Response.Body = transfer.Sent;
             var started = Stopwatch.GetTimestamp();
@@ -52,7 +57,8 @@ public static class UsageRequestMetering
             {
                 context.Request.Body = input;
                 context.Response.Body = output;
-                transfer.Complete(failed ? 500 : context.Response.StatusCode, Stopwatch.GetElapsedTime(started));
+                try { transfer.Complete(failed ? 500 : context.Response.StatusCode, Stopwatch.GetElapsedTime(started), operations); }
+                finally { RequestLogOperations.Current.Value = previousOperations; }
             }
         });
         return app;
@@ -65,6 +71,7 @@ public static class UsageRequestMetering
         private readonly HttpContext _context;
         private readonly IUsageMeter _meter;
         private readonly TimeProvider _time;
+        private readonly IRequestLogs _logs;
         private readonly IDisposable _tracked;
         private readonly Lock _gate = new();
         private TenantContext? _database;
@@ -73,9 +80,9 @@ public static class UsageRequestMetering
         private long _sent;
         private DateTimeOffset _transferredAt;
 
-        public Transfer(HttpContext context, IUsageMeter meter, TimeProvider time)
+        public Transfer(HttpContext context, IUsageMeter meter, TimeProvider time, IRequestLogs logs)
         {
-            (_context, _meter, _time) = (context, meter, time);
+            (_context, _meter, _time, _logs) = (context, meter, time, logs);
             Received = new CountingStream(context.Request.Body, count => Moved(count, 0));
             Sent = new CountingStream(context.Response.Body, count => Moved(0, count));
             _tracked = meter.TrackActive(Report);
@@ -85,7 +92,7 @@ public static class UsageRequestMetering
 
         public CountingStream Sent { get; }
 
-        public void Complete(int status, TimeSpan elapsed)
+        public void Complete(int status, TimeSpan elapsed, RequestLogOperations operations)
         {
             lock (_gate)
             {
@@ -94,6 +101,7 @@ public static class UsageRequestMetering
                 if (_database is { } database)
                 {
                     _meter.RecordRequest(database, _context.Request.Method, status, elapsed, 0, 0);
+                    if (_context.GetEndpoint() is RouteEndpoint { RoutePattern.RawText: { } route }) { _logs.Record(database, _context.Request.Method, route, status, elapsed, operations.Count(database)); }
                 }
             }
         }

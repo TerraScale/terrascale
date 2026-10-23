@@ -79,6 +79,9 @@ internal sealed class ShapeSnapshots(
     internal const int WorkspaceBytes = PageBytes + 64 * 1024;
     internal const int PageExamined = 10_000;
     internal const int ResealChunks = 4096;
+    // A bootstrap replays every chunk past its snapshot one request each, so a snapshot is resealed once those chunks outnumber
+    // its pages this many times: catch-up stays a few requests per page, and resealing costs at most one page per 16 chunks.
+    internal const int ResealChunksPerPage = 16;
     internal static readonly TimeSpan ResealAge = TimeSpan.FromHours(1);
     internal static readonly TimeSpan PageDeadline = TimeSpan.FromSeconds(5);
 

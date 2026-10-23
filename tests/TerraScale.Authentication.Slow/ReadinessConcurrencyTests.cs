@@ -44,12 +44,12 @@ public sealed class ReadinessConcurrencyTests
     [Test]
     public async Task A_stuck_storage_check_is_never_stacked_with_new_ones()
     {
-        var health = new FakeStorageHealth(healthy: true, delay: TimeSpan.FromSeconds(8), ignoreCancellation: true);
+        var health = new FakeStorageHealth(healthy: true, delay: TimeSpan.FromSeconds(20), ignoreCancellation: true);
         await using var server = await AuthTestServer.StartAsync(services: services =>
             services.AddSingleton<IStorageHealth>(health));
 
-        // The pass at five seconds finds the first check still running and starts no storage work.
-        await Task.Delay(ReadinessWait.NextPass);
+        // The pass five seconds after the eight-second deadline finds the first check still running and starts no storage work.
+        await Task.Delay(TimeSpan.FromSeconds(13.5));
         using var response = await server.Client.GetAsync("/readyz");
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
@@ -59,12 +59,12 @@ public sealed class ReadinessConcurrencyTests
     [Test]
     public async Task A_check_that_blocks_before_returning_is_still_bounded()
     {
-        var health = new FakeStorageHealth(healthy: true, delay: TimeSpan.FromSeconds(8), blockBeforeReturning: true);
+        var health = new FakeStorageHealth(healthy: true, delay: TimeSpan.FromSeconds(20), blockBeforeReturning: true);
         await using var server = await AuthTestServer.StartAsync(services: services =>
             services.AddSingleton<IStorageHealth>(health));
 
-        // The two-second deadline records not ready even though the check blocks its worker.
-        await Task.Delay(TimeSpan.FromSeconds(2.5));
+        // The eight-second deadline records not ready even though the check blocks its worker.
+        await Task.Delay(TimeSpan.FromSeconds(8.5));
         using var response = await server.Client.GetAsync("/readyz");
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
@@ -78,7 +78,7 @@ public sealed class ReadinessConcurrencyTests
             services.AddSingleton<IStorageHealth>(health));
 
         // The first pass times out while its check ignores cancellation.
-        await Task.Delay(TimeSpan.FromSeconds(2.5));
+        await Task.Delay(TimeSpan.FromSeconds(8.5));
         health.CompleteFirstCheck(healthy: true);
         var recovered = await ReadinessWait.ReadyWithinAsync(server.Client, TimeSpan.FromSeconds(10));
 

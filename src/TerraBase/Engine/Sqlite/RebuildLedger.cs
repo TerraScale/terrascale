@@ -1118,6 +1118,11 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
         {
             store.RebuildRow = row;
         }
+
+        if (row is { Phase: RebuildPhase.Certified })
+        {
+            engine.NotifyReplicationChanged(key.Tenant);
+        }
     }
 
     // Inside the transaction, under its writer: the file is exactly that incarnation.

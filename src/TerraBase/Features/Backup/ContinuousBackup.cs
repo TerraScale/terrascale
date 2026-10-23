@@ -440,7 +440,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         _jobs.Clear();
         // Final network shipping must leave time for the durable local close; joins still own their resources.
-        using var finalShipping = new CancellationTokenSource(TimeSpan.FromSeconds(4), _time);
+        using var finalShipping = new CancellationTokenSource(TimeSpan.FromSeconds(4), TimeProvider.System);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, finalShipping.Token);
         var callerCancellation = cancellationToken;
         cancellationToken = deadline.Token;
