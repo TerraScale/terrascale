@@ -69,6 +69,9 @@ public sealed class HranaPipelineTests
         var malformed = await PostAsync(api, """{"requests": 1}""");
         var large = await PostAsync(api, $$$"""{"requests":[{"type":"execute","stmt":{"sql":"SELECT '{{{new string('x', HranaRoute.MaxRequestBytes)}}}'"}}]}""");
         var unknownDatabase = await PostAsync(api, CreateT, database: "nope");
+        var describes = await PostAsync(api, $$$"""{"requests":[{{{string.Join(',', Enumerable.Repeat("""{"type":"describe","sql":"SELECT 1"}""", 257))}}}]}""");
+        var script = string.Join(';', Enumerable.Repeat("SELECT 1", 200));
+        var longSequence = await PostAsync(api, $$$"""{"requests":[{{{string.Join(',', Enumerable.Repeat("""{"type":"execute","stmt":{"sql":"SELECT 1"}}""", 100))}}},{"type":"sequence","sql":"{{{script}}}"},{"type":"sequence","sql":"SELECT 1; SELECT 2"},{"type":"close"}]}""");
         var tooMany = await PostAsync(api, $$$"""{"requests":[{"type":"batch","batch":{"steps":[{{{string.Join(',', Enumerable.Repeat("""{"stmt":{"sql":"SELECT 1"}}""", 257))}}}]}},{"type":"close"}]}""");
         var stillEmpty = await PostAsync(api, """{"requests":[{"type":"execute","stmt":{"sql":"SELECT x FROM t"}},{"type":"close"}]}""");
 
@@ -99,10 +102,42 @@ public sealed class HranaPipelineTests
         await Assert.That((large.Status, Code(large))).IsEqualTo((HttpStatusCode.RequestEntityTooLarge, "payload_too_large"));
         await Assert.That((unknownDatabase.Status, Code(unknownDatabase))).IsEqualTo((HttpStatusCode.NotFound, "unknown_database"));
         await Assert.That((tooMany.Status, Code(tooMany))).IsEqualTo((HttpStatusCode.BadRequest, "PROTOCOL_ERROR"));
+        await Assert.That((describes.Status, Code(describes))).IsEqualTo((HttpStatusCode.BadRequest, "PROTOCOL_ERROR"));
+        // 100 executes leave 156 statements; a 200-statement sequence is refused before it runs, and the allowance is spent.
+        var sequences = longSequence.Json.GetProperty("results").EnumerateArray().Skip(100).ToList();
+        await Assert.That(sequences[0].GetProperty("error").GetProperty("code").GetString()).IsEqualTo("SQLITE_TOOBIG");
+        await Assert.That(sequences[1].GetProperty("error").GetProperty("code").GetString()).IsEqualTo("SQLITE_TOOBIG");
         await Assert.That(tooMany.Json.GetProperty("message").GetString()).Contains("256 statements");
         await Assert.That(Response(stillEmpty.Json, 0).GetProperty("result").GetProperty("rows").GetArrayLength()).IsEqualTo(0);
         await Assert.That(busy.Status).IsEqualTo(HttpStatusCode.TooManyRequests);
         await Assert.That(busy.Json.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("tenant_busy");
+    }
+
+    [Test]
+    public async Task Past_the_response_bound_reads_fail_and_later_statements_never_run()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await PostAsync(api, CreateT);
+        // Each hex() doubles the text: 23 of them build one long value. Estimated as 64 + 33 for the column and 32 + 3 per character for the value:
+        // 5,592,350 characters make 16,777,179 bytes, just under 16 MiB; 5,592,400 cross it.
+        var crossingWrite = await PostAsync(api, """
+            {"requests":[{"type":"execute","stmt":{"sql":"SELECT substr(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(char(120)))))))))))))))))))))))), 1, 5592350) AS v"}},{"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (1)"}},
+             {"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (2)"}},{"type":"close"}]}
+            """);
+        var crossingRead = await PostAsync(api, """
+            {"requests":[{"type":"execute","stmt":{"sql":"SELECT substr(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(hex(char(120)))))))))))))))))))))))), 1, 5592400) AS v"}},{"type":"execute","stmt":{"sql":"INSERT INTO t VALUES (3)"}},
+             {"type":"sequence","sql":"INSERT INTO t VALUES (4)"},{"type":"close"}]}
+            """);
+        var rows = await PostAsync(api, """{"requests":[{"type":"execute","stmt":{"sql":"SELECT x FROM t ORDER BY x"}},{"type":"close"}]}""");
+
+        await Assert.That(Types(crossingWrite.Json)).IsEqualTo("ok:execute,ok:execute,error,ok:close");
+        await Assert.That(Response(crossingWrite.Json, 0).GetProperty("result").GetProperty("rows")[0][0].GetProperty("value").GetString()!.Length).IsEqualTo(5_592_350);
+        await Assert.That(Response(crossingWrite.Json, 1).GetProperty("result").GetProperty("affected_row_count").GetInt64()).IsEqualTo(1);
+        await Assert.That(crossingWrite.Json.GetProperty("results")[2].GetProperty("error").GetProperty("code").GetString()).IsEqualTo("SQLITE_TOOBIG");
+        await Assert.That(Types(crossingRead.Json)).IsEqualTo("error,error,error,ok:close");
+        await Assert.That(string.Join(',', crossingRead.Json.GetProperty("results").EnumerateArray().Take(3).Select(result => result.GetProperty("error").GetProperty("code").GetString())))
+            .IsEqualTo("SQLITE_TOOBIG,SQLITE_TOOBIG,SQLITE_TOOBIG");
+        await Assert.That(Response(rows.Json, 0).GetProperty("result").GetProperty("rows").GetRawText()).IsEqualTo("""[[{"type":"integer","value":"1"}]]""");
     }
 
     internal sealed record ApiResult(HttpStatusCode Status, JsonElement Json, string? ContentType, string Raw, string? RetryAfter = null);

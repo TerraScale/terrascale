@@ -58,7 +58,7 @@ internal sealed class HranaCursorEndpoint(ITenantDirectory tenants, IHranaStream
 
         // Every step runs before the first line: the baton's suffix states whether the batch left a transaction open.
         // The core materializes each result anyway, and the executor bounds their total size.
-        var executor = new HranaExecutor(stream, memory);
+        var executor = new HranaExecutor(stream, memory, batch.Steps.Count);
         var results = new HranaStmtResult?[batch.Steps.Count];
         var errors = new HranaError?[batch.Steps.Count];
         string baton;

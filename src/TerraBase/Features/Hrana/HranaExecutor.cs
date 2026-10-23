@@ -9,7 +9,10 @@ namespace TerraBase.Features.Hrana;
 internal readonly union HranaCommand(SqlCommand, HranaError);
 
 /// <summary>Runs one HTTP request's stream requests against its stream, bounding the response it builds.</summary>
-internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory)
+/// <param name="stream">The request's stream.</param>
+/// <param name="memory">Admits stored statements.</param>
+/// <param name="statements">What <see cref="Statements"/> counted for the request; a sequence may run the rest of the allowance.</param>
+internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory, int statements)
 {
     /// <summary>
     /// SQL statements (execute requests and batch steps) per HTTP request, the core's per-request limit; the core bounds a
@@ -23,6 +26,9 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory)
     private static readonly HranaError Protocol = new("the request is not a valid Hrana request", "PROTOCOL_ERROR");
 
     private long _responseBytes;
+
+    // Statements a sequence may run beyond its own count; the first sequence of a request takes all of them.
+    private int _spare = Math.Max(0, MaxStatements - statements);
 
     /// <summary>Runs one pipeline request; exactly one result whose response type matches the request type.</summary>
     public async ValueTask<HranaResult> RunAsync(HranaRequest? request, CancellationToken cancellationToken)
@@ -70,9 +76,12 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory)
         }
     }
 
-    /// <summary>SQL statements a pipeline runs: one per execute, one per batch step; other requests run none.</summary>
+    /// <summary>
+    /// SQL statements a pipeline runs: one per execute, describe and sequence, one per batch step; other requests run none.
+    /// </summary>
+    /// <remarks>A sequence counts once here; it runs at most the allowance the other statements leave (see <c>SequenceAsync</c>).</remarks>
     public static int Statements(IReadOnlyList<HranaRequest> requests) =>
-        requests.Sum(request => request?.Type == "execute" ? 1 : request?.Batch?.Steps?.Count ?? 0);
+        requests.Sum(request => request?.Type is "execute" or "describe" or "sequence" ? 1 : request?.Batch?.Steps?.Count ?? 0);
 
     /// <summary>Runs a batch; null when its steps or conditions are malformed (nothing ran).</summary>
     public async ValueTask<HranaBatchResult?> BatchAsync(HranaBatch batch, CancellationToken cancellationToken)
@@ -130,23 +139,36 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory)
     };
 
     /// <summary>Runs one statement into a wire result, refusing results past the response bound.</summary>
-    public async ValueTask<HranaStmtOutcome> ExecuteAsync(HranaStmt stmt, CancellationToken cancellationToken) => Command(stmt) switch
+    public async ValueTask<HranaStmtOutcome> ExecuteAsync(HranaStmt stmt, CancellationToken cancellationToken)
     {
-        HranaError error => error,
-        SqlCommand command => await stream.Session.ExecuteAsync(command, cancellationToken).ConfigureAwait(false) switch
+        // Past the bound nothing runs: a statement that ran and then reported an error would invite a duplicate retry.
+        if (_responseBytes > MaxResponseBytes)
         {
-            SqlError error => HranaError.From(error),
-            SqlResult result => Bound(result, stmt.WantRows ?? true),
-        },
-    };
+            return TooBig;
+        }
 
+        return Command(stmt) switch
+        {
+            HranaError error => error,
+            SqlCommand command => await stream.Session.ExecuteAsync(command, cancellationToken).ConfigureAwait(false) switch
+            {
+                SqlError error => HranaError.From(error),
+                SqlResult result => Bound(result, stmt.WantRows ?? true),
+            },
+        };
+    }
+
+    private static readonly HranaError TooBig = new($"the response exceeds {MaxResponseBytes / 1024 / 1024} MiB", "SQLITE_TOOBIG");
+
+    // The statement that crosses the bound already ran: a read reports SQLITE_TOOBIG (rerunning it changes nothing); a
+    // write keeps its counts, without rows.
     private HranaStmtOutcome Bound(SqlResult result, bool wantRows)
     {
         _responseBytes += 64 + result.Columns.Sum(column => 32L + column.Name.Length + (column.DeclType?.Length ?? 0))
             + (wantRows ? result.Rows.Sum(row => row.Sum(value => 32L + (value.Text?.Length ?? 0) * 3L)) : 0);
-        return _responseBytes > MaxResponseBytes
-            ? new HranaError($"the response exceeds {MaxResponseBytes / 1024 / 1024} MiB", "SQLITE_TOOBIG")
-            : HranaStmtResult.From(result, wantRows);
+        return _responseBytes <= MaxResponseBytes ? HranaStmtResult.From(result, wantRows)
+            : result.RowsAffected > 0 ? HranaStmtResult.From(result, wantRows: false)
+            : TooBig;
     }
 
     // The core splits the text and runs its statements in order, stopping at the first failure.
@@ -163,7 +185,14 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory)
             return request.SqlId is null ? Protocol : UnknownSql;
         }
 
-        return await stream.Session.ExecuteScriptAsync(text, cancellationToken).ConfigureAwait(false) switch
+        if (_responseBytes > MaxResponseBytes)
+        {
+            return TooBig;
+        }
+
+        var allowance = _spare + 1;
+        _spare = 0;
+        return await stream.Session.ExecuteScriptAsync(text, allowance, cancellationToken).ConfigureAwait(false) switch
         {
             SqlError error => HranaError.From(error),
             SqlResult => null,

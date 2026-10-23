@@ -52,7 +52,7 @@ internal sealed class HranaPipelineEndpoint(ITenantDirectory tenants, IHranaStre
             return refused!;
         }
 
-        var executor = new HranaExecutor(stream, memory);
+        var executor = new HranaExecutor(stream, memory, HranaExecutor.Statements(body.Requests));
         var results = new List<HranaResult>(body.Requests.Count);
         var closed = false;
         try
