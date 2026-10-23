@@ -106,10 +106,10 @@ TerraBaseDocument? current = await database.GetDocumentAsync("users", userId, ca
 
 `DeleteAsync` deletes the database and its data; it throws `TerraBaseConflictException` (`database_replicated`) while replica regions exist.
 
-One-time imports follow TerraBase's import contract v1 revision 3 (monorepo `docs/terrabase/import.md` on
-`feat/postgres-turso-import-engine` at `567bfd33`; the engine is not merged or deployed, and nothing here is
-live-qualified). The user exports with their own tools
-(`pg_dump --format=plain`, or a rollback-journal SQLite/Turso file from `VACUUM INTO`) and uploads it: TerraBase never
+One-time imports follow TerraBase's import contract (monorepo `docs/terrabase/import.md` and `import-ndjson.md` at
+`94481f1f2`; nothing here is live-qualified). Every imported row gets a generated deterministic ULID document id;
+source primary keys (and NDJSON `id`, `_id` or `$oid`) stay ordinary fields. The user exports with their own tools
+(`pg_dump --format=plain`, a rollback-journal SQLite/Turso file from `VACUUM INTO`, or NDJSON) and uploads it: TerraBase never
 connects to the source or receives its credentials. Create a new, empty destination database for each import with
 `Project(projectId).CreateDatabaseAsync`, a fresh `import-<lowercase ULID>` name, no replicas and the same ts-auth
 project access token (a database created through `TerraBaseManagementClient` is reachable by a project token only once

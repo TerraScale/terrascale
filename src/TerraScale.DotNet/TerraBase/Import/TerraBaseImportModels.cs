@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet.TerraBase;
 
-// Import contract v1 revision 3: TerraScale/terrascale docs/terrabase/import.md on feat/postgres-turso-import-engine at 567bfd33fe1257a922c4f8df4e8217517fc06268.
+// Import contract: TerraScale/terrascale docs/terrabase/import.md and import-ndjson.md at 94481f1f2 (#408).
 
 /// <summary>The kind of export file an import reads. TerraBase never connects to the source database.</summary>
 [JsonConverter(typeof(TerraBaseStringEnumConverter<TerraBaseImportFormat>))]
@@ -21,19 +21,13 @@ public enum TerraBaseImportFormat
     /// </summary>
     [JsonStringEnumMemberName("sqlite")]
     Sqlite,
-}
 
-/// <summary>What happens to a PostgreSQL table without a primary key.</summary>
-[JsonConverter(typeof(TerraBaseStringEnumConverter<TerraBaseImportMissingPrimaryKey>))]
-public enum TerraBaseImportMissingPrimaryKey
-{
-    /// <summary>The table blocks the import (<c>missing_primary_key</c>). The default.</summary>
-    [JsonStringEnumMemberName("reject")]
-    Reject,
-
-    /// <summary>Each row gets a deterministic ULID, identical on every resume.</summary>
-    [JsonStringEnumMemberName("generate")]
-    Generate,
+    /// <summary>
+    /// One JSON object per line. Export lines (<c>{collection,id,document}</c>) keep their collection and ULID id; any other
+    /// line goes to <see cref="TerraBaseImportOptions.Collection"/> or its own <c>collection</c> member.
+    /// </summary>
+    [JsonStringEnumMemberName("ndjson")]
+    Ndjson,
 }
 
 /// <summary>Where an import job is. <see cref="Completed"/> is terminal; <see cref="Failed"/> and <see cref="Cancelled"/> can resume.</summary>
@@ -84,15 +78,18 @@ public enum TerraBaseImportState
     Cancelled,
 }
 
-/// <summary>How an import maps the source.</summary>
-/// <param name="MissingPrimaryKey">Policy for tables without a primary key.</param>
+/// <summary>
+/// How an import maps the source. Every imported row gets a generated deterministic ULID document id, identical on every
+/// resume; source primary keys (and NDJSON <c>id</c>, <c>_id</c> or <c>$oid</c>) stay ordinary fields.
+/// </summary>
 /// <param name="Exclude">
 /// At most 1000 tables (<c>schema.table</c>) and columns (<c>schema.table.column</c>) to leave out; SQLite's schema is
 /// <c>main</c>. Identifiers other than <c>[a-z0-9_]</c> are double-quoted as in SQL. <see langword="null"/> excludes nothing.
 /// </param>
+/// <param name="Collection">NDJSON only: the collection of every non-export line; export lines keep their own.</param>
 public sealed record TerraBaseImportOptions(
-    TerraBaseImportMissingPrimaryKey MissingPrimaryKey = TerraBaseImportMissingPrimaryKey.Reject,
-    IReadOnlyList<string>? Exclude = null) : IJsonOnDeserialized
+    IReadOnlyList<string>? Exclude = null,
+    string? Collection = null) : IJsonOnDeserialized
 {
     void IJsonOnDeserialized.OnDeserialized()
     {
@@ -100,7 +97,7 @@ public sealed record TerraBaseImportOptions(
     }
 
     internal bool SameAs(TerraBaseImportOptions other) =>
-        MissingPrimaryKey == other.MissingPrimaryKey && (Exclude ?? []).SequenceEqual(other.Exclude ?? [], StringComparer.Ordinal);
+        Collection == other.Collection && (Exclude ?? []).SequenceEqual(other.Exclude ?? [], StringComparer.Ordinal);
 }
 
 /// <summary>
@@ -179,8 +176,7 @@ public sealed record TerraBaseImportPreview(
 /// <param name="Collection">Destination collection name.</param>
 /// <param name="Excluded">Whether the options leave the table out.</param>
 /// <param name="Rows">Rows in the export.</param>
-/// <param name="IdPolicy">Where document ids come from: <c>primary_key</c>, <c>rowid</c>, <c>generated</c>, or <c>none</c>.</param>
-/// <param name="PrimaryKey">Primary key columns, in key order.</param>
+/// <param name="PrimaryKey">Primary key columns, in key order; they stay ordinary fields.</param>
 /// <param name="Columns">Every source column.</param>
 /// <param name="Constraints">Constraints recorded from the source; TerraBase enforces none of them.</param>
 /// <param name="Issues">Problems found in every row, at most 50.</param>
@@ -189,7 +185,6 @@ public sealed record TerraBaseImportTablePlan(
     string Collection,
     bool Excluded,
     long Rows,
-    string IdPolicy,
     IReadOnlyList<string> PrimaryKey,
     IReadOnlyList<TerraBaseImportColumn> Columns,
     IReadOnlyList<TerraBaseImportConstraint> Constraints,
@@ -229,7 +224,7 @@ public sealed record TerraBaseImportConstraint(string Kind, string? Name, IReadO
 
 /// <summary>A problem found in a table.</summary>
 /// <param name="Severity"><c>blocking</c> (start is refused) or <c>warning</c>.</param>
-/// <param name="Code">For example <c>unsupported_type</c> or <c>missing_primary_key</c>.</param>
+/// <param name="Code">For example <c>unsupported_type</c> or <c>collection_name_collision</c>.</param>
 /// <param name="Column">The column it concerns; <see langword="null"/> when it concerns the table.</param>
 /// <param name="Row">The row it concerns; <see langword="null"/> when none.</param>
 /// <param name="Message">What to do about it.</param>
