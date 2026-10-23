@@ -111,6 +111,7 @@ OpenAPI and immutable release qualification remain open gates.
 | Databases | `client.databases.create/list/get/update/delete/branch` |
 | SQL | `db.sql/checkSql/explainSql` |
 | Changes | `db.changes` (SSE async iterator) |
+| Export | `db.export` (NDJSON async iterator) |
 
 Project, collection catalog, and database catalog IDs are canonical uppercase
 26-character ULIDs. `generateId()`, `isValidId()` and `requireId()` retain that
@@ -168,6 +169,18 @@ serving value, including null. Network failures, malformed streams, terminal
 errors, denials, expired history (410) and overload (429) propagate. The SDK
 never silently resets to `now` or broadens the view. Iterator `return()` also
 interrupts an already pending read.
+
+`db.export()` streams every live document as `{ collection, id, document }`,
+in collection then id order, from one read snapshot (`documents:read`). Lines
+are parsed as they arrive. A stream that ends inside a line throws; resume with
+the last whole document received, which reads a new snapshot:
+
+```js
+let last;
+for await (const row of db.export({ after: last, signal: controller.signal })) {
+  last = { collection: row.collection, id: row.id };
+}
+```
 
 The exported collection `shape()` remains compatible with the historical
 `6cb9745…` release. Its route is absent from the audited current server source;
