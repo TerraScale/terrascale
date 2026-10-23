@@ -6,14 +6,14 @@ namespace TerraScale.Authentication.Features.Observability;
 
 /// <summary>Liveness body.</summary>
 /// <param name="Status">Always <c>ok</c>.</param>
-/// <param name="Version">Service version of the running build.</param>
+/// <param name="Version">Service version of the running build, without its revision (<see cref="ServiceVersion.Public"/>).</param>
 public sealed record StatusBody(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("version")] string Version);
 
 /// <summary>Readiness body.</summary>
 /// <param name="Status"><c>ready</c> or <c>not_ready</c>.</param>
-/// <param name="Version">Service version of the running build.</param>
+/// <param name="Version">Service version of the running build, without its revision (<see cref="ServiceVersion.Public"/>).</param>
 /// <param name="Region">Storage authority region, when it answered.</param>
 /// <param name="Error">Why it is not ready, when signing-key bootstrap is pending (<c>no signing keys: startup bootstrap pending …</c>).</param>
 public sealed record ReadyBody(
@@ -37,7 +37,7 @@ public sealed class HealthzEndpoint : EndpointWithoutRequest<StatusBody>
 
     /// <inheritdoc />
     public override ValueTask<StatusBody> HandleAsync(CancellationToken cancellationToken) =>
-        ValueTask.FromResult(new StatusBody("ok", ServiceVersion.Value));
+        ValueTask.FromResult(new StatusBody("ok", ServiceVersion.Public));
 }
 
 /// <summary><c>GET /readyz</c>: storage, the signing-ring bootstrap and public signing metadata were usable at the latest background check.</summary>
@@ -60,7 +60,7 @@ public sealed class ReadyzEndpoint(ReadinessProbe probe) : EndpointWithoutReques
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var observation = probe.Latest();
-        var body = new ReadyBody(observation.Ready ? "ready" : "not_ready", ServiceVersion.Value, observation.Region, observation.Error);
+        var body = new ReadyBody(observation.Ready ? "ready" : "not_ready", ServiceVersion.Public, observation.Region, observation.Error);
         return ValueTask.FromResult<IResult>(TypedResults.Json(body, statusCode: observation.Ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable));
     }
 }

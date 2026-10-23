@@ -10,7 +10,9 @@ listener on port 18080. The runner must be on the NetBird mesh (delta, mariogk-d
 |---|---|---|
 | `TERRABASE_E2E_ORCH_NODES` | no | Each region's client listener: `gru=http://<netbird-ip>:18080,sjc=...,fra=...`. Setting it selects ts-orch. |
 | `TERRABASE_E2E_ORCH_KEY` | yes | The e2e project's ts-auth project API key (scopes `databases:read databases:write documents:read documents:write`). |
-| `TERRABASE_E2E_ORCH_REVISION` | no | The commit every node must report on `/healthz`. Set, the run is pinned: acceptance evidence. |
+| `TERRABASE_E2E_ORCH_REVISION` | no | The commit every node must report on its internal listener's `/healthz`. Set, the run is pinned: acceptance evidence. |
+| `TERRABASE_E2E_ORCH_INTERNAL_NODES` | no | Pinned runs only: each region's internal listener, `gru=http://<netbird-ip>:<internal-port>,...`. The public listener never names the revision. |
+| `TERRABASE_E2E_ORCH_PEER_SECRET` | yes | Pinned runs only: the service's peer credential (`TERRABASE_PEER_SECRET`), sent only to the internal listeners. |
 | `TERRABASE_E2E_ORCH_OUTAGE` | no | `1` lets a pinned run stop regions (`make terrabase-e2e-orch-outage` sets it). |
 
 ## Credentials

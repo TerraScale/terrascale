@@ -494,22 +494,35 @@ public sealed class HealthTests
         public void Advance(TimeSpan interval) => Interlocked.Add(ref _timestamp, (long)interval.TotalMilliseconds);
     }
 
-    // The whole body is node metadata: status, build version, region and storage format, with no tenant data.
+    // The whole body is node metadata with no tenant data. Anonymous callers on the public listener (the one that sets
+    // X-TerraBase-Region) get status, version and region only; build detail (storage format, revision, node) needs the
+    // internal listener's peer credential.
     private static async Task AssertProbeAsync(HttpClient client, string path, HttpStatusCode status, string state)
     {
         using var response = await client.GetAsync(new Uri(path, UriKind.Relative));
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var text = await response.Content.ReadAsStringAsync();
+        using var body = JsonDocument.Parse(text);
+        var anonymous = response.Headers.Contains("X-TerraBase-Region");
 
         await Assert.That(response.StatusCode).IsEqualTo(status);
-        await Assert.That(body.RootElement.EnumerateObject().Select(property => property.Name).ToList()).IsEquivalentTo(["status", "version", "region", "storageFormat", "revision", "machine"]);
-        // The source commit the build was made from: the checkout's HEAD here, TERRABASE_REVISION in a CI image.
-        await Assert.That(body.RootElement.GetProperty("revision").GetString()).IsEqualTo(ServiceVersion.Revision);
-        await Assert.That(ServiceVersion.Revision).Matches("^[0-9a-f]{40}$");
-        await Assert.That(body.RootElement.GetProperty("machine").GetString()).IsEqualTo("local");
         await Assert.That(body.RootElement.GetProperty("status").GetString()).IsEqualTo(state);
         await Assert.That(body.RootElement.GetProperty("version").GetString()).IsEqualTo("0.1.0");
         await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo("test-region");
-        await Assert.That(body.RootElement.GetProperty("storageFormat").GetString()).IsEqualTo(StorageFormat.Id);
+        // The source commit the build was made from: the checkout's HEAD here, TERRABASE_REVISION in a CI image.
+        await Assert.That(ServiceVersion.Revision).Matches("^[0-9a-f]{40}$");
+        if (anonymous)
+        {
+            await Assert.That(body.RootElement.EnumerateObject().Select(property => property.Name).ToList()).IsEquivalentTo(["status", "version", "region"]);
+            await Assert.That(text.Contains(ServiceVersion.Revision!, StringComparison.Ordinal)).IsFalse();
+        }
+        else
+        {
+            await Assert.That(body.RootElement.EnumerateObject().Select(property => property.Name).ToList()).IsEquivalentTo(["status", "version", "region", "storageFormat", "revision", "machine"]);
+            await Assert.That(body.RootElement.GetProperty("revision").GetString()).IsEqualTo(ServiceVersion.Revision);
+            await Assert.That(body.RootElement.GetProperty("machine").GetString()).IsEqualTo("local");
+            await Assert.That(body.RootElement.GetProperty("storageFormat").GetString()).IsEqualTo(StorageFormat.Id);
+        }
+
         if (client.BaseAddress?.Scheme == Uri.UriSchemeHttps)
         {
             await Assert.That(response.Headers.GetValues("X-TerraBase-Region").Single()).IsEqualTo("test-region");

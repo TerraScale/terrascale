@@ -43,26 +43,39 @@ public sealed class OrchTests
         await Assert.That(Gaps.PinnedRefusal("not-a-gap")).IsNull();
     }
 
-    // /healthz of gru's node: the run starts (and ends) only when it answers as a named node in gru running the revision.
+    // /healthz of gru's node: the run starts (and ends) only when it answers as a named node in gru (X-TerraBase-Machine) and,
+    // on its internal listener, reports the revision under test.
     [Test]
     [Scenario(Nodes.Harness)]
-    [Arguments(HttpStatusCode.OK, """{"region":"gru","machine":"ts-gru-1","revision":"rev1"}""", null)]
-    [Arguments(HttpStatusCode.OK, """{"region":"sjc","machine":"ts-gru-1","revision":"rev1"}""", "region sjc")]
-    [Arguments(HttpStatusCode.OK, """{"region":"gru","machine":"ts-gru-1","revision":"rev2"}""", "revision rev2")]
-    [Arguments(HttpStatusCode.OK, """{"region":"gru","machine":"ts-gru-1","revision":null}""", "revision (none)")]
-    [Arguments(HttpStatusCode.OK, """{"status":"ok","version":"0.1.0","region":"gru"}""", "node (none)")]
-    [Arguments(HttpStatusCode.ServiceUnavailable, """{"error":{"code":"unavailable"}}""", "503")]
-    public async Task Each_node_must_answer_as_itself_running_the_revision_under_test(HttpStatusCode status, string body, string? refusal)
+    [Arguments(HttpStatusCode.OK, """{"region":"gru"}""", "ts-gru-1", """{"revision":"rev1"}""", null)]
+    [Arguments(HttpStatusCode.OK, """{"region":"sjc"}""", "ts-gru-1", """{"revision":"rev1"}""", "region sjc")]
+    [Arguments(HttpStatusCode.OK, """{"region":"gru"}""", "ts-gru-1", """{"revision":"rev2"}""", "revision rev2")]
+    [Arguments(HttpStatusCode.OK, """{"region":"gru"}""", "ts-gru-1", """{"status":"ok"}""", "revision (none)")]
+    [Arguments(HttpStatusCode.OK, """{"status":"ok","version":"0.1.0","region":"gru"}""", null, """{"revision":"rev1"}""", "node (none)")]
+    [Arguments(HttpStatusCode.ServiceUnavailable, """{"error":{"code":"unavailable"}}""", "ts-gru-1", """{"revision":"rev1"}""", "503")]
+    public async Task Each_node_must_answer_as_itself_running_the_revision_under_test(HttpStatusCode status, string body, string? machine, string build, string? refusal)
     {
-        using var client = new HttpClient(new Stand(_ => new HttpResponseMessage(status) { Content = new StringContent(body) })) { BaseAddress = new Uri("http://node.test") };
+        using var client = new HttpClient(new Stand(_ =>
+        {
+            var response = new HttpResponseMessage(status) { Content = new StringContent(body) };
+            if (machine is not null)
+            {
+                response.Headers.Add("X-TerraBase-Machine", machine);
+            }
+
+            return response;
+        }))
+        { BaseAddress = new Uri("http://node.test") };
+        using var internalClient = new HttpClient(new Stand(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(build) })) { BaseAddress = new Uri("http://node.test:8081") };
         var nodes = new Dictionary<string, HttpClient>(StringComparer.Ordinal) { [Cluster.Gru] = client };
+        var builds = new Dictionary<string, HttpClient>(StringComparer.Ordinal) { [Cluster.Gru] = internalClient };
         if (refusal is null)
         {
-            await Assert.That((await Cluster.IdentifyAsync(nodes, "rev1"))[Cluster.Gru]).IsEqualTo("ts-gru-1");
+            await Assert.That((await Cluster.IdentifyAsync(nodes, "rev1", builds))[Cluster.Gru]).IsEqualTo("ts-gru-1");
             return;
         }
 
-        var error = await Assert.ThrowsAsync<Exception>(() => Cluster.IdentifyAsync(nodes, "rev1"));
+        var error = await Assert.ThrowsAsync<Exception>(() => Cluster.IdentifyAsync(nodes, "rev1", builds));
         await Assert.That(error!.Message).Contains(refusal);
     }
 

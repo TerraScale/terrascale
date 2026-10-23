@@ -295,6 +295,10 @@ public sealed class Cluster : IAsyncDisposable
         var revision = Environment.GetEnvironmentVariable(RevisionVariable) is { Length: > 0 } expected ? expected : null;
         var addresses = Orch.Nodes(Environment.GetEnvironmentVariable, regions);
         var nodes = regions.ToDictionary(region => region, region => Orch.Node(addresses[region]), StringComparer.Ordinal);
+        // Only the internal listener names the build revision, so a pinned run reads it there with the peer credential.
+        var builds = revision is null ? null : Orch.Nodes(Environment.GetEnvironmentVariable, regions, Orch.InternalNodesVariable).ToDictionary(
+            entry => entry.Key, entry => Orch.Internal(entry.Value, Environment.GetEnvironmentVariable(Orch.PeerSecretVariable) is { Length: > 0 } secret
+                ? secret : throw new InvalidOperationException($"a pinned run needs {Orch.PeerSecretVariable}")), StringComparer.Ordinal);
         var clients = regions.ToDictionary(region => region, region => Client(region), StringComparer.Ordinal);
         var collection = NewCollection();
         string? path = null;
@@ -302,7 +306,7 @@ public sealed class Cluster : IAsyncDisposable
         {
             var (project, organization) = await Orch.ClaimsAsync();
             var projectPath = $"/v1/projects/{project}";
-            var names = await IdentifyAsync(nodes, revision);
+            var names = await IdentifyAsync(nodes, revision, builds);
             path = await SharedDatabaseAsync(clients[Gru], projectPath);
             await CreateCollectionAsync(clients, path, collection);
             return new Cluster(projectPath, path, collection, clients, null, regions.ToDictionary(
@@ -312,7 +316,7 @@ public sealed class Cluster : IAsyncDisposable
                 {
                     try
                     {
-                        if (!(await IdentifyAsync(nodes, revision)).OrderBy(name => name.Key).SequenceEqual(names.OrderBy(name => name.Key)))
+                        if (!(await IdentifyAsync(nodes, revision, builds)).OrderBy(name => name.Key).SequenceEqual(names.OrderBy(name => name.Key)))
                         {
                             throw new InvalidOperationException($"the ts-orch nodes changed during the run: {string.Join(", ", names)} before");
                         }
@@ -499,9 +503,11 @@ public sealed class Cluster : IAsyncDisposable
 
     private static string NewCollection() => $"e2e-{Guid.NewGuid():N}";
 
-    // Each region's node answers /healthz as itself (its region, a node name and, pinned, the commit under test), or the run
-    // stops before any write: an answer from another region or build proves nothing about this one. Answers each node's name.
-    internal static async Task<Dictionary<string, string>> IdentifyAsync(Dictionary<string, HttpClient> nodes, string? revision)
+    // Each region's node answers /healthz as itself (its region, a node name in X-TerraBase-Machine and, pinned, the commit under
+    // test on its internal listener in `builds`), or the run stops before any write: an answer from another region or build
+    // proves nothing about this one. Answers each node's name.
+    internal static async Task<Dictionary<string, string>> IdentifyAsync(
+        Dictionary<string, HttpClient> nodes, string? revision, IReadOnlyDictionary<string, HttpClient>? builds = null)
     {
         var names = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (region, node) in nodes)
@@ -509,7 +515,17 @@ public sealed class Cluster : IAsyncDisposable
             using var health = await node.GetAsync(new Uri("/healthz", UriKind.Relative));
             await Docs.EnsureSuccessAsync(health);
             using var body = JsonDocument.Parse(await health.Content.ReadAsStringAsync());
-            var (served, name, built) = (Text(body, "region"), Text(body, "machine"), Text(body, "revision"));
+            var (served, name) = (Text(body, "region"), health.Headers.TryGetValues("X-TerraBase-Machine", out var machine) ? machine.Single() : null);
+            string? built = null;
+            if (revision is not null)
+            {
+                using var build = await (builds ?? throw new InvalidOperationException("a pinned run needs each node's internal listener"))[region]
+                    .GetAsync(new Uri("/healthz", UriKind.Relative));
+                await Docs.EnsureSuccessAsync(build);
+                using var detail = JsonDocument.Parse(await build.Content.ReadAsStringAsync());
+                built = Text(detail, "revision");
+            }
+
             names[region] = served == region && name is { Length: > 0 } && (revision is null || built == revision)
                 ? name
                 : throw new InvalidOperationException(

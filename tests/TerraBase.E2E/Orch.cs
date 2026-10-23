@@ -17,6 +17,8 @@ internal static class Orch
 {
     public const string NodesVariable = "TERRABASE_E2E_ORCH_NODES";
     public const string KeyVariable = "TERRABASE_E2E_ORCH_KEY";
+    public const string InternalNodesVariable = "TERRABASE_E2E_ORCH_INTERNAL_NODES";
+    public const string PeerSecretVariable = "TERRABASE_E2E_ORCH_PEER_SECRET";
     public const string Service = "terrabase-e2e";
 
     // Any ts-orch host runs the CLI (apply is global); gru's host stays up while its terrabase-e2e node is removed.
@@ -32,23 +34,42 @@ internal static class Orch
     // The regions this run has stopped: a second stop keeps the first one down, and a start brings back only its own region.
     private static readonly HashSet<string> Stopped = [];
 
-    /// <summary>Each region's client listener, from <c>gru=http://ip:port,sjc=...,fra=...</c>; every one of <paramref name="regions"/> once.</summary>
-    public static Dictionary<string, Uri> Nodes(Func<string, string?> variable, IReadOnlyList<string> regions)
+    /// <summary>
+    /// Each region's listener, from <c>gru=http://ip:port,sjc=...,fra=...</c> in <paramref name="name"/> (the client listeners
+    /// by default); every one of <paramref name="regions"/> once.
+    /// </summary>
+    public static Dictionary<string, Uri> Nodes(Func<string, string?> variable, IReadOnlyList<string> regions, string name = NodesVariable)
     {
         ArgumentNullException.ThrowIfNull(variable);
         ArgumentNullException.ThrowIfNull(regions);
         var nodes = new Dictionary<string, Uri>(StringComparer.Ordinal);
-        foreach (var entry in (variable(NodesVariable) ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var entry in (variable(name) ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             if (entry.Split('=') is not [{ Length: > 0 } region, var address] || !Uri.TryCreate(address, UriKind.Absolute, out var url)
                 || url.Scheme != Uri.UriSchemeHttp || url.AbsolutePath != "/" || !nodes.TryAdd(region, url))
             {
-                throw new InvalidOperationException($"{NodesVariable} must list each region once as region=http://<netbird-ip>:<port>/; got {entry}");
+                throw new InvalidOperationException($"{name} must list each region once as region=http://<netbird-ip>:<port>/; got {entry}");
             }
         }
 
         var missing = regions.Where(region => !nodes.ContainsKey(region)).ToArray();
-        return missing.Length == 0 ? nodes : throw new InvalidOperationException($"{NodesVariable} names no node for {string.Join(", ", missing)}");
+        return missing.Length == 0 ? nodes : throw new InvalidOperationException($"{name} names no node for {string.Join(", ", missing)}");
+    }
+
+    /// <summary>
+    /// A client of one node's internal listener (HTTP/2 without TLS) carrying the service's peer credential: only there does
+    /// <c>/healthz</c> name the build revision, which a pinned run checks.
+    /// </summary>
+    public static HttpClient Internal(Uri address, string secret)
+    {
+        var client = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
+        {
+            BaseAddress = address,
+            DefaultRequestVersion = HttpVersion.Version20,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        client.DefaultRequestHeaders.Add("X-TerraBase-Peer-Credential", secret);
+        return client;
     }
 
     /// <summary>A client of one node: the run's bearer on every request, and a refused connection answered as 503, as a stopped local node is.</summary>

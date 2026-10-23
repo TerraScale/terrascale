@@ -34,10 +34,17 @@ public sealed class BackupRequiredTests
     [Test]
     public async Task Backupz_answers_503_in_development_without_backup()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
+        using var tls = new ClientTls();
+        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
+        using var client = tls.CreateClient(server.ClientAddress!);
         using var response = await server.Client.GetAsync(new Uri("/backupz", UriKind.Relative));
+        using var anonymous = await client.GetAsync(new Uri("/backupz", UriKind.Relative));
+        var body = await anonymous.Content.ReadFromJsonAsync<JsonElement>();
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        // Anonymous public callers never see the build revision, storage format or node name.
+        await Assert.That(body.EnumerateObject().Select(property => property.Name).ToList()).IsEquivalentTo(["status", "version", "region"]);
     }
 
     [Test]

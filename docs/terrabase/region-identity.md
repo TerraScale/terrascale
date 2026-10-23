@@ -45,7 +45,11 @@ A `200` over `sjc.api.terrascale.tech` proves DNS and TLS for that name only;
 `X-TerraBase-Region: sjc` identifies the answering region. Unavailable regional
 routing must fail closed; its OCI ingress behavior requires runtime verification.
 
-The `/healthz` JSON body includes `status`, `version`, `region`, `storageFormat`, `revision`: the source commit the build was made from (`TERRABASE_REVISION` in CI images, null when a build recorded none), and `machine` (the deployed runtime identity), so each answer names the exact machine and commit (`/readyz` and `/backupz` carry the same fields).
+On the public listener the `/healthz` JSON body is `status`, `version` (without build metadata) and `region` only; the
+answering node is named in `X-TerraBase-Machine`. On the internal listener (peer credential) it also carries
+`storageFormat`, `revision`: the source commit the build was made from (`TERRABASE_REVISION` in CI images, omitted when a
+build recorded none), and `machine` (the deployed runtime identity), so an operator sees the exact machine and commit.
+`/readyz` and `/backupz` follow the same split: anonymous callers never see the revision or storage format.
 Management API database JSON includes `region` on create, branch, get, and list
 responses. This value is the responding node's region at response time, including
 for existing database records; it is not persisted placement metadata and

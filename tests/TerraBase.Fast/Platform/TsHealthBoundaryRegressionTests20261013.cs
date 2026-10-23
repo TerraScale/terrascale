@@ -117,8 +117,12 @@ public sealed class TsHealthBoundaryRegressionTests20261013
 
         await Assert.That(response.StatusCode).IsEqualTo(expected);
         await Assert.That(body.RootElement.GetProperty("status").GetString()).IsEqualTo(status);
-        await Assert.That(body.RootElement.EnumerateObject().Select(property => property.Name).ToList())
-            .IsEquivalentTo(["status", "version", "region", "storageFormat", "revision", "machine"]);
+        // Build detail only on the internal listener; the public listener (which sets X-TerraBase-Region) answers status,
+        // version and region.
+        string[] names = response.Headers.Contains("X-TerraBase-Region")
+            ? ["status", "version", "region"]
+            : ["status", "version", "region", "storageFormat", "revision", "machine"];
+        await Assert.That(body.RootElement.EnumerateObject().Select(property => property.Name).ToList()).IsEquivalentTo(names);
         await Assert.That(text.Contains(privateValue, StringComparison.Ordinal)).IsFalse();
     }
 }
