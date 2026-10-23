@@ -11,6 +11,7 @@ internal static class ApiExamples
         {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false}
         """;
     private const string DeclaredSchema = """{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["name"],"properties":{"name":{"type":"string"}}}""";
+    private const string CollectionRules = """{"owner":"/userId","read":{"owner":true,"public":false,"roles":[]},"write":{"owner":true,"public":false,"roles":[]}}""";
     private const string Collection = """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA7","name":"people","created_at":"1791374400000"}""";
     private const string Document = """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA3","version":"opaque-version-from-server","state":"value","document":{"name":"Ada"}}""";
     private const string Write = """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA3","version":"opaque-version-from-server","offset":"1","durability":"local_durable"}""";
@@ -42,16 +43,7 @@ internal static class ApiExamples
             });
         }
 
-        if (operation.RequestBody?.Content is { } request)
-        {
-            foreach (var (mediaType, media) in request)
-            {
-                if (media is OpenApiMediaType body)
-                {
-                    body.Example = JsonNode.Parse(Request(id, mediaType));
-                }
-            }
-        }
+        ApplyRequestExamples(operation);
 
         if (operation.Responses is not { } responses)
         {
@@ -81,6 +73,22 @@ internal static class ApiExamples
         }
     }
 
+    public static void ApplyRequestExamples(OpenApiOperation operation)
+    {
+        if (operation.RequestBody?.Content is not { } request)
+        {
+            return;
+        }
+
+        foreach (var (mediaType, media) in request)
+        {
+            if (media is OpenApiMediaType body && body.Example is null)
+            {
+                body.Example = JsonNode.Parse(Request(operation.OperationId, mediaType));
+            }
+        }
+    }
+
     private static string Request(string? id, string mediaType) => id switch
     {
         "createDatabase" => """{"name":"main"}""",
@@ -96,6 +104,7 @@ internal static class ApiExamples
         "createCollection" => """{"name":"people"}""",
         "createCollectionWebhook" => """{"url":"https://receiver.example/events"}""",
         "putDeclaredCollectionSchema" => DeclaredSchema,
+        "putCollectionRules" => CollectionRules,
         "putCollectionTtl" => """{"path":"/expiresAt"}""",
         "declareCollectionSchema" => """{"fields":[{"name":"email","unique":true,"normalization":"lowercase"}],"indexes":[{"name":"tenant_handle","fields":["tenant","handle"],"unique":true}]}""",
         "createDocument" or "putDocument" => """{"name":"Ada"}""",
@@ -146,6 +155,7 @@ internal static class ApiExamples
         "listCollectionWebhooks" => """[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAA","url":"https://receiver.example/events","createdAt":"2026-10-07T12:00:00Z","status":"active"}]""",
         "listCollectionWebhookDeliveries" => """[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAB","createdAt":"2026-10-07T12:00:00Z","status":"pending","attempts":1,"lastAttemptAt":"2026-10-07T12:00:00Z","nextAttemptAt":"2026-10-07T12:00:01Z","httpStatus":503,"errorCode":"http_error"}]""",
 
+        "getCollectionRules" or "putCollectionRules" => "{\"rules\":" + CollectionRules + "}",
         "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" => "{\"schema\":" + DeclaredSchema + ",\"dialect\":\"https://json-schema.org/draft/2020-12/schema\"}",
         "deleteDeclaredCollectionSchema" => """{"schema":null}""",
         "getCollectionTtl" or "putCollectionTtl" => """{"path":"/expiresAt"}""",
@@ -174,6 +184,7 @@ internal static class ApiExamples
         "400" when id is "getDatabaseSchema" or "getCollectionSchema" or "runSql" or "checkSql" or "explainSql" or "getDatabaseUsage" or "getProjectUsage" =>
             "invalid_request, invalid_query",
         "400" when id == "putDeclaredCollectionSchema" => "invalid_request, invalid_schema",
+        "400" when id == "putCollectionRules" => "invalid_request, invalid_rules",
         "400" when id == "putCollectionTtl" => "invalid_request, invalid_ttl",
         "400" when id is "createDocument" or "putDocument" => "invalid_request, schema_validation_failed",
         "400" when id == "patchDocument" => "invalid_request, invalid_patch, nested_lattice_path, schema_validation_failed",
@@ -189,7 +200,8 @@ internal static class ApiExamples
         "404" when id is "createCollection" or "listCollections" => "unknown_database",
         "404" when id is "getDocument" or "patchDocument" or "deleteDocument" or "runTransaction" => "unknown_database, unknown_collection, not_found",
         "404" when id is "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" or "deleteDeclaredCollectionSchema"
-            or "getCollectionTtl" or "putCollectionTtl" or "deleteCollectionTtl" => "unknown_database, unknown_collection",
+            or "getCollectionTtl" or "putCollectionTtl" or "deleteCollectionTtl"
+            or "getCollectionRules" or "putCollectionRules" => "unknown_database, unknown_collection",
         "404" when id is "getCollection" or "dropCollection" or "listDocuments" or "createDocument" or "putDocument" or "queryDocuments" => "unknown_database, unknown_collection",
         "404" when id is "createDatabase" or "getDatabase" or "listDatabases" or "updateDatabase" or "deleteDatabase" or "branchDatabase" or "getDatabaseUsage" or "getProjectUsage" => "unknown_database, unknown_route",
         "404" when id == "createImport" => "unknown_database",

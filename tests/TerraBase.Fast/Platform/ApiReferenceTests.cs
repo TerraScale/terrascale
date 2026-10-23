@@ -282,6 +282,15 @@ public sealed class ApiReferenceTests
                 }
             }
 
+            if (operation.GetProperty("operationId").GetString() == "putCollectionRules")
+            {
+                var example = operation.GetProperty("requestBody").GetProperty("content")
+                    .GetProperty("application/json").GetProperty("example");
+                await Assert.That(example.GetProperty("owner").GetString()).IsEqualTo("/userId");
+                await Assert.That(example.GetProperty("read").GetProperty("owner").GetBoolean()).IsTrue();
+                await Assert.That(example.GetProperty("write").GetProperty("public").GetBoolean()).IsFalse();
+            }
+
             if (operation.GetProperty("operationId").GetString() is "getDocument" or "putDocument" or "patchDocument" or "deleteDocument")
             {
                 var key = operation.GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "id");
