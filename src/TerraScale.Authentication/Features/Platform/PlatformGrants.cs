@@ -36,8 +36,11 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
     /// <summary>The database an API key's token is narrowed to.</summary>
     public const string DatabaseClaim = "database";
 
-    /// <summary>The lifetime of organization and project tokens.</summary>
-    public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(5);
+    /// <summary>
+    /// The lifetime of organization and project tokens. TerraBase validates them offline, so this bounds how long one
+    /// keeps working after its key is revoked or its project or organization is deleted.
+    /// </summary>
+    public static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(60);
 
     private static readonly TimeSpan AuthenticationTimeClockSkew = TimeSpan.FromSeconds(30);
 
@@ -54,7 +57,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
         // Read the key again and check the presented string against it: whatever OpenIddict saw, a key revoked or rotated
         // since then, on any replica, issues nothing.
         if (await keys.FindAsync(request.ClientId!, cancellationToken) is not { } key
-            || request.ClientSecret is not { } secret || !Matches(secret, await keys.DigestsAsync(key, cancellationToken))
+            || request.ClientSecret is not { } secret || !Matches(secret, keys.Digests(key))
             || await directory.OrganizationAsync(key.OrganizationId, cancellationToken) is null)
         {
             return OidcResults.Forbid(Errors.InvalidClient, InvalidApiKeyNotice);
@@ -85,6 +88,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
             identity.SetClaim(DatabaseClaim, database);
         }
 
+        await keys.RecordUseAsync(key, cancellationToken);
         return SignIn(identity);
     }
 

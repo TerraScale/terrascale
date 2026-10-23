@@ -78,14 +78,18 @@ public sealed record ApiKeyRecord(
     DateTimeOffset? PreviousSecretExpiresAt,
     string CreatedBy,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? ExpiresAt)
-{
-    /// <summary>The sign-in branch that issued the current secret must remain a replicated winner.</summary>
-    public IReadOnlyList<CredentialBinding>? SecretBindings { get; init; }
+    DateTimeOffset? ExpiresAt);
 
-    /// <summary>The previous secret retains its own lineage during rotation grace.</summary>
-    public IReadOnlyList<CredentialBinding>? PreviousSecretBindings { get; init; }
-}
+/// <summary>
+/// When an API key last exchanged a token (collection <c>api_key_usage</c>, addressed by key id). It is kept apart from the
+/// key so a usage write never races a rotation or revocation of the key record itself.
+/// </summary>
+/// <param name="KeyId">The key.</param>
+/// <param name="InstanceId">Always the platform tenant.</param>
+/// <param name="OrganizationId">The key's organization.</param>
+/// <param name="ProjectId">The key's project; null for an organization key.</param>
+/// <param name="LastUsedAt">The last successful token exchange, at most <c>ApiKeys.UsageGranularity</c> stale.</param>
+public sealed record ApiKeyUsageRecord(string KeyId, string InstanceId, string OrganizationId, string? ProjectId, DateTimeOffset LastUsedAt);
 
 /// <summary>
 /// An invitation (collection <c>invitations</c>, addressed by id) to an organization role, or with a project to that

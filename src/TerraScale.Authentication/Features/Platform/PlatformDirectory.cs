@@ -193,6 +193,7 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
         await this.CleanUpAsync(AuthStore.MembershipCollection, [("/organizationId", organizationId)], PlatformJson.Default.MembershipRecord,
             membership => MembershipKey(membership.OrganizationId, membership.UserId), cancellationToken).ConfigureAwait(false);
         await this.CleanUpAsync(AuthStore.ApiKeyCollection, [("/organizationId", organizationId)], PlatformJson.Default.ApiKeyRecord, key => key.Id, cancellationToken).ConfigureAwait(false);
+        await this.CleanUpAsync(AuthStore.ApiKeyUsageCollection, [("/organizationId", organizationId)], PlatformJson.Default.ApiKeyUsageRecord, usage => usage.KeyId, cancellationToken).ConfigureAwait(false);
         await this.RetireInvitationsAsync([("/organizationId", organizationId)], cancellationToken).ConfigureAwait(false);
         await this.CleanUpAsync(AuthStore.AuditEventCollection, [("/organizationId", organizationId)], PlatformJson.Default.AuditEventRecord, item => item.Id, cancellationToken).ConfigureAwait(false);
     }
@@ -493,6 +494,7 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
         }
 
         await this.CleanUpAsync(AuthStore.ApiKeyCollection, [("/projectId", projectId)], PlatformJson.Default.ApiKeyRecord, key => key.Id, cancellationToken).ConfigureAwait(false);
+        await this.CleanUpAsync(AuthStore.ApiKeyUsageCollection, [("/projectId", projectId)], PlatformJson.Default.ApiKeyUsageRecord, usage => usage.KeyId, cancellationToken).ConfigureAwait(false);
         await this.RetireInvitationsAsync([("/projectId", projectId), ("/status", "pending")], cancellationToken).ConfigureAwait(false);
     }
 
@@ -1074,6 +1076,7 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
 [JsonSerializable(typeof(ProjectRecord))]
 [JsonSerializable(typeof(ProjectMemberRecord))]
 [JsonSerializable(typeof(ApiKeyRecord))]
+[JsonSerializable(typeof(ApiKeyUsageRecord))]
 [JsonSerializable(typeof(InvitationRecord))]
 [JsonSerializable(typeof(AuditEventRecord))]
 internal sealed partial class PlatformJson : JsonSerializerContext;

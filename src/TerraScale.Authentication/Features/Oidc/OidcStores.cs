@@ -60,7 +60,7 @@ public sealed class OidcApplicationStore(AuthStore store, IServiceProvider servi
         if (document is null)
         {
             var keys = services.GetRequiredService<Platform.ApiKeys>();
-            return await keys.FindAsync(identifier, cancellationToken).ConfigureAwait(false) is { } key ? Platform.ApiKeyClients.Describe(key, await keys.DigestsAsync(key, cancellationToken).ConfigureAwait(false)) : null;
+            return await keys.FindAsync(identifier, cancellationToken).ConfigureAwait(false) is { } key ? Platform.ApiKeyClients.Describe(key, keys.Digests(key)) : null;
         }
 
         var application = document.Document.Deserialize(OidcJson.Default.OidcApplication);
