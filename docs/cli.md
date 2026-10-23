@@ -20,13 +20,16 @@ Install with `go install` or the source build below today. Installation does not
 Install [Go](https://go.dev/doc/install) 1.25 or later. In a terminal:
 
 ```sh
-go install terrascale.tech/sdk/cmd/ts@main
+GOPROXY=direct go install terrascale.tech/sdk/cmd/ts@main
 export PATH="$(go env GOPATH)/bin:$PATH"
 ts help
 ```
 
 Use `@main`: `@latest` resolves to SDK `v0.0.1`, which predates `cmd/ts` and
-fails with `does not contain package terrascale.tech/sdk/cmd/ts`. On Windows,
+fails with `does not contain package terrascale.tech/sdk/cmd/ts`. `GOPROXY=direct`
+fetches `main` from GitHub; the public Go module proxy caches `@main` and can
+serve an older CLI for a while after a change. On Windows PowerShell, run
+`$env:GOPROXY="direct"` first. On Windows,
 the same command installs `ts.exe` into `%USERPROFILE%\go\bin`; add that
 directory to `PATH`.
 
