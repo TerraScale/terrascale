@@ -140,9 +140,14 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
                 $"{table.Source}: {Kind(constraint.Kind)} {constraint.Name ?? "(unnamed)"} ({string.Join(", ", constraint.Columns)}{(constraint.References is null ? "" : " → " + constraint.References)}) is recorded but not enforced.")).ToArray(),
             (job.Preview?.Tables.Where(table => table.Excluded).Select(table => table.Source + " is not imported.") ?? [])
                 .Concat(tables.SelectMany(table => table.Columns.Where(column => column.Excluded).Select(column => $"{table.Source}.{column.Name} is not imported."))).ToArray(),
-            tables.Select(table => $"{table.Source}: every row gets a deterministic generated ULID; source primary keys remain document fields.").ToArray(),
+            tables.Select(table => $"{table.Source}: {Ids(job.Source.Format)}.").ToArray(),
             tables.SelectMany(table => table.Issues.Where(issue => issue.Severity != "blocking").Select(Issue(table))).ToArray());
     }
+
+    // NDJSON lines in the export shape keep their id (import-ndjson guide); every other row gets a generated ULID.
+    public static string Ids(TerraBaseImportFormat format) => format == TerraBaseImportFormat.Ndjson
+        ? "lines exported as {collection, id, document} keep their id; other lines get a deterministic generated ULID"
+        : "every row gets a deterministic generated ULID; source primary keys remain document fields";
 
     // SQLite reports the storage classes it saw, joined by "+", or "null" when every value is NULL.
     private static bool Changes(string mapping) => TypeChanges.ContainsKey(mapping) || mapping.Contains('+');
