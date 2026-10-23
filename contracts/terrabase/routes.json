@@ -492,7 +492,11 @@
       "operation": "getDatabaseSchema",
       "method": "GET",
       "path": "/v1/projects/{project}/databases/{database}/schema"
-    }
+    },
+    {"client": "documents", "operation": "createChangeWebhook", "method": "POST", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/webhooks"},
+    {"client": "documents", "operation": "listChangeWebhooks", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/webhooks"},
+    {"client": "documents", "operation": "deleteChangeWebhook", "method": "DELETE", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook}"},
+    {"client": "documents", "operation": "listChangeWebhookDeliveries", "method": "GET", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook}/deliveries"}
   ],
   "producerCommit": "8db4c792142dcd6644e1d14a2b2efd6bc04a107a"
 }
