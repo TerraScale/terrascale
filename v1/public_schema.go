@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 )
 
 // InferredCollectionSchema describes sampled fields and declared unique keys.
@@ -78,4 +80,42 @@ func (col *Collection) schemaCall(ctx context.Context, method string, body []byt
 		return nil, err
 	}
 	return publicCall[DeclaredCollectionSchema](ctx, col.db.c, request{method: method, path: p, body: body, replaySafe: method == http.MethodGet}, nil)
+}
+
+type collectionTTL struct {
+	Path *string `json:"path"`
+}
+
+// TTL returns the JSON Pointer whose RFC 3339 time expires documents, or ""
+// when the collection has no TTL.
+func (col *Collection) TTL(ctx context.Context) (string, error) {
+	var out collectionTTL
+	if err := col.ttlCall(ctx, http.MethodGet, nil, &out); err != nil || out.Path == nil {
+		return "", err
+	}
+	return *out.Path, nil
+}
+
+// SetTTL expires documents whose member at path (an RFC 6901 JSON Pointer
+// such as "/expiresAt") holds a past RFC 3339 UTC time. An hourly sweep
+// deletes them, so removal can lag expiry by up to an hour.
+func (col *Collection) SetTTL(ctx context.Context, path string) error {
+	if !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("terrabase: TTL path %q must be a JSON Pointer such as /expiresAt", path)
+	}
+	return col.ttlCall(ctx, http.MethodPut, collectionTTL{Path: &path}, &collectionTTL{})
+}
+
+// DeleteTTL stops expiring documents in the collection.
+func (col *Collection) DeleteTTL(ctx context.Context) error {
+	return col.ttlCall(ctx, http.MethodDelete, nil, nil)
+}
+
+func (col *Collection) ttlCall(ctx context.Context, method string, in, out any) error {
+	p, err := col.path("ttl")
+	if err != nil {
+		return err
+	}
+	_, err = col.db.c.call(ctx, request{method: method, path: p, replaySafe: method == http.MethodGet}, in, out)
+	return err
 }
