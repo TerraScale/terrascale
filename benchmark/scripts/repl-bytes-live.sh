@@ -8,7 +8,8 @@
 # HOSTS are ssh arguments separated by ';' (the runner included), TARGETS a repl-bench targets file on RUNNER. Prints one
 # TSV line like repl-bytes.sh: size, docs, idle peer bytes/s, load seconds, peer bytes during load, bytes per write (idle
 # subtracted), bytes per write per receiving region (two receivers), raw bytes per write per receiver. TCP payload only:
-# NetBird (WireGuard, UDP, IP) adds per-packet headers on top.
+# NetBird (WireGuard, UDP, IP) adds per-packet headers on top. UNSAMPLED_IP names a peer without ssh: the sampled hosts
+# also count the bytes they receive from it, so its sends still count once.
 set -euo pipefail
 docs=${1:?docs}
 size=${2:?size in bytes}
@@ -33,14 +34,15 @@ sampler=$(cat <<'SAMPLER'
 while :; do
   t=$(date +%s.%N)
   ss -tinH state established "( sport = :$1 or dport = :$1 )" |
-    awk -v t="$t" '/bytes_sent/ { match($0, /bytes_sent:[0-9]+/); print t, key, substr($0, RSTART + 11, RLENGTH - 11); next } { key = $3 "-" $4 }'
+    awk -v t="$t" -v x="$2" '/bytes_sent/ { match($0, /bytes_sent:[0-9]+/); print t, key, substr($0, RSTART + 11, RLENGTH - 11)
+      if (x != "" && key ~ x) { match($0, /bytes_received:[0-9]+/); print t, key "-rx", substr($0, RSTART + 15, RLENGTH - 15) }; next } { key = $3 "-" $4 }'
   sleep 1
 done
 SAMPLER
 )
 for i in "${!hosts[@]}"; do
   # shellcheck disable=SC2086 # ssh arguments
-  ssh -o BatchMode=yes ${hosts[$i]} "cat > /tmp/$run.sh && (nohup timeout $((idle + 1800)) bash /tmp/$run.sh $port > /tmp/$run.samples 2>/dev/null &)" <<<"$sampler"
+  ssh -o BatchMode=yes ${hosts[$i]} "cat > /tmp/$run.sh && (nohup timeout $((idle + 1800)) bash /tmp/$run.sh $port ${UNSAMPLED_IP:-} > /tmp/$run.samples 2>/dev/null &)" <<<"$sampler"
 done
 
 sleep 3
