@@ -40,6 +40,8 @@ public sealed class StorageQuotaTests
         // Each read-pool timestamp advances beyond both commercial and default safety deadlines.
         // The direct commit invalidated cached usage: cold accounting must total 7 + 21 bytes, not time out.
         clock.Enabled = true;
+        // Background reconciliation must remain outside the request-only artificial deadline.
+        await api.Server.Services.GetRequiredService<EngineManagementService>().ConvergeAsync(CancellationToken.None);
         await IsQuotaAsync(await api.PutAsync(DocumentApi.NewId(), new { n = 2 }));
         var foreground = await api.SendAsync(HttpMethod.Post, api.Query, new { limit = 1 });
         await Assert.That((foreground.Status, foreground.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query"));
