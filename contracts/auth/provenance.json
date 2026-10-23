@@ -20,13 +20,13 @@
   },
   "qualification": "Source-derived contracts; HTTP fakes only. Producer parity and live qualification remain unproven.",
   "ts873_closure_producer": {
-    "state": "unmerged producer change: TS-873 auth closure (R4 patch) on TerraScale/terrascale base_revision; replace with the merged commit and its hashes once it lands",
+    "state": "Unmerged TS-873 producer candidate; server PR #495 must merge before this SDK PR.",
     "base_revision": "2d639336d1df5799bd2d62bd6cfded1498774dde",
     "sources_sha256": {
       "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "a7436836b58919b0804661cdacfd30760f568d3d41a969823514cfceb54f04fd",
-      "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "0a91cf170ae2854c27888257d92b71a3d733e1ebfa457f8c2b48b79505f75b13",
-      "src/TerraScale.Authentication/Features/Platform/Closures.cs": "1170f473b4d87bbdadc5a9165335da1724e6e20b975226deab0b58d3b8a2fd36",
-      "src/TerraScale.Authentication/Features/Platform/AccountDeletion.cs": "c36d64d3372e75d16b97b0296e5ff42a6fb306fcf07734df58115859bec3febd",
+      "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "5d21c3a21f13c1d39da5f7926d65a193e96f86b7c2c5cc5f08201bcbaf6f040e",
+      "src/TerraScale.Authentication/Features/Platform/Closures.cs": "9e9d9e3485a8f4c4825ae2009492bfed6ea6d1814ac7ee0a5225764358a4c27b",
+      "src/TerraScale.Authentication/Features/Platform/AccountDeletion.cs": "46c44484be3f81dcfcd5f69c74c0d3490f41432cca87949a8b2c33ccd99b3dcd",
       "docs/auth/platform-api.openapi.yaml": "e11da164426128960ea7726dad0805571b43cb54ff3e55e62a6cd8e392033516"
     },
     "codes": [
@@ -34,6 +34,6 @@
       "binding_conflict"
     ],
     "statuses": "delete_account and delete_project answer 202 while a TerraBase project closure is pending",
-    "patch": "ts873-auth-r4-on-ba76166.patch sha256 f268ab4f65f61a349b48cd64f51a2d932479613d1a88c5b4847a8ac213057783 (applies to ba761660b and 2d639336d)"
+    "revision": "d4ca15be9607e26b03951dcdd629e46d75d3d500"
   }
 }

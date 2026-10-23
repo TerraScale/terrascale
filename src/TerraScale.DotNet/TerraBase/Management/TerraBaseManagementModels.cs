@@ -75,6 +75,23 @@ public sealed record TerraBaseProjectClosure(string Status, string ClosureId, in
     public bool Accepted => this.Status == "accepted";
 }
 
+/// <summary>Where a shared-history erasure stands in TerraBase, computed from every holder; never complete while one is missing.</summary>
+/// <param name="Status"><c>fencing</c>, <c>settling</c>, <c>reverify</c>, <c>rewriting</c>, <c>residue</c>, <c>backup</c> or <c>complete</c>.</param>
+/// <param name="ErasureId">The random erasure id of ts-auth's deletion job.</param>
+/// <param name="PendingHolders">Holders that have not reached the current phase.</param>
+/// <param name="ActiveDueAt">The request time plus 30 days.</param>
+/// <param name="BackupDueAt">The request time plus the configured backup retention plus 30 days.</param>
+/// <param name="ActiveOverdue">Whether active copies are still pending past <paramref name="ActiveDueAt"/>.</param>
+/// <param name="BackupOverdue">Whether completion is still pending past <paramref name="BackupDueAt"/>.</param>
+/// <param name="SettlementToken">With <c>reverify</c>: present it after re-verifying auth's cleanup against this TerraBase.</param>
+public sealed record TerraBaseHistoryErasure(
+    string Status, string ErasureId, int PendingHolders, DateTimeOffset ActiveDueAt, DateTimeOffset BackupDueAt, bool ActiveOverdue, bool BackupOverdue,
+    string? SettlementToken = null)
+{
+    /// <summary>Whether every holder rewrote both files, cleared identifier residue, and no older backup remains.</summary>
+    public bool Complete => this.Status == "complete";
+}
+
 /// <summary>A database registered in a project. The Documents API addresses it by <see cref="ProjectId"/> and <see cref="Name"/>.</summary>
 /// <param name="Id">Canonical uppercase ULID.</param>
 /// <param name="ProjectId">Owning project.</param>

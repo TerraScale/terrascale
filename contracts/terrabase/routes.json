@@ -219,6 +219,12 @@
     },
     {
       "client": "management",
+      "operation": "requestHistoryErasure",
+      "method": "PUT",
+      "path": "/admin/history-erasures/{erasure}"
+    },
+    {
+      "client": "management",
       "operation": "deleteProject",
       "method": "DELETE",
       "path": "/v1/management/organizations/{organization}/projects/{project}"

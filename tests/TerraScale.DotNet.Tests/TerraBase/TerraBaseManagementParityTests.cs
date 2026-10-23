@@ -80,3 +80,59 @@ public sealed class TerraBaseProjectClosureTests
         await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");
     }
 }
+
+public sealed class TerraBaseHistoryErasureTests
+{
+    private const string Erasure = "01JA0000000000000000000009";
+
+    [Test]
+    [Arguments(200, "complete", true)]
+    [Arguments(202, "reverify", false)]
+    public async Task History_erasure_answers_report_their_status_and_send_no_user(int status, string state, bool complete)
+    {
+        HttpRequestMessage? sent = null;
+        string? body = null;
+        using var handler = new TerraBaseTestHandler(async (request, token) =>
+        {
+            sent = request;
+            body = await request.Content!.ReadAsStringAsync(token);
+            var response = TerraBaseIntegrationFixture.Json($$"""
+                {"status":"{{state}}","erasureId":"{{Erasure}}","pendingHolders":0,"activeDueAt":"2026-11-22T00:00:00Z","backupDueAt":"2026-12-22T00:00:00Z",
+                 "activeOverdue":false,"backupOverdue":false,"settlementToken":{{(complete ? "null" : "\"01JA000000000000000000000A\"")}}}
+                """);
+            response.StatusCode = (System.Net.HttpStatusCode)status;
+            return response;
+        });
+        using var http = new HttpClient(handler);
+        var client = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = new Uri("http://100.64.0.1:8081") });
+
+        var answer = await client.RequestHistoryErasureAsync(Erasure, new DateTimeOffset(2026, 10, 23, 0, 0, 0, TimeSpan.Zero));
+        await Assert.That(answer.Complete).IsEqualTo(complete);
+        await Assert.That(answer.SettlementToken is null).IsEqualTo(complete);
+        await Assert.That(sent!.RequestUri!.AbsolutePath).IsEqualTo($"/admin/history-erasures/{Erasure}");
+        await Assert.That(sent.Headers.Contains("X-TerraBase-User-Id")).IsFalse();
+        await Assert.That(body).IsEqualTo("""{"version":1,"requestedAt":"2026-10-23T00:00:00+00:00"}""");
+    }
+
+    // A body for another erasure, or a status contradicting its code, proves nothing.
+    [Test]
+    [Arguments(200, "rewriting", Erasure)]
+    [Arguments(202, "complete", Erasure)]
+    [Arguments(200, "complete", "01JA0000000000000000000008")]
+    public async Task Mismatched_history_erasure_answers_are_invalid(int status, string state, string erasure)
+    {
+        using var handler = new TerraBaseTestHandler((_, _) =>
+        {
+            var response = TerraBaseIntegrationFixture.Json($$"""
+                {"status":"{{state}}","erasureId":"{{erasure}}","pendingHolders":0,"activeDueAt":"2026-11-22T00:00:00Z","backupDueAt":"2026-12-22T00:00:00Z","activeOverdue":false,"backupOverdue":false}
+                """);
+            response.StatusCode = (System.Net.HttpStatusCode)status;
+            return Task.FromResult(response);
+        });
+        using var http = new HttpClient(handler);
+        var client = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = new Uri("http://100.64.0.1:8081") });
+
+        var error = await Assert.ThrowsAsync<TerraBaseException>(() => client.RequestHistoryErasureAsync(Erasure, DateTimeOffset.UnixEpoch));
+        await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");
+    }
+}

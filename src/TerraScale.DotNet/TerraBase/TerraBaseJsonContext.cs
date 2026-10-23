@@ -31,6 +31,7 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBasePage<TerraBaseOrganization>))]
 [JsonSerializable(typeof(TerraBaseProject))]
 [JsonSerializable(typeof(TerraBaseProjectClosure))]
+[JsonSerializable(typeof(TerraBaseHistoryErasure))]
 [JsonSerializable(typeof(TerraBasePage<TerraBaseProject>))]
 [JsonSerializable(typeof(TerraBaseManagedDatabase))]
 [JsonSerializable(typeof(TerraBasePage<TerraBaseManagedDatabase>))]
@@ -161,4 +162,8 @@ internal sealed record RequestBody
     public string? ClosureId { get; init; }
 
     public string? AuthorityOrganizationId { get; init; }
+
+    public DateTimeOffset? RequestedAt { get; init; }
+
+    public string? SettlementToken { get; init; }
 }

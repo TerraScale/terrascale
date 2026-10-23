@@ -149,6 +149,27 @@ public sealed class TerraBaseManagementClient
             : throw new TerraBaseException(status, "TerraBase answered a project closure with a status or closure id that does not match the request.", "invalid_response", null);
     }
 
+    /// <summary>
+    /// ts-auth's shared-history erasure handoff (TerraBase docs/terrabase/history-erasure.md): creates or advances the permanent
+    /// erasure <paramref name="erasureId"/> (the random id of ts-auth's deletion job, whose request document names the fence) over ts-auth's
+    /// database and TerraBase's SYSTEM, and returns its status computed from every holder. Served only on TerraBase's private
+    /// listener behind the peer credential; the scope is fixed, no database is named. Always present the original
+    /// <paramref name="requestedAt"/>. Present <paramref name="settlementToken"/> only after re-verifying auth's cleanup against the
+    /// same TerraBase that issued it. A stale token or another request time throws <see cref="TerraBaseConflictException"/>
+    /// (<c>settlement_stale</c>, <c>erasure_conflict</c>). Any other failure, a 404 included, proves nothing.
+    /// </summary>
+    public async Task<TerraBaseHistoryErasure> RequestHistoryErasureAsync(string erasureId, DateTimeOffset requestedAt, string? settlementToken = null, CancellationToken cancellationToken = default)
+    {
+        var body = TerraBaseConnection.Json(new RequestBody { Version = 1, RequestedAt = requestedAt, SettlementToken = settlementToken }, Json.RequestBody);
+        var (erasure, status) = await connection.SendAsync(HttpMethod.Put, "/admin/history-erasures/" + TerraBaseConnection.Segment(erasureId, nameof(erasureId)),
+            body, Json.TerraBaseHistoryErasure, null, cancellationToken).ConfigureAwait(false);
+        // A body that does not answer this erasure, or contradicts its status code, is not evidence either way.
+        return erasure.ErasureId == erasureId && (status == System.Net.HttpStatusCode.OK) == erasure.Complete
+            && status is System.Net.HttpStatusCode.OK or System.Net.HttpStatusCode.Accepted
+            ? erasure
+            : throw new TerraBaseException(status, "TerraBase answered a history erasure with a status or erasure id that does not match the request.", "invalid_response", null);
+    }
+
     // Databases and branches
 
     /// <summary>Creates an empty database in a project.</summary>
