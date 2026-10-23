@@ -11,9 +11,10 @@ namespace TerraBase.Fast.Replication;
 public sealed class GcPresenceTests
 {
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Listed_peer_without_progress_holds_only_databases_placed_in_its_region(bool placed)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task Listed_peer_without_progress_holds_only_databases_placed_in_its_region(bool placed, bool allRegions)
     {
         var clock = new PeerStreamTests.ShiftedTime();
         await using var cluster = await StartAsync(clock);
@@ -22,7 +23,7 @@ public sealed class GcPresenceTests
         var peer = new ReplicaId(member.Id.Value == 1 ? 2UL : 1UL);
         var engine = machine.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
         var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
-        var placement = new DatabasePlacement("gru", placed ? ["sjc"] : [], 1);
+        var placement = new DatabasePlacement("gru", placed && !allRegions ? ["sjc"] : [], 1, allRegions);
         member.Presence.Listed([("unheard", "sjc")], member.Clock.Tick().Milliseconds);
         clock.Offset = TimeSpan.FromDays(2);
         var now = member.Clock.Tick();
