@@ -28,7 +28,10 @@ import (
 	v1 "terrascale.tech/sdk/v1"
 )
 
+var version = "dev" // Set by release builds with -ldflags.
+
 const usage = `usage:
+  ts version | --version
   ts auth login | logout
   ts [-project <name or id>] db list | create <name> | delete <name> | branch <source> <name>
   ts [-project <name or id>] sql <db> <query>
@@ -46,6 +49,10 @@ func main() {
 var errUsage = errors.New("invalid arguments\n" + usage)
 
 func run(ctx context.Context, args []string, out io.Writer) error {
+	if len(args) == 1 && (args[0] == "version" || args[0] == "--version") {
+		_, err := fmt.Fprintln(out, "ts", version)
+		return err
+	}
 	fs := flag.NewFlagSet("ts", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	project := fs.String("project", "", "project name or id")
