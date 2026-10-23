@@ -91,7 +91,7 @@ public static class DatabaseEndpoints
                     }
                     catch (Exception error) when (KnownFailure(error))
                     {
-                        if (!WantsHtml(http) || Status(error) == 404) return Failure(error);
+                        if (!WantsHtml(http) || Status(error) == 404) return DatabaseResults.PageFailure(http, context, error);
                         return await DetailPageAsync(http, context, id, action switch { "branch" => "branches", "delete" => "danger", _ => "replication" }, backend, databases, Message(error), action == "delete", Status(error));
                     }
                 });
@@ -149,7 +149,7 @@ public static class DatabaseEndpoints
     {
         DatabaseRecord database;
         try { database = DatabaseService.Database(context, id); }
-        catch (AccountAccessException failure) { return Failure(failure); }
+        catch (AccountAccessException failure) { return DatabaseResults.PageFailure(http, context, failure); }
         IReadOnlyList<DatabaseRegion> choices = [];
         IReadOnlyList<CollectionStats> contents = [];
         var contentsAvailable = false;
