@@ -120,7 +120,11 @@ public static class ApiReferenceExtensions
             // Request-body metadata can replace content after the operation examples ran.
             foreach (var path in document.Paths.Values)
             {
-                foreach (var operation in path.Operations?.Values ?? [])
+                if (path.Operations is not { } operations)
+                {
+                    continue;
+                }
+                foreach (var operation in operations.Values)
                 {
                     ApiExamples.ApplyRequestExamples(operation);
                 }
