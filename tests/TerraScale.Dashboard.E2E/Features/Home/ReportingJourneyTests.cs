@@ -452,20 +452,16 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await flow.GotoAsync(ownerPage, "/organization?tab=danger");
             await ownerPage.GetByRole(AriaRole.Button, new() { Name = "Organization deletion", Exact = true }).ClickAsync();
             await ownerPage.Locator("#deletion-confirmation").FillAsync("Wrong");
-            await Assert.That((await flow.SubmitAsync(ownerPage, "#delete-organization form", "Request deletion")).Status).IsEqualTo(422);
+            await Assert.That((await flow.SubmitAsync(ownerPage, "#delete-organization form", "Delete organization")).Status).IsEqualTo(422);
             await flow.GotoAsync(ownerPage, "/organization?tab=danger");
             await ownerPage.GetByRole(AriaRole.Button, new() { Name = "Organization deletion", Exact = true }).ClickAsync();
             await ownerPage.Locator("#deletion-confirmation").FillAsync("Invite company " + slug);
-            await flow.SubmitAsync(ownerPage, "#delete-organization form", "Request deletion");
-            await Assert.That(Text(await flow.MeAsync(ownerContext), "organizationId")).IsEqualTo(businessId);
-            var pending = (await (await ownerContext.APIRequest.GetAsync(flow.Origin + "/api/v1/dashboard/context")).JsonAsync())!.Value;
-            var pendingOrg = pending.GetProperty("organizations").EnumerateArray().First(item => Text(item, "id") == businessId);
-            await Assert.That(pendingOrg.GetProperty("deletionRequested").GetBoolean()).IsTrue();
-            await Assert.That(Text(pendingOrg, "status")).IsEqualTo("active");
-            await ownerPage.GetByRole(AriaRole.Button, new() { Name = "Organization deletion", Exact = true }).ClickAsync();
-            await Assert.That(await ownerPage.GetByRole(AriaRole.Button, new() { Name = "Deletion pending", Exact = true }).IsDisabledAsync()).IsTrue();
-            await ownerPage.GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).Last.ClickAsync();
-            flow.Checks.Add("native business member leave, actual session revocation after removal, and idempotent queued organization deletion retains owner access");
+            await flow.SubmitAsync(ownerPage, "#delete-organization form", "Delete organization");
+            await ownerPage.GetByRole(AriaRole.Status).Filter(new() { HasText = "Organization deleted." }).WaitForAsync();
+            await Assert.That(Text(await flow.MeAsync(ownerContext), "organizationId")).IsEqualTo(Text(original, "organizationId"));
+            var remaining = (await (await ownerContext.APIRequest.GetAsync(flow.Origin + "/api/v1/dashboard/context")).JsonAsync())!.Value;
+            await Assert.That(remaining.GetProperty("organizations").EnumerateArray().Any(item => Text(item, "id") == businessId)).IsFalse();
+            flow.Checks.Add("native business member leave, actual session revocation after removal, and confirmed organization deletion moves the owner to the personal organization");
 
             await ownerPage.SetViewportSizeAsync(390, 844);
             foreach (var (path, key) in new[] { ("/profile", "profile-mobile"), ("/profile?tab=sessions", "sessions-mobile"), ("/profile?tab=security", "security-mobile"), ("/organization", "organization-mobile"), ("/organization?tab=danger", "organization-danger-mobile"), ("/organization?tab=projects", "projects-mobile"), ("/notifications", "notifications-mobile") })

@@ -39,7 +39,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
     [McpServerTool(Name = "request_organization_deletion", Title = "Request organization deletion", Idempotent = true, Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Request deletion of a business organization. Requires the owner role and confirmName equal to the organization name.")]
     public Task<OrganizationDone> RequestDeletion([Description("The organization's exact name, confirming the deletion request.")] string confirmName,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
-    { await lifecycle.RequestDeletionAsync(Scope(organizationId, projectId), confirmName, Cancellation); return new OrganizationDone(true); });
+    { await lifecycle.DeleteAsync(Scope(organizationId, projectId), confirmName, Cancellation); return new OrganizationDone(true); });
 
     [McpServerTool(Name = "leave_organization", Title = "Leave organization", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Leave a business organization the caller does not own. The dashboard selection moves to another organization.")]
     public Task<OrganizationDone> LeaveOrganization([Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>

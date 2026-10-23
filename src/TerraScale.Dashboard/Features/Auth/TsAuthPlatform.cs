@@ -13,6 +13,8 @@ public interface ITsAuthPlatform
     Task<TerraScaleAuthPlatformOrganization> CreateOrganizationAsync(SessionRecord session, string name, CancellationToken cancellationToken);
     Task RenameOrganizationAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken);
     Task LeaveOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
+    // Owner only; ts-auth refuses with not_empty while the organization still has projects.
+    Task DeleteOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
     Task<IReadOnlyList<TerraScaleAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
     Task ChangeMemberRoleAsync(SessionRecord session, string organizationId, string userId, string role, CancellationToken cancellationToken);
     Task RemoveMemberAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken);
@@ -57,6 +59,9 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
 
     public Task LeaveOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
         PlatformAsync(() => Client().Platform.LeaveOrganizationAsync(Bearer(session), Id(organizationId), cancellationToken));
+
+    public Task DeleteOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
+        PlatformAsync(() => Client().Platform.DeleteOrganizationAsync(Bearer(session), Id(organizationId), cancellationToken));
 
     public Task<IReadOnlyList<TerraScaleAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
         PagesAsync(after => Client().Platform.ListMembersAsync(Bearer(session), Id(organizationId), 100, after, cancellationToken));

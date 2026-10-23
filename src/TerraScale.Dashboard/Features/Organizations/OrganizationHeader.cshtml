@@ -19,6 +19,7 @@
     @if (access) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">Could not update access</p><p class="ts-alert-body">@Model.Error</p></div> }
     else { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
 }
+@if (Model.Status.Length > 0) { <p role="status" aria-live="polite" class="ts-alert ts-alert-success" data-init="history.replaceState(null, '', '/organization')">@Model.Status</p> }
 @if (Model.InvitationLink.Length > 0)
 {
     <section class="ts-alert ts-alert-success" aria-labelledby="invitation-link-title" data-init="@("history.replaceState(null, '', '/organization?tab=" + (access ? Model.Tab : "members") + "')")">

@@ -13,7 +13,7 @@ namespace TerraScale.Dashboard.Features.Organizations;
 public sealed partial record OrganizationPage(ShellModel Shell, string Tab, IReadOnlyList<string> Regions, string Error = "", bool OpenCreateProject = false, bool OpenCreateOrganization = false,
     OrganizationAccessView? Access = null, string InvitationLink = "", OrganizationFilters? Filters = null, string WizardStep = "", bool PaymentCanceled = false,
     BillingPage? Billing = null, string ProjectDraftName = "", IReadOnlyList<string>? ProjectDraftRegions = null,
-    string ProjectDraftPrimaryRegion = "", string ProjectDraftBackupRegion = "");
+    string ProjectDraftPrimaryRegion = "", string ProjectDraftBackupRegion = "", string Status = "");
 
 public static class OrganizationEndpoints
 {
@@ -137,7 +137,8 @@ public static class OrganizationEndpoints
         }
         if (error.Length == 0 && http.Request.Query["error"].ToString() is { Length: > 0 and <= 500 } queryError) error = queryError;
         return new(ShellModel.For(http, context, "Organization"), tab, regions, error,
-            http.Request.Query["newProject"] == "1", wizard.Length > 0, access, Filters: OrganizationFilters.For(http), WizardStep: wizard, PaymentCanceled: http.Request.Query["payment"] == "canceled");
+            http.Request.Query["newProject"] == "1", wizard.Length > 0, access, Filters: OrganizationFilters.For(http), WizardStep: wizard, PaymentCanceled: http.Request.Query["payment"] == "canceled",
+            Status: http.Request.Query["deleted"] == "1" ? "Organization deleted." : "");
     }
 
     private static async Task<IResult> AccessMutationAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement, string operation, string? id = null)
@@ -188,12 +189,13 @@ public static class OrganizationEndpoints
         {
             if (operation == "leave") await lifecycle.LeaveAsync(context, http.RequestAborted);
             else if (operation == "delete-project") await lifecycle.DeleteProjectAsync(context, projectId!, form["confirmation"].ToString(), http.RequestAborted);
-            else await lifecycle.RequestDeletionAsync(context, form["confirmation"].ToString(), http.RequestAborted);
-            if (operation == "leave" || operation == "delete-project" && context.Project?.Id == projectId)
+            else await lifecycle.DeleteAsync(context, form["confirmation"].ToString(), http.RequestAborted);
+            // Leaving or deleting moves the account to another organization.
+            if (operation is "leave" or "delete" || operation == "delete-project" && context.Project?.Id == projectId)
                 context = await accounts.GetContextAsync(context.Session, http.RequestAborted,
-                    organizationId: operation == "leave" ? null : context.Organization?.Id);
+                    organizationId: operation is "leave" or "delete" ? null : context.Organization?.Id);
             return HttpRedirects.SeeOther(WorkspaceUrl.For(context,
-                operation == "delete-project" ? "/organization?tab=projects" : operation == "delete" ? "/organization?tab=danger" : "/organization", replace: true));
+                operation == "delete-project" ? "/organization?tab=projects" : operation == "delete" ? "/organization?deleted=1" : "/organization", replace: true));
         }
         catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode, operation == "delete-project" ? "projects" : "danger"); }
     }
