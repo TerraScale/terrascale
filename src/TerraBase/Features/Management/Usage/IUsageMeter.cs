@@ -5,11 +5,11 @@ namespace TerraBase.Features.Management.Usage;
 /// <summary>Counts document operations per database (by tenant) for usage reporting. Each count also feeds live statistics.</summary>
 public interface IUsageMeter
 {
-    /// <summary>Counts one document read (a get, or a list or query page).</summary>
-    void RecordRead(TenantContext database);
+    /// <summary>Counts one document read (a get, or a list or query page) of <paramref name="units"/> operation units.</summary>
+    void RecordRead(TenantContext database, long units);
 
-    /// <summary>Counts <paramref name="writes"/> committed document writes (puts, patches and deletes).</summary>
-    void RecordWrites(TenantContext database, int writes);
+    /// <summary>Counts <paramref name="writes"/> committed document writes (puts, patches and deletes) of <paramref name="units"/> operation units.</summary>
+    void RecordWrites(TenantContext database, int writes, long units);
 
     /// <summary>Counts committed operations by type: read, put, patch or delete.</summary>
     void RecordOperation(TenantContext database, string kind, int count);
@@ -31,4 +31,17 @@ public interface IUsageMeter
 
     /// <summary>Records replication backlog and divergence observations.</summary>
     void RecordReplicationState(TenantContext database, string peerRegion, long remaining, bool diverged, double? convergenceMs = null);
+}
+
+/// <summary>
+/// The billing unit of https://terrascale.tech/pricing.json (<c>metering.operationUnit</c>): each started 4 KiB of a
+/// logical object successfully read or written. Replicated applies count none.
+/// </summary>
+public static class OperationUnits
+{
+    /// <summary>Bytes per unit.</summary>
+    public const int Bytes = 4096;
+
+    /// <summary>The units of an object of <paramref name="bytes"/>: none for none.</summary>
+    public static long Of(long bytes) => (bytes + Bytes - 1) / Bytes;
 }

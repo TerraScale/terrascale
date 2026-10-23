@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Schema;
@@ -181,10 +182,18 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
 
         // The last tenant lookup or usage read can itself end past the deadline.
         ThrowPastDeadline(budget.Started);
+        var month = time.GetUtcNow().ToString("yyyy-MM", CultureInfo.InvariantCulture);
+        if (await meter.GetMonthAsync(organizationId, projectId, cancellationToken).ConfigureAwait(false) is not UsageTotals project
+            || await meter.GetMonthAsync(organizationId, projectId: null, cancellationToken).ConfigureAwait(false) is not UsageTotals organization)
+        {
+            return new Unavailable("usage accounting is unavailable; retry");
+        }
+
         var series = Sum(window, items.Select(item => item.Series));
         return new ProjectUsage(
             projectId, items.Count, items.Sum(item => item.StorageBytes), items.Sum(item => item.LogicalBytes), items.Sum(item => item.Documents),
-            items.Sum(item => item.Reads), items.Sum(item => item.Writes), Period(window, series), series, [.. items.Select(item => item with { Series = [] })]);
+            items.Sum(item => item.Reads), items.Sum(item => item.Writes), Period(window, series), series, [.. items.Select(item => item with { Series = [] })],
+            new UsageMonth(month, project.Reads, project.Writes, project.Reads + project.Writes, organization.Reads + organization.Writes));
     }
 
     private static void Count(Budget budget, int listed)

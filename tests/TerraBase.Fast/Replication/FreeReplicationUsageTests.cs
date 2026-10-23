@@ -82,6 +82,18 @@ public sealed class FreeReplicationUsageTests
         await Assert.That(after.Writes - before.Writes).IsEqualTo(gruIds.Length + sjcIds.Length).Because("each client write counts exactly once");
         await Assert.That(after.Reads - before.Reads).IsEqualTo(2).Because("each client read counts exactly once");
         await Assert.That(await fra.OwnUsageDocumentsAsync(managed.Id)).IsEmpty().Because("a region that served no client wrote no usage");
+
+        // Every region reads the same billed month, in operation units, and its allowance counts the same total.
+        foreach (var machine in new[] { gru, sjc, fra })
+        {
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+            {
+                await machine.Meter.RefreshMonthsAsync(token);
+                return await machine.Meter.GetMonthAsync(organization, project, token) is UsageTotals { Reads: 2, Writes: 8 }
+                    && await machine.Meter.GetMonthAsync(organization, projectId: null, token) is UsageTotals { Reads: 2, Writes: 8 }
+                    && await machine.Meter.MonthUnitsAsync(tenant, token) is long units && units == 10;
+            }, timeout: TimeSpan.FromSeconds(30));
+        }
     }
 
     // Flushes every machine at once, then waits until each one's catalog reads the same lifetime totals with nothing pending.

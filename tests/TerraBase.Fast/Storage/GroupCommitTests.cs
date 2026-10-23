@@ -610,9 +610,9 @@ public sealed class GroupCommitTests
     // Fails counting committed writes, as accounting after a commit may; everything else reaches the real meter.
     private sealed class FailingWriteCounts(IUsageMeter inner) : IUsageMeter
     {
-        public void RecordRead(TenantContext database) => inner.RecordRead(database);
+        public void RecordRead(TenantContext database, long units) => inner.RecordRead(database, units);
 
-        public void RecordWrites(TenantContext database, int writes) => throw new InvalidOperationException("the test fails counting committed writes");
+        public void RecordWrites(TenantContext database, int writes, long units) => throw new InvalidOperationException("the test fails counting committed writes");
 
         public void RecordOperation(TenantContext database, string kind, int count) => inner.RecordOperation(database, kind, count);
 

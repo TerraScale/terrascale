@@ -11,7 +11,8 @@ public readonly union OperationAllowanceCheck(Done, QuotaExceeded, Unavailable);
 
 /// <summary>
 /// The hard monthly operation allowance of an organization's plan (https://terrascale.tech/pricing.json): once its
-/// operations this UTC month reach it, new puts and patches stop; reads and deletes remain available.
+/// operation units this UTC month, summed over every project, region and node, reach it, new puts and patches stop;
+/// reads and deletes remain available.
 /// </summary>
 public interface IOperationAllowance
 {
@@ -19,8 +20,6 @@ public interface IOperationAllowance
     ValueTask<OperationAllowanceCheck> CheckAsync(TenantContext database, CancellationToken cancellationToken);
 }
 
-// shortcut: counts are per node and per document operation, not per 4 KiB unit across regions; meter units and share
-// counts across regions once usage feeds billing.
 internal sealed class OperationAllowance : IOperationAllowance
 {
     private readonly UsageMeter _meter;
@@ -56,11 +55,20 @@ internal sealed class OperationAllowance : IOperationAllowance
             return new Done();
         }
 
-        var operations = _meter.MonthOperations(database);
-        return operations < limit
+        var counted = await _meter.MonthUnitsAsync(database, cancellationToken).ConfigureAwait(false);
+        if (counted is not long units)
+        {
+            return counted switch
+            {
+                Unavailable error => error,
+                long => throw new UnreachableException(),
+            };
+        }
+
+        return units < limit
             ? new Done()
             : new QuotaExceeded(string.Create(CultureInfo.InvariantCulture,
-                $"the organization used its {plan.ToString().ToLowerInvariant()} plan allowance of {limit:N0} operations this month; upgrade the plan at https://dash.terrascale.tech/organization?tab=billing to continue writing. Reads and deletes remain available"),
+                $"the organization used its {plan.ToString().ToLowerInvariant()} plan allowance of {limit:N0} operation units this month; upgrade the plan at https://dash.terrascale.tech/organization?tab=billing to continue writing. Reads and deletes remain available"),
                 "operation_allowance");
     }
 }

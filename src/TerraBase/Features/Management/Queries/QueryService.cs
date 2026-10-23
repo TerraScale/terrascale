@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Text;
 using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -63,8 +64,8 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
                 },
                 new SqlResultBody(0, false, []),
                 cancellationToken).ConfigureAwait(false);
-            // One read per run the engine answered, as a data API query page.
-            usage.RecordRead(database);
+            // One read per run the engine answered, as a data API query page; each row bills its value's started 4 KiB.
+            usage.RecordRead(database, rows.Rows.Sum(row => OperationUnits.Of(Encoding.UTF8.GetByteCount(row.Value.GetRawText()))));
             return rows;
         }
         catch (QueryCapacityException)
