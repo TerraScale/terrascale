@@ -16,6 +16,7 @@ public sealed class CatalogFreshnessTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var window = TimeSpan.FromSeconds(10);
         var members = new FakeMemberStore();
         var localName = EntityIds.New().ToString();
         var remoteName = EntityIds.New().ToString();
@@ -26,7 +27,7 @@ public sealed class CatalogFreshnessTests
             services.AddSingleton<IMemberDirectory>(members);
             var registration = services.Last(service => service.ServiceType == typeof(IReplicaStates));
             services.AddSingleton<IReplicaStates>(provider =>
-                delayed = new ExpiringStates((IReplicaStates)registration.ImplementationFactory!(provider), clock));
+                delayed = new ExpiringStates((IReplicaStates)registration.ImplementationFactory!(provider), clock, window));
         });
         await using var remote = await TerraBaseTestServer.StartAsync(settings => settings["node-name"] = remoteName, services =>
         {
@@ -40,7 +41,6 @@ public sealed class CatalogFreshnessTests
         var repair = local.Services.GetRequiredService<AntiEntropy>();
         await Assert.That(await repair.PullAsync(ChangeGroups.System, peer, token)).IsNotNull();
         var freshness = local.Services.GetRequiredService<ICatalogFreshness>();
-        var window = TimeSpan.FromSeconds(10);
         clock.Advance(TimeSpan.FromSeconds(9));
         await Assert.That(await freshness.IsFreshAsync(window, token)).IsTrue();
 
@@ -54,11 +54,13 @@ public sealed class CatalogFreshnessTests
         await Assert.That(await freshness.IsFreshAsync(window, token)).IsTrue();
     }
 
-    private sealed class ExpiringStates(IReplicaStates inner, FakeTimeProvider clock) : IReplicaStates
+    private sealed class ExpiringStates(IReplicaStates inner, FakeTimeProvider clock, TimeSpan window) : IReplicaStates
     {
+        private int expired;
+
         public CancellationToken ExpireOn { get; set; }
 
-        public bool Expired { get; private set; }
+        public bool Expired => Volatile.Read(ref this.expired) != 0;
 
         public ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken) =>
             inner.DigestAsync(database, expected, cancellationToken);
@@ -66,17 +68,18 @@ public sealed class CatalogFreshnessTests
         public ValueTask<bool> MatchedAsync(TenantContext database, ReplicaDigest digest, CancellationToken cancellationToken) =>
             inner.MatchedAsync(database, digest, cancellationToken);
 
-        public ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)?> ReadBucketsAsync(
+        public async ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)?> ReadBucketsAsync(
             TenantContext database, Ulid incarnation, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken)
         {
-            if (ExpireOn.CanBeCanceled && cancellationToken == ExpireOn && database == ChangeGroups.System && buckets.Count == 0)
+            var page = await inner.ReadBucketsAsync(database, incarnation, buckets, after, maxStates, maxBytes, cancellationToken);
+            if (ExpireOn.CanBeCanceled && cancellationToken == ExpireOn && database == ChangeGroups.System && buckets.Count == 0
+                && Interlocked.Exchange(ref this.expired, 1) == 0)
             {
-                ExpireOn = default;
-                Expired = true;
-                clock.Advance(TimeSpan.FromSeconds(2));
+                // Even a concurrent refill's newer proof must expire before this incarnation read returns.
+                clock.Advance(window);
             }
 
-            return inner.ReadBucketsAsync(database, incarnation, buckets, after, maxStates, maxBytes, cancellationToken);
+            return page;
         }
 
         public ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken) => inner.StableAsync(database, cancellationToken);

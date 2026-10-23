@@ -203,6 +203,7 @@ public sealed class DataDirectoryTests
         var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var project = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString());
         var connections = new List<SqliteConnection>();
+        var stores = new List<SqliteDatabaseStore>();
         // More databases than the pool keeps idle connections for: returning the later sessions evicts earlier ones.
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
         {
@@ -211,6 +212,7 @@ public sealed class DataDirectoryTests
             var path = Path.Combine(server.DataDirectory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
             // These stores share the live engine's pool, but no background transaction can rent their sessions.
             var store = new SqliteDatabaseStore("eviction", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64;");
+            stores.Add(store);
             var connection = new SqliteConnection(Connect(path));
             var session = await OpenSessionAsync(connection);
             connections.Add(connection);
@@ -219,8 +221,8 @@ public sealed class DataDirectoryTests
             engine.Pool.Return(store, session);
         }
 
-        // At least eight owned connections were evicted, regardless of background rents in the engine-wide pool.
-        await Assert.That(connections.Take(8).All(connection => connection.State == System.Data.ConnectionState.Closed)).IsTrue();
+        // Background work cannot rent these stores; only front-eviction can remove their idle sessions.
+        await Assert.That(stores.Take(8).All(store => engine.Pool.IdleCountOf(store) == 0)).IsTrue();
 
         await engine.DisposeAsync();
         await engine.CleanupCompletion;
