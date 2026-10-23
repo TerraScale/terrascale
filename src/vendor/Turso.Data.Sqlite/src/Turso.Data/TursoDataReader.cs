@@ -268,6 +268,27 @@ public class TursoDataReader : DbDataReader
         base.Dispose(disposing);
     }
 
+    /// <summary>
+    /// Closes the reader without stepping its unread rows: Dispose finalizes, and native finalize steps a running
+    /// statement to its end. Reset aborts it instead, so call this only for a statement whose unread rows have no effect
+    /// (a read-only SELECT); a write's open transaction follows native reset rules.
+    /// </summary>
+    public void Abort()
+    {
+        if (_isClosed)
+            return;
+
+        try
+        {
+            if (!_statement.IsInvalid)
+                TursoBindings.ResetStatement(_statement);
+        }
+        finally
+        {
+            Dispose();
+        }
+    }
+
     public override bool Read()
     {
         EnsureOpen();

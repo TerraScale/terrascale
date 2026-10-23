@@ -350,7 +350,8 @@ internal sealed class TursoChangeTap : IWalTap
         command.Parameters.Add(new TursoParameter("$after", after));
         command.Parameters.Add(new TursoParameter("$end", end));
         command.Parameters.Add(new TursoParameter("$limit", (long)PageRows));
-        using var rows = command.ExecuteReader();
+        // Aborted, not disposed, when the page stops early: finalize would step the SELECT through its unread rows.
+        using var rows = (TursoDataReader)command.ExecuteReader();
         var last = after;
         if (after == _anchor)
         {
@@ -381,6 +382,7 @@ internal sealed class TursoChangeTap : IWalTap
                 _open = null;
                 if (buffer.WrittenCount >= allowance)
                 {
+                    rows.Abort();
                     return (last, true, true);
                 }
 
@@ -396,6 +398,7 @@ internal sealed class TursoChangeTap : IWalTap
             {
                 if (!Place(type, rowid, image, schema, buffer))
                 {
+                    rows.Abort();
                     return (last, false, false);
                 }
             }
@@ -410,6 +413,11 @@ internal sealed class TursoChangeTap : IWalTap
                     ChangeLog.WriteUpsert(buffer, table, rowid, image ?? throw new InvalidDataException("a captured row change has no after-image"));
                 }
             }
+        }
+
+        if (buffer.WrittenCount >= PageBytes)
+        {
+            rows.Abort();
         }
 
         return (last, true, false);
