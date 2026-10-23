@@ -56,6 +56,13 @@ Receiver (`PeerStreamReceiver`), for a sender whose Hello names protocol 2, per 
 - A database's answers go in the order its batches arrived: a refusal waits for the batches of the database in
   progress before it, and an answer that completes before an older one of its database is written after it, so the
   sender reads every answer as its oldest batch's. A refill that commits restarts the chain at its change id.
+- The batch whose turn comes also applies the batches admitted behind it in its chain, in one durable transaction:
+  those with their memory reserved, past the catalog frame they follow and decodable, while the whole stays within one
+  batch's groups (1024) and bytes (2 MiB) and one transaction's deltas. The coverage check uses the highest `expect`
+  among them. After the FULL commit and the stable read, each batch gets its own ack, in arrival order, naming its own
+  change id and highest stamp. A refusal or fault of the transaction (including its stable read) refuses the first
+  batch and every batch it took, so none is acknowledged; the first one that did not fit applies on its own turn.
+  Receiver-local: acks keep their form and order.
 
 ## Rolling deploy
 
