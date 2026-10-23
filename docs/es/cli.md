@@ -25,13 +25,16 @@ Install with `go install` or the source build below today. Installation does not
 Install [Go](https://go.dev/doc/install) 1.25 or later. In a terminal:
 
 ```sh
-go install terrascale.tech/sdk/cmd/ts@main
+GOPROXY=direct go install terrascale.tech/sdk/cmd/ts@main
 export PATH="$(go env GOPATH)/bin:$PATH"
 ts help
 ```
 
 Use `@main`: `@latest` resolves to SDK `v0.0.1`, which predates `cmd/ts` and
-fails with `does not contain package terrascale.tech/sdk/cmd/ts`. On Windows,
+fails with `does not contain package terrascale.tech/sdk/cmd/ts`. `GOPROXY=direct`
+fetches `main` from GitHub; the public Go module proxy caches `@main` and can
+serve an older CLI for a while after a change. On Windows PowerShell, run
+`$env:GOPROXY="direct"` first. On Windows,
 the same command installs `ts.exe` into `%USERPROFILE%\go\bin`; add that
 directory to `PATH`.
 
@@ -126,8 +129,25 @@ ts db create example
 ts db branch example example-preview
 ```
 
-`db list` prints database names, IDs, and home regions, and an empty table
-before the project's first database. `db branch` takes the
+`db list` prints database names, IDs, home regions and replica regions, and an
+empty table before the project's first database. `db info` prints one
+database's metadata as JSON.
+
+## Regions and backups
+
+```sh
+ts db regions example sjc fra   # replicate to sjc and fra besides the home region
+ts db regions example none      # remove every replica
+ts backup create example
+ts backup list example
+ts backup restore example 01JZ8Q7D9F1G3H5J7K9M1N3P5Q example-restored
+```
+
+`db regions` replaces the replica list; the home region never changes. Serving
+regions are `gru`, `sjc` and `fra`. `backup restore` creates a new, independent
+database from the backup and leaves the source untouched. See
+[Backups and restore](/es/guides/backups-and-restore) and
+[Replication and durability](/es/concepts/replication). `db branch` takes the
 source database name first and the new branch name second.
 
 ::: danger Database deletion
