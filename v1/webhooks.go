@@ -66,7 +66,7 @@ func (o WebhookListOptions) query() (url.Values, error) {
 
 // CreateWebhook registers an HTTPS endpoint from the current feed head, without
 // backfill. The producer validates the URL and public destination on every attempt.
-// Needs webhooks:write. Creation is never automatically retried after uncertainty.
+// Needs both documents:read and documents:write. Creation is never automatically retried after uncertainty.
 func (col *Collection) CreateWebhook(ctx context.Context, endpoint string) (*CreatedWebhook, error) {
 	p, err := col.path("webhooks")
 	if err != nil {
@@ -81,7 +81,7 @@ func (col *Collection) CreateWebhook(ctx context.Context, endpoint string) (*Cre
 	return &out, nil
 }
 
-// Webhooks lists one page of endpoints without secrets. Needs webhooks:read.
+// Webhooks lists one page of endpoints without secrets. Needs documents:read.
 func (col *Collection) Webhooks(ctx context.Context, opts WebhookListOptions) ([]Webhook, error) {
 	q, err := opts.query()
 	if err != nil {
@@ -99,7 +99,7 @@ func (col *Collection) Webhooks(ctx context.Context, opts WebhookListOptions) ([
 }
 
 // DeleteWebhook stops future attempts; an in-flight request may complete.
-// An unknown ID returns 404. Needs webhooks:write.
+// An unknown ID returns 404. Needs both documents:read and documents:write.
 func (col *Collection) DeleteWebhook(ctx context.Context, id string) error {
 	if err := checkID(id); err != nil {
 		return err
@@ -112,7 +112,7 @@ func (col *Collection) DeleteWebhook(ctx context.Context, id string) error {
 	return err
 }
 
-// WebhookDeliveries lists one page of retained delivery records. Needs webhooks:read.
+// WebhookDeliveries lists one page of retained delivery records. Needs documents:read.
 func (col *Collection) WebhookDeliveries(ctx context.Context, id string, opts WebhookListOptions) ([]WebhookDelivery, error) {
 	if err := checkID(id); err != nil {
 		return nil, err
