@@ -270,6 +270,9 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
             }
         }
 
+        public ValueTask<SqlProgramResult> ExecuteSqlAsync(SqlProgram program, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.ExecuteSqlAsync(program, cancellationToken), cancellationToken);
+
         public ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken) =>
             RunAsync(() => inner.ExplainSqlAsync(query, cancellationToken), cancellationToken);
 
