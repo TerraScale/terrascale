@@ -28,7 +28,7 @@ ts-auth never stores copies of other products' data. It reaches them only throug
 - **TerraBase** (ts-dotnet): databases, collections, documents, backups, indexes, schema and usage metering. ts-auth persists its own state there with a TerraBase-issued bootstrap key, never with a token it signed itself.
 - **ts-dashboard**: platform UI, API and MCP server, plans, subscriptions, Stripe billing and spending caps.
 
-ts-auth runs on Fly.io, which owns regions, placement, scaling, edge, TLS and secrets. TerraBase and other products authorize from ts-auth tokens offline. ts-auth never reaches into another product's storage.
+ts-auth runs on OCI under ts-orch, which owns regions, placement, scaling, edge, TLS and secrets (OCI Vault). TerraBase and other products authorize from ts-auth tokens offline. ts-auth never reaches into another product's storage.
 
 ## Stack
 
@@ -46,8 +46,8 @@ ts-auth runs on Fly.io, which owns regions, placement, scaling, edge, TLS and se
 - **State:** persistent identity and authentication state MUST live in TerraBase, accessed only through ts-dotnet. Verify the consistency, uniqueness and atomic guarantees ts-dotnet actually provides. Never silently substitute in-memory persistence when the database is unavailable.
 - **Stateless instances:** do not require server affinity or process-local state for correctness. Process-local locks MUST NOT count as coordination between instances.
 - **Caches** MAY improve performance but MUST NOT override authorization, expiry or revocation.
-- **Secrets:** keep signing keys and encryption secrets in the approved secret manager (fly secrets in production), separate from source and public configuration.
-- **Zero configuration:** discover regional endpoints through Fly's `.internal` DNS. Delivery and service credentials arrive through fly secrets. ts-auth generates its signing keys and stores them encrypted in TerraBase under a fly-secret master key. No authentication bypass.
+- **Secrets:** keep signing keys and encryption secrets in the approved secret manager (OCI Vault in production), separate from source and public configuration.
+- **Zero configuration:** ts-orch supplies regional identity and endpoints (`TS_REGION`, `TS_NODE`, `TS_PEERS_FILE`); no per-region setting. Delivery and service credentials arrive from OCI Vault through ts-orch. ts-auth generates its signing keys and stores them encrypted in TerraBase under an OCI Vault master key. No authentication bypass.
 - **Concurrency:** single-use challenges, credential updates, refresh-token rotation and identity uniqueness MUST stay correct under concurrent requests. Never implement a security-critical operation as an unprotected read followed by a write.
 - **Missing guarantees:** if required storage guarantees are unavailable, report the limitation and require an approved coordination design. Never weaken the security requirement silently. Document and test revocation behavior, cache staleness limits and failure handling.
 - **Organization:** group code by feature, with clear boundaries between HTTP handlers, application logic, persistence and presentation. Share authentication and authorization logic between APIs and UI flows. Keep billing, product logic and TerraBase internals out of this service. Add abstractions only for a real boundary or meaningful duplication removal.
