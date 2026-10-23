@@ -59,6 +59,14 @@ type Cluster struct {
 }
 
 func StartCluster(ctx context.Context, Root string) (*Cluster, error) {
+	return startCluster(ctx, Root, []string{"gru", "sjc", "fra"})
+}
+
+func StartPair(ctx context.Context, root string) (*Cluster, error) {
+	return startCluster(ctx, root, []string{"gru", "sjc"})
+}
+
+func startCluster(ctx context.Context, Root string, regions []string) (*Cluster, error) {
 	Work, err := os.MkdirTemp("", "repl-local-")
 	if err != nil {
 		return nil, err
@@ -72,7 +80,7 @@ func StartCluster(ctx context.Context, Root string) (*Cluster, error) {
 	if err := os.Mkdir(filepath.Join(Work, "members"), 0o700); err != nil {
 		return nil, errors.Join(err, c.Close())
 	}
-	for _, region := range []string{"gru", "sjc", "fra"} {
+	for _, region := range regions {
 		p, err := StartWireProxy(ctx)
 		if err != nil {
 			return nil, errors.Join(err, c.Close())

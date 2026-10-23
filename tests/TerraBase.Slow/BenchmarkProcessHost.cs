@@ -108,7 +108,7 @@ public sealed class BenchmarkProcessHost
             }, services =>
             {
                 services.AddSingleton<IMemberDirectory>(new DirectoryOfMembers(members));
-                MeasureDurability(services);
+                MeasureDurability(services, directory);
             }, userId: Get("user"), cancellationToken: cancellationToken, failedStartCleanup: task => failedStartCleanup = task);
             await WriteAsync(listening, new JsonObject { ["peer_url"] = api.Server.PeerAddress!.ToString() }.ToJsonString(), cancellationToken);
             await WriteAsync(member, $"{region}\n{advertised ?? api.Server.PeerAddress!.ToString()}", cancellationToken);
@@ -365,7 +365,7 @@ public sealed class BenchmarkProcessHost
     private static async Task SmokeAsync(CancellationToken cancellationToken)
     {
         await using var api = await ManagementApi.StartAsync(settings =>
-            settings["node-name"] = EntityIds.New().ToString().ToLowerInvariant(), services: MeasureDurability, cancellationToken: cancellationToken);
+            settings["node-name"] = EntityIds.New().ToString().ToLowerInvariant(), services: services => MeasureDurability(services), cancellationToken: cancellationToken);
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await WaitForWritesAsync(data, new Uri($"{database.Data}/collections", UriKind.Relative), null, cancellationToken);
@@ -402,7 +402,7 @@ public sealed class BenchmarkProcessHost
         await Assert.That(scrape).Contains("terrabase_benchmark_admission_duration");
     }
 
-    private static void MeasureDurability(IServiceCollection services)
+    private static void MeasureDurability(IServiceCollection services, string? directory = null)
     {
         services.AddHttpContextAccessor();
         services.AddSingleton<BenchmarkLocalAck>();
@@ -412,6 +412,11 @@ public sealed class BenchmarkProcessHost
         services.AddSingleton<IRemoteDurability>(provider => new TimedDurability(
             (IRemoteDurability)original.ImplementationFactory!(provider), provider.GetRequiredService<IMeterFactory>(),
             provider.GetRequiredService<BenchmarkLocalAck>()));
+        if (directory is not null)
+        {
+            services.AddSingleton<IChangeGroupSink>(provider => new HeldAckSink(
+                ActivatorUtilities.CreateInstance<StorageChangeGroupSink>(provider), directory));
+        }
     }
 
     private static void ValidatePeer(string address)
@@ -475,6 +480,33 @@ public sealed class BenchmarkProcessHost
         }
     }
 
+    private sealed class HeldAckSink(IChangeGroupSink inner, string directory) : IChangeGroupSink
+    {
+        public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken)
+        {
+            var applied = await inner.ApplyAsync(database, origin, groups, expected, cancellationToken);
+            var hold = Path.Combine(directory, "ack.hold");
+            if (applied is not null && File.Exists(hold)
+                && groups.Any(group => group.Deltas.Any(delta => delta.Id == File.ReadAllText(hold))))
+            {
+                // The real receiver committed; only delivery of its ACK is held by the disposable benchmark.
+                await WriteAsync(Path.Combine(directory, "ack.reached"), Environment.ProcessId.ToString(CultureInfo.InvariantCulture), cancellationToken);
+                while (File.Exists(hold))
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
+                }
+            }
+
+            return applied;
+        }
+
+        public ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
+            inner.RepairAsync(database, incarnation, states, cancellationToken);
+
+        public ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
+            inner.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
+    }
+
     private sealed class TimedDurability(IRemoteDurability inner, IMeterFactory meters, BenchmarkLocalAck local) : IRemoteDurability
     {
         private readonly Histogram<double> _admission = meters.Create(Telemetry.MeterName).CreateHistogram<double>("terrabase.benchmark.admission.duration", "s");
@@ -483,6 +515,7 @@ public sealed class BenchmarkProcessHost
         public bool Confirms => inner.Confirms;
         public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => inner.OtherRegionsAsync(cancellationToken);
         public ValueTask<IReadOnlySet<ReplicaId>> HeldOriginsAsync(TenantContext database, CancellationToken cancellationToken) => inner.HeldOriginsAsync(database, cancellationToken);
+        public ValueTask<DatabasePlacement?> PlacementAsync(TenantContext database, CancellationToken cancellationToken) => inner.PlacementAsync(database, cancellationToken);
 
         public async ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken)
         {
