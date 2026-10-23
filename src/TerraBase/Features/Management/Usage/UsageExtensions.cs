@@ -12,7 +12,6 @@ public static class UsageExtensions
             .AddSingleton<IUsageMeter>(provider => provider.GetRequiredService<UsageMeter>())
             .AddSingleton<IUsageService, UsageService>()
             .AddSingleton<IOperationAllowance, OperationAllowance>()
-            .AddSingleton<IAllowanceUsageFeed, AllowanceUsageFeed>()
             .AddSingleton<IUsageAnalytics, UsageAnalytics>()
             .AddSingleton<IRequestLogs, RequestLogRecorder>()
             .AddHostedService<UsageFlushService>();
