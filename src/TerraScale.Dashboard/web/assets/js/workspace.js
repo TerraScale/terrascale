@@ -6,7 +6,7 @@ const selection = {organizationId, projectId};
 
 function scoped(value) {
   const url = new URL(value, location.href);
-  if (url.origin !== location.origin || /^\/(login|logout|js|css|fonts|brand|flags|img)(\/|$)/.test(url.pathname)) return url;
+  if (url.origin !== location.origin || /^\/(login|logout|invitations|js|css|fonts|brand|flags|img)(\/|$)/.test(url.pathname)) return url;
   const targetOrganization = url.searchParams.get('organizationId') ?? url.searchParams.get('organizationID');
   if (targetOrganization && targetOrganization !== organizationId) return url;
   if (!targetOrganization && url.searchParams.has('projectId') && url.searchParams.get('projectId') !== projectId) return url;

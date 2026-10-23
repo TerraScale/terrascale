@@ -57,6 +57,7 @@ internal sealed class OnboardingProjectsAuditHost(WebApplication app, string ori
                     "/js/datastar.js" => "vendor/datastar.js",
                     "/js/datastar.js.map" => "vendor/datastar.js.map",
                     "/js/button-loading.js" => "button-loading.js",
+                    "/js/workspace.js" => "workspace.js",
                     _ => null
                 };
                 if (source is not null)
