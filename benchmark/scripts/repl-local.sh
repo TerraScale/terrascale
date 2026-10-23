@@ -16,7 +16,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-TERRABASE_BENCH_CLUSTER_FILE="$targets" dotnet run --project "$root/tests/TerraBase.E2E" --configuration Release --no-build -- \
+TERRABASE_BENCH_TARGETS="$targets" dotnet run --project "$root/tests/TerraBase.E2E" --configuration Release --no-build -- \
   --treenode-filter '/*/*/BenchmarkClusterHost/*' >"$host_log" 2>&1 &
 host=$!
 for _ in $(seq 1 180); do
