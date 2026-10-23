@@ -42,6 +42,14 @@ public sealed class ShapeMirrorHttpTests
             .Because("the mirrored snapshot page decrypts to the page the origin served");
         await Assert.That((await host.OpenAsync(shape, objects[1])).SequenceEqual(chunkBytes)).IsTrue()
             .Because("the mirrored chunk decrypts to the chunk the origin served");
+
+        // Once mirrored, listing the offsets again costs the origin no payload read: T1 readers are free at the origin.
+        var before = await host.ScrapeAsync();
+        var again = await host.ManifestAsync(shape, shape.FirstPage, count: 2);
+        var after = await host.ScrapeAsync();
+        await Assert.That(again.Select(entry => entry.GetProperty("sha256").GetString())).IsEquivalentTo(objects.Select(entry => entry.GetProperty("sha256").GetString()));
+        await Assert.That(Delta(before, after, "terrabase_storage_reads_total", "path=\"shape_body\"")).IsEqualTo(0d)
+            .Because("a listed offset is answered from the mirror's metadata");
     }
 
     [Test]
