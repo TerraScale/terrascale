@@ -74,6 +74,10 @@ func run() (runErr error) {
 				return err
 			}
 			defer func() {
+				if phaseErr != nil {
+					c.Preserve = true
+					log.Printf("failed phase: private worker logs retained in %s", c.Work)
+				}
 				phaseErr = errors.Join(phaseErr, c.Close())
 			}()
 			s, err := phase(c)
