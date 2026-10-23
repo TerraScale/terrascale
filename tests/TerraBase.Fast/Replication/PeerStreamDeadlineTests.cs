@@ -325,7 +325,7 @@ public sealed class PeerStreamDeadlineTests
         release.SetResult();
         for (var index = 32; index < 70; index++)
         {
-            await Assert.That((await NextBatchAsync(index)).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[index], await IncarnationAsync(api, databases[index])));
+            await Assert.That((await NextFrameAsync(index)).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[index], await IncarnationAsync(api, databases[index])));
         }
 
         await held.Entered.Task.WaitAsync(Deadline);
@@ -334,7 +334,8 @@ public sealed class PeerStreamDeadlineTests
         {
             changes = time.Changes;
             time.Advance(Idle);
-            await Assert.That((await peer.NextAsync()).KindCase).IsEqualTo(PushFrame.KindOneofCase.Heartbeat);
+            // ACK-driven empty reads can leave valid frontiers ahead of the first heartbeat.
+            _ = await NextFrameAsync(70, PushFrame.KindOneofCase.Heartbeat);
             await time.UntilChangeAsync(ReplicationProtocol.ProgressTimeout, changes);
         }
 
@@ -344,19 +345,20 @@ public sealed class PeerStreamDeadlineTests
         await Assert.That(source.AckedBy(databases[^1], ReplicaId.Of(1, 9, 0))).IsEqualTo(0);
 
         held.Release.SetResult();
-        await Assert.That((await NextBatchAsync(70)).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[^1], await IncarnationAsync(api, databases[^1])));
+        await Assert.That((await NextFrameAsync(70)).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[^1], await IncarnationAsync(api, databases[^1])));
         using var deadline = new CancellationTokenSource(Deadline);
         await Task.WhenAll(databases.Select(database => source.UntilAckedAsync(database, ReplicaId.Of(1, 9, 0), 1, deadline.Token)));
         await Assert.That(peer.Streams).IsEqualTo(1);
 
-        async Task<PushFrame> NextBatchAsync(int index)
+        async Task<PushFrame> NextFrameAsync(int index, PushFrame.KindOneofCase expected = PushFrame.KindOneofCase.Batch)
         {
+            using var deadline = new CancellationTokenSource(Deadline);
             while (true)
             {
-                var frame = await peer.NextAsync();
+                var frame = await peer.NextAsync().WaitAsync(deadline.Token);
                 if (frame.Frontier is not { } frontier)
                 {
-                    await Assert.That(frame.KindCase).IsEqualTo(PushFrame.KindOneofCase.Batch);
+                    await Assert.That(frame.KindCase).IsEqualTo(expected);
                     return frame;
                 }
 
@@ -369,7 +371,6 @@ public sealed class PeerStreamDeadlineTests
     }
 
     [Test]
-    [Skip("flake #437, owner R10 d83ac492, fix due 2026-10-24T09:00Z")]
     public async Task Thirty_two_unanswered_frontiers_do_not_consume_the_healthy_batch_budget()
     {
         var time = new ObservedTime();
@@ -409,7 +410,8 @@ public sealed class PeerStreamDeadlineTests
                     frontiers++;
                 }
             }
-            await time.UntilTimerAsync(Idle, after: 0, period: Timeout.InfiniteTimeSpan, createdAt: time.GetUtcNow());
+            // Earlier passes can leave canceled waits at this same fake instant.
+            await time.UntilTimerAsync(Idle, after: 0, period: Timeout.InfiniteTimeSpan, createdAt: time.GetUtcNow(), activeOnly: true);
             // Advance only one second after the frontier pass: no frontier is due, so a heartbeat must answer.
             var changes = time.Changes;
             time.Advance(Idle);
@@ -418,7 +420,7 @@ public sealed class PeerStreamDeadlineTests
             if (round < 15)
             {
                 // The pass this heartbeat second woke must re-arm its wait now: armed after the advance, no frontier pass would follow it.
-                await time.UntilTimerAsync(Idle, after: 0, period: Timeout.InfiniteTimeSpan, createdAt: time.GetUtcNow());
+                await time.UntilTimerAsync(Idle, after: 0, period: Timeout.InfiniteTimeSpan, createdAt: time.GetUtcNow(), activeOnly: true);
                 time.Advance(TimeSpan.FromSeconds(4));
             }
         }
@@ -516,7 +518,8 @@ public sealed class PeerStreamDeadlineTests
             var batch = (await peer.NextAsync()).Batch;
             await Assert.That(batch).IsNotNull();
             var database = ChangeGroups.Tenant(batch.Database);
-            await Assert.That(waiting.Remove(database)).IsTrue();
+            await Assert.That(waiting.Remove(database)).IsTrue()
+                .Because($"each initial batch names a different client database; received {database.DatabaseId} on {peer.Streams} stream(s)");
             await Assert.That(batch.Database).IsEqualTo(ChangeGroups.Wire(database, await IncarnationAsync(api, database)));
         }
 
@@ -531,6 +534,7 @@ public sealed class PeerStreamDeadlineTests
             await peer.StableSent.Task.WaitAsync(Deadline);
             source.Release.SetResult();
             await source.Reset.Task.WaitAsync(Deadline);
+            await warnings.BookkeepingFailed.Task.WaitAsync(Deadline);
             var stored = api.Server.Services.GetRequiredService<FaultAwareReplicaSource>();
             await TerraBaseTestServer.EventuallyAsync(async token =>
             {
@@ -546,17 +550,20 @@ public sealed class PeerStreamDeadlineTests
 
                 return true;
             }, Deadline);
-            await source.Reinitialized.Task.WaitAsync(Deadline);
-            // The fresh cursor read is held; a heartbeat orders every earlier prepared write before this observation.
-            await time.UntilTimerAsync(Idle, after: 0, period: Idle);
-            time.Advance(Idle);
-            PushFrame observed;
-            do
+            // ACK persistence precedes queued empty reads; observe their writes before advancing the clock.
+            var frontiers = databases.Skip(1).ToHashSet();
+            while (frontiers.Count != 0)
             {
-                observed = await peer.NextAsync();
-                await Assert.That(observed.Hello).IsNull();
+                var frontier = (await peer.NextAsync()).Frontier;
+                await Assert.That(frontier).IsNotNull();
+                await Assert.That(frontiers.Remove(ChangeGroups.Tenant(frontier.Database))).IsTrue();
             }
-            while (observed.Heartbeat is null);
+
+            await Assert.That(source.Reinitialized.Task.IsCompleted).IsFalse();
+            // Consume the retry tick's heartbeat before using a later heartbeat to order the held cursor read.
+            await AdvanceHeartbeatAsync();
+            await source.Reinitialized.Task.WaitAsync(Deadline);
+            await AdvanceHeartbeatAsync();
             await Assert.That(peer.BatchesReceived).IsEqualTo(32)
                 .Because("the prepared batch never reached the peer before cursor reinitialization");
             var abandoned = await stored.AckedAsync(databases[0], replica, CancellationToken.None)
@@ -574,6 +581,22 @@ public sealed class PeerStreamDeadlineTests
             _ = release.TrySetResult();
             _ = source.Release.TrySetResult();
             _ = source.ReinitializeRelease.TrySetResult();
+        }
+
+        async Task AdvanceHeartbeatAsync()
+        {
+            await time.UntilTimerAsync(Idle, after: 0, period: Timeout.InfiniteTimeSpan, createdAt: time.GetUtcNow(), activeOnly: true);
+            await time.UntilTimerAsync(Idle, after: 0, period: Idle);
+            var changes = time.Changes;
+            time.Advance(Idle);
+            PushFrame observed;
+            do
+            {
+                observed = await peer.NextAsync();
+                await Assert.That(observed.Hello).IsNull();
+            }
+            while (observed.Heartbeat is null);
+            await time.UntilChangeAsync(ReplicationProtocol.ProgressTimeout, changes);
         }
     }
 
@@ -932,6 +955,8 @@ public sealed class PeerStreamDeadlineTests
 
         public TaskCompletionSource<int> BackoffBoundary { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public TaskCompletionSource BookkeepingFailed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull => null;
 
@@ -939,6 +964,13 @@ public sealed class PeerStreamDeadlineTests
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
+            if (logLevel == LogLevel.Warning
+                && formatter(state, exception).Contains("Peer bookkeeping for database", StringComparison.Ordinal))
+            {
+                // BookkeepAsync logs after installing the tenant's retry deadline.
+                _ = BookkeepingFailed.TrySetResult();
+            }
+
             if (logLevel == LogLevel.Warning
                 && (!streamFailuresOnly || formatter(state, exception).Contains("reconnects and resumes", StringComparison.Ordinal)))
             {
@@ -993,6 +1025,7 @@ public sealed class PeerStreamDeadlineTests
         public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) => source.RetainsAsync(database, incarnation, after, cancellationToken);
         public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) => source.HeadAsync(database, incarnation, cancellationToken);
         public Task ChangedAsync(CancellationToken cancellationToken) => source.ChangedAsync(cancellationToken);
+        public IDisposable Subscribe(Action<TenantContext> changed) => source.Subscribe(changed);
 
         private async Task HoldAsync(CancellationToken cancellationToken)
         {
@@ -1046,13 +1079,14 @@ public sealed class PeerStreamDeadlineTests
 
         public async ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken)
         {
+            var cursor = await inner.AckedAsync(database, peer, cancellationToken);
             if (database == ResetDatabase && Reset.Task.IsCompleted)
             {
                 _ = Reinitialized.TrySetResult();
                 await ReinitializeRelease.Task.WaitAsync(cancellationToken);
             }
 
-            return await inner.AckedAsync(database, peer, cancellationToken);
+            return cursor;
         }
 
         public ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken)
@@ -1069,6 +1103,15 @@ public sealed class PeerStreamDeadlineTests
         public ValueTask<bool> ProveAsync(TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken) => inner.ProveAsync(database, incarnation, from, through, held, cancellationToken);
         public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) => inner.RetainsAsync(database, incarnation, after, cancellationToken);
         public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) => inner.HeadAsync(database, incarnation, cancellationToken);
+        public IDisposable Subscribe(Action<TenantContext> changed) => inner.Subscribe(database =>
+        {
+            // Match discovery's client-only scope; frontier tests also delay these commit wakes.
+            if (Wakes.IsCompletedSuccessfully && Databases.Contains(database))
+            {
+                changed(database);
+            }
+        });
+
         public async Task ChangedAsync(CancellationToken cancellationToken)
         {
             await inner.ChangedAsync(cancellationToken);
@@ -1188,7 +1231,7 @@ public sealed class PeerStreamDeadlineTests
     {
         private readonly FakeTimeProvider _time = new();
         private readonly Lock _gate = new();
-        private readonly List<(TimeSpan Due, TimeSpan Period, DateTimeOffset Created)> _timers = [];
+        private readonly List<(TimeSpan Due, TimeSpan Period, DateTimeOffset Created, ObservedTimer Timer)> _timers = [];
         private readonly List<TimeSpan> _changes = [];
         private TaskCompletionSource _created = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -1225,20 +1268,20 @@ public sealed class PeerStreamDeadlineTests
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var at = _time.GetUtcNow();
-            var timer = _time.CreateTimer(callback, state, dueTime, period);
+            var timer = new ObservedTimer(this, _time.CreateTimer(callback, state, dueTime, period));
             TaskCompletionSource created;
             lock (_gate)
             {
-                _timers.Add((dueTime, period, at));
+                _timers.Add((dueTime, period, at, timer));
                 (created, _created) = (_created, new(TaskCreationOptions.RunContinuationsAsynchronously));
             }
 
             created.SetResult();
-            return new ObservedTimer(this, timer);
+            return timer;
         }
 
         // Waits for a timer due in `due` among those created after the first `after`.
-        public async Task UntilTimerAsync(TimeSpan due, int after, TimeSpan? period = null, DateTimeOffset? createdAt = null)
+        public async Task UntilTimerAsync(TimeSpan due, int after, TimeSpan? period = null, DateTimeOffset? createdAt = null, bool activeOnly = false)
         {
             using var deadline = new CancellationTokenSource(Deadline);
             while (true)
@@ -1247,7 +1290,7 @@ public sealed class PeerStreamDeadlineTests
                 lock (_gate)
                 {
                     if (_timers.Skip(after).Any(timer => timer.Due == due && (period is null || timer.Period == period)
-                        && (createdAt is null || timer.Created == createdAt)))
+                        && (createdAt is null || timer.Created == createdAt) && (!activeOnly || !timer.Timer.IsDisposed)))
                     {
                         return;
                     }
@@ -1281,6 +1324,10 @@ public sealed class PeerStreamDeadlineTests
 
         private sealed class ObservedTimer(ObservedTime owner, ITimer inner) : ITimer
         {
+            private bool _disposed;
+
+            public bool IsDisposed => Volatile.Read(ref _disposed);
+
             public bool Change(TimeSpan dueTime, TimeSpan period)
             {
                 var changed = inner.Change(dueTime, period);
@@ -1299,8 +1346,17 @@ public sealed class PeerStreamDeadlineTests
                 return changed;
             }
 
-            public void Dispose() => inner.Dispose();
-            public ValueTask DisposeAsync() => inner.DisposeAsync();
+            public void Dispose()
+            {
+                Volatile.Write(ref _disposed, true);
+                inner.Dispose();
+            }
+
+            public ValueTask DisposeAsync()
+            {
+                Volatile.Write(ref _disposed, true);
+                return inner.DisposeAsync();
+            }
         }
     }
 

@@ -118,8 +118,6 @@ public sealed class PeerStreamFaultIsolationTests
                     afterApply?.Invoke(database);
                 }
             }));
-        var store = await node.StoreAsync(node.Database);
-        var faults = node.Api.Server.Services.GetRequiredService<IReplicaCopyFaults>();
         // Admit forensic inspection before SYSTEM can fault; BEGIN DEFERRED takes no read snapshot yet.
         await using var forensic = await (await node.StoreAsync(node.Database)).BeginTransactionAsync(write: false, CancellationToken.None);
         Task? recording = null;
@@ -127,8 +125,7 @@ public sealed class PeerStreamFaultIsolationTests
         {
             if (database == node.Database)
             {
-                recording = faults.RecordAsync(nodeFault ? ChangeGroups.System : database,
-                    nodeFault ? Ulid.Empty : store.Incarnation, "a test fault after apply and before stable", CancellationToken.None).AsTask();
+                recording = node.FaultAsync(database, nodeFault, CancellationToken.None, "a test fault after apply and before stable");
             }
         };
 
@@ -194,8 +191,7 @@ public sealed class PeerStreamFaultIsolationTests
             }
             else if (step == "reader.reset" && Interlocked.Exchange(ref armed, 0) == 1)
             {
-                recording = faults.RecordAsync(ChangeGroups.System, Ulid.Empty,
-                    "a node fault during the stable reader reset", CancellationToken.None).AsTask();
+                recording = node.FaultAsync(node.Database, nodeFault: true, CancellationToken.None, "a node fault during the stable reader reset");
                 throw native;
             }
         };
@@ -345,7 +341,7 @@ public sealed class PeerStreamFaultIsolationTests
         using var deadline = Timeout();
         await WarmAsync(sender, receiver, deadline.Token);
         var before = sender.Status(sender.Database)!.Acknowledged;
-        var initialized = source.Initializations;
+        var connected = source.Connections;
         var gate = new BookkeepingGate(sender.Database, stableReport, deadline.Token);
         source.Hold(gate);
         try
@@ -378,7 +374,7 @@ public sealed class PeerStreamFaultIsolationTests
             await gate.Refused.Task.WaitAsync(deadline.Token);
             if (nodeFault)
             {
-                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(source.Initializations > initialized), Deadline);
+                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(source.Connections > connected), Deadline);
                 await Assert.That(sender.Status(sender.Database)?.Acknowledged ?? 0).IsLessThanOrEqualTo(before)
                     .Because("a node failure ends the call and cannot publish the completed response as a successful ACK");
             }
@@ -390,7 +386,7 @@ public sealed class PeerStreamFaultIsolationTests
                 await TerraBaseTestServer.EventuallyAsync(async token =>
                     sender.Status(sender.Second)?.Acknowledged == head
                     && await receiver.HasAsync(receiver.Second, "after-refusal", token), Deadline);
-                await Assert.That(source.Initializations).IsEqualTo(initialized)
+                await Assert.That(source.Connections).IsEqualTo(connected)
                     .Because("a refused tenant report or ACK must not restart the shared connection");
                 await Assert.That(sender.Status(sender.Database)!.Acknowledged).IsEqualTo(stableReport ? before : 0)
                     .Because("a stable report changes no cursor; refused ACK bookkeeping resets its cursor to neutral");
@@ -424,7 +420,7 @@ public sealed class PeerStreamFaultIsolationTests
         using var deadline = Timeout();
         await WarmAsync(sender, receiver, deadline.Token);
         var before = sender.Status(sender.Database)!.Acknowledged;
-        var initialized = source.Initializations;
+        var connected = source.Connections;
         var gate = new ShippingGate(sender.Database, boundary);
         source.Hold(gate);
         try
@@ -437,7 +433,7 @@ public sealed class PeerStreamFaultIsolationTests
             await gate.Refused.Task.WaitAsync(deadline.Token);
             if (nodeFault)
             {
-                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(source.Initializations > initialized), Deadline);
+                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(source.Connections > connected), Deadline);
                 await Assert.That(sender.Status(sender.Database)?.Acknowledged ?? 0).IsLessThanOrEqualTo(before)
                     .Because("a node-wide shipping refusal ends the shared call");
             }
@@ -449,7 +445,7 @@ public sealed class PeerStreamFaultIsolationTests
                 await TerraBaseTestServer.EventuallyAsync(async token =>
                     sender.Status(sender.Second)?.Acknowledged == head
                     && await receiver.HasAsync(receiver.Second, "after-shipping-refusal", token), Deadline);
-                await Assert.That(source.Initializations).IsEqualTo(initialized)
+                await Assert.That(source.Connections).IsEqualTo(connected)
                     .Because("the healthy sentinel must be acknowledged on the original shared call");
                 await Assert.That(sender.Status(sender.Database)!.Acknowledged).IsEqualTo(before)
                     .Because("a refused shipping read cannot acknowledge a new tenant prefix");
@@ -484,7 +480,7 @@ public sealed class PeerStreamFaultIsolationTests
         using var deadline = Timeout();
         await WarmAsync(sender, receiver, deadline.Token);
         var before = sender.Status(sender.Database)!.Acknowledged;
-        var initialized = source.Initializations;
+        var connected = source.Connections;
         var native = new SqliteException("a native I/O error during the retention reader reset", 10);
         var gate = new ShippingGate(sender.Database, "retains");
         source.Hold(gate);
@@ -499,8 +495,7 @@ public sealed class PeerStreamFaultIsolationTests
             {
                 if (step == "reader.reset" && database == sender.Database && Interlocked.Exchange(ref armed, 0) == 1)
                 {
-                    recording = faults.RecordAsync(ChangeGroups.System, Ulid.Empty,
-                        "a node fault during the retention reader reset", CancellationToken.None).AsTask();
+                    recording = sender.FaultAsync(sender.Database, nodeFault: true, CancellationToken.None, "a node fault during the retention reader reset");
                     throw native;
                 }
             };
@@ -513,7 +508,7 @@ public sealed class PeerStreamFaultIsolationTests
             await Assert.That(recording).IsNotNull();
             await recording!.WaitAsync(deadline.Token);
             await Assert.That(await faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, deadline.Token)).IsTrue();
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(source.Initializations > initialized), Deadline);
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(source.Connections > connected), Deadline);
             await Assert.That(source.ReadsAfterNativeError).IsEqualTo(0)
                 .Because("this call must end at the triggering error, without another tenant read to discover the known node fault");
             await Assert.That(sender.Status(sender.Database)?.Acknowledged ?? 0).IsLessThanOrEqualTo(before)
@@ -599,6 +594,7 @@ public sealed class PeerStreamFaultIsolationTests
         public TenantContext Database { get; } = database;
         public TenantContext Second { get; } = second;
         private readonly Dictionary<TenantContext, Ulid> _pins = [];
+        private readonly HashSet<string> _expectedRetentionRefusals = [];
 
         public Ulid Pin(TenantContext database) => _pins[database];
 
@@ -688,17 +684,34 @@ public sealed class PeerStreamFaultIsolationTests
             return await transaction.GetAsync("items", id, cancellationToken) is { Deleted: false };
         }
 
-        public async Task FaultAsync(TenantContext database, bool nodeFault, CancellationToken cancellationToken)
+        public async Task FaultAsync(
+            TenantContext database, bool nodeFault, CancellationToken cancellationToken, string reason = "a test fault during replication bookkeeping")
         {
             var incarnation = nodeFault ? Ulid.Empty : (await StoreAsync(database, cancellationToken)).Incarnation;
             await Api.Server.Services.GetRequiredService<IReplicaCopyFaults>().RecordAsync(nodeFault ? ChangeGroups.System : database,
-                incarnation, "a test fault during replication bookkeeping", cancellationToken);
+                incarnation, reason, cancellationToken);
+            _ = _expectedRetentionRefusals.Add(nodeFault
+                ? $"storage failed closed: the system database faulted: {reason}"
+                : $"this copy is faulted: {reason}");
         }
 
         public ReplicationDatabaseStatus? Status(TenantContext database) => Api.Server.Services.GetRequiredService<IReplicationStatus>()
             .Snapshot().Peers.SelectMany(peer => peer.Databases).SingleOrDefault(tenant => tenant.DatabaseId == database.DatabaseId);
 
-        public ValueTask DisposeAsync() => Api.DisposeAsync();
+        public async ValueTask DisposeAsync()
+        {
+            var retention = Api.Server.Services.GetRequiredService<TursoChangeGroupSource>();
+            try
+            {
+                await Api.DisposeAsync();
+                await Api.CleanupCompletion;
+            }
+            catch (ReplicaCopyFaultedException error) when (_expectedRetentionRefusals.Contains(error.Message)
+                && retention.ExecuteTask?.Exception?.Flatten().InnerExceptions.Contains(error) == true)
+            {
+                // Shutdown can cancel retention's retry catch while it observes this fixture's injected copy or node fault.
+            }
+        }
     }
 
     private sealed class FixedUtcTime : TimeProvider
@@ -740,10 +753,10 @@ public sealed class PeerStreamFaultIsolationTests
 
         private BookkeepingGate? _held;
         private ShippingGate? _shipping;
-        private int _initializations;
-        private int _nativeInitializations = -1;
+        private int _connections;
+        private int _nativeConnection = -1;
         private int _readsAfterNativeError;
-        public int Initializations => Volatile.Read(ref _initializations);
+        public int Connections => Volatile.Read(ref _connections);
         public int ReadsAfterNativeError => Volatile.Read(ref _readsAfterNativeError);
         public TaskCompletionSource SystemCursorRefused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<(string Boundary, SqliteException Error)> NativeReadError { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -752,9 +765,16 @@ public sealed class PeerStreamFaultIsolationTests
 
         public IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken) => inner.ListDatabasesAsync(cancellationToken);
         public Task ChangedAsync(CancellationToken cancellationToken) => inner.ChangedAsync(cancellationToken);
+        public IDisposable Subscribe(Action<TenantContext> changed)
+        {
+            // The sender subscribes once after each welcome, before any database's placement or cursor read can refuse.
+            _ = Interlocked.Increment(ref _connections);
+            return inner.Subscribe(changed);
+        }
+
         public async ValueTask<SourceGroups?> ReadAsync(TenantContext database, Ulid incarnation, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
         {
-            if (Volatile.Read(ref _nativeInitializations) == Initializations)
+            if (Volatile.Read(ref _nativeConnection) == Connections)
             {
                 _ = Interlocked.Increment(ref _readsAfterNativeError);
             }
@@ -821,7 +841,7 @@ public sealed class PeerStreamFaultIsolationTests
             }
             catch (SqliteException error)
             {
-                Volatile.Write(ref _nativeInitializations, Initializations);
+                Volatile.Write(ref _nativeConnection, Connections);
                 _ = NativeReadError.TrySetResult((boundary, error));
                 throw;
             }
@@ -835,15 +855,10 @@ public sealed class PeerStreamFaultIsolationTests
 
         public ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken)
         {
-            // Count SYSTEM cursor reads; a nullable refusal may cause another read on the same connection.
-            if (database == ChangeGroups.System)
+            if (database == ChangeGroups.System && refuseSystemCursor)
             {
-                _ = Interlocked.Increment(ref _initializations);
-                if (refuseSystemCursor)
-                {
-                    _ = SystemCursorRefused.TrySetResult();
-                    return ValueTask.FromResult<SourceCursor?>(null);
-                }
+                _ = SystemCursorRefused.TrySetResult();
+                return ValueTask.FromResult<SourceCursor?>(null);
             }
             return inner.AckedAsync(database, peer, cancellationToken);
         }

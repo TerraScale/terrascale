@@ -9,6 +9,7 @@ using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -248,6 +249,27 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
     /// <summary>Completes at the next committed write to any database.</summary>
     internal Task NextCommitAsync(CancellationToken cancellationToken) => Volatile.Read(ref _commitSignal).Task.WaitAsync(cancellationToken);
+
+    internal event Action<TenantContext>? ReplicationChanged;
+
+    // Keep store callbacks from capturing the opening operation's cancellation and lifetime.
+    private Action ReplicationNotification(TenantContext database) => () => NotifyReplicationChanged(database);
+
+    internal void NotifyReplicationChanged(TenantContext database)
+    {
+        database = database.Plan == PlanTier.Hobby ? database : database with { Plan = PlanTier.Hobby };
+        foreach (var subscriber in Delegate.EnumerateInvocationList(ReplicationChanged))
+        {
+            try
+            {
+                subscriber(database);
+            }
+            catch (Exception error)
+            {
+                _logger.ZLogError(error, $"A replication notification for database {database.DatabaseId:@Database} failed; the change itself is committed");
+            }
+        }
+    }
 
     private void RecordCommittedWrite()
     {
@@ -804,6 +826,11 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                         DeleteIfEmpty(Path.Combine(_dataDirectory, key.Organization));
                         return true;
                     }, CancellationToken.None).ConfigureAwait(false);
+                    if (existed)
+                    {
+                        NotifyReplicationChanged(ChangeGroups.System);
+                    }
+
                     return existed;
                 }
 
@@ -921,6 +948,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                     openingSystem = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
                         RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
                     {
+                        ReplicationCommitted = ReplicationNotification(ChangeGroups.System),
                         QueryBudget = QueryBudget,
                         Member = Member,
                         Checkpoint = _checkpoint,
@@ -936,6 +964,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                         return true;
                     }).ConfigureAwait(false);
                     Volatile.Write(ref _system, openingSystem);
+                    NotifyReplicationChanged(ChangeGroups.System);
                 }
                 catch
                 {
@@ -1683,6 +1712,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         var store = new SqliteDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
             RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
         {
+            ReplicationCommitted = ReplicationNotification(tenant),
             QueryBudget = QueryBudget,
             Member = Member,
             Checkpoint = _checkpoint,
@@ -1728,6 +1758,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 _logger.ZLogWarning($"A database's rebuild record could not be read again after it opened; its writes retry it: {error.GetType().Name:@Error}");
             }
 
+            // Creation, import and replacement may publish a copy without a new local group.
+            NotifyReplicationChanged(tenant);
             return store;
         }
         finally

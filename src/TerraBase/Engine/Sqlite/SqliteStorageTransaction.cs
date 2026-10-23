@@ -1260,6 +1260,7 @@ internal sealed partial class SqliteStorageTransaction(
                     Follow("the commit notification", committed);
                 }
 
+                NotifyReplicationCommitted();
                 throw;
             }
 
@@ -1285,6 +1286,8 @@ internal sealed partial class SqliteStorageTransaction(
             Follow("the commit notification", committed);
         }
 
+        // Placement readers must observe the advanced catalog cache generation when this wake arrives.
+        NotifyReplicationCommitted();
         if (_followFailure is { } failure)
         {
             ExceptionDispatchInfo.Throw(failure);
@@ -1326,6 +1329,15 @@ internal sealed partial class SqliteStorageTransaction(
         }
 
         return new CommitMarker(store.Incarnation, reader.GetInt64(0));
+    }
+
+    private void NotifyReplicationCommitted()
+    {
+        // Remote catalog joins can change placement; ordinary joined states are never shipped again.
+        if (_offset is not null && (store.IsSystem || (_captured > 0 && !_captureSuspended)))
+        {
+            Follow("the replication notification", store.ReplicationCommitted);
+        }
     }
 
     // The first step after the commit that failed: CommitAsync throws it once every step ran.

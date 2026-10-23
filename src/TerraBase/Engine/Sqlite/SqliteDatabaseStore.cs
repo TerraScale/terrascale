@@ -32,6 +32,7 @@ internal sealed partial class SqliteDatabaseStore(
     Action? committed, ILogger? logger = null, IMemoryBudget? schemaMemory = null, Counter<long>? schemaEvaluations = null,
     Counter<long>? storageReads = null) : IDatabaseStore, IDisposable
 {
+    internal Action? ReplicationCommitted { get; init; }
     internal IMemoryBudget? SchemaMemory { get; } = schemaMemory;
     internal Action<string>? CollectionStateWritten { get; init; }
     internal Counter<long>? SchemaEvaluations { get; } = schemaEvaluations;

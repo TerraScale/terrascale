@@ -31,6 +31,31 @@ public sealed class PeerStreamTests
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
 
     [Test]
+    public async Task Catalog_wake_observes_the_advanced_commit_sequence(CancellationToken cancellationToken)
+    {
+        await using var api = await ManagementApi.StartAsync(cancellationToken: cancellationToken);
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken);
+        var source = api.Server.Services.GetRequiredService<IChangeGroupSource>();
+        long observed = -1;
+        var armed = 0;
+        using var subscription = source.Subscribe(database =>
+        {
+            if (database == ChangeGroups.System && Volatile.Read(ref armed) == 1)
+            {
+                _ = Interlocked.CompareExchange(ref observed, store.CommitSequence, -1);
+            }
+        });
+        await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken);
+        _ = await transaction.CreateCollectionAsync(new CollectionInfo("wake-order", 1), cancellationToken);
+        var before = store.CommitSequence;
+        Volatile.Write(ref armed, 1);
+        _ = await transaction.CommitAsync(cancellationToken);
+        Volatile.Write(ref armed, 0);
+        await Assert.That(observed).IsGreaterThan(before);
+    }
+
+    [Test]
     public async Task Three_regions_converge_through_concurrent_reordered_and_duplicated_groups()
     {
         await using var cluster = await Cluster.StartAsync("gru", "sjc", "fra");
@@ -116,6 +141,201 @@ public sealed class PeerStreamTests
         }
 
         await Assert.That(gru.Source.AckedBy(cluster.Database, sjc.Node)).IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task A_write_after_an_empty_snapshot_ships_without_another_write()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: false, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var stamp = Stamp();
+        var id = EntityIds.New().ToString();
+        var drained = NextEmptyReadAsync(gru.Source, cluster.Database);
+        await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, id, """{"n":1}"""));
+        await drained.WaitAsync(Deadline);
+        clock.FreezeTimestamp();
+        var committed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gru.Source.AfterNextEmptyRead(cluster.Database, async cancellationToken =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await gru.CommitAsync(Set(gru, stamp + 2, id, "n", "3"));
+            committed.SetResult();
+        });
+
+        await gru.CommitAsync(Set(gru, stamp + 1, id, "n", "2"));
+        await committed.Task.WaitAsync(Deadline);
+        using var deadline = new CancellationTokenSource(Deadline);
+        await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, 3, deadline.Token);
+        await Assert.That(await sjc.ReadAsync(id)).IsEqualTo("""{"n":3}""");
+        await Assert.That(gru.Source.AckedBy(cluster.Database, sjc.Node)).IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task Writes_to_one_database_do_not_read_a_quiet_database_before_frontier_maintenance_is_due()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: false, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var stamp = Stamp();
+        var (hotId, quietId) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        var hotDrained = NextEmptyReadAsync(gru.Source, cluster.Database);
+        await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, hotId, """{"n":1}"""));
+        await hotDrained.WaitAsync(Deadline);
+        var quiet = await gru.CreateOtherDatabaseAsync();
+        _ = await sjc.CreateOtherDatabaseAsync(quiet.DatabaseId);
+        var quietDrained = NextEmptyReadAsync(gru.Source, quiet);
+        await gru.CommitAsync(quiet, Metadata(gru, stamp, "items"), Put(gru, stamp, quietId, """{"n":1}"""));
+        await quietDrained.WaitAsync(Deadline);
+        clock.FreezeTimestamp();
+        var quietReads = gru.Source.ReadCount(quiet);
+
+        using var deadline = new CancellationTokenSource(Deadline);
+        for (var value = 2; value <= 3; value++)
+        {
+            hotDrained = NextEmptyReadAsync(gru.Source, cluster.Database);
+            await gru.CommitAsync(Set(gru, stamp + (ulong)value, hotId, "n", value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            await hotDrained.WaitAsync(deadline.Token);
+            await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, value, deadline.Token);
+        }
+
+        await Assert.That(await sjc.ReadAsync(hotId)).IsEqualTo("""{"n":3}""");
+        await Assert.That(await sjc.ReadAsync(quiet, quietId)).IsEqualTo("""{"n":1}""");
+        await Assert.That(gru.Source.ReadCount(quiet)).IsEqualTo(quietReads);
+    }
+
+    [Test]
+    public async Task Coalesced_writes_beyond_one_batch_drain_without_starving_another_database()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var stamp = Stamp();
+        var (busyId, otherId) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondBatch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseBatch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gru.Source.AfterNextEmptyRead(cluster.Database, async cancellationToken =>
+        {
+            reading.SetResult();
+            await releaseRead.Task.WaitAsync(cancellationToken);
+        });
+        sjc.BeforeApply = async (database, groups, cancellationToken) =>
+        {
+            if (database == cluster.Database && groups[^1].ChangeId > ChangeGroups.MaxGroups + 1)
+            {
+                _ = secondBatch.TrySetResult();
+                await releaseBatch.Task.WaitAsync(cancellationToken);
+            }
+        };
+        try
+        {
+            await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, busyId, """{"n":0}"""));
+            await reading.Task.WaitAsync(Deadline);
+            var other = await gru.CreateOtherDatabaseAsync();
+            _ = await sjc.CreateOtherDatabaseAsync(other.DatabaseId);
+            // The sender is inside its old empty read: all these writes leave one coalesced pending database.
+            for (var value = 1; value <= ChangeGroups.MaxGroups + 1; value++)
+            {
+                await gru.CommitAsync(Set(gru, stamp + (ulong)value, busyId, "n", value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            }
+
+            await gru.CommitAsync(other, Metadata(gru, stamp, "items"), Put(gru, stamp, otherId, """{"n":1}"""));
+            releaseRead.SetResult();
+            await secondBatch.Task.WaitAsync(Deadline);
+            using var deadline = new CancellationTokenSource(Deadline);
+            await gru.Source.UntilAckedAsync(other, sjc.Node, 1, deadline.Token);
+            await Assert.That(await sjc.ReadAsync(other, otherId)).IsEqualTo("""{"n":1}""");
+            await Assert.That(gru.Source.AckedBy(cluster.Database, sjc.Node)).IsLessThan(ChangeGroups.MaxGroups + 2L);
+
+            releaseBatch.SetResult();
+            await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, ChangeGroups.MaxGroups + 2L, deadline.Token);
+            await Assert.That(await sjc.ReadAsync(busyId)).IsEqualTo($$"""{"n":{{ChangeGroups.MaxGroups + 1}}}""");
+            await Assert.That(gru.Source.AckedBy(cluster.Database, sjc.Node)).IsEqualTo(ChangeGroups.MaxGroups + 2L);
+        }
+        finally
+        {
+            sjc.BeforeApply = null;
+            _ = releaseRead.TrySetResult();
+            _ = releaseBatch.TrySetResult();
+        }
+    }
+
+    [Test]
+    public async Task Repeated_dirty_queue_overflow_does_not_restart_discovery_ahead_of_a_later_database()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: false, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var stamp = Stamp();
+        var (warmId, id) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        var drained = NextEmptyReadAsync(gru.Source, cluster.Database);
+        await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, warmId, """{"n":0}"""));
+        await drained.WaitAsync(Deadline);
+        var later = await gru.CreateOtherDatabaseAsync();
+        _ = await sjc.CreateOtherDatabaseAsync(later.DatabaseId);
+        drained = NextEmptyReadAsync(gru.Source, later);
+        await gru.CommitAsync(later, Metadata(gru, stamp, "items"), Put(gru, stamp, id, """{"n":0}"""));
+        await drained.WaitAsync(Deadline);
+        using var deadline = new CancellationTokenSource(Deadline);
+        await gru.Source.UntilAckedAsync(later, sjc.Node, 1, deadline.Token);
+        var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rounds = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        gru.Source.AfterNextEmptyRead(cluster.Database, async cancellationToken =>
+        {
+            reading.SetResult();
+            await release.Task.WaitAsync(cancellationToken);
+        });
+        try
+        {
+            await gru.CommitAsync(Set(gru, stamp + 1, warmId, "n", "1"));
+            await reading.Task.WaitAsync(Deadline);
+            var before = gru.Source.ReadCount(later);
+            // Valid earlier ULIDs exceed the dirty queue's capacity without creating 1,025 database files.
+            var candidates = Enumerable.Range(1, 1025).Select(value => cluster.Database with
+            {
+                DatabaseId = value.ToString("D26", System.Globalization.CultureInfo.InvariantCulture),
+            }).ToArray();
+            gru.Source.Announce(candidates);
+            await gru.CommitAsync(later, Set(gru, stamp + 1, id, "n", "2"));
+            // The initialized later copy is overdue before any candidate receives its first discovery deadline.
+            clock.AdvanceTimestamp(TimeSpan.FromSeconds(6));
+            var reconciliations = 0;
+            gru.Source.AfterListing = () =>
+            {
+                if (++reconciliations == 3)
+                {
+                    var reads = gru.Source.ReadCount(later);
+                    gru.Source.AfterListing = null;
+                    rounds.SetResult(reads);
+                    return;
+                }
+
+                gru.Source.Announce(candidates);
+            };
+            release.SetResult();
+            await Assert.That(await rounds.Task.WaitAsync(deadline.Token)).IsGreaterThan(before)
+                .Because("the overdue initialized database must run before repeated discovery can restart its deadline");
+            await gru.Source.UntilAckedAsync(later, sjc.Node, 2, deadline.Token);
+            await Assert.That(await sjc.ReadAsync(later, id)).IsEqualTo("""{"n":2}""");
+        }
+        finally
+        {
+            gru.Source.AfterListing = null;
+            _ = release.TrySetResult();
+        }
+    }
+
+    private static Task NextEmptyReadAsync(FakeChangeGroupSource source, TenantContext database)
+    {
+        var read = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        source.AfterNextEmptyRead(database, _ =>
+        {
+            read.SetResult();
+            return Task.CompletedTask;
+        });
+        return read.Task;
     }
 
     [Test]
@@ -1599,6 +1819,10 @@ public sealed class PeerStreamTests
             await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, 1, deadline.Token);
         }
 
+        // ACK 1 may precede membership coverage; rollback needs a persisted nonzero expectation.
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            await gru.Source.AckedAsync(cluster.Database, sjc.Node, token) is { Stable.Value: > 0 }, Deadline);
+
         var origin = gru.Node;
         if (idle)
         {
@@ -2662,6 +2886,8 @@ public sealed class PeerStreamTests
 
         public Func<TenantContext, CancellationToken, Task>? BeforeDigest { get; set; }
 
+        public Func<TenantContext, IReadOnlyList<OriginGroup>, CancellationToken, Task>? BeforeApply { get; set; }
+
         public RefillMemory? RefillMemory { get; private set; }
 
         // Completes once a repair waits for HeldRepairs.
@@ -2713,9 +2939,9 @@ public sealed class PeerStreamTests
         public async Task<IDatabaseStore> StoreAsync() =>
             await Engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None) ?? throw new InvalidOperationException("the database is missing");
 
-        public async Task<TenantContext> CreateOtherDatabaseAsync()
+        public async Task<TenantContext> CreateOtherDatabaseAsync(string? databaseId = null)
         {
-            var database = cluster.Database with { DatabaseId = EntityIds.New().ToString() };
+            var database = cluster.Database with { DatabaseId = databaseId ?? EntityIds.New().ToString() };
             var commit = JsonSerializer.Serialize(new
             {
                 id = EntityIds.New().ToString(),
@@ -2729,9 +2955,12 @@ public sealed class PeerStreamTests
 
         // Commits the deltas here, as a local write does, then hands them to the fake source as one group (the CDC tailer
         // finds them itself).
-        public async Task CommitAsync(params ChangeDelta[] deltas)
+        public Task CommitAsync(params ChangeDelta[] deltas) => CommitAsync(cluster.Database, deltas);
+
+        public async Task CommitAsync(TenantContext database, params ChangeDelta[] deltas)
         {
-            var store = await StoreAsync();
+            var store = await Engine.OpenDatabaseAsync(database, CancellationToken.None)
+                ?? throw new InvalidOperationException("the database is missing");
             await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
             {
                 foreach (var delta in deltas)
@@ -2744,7 +2973,7 @@ public sealed class PeerStreamTests
 
             if (!cluster.Cdc)
             {
-                _ = Source.Add(cluster.Database, deltas);
+                _ = Source.Add(database, deltas);
             }
         }
 
@@ -3167,14 +3396,21 @@ public sealed class PeerStreamTests
         }
     }
 
-    /// <summary>A machine's sink whose repairs wait while the test holds them.</summary>
+    /// <summary>A machine's sink whose applies and repairs wait while the test holds them.</summary>
     private sealed class HeldSink(IChangeGroupSink sink, Machine machine) : IChangeGroupSink
     {
         public ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
             sink.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
 
-        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken) =>
-            sink.ApplyAsync(database, origin, groups, expected, cancellationToken);
+        public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken)
+        {
+            if (machine.BeforeApply is { } before)
+            {
+                await before(database, groups, cancellationToken);
+            }
+
+            return await sink.ApplyAsync(database, origin, groups, expected, cancellationToken);
+        }
 
         public async ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
         {
@@ -3423,11 +3659,24 @@ public sealed class PeerStreamTests
     internal sealed class ShiftedTime : TimeProvider
     {
         private long _offset;
+        private long _timestamp;
+        private long _timestampAdvance;
 
         public TimeSpan Offset
         {
             get => TimeSpan.FromTicks(Interlocked.Read(ref _offset));
             set => Interlocked.Exchange(ref _offset, value.Ticks);
+        }
+
+        // Freeze only after initial peer discovery and shipping; UTC and timers keep advancing normally.
+        public void FreezeTimestamp() => Interlocked.Exchange(ref _timestamp, System.GetTimestamp());
+
+        public void AdvanceTimestamp(TimeSpan elapsed) => Interlocked.Add(ref _timestampAdvance, (long)(elapsed.TotalSeconds * TimestampFrequency));
+
+        public override long GetTimestamp()
+        {
+            var frozen = Interlocked.Read(ref _timestamp);
+            return (frozen > 0 ? frozen : System.GetTimestamp()) + Interlocked.Read(ref _timestampAdvance);
         }
 
         public override DateTimeOffset GetUtcNow() => System.GetUtcNow() + Offset;

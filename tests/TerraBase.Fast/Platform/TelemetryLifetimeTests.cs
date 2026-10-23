@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Metrics;
 using TerraBase.Features.UserAuth;
@@ -27,9 +28,13 @@ public sealed class TelemetryLifetimeTests
         {
             token.ThrowIfCancellationRequested();
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
-            return Task.FromResult(!metrics.TryGetTarget(out _) && !http.TryGetTarget(out _));
+            return Task.FromResult(!IsAlive(metrics) && !IsAlive(http));
         }, timeout: TimeSpan.FromSeconds(5));
     }
+
+    // TryGetTarget's temporary strong reference must leave the stack before the next collection.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool IsAlive<T>(WeakReference<T> reference) where T : class => reference.TryGetTarget(out _);
 
     private static async Task<(WeakReference<MeterProvider> Metrics, WeakReference<IHttpClientFactory> Http)> ExerciseAndDisposeHostAsync()
     {

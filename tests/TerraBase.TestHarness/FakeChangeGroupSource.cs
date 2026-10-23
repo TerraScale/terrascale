@@ -13,6 +13,8 @@ namespace TerraBase.Testing;
 internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToken, ValueTask<Ulid?>> incarnation) : IChangeGroupSource
 {
     private readonly Lock _gate = new();
+    private readonly Dictionary<TenantContext, int> _readCounts = [];
+    private readonly Dictionary<TenantContext, Func<CancellationToken, Task>> _afterEmptyReads = [];
     private readonly Dictionary<TenantContext, List<OriginGroup>> _groups = [];
     private readonly Dictionary<(TenantContext Database, ReplicaId Peer), long> _ackedBy = [];
     private readonly HashSet<(TenantContext Database, ReplicaId Peer)> _refills = [];
@@ -20,6 +22,23 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
     private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource _acked = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Action? _beforeRead;
+    private event Action<TenantContext>? Changed;
+
+    public Action? AfterListing { get; set; }
+
+    // A stale discovery candidate can be announced before its catalog placement or local copy exists.
+    public void Announce(params TenantContext[] databases)
+    {
+        foreach (var database in databases)
+        {
+            lock (_gate)
+            {
+                _ = _groups.TryAdd(database, []);
+            }
+
+            Changed?.Invoke(database);
+        }
+    }
 
     /// <summary>
     /// Drops the groups through <paramref name="changeId"/> as retention does, just before the next read: a trim landing
@@ -46,8 +65,26 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
             (changed, _changed) = (_changed, new(TaskCreationOptions.RunContinuationsAsynchronously));
         }
 
+        Changed?.Invoke(database with { Plan = PlanTier.Hobby });
         changed.SetResult();
         return id;
+    }
+
+    public int ReadCount(TenantContext database)
+    {
+        lock (_gate)
+        {
+            return _readCounts.GetValueOrDefault(database);
+        }
+    }
+
+    // Runs outside the gate after the next empty snapshot, before that snapshot returns to the sender.
+    public void AfterNextEmptyRead(TenantContext database, Func<CancellationToken, Task> afterRead)
+    {
+        lock (_gate)
+        {
+            _afterEmptyReads.Add(database, afterRead);
+        }
     }
 
     /// <summary>
@@ -94,6 +131,7 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
             yield return database;
         }
 
+        AfterListing?.Invoke();
         await Task.CompletedTask;
     }
 
@@ -106,8 +144,11 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
         }
 
         Interlocked.Exchange(ref _beforeRead, null)?.Invoke();
+        SourceGroups snapshot;
+        Func<CancellationToken, Task>? afterEmptyRead = null;
         lock (_gate)
         {
+            _readCounts[database] = _readCounts.GetValueOrDefault(database) + 1;
             List<OriginGroup> page = [];
             var bytes = 0;
             foreach (var group in _groups.GetValueOrDefault(database, []).Where(group => group.ChangeId > after).Take(maxGroups))
@@ -121,8 +162,19 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
                 page.Add(group);
             }
 
-            return new SourceGroups(expected, page);
+            snapshot = new SourceGroups(expected, page);
+            if (page.Count == 0)
+            {
+                _ = _afterEmptyReads.Remove(database, out afterEmptyRead);
+            }
         }
+
+        if (afterEmptyRead is not null)
+        {
+            await afterEmptyRead(cancellationToken);
+        }
+
+        return snapshot;
     }
 
     public async ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken)
@@ -188,6 +240,27 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
     // Fakes hold no store, so every proof is taken as established; proof behavior is exercised against real sources.
     public ValueTask<bool> ProveAsync(TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken) =>
         ValueTask.FromResult(true);
+
+    public IDisposable Subscribe(Action<TenantContext> changed)
+    {
+        ArgumentNullException.ThrowIfNull(changed);
+        var subscription = new Subscription(this, changed);
+        Changed += changed;
+        return subscription;
+    }
+
+    private sealed class Subscription(FakeChangeGroupSource source, Action<TenantContext> changed) : IDisposable
+    {
+        private Action<TenantContext>? _changed = changed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _changed, null) is { } callback)
+            {
+                source.Changed -= callback;
+            }
+        }
+    }
 
     public Task ChangedAsync(CancellationToken cancellationToken)
     {
