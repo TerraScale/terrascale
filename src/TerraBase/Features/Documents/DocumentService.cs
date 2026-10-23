@@ -142,17 +142,22 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         return collection;
     }
 
-    public ValueTask<DocumentRead> GetAsync(DocumentKey key, CancellationToken cancellationToken) =>
-        ReadCertifiedAsync<DocumentRead>(key.Database, incarnation => ReadCachedDocumentAsync(key, incarnation, cancellationToken),
-            static () => DocumentRoute.UnknownDatabase, cancellationToken);
+    public ValueTask<DocumentRead> GetAsync(DocumentKey key, CancellationToken cancellationToken)
+    {
+        var hit = new StrongBox<bool>();
+        return ReadCertifiedAsync<DocumentRead>(key.Database, incarnation => ReadCachedDocumentAsync(key, incarnation, hit, cancellationToken),
+            static () => DocumentRoute.UnknownDatabase, cancellationToken, hit);
+    }
 
-    private async ValueTask<DocumentRead> ReadCachedDocumentAsync(DocumentKey key, Ulid incarnation, CancellationToken cancellationToken)
+    private async ValueTask<DocumentRead> ReadCachedDocumentAsync(DocumentKey key, Ulid incarnation, StrongBox<bool> hit, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         // The cache keeps documents only: an absence or a refusal comes back as null, which it never stores.
         DocumentRead? missed = null;
+        var fromStorage = false;
         var document = await cache.GetAsync(key, incarnation, async () =>
         {
+            fromStorage = true;
             var read = await ReadAsync(key, cancellationToken).ConfigureAwait(false);
             if (read is StoredDocument stored)
             {
@@ -162,6 +167,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             missed = read;
             return null;
         }).ConfigureAwait(false);
+        hit.Value = !fromStorage;
         if (document is not null)
         {
             usage.RecordRead(key.Database, OperationUnits.Of(document.Json.Length));
@@ -838,8 +844,9 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
     private static PreconditionFailed Failed(string message) => new(message, "precondition_failed");
 
+    // `hit` is set by a read the document cache answered without storage.
     private async ValueTask<T> ReadCertifiedAsync<T>(
-        TenantContext database, Func<Ulid, ValueTask<T>> read, Func<T> missing, CancellationToken cancellationToken)
+        TenantContext database, Func<Ulid, ValueTask<T>> read, Func<T> missing, CancellationToken cancellationToken, StrongBox<bool>? hit = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
@@ -854,8 +861,9 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         }
 
         var result = await read(incarnation).ConfigureAwait(false);
-        // Admission can overlap a fault, swap and certification; reject results from a copy that stopped being trusted.
-        if (await faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false))
+        // Admission can overlap a fault, swap and certification; reject results from a copy that stopped being trusted. A
+        // cache hit read no storage: it is of this incarnation, which the check above trusted just before the lookup.
+        if (hit?.Value != true && await faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false))
         {
             throw new ReplicaCopyFaultedException("this database copy changed while it was being read");
         }
