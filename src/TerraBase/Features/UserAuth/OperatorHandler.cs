@@ -32,8 +32,11 @@ internal sealed class OperatorHandler(
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        // Never on the public listener, whatever is presented there; a presented credential is the other schemes' to check.
-        if (Listeners.ArrivedOn(Context) != TerraBaseListener.Internal || Request.Headers.Authorization.Count > 0)
+        // A bearer credential is supplemental live authority only on the explicit recovery route, with an acting user.
+        if (Listeners.ArrivedOn(Context) != TerraBaseListener.Internal
+            || Request.Headers.Authorization.Count > 0
+                && (Context.GetEndpoint()?.Metadata.GetMetadata<OperatorAuthorityProof>() is null
+                    || !Request.Headers.ContainsKey(UserHeader) || OperatorAuthorityProof.Read(Request) is null))
         {
             return AuthenticateResult.NoResult();
         }

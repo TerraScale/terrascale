@@ -41,6 +41,7 @@ public sealed class TestIssuer : IDisposable
     private readonly List<JsonObject> _published = [];
     private readonly List<IDisposable> _keys = [];
     private readonly Dictionary<(string Token, string Organization, string Project), ProjectAuthority> _projects = [];
+    private readonly Dictionary<string, RecoveryAuthority> _recovery = [];
     private int _discoveryFetches;
     private int _jwksFetches;
     private int _movedJwksFetches;
@@ -104,6 +105,20 @@ public sealed class TestIssuer : IDisposable
         lock (_gate)
         {
             _projects[(token, organization, project)] = authority ?? new ProjectAuthority(project, organization);
+        }
+    }
+
+    /// <summary>Explicit live subject and organization responses for recovery; no token is granted by default.</summary>
+    public sealed record RecoveryAuthority(string Subject, string Organization, string? Role = "owner",
+        HttpStatusCode Status = HttpStatusCode.OK, Uri? Redirect = null, bool Available = true, bool Malformed = false,
+        Func<Task>? BeforeOrganization = null);
+
+    /// <summary>Grants only this token the supplied live recovery identity and organization response.</summary>
+    public void GrantRecovery(string token, RecoveryAuthority authority)
+    {
+        lock (_gate)
+        {
+            _recovery[token] = authority;
         }
     }
 
@@ -262,6 +277,18 @@ public sealed class TestIssuer : IDisposable
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
 
+        RecoveryAuthority? recovery;
+        lock (_gate)
+        {
+            recovery = authorization?.StartsWith("Bearer ", StringComparison.Ordinal) == true
+                ? _recovery.GetValueOrDefault(authorization[7..]) : null;
+        }
+
+        if (recovery?.BeforeOrganization is { } before && uri.AbsolutePath == ProjectAuthorityPath + recovery.Organization)
+        {
+            await before();
+        }
+
         return Serve(uri, method, authorization);
     }
 
@@ -315,6 +342,38 @@ public sealed class TestIssuer : IDisposable
             };
             result.Headers.Location = authority.Redirect;
             return result;
+        }
+
+        if (uri.GetLeftPart(UriPartial.Authority) == IssuerAddress.GetLeftPart(UriPartial.Authority)
+            && (uri.AbsolutePath == IssuerAddress.AbsolutePath + "/oauth/userinfo"
+                || uri.AbsolutePath.StartsWith(ProjectAuthorityPath, StringComparison.Ordinal)))
+        {
+            RecoveryAuthority? recovery;
+            lock (_gate)
+            {
+                recovery = authorization?.StartsWith("Bearer ", StringComparison.Ordinal) == true
+                    ? _recovery.GetValueOrDefault(authorization[7..]) : null;
+            }
+
+            if (method != "GET" || recovery is null)
+            {
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
+            }
+
+            if (!recovery.Available)
+            {
+                throw new HttpRequestException("test authority unavailable");
+            }
+
+            var subject = uri.AbsolutePath == IssuerAddress.AbsolutePath + "/oauth/userinfo";
+            var payload = subject ? new JsonObject { ["sub"] = recovery.Subject }
+                : new JsonObject { ["id"] = recovery.Organization, ["role"] = recovery.Role };
+            var response = new HttpResponseMessage(recovery.Status)
+            {
+                Content = new StringContent(recovery.Malformed ? "{" : payload.ToJsonString(), Encoding.UTF8, "application/json"),
+            };
+            response.Headers.Location = recovery.Redirect;
+            return response;
         }
 
         string body;

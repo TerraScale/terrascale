@@ -18,7 +18,7 @@ using Turso.Data.Sqlite;
 
 namespace TerraBase.Slow.Replication;
 
-public sealed class A6LocalRebuildE2ETests
+public sealed partial class A6LocalRebuildE2ETests
 {
     [Test]
     public async Task Local_capture_shape_damage_rebuilds_and_accepts_new_cross_region_writes()
@@ -150,7 +150,7 @@ public sealed class A6LocalRebuildE2ETests
             return await condition(linked.Token);
         }, TimeSpan.FromMinutes(3)).WaitAsync(token);
 
-    // Private to this single test file: no Cluster, deployment branch, environment writes or shared mutable state.
+    // Owned by these local rebuild tests: no Cluster, deployment branch, environment writes or shared mutable state.
     // Pin host UTC before native CDC timestamps; advance fake timers and elapsed time separately.
     private sealed class RetainedCdcTime : TimeProvider
     {
