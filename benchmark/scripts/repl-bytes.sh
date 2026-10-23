@@ -16,6 +16,7 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 work=$(mktemp -d) # 0700: the targets file holds the nodes' tokens
 targets="$work/cluster.json"
 cleanup() {
+  [[ -n "${sampler:-}" ]] && kill "$sampler" 2>/dev/null
   rm -f "$targets"
   if [[ -n "${host:-}" ]] && kill -0 "$host" 2>/dev/null; then
     wait "$host" || true
@@ -36,12 +37,23 @@ done
 pid=$(jq -r .pid "$targets")
 clients=$(jq -r '[.regions[].url | capture(":(?<p>[0-9]+)/?$").p] | join(" ")' "$targets")
 
-# Sum of bytes_sent over the host's established TCP sockets, except those on a client listener port.
+# Every 0.5 s, each established host socket's bytes_sent (keyed by its two endpoints), except sockets on a client listener
+# port; a socket's last sample stays counted after it closes.
+sample() {
+  while kill -0 "$host" 2>/dev/null; do
+    ss -tinpH state established | awk -v pid="pid=$pid," -v clients=" $clients " '
+      /users:/ { split($3, local, ":"); mine = index($0, pid) > 0 && index(clients, " " local[length(local)] " ") == 0; key = $3 "-" $4; next }
+      mine && match($0, /bytes_sent:[0-9]+/) { print key, substr($0, RSTART + 11, RLENGTH - 11) }' >>"$work/samples"
+    echo "--" >>"$work/samples"
+    sleep 0.5
+  done
+}
+sample &
+sampler=$!
+# Bytes sent so far: the sum of every socket's largest sample.
 sent() {
-  ss -tinpH state established | awk -v pid="pid=$pid," -v clients=" $clients " '
-    /users:/ { split($3, local, ":"); mine = index($0, pid) > 0 && index(clients, " " local[length(local)] " ") == 0; next }
-    mine && match($0, /bytes_sent:[0-9]+/) { total += substr($0, RSTART + 11, RLENGTH - 11) }
-    END { printf "%d\n", total }'
+  sleep 1
+  awk '$1 != "--" { if ($2 > max[$1]) max[$1] = $2 } END { for (k in max) total += max[k]; printf "%d\n", total }' "$work/samples"
 }
 
 sleep 20 # startup catalog and refill traffic settles
