@@ -36,7 +36,7 @@ internal readonly union PgParse(PgStatement[], PgError);
 /// </summary>
 internal static partial class PostgresStatements
 {
-    public const int TextOid = 25;
+    public const int TextOid = 25, FirstTableOid = 16384;
     public const string ServerVersion = "16.0";
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
     private static readonly UTF8Encoding Utf8 = new(false, true);
