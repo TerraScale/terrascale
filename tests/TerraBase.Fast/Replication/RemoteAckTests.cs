@@ -464,7 +464,16 @@ public sealed class RemoteAckTests
     [Arguments(false, true, true)]
     public async Task A_cut_log_refill_replays_unconfirmed_writes_without_certifying_the_refill(bool cutWrite, bool unregistered, bool large)
     {
-        await using var pair = await Pair.StartAsync();
+        var timing = Stopwatch.StartNew();
+        var output = TUnit.Core.TestContext.Current!.OutputWriter;
+        void Trace(string phase)
+        {
+            output.WriteLine(string.Create(CultureInfo.InvariantCulture, $"refill timing {timing.Elapsed.TotalSeconds:F3}s {phase}"));
+        }
+        // This includes building real >64 MiB history; the product ACK deadline remains ten seconds.
+        await using var pair = await Pair.StartAsync(fixtureBudget: large ? TimeSpan.FromSeconds(90) : null);
+        pair.ReplayTrace = Trace;
+        Trace("listeners and catalog ready");
         var store = await pair.OriginTursoAsync();
         store.BackupAnchor = null;
         async Task LocalAsync(string id, byte[]? body = null)
@@ -509,14 +518,16 @@ public sealed class RemoteAckTests
             var id = EntityIds.New().ToString();
             pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
             var marker = await pair.ReachedWait.Task.WaitAsync(pair.Token);
+            Trace("write committed; retained-data setup starts");
             if (large)
             {
                 var paddingId = EntityIds.New().ToString();
-                var padding = new string('x', 900 * 1024);
+                var padding = Encoding.UTF8.GetBytes("{\"padding\":\"" + new string('x', 900 * 1024) + "\"}");
                 // Real updates keep over 64 MiB of capture above the marker, with one document to repair in the refill.
                 for (var n = 0; n < 76; n++)
                 {
-                    await LocalAsync(paddingId, Encoding.UTF8.GetBytes("{\"padding\":\"" + padding + n.ToString(CultureInfo.InvariantCulture) + "\"}"));
+                    padding[^3] = (byte)('a' + n % 26);
+                    await LocalAsync(paddingId, padding);
                 }
 
                 var bytes = await store.WithWriterAsync(session =>
@@ -531,6 +542,7 @@ public sealed class RemoteAckTests
                     .IsEqualTo(floor).Because("the capped fallback must not swallow writes admitted after its captured head");
             }
 
+            Trace("retained-data setup complete");
             if (cutWrite)
             {
                 await pair.AgeOriginCaptureAsync(TimeSpan.FromHours(25));
@@ -550,6 +562,7 @@ public sealed class RemoteAckTests
 
             var replay = pair.ReplayStart = new(TaskCreationOptions.RunContinuationsAsynchronously);
             pair.PeerAck.Refuse = false;
+            Trace("release sender head");
             head.TrySetResult();
             long? captured = null;
             if (pair.HoldReplay is { } held)
@@ -565,6 +578,7 @@ public sealed class RemoteAckTests
             }
 
             var start = await replay.Task.WaitAsync(pair.Token);
+            Trace("boundary selected; refill can start");
             if (captured is { } capturedHead)
             {
                 await Assert.That(start).IsLessThanOrEqualTo(capturedHead).Because("a later admission must remain above the capped refill");
@@ -587,6 +601,7 @@ public sealed class RemoteAckTests
 
             pair.HoldWait?.TrySetResult();
             using var response = await pending.WaitAsync(pair.Token);
+            Trace("original PUT answered");
             await Assert.That(response.StatusCode).IsEqualTo(unknown ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.Created);
             var body = await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token);
             await Assert.That(unknown ? body.GetProperty("error").GetProperty("code").GetString() : body.GetProperty("durability").GetString())
@@ -597,6 +612,7 @@ public sealed class RemoteAckTests
             if (later is not null)
             {
                 using var following = await later.WaitAsync(pair.Token);
+                Trace("later PUT answered");
                 await Assert.That(following.StatusCode).IsEqualTo(HttpStatusCode.Created);
                 await Assert.That((await following.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString())
                     .IsEqualTo("remote_durable");
@@ -604,6 +620,7 @@ public sealed class RemoteAckTests
         }
         finally
         {
+            Trace("test assertions/cleanup entered");
             pair.HoldReplay?.TrySetResult();
             pair.PeerAck.Refuse = false;
             head.TrySetResult();
@@ -1688,9 +1705,9 @@ public sealed class RemoteAckTests
         private ManagementApi? _peer;
         private ReplicationTenant? _tenant;
 
-        private Pair()
+        private Pair(TimeSpan? fixtureBudget)
         {
-            _deadline.CancelAfter(TimeSpan.FromSeconds(60));
+            _deadline.CancelAfter(fixtureBudget ?? TimeSpan.FromSeconds(60));
         }
 
         public AckGate PeerAck { get; } = new();
@@ -1750,6 +1767,10 @@ public sealed class RemoteAckTests
         public TaskCompletionSource DatabaseHeadReached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource<long>? ReplayStart { get; set; }
+
+        public Action<string>? ReplayTrace { get; set; }
+
+        public TaskCompletionSource ReplayLive { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource? HoldReplay { get; set; }
 
@@ -1879,9 +1900,9 @@ public sealed class RemoteAckTests
 
         public ReplicaId OriginNode => _origin!.Server.Services.GetRequiredService<LocalReplica>().Id;
 
-        public static async Task<Pair> StartAsync(string peerRegion = "sjc", PlanTier plan = PlanTier.Hobby, TimeProvider? ackTime = null)
+        public static async Task<Pair> StartAsync(string peerRegion = "sjc", PlanTier plan = PlanTier.Hobby, TimeProvider? ackTime = null, TimeSpan? fixtureBudget = null)
         {
-            var pair = new Pair();
+            var pair = new Pair(fixtureBudget);
             try
             {
                 pair._origin = await pair.StartMachineAsync("gru", ackTime: ackTime);
@@ -2148,6 +2169,12 @@ public sealed class RemoteAckTests
                 }
             }
 
+            if (ReferenceEquals(refill, pair.Refill) && (database with { Plan = PlanTier.Hobby }) == pair.Database
+                && pair.ReplayStart?.Task.IsCompletedSuccessfully == true && pair.ReplayLive.TrySetResult())
+            {
+                pair.ReplayTrace?.Invoke("first live read after refill ACK");
+            }
+
             return await inner.ReadAsync(database, incarnation, after, maxGroups, maxBytes, cancellationToken);
         }
 
@@ -2208,9 +2235,11 @@ public sealed class RemoteAckTests
                 await held.Task.WaitAsync(cancellationToken);
             }
 
+            var started = Stopwatch.GetTimestamp();
             var start = await inner.RetainedAfterAsync(database, incarnation, through, head, cancellationToken);
             if (ReferenceEquals(refill, pair.Refill) && (database with { Plan = PlanTier.Hobby }) == pair.Database && start is { } found)
             {
+                pair.ReplayTrace?.Invoke(string.Create(CultureInfo.InvariantCulture, $"boundary scan {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms unknown={through is null}"));
                 pair.ReplayStart?.TrySetResult(found);
             }
 
@@ -2331,9 +2360,12 @@ public sealed class RemoteAckTests
                 await held.Task.WaitAsync(cancellationToken);
             }
 
+            var started = Stopwatch.GetTimestamp();
             var waiting = inner.WaitAsync(database, marker, cancellationToken).AsTask();
             pair.WaitEntered.TrySetResult(waiting);
-            return await waiting;
+            var confirmed = await waiting;
+            pair.ReplayTrace?.Invoke(string.Create(CultureInfo.InvariantCulture, $"marker {marker.ChangeId} ACK wait {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms confirmed={confirmed}"));
+            return confirmed;
         }
     }
 }
