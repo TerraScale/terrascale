@@ -1,0 +1,7 @@
+{
+  "name": "terrabase-postgres-smoke-js",
+  "private": true,
+  "type": "module",
+  "scripts": { "smoke": "node smoke.mjs" },
+  "dependencies": { "pg": "8.23.1" }
+}
