@@ -104,7 +104,7 @@ pytest && ruff check src tests && mypy
 Tests run against an in-memory HTTP fake (`tests/fake.py`) and check every
 request against the published route list in `contracts/openapi-routes.json`
 (`python scripts/refresh-contract.py` updates it). They never start a TerraBase
-server. Releases: bump `src/terrascale/_version.py`, tag `vX.Y.Z`; the publish
-workflow uploads to PyPI with trusted publishing.
+server. Releases: bump `src/terrascale/_version.py`, tag `vX.Y.Z` and publish a
+GitHub release for it; the publish workflow uploads to PyPI with trusted publishing.
 
 License: Apache-2.0.
