@@ -43,6 +43,7 @@ func main() {
 	database := flag.String("database", "", "database name")
 	collection := flag.String("collection", "", "collection (must exist)")
 	keyFile := flag.String("key-file", "", "file holding the API key")
+	localKeyFile := flag.String("local-key-file", "", "file holding this region's API key, when it differs (local cells)")
 	n := flag.Int("n", 100, "probes")
 	every := flag.Duration("every", 200*time.Millisecond, "gap between probes")
 	poll := flag.Duration("poll", 2*time.Millisecond, "local poll interval")
@@ -53,9 +54,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	localKey := key
+	if *localKeyFile != "" {
+		if localKey, err = os.ReadFile(*localKeyFile); err != nil {
+			log.Fatal(err)
+		}
+	}
 	t := replbench.Targets{Project: *project, Database: *database, Regions: map[string]replbench.RegionTarget{
 		"origin": {URL: *origin, Token: strings.TrimSpace(string(key))},
-		"local":  {URL: *local, Token: strings.TrimSpace(string(key))},
+		"local":  {URL: *local, Token: strings.TrimSpace(string(localKey))},
 	}}
 	from, err := replbench.NewRegion("origin", t, 4)
 	if err != nil {
