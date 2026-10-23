@@ -211,6 +211,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # ts-orch accepts this job's OIDC token to release the image it just published.
+      id-token: write
     steps:
       - *checkout
       - *checkout-ts-dotnet
@@ -243,6 +245,28 @@ jobs:
           IMAGE: ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}@${{ steps.image.outputs.digest }}
         run: |
           { echo '```'; docker buildx imagetools inspect "$IMAGE"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      # Every region's ts-orch swaps to the linux/arm64 digest, waits for readiness and rolls back on failure.
+      # TerraBase releases stay by hand until FR1's batch-2 wipe (#408, #398); then drop the AREA check.
+      - name: Release to every region
+        if: github.event_name == 'push' && env.AREA == 'auth'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVICE: ${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}
+          INDEX: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/terrascale/${SERVICE}"
+          arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
+            jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
+          test -n "$arm64"
+          tag=$(gh release list --repo TerraScale/ts-orchestrator --limit 30 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("ci-"))] | sort_by(.createdAt) | last | .tagName // ""')
+          test -n "$tag"
+          gh release download "$tag" --repo TerraScale/ts-orchestrator --dir "${RUNNER_TEMP}/ts-orch" --pattern terrascale-orchestrator-linux-amd64
+          curl -fsSL https://raw.githubusercontent.com/TerraScale/ts-orchestrator/main/deploy/m1/regions.json -o "${RUNNER_TEMP}/regions.json"
+          chmod +x "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64"
+          "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" release app --service "$SERVICE" \
+            --image "${image}@${arm64}" --regions "${RUNNER_TEMP}/regions.json" | tee -a "$GITHUB_STEP_SUMMARY"
 
   # Slow is independent of required Fast: relevant PRs and newest main, never merge groups.
   slow-auth:
