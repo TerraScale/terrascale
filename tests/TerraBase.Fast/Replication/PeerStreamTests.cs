@@ -1794,6 +1794,10 @@ public sealed class PeerStreamTests
             await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, 1, deadline.Token);
         }
 
+        // ACK 1 may precede membership coverage; rollback needs a persisted nonzero expectation.
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            await gru.Source.AckedAsync(cluster.Database, sjc.Node, token) is { Stable.Value: > 0 }, Deadline);
+
         var origin = gru.Node;
         if (idle)
         {
