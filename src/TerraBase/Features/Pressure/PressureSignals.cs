@@ -165,6 +165,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
                     PlanTier.Hobby => "hobby",
                     PlanTier.Starter => "starter",
                     PlanTier.Pro => "pro",
+                    PlanTier.Team => "team",
                     PlanTier.Enterprise => "enterprise",
                     _ => null,
                 }))];

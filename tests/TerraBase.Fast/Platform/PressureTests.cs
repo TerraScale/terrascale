@@ -677,7 +677,7 @@ public sealed class PressureTests
                     await Assert.That(tenant.GetProperty("cpu_share").ValueKind).IsEqualTo(JsonValueKind.Null);
                     await Assert.That(tenant.GetProperty("request_rate").GetDouble()).IsGreaterThanOrEqualTo(0);
                     var plan = tenant.GetProperty("plan");
-                    await Assert.That(plan.ValueKind == JsonValueKind.Null || plan.GetString() is "hobby" or "starter" or "pro" or "enterprise").IsTrue();
+                    await Assert.That(plan.ValueKind == JsonValueKind.Null || plan.GetString() is "hobby" or "starter" or "pro" or "team" or "enterprise").IsTrue();
                 }
                 else
                 {

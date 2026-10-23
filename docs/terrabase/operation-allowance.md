@@ -6,9 +6,10 @@ usage reduction remain available.
 
 | Plan | Operation units per UTC month |
 |---|---|
-| hobby | 100,000 |
-| starter | 1,000,000 |
-| pro | 100,000,000 |
+| hobby | 50,000 |
+| starter | 250,000 |
+| pro | 2,000,000 |
+| team | 5,000,000 |
 | enterprise | unlimited |
 
 Values live in `QosPolicy.MonthlyOperations` (`src/TerraBase/Features/Qos/QosPolicy.cs`).

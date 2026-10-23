@@ -844,6 +844,7 @@ internal sealed partial class EngineManagementService
     {
         "starter" => PlanTier.Starter,
         "pro" => PlanTier.Pro,
+        "team" => PlanTier.Team,
         "enterprise" => PlanTier.Enterprise,
         _ => PlanTier.Hobby,
     };
