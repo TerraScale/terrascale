@@ -171,7 +171,7 @@ async fn errors_preserve_http_diagnostics_and_uncertain_creates_are_not_replayed
             .unwrap_err();
         assert_eq!(error.status(), Some(status));
         assert_eq!(error.code(), Some("fixture_refusal"));
-        assert_eq!(error.raw_body(), Some(body.as_bytes()));
+        assert_eq!(error.raw_body(), Some([].as_slice()));
         assert_eq!(error.request_id(), Some("parity-fixture"));
         assert_eq!(error.is_uncertain(), status == 503);
         assert_eq!(fixture.requests.lock().unwrap().len(), 1);
@@ -183,10 +183,133 @@ async fn errors_preserve_http_diagnostics_and_uncertain_creates_are_not_replayed
         .await
         .unwrap_err()
         .is_uncertain());
-    assert!(matches!(
-        items.list_webhooks(None, None).await.unwrap_err(),
-        Error::Decode(_)
-    ));
+    let error = items.list_webhooks(None, None).await.unwrap_err();
+    assert_eq!(error.status(), Some(200));
+    assert_eq!(error.request_id(), Some("parity-fixture"));
+    assert!(matches!(error, Error::Response { error, body, .. }
+        if matches!(*error, Error::Decode(_)) && !body.is_empty()));
+}
+
+const SYNTHETIC_SECRET: &str = "synthetic-signing-key-never-in-diagnostics";
+fn assert_creation_redacted(error: &Error) {
+    assert_eq!(error.raw_body(), Some([].as_slice()));
+    assert!(!format!("{error:?}").contains(SYNTHETIC_SECRET));
+    assert!(!error.to_string().contains(SYNTHETIC_SECRET));
+    assert_eq!(error.request_id(), Some("parity-fixture"));
+}
+
+#[tokio::test]
+async fn creation_redacts_malformed_acknowledgements_and_server_error_details() {
+    let mut missing_time = metadata();
+    missing_time.as_object_mut().unwrap().remove("createdAt");
+    missing_time["secret"] = json!(SYNTHETIC_SECRET);
+    let mut invalid_status = metadata();
+    invalid_status["status"] = json!(SYNTHETIC_SECRET);
+    invalid_status["secret"] = json!(SYNTHETIC_SECRET);
+    for status in [200, 201] {
+        for body in [&missing_time, &invalid_status] {
+            let fixture = Fixture::new(vec![reply(status, &body.to_string())]).await;
+            let error = fixture
+                .client()
+                .database("orders")
+                .collection("items")
+                .create_webhook("https://receiver.example/events")
+                .await
+                .unwrap_err();
+            assert_creation_redacted(&error);
+            assert_eq!(error.status(), Some(status));
+            assert!(error.is_uncertain());
+            assert!(matches!(error, Error::Response { error, .. }
+                if matches!(*error, Error::UndecodableAck { .. })));
+        }
+    }
+    let body = json!({"error":{"code":"fixture_refusal","message":SYNTHETIC_SECRET,"secret":SYNTHETIC_SECRET}});
+    let fixture = Fixture::new(vec![reply(403, &body.to_string())]).await;
+    let error = fixture
+        .client()
+        .database("orders")
+        .collection("items")
+        .create_webhook("https://receiver.example/events")
+        .await
+        .unwrap_err();
+    assert_creation_redacted(&error);
+    assert_eq!(error.status(), Some(403));
+    assert_eq!(error.code(), Some("fixture_refusal"));
+    assert!(!error.is_uncertain());
+    assert!(matches!(error, Error::Response { error, .. }
+        if matches!(*error, Error::Api { message: None, details: None, .. })));
+}
+
+#[tokio::test]
+async fn creation_redacts_oversized_and_truncated_response_bytes() {
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let body = format!(
+        "{{\"secret\":\"{SYNTHETIC_SECRET}\",\"padding\":\"{}\"}}",
+        "x".repeat(512)
+    );
+    let fixture = Fixture::new(vec![reply(201, &body)]).await;
+    let client = Client::builder(&fixture.url, "fixture-token")
+        .project(PROJECT)
+        .max_response_bytes(128)
+        .build()
+        .unwrap();
+    let error = client
+        .database("orders")
+        .collection("items")
+        .create_webhook("https://receiver.example/events")
+        .await
+        .unwrap_err();
+    assert_creation_redacted(&error);
+    assert_eq!(error.status(), Some(201));
+    assert!(error.is_uncertain());
+    assert!(matches!(error, Error::Response { error, .. }
+        if matches!(*error, Error::ResponseTooLarge { .. })));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = Client::builder(
+        format!("http://{}", listener.local_addr().unwrap()),
+        "fixture-token",
+    )
+    .project(PROJECT)
+    .build()
+    .unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            head.push(socket.read_u8().await.unwrap());
+        }
+        let length = String::from_utf8_lossy(&head)
+            .lines()
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .strip_prefix("content-length:")
+                    .map(|value| value.trim().parse::<usize>().unwrap())
+            })
+            .unwrap();
+        socket.read_exact(&mut vec![0; length]).await.unwrap();
+        let partial = format!("{{\"secret\":\"{SYNTHETIC_SECRET}\",");
+        let response = format!("HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nX-Request-ID: parity-fixture\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n{partial}\r\n", partial.len());
+        socket.write_all(response.as_bytes()).await.unwrap();
+        socket.shutdown().await.unwrap(); // No terminating chunk: fail after credential bytes.
+    });
+    let error = tokio::time::timeout(
+        Duration::from_secs(2),
+        client
+            .database("orders")
+            .collection("items")
+            .create_webhook("https://receiver.example/events"),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
+    server.await.unwrap();
+    assert_creation_redacted(&error);
+    assert_eq!(error.status(), Some(201));
+    assert!(error.is_uncertain());
+    assert!(matches!(error, Error::Response { error, .. }
+        if matches!(*error, Error::Transport(_))));
 }
 
 #[tokio::test]

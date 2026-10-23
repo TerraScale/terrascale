@@ -82,8 +82,10 @@ impl Collection {
             .json(&serde_json::json!({"url": url}))?;
         self.client()
             .send_project(req)
-            .await?
+            .await
+            .map_err(redact_creation_error)?
             .decode_status(&[StatusCode::CREATED])
+            .map_err(redact_creation_error)
     }
 
     /// Lists registrations (`documents:read`) in ascending ULID order, without keys.
@@ -135,6 +137,44 @@ impl Collection {
             .send_project(req)
             .await?
             .decode_status(&[StatusCode::OK])
+    }
+}
+
+// A failed creation can still contain its one-time key, including in partial bytes
+// or a decoder's quoted value. Keep HTTP diagnostics, never credential content.
+fn redact_creation_error(error: Error) -> Error {
+    match error {
+        Error::Response {
+            status,
+            error,
+            request_id,
+            ..
+        } => Error::Response {
+            status,
+            error: Box::new(redact_creation_error(*error)),
+            body: Vec::new(),
+            request_id,
+        },
+        Error::Api {
+            status, code, op, ..
+        } => Error::Api {
+            status,
+            code,
+            op,
+            message: None,
+            details: None,
+        },
+        Error::UndecodableAck { status, .. } => Error::UndecodableAck {
+            status,
+            message: "webhook creation response does not match the contract".into(),
+        },
+        Error::Decode(_) => Error::Decode("invalid webhook creation response".into()),
+        Error::Transport(_) => Error::Transport("webhook creation transport failed".into()),
+        Error::UniqueViolation { op, .. } => Error::UniqueViolation {
+            constraint: "[REDACTED]".into(),
+            op,
+        },
+        other => other,
     }
 }
 

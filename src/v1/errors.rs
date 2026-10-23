@@ -28,7 +28,8 @@ pub enum Error {
         status: u16,
         #[source]
         error: Box<Error>,
-        /// Exact response bytes, including malformed or empty bodies.
+        /// Exact response bytes, including malformed or empty bodies. Webhook
+        /// creation errors omit these bytes to protect one-time secrets.
         body: Vec<u8>,
         /// Server correlation id, preferring the HTTP header over the body.
         request_id: Option<String>,
@@ -217,7 +218,8 @@ impl Error {
     }
 
     /// Exact bytes of a project API error response, including unknown problem
-    /// extensions and invalid JSON. Local client errors have none.
+    /// extensions and invalid JSON. Webhook creation errors return empty bytes;
+    /// local client errors have none.
     #[must_use]
     pub fn raw_body(&self) -> Option<&[u8]> {
         match self {
