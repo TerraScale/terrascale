@@ -32,12 +32,12 @@ public static class OrganizationEndpoints
             if (http.Request.Query["tab"] == "billing" && http.Request.Query["payment"] == "success" && context.Role == "owner")
             {
                 await http.RequestServices.GetRequiredService<TerraScale.Dashboard.Features.Billing.StripeBilling>().ConfirmAsync(context, http.RequestAborted);
-                context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted);
+                context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
             }
             else if (http.Request.Query["tab"] == "billing" && context.Organization is not null)
             {
                 // A provider failure leaves the stored state; the page still loads and the next reload retries.
-                try { if (await billing.ReconcileCheckoutAsync(context, http.RequestAborted)) context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted); }
+                try { if (await billing.ReconcileCheckoutAsync(context, http.RequestAborted)) context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true); }
                 catch (Exception error) when (error is AccountAccessException or IOException or HttpRequestException or Stripe.StripeException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested) { }
             }
             context = await OrganizationWizard.PrepareAsync(http, context, accounts);

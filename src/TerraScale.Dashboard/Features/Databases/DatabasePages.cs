@@ -155,15 +155,16 @@ public sealed record DatabaseActivity(IReadOnlyList<DatabaseActivityCard> Cards,
     {
         var cards = Kinds.Select(kind => new DatabaseActivityCard(kind.Key, kind.Title, rangeFor(kind.Key), null, "")).ToArray();
         IReadOnlyList<AnalyticsRegionRow> latencyRegions = [];
-        foreach (var range in cards.Select(card => card.Range).Distinct().ToArray())
+        // Each distinct range is one analytics read; they run together and each updates only its own cards.
+        await Task.WhenAll(cards.Select(card => card.Range).Distinct().ToArray().Select(async range =>
         {
             void Set(Func<DatabaseActivityCard, DatabaseActivityCard> update) { for (var i = 0; i < cards.Length; i++) if (cards[i].Range == range) cards[i] = update(cards[i]); }
             try
             {
                 var selection = AnalyticsSelection.For(context, "", databaseId, "", range);
                 var batch = await backend.ReadAsync(selection, cancellationToken);
-                if (batch.State == AnalyticsSourceState.Unavailable) { Set(card => card with { Message = "Activity measurements are unavailable." }); continue; }
-                if (batch.State == AnalyticsSourceState.NotMetered || batch.Points.Count == 0) { Set(card => card with { Message = "No activity measurements for this database in the last " + range + "." }); continue; }
+                if (batch.State == AnalyticsSourceState.Unavailable) { Set(card => card with { Message = "Activity measurements are unavailable." }); return; }
+                if (batch.State == AnalyticsSourceState.NotMetered || batch.Points.Count == 0) { Set(card => card with { Message = "No activity measurements for this database in the last " + range + "." }); return; }
                 // Build validates buckets and values the same way the analytics page does; the backend already bounds buckets to the reporting window.
                 var regions = AnalyticsService.Build(selection, batch.Points).Totals.Regions;
                 if (cards.Any(card => card.Key == "latency" && card.Range == range)) latencyRegions = regions;
@@ -190,7 +191,7 @@ public sealed record DatabaseActivity(IReadOnlyList<DatabaseActivityCard> Cards,
             catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
                 error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             { Set(card => card with { Plot = null, Message = "Could not load activity measurements. Reload the page to retry.", Failed = true }); }
-        }
+        }));
         return new(cards, latencyRegions);
     }
 

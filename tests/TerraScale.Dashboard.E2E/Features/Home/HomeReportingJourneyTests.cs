@@ -119,7 +119,8 @@ public sealed class HomeReportingJourneyTests(DashboardRootFixture fixture)
         await Assert.That(observationResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using var observation = JsonDocument.Parse(await observationResponse.Content.ReadAsStringAsync());
         var observed = observation.RootElement;
-        await Assert.That(observed.GetProperty("projectExchanges").GetInt32()).IsEqualTo(2);
+        // Analytics and replication run together and share the session's one exchanged read token.
+        await Assert.That(observed.GetProperty("projectExchanges").GetInt32()).IsEqualTo(1);
         await Assert.That(observed.GetProperty("projectReportReads").GetInt32()).IsEqualTo(2);
         await Assert.That(observed.GetProperty("contractFailures").GetInt32()).IsEqualTo(0)
             .Because(observed.GetProperty("contractFailureMessages").GetRawText());

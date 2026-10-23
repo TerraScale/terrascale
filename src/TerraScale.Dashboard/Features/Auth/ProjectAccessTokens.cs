@@ -15,9 +15,13 @@ public interface IProjectAccessTokens
 }
 
 // ts-auth's RFC 8693 exchange (ts-dotnet ExchangeTokenAsync) supplies the caller's project
-// authority. Each request rechecks membership at ts-auth, without caching permissions.
+// authority. An exchanged token is reused for at most ExchangeReuse, bound to the exact session access
+// token, project and scopes; every page still rechecks membership at ts-auth when it loads its account
+// context, so reuse only saves the 0.5-1.5 s exchange that each TerraBase read used to repeat.
 public sealed partial class TsAuthGateway : IProjectAccessTokens
 {
+    private static readonly TimeSpan ExchangeReuse = TimeSpan.FromMinutes(2);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (Lazy<Task<string>> Token, DateTimeOffset Until)> exchanged = new(StringComparer.Ordinal);
     // ts-auth gives every organization and project token TerraBase's one audience, valid in every region.
     private const string TerraBaseAudience = "https://api.terrascale.tech";
 
@@ -27,6 +31,27 @@ public sealed partial class TsAuthGateway : IProjectAccessTokens
     };
 
     public async Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, IReadOnlyList<string> scopes, CancellationToken cancellationToken)
+    {
+        var now = time.GetUtcNow();
+        if (exchanged.Count > 10_000)
+            foreach (var stale in exchanged.Where(entry => entry.Value.Until <= now).Select(entry => entry.Key).ToArray()) exchanged.TryRemove(stale, out _);
+        var key = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            string.Join('\n', session.AccessToken, organizationId, projectId, string.Join(' ', scopes.Order(StringComparer.Ordinal))))));
+        // ts-auth caps an exchanged token at the session's own expiry, so reuse stops well before either lapses.
+        var until = Min(now.Add(ExchangeReuse), session.ExpiresAt.AddSeconds(-30));
+        (Lazy<Task<string>>, DateTimeOffset) Fresh() => (new(() => ExchangeAsync(session, organizationId, projectId, scopes, CancellationToken.None)), until);
+        // Concurrent reads on one page share a single exchange; a failed exchange is never reused.
+        var entry = exchanged.AddOrUpdate(key, _ => Fresh(),
+            (_, current) => current.Until > now && !current.Token.Value.IsFaulted && !current.Token.Value.IsCanceled ? current : Fresh());
+        try { return await entry.Token.Value.WaitAsync(cancellationToken); }
+        catch when (entry.Token.Value.IsFaulted || entry.Token.Value.IsCanceled)
+        {
+            exchanged.TryRemove(new(key, entry));
+            throw;
+        }
+    }
+
+    private async Task<string> ExchangeAsync(SessionRecord session, string organizationId, string projectId, IReadOnlyList<string> scopes, CancellationToken cancellationToken)
     {
         if (!TerraScaleIds.IsValid(organizationId) || !TerraScaleIds.IsValid(projectId) ||
             session.ExpiresAt <= time.GetUtcNow() || string.IsNullOrWhiteSpace(session.AccessToken) ||
@@ -77,6 +102,8 @@ public sealed partial class TsAuthGateway : IProjectAccessTokens
         catch (Exception error) when (error is SignInRejectedException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
         { throw new HttpRequestException("The issuer returned invalid project authorization."); }
     }
+
+    private static DateTimeOffset Min(DateTimeOffset left, DateTimeOffset right) => left < right ? left : right;
 
     // A scope string is an unordered space-separated set (RFC 6749 section 3.3).
     private static bool SameScopes(string? actual, string expected) => actual is not null &&

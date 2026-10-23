@@ -109,40 +109,56 @@ public static class DatabaseEndpoints
     internal static async Task<IResult> ListPageAsync(HttpContext http, AccountContext context, IDatabaseBackend backend, DatabaseService databases,
         string error = "", bool openCreate = false, string name = "", IReadOnlyList<string>? regions = null, int status = 200)
     {
+        // Regions, each database's collection counts and the project metrics are independent reads; they run together.
+        var range = HomePage.NormalizeRange(http.Request.Query["range"].ToString());
+        var metricsRead = DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, range, http.RequestAborted);
+        var regionsRead = backend.RegionsAsync(http.RequestAborted);
         IReadOnlyList<DatabaseRegion> choices = [];
         var regionsError = "";
-        try { choices = await backend.RegionsAsync(http.RequestAborted); }
-        catch (HttpRequestException) { regionsError = "Region discovery is unavailable. Try again shortly."; }
         var contents = new List<CollectionStats>();
         var contentsAvailable = true;
         if (context.Project is not null)
         {
-            foreach (var database in context.Project.Databases.Values)
+            // Explore serves no collection counts.
+            if (PlatformDatabases.IsPlatform(context.Organization?.Id)) contentsAvailable = false;
+            else
             {
-                // Explore serves no collection counts.
-                if (PlatformDatabases.IsPlatform(context.Organization?.Id)) { contentsAvailable = false; continue; }
+                var reads = await Task.WhenAll(context.Project.Databases.Values.Select(async database =>
+                {
+                    try
+                    {
+                        var reported = await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), database.Id, http.RequestAborted);
+                        DatabaseService.ValidateContents(reported);
+                        return reported;
+                    }
+                    catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested &&
+                        (failure is HttpRequestException or IOException or System.Text.Json.JsonException or OverflowException || KnownFailure(failure)))
+                    { return null; }
+                }));
                 try
                 {
-                    var reported = await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), database.Id, http.RequestAborted);
-                    DatabaseService.ValidateContents(reported);
-                    contents.AddRange(reported);
-                    // Collection names can repeat across databases; validate only the combined totals.
-                    _ = contents.Sum(item => item.Documents);
-                    _ = contents.Sum(item => item.Bytes);
+                    foreach (var reported in reads.OfType<IReadOnlyList<CollectionStats>>())
+                    {
+                        contents.AddRange(reported);
+                        // Collection names can repeat across databases; validate only the combined totals.
+                        _ = contents.Sum(item => item.Documents);
+                        _ = contents.Sum(item => item.Bytes);
+                    }
                 }
-                catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested &&
-                    (failure is HttpRequestException or IOException or System.Text.Json.JsonException or OverflowException || KnownFailure(failure)))
+                catch (OverflowException) { reads = [null]; }
+                if (reads.Any(reported => reported is null))
                 {
                     contentsAvailable = false;
                     if (error.Length == 0) error = "Database counts are unavailable. The data plane did not answer.";
                 }
             }
         }
+        try { choices = await regionsRead; }
+        catch (HttpRequestException) { regionsError = "Region discovery is unavailable. Try again shortly."; }
         var search = http.Request.Query["q"].ToString().Trim();
         var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
         var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
-        var range = HomePage.NormalizeRange(http.Request.Query["range"].ToString());
-        var metrics = await DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, range, http.RequestAborted);
+        var metrics = await metricsRead;
         var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regions, regionsError) { ContentsAvailable = contentsAvailable, Metrics = metrics, Range = range });
         result.StatusCode = status;
         return result;
@@ -158,19 +174,29 @@ public static class DatabaseEndpoints
         var contentsAvailable = false;
         var regionError = "";
         var range = HomePage.NormalizeRange(http.Request.Query["range"]);
-        UsageReplication? measurements = null;
-        if (tab == "replication")
+        // Each tab's reads are independent of one another, so they all start before any is awaited.
+        var measurementsRead = tab == "replication"
+            ? http.RequestServices.GetRequiredService<IUsageReplication>().ReadAsync(new(context, range, database.Id, true), http.RequestAborted) : null;
+        var activityRead = tab is "overview" or "replication"
+            ? DatabaseActivity.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, database.Id,
+                key => tab == "overview" && http.Request.Query[key].ToString() is { Length: > 0 } selected ? HomePage.NormalizeRange(selected) : range, http.RequestAborted) : null;
+        var backupsRead = tab is "backups" or "overview" ? BackupEndpoints.PageAsync(http, context, database, error) : null;
+        var choicesRead = tab == "replication" ? backend.RegionsAsync(http.RequestAborted) : null;
+        async Task<IReadOnlyList<CollectionStats>> ContentsAsync() =>
+            await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), id, http.RequestAborted);
+        var contentsRead = tab == "overview" ? ContentsAsync() : null;
+        if (choicesRead is not null)
         {
             try
             {
-                choices = await backend.RegionsAsync(http.RequestAborted);
+                choices = await choicesRead;
                 // The database's own regions stay listed, so saving never drops a replica the catalog does not name.
                 var listed = choices;
                 choices = [.. listed, .. DatabaseService.Regions(database).Select(code => DatabaseRegion.Resolve(listed, code)).OfType<DatabaseRegion>().Where(region => !listed.Contains(region)).Distinct()];
             }
             catch (HttpRequestException) { regionError = "Region discovery is unavailable. Try again shortly."; }
         }
-        if (tab == "overview")
+        if (contentsRead is not null)
         {
             // An all-regions database serves every catalog region; without the catalog it shows its recorded regions.
             if (database.AllRegions)
@@ -178,19 +204,17 @@ public static class DatabaseEndpoints
                 catch (HttpRequestException) { }
             try
             {
-                contents = await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), id, http.RequestAborted);
+                contents = await contentsRead;
                 DatabaseService.ValidateContents(contents);
                 contentsAvailable = true;
             }
             catch (Exception failure) when (failure is HttpRequestException or System.Text.Json.JsonException or OverflowException || KnownFailure(failure))
             { if (error.Length == 0) error = "Database counts are unavailable. The data plane did not answer."; }
         }
-        if (tab == "replication")
-            measurements = await http.RequestServices.GetRequiredService<IUsageReplication>().ReadAsync(new(context, range, database.Id, true), http.RequestAborted);
-        var activity = tab is "overview" or "replication"
-            ? await DatabaseActivity.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, database.Id,
-                key => tab == "overview" && http.Request.Query[key].ToString() is { Length: > 0 } selected ? HomePage.NormalizeRange(selected) : range, http.RequestAborted) : null;
-        var backups = tab is "backups" or "overview" ? await BackupEndpoints.PageAsync(http, context, database, error) : null;
+        UsageReplication? measurements = measurementsRead is null ? null : await measurementsRead;
+        var activity = activityRead is null ? null : await activityRead;
+        // The backups section shows the same page error, which the counts read above may have just set.
+        var backups = backupsRead is null ? null : (await backupsRead) with { Error = error };
         var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, contents, error, regionError, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, contentsAvailable, measurements, range, activity));
         result.StatusCode = status;
         return result;

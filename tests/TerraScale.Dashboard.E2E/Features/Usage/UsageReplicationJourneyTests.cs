@@ -70,8 +70,8 @@ public sealed class UsageReplicationJourneyTests(DashboardRootFixture fixture)
         await Assert.That(observedResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using var observed = JsonDocument.Parse(await observedResponse.Content.ReadAsStringAsync());
         var root = observed.RootElement;
-        // Each page independently exchanges its scoped usage, monthly usage and replication read.
-        await Assert.That(root.GetProperty("projectExchanges").GetInt32()).IsEqualTo(6);
+        // Scoped usage, monthly usage and replication on both pages share the session's one exchanged read token.
+        await Assert.That(root.GetProperty("projectExchanges").GetInt32()).IsEqualTo(1);
         foreach (var requested in root.GetProperty("projectScopeExchanges").EnumerateArray())
         {
             await Assert.That(requested.GetProperty("projectId").GetString()).IsEqualTo(projectId);
