@@ -480,7 +480,7 @@ public sealed class PeerStreamTests
         var before = await gru.HeadAsync(cluster.Database);
         var stamp = gru.Api.Server.Services.GetRequiredService<LocalReplica>().Clock.Tick();
         await gru.Api.Server.Services.GetRequiredService<IChangeGroupSink>()
-            .RecordFrontierAsync(cluster.Database, sjc.Node, stamp, CancellationToken.None);
+            .RecordFrontierAsync(cluster.Database, sjc.Node, stamp, default, null, CancellationToken.None);
         var head = await gru.HeadAsync(cluster.Database);
         await Assert.That(head).IsGreaterThan(before);
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, head)).IsTrue();
