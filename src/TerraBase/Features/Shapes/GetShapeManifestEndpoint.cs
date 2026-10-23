@@ -104,7 +104,15 @@ internal sealed class GetShapeManifestEndpoint(
             return Refetch(lineage, "shape lineage changed");
         }
 
-        // Verifies that the offset is published and retained before any object is named.
+        // A mirrored object exists only for a sealed offset of this handle, and the listing rechecks the retention floor, so a
+        // listed offset needs no payload read: T1 readers cost the origin no storage read once the mirror holds the object.
+        var mirrored = await mirror.ManifestAsync(request.Scope.Database, lineage.ShapeId, lineage.Handle, request.OffsetText, 0, cancellationToken);
+        if (mirrored.Objects.Count > 0)
+        {
+            return TypedResults.Json(mirrored, ShapeMirrorJsonContext.Default.ShapeMirrorManifest);
+        }
+
+        // Otherwise verify that the offset is published and retained, so an unknown offset still answers 409.
         var read = request.Offset switch
         {
             SnapshotOffset page => await snapshots.PageAsync(request.Scope, lineage, page.Snapshot, page.AfterId, cancellationToken),
@@ -132,6 +140,7 @@ internal sealed class GetShapeManifestEndpoint(
             }
         }
 
+        // The read may have adopted the object's metadata in the meantime.
         var manifest = await mirror.ManifestAsync(request.Scope.Database, lineage.ShapeId, lineage.Handle, request.OffsetText, 0, cancellationToken);
         return TypedResults.Json(manifest, ShapeMirrorJsonContext.Default.ShapeMirrorManifest);
     }
