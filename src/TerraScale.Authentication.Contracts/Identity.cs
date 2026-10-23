@@ -19,6 +19,9 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     /// <summary>Identity of the last authentication-state change; equal numeric epochs can race across regions.</summary>
     public string? AuthStamp { get; init; }
 
+    /// <summary>A disabled user cannot sign in; disabling advances the epoch, which ends its sessions and tokens.</summary>
+    public bool Disabled { get; init; }
+
     /// <summary>Proof lineage for this authentication attempt; never written back to the account.</summary>
     [JsonIgnore]
     public IReadOnlyList<CredentialBinding> AuthenticationBindings { get; init; } = [];

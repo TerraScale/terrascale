@@ -495,11 +495,11 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
     protected string RouteId(string name) =>
         this.HttpContext.GetRouteValue(name) is string value && PlatformDirectory.IsId(value) ? value : throw PlatformDirectory.NotFound();
 
-    /// <summary><c>limit</c> (1 to 100, default 20) and <c>after</c>.</summary>
-    protected (int Limit, string? After) Paging()
+    /// <summary><c>limit</c> (1 to 100, default <paramref name="fallback"/>) and <c>after</c>.</summary>
+    protected (int Limit, string? After) Paging(int fallback = 20)
     {
         var query = this.HttpContext.Request.Query;
-        var limit = 20;
+        var limit = fallback;
         if (query.TryGetValue("limit", out var text) && (text.Count != 1 || !int.TryParse(text[0], NumberStyles.None, CultureInfo.InvariantCulture, out limit) || limit is < 1 or > 100))
         {
             throw Invalid("limit must be 1 to 100.");
