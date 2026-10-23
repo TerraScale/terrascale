@@ -7,7 +7,7 @@
     <TargetFrameworks Condition="'$(TargetFrameworks)' == ''">net10.0</TargetFrameworks>
     <TargetFramework />
     <PackageId>TerraScale.DotNet</PackageId>
-    <Version>0.0.4</Version>
+    <Version>0.0.5</Version>
     <Description>Official .NET SDK for TerraBase and ts-auth.</Description>
     <PackageProjectUrl>https://github.com/TerraScale/ts-dotnet</PackageProjectUrl>
     <RepositoryUrl>https://github.com/TerraScale/ts-dotnet</RepositoryUrl>
@@ -16,7 +16,7 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>terrascale;terrabase;database;documents;auth;sdk</PackageTags>
-    <PackageReleaseNotes>0.0.4: Adds typed collection change webhook creation, listing, deletion and delivery logs. Uses project-token document scopes, direct-array ULID pagination, cancellation and one-time signing secret redaction. Includes the current account API and existing TerraBase and ts-auth clients. Producer contract and implementation must be deployed before using webhook APIs.</PackageReleaseNotes>
+    <PackageReleaseNotes>0.0.5: Adds TerraScaleAuthClient.Projects for the ts-auth project tenant management API: settings, end users, sessions and OAuth clients under /v1/{project}, authenticated with the caller's sign-in token. Confidential client secrets are returned once and redacted from ToString. Includes the existing TerraBase and ts-auth clients. The producer API must be deployed before using these methods.</PackageReleaseNotes>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Deterministic>true</Deterministic>
     <IncludeSymbols>false</IncludeSymbols>

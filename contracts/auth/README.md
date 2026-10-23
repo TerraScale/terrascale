@@ -79,3 +79,7 @@ JSON headless bodies: 8 KiB. Platform bodies: 16 KiB. Token forms and success re
 ## I5 requests
 
 Package all `contracts/auth` manifests/fixtures with the SDK candidate and register them for compatibility checking; this slice does not edit csproj or root files. Keep package version 0.0.X (provisional 0.0.3 belongs to I5). Update root README/release notes to point consumers here and distinguish the C# platform client from legacy instance management. Run matching monorepo producer tests against the exact selected SDK K; do not infer parity from SDK fake tests. No dashboard endpoint/fixture composition or pin changes are made here.
+
+## Project tenant management
+
+`auth.Projects` is `TerraScaleAuthProjectsClient` for the producer's project tenant management API (`docs/auth/project-tenant-management.md` section 2, base `/v1/{project}`). Every method takes the caller's terrascale sign-in `accessToken` and the project ULID first and an optional `CancellationToken` last; viewer reads, admin changes, 404 hides projects the caller cannot see and 403 `forbidden` reports a role too low. Lists return `TerraScaleAuthPlatformPage<T>`. `TerraScaleAuthProjectOAuthClient.ClientSecret` appears only when creating a confidential client and is redacted from `ToString`. `fixtures/project-tenant.json` holds the HTTP-fake fixtures, with each operation's method, path and status; producer parity remains unproven.
