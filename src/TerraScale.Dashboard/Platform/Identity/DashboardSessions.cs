@@ -197,6 +197,22 @@ public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity 
                     if (refused is not null) await RemoveAsync(collection, refused, cancellationToken);
                     return null;
                 }
+                catch (RefreshNotStartedException)
+                {
+                    // ts-auth never read the secret, so the session keeps it and
+                    // survives an auth restart instead of expiring with the lease.
+                    var unchanged = await state.GetAsync(collection, id, cancellationToken);
+                    if (unchanged is { State: "value" } &&
+                        Open(unchanged.Document.Deserialize<SealedSession>() ?? throw new IOException("Dashboard session is invalid."), credentials.SessionEncryptionKey).RefreshLease == lease.RefreshLease)
+                    {
+                        try
+                        {
+                            await state.PutAsync(collection, id, JsonSerializer.SerializeToElement(Seal(record, credentials.SessionEncryptionKey)), TerraBasePrecondition.Matches(unchanged.Version), cancellationToken);
+                        }
+                        catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.PreconditionFailed or System.Net.HttpStatusCode.Conflict) { }
+                    }
+                    throw;
+                }
                 // A failed request keeps its lease until expiry; a refresh whose
                 // response was lost is never blindly replayed by another replica.
                 if (refreshed.UserId != record.UserId || refreshed.Email != record.Email || refreshed.ExpiresAt <= now ||

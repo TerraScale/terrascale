@@ -75,6 +75,10 @@ public sealed partial class TsAuthGateway
         }
         catch (TerraScaleAuthException error) when (error.ErrorCode == "invalid_grant" || error.StatusCode is System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.Unauthorized)
         { throw new SignInRejectedException(); }
+        catch (TerraScaleAuthException error) when (error.ErrorCode == "temporarily_unavailable" || error.StatusCode is System.Net.HttpStatusCode.TooManyRequests)
+        { throw new RefreshNotStartedException(error); }
+        catch (HttpRequestException error) when (error is not TerraScaleAuthException && error.HttpRequestError is HttpRequestError.ConnectionError or HttpRequestError.NameResolutionError)
+        { throw new RefreshNotStartedException(error); }
         if (tokens.ExpiresIn is <= 0 or > 86400 || !string.Equals(tokens.TokenType, "Bearer", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(tokens.AccessToken))
             throw new SignInRejectedException();
         // OIDC allows refresh answers without an ID token. A new ID token must
