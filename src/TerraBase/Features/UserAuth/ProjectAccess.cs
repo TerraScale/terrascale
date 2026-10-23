@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace TerraBase.Features.UserAuth;
 
 /// <summary>A verified project token's access to the existing storage namespace, scoped to one request.</summary>
@@ -8,6 +10,12 @@ namespace TerraBase.Features.UserAuth;
 /// <param name="DatabaseId">The catalog id of that restricted database, when present.</param>
 public sealed record ProjectAccess(string Actor, string ProjectId, string OrganizationId, string? DatabaseName, string? DatabaseId)
 {
+    /// <summary>Whether collection rules must authorize this scoped end user.</summary>
+    public bool IsEndUser { get; init; }
+
+    /// <summary>Trusted roles from ts-auth, compared ordinally; never project administrator scopes.</summary>
+    public IReadOnlySet<string> Roles { get; init; } = FrozenSet<string>.Empty;
+
     private static readonly AsyncLocal<ProjectAccess?> Access = new();
 
     /// <summary>The project grant of the current async request, after authorization.</summary>
