@@ -212,7 +212,40 @@ and its `/check` and `/explain` routes with `databases:read`. SQL is the server'
 read-only SELECT subset, with a default LIMIT of 100, a maximum of 1000 and an
 8 MiB result bound. `CheckSQL` can return `OK: false` for an unsupported
 statement; invalid explain requests return API errors. Root SQL builders do
-not execute this HTTP API.
+not execute this HTTP API. New code should use relational SQL below; the
+read-only `Database.SQL` route refuses dashboard API keys.
+
+### Relational SQL
+
+`ExecuteSQL`, `QuerySQL` and `BatchSQL` call
+`POST /v1/projects/{project}/databases/{name}/sql/execute`
+([guide](https://docs.terrascale.tech/guides/sql-http)). Each call is one
+transaction: a batch of 1 to 256 statements applies completely or not at all,
+and `BEGIN`/`COMMIT`/`ROLLBACK` are refused. Arguments are `nil`, booleans
+(bound as 1/0), numbers and strings; `v1.Named` binds `:name`, `@name` or
+`$name` parameters.
+
+```go
+db := c.Database(projectID, "main")
+_, err := db.ExecuteSQL(ctx, "INSERT INTO users (id, name) VALUES (?, :name)", 1, v1.Named("name", "Ada"))
+res, err := db.ExecuteSQL(ctx, "SELECT id, name FROM users WHERE id = ?", 1)
+// res.Columns[0].Name == "id"; res.Rows[0][0] == int64(1); res.LastInsertRowID is *int64
+rows, err := db.QuerySQL(ctx, "SELECT id, name FROM users") // []map[string]any
+out, err := db.BatchSQL(ctx, []v1.SQLStatement{
+	{SQL: "UPDATE users SET name = ? WHERE id = ?", Args: []any{"Grace", 1}},
+	{SQL: "DELETE FROM users WHERE id = :id", Named: map[string]any{"id": 2}},
+})
+var sqlErr *v1.SQLError // Code, Message, Statement (0-based), SQLiteCode
+if errors.As(err, &sqlErr) { /* sql_error, sql_conflict, sql_too_large, forbidden_scope */ }
+```
+
+Row values are `nil`, `int64`, `float64` or `string`; integers decode exactly
+(the SDK never routes them through float64). `SQLError` wraps the `*APIError`,
+so `errors.Is(err, v1.ErrSQLConflict)` also matches. Other failures stay
+`*APIError`. Requests are never retried: a lost response returns
+`ErrCommitUncertain`. `TestSQLLive` runs against production when
+`TERRASCALE_SQL_LIVE_TOKEN`, `TERRASCALE_SQL_LIVE_PROJECT` and
+`TERRASCALE_SQL_LIVE_DATABASE` are set.
 
 `Client.ProjectUsage` and `Database.Usage` use public project/name routes and
 the existing `UsageOptions`. Counts are best-effort dashboard observations,
