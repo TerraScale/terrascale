@@ -25,6 +25,8 @@ public sealed class HealthTests
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(body.GetProperty("status").GetString()).IsEqualTo("ok");
         await Assert.That(body.GetProperty("version").GetString()).StartsWith("0.1.0-alpha");
+        // Anonymous health never names the build revision (ServiceVersion.Value carries it as +<commit> in CI builds).
+        await Assert.That(body.GetProperty("version").GetString()).DoesNotContain("+");
     }
 
     [Test]

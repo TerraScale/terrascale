@@ -1,5 +1,4 @@
 using TerraBase.Configuration;
-using TerraBase.Engine.Sqlite;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -8,7 +7,8 @@ namespace TerraBase.Features.Health;
 /// <summary>
 /// <c>GET /readyz</c>: 200 only while the storage engine is open, the data directory is writable, ts-auth's signing keys
 /// are loaded (when <c>auth-issuer</c> is set), a catalog follower has caught up with its primary once and the server is
-/// not shutting down; 503 otherwise. Unauthenticated, on the administrative and client listeners, for load balancers.
+/// not shutting down; 503 otherwise. Unauthenticated on the client listener for load balancers (status only, see
+/// <see cref="StatusBody.For"/>), with build detail on the internal listener.
 /// </summary>
 public sealed class ReadyzEndpoint(
     INodeReadiness readiness, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
@@ -31,7 +31,7 @@ public sealed class ReadyzEndpoint(
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         return await readiness.IsReadyAsync(cancellationToken).ConfigureAwait(false)
-            ? TypedResults.Ok(new StatusBody("ready", ServiceVersion.Value, options.Region, StorageFormat.Id, ServiceVersion.Revision, options.MachineId))
-            : TypedResults.Json(new StatusBody("unavailable", ServiceVersion.Value, options.Region, StorageFormat.Id, ServiceVersion.Revision, options.MachineId), statusCode: StatusCodes.Status503ServiceUnavailable);
+            ? TypedResults.Ok(StatusBody.For(HttpContext, "ready", options))
+            : TypedResults.Json(StatusBody.For(HttpContext, "unavailable", options), statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 }
