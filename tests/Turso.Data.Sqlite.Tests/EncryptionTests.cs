@@ -138,13 +138,6 @@ public sealed class EncryptionTests
                 offset = (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) - 1) * pageSize;
                 command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
                 command.ExecuteNonQuery();
-
-                // A tenant-supplied error resembling the native message must remain an ordinary SQL error.
-                command.CommandText = "CREATE TRIGGER reject_insert BEFORE INSERT ON secret BEGIN SELECT RAISE(ABORT, 'Decryption failed for page=2'); END;";
-                command.ExecuteNonQuery();
-                command.CommandText = "INSERT INTO secret VALUES ('rejected');";
-                var sqlError = Assert.Throws<SqliteException>(() => command.ExecuteNonQuery());
-                await Assert.That(sqlError!.SqliteErrorCode).IsNotEqualTo(11);
             }
 
             using (var file = new FileStream(builder.DataSource, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
@@ -171,6 +164,52 @@ public sealed class EncryptionTests
             }
             var facadeError = Assert.Throws<SqliteException>(() => ReadValue(builder.ConnectionString));
             await Assert.That(facadeError!.SqliteErrorCode).IsEqualTo(11);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>SQL rejection text cannot impersonate a damaged encrypted page.</summary>
+    [Test]
+    public async Task SqlRaiseCannotImpersonatePageAuthenticationFailure()
+    {
+        var directory = Directory.CreateTempSubdirectory("turso-encrypted-raise-").FullName;
+        try
+        {
+            var builder = new SqliteConnectionStringBuilder
+            {
+                DataSource = Path.Combine(directory, "healthy.db"),
+                EncryptionCipher = "aegis256",
+                EncryptionKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),
+                Pooling = false,
+            };
+            using (var raw = new Turso.TursoConnection(builder.ConnectionString))
+            {
+                raw.Open();
+                using var command = raw.CreateCommand();
+                command.CommandText = "CREATE TABLE secret(value TEXT);";
+                command.ExecuteNonQuery();
+                command.CommandText = "INSERT INTO secret VALUES ('healthy');";
+                command.ExecuteNonQuery();
+                // Raw prepare retains the complete trigger body, including its internal semicolon.
+                command.CommandText = "CREATE TRIGGER reject_insert BEFORE INSERT ON secret BEGIN SELECT RAISE(ABORT, 'Decryption failed for page=2'); END;";
+                command.ExecuteNonQuery();
+                command.CommandText = "INSERT INTO secret VALUES ('rejected');";
+                var nativeError = Assert.Throws<TursoNativeException>(() => command.ExecuteNonQuery());
+                await Assert.That(nativeError!.StatusCode).IsEqualTo(127U);
+                await Assert.That(nativeError.IsPageAuthenticationFailure).IsFalse();
+            }
+            using (var connection = new SqliteConnection(builder.ConnectionString))
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "INSERT INTO secret VALUES ('rejected');";
+                var sqlError = Assert.Throws<SqliteException>(() => command.ExecuteNonQuery());
+                await Assert.That(sqlError!.SqliteErrorCode).IsEqualTo(1);
+            }
+            await Assert.That(ReadValue(builder.ConnectionString)).IsEqualTo("healthy");
         }
         finally
         {
