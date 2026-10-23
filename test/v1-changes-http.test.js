@@ -170,7 +170,7 @@ describe("SSE failures preserve errors without reconnecting", () => {
 
   test("returns issuer-routing metadata without another SDK fetch", async () => {
     const { baseUrl } = await fixture((_request, response) => response.writeHead(421,
-      { "content-type": "application/json", "fly-replay": "instance=issuer-machine" })
+      { "content-type": "application/json", "ts-replay": "region=sjc" })
       .end(JSON.stringify({ error: { code: "cursor_elsewhere" } })));
     let calls = 0;
     const db = createTerraBaseV1Client({ project, token, baseUrl, fetch: (input, init) => {
@@ -181,7 +181,7 @@ describe("SSE failures preserve errors without reconnecting", () => {
     const error = await db.changes({ cursor: "previous" }).next().catch(error => error);
     expect(error).toBeInstanceOf(TerraBaseV1Error);
     expect(error).toMatchObject({ status: 421, code: "cursor_elsewhere" });
-    expect(error.headers.get("fly-replay")).toBe("instance=issuer-machine");
+    expect(error.headers.get("ts-replay")).toBe("region=sjc");
     expect(calls).toBe(1);
   });
 
