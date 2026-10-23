@@ -141,7 +141,7 @@ public sealed class TigrisBackupTests
         }
     }
 
-    private static async Task<List<string>> ListAsync(AmazonS3Client s3, string prefix, CancellationToken cancellationToken)
+    internal static async Task<List<string>> ListAsync(AmazonS3Client s3, string prefix, CancellationToken cancellationToken)
     {
         var keys = new List<string>();
         var request = new ListObjectsV2Request { BucketName = TigrisCiBucket.Bucket, Prefix = prefix };
@@ -165,7 +165,7 @@ public sealed class TigrisBackupTests
     }
 
     // Test-only namespace adapter: the real S3 store still performs signing, uploads, reads and deletes.
-    private sealed class PrefixedStore(IObjectStore inner, string prefix) : IObjectStore
+    internal sealed class PrefixedStore(IObjectStore inner, string prefix) : IObjectStore
     {
         public Task PutAsync(string key, Stream content, CancellationToken cancellationToken) =>
             inner.PutAsync(prefix + key, content, cancellationToken);
@@ -187,11 +187,18 @@ public sealed class TigrisBackupTests
     }
 }
 
-/// <summary>Bucket-scoped credentials for the durable private CI bucket; missing credentials fail the test.</summary>
+/// <summary>
+/// Bucket-scoped credentials for a private S3-compatible test bucket (Tigris or R2: endpoint, bucket and keys only);
+/// missing credentials fail the test. Only the CI bucket or a bucket named ts-*-test is accepted, never a production one.
+/// </summary>
 internal static class TigrisCiBucket
 {
-    public static string Bucket => Variable("BUCKET_NAME") == "ts-terrabase-ci" ? "ts-terrabase-ci"
-        : throw new InvalidOperationException("BUCKET_NAME must name the private ts-terrabase-ci test bucket");
+    public static string Bucket => Variable("BUCKET_NAME") is var name
+        && (name == "ts-terrabase-ci" || (name.StartsWith("ts-", StringComparison.Ordinal) && name.EndsWith("-test", StringComparison.Ordinal)))
+        ? name : throw new InvalidOperationException("BUCKET_NAME must name the private ts-terrabase-ci bucket or a ts-*-test bucket");
+
+    /// <summary>Whether the endpoint is Cloudflare R2, whose bucket serves shape objects through its CDN custom domain.</summary>
+    public static bool R2 => new Uri(Variable("AWS_ENDPOINT_URL_S3")).Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase);
 
     public static void Configure(Dictionary<string, string> settings)
     {
