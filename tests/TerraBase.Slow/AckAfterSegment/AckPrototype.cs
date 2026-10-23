@@ -96,7 +96,7 @@ internal sealed class AckPrototype : IAsyncDisposable
     {
         var (file, position, segments) = await SegmentHistory.RestoreAsync(Store, Backup, Prefix, _scratch, cancellationToken);
         HashSet<string> ids = [with(StringComparer.Ordinal)];
-        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = file, Pooling = false }.ToString()))
+        await using (var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = file, Pooling = false })))
         {
             await connection.OpenAsync(cancellationToken);
             await using var command = connection.CreateCommand();

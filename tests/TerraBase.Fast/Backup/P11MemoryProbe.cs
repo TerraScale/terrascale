@@ -1,6 +1,7 @@
 using System.Globalization;
 using Turso;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Testing;
 
 namespace TerraBase.Fast.Backup;
 
@@ -35,7 +36,8 @@ public sealed class P11MemoryProbe
                             begin.ExecuteNonQuery();
                         }
 
-                        TursoCopy.Write(connection, target, CancellationToken.None);
+                        TestMasterKey.Create(target);
+                        TursoCopy.Write(connection, TestMasterKey.ConnectionString(target, Turso.Data.Sqlite.SqliteOpenMode.ReadWriteCreate), CancellationToken.None);
                         Console.WriteLine("P11 round " + round + " " + string.Join(" ", File.ReadAllLines("/proc/self/status").Where(line => line.StartsWith("VmRSS", StringComparison.Ordinal) || line.StartsWith("VmHWM", StringComparison.Ordinal))));
                     }
 

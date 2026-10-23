@@ -2,6 +2,7 @@ using System.Net;
 using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
 
@@ -25,6 +26,7 @@ public sealed class EntityIdStorageFormatTests
         try
         {
             var snapshot = Path.Combine(directory, "snapshot.db");
+            TestMasterKey.Create(snapshot);
             await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(snapshot)))
             {
                 await connection.OpenAsync(token);
@@ -62,6 +64,7 @@ public sealed class EntityIdStorageFormatTests
             var checksum = await backup.ChecksumAsync(snapshot, token);
             var imported = Path.Combine(directory, "import.db");
             File.Copy(snapshot, imported);
+            File.Copy(snapshot + ".key", imported + ".key");
             var error = await Assert.ThrowsAsync<InvalidOperationException>(() => backup.ImportDatabaseAsync(target, imported, token).AsTask());
             await Assert.That(error!.Message).Contains("old database format");
             await Assert.That(File.Exists(targetPath)).IsFalse();

@@ -218,12 +218,12 @@ public sealed class SavedQueryApiTests
     // The UTF-8 size of each stored saved query entry of a project, by id, read from the catalog file.
     private static async Task<Dictionary<string, long>> StoredSizesAsync(string dataDirectory, string project)
     {
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
         {
             DataSource = Path.Combine(dataDirectory, "_system.db"),
             Mode = SqliteOpenMode.ReadOnly,
             Pooling = false,
-        }.ToString());
+        }));
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT id, length(CAST(body AS BLOB)) FROM documents WHERE collection = $collection AND body IS NOT NULL;";

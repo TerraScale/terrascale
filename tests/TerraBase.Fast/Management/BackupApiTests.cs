@@ -933,7 +933,7 @@ public sealed class BackupApiTests
     private static async Task SetNewerSchemaVersionAsync(ManagementApi api, ManagedDatabaseRef database)
     {
         var path = Path.Combine(ProjectDirectory(api, database), $"{database.Id}.db");
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }));
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "PRAGMA user_version = 99;";
@@ -1011,7 +1011,7 @@ public sealed class BackupApiTests
     private static async Task<long> CountAsync(string dataDirectory, string collection)
     {
         var path = Path.Combine(dataDirectory, "_system.db");
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }));
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT count(*) FROM documents WHERE collection = $collection;";
@@ -1023,7 +1023,7 @@ public sealed class BackupApiTests
     private static async Task<Dictionary<string, JsonElement>> ReadAsync(string dataDirectory, string collection)
     {
         var path = Path.Combine(dataDirectory, "_system.db");
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }));
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT id, body FROM documents WHERE collection = $collection;";
@@ -1042,7 +1042,7 @@ public sealed class BackupApiTests
     private static async Task InsertAsync(string dataDirectory, string collection, string id, string body)
     {
         var path = Path.Combine(dataDirectory, "_system.db");
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false, DefaultTimeout = 30 }.ToString());
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false, DefaultTimeout = 30 }));
         await connection.OpenAsync();
         await StoredStates.WriteAsync(connection, collection, id, body, system: true);
     }

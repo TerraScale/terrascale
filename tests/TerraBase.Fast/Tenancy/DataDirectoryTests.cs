@@ -248,7 +248,7 @@ public sealed class DataDirectoryTests
             ];
             foreach (var connection in connections)
             {
-                var store = new SqliteDatabaseStore("probe", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;");
+                var store = new SqliteDatabaseStore("probe", path, engine.Pool, engine.Io, "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;", engine.Encryption);
                 var session = await OpenSessionAsync(connection);
                 await Assert.That(engine.Pool.Rent(store)).IsNull();
                 engine.Pool.Adopt(store, session);
@@ -465,7 +465,7 @@ public sealed class DataDirectoryTests
         }
     }
 
-    private static string Connect(string path) => new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString();
+    private static string Connect(string path) => TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWrite, Pooling = false });
 
     private static async Task<SqliteSession> OpenSessionAsync(SqliteConnection connection)
     {
@@ -747,6 +747,11 @@ public sealed class DataDirectoryTests
         // Like the harness, clear every ambient TERRABASE setting through entry-point arguments.
         foreach (var name in TerraBaseOptions.SettingNames)
         {
+            if (BackupSettings.Keys.Contains(name, StringComparer.Ordinal))
+            {
+                continue;
+            }
+
             var value = name switch
             {
                 "port" or "internal-port" or "metrics-port" or "postgres-port" => "0",
@@ -756,6 +761,8 @@ public sealed class DataDirectoryTests
             };
             start.ArgumentList.Add($"--{name}={value}");
         }
+
+        TestMasterKey.ConfigureProcess(start);
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("the second TerraBase process did not start");

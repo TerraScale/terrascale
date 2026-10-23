@@ -35,7 +35,7 @@ public sealed class RepairIncarnationTests
         var states = new ReplacingStates(rows, replaceAfter, () =>
         {
             // A file replacement changes persisted identity while the open store still caches the original one.
-            using var connection = new SqliteConnection($"Data Source={store.FilePath}");
+            using var connection = new SqliteConnection(TestMasterKey.ConnectionString(store.FilePath));
             connection.Open();
             using var command = connection.CreateCommand();
             command.CommandText = "UPDATE commit_offset SET incarnation = $incarnation WHERE id = 1;";

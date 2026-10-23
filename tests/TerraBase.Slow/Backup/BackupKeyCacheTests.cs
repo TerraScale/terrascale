@@ -202,7 +202,7 @@ public sealed class BackupKeyCacheTests
             }
 
             // Copy only the stopped catalog, its intent journal and layout marker, leaving the source's physical database behind.
-            foreach (var file in new[] { "_system.db", "_intents.db", ".terrabase.lock" })
+            foreach (var file in new[] { "_system.db", "_system.db.key", "_intents.db", "_intents.db.key", ".terrabase.lock" })
             {
                 File.Copy(Path.Combine(directory, file), Path.Combine(coldDirectory, file));
             }

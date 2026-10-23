@@ -405,6 +405,7 @@ public sealed class RebuildLedgerRecoveryTests
             // A SYSTEM snapshot from after certification beside a tenant snapshot from before its barrier. The retained
             // copy is test-owned; changing its incarnation only constructs this offline restore fixture.
             File.Copy(Path.Combine(Path.GetDirectoryName(side)!, database.DatabaseId + ".db"), side);
+            File.Copy(Path.Combine(Path.GetDirectoryName(side)!, database.DatabaseId + ".db.key"), side + ".key");
             using (var connection = Connection(side))
             {
                 await connection.OpenAsync();
@@ -486,12 +487,12 @@ public sealed class RebuildLedgerRecoveryTests
         file.WriteByte(0xFF);
     }
 
-    private static SqliteConnection Connection(string path) => new(new SqliteConnectionStringBuilder
+    private static SqliteConnection Connection(string path) => new(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
     {
         DataSource = path,
         Mode = SqliteOpenMode.ReadWrite,
         Pooling = false,
-    }.ToString());
+    }));
 
     private sealed class BusyRebuild : IReplicaRebuild
     {

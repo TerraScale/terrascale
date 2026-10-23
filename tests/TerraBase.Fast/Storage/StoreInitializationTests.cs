@@ -2,7 +2,9 @@ using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -25,7 +27,7 @@ public sealed class StoreInitializationTests
             var options = provider.GetRequiredService<TerraBaseOptions>();
             engine = new SqliteStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl,
+                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), provider.GetRequiredKeyedService<IMasterKey>(EngineExtensions.DatabaseMasterKey), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl,
                 checkpoint: (step, tenant) =>
                 {
                     // Still inside the creation lock, right after the store's initialization was registered: one that

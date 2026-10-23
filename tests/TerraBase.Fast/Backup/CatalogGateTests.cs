@@ -315,6 +315,7 @@ public sealed class CatalogGateTests
 
             // The server is fully stopped; its local fixture files are owned by this test alone.
             File.Move(Path.Combine(directory, ".restore-drill", "pre-revocation.db"), Path.Combine(directory, "_system.db"), overwrite: true);
+            File.Move(Path.Combine(directory, ".restore-drill", "pre-revocation.db.key"), Path.Combine(directory, "_system.db.key"), overwrite: true);
             File.Delete(Path.Combine(directory, "_system.db-wal"));
             File.Delete(Path.Combine(directory, "_system.db-shm"));
 

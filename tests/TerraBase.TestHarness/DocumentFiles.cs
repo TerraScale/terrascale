@@ -16,6 +16,7 @@ public static class DocumentFiles
     {
         using var meter = new Meter("TerraBase.Testing.DocumentFiles");
         await using var io = new SqliteIoPool(1, 1, meter);
+        var keys = new DatabaseKeys(new TestMasterKey());
         var system = Path.GetFileName(path) == "_system.db";
         if (system)
         {
@@ -23,13 +24,13 @@ public static class DocumentFiles
             var journal = Path.Combine(Path.GetDirectoryName(path)!, SqliteStorageEngine.IntentName + ".db");
             if (!File.Exists(journal))
             {
-                await SqliteDatabaseStore.InitializeAsync("_system", journal, io, string.Empty, CancellationToken.None);
+                await SqliteDatabaseStore.InitializeAsync("_system", journal, io, string.Empty, keys, CancellationToken.None);
             }
         }
         // The name chooses the schema the file bootstraps: the system database keeps its documents in one table.
-        await SqliteDatabaseStore.InitializeAsync(system ? "_system" : "fixture", path, io, string.Empty, CancellationToken.None);
+        await SqliteDatabaseStore.InitializeAsync(system ? "_system" : "fixture", path, io, string.Empty, keys, CancellationToken.None);
         // Built, never interpolated: a path may contain ';' or quotes.
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(path));
         await connection.OpenAsync();
         await WriteDocumentsAsync(connection, documents, system);
         if (system)
@@ -50,7 +51,7 @@ public static class DocumentFiles
     {
         ArgumentNullException.ThrowIfNull(documents);
         await using var connection = new SqliteConnection(
-            new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString());
+            TestMasterKey.ConnectionString(path));
         await connection.OpenAsync();
         // All or nothing: a missing document leaves the closed fixture file untouched.
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
@@ -72,7 +73,7 @@ public static class DocumentFiles
     public static async Task<List<string>> ReadAsync(string path)
     {
         await using var connection = new SqliteConnection(
-            new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+            TestMasterKey.ConnectionString(path, SqliteOpenMode.ReadOnly));
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT collection, id, body FROM documents ORDER BY collection, id;";

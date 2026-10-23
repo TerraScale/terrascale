@@ -14,12 +14,12 @@ public static partial class QueryPlan
     public static async Task<string> ExplainAsync(string databasePath, string sql)
     {
         // Unpooled, so the file is released when this returns and the server can delete it.
-        var connectionString = new SqliteConnectionStringBuilder
+        var connectionString = TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
         {
             DataSource = databasePath,
             Mode = SqliteOpenMode.ReadOnly,
             Pooling = false,
-        }.ToString();
+        });
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync();
         // Compiled scans call the engine's per-row budget function, which a plan only needs to resolve.

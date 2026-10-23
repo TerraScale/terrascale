@@ -534,6 +534,7 @@ public sealed class DocumentApiTests
         // A database file from a newer TerraBase: opening it fails on the server side.
         var path = await api.ReplaceFileAsync("future", async file =>
         {
+            TestMasterKey.Create(file);
             var connection = new Turso.Data.Sqlite.SqliteConnection(DocumentApi.ConnectionString(file));
             await using (connection)
             {

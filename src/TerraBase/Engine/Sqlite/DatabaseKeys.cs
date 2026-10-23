@@ -33,7 +33,7 @@ internal sealed class DatabaseKeys(IMasterKey master)
                 file.Write(record);
                 file.Flush(flushToDisk: true);
             }, cancellationToken).ConfigureAwait(false);
-            return ConnectionString(path, key);
+            return ConnectionString(path, key, SqliteOpenMode.ReadWriteCreate);
         }
         finally
         {
@@ -57,7 +57,7 @@ internal sealed class DatabaseKeys(IMasterKey master)
         try
         {
             ValidateKey(key);
-            return ConnectionString(path, key);
+            return ConnectionString(path, key, SqliteOpenMode.ReadWrite);
         }
         finally
         {
@@ -132,10 +132,10 @@ internal sealed class DatabaseKeys(IMasterKey master)
         }
     }
 
-    private static string ConnectionString(string path, byte[] key) => new SqliteConnectionStringBuilder
+    private static string ConnectionString(string path, byte[] key, SqliteOpenMode mode) => new SqliteConnectionStringBuilder
     {
         DataSource = path,
-        Mode = SqliteOpenMode.ReadWrite,
+        Mode = mode,
         Pooling = false,
         DefaultTimeout = 30,
         EncryptionCipher = "aegis256",

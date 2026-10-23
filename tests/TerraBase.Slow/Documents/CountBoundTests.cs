@@ -30,7 +30,7 @@ public sealed class CountBoundTests
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         // This build's schema with 100001 documents, written in one statement instead of 100001 requests.
         await DocumentFiles.WriteAsync(path);
-        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
+        await using (var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false })))
         {
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
@@ -165,7 +165,7 @@ public sealed class CountBoundTests
         var path = Path.Combine(api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId, databaseId + ".db");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await DocumentFiles.WriteAsync(path, ("items", Id(0), """{"n":1}"""));
-        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
+        await using (var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false })))
         {
             await connection.OpenAsync(cancellationToken);
             using var body = JsonDocument.Parse("""{"n":1}""");

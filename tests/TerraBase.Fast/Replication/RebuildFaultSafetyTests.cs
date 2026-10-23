@@ -535,12 +535,12 @@ public sealed class RebuildFaultSafetyTests
     private static async Task CorruptTablePageAsync(string path, string table)
     {
         long offset;
-        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        using (var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
         {
             DataSource = path,
             Mode = SqliteOpenMode.ReadWrite,
             Pooling = false,
-        }.ToString()))
+        })))
         {
             await connection.OpenAsync();
             using var command = connection.CreateCommand();

@@ -4,7 +4,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
@@ -96,7 +98,7 @@ public sealed class StorageConstructionTests
                         return new SqliteStorageEngine(
                             options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                             provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                            provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace,
+                            provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), provider.GetRequiredKeyedService<IMasterKey>(EngineExtensions.DatabaseMasterKey), options.ShutdownGrace,
                             createWorker: CreateWorker);
                     }));
                     return (Exception?)null;
@@ -235,7 +237,7 @@ public sealed class StorageConstructionTests
                 {
                     // The pool rejects this queue after the engine takes the directory's actual file lock.
                     // If validation regresses, return the unexpected engine so DI still owns its cleanup.
-                    return new SqliteStorageEngine(options.DataDirectory, 1, 0, options.MemoryBudget, meter, logger, options.ShutdownGrace);
+                    return new SqliteStorageEngine(options.DataDirectory, 1, 0, options.MemoryBudget, meter, logger, provider.GetRequiredKeyedService<IMasterKey>(EngineExtensions.DatabaseMasterKey), options.ShutdownGrace);
                 }
                 catch (ArgumentOutOfRangeException error)
                 {
@@ -245,7 +247,7 @@ public sealed class StorageConstructionTests
                 // Reacquire the same directory immediately, without collection/finalization of the failed engine.
                 return new SqliteStorageEngine(
                     options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
-                    meter, logger, options.ShutdownGrace);
+                    meter, logger, provider.GetRequiredKeyedService<IMasterKey>(EngineExtensions.DatabaseMasterKey), options.ShutdownGrace);
             }));
         await Assert.That(failure).IsNotNull();
         await Assert.That(failure!.ParamName).IsEqualTo("maxAdmitted");

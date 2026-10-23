@@ -8,6 +8,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
+using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -286,7 +287,7 @@ public sealed class StorageTransactionTests
 
         // Model an exhausted commit offset: the next local write cannot take one.
         var path = Path.Combine(server.DataDirectory, Database.OrganizationId, Database.ProjectId!, Database.DatabaseId + ".db");
-        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
+        await using (var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false })))
         {
             await connection.OpenAsync(CancellationToken.None);
             using var exhaust = connection.CreateCommand();
@@ -578,7 +579,7 @@ public sealed class StorageTransactionTests
             return new SqliteStorageEngine(
                 options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace, maxIdle: 8, maxIdlePerDatabase: 2);
+                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), provider.GetRequiredKeyedService<IMasterKey>(EngineExtensions.DatabaseMasterKey), options.ShutdownGrace, maxIdle: 8, maxIdlePerDatabase: 2);
         });
     }
 

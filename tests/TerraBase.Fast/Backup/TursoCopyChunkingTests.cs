@@ -1,4 +1,5 @@
 using TerraBase.Engine.Sqlite;
+using TerraBase.Testing;
 using Turso;
 
 namespace TerraBase.Fast.Backup;
@@ -17,7 +18,8 @@ public sealed class TursoCopyChunkingTests
         try
         {
             var source = Path.Combine(directory.FullName, "source.db");
-            using (var connection = new TursoConnection($"Data Source={source}"))
+            TestMasterKey.Create(source);
+            using (var connection = new TursoConnection(TestMasterKey.ConnectionString(source, Turso.Data.Sqlite.SqliteOpenMode.ReadWriteCreate)))
             {
                 connection.Open();
                 Execute(connection, "CREATE TABLE events (id INTEGER PRIMARY KEY, acct TEXT, note TEXT, amount Cents INTEGER);");
@@ -56,12 +58,13 @@ public sealed class TursoCopyChunkingTests
 
             // Two rows per commit: every table's copy spans many transactions.
             var copy = Path.Combine(directory.FullName, "copy.db");
-            using var reader = new TursoConnection($"Data Source={source}");
+            TestMasterKey.Create(copy);
+            using var reader = new TursoConnection(TestMasterKey.ConnectionString(source));
             reader.Open();
             Execute(reader, "BEGIN;");
-            TursoCopy.Write(reader, copy, chunkRows: 2, chunkBytes: 64, CancellationToken.None);
+            TursoCopy.Write(reader, TestMasterKey.ConnectionString(copy, Turso.Data.Sqlite.SqliteOpenMode.ReadWriteCreate), chunkRows: 2, chunkBytes: 64, CancellationToken.None);
 
-            using var target = new TursoConnection($"Data Source={copy}");
+            using var target = new TursoConnection(TestMasterKey.ConnectionString(copy));
             target.Open();
             await Assert.That(Scalar(target, "SELECT count(*) FROM events;")).IsEqualTo(50L);
             await Assert.That(Scalar(target, "SELECT count(*) FROM markers;")).IsEqualTo(9L);
@@ -95,7 +98,8 @@ public sealed class TursoCopyChunkingTests
         try
         {
             var source = Path.Combine(directory.FullName, "source.db");
-            using (var connection = new TursoConnection($"Data Source={source}"))
+            TestMasterKey.Create(source);
+            using (var connection = new TursoConnection(TestMasterKey.ConnectionString(source, Turso.Data.Sqlite.SqliteOpenMode.ReadWriteCreate)))
             {
                 connection.Open();
                 Execute(connection, "CREATE TABLE events (id INTEGER PRIMARY KEY, note TEXT);");
@@ -112,11 +116,13 @@ public sealed class TursoCopyChunkingTests
 
             using var cancelled = new CancellationTokenSource();
             cancelled.Cancel();
-            using (var connection = new TursoConnection($"Data Source={source}"))
+            using (var connection = new TursoConnection(TestMasterKey.ConnectionString(source)))
             {
                 connection.Open();
                 Execute(connection, "BEGIN;");
-                await Assert.That(() => TursoCopy.Write(connection, Path.Combine(directory.FullName, "copy.db"), chunkRows: 2, chunkBytes: 64, cancelled.Token))
+                var copy = Path.Combine(directory.FullName, "copy.db");
+                TestMasterKey.Create(copy);
+                await Assert.That(() => TursoCopy.Write(connection, TestMasterKey.ConnectionString(copy, Turso.Data.Sqlite.SqliteOpenMode.ReadWriteCreate), chunkRows: 2, chunkBytes: 64, cancelled.Token))
                     .Throws<OperationCanceledException>();
             }
         }
