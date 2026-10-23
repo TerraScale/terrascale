@@ -25,7 +25,7 @@ The [published module](https://proxy.golang.org/terrascale.tech/sdk/@v/v0.0.2.in
 
 ## 2. Supply your project and API key
 
-Create a database and API key in the [dashboard](https://dash.terrascale.tech/) as described in [Getting started](/ja/getting-started/#create-an-account-a-database-and-an-api-key). This example creates the `go_quickstart` collection. Its key needs `documents:read`, `documents:write`, `databases:read` for SQL, and `databases:write` for collection creation. Scope it to the project and database you intend to use. The **Read and write** key from Getting started lacks `databases:read`, so SQL answers `403 forbidden_scope`: under **More access options** choose **Full access** for this key.
+Create a database and API key in the [dashboard](https://dash.terrascale.tech/) as described in [Getting started](/ja/getting-started/#create-an-account-a-database-and-an-api-key). This example creates the `go_quickstart` collection. Its key needs `documents:read`, `documents:write` for collection creation, and `databases:read` for SQL. Scope it to the project and database you intend to use. The **Read and write** key from Getting started lacks `databases:read`, so SQL answers `403 forbidden_scope`: under **More access options** choose **Full access** for this key. A **Read only** key cannot run `POST /sql` either, and answers `403 forbidden_scope` for the same reason.
 
 In Bash, enter the key without saving its value in shell history:
 
