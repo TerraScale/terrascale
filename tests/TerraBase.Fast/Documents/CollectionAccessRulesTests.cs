@@ -252,6 +252,29 @@ public sealed class CollectionAccessRulesTests
     }
 
     [Test]
+    public async Task Batched_absence_assertions_do_not_reserve_hidden_document_bodies()
+    {
+        await using var api = await CollectionAccessRulesTests.StartAsync();
+        await DeclareAsync(api, OwnerRules());
+        var hiddenOwner = DocumentApi.NewId();
+        var hidden = Enumerable.Range(0, 32).Select(_ => DocumentApi.NewId()).ToArray();
+        var padding = new string('x', 128 * 1024);
+        foreach (var id in hidden)
+        {
+            (await api.PutAsync(id, new { owner = hiddenOwner, padding })).Status.ShouldBe(HttpStatusCode.Created);
+        }
+
+        await api.ReservedBytesAsync();
+        using var user = Reader(api, DocumentApi.NewId());
+        foreach (var ids in new[] { hidden, Enumerable.Range(0, hidden.Length).Select(_ => DocumentApi.NewId()).ToArray() })
+        {
+            var absent = await SendAsync(user, HttpMethod.Post, api.Transactions,
+                new { ops = ids.Select(id => new { op = "assert", collection = "items", id, absent = true }).ToArray() });
+            await Assert.That(absent.Status).IsEqualTo(HttpStatusCode.OK);
+        }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task Role_and_public_write_grants_cover_crud_and_transactions_without_ownership(bool publicWrite)
