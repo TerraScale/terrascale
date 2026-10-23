@@ -1,12 +1,11 @@
-# Public multi-arch image ts-orch runs (REFACTOR.md W10): ghcr.io/terrascale/ts-dashboard:<sha> and :main,
-# linux/amd64 + linux/arm64 (portable publish on the builder's platform). Writes the layer cache CI's
-# pull request image builds read; the digest goes to the job summary.
+# Preserve this workflow path and push identity: ts-orch trusts it for OIDC releases.
+# Reuse exact-tree PR proof; direct pushes must pass the full checks here before publishing.
 name: Images (GHCR)
 
 on:
   push:
     branches: [main]
-    paths-ignore: ["**/*.md"]
+    paths-ignore: ["**/*.md", "docs/**", "benchmark/**"]
   workflow_dispatch:
 
 # Every publish runs to completion in its own group.
@@ -17,19 +16,62 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
 jobs:
   image:
+    name: test
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
+      actions: read
       packages: write
       id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+      - name: Reuse only a successful check of this exact tree
+        id: proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/tree-proof.py >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/dashboard-setup
+        id: dependencies
+      - name: Check unproved pushes before publishing
+        if: steps.proof.outputs.proof == ''
+        run: bash scripts/ci/check.sh
+      - name: Build the application once when PR checks are reused
+        if: steps.proof.outputs.proof != ''
+        env:
+          PROOF_URL: ${{ steps.proof.outputs.proof }}
+        run: |
+          echo "Reusing exact-tree checks: $PROOF_URL" >> "$GITHUB_STEP_SUMMARY"
+          make security
+          dotnet build src/TerraScale.Dashboard --configuration Release --no-restore \
+            -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$GITHUB_SHA"
+      - name: Publish the already-built application
+        run: |
+          dotnet publish src/TerraScale.Dashboard --configuration Release --no-build --no-restore \
+            --output "$RUNNER_TEMP/dashboard-publish" \
+            -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$GITHUB_SHA"
+      - name: Smoke-test unproved pushes before publishing
+        if: steps.proof.outputs.proof == ''
+        run: |
+          docker build -f scripts/ci/Dockerfile.runtime -t "ts-dashboard:$GITHUB_SHA" "$RUNNER_TEMP/dashboard-publish"
+          bash scripts/ci/smoke.sh
+      - name: Save main's locked dependency cache
+        if: steps.dependencies.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.temp }}/nuget
+            ~/.npm
+          key: ${{ steps.dependencies.outputs.cache-key }}
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -39,16 +81,16 @@ jobs:
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         id: push
         with:
-          context: .
-          build-args: SOURCE_REVISION=${{ github.sha }}
+          context: ${{ runner.temp }}/dashboard-publish
+          file: scripts/ci/Dockerfile.runtime
           platforms: linux/amd64,linux/arm64
           tags: |
             ghcr.io/terrascale/ts-dashboard:${{ github.sha }}
             ${{ github.ref == 'refs/heads/main' && 'ghcr.io/terrascale/ts-dashboard:main' || '' }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          # Only main writes the layer cache; CI's pull request builds read it.
-          cache-from: type=gha,scope=dashboard-image
-          cache-to: type=gha,mode=max,scope=dashboard-image
+          # Only main writes shared dependency and runtime layer caches.
+          cache-from: type=gha,scope=dashboard-runtime
+          cache-to: type=gha,mode=max,scope=dashboard-runtime
           push: true
       # Index digest plus each platform's child digest (ts-orch specs pin the linux/arm64 child).
       - run: |

@@ -1,0 +1,7 @@
+run_id,workflow,event,conclusion,url,jobs,wall_seconds,initial_queue_seconds,runner_job_minutes
+39883426465,CI,push,failure,https://github.com/TerraScale/ts-dashboard/actions/runs/39883426465,1,314.0,25.0,5.233333333333333
+39883088841,CI,pull_request,success,https://github.com/TerraScale/ts-dashboard/actions/runs/39883088841,1,355.0,3.0,5.916666666666667
+39883426595,Slow,push,success,https://github.com/TerraScale/ts-dashboard/actions/runs/39883426595,1,254.0,77.0,4.233333333333333
+39872842398,Slow,pull_request,failure,https://github.com/TerraScale/ts-dashboard/actions/runs/39872842398,1,223.0,208.0,3.716666666666667
+39883426565,Images (GHCR),push,failure,https://github.com/TerraScale/ts-dashboard/actions/runs/39883426565,1,179.0,38.0,2.9833333333333334
+39816512800,CodeQL,workflow_dispatch,success,https://github.com/TerraScale/ts-dashboard/actions/runs/39816512800,4,699.0,242.0,6.3

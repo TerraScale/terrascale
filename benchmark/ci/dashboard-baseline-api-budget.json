@@ -1,0 +1,746 @@
+{
+  "workflow_list_commands": [
+    {
+      "command": [
+        "gh",
+        "run",
+        "list",
+        "--repo",
+        "TerraScale/ts-dashboard",
+        "--workflow",
+        "ci.yml",
+        "-L",
+        "100",
+        "--json",
+        "databaseId,workflowDatabaseId,workflowName,name,displayTitle,event,status,conclusion,createdAt,startedAt,updatedAt,headBranch,headSha,number,url,attempt"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:35:10.708740+00:00"
+    },
+    {
+      "command": [
+        "gh",
+        "run",
+        "list",
+        "--repo",
+        "TerraScale/ts-dashboard",
+        "--workflow",
+        "slow.yml",
+        "-L",
+        "100",
+        "--json",
+        "databaseId,workflowDatabaseId,workflowName,name,displayTitle,event,status,conclusion,createdAt,startedAt,updatedAt,headBranch,headSha,number,url,attempt"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:35:14.434057+00:00"
+    },
+    {
+      "command": [
+        "gh",
+        "run",
+        "list",
+        "--repo",
+        "TerraScale/ts-dashboard",
+        "--workflow",
+        "images-ghcr.yml",
+        "-L",
+        "100",
+        "--json",
+        "databaseId,workflowDatabaseId,workflowName,name,displayTitle,event,status,conclusion,createdAt,startedAt,updatedAt,headBranch,headSha,number,url,attempt"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:35:16.178027+00:00"
+    },
+    {
+      "command": [
+        "gh",
+        "run",
+        "list",
+        "--repo",
+        "TerraScale/ts-dashboard",
+        "--workflow",
+        "codeql.yml",
+        "-L",
+        "100",
+        "--json",
+        "databaseId,workflowDatabaseId,workflowName,name,displayTitle,event,status,conclusion,createdAt,startedAt,updatedAt,headBranch,headSha,number,url,attempt"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:35:17.129019+00:00"
+    }
+  ],
+  "job_timing_calls": [
+    {
+      "kind": "job-timing",
+      "run_id": 39883426465,
+      "reason": "CI latest completed main failure",
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39883426465/jobs?per_page=100"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:29.307095+00:00"
+    },
+    {
+      "kind": "job-timing",
+      "run_id": 39883088841,
+      "reason": "CI latest successful PR",
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39883088841/jobs?per_page=100"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:29.891769+00:00"
+    },
+    {
+      "kind": "job-timing",
+      "run_id": 39883426595,
+      "reason": "Slow latest successful main",
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39883426595/jobs?per_page=100"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:30.516290+00:00"
+    },
+    {
+      "kind": "job-timing",
+      "run_id": 39872842398,
+      "reason": "Slow latest failed PR",
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39872842398/jobs?per_page=100"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:31.110468+00:00"
+    },
+    {
+      "kind": "job-timing",
+      "run_id": 39883426565,
+      "reason": "Images latest main failure",
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39883426565/jobs?per_page=100"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:31.659569+00:00"
+    },
+    {
+      "kind": "job-timing",
+      "run_id": 39816512800,
+      "reason": "CodeQL only baseline run",
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39816512800/jobs?per_page=100"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:32.598854+00:00"
+    }
+  ],
+  "failure_log_calls": [
+    {
+      "kind": "failure-log",
+      "run_id": 39883847464,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39883847464/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:14.183904+00:00",
+      "members": 12
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39883661586,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39883661586/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:14.258208+00:00",
+      "members": 12
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39883426465,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39883426465/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:14.268216+00:00",
+      "members": 12
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39883406697,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39883406697/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:15.362391+00:00",
+      "members": 12
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39882594788,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39882594788/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:15.424478+00:00",
+      "members": 12
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39876417752,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39876417752/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:15.315705+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39874625679,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39874625679/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:16.427621+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39872575340,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39872575340/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:16.378658+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39870851316,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39870851316/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:16.516458+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39785871242,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39785871242/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:17.535586+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39784654715,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39784654715/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:17.581689+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39782315771,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39782315771/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:17.603567+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39782134594,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39782134594/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:18.583900+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39781355356,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39781355356/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:18.731531+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39781333301,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39781333301/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:18.699398+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39680546539,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39680546539/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:19.865046+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39668609733,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39668609733/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:19.954127+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39667613380,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39667613380/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:19.931549+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39603691501,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39603691501/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:21.148059+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39872842398,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39872842398/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:21.119566+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39871778918,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39871778918/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:21.080346+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39801706784,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39801706784/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:22.168862+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39799075866,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39799075866/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:22.181817+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39797379885,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39797379885/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:22.295938+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39796017830,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39796017830/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:23.371732+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39793443800,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39793443800/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:23.394176+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39791253002,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39791253002/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:23.511401+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39789992109,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39789992109/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:24.503141+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39787207240,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39787207240/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:25.207620+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39787203914,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39787203914/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:24.849478+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39782315588,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39782315588/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:25.616204+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39781974043,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39781974043/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:26.098170+00:00",
+      "members": 2
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39781355418,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39781355418/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:26.400940+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39781333271,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39781333271/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:27.356607+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39779399796,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39779399796/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:27.258435+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39776847443,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39776847443/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:27.521810+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39776770425,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39776770425/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:28.622490+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39680546438,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39680546438/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:28.664565+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39678865117,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39678865117/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:28.819994+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39668609736,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39668609736/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:29.926444+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39667913923,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39667913923/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:30.171194+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39667613234,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39667613234/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:30.175987+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39666555668,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39666555668/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:31.142223+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39606620635,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39606620635/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:31.543892+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39605663903,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39605663903/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:31.395200+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39603739320,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39603739320/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:32.423678+00:00",
+      "members": 4
+    },
+    {
+      "kind": "failure-log",
+      "run_id": 39883426565,
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/actions/runs/39883426565/logs"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:36:32.720588+00:00",
+      "members": 14
+    }
+  ],
+  "label_history_calls": [
+    {
+      "kind": "PR-label-history",
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/issues/99/timeline?per_page=100"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:37:44.194699+00:00"
+    },
+    {
+      "kind": "PR-label-history",
+      "command": [
+        "gh",
+        "api",
+        "repos/TerraScale/ts-dashboard/issues/95/timeline?per_page=100"
+      ],
+      "exit_code": 0,
+      "completed_utc": "2026-10-23T01:37:45.167626+00:00"
+    }
+  ],
+  "budget": {
+    "workflow_list_commands_used": 4,
+    "workflow_list_limit_each": 100,
+    "job_timing_calls_used": 6,
+    "job_timing_calls_reserved_for_lead_after": 4,
+    "job_timing_calls_total_limit": 10,
+    "failure_log_calls": 47,
+    "label_history_calls": 2,
+    "explicit_gh_api_commands": 55,
+    "total_gh_commands": 59,
+    "note": "gh run list internal workflow-resolution HTTP requests were not traced. The six direct jobs calls are the complete job/timing budget used; log downloads and label timelines are not timing calls. No run-list repeats or polling."
+  }
+}
