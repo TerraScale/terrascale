@@ -22,8 +22,8 @@ namespace TerraBase.Engine.Sqlite;
 /// </para>
 /// <para>
 /// The open gap of section 1.3, a crash between a failed sync and its fault record, is closed by write intents: before an
-/// incarnation's first active storage operation starts, <c>_tb_write_intent</c> records it, with FULL, under this
-/// process's replica id in a separate node-local journal, independent of the catalog writer. A clean stop keeps the replica id; any other ending raises its epoch (<see cref="ReplicaIdentityFile"/>),
+/// incarnation's first active storage operation that can write starts, <c>_tb_write_intent</c> records it (NORMAL suffices for
+/// the process crash an ordinary intent speaks for, decision 0013d) under this process's replica id in a separate node-local journal, independent of the catalog writer. A clean stop keeps the replica id; any other ending raises its epoch (<see cref="ReplicaIdentityFile"/>),
 /// so at the next start every remaining intent of another replica id becomes a fault, except where the copy's own FULL log
 /// is proven to be all that remains: no record names the database, no fault of it was being recorded (that intent's
 /// replica is <see cref="Faulting"/>), and the kernel caches none of its pages (<see cref="PageCache"/>), so the failed sync
@@ -255,7 +255,9 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
     }
 
     /// <summary>
-    /// Records, with FULL, that <paramref name="store"/>'s incarnation has an active storage operation. Runs before native use.
+    /// Records that <paramref name="store"/>'s incarnation has an active storage operation. Runs before native use. NORMAL
+    /// unless a record refuses the copy: an ordinary intent speaks only for a process crash, after which the unsynced commit
+    /// is still read back, and after a power loss the restart proof (<see cref="PageCache"/>) passes anyway (decision 0013d).
     /// </summary>
     internal async Task RecordIntentAsync(SqliteDatabaseStore store, CancellationToken cancellationToken)
     {
@@ -266,7 +268,22 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
         {
             // Under the gate: a deletion closes the store before it forgets the database's intents, so none outlives it.
             ObjectDisposedException.ThrowIf(store.IsClosed, store);
-            await WriteIntentAsync(engine.IntentStore!, key, store.Incarnation, cancellationToken).ConfigureAwait(false);
+            // A Faulting mark of this incarnation stays: FlagAsync writes it without the gate.
+            _ = await InSystemAsync(engine.IntentStore!, command =>
+            {
+                using var insert = command("""
+                    INSERT INTO _tb_write_intent (organization, project, database, incarnation, replica)
+                    VALUES ($organization, $project, $database, $incarnation, $replica)
+                    ON CONFLICT (organization, project, database) DO UPDATE
+                        SET incarnation = excluded.incarnation, replica = excluded.replica
+                        WHERE NOT (replica = $faulting AND incarnation = excluded.incarnation);
+                    """);
+                key.Bind(insert);
+                insert.Parameters.AddWithValue("$incarnation", store.Incarnation.ToString());
+                insert.Parameters.AddWithValue("$replica", unchecked((long)engine.ReplicaId.Value));
+                insert.Parameters.AddWithValue("$faulting", Faulting);
+                return insert.ExecuteNonQuery();
+            }, cancellationToken, full: Refusal(store) is not null).ConfigureAwait(false);
         }
         finally
         {
@@ -278,22 +295,18 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
     /// Marks <paramref name="store"/>'s intent <see cref="Faulting"/> as soon as a fault is noted in memory, so a crash before
     /// its record still faults the copy. Never throws; a mark that cannot be written fails the node closed.
     /// </summary>
+    /// <remarks>
+    /// Without the gate: a transaction read under it (a rebuild's barrier) waits for this mark before its error surfaces.
+    /// Only <see cref="RecordAsync"/>, once the record is durable, turns a mark back into an ordinary intent.
+    /// </remarks>
     internal async Task FlagAsync(SqliteDatabaseStore store)
     {
         try
         {
-            await _gate.WaitAsync().ConfigureAwait(false);
-            try
+            // A record already refuses the copy, and recovery never proves a copy its record names.
+            if (store.RebuildRow is null && !store.IsClosed && engine.IntentStore is { } journal)
             {
-                // A record already refuses the copy, and recovery never proves a copy its record names.
-                if (store.RebuildRow is null && !store.IsClosed && engine.IntentStore is { } journal)
-                {
-                    await WriteIntentAsync(journal, Key.Of(store.Tenant!), store.Incarnation, CancellationToken.None, Faulting).ConfigureAwait(false);
-                }
-            }
-            finally
-            {
-                _gate.Release();
+                await WriteIntentAsync(journal, Key.Of(store.Tenant!), store.Incarnation, CancellationToken.None, Faulting).ConfigureAwait(false);
             }
         }
         catch (Exception error)
@@ -338,7 +351,7 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
                 delete.Parameters.AddWithValue("$incarnation", store.Incarnation.ToString());
                 delete.Parameters.AddWithValue("$replica", unchecked((long)engine.ReplicaId.Value));
                 return delete.ExecuteNonQuery();
-            }, CancellationToken.None).ConfigureAwait(false);
+            }, CancellationToken.None, full: false).ConfigureAwait(false);
         }
         finally
         {
@@ -1198,12 +1211,13 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
     // One system transaction, FULL and uncaptured when it writes, running `call` and committing. Every call reads at most a
     // page of rows or intents: that much memory is reserved first.
     private async Task<T> InSystemAsync<T>(
-        SqliteDatabaseStore system, Func<Func<string, SqliteCommand>, T> call, CancellationToken cancellationToken, bool write = true, int rows = 1)
+        SqliteDatabaseStore system, Func<Func<string, SqliteCommand>, T> call, CancellationToken cancellationToken, bool write = true, int rows = 1,
+        bool full = true)
     {
         using var reservation = Reserve(rows);
         try
         {
-            return await RunInSystemAsync(system, call, write, cancellationToken).ConfigureAwait(false);
+            return await RunInSystemAsync(system, call, write, full, cancellationToken).ConfigureAwait(false);
         }
         catch (InvalidDataException error)
         {
@@ -1214,7 +1228,7 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
     }
 
     private static async Task<T> RunInSystemAsync<T>(
-        SqliteDatabaseStore system, Func<Func<string, SqliteCommand>, T> call, bool write, CancellationToken cancellationToken)
+        SqliteDatabaseStore system, Func<Func<string, SqliteCommand>, T> call, bool write, bool full, CancellationToken cancellationToken)
     {
         if (!write)
         {
@@ -1222,7 +1236,7 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
             return await read.LedgerAsync(call, cancellationToken).ConfigureAwait(false);
         }
 
-        await using var transaction = await system.BeginRebuildTransactionAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await system.BeginRebuildTransactionAsync(cancellationToken, full).ConfigureAwait(false);
         await transaction.SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         var result = await transaction.LedgerAsync(call, cancellationToken).ConfigureAwait(false);
         _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
