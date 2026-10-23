@@ -24,7 +24,21 @@ public sealed class BenchmarkClusterHost
         var chosen = Environment.GetEnvironmentVariable("TERRABASE_BENCH_REGIONS") is { Length: > 0 } list
             ? list.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             : [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
-        await using var cluster = await Cluster.StartLocalAsync(chosen);
+        // With bucket credentials (BUCKET_NAME, the AWS_* variables of a private test bucket and the bucket's
+        // TERRABASE_MASTER_KEY, shared by every node and run as in production) the nodes back up and mirror shapes to that
+        // bucket: shape-bench measures free-read tiers T1 and T2 against it.
+        await using var cluster = Environment.GetEnvironmentVariable("BUCKET_NAME") is { Length: > 0 } bucket
+            ? await Cluster.StartBucketAsync(chosen, settings =>
+            {
+                settings["backup-endpoint"] = Required("AWS_ENDPOINT_URL_S3");
+                settings["backup-region"] = Required("AWS_REGION");
+                settings["backup-bucket"] = bucket.StartsWith("ts-", StringComparison.Ordinal)
+                    ? bucket : throw new InvalidOperationException("BUCKET_NAME must name a private ts-* test bucket, never a production one");
+                settings["backup-access-key-id"] = Required("AWS_ACCESS_KEY_ID");
+                settings["backup-secret-key"] = Required("AWS_SECRET_ACCESS_KEY");
+                settings["master-key"] = Required("TERRABASE_MASTER_KEY");
+            })
+            : await Cluster.StartLocalAsync(chosen);
         foreach (var pair in (Environment.GetEnvironmentVariable("TERRABASE_BENCH_LINK_DELAYS") ?? "")
             .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
         {
@@ -62,4 +76,7 @@ public sealed class BenchmarkClusterHost
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }
     }
+
+    private static string Required(string name) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value
+        ? value : throw new InvalidOperationException($"the bucket variable {name} is missing");
 }
