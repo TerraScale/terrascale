@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
 using System.Text;
 using Google.Protobuf;
+using TerraBase.Configuration;
 using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 
@@ -14,18 +15,28 @@ namespace TerraBase.Features.Replication;
 /// is the batch's LZ4 envelope sealed as <c>TBL1</c> ‖ nonce ‖ AES-256-GCM ciphertext ‖ tag under its own fresh key, which
 /// only the peer streams carry, with the object key as associated data. A machine with a bucket says so in its
 /// <c>Welcome</c> and reads chunks; one it cannot read refuses the batch as <c>chunk_unread</c>. Without a bucket no chunk
-/// is read.
+/// is read or sent.
 /// </summary>
-internal sealed partial class LogChunks(IServiceProvider services, IMeterFactory meters)
+internal sealed partial class LogChunks
 {
     internal const string Prefix = "v1/replication/";
     private const int NonceBytes = 12;
     private const int TagBytes = 16;
     private const int Overhead = 4 + NonceBytes + TagBytes;
 
-    private readonly IObjectStore? _store = services.GetService<IObjectStore>();
-    private readonly Counter<long> _requests = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.replication.log_chunk_requests", "{request}",
-        "Object store requests of log shipping, by operation (put, get, delete, list).");
+    private readonly IObjectStore? _store;
+    private readonly Counter<long> _requests;
+
+    public LogChunks(IServiceProvider services, TerraBaseOptions options, TimeProvider time, IMeterFactory meters, ILogger<LogChunks> logger)
+    {
+        _store = services.GetService<IObjectStore>();
+        (_options, _time, _logger) = (options, time, logger);
+        var meter = meters.Create(Telemetry.MeterName);
+        _requests = meter.CreateCounter<long>("terrabase.replication.log_chunk_requests", "{request}",
+            "Object store requests of log shipping, by operation (put, get, delete, list).");
+        _bytes = meter.CreateCounter<long>("terrabase.replication.shipped_bytes", "By",
+            "Change group bytes this machine shipped, by path: peer (batches on the peer streams) or store (log chunks put in the object store).");
+    }
 
     /// <summary>Whether this machine reads log chunks: it has the object store.</summary>
     public bool Reads => _store is not null;
