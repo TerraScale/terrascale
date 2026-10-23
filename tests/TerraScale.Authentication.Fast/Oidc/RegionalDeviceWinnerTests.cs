@@ -57,17 +57,28 @@ public sealed class RegionalDeviceWinnerTests
             .Document.GetProperty("id").GetString()!;
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var approvingB = await ApprovalReplicaAsync(regions, winningRegion, winning, reached, release);
+        var admittedA = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var admittedB = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var beginA = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var beginB = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var approvingA = await ApprovalReplicaAsync(regions, losingRegion, losing, admittedA, beginA);
+        await using var approvingB = await ApprovalReplicaAsync(regions, winningRegion, winning, admittedB, beginB, reached, release);
         var approvals = new List<Task>();
         string? losingPayload = null;
-        regions.HoldReplication();
         try
         {
-            // Both real approval transactions must commit locally before either remote_durable reply completes.
-            // Only B's continuation after RedeemExactlyOnce is paused; replication is released before payload writes.
+            // DeviceGate's genuine hosted admissions and rate-limit writes finish while peers are healthy.
             approvals.Add(ApproveAsync(approvingB.Client, winningSession, userCode));
+            await admittedB.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            approvals.Add(ApproveAsync(approvingA.Client, losingSession, userCode));
+            await admittedA.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            regions.HoldReplication();
+
+            // Both atomic approvals commit locally before either remote_durable reply completes.
+            // B's continuation after RedeemExactlyOnce stays paused until A has written its payload.
+            beginB.TrySetResult();
             await LocallyApprovedAsync(store, userCodeId);
-            approvals.Add(ApproveAsync(losing.Client, losingSession, userCode));
+            beginA.TrySetResult();
             await LocallyApprovedAsync(Store(losing), userCodeId);
             regions.ReleaseReplication();
             await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -78,6 +89,8 @@ public sealed class RegionalDeviceWinnerTests
         finally
         {
             regions.ReleaseReplication();
+            beginA.TrySetResult();
+            beginB.TrySetResult();
             release.TrySetResult();
             await Task.WhenAll(approvals);
         }
@@ -94,7 +107,7 @@ public sealed class RegionalDeviceWinnerTests
         }
 
         // A's manager already saw payload A during approval; it must now redeem converged payload B without a restart.
-        using var redeemed = await DeviceTokenAsync(losing, deviceCode);
+        using var redeemed = await DeviceTokenAsync(approvingA.Client, deviceCode);
         await Assert.That(redeemed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var tokens = await OidcHarness.JsonAsync(redeemed);
         await ConvergedAsync(nodes);
@@ -123,7 +136,7 @@ public sealed class RegionalDeviceWinnerTests
                 ["grant_type"] = "refresh_token",
                 ["refresh_token"] = tokens.GetProperty("refresh_token").GetString()!,
                 ["client_id"] = OidcIssuer.CliClientId,
-            }, null, null);
+            }, null, null, client: node == losing ? approvingA.Client : node.Client);
             await Assert.That(refreshed.StatusCode).IsEqualTo(HttpStatusCode.OK);
             tokens = await OidcHarness.JsonAsync(refreshed);
             access = tokens.GetProperty("access_token").GetString()!;
@@ -172,7 +185,7 @@ public sealed class RegionalDeviceWinnerTests
                 ["grant_type"] = "refresh_token",
                 ["refresh_token"] = tokens.GetProperty("refresh_token").GetString()!,
                 ["client_id"] = OidcIssuer.CliClientId,
-            }, null, null);
+            }, null, null, client: node == losing ? approvingA.Client : node.Client);
             await Assert.That(refresh.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
             await Assert.That(await OidcHarness.ErrorAsync(refresh)).IsEqualTo("invalid_grant");
         }
@@ -181,12 +194,11 @@ public sealed class RegionalDeviceWinnerTests
     private static AuthStore Store(OidcHarness node) => node.Server.App.Services.GetRequiredService<AuthStore>();
 
     private static Task<AuthTestServer> ApprovalReplicaAsync(RegionalTerraBaseFixture regions, string region, OidcHarness node,
-        TaskCompletionSource reached, TaskCompletionSource release)
+        TaskCompletionSource admitted, TaskCompletionSource beginApproval, TaskCompletionSource? reached = null, TaskCompletionSource? release = null)
     {
         var options = node.Server.App.Services.GetRequiredService<AuthOptions>();
         return AuthTestServer.StartAsync(settings: settings =>
         {
-            settings["TS_REGION"] = region;
             settings["master-key"] = Convert.ToBase64String(options.MasterKey);
             settings["audit-signing-key"] = Convert.ToBase64String(options.AuditSigningKey!);
             settings["dashboard-client-secret"] = OidcHarness.ClientSecret;
@@ -197,17 +209,26 @@ public sealed class RegionalDeviceWinnerTests
             services.AddSingleton<IEmailSender>(new CapturingEmailSender());
             services.AddSingleton(regions[region].Http);
             services.AddSingleton(regions.Database(region));
-            services.AddOpenIddict().AddServer(server => server.AddEventHandler<OpenIddictServerEvents.ProcessSignInContext>(handler => handler
-                .SetOrder(OpenIddictServerHandlers.RedeemTokenEntry.Descriptor.Order + 1)
-                .UseInlineHandler(async context =>
-                {
-                    if (context.EndpointType == OpenIddictServerEndpointType.EndUserVerification)
+            services.AddOpenIddict().AddServer(server => server
+                // Handling starts after DeviceGate and OpenIddict's verification authentication have admitted the request.
+                .AddEventHandler<OpenIddictServerEvents.HandleEndUserVerificationRequestContext>(handler => handler
+                    .SetOrder(int.MinValue)
+                    .UseInlineHandler(async context =>
                     {
-                        reached.TrySetResult();
-                        await release.Task.WaitAsync(context.CancellationToken);
-                    }
-                })));
-        });
+                        admitted.TrySetResult();
+                        await beginApproval.Task.WaitAsync(context.CancellationToken);
+                    }))
+                .AddEventHandler<OpenIddictServerEvents.ProcessSignInContext>(handler => handler
+                    .SetOrder(OpenIddictServerHandlers.RedeemTokenEntry.Descriptor.Order + 1)
+                    .UseInlineHandler(async context =>
+                    {
+                        if (context.EndpointType == OpenIddictServerEndpointType.EndUserVerification && reached is not null && release is not null)
+                        {
+                            reached.TrySetResult();
+                            await release.Task.WaitAsync(context.CancellationToken);
+                        }
+                    })));
+        }, configure: builder => builder.Configuration["TS_REGION"] = region);
     }
 
     private static async Task LocallyApprovedAsync(AuthStore store, string userCodeId) =>
@@ -233,13 +254,13 @@ public sealed class RegionalDeviceWinnerTests
         return client.SendAsync(request);
     }
 
-    private static Task<HttpResponseMessage> DeviceTokenAsync(OidcHarness node, string deviceCode) =>
-        node.PostTokenAsync(new()
+    private static Task<HttpResponseMessage> DeviceTokenAsync(HttpClient client, string deviceCode) =>
+        client.PostAsync($"/{OidcIssuer.Slug}/oauth/token", new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code",
             ["device_code"] = deviceCode,
             ["client_id"] = OidcIssuer.CliClientId,
-        }, null, null);
+        }));
 
     private static async Task UsableAsync(OidcHarness node, string access, string subject)
     {

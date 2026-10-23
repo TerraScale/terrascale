@@ -382,6 +382,7 @@ public sealed class ConfigurationTests
             settings["master-key"] = "not-a-key";
             await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string>
             {
+                ["TS_REGION"] = "gru",
                 ["TS_AUTH_MASTER_KEY_FILE"] = masterKey,
                 ["TERRABASE_PEER_SECRET"] = "not-a-peer-secret",
                 ["TERRABASE_PEER_SECRET_FILE"] = peerSecret,
