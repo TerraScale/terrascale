@@ -2,8 +2,9 @@ using System.Diagnostics;
 using System.Net;
 using System.Text.Json.Nodes;
 using Bogus;
-using Turso.Data.Sqlite;
 using TerraBase.Primitives;
+using TerraBase.Testing;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.E2E;
 
@@ -295,7 +296,7 @@ public sealed class RepairAndContractE2ETests
     // Deletes the document from every table that keys rows by an id column, whatever the layout of the build.
     internal static async Task DeleteRowsAsync(string file, string id)
     {
-        await using var connection = new SqliteConnection($"Data Source={file};Pooling=False");
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(file));
         await connection.OpenAsync();
         var tables = new List<string>();
         using (var list = connection.CreateCommand())

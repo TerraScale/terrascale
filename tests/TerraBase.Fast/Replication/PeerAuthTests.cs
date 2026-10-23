@@ -296,6 +296,11 @@ public sealed class PeerAuthTests
         start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, typeof(Program).Assembly.GetName().Name + ".dll"));
         foreach (var name in TerraBaseOptions.SettingNames)
         {
+            if (name == "master-key")
+            {
+                continue;
+            }
+
             var value = name switch
             {
                 "port" or "internal-port" or "metrics-port" or "postgres-port" => "0",
@@ -316,6 +321,8 @@ public sealed class PeerAuthTests
         {
             start.Environment[name] = value;
         }
+
+        TestMasterKey.ConfigureProcess(start);
 
         return Process.Start(start) ?? throw new InvalidOperationException("the TerraBase process did not start");
     }

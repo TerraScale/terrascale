@@ -106,7 +106,8 @@ internal sealed class NodeProcess : IAsyncDisposable
             _ = start.Environment.Remove(name);
         }
 
-        // As the in-process harness runs it: Development needs no Tigris bucket or master key for backups.
+        // Real child binaries use only the synthetic fixture master, which survives every restart.
+        TestMasterKey.ConfigureProcess(start);
         start.Environment[PeerCredential.EnvironmentVariable] = PeerTls.Secret;
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
         start.Environment["DOTNET_ENVIRONMENT"] = "Development";
