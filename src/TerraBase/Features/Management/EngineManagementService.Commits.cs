@@ -909,7 +909,7 @@ internal sealed partial class EngineManagementService
                             return actor switch
                             {
                                 NotFound error => error,
-                                Forbidden error => new NotFound(error.Message, error.Code),
+                                Forbidden error => error,
                                 OrganizationMember => throw new UnreachableException(),
                             };
                         }

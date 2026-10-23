@@ -43,6 +43,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/collections/{collection} TsAuth(documents:read) getCollection Collections
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/documents TsAuth(documents:read) listDocuments Documents
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:read) getDocument Documents
+        GET /v1/projects/{project}/databases/{database}/collections/{collection}/rules TsAuth(documents:read) getCollectionRules Collections
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:read) getDeclaredCollectionSchema Collections
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape TsAuth(documents:read) getShape Live
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape/keys TsAuth(documents:read) getShapeKey Live
@@ -97,6 +98,7 @@ public sealed class ApiReferenceTests
         PUT /v1/projects/{project}/databases/{database}/auto-index/{collection} TsAuth(databases:write) setAutoIndexPolicy Indexes
         PUT /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:write) setBackupPolicy Backups
         PUT /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) putDocument Documents
+        PUT /v1/projects/{project}/databases/{database}/collections/{collection}/rules TsAuth(documents:write) putCollectionRules Collections
         PUT /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) putDeclaredCollectionSchema Collections
         PUT /v1/projects/{project}/databases/{database}/collections/{collection}/ttl TsAuth(documents:write) putCollectionTtl Collections
         PUT /v1/projects/{project}/databases/{database}/import/source TsAuth(databases:write,documents:write) uploadImportSource Imports
