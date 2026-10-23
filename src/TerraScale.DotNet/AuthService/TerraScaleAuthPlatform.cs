@@ -103,14 +103,17 @@ public sealed class TerraScaleAuthPlatformClient(TerraScaleAuthClient client)
             null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
 
-    /// <summary>delete_account: DELETE /v1/terrascale/account. Deletes the signed-in user's own account; 409
-    /// <c>last_owner</c> while the user is the last owner of an organization with other members.</summary>
-    public Task DeleteAccountAsync(
+    /// <summary>
+    /// delete_account: DELETE /v1/terrascale/account. Deletes the signed-in user's own account: true once it is deleted
+    /// (204), false while a project closure is pending (202; ts-auth finishes it in the background, and calling again
+    /// resumes it). 409 <c>last_owner</c>, <c>not_empty</c>, <c>closure_conflict</c> or <c>binding_conflict</c>: before
+    /// anything was removed the account and its organizations stay, though project closures already started finish on
+    /// their own; once removals began, the deletion is paused until the cause is resolved.
+    /// </summary>
+    public Task<bool> DeleteAccountAsync(
         string accessToken,
         CancellationToken cancellationToken = default) =>
-        client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, "/v1/terrascale/account",
-            null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
-            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
+        client.SendAuthenticatedForDeletionAsync("/v1/terrascale/account", TerraScaleAuthCredentials.Bearer(accessToken), cancellationToken);
 
     /// <summary>create_project: POST /v1/terrascale/organizations/{organization}/projects.</summary>
     public Task<TerraScaleAuthPlatformProject> CreateProjectAsync(
@@ -158,15 +161,19 @@ public sealed class TerraScaleAuthPlatformClient(TerraScaleAuthClient client)
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformProject,
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
-    /// <summary>delete_project: DELETE /v1/terrascale/organizations/{organization}/projects/{project}.</summary>
-    public Task DeleteProjectAsync(
+    /// <summary>
+    /// delete_project: DELETE /v1/terrascale/organizations/{organization}/projects/{project}. True once the project is
+    /// removed (204: TerraBase accepted its closure); false while the closure is pending (202; ts-auth finishes it in the
+    /// background, and calling again resumes it). 409 <c>not_empty</c>, <c>closure_conflict</c> or <c>binding_conflict</c>
+    /// changes nothing.
+    /// </summary>
+    public Task<bool> DeleteProjectAsync(
         string accessToken,
         string organizationId,
         string projectId,
         CancellationToken cancellationToken = default) =>
-        client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, $"/v1/terrascale/organizations/{Id(organizationId)}/projects/{Id(projectId)}",
-            null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
-            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
+        client.SendAuthenticatedForDeletionAsync($"/v1/terrascale/organizations/{Id(organizationId)}/projects/{Id(projectId)}",
+            TerraScaleAuthCredentials.Bearer(accessToken), cancellationToken);
 
     /// <summary>list_project_members: GET /v1/terrascale/organizations/{organization}/projects/{project}/members.</summary>
     public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProjectMember>> ListProjectMembersAsync(
