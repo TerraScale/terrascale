@@ -415,8 +415,8 @@ public sealed class RegionProcessHost
     // Refuses the held database's batches and repairs before they apply, as a failed apply is refused: the stream stays.
     private sealed class HeldSink(IChangeGroupSink inner, string hold) : IChangeGroupSink
     {
-        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken) =>
-            Held(database) ? throw new IOException("the harness holds this database's replication") : inner.ApplyAsync(database, origin, groups, expected, cancellationToken);
+        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken, ApplyProgress? progress = null) =>
+            Held(database) ? throw new IOException("the harness holds this database's replication") : inner.ApplyAsync(database, origin, groups, expected, cancellationToken, progress);
 
         public ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
             Held(database) ? throw new IOException("the harness holds this database's replication") : inner.RepairAsync(database, incarnation, states, cancellationToken);

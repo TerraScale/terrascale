@@ -679,14 +679,14 @@ public sealed class BenchmarkProcessHost
 
     private sealed class HeldAckSink(IChangeGroupSink inner, string directory, CommitTiming timing) : IChangeGroupSink
     {
-        public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken)
+        public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken, ApplyProgress? progress = null)
         {
             var entered = Stopwatch.GetTimestamp();
             var nativeCommits = timing.BeginApply(database);
             Hlc? applied;
             try
             {
-                applied = await inner.ApplyAsync(database, origin, groups, expected, cancellationToken);
+                applied = await inner.ApplyAsync(database, origin, groups, expected, cancellationToken, progress);
             }
             finally
             {

@@ -42,6 +42,7 @@ public static class QueryShape
         ExistsFilter exists => new JsonArray("exists", Path(exists.Path)),
         PrefixFilter prefix => new JsonArray("prefix", Path(prefix.Path), "Text"),
         ContainsFilter contains => new JsonArray("contains", Path(contains.Path), contains.Value.Kind.ToString()),
+        SearchFilter search => new JsonArray("search", Path(search.Path), "Text"),
         _ => throw new InvalidOperationException("unknown document filter"),
     };
 
@@ -95,11 +96,11 @@ public static class QueryShape
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var key in keys)
         {
-            var path = Path(key.Path);
+            JsonArray? path = key.Score ? ["$score"] : Path(key.Path);
             if (seen.Add(JsonSerializer.Serialize(path, TerraBaseJsonContext.Default.JsonNode)))
             {
                 sort.Add(new JsonArray(path, key.Descending));
-                if (key.Path.IsId)
+                if (key.Path.IsId && !key.Score)
                 {
                     return sort;
                 }
@@ -142,6 +143,7 @@ public static class QueryShape
         ExistsFilter exists => Weight(exists.Path),
         PrefixFilter prefix => Weight(prefix.Path),
         ContainsFilter contains => Weight(contains.Path),
+        SearchFilter search => Weight(search.Path),
         _ => 0,
     });
 

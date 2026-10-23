@@ -47,6 +47,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private readonly LocalReplica _self;
     private readonly TerraBaseOptions _options;
     private readonly TimeProvider _time;
+    private readonly DatabaseLifecycleCheckpoint _checkpoint;
     private readonly ILogger<PeerStreams> _logger;
     private readonly Counter<long> _unreadable;
     private readonly Histogram<double> _remoteAckDelay;
@@ -59,7 +60,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     public PeerStreams(
         IMembership membership, IChangeGroupSource source, RemoteAckWaiter acks, IReplicaStates states, ITenantDirectory tenants, LocalReplica self, TerraBaseOptions options,
         TimeProvider time, IMeterFactory meters, ILogger<PeerStreams> logger, Lazy<ICatalogGate> catalogGate, PeerCredential credential, IReplicaCopyFaults faults, IRebuildStorage storage,
-        ReplicationTimings timings)
+        ReplicationTimings timings, DatabaseLifecycleCheckpoint checkpoint)
     {
         _credential = credential;
         _timings = timings;
@@ -68,6 +69,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         _catalogGate = catalogGate;
         _faults = faults;
         _storage = storage;
+        _checkpoint = checkpoint;
         var meter = meters.Create(Telemetry.MeterName);
         meter.CreateObservableGauge("terrabase.replication.send_lag", () => Lags(cursor => cursor.BehindSince), "s",
             "Age of the oldest change group not yet acknowledged by the peer region's machines.");
@@ -454,7 +456,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             lock (link.Gate)
             {
                 if (link.Cursors.Values.Any(cursor => cursor.InFlight is not null && !cursor.ResponseReceived
-                    && _time.GetElapsedTime(cursor.SentAt) >= (cursor.Refilling ? RefillTimeout : ReplicationProtocol.ProgressTimeout)))
+                    && _time.GetElapsedTime(Math.Max(cursor.SentAt, cursor.ProgressAt)) >= (cursor.Refilling ? RefillTimeout : ReplicationProtocol.ProgressTimeout)))
                 {
                     throw new TimeoutException("the peer did not acknowledge a batch in time");
                 }
@@ -470,6 +472,28 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 {
                     silent.CancelAfter(ReplicationProtocol.ProgressTimeout);
                     var frame = call.ResponseStream.Current;
+                    if (frame.Applying is { } applying)
+                    {
+                        var database = ChangeGroups.Tenant(applying.Database);
+                        var observed = false;
+                        lock (link.Gate)
+                        {
+                            var cursor = link.Cursors.GetValueOrDefault(database);
+                            if (cursor?.InFlight is { } inFlight && !cursor.Refilling && cursor.Incarnation is { } pinned
+                                && ChangeGroups.RequiredIncarnation(applying.Database) == pinned && applying.ChangeId == (ulong)inFlight
+                                && applying.Progress > cursor.Progress)
+                            {
+                                cursor.Progress = applying.Progress;
+                                cursor.ProgressAt = _time.GetTimestamp();
+                                observed = true;
+                            }
+                        }
+                        if (observed)
+                        {
+                            _checkpoint("replication.progress.observed", database);
+                        }
+                        continue;
+                    }
                     if (frame.KindCase != AckFrame.KindOneofCase.None)
                     {
                         if (frame.Stable is not null)
@@ -513,7 +537,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 using var timer = new PeriodicTimer(Idle, _time);
                 while (await timer.WaitForNextTickAsync(activity.Token).ConfigureAwait(false))
                 {
-                    if (writer.Quiet >= Idle)
+                    bool awaiting;
+                    lock (link.Gate)
+                    {
+                        awaiting = link.Cursors.Values.Any(cursor => cursor.InFlight is not null && !cursor.ResponseReceived && !cursor.Refilling);
+                    }
+                    // Active tenants must not suppress another batch's work-progress reports.
+                    if (writer.Quiet >= Idle || awaiting)
                     {
                         await writer.WriteAsync(new PushFrame { Heartbeat = new Heartbeat { Hlc = _self.Clock.Tick().Value } }, activity.Token).ConfigureAwait(false);
                     }
@@ -839,6 +869,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling, cursor.Stamps) =
                         (refillResume, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true, null);
                     cursor.ResponseReceived = false;
+                    (cursor.Progress, cursor.ProgressAt) = (0, cursor.SentAt);
                 }
                 await stream.WriteAsync(new PushFrame
                 {
@@ -882,6 +913,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (last, groups.Count, _time.GetTimestamp(), Math.Max(cursor.Head, last), false);
                 cursor.ResponseReceived = false;
                 cursor.Stamps = Stamps(groups);
+                (cursor.Progress, cursor.ProgressAt) = (0, cursor.SentAt);
             }
             await stream.WriteAsync(new PushFrame
             {
@@ -1572,6 +1604,10 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         public long[]? Stamps { get; set; }
 
         public long SentAt { get; set; }
+
+        public ulong Progress { get; set; }
+
+        public long ProgressAt { get; set; }
 
         public long RetryAt { get; set; }
 

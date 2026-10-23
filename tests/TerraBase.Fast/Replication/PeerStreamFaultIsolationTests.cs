@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
@@ -575,7 +576,131 @@ public sealed class PeerStreamFaultIsolationTests
         }
     }
 
-    private static async Task WarmAsync(Node sender, Node receiver, CancellationToken cancellationToken)
+    // The receiver's real drop of 2,048 documents waits at each 512-document checkpoint for eleven seconds of fake time:
+    // 44 seconds in all, past two deadlines. Another database ships every half second, so the link's writer is never quiet
+    // for a whole heartbeat period, yet each checkpoint's growth reaches the sender and the batch stays in flight on one stream.
+    [Test]
+    public async Task A_replicated_drop_longer_than_the_deadline_reports_progress_and_commits_on_one_stream()
+    {
+        const int documents = 2048;
+        var half = TimeSpan.FromMilliseconds(500);
+        var time = new FakeTimeProvider();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(120));
+        using var reached = new SemaphoreSlim(0);
+        using var release = new SemaphoreSlim(0);
+        using var observed = new SemaphoreSlim(0);
+        TenantContext? dropping = null;
+        await using var receiver = await Node.StartAsync(services: services =>
+        {
+            services.AddSingleton(provider => ActivatorUtilities.CreateInstance<PeerStreamReceiver>(provider, time));
+            // Only this tenant's drop waits, on its own writer; the stream loop keeps reading heartbeats and other databases.
+            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
+            {
+                if (step == "storage.drop.progress" && database == Volatile.Read(ref dropping))
+                {
+                    _ = reached.Release();
+                    release.Wait(deadline.Token);
+                }
+            });
+        });
+        HeldSource? held = null;
+        await using var sender = await Node.StartAsync(receiver, services =>
+        {
+            services.AddSingleton(provider => ActivatorUtilities.CreateInstance<PeerStreams>(provider, time));
+            services.AddSingleton<IChangeGroupSource>(provider => held = new HeldSource(provider.GetRequiredService<FaultAwareReplicaSource>()));
+            // Called on the sender's response reader: count only, never block.
+            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
+            {
+                if (step == "replication.progress.observed" && database == Volatile.Read(ref dropping))
+                {
+                    _ = observed.Release();
+                }
+            });
+        }, receiver.Api.Server.BaseAddress);
+        var source = held ?? throw new InvalidOperationException("the sender source was not activated");
+        // Whole seconds only until the drop, so heartbeat ticks stay on whole seconds; progress covers slow seeding applies.
+        await WarmAsync(sender, receiver, deadline.Token, () => time.Advance(TimeSpan.FromSeconds(1)));
+        var store = await sender.StoreAsync(sender.Database, deadline.Token);
+        var ids = Enumerable.Range(0, documents).Select(_ => EntityIds.New().ToString()).ToArray();
+        foreach (var chunk in ids.Chunk(IStorageTransaction.MaxChangeGroupChanges))
+        {
+            await using var transaction = await store.BeginDurableTransactionAsync(deadline.Token);
+            foreach (var id in chunk)
+            {
+                _ = await transaction.PutAsync("items", id, "{\"n\":1}"u8.ToArray(), deadline.Token);
+            }
+
+            _ = await transaction.CommitAsync(deadline.Token);
+        }
+
+        await UntilAckedAsync(sender.Database, () => time.Advance(TimeSpan.FromSeconds(1)));
+        await Assert.That(await receiver.HasAsync(receiver.Database, ids[^1], deadline.Token)).IsTrue();
+        var connected = source.Connections;
+        var acknowledged = sender.Status(sender.Database)!.Acknowledged;
+        var peer = receiver.Api.Server.Services.GetRequiredService<LocalReplica>().Id;
+
+        Volatile.Write(ref dropping, sender.Database);
+        CommitMarker marker;
+        await using (var transaction = await store.BeginDurableTransactionAsync(deadline.Token))
+        {
+            await Assert.That(await transaction.DropCollectionAsync("items", deadline.Token)).IsTrue();
+            marker = (await transaction.CommitAsync(deadline.Token)).Marker ?? throw new InvalidOperationException("the drop produced no commit marker");
+        }
+
+        var shipped = time.GetUtcNow();
+        try
+        {
+            for (var checkpoint = 0; checkpoint < documents / 512; checkpoint++)
+            {
+                await reached.WaitAsync(deadline.Token);
+                for (var second = 0; second < 11; second++)
+                {
+                    time.Advance(half);
+                    await sender.PutAsync(sender.Second, $"busy-{checkpoint}-{second}", deadline.Token);
+                    await UntilAckedAsync(sender.Second);
+                    time.Advance(half);
+                    if (second == 0)
+                    {
+                        await observed.WaitAsync(deadline.Token);
+                    }
+                }
+
+                // Progress is liveness only: no stream ACK, persisted cursor or confirmation for the drop yet.
+                await Assert.That(sender.Status(sender.Database)!.Acknowledged).IsEqualTo(acknowledged);
+                await Assert.That((await source.AckedAsync(sender.Database, peer, deadline.Token))!.Value.Acked).IsLessThan(marker.ChangeId);
+                await Assert.That(source.Connections).IsEqualTo(connected);
+                _ = release.Release();
+            }
+
+            await UntilAckedAsync(sender.Database);
+            await Assert.That(sender.Status(sender.Database)!.Acknowledged).IsGreaterThanOrEqualTo(marker.ChangeId);
+            await Assert.That(time.GetUtcNow() - shipped).IsGreaterThan(2 * ReplicationProtocol.ProgressTimeout);
+            await Assert.That(source.Connections).IsEqualTo(connected).Because("progress kept the long batch on its stream");
+            await Assert.That(observed.CurrentCount).IsEqualTo(0).Because("each checkpoint's growth was observed once");
+            await using var read = await (await receiver.StoreAsync(receiver.Database, deadline.Token)).BeginTransactionAsync(write: false, deadline.Token);
+            await Assert.That(await read.GetCollectionAsync("items", deadline.Token)).IsNull();
+        }
+        finally
+        {
+            Volatile.Write(ref dropping, null);
+            _ = release.Release(documents / 512);
+        }
+
+        // The clock stays put while waiting, so a wait alone cannot move a deadline or a heartbeat.
+        async Task UntilAckedAsync(TenantContext database, Action? tick = null)
+        {
+            var head = await source.HeadAsync(database, sender.Pin(database), deadline.Token)
+                ?? throw new InvalidOperationException("the source head was refused");
+            await TerraBaseTestServer.EventuallyAsync(_ =>
+            {
+                tick?.Invoke();
+                return Task.FromResult(sender.Status(database)?.Acknowledged >= head);
+            }, Deadline);
+        }
+    }
+
+    private static async Task WarmAsync(Node sender, Node receiver, CancellationToken cancellationToken, Action? tick = null)
     {
         var source = sender.Api.Server.Services.GetRequiredService<IChangeGroupSource>();
         foreach (var database in new[] { sender.Database, sender.Second })
@@ -585,8 +710,10 @@ public sealed class PeerStreamFaultIsolationTests
                 ?? throw new InvalidOperationException("the warm source head was refused");
             await Assert.That(head).IsGreaterThan(0);
             await TerraBaseTestServer.EventuallyAsync(async token =>
-                sender.Status(database)?.Acknowledged == head
-                && await receiver.HasAsync(database, "warm", token), Deadline);
+            {
+                tick?.Invoke();
+                return sender.Status(database)?.Acknowledged == head && await receiver.HasAsync(database, "warm", token);
+            }, Deadline);
         }
     }
 

@@ -1094,11 +1094,12 @@ public class SqliteCommand : DbCommand
     }
 
     // TerraScale: damage keeps its SQLite code (SQLITE_IOERR 10, SQLITE_CORRUPT 11, SQLITE_NOTADB 26); every other local
-    // status stays SQLITE_ERROR, as upstream reports it.
+    // status stays SQLITE_ERROR, as upstream reports it, except native interruption (SQLITE_INTERRUPT 9).
     internal static int GetNativeSqliteErrorCode(TursoException ex)
         => ex is TursoNativeException native
             ? native.StatusCode switch
             {
+                5 => 9,
                 132 => 26,
                 133 => 11,
                 134 => 10,

@@ -700,6 +700,10 @@ public partial class SqliteConnection : DbConnection
     private TursoStatementHandle PrepareProbe(string sql)
         => ProbeStatements?.Invoke(sql) ?? TursoBindings.PrepareStatement(DatabaseHandle, sql);
 
+    /// <summary>Sets native FTS work/byte accounting on an idle local connection. True interrupts the statement.</summary>
+    public void SetFtsProgressHandler(Func<ulong, ulong, bool>? callback)
+        => TursoBindings.SetFtsProgressHandler(DatabaseHandle, callback);
+
     internal TursoDatabaseHandle DatabaseHandle
     {
         get

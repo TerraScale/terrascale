@@ -3402,14 +3402,14 @@ public sealed class PeerStreamTests
         public ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
             sink.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
 
-        public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken)
+        public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken, ApplyProgress? progress = null)
         {
             if (machine.BeforeApply is { } before)
             {
                 await before(database, groups, cancellationToken);
             }
 
-            return await sink.ApplyAsync(database, origin, groups, expected, cancellationToken);
+            return await sink.ApplyAsync(database, origin, groups, expected, cancellationToken, progress);
         }
 
         public async ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)

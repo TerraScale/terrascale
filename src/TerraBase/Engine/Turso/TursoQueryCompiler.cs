@@ -20,7 +20,8 @@ namespace TerraBase.Engine.Turso;
 /// range, because the Turso planner uses an expression index for neither <c>IN</c> nor a prefix test
 /// (docs/terrabase/turso-spike.md). Sorts order by JSON type first, so an index serves filters, not sorts.
 /// </remarks>
-internal sealed class TursoQueryCompiler(SqliteParameterCollection parameters, RowSource rows)
+internal sealed class TursoQueryCompiler(
+    SqliteParameterCollection parameters, RowSource rows, IReadOnlyDictionary<SearchFilter, int>? searches = null, string? candidates = null)
 {
     // Sort rank by JSON type: missing < null < false < true < numbers < strings < arrays/objects.
     private const string RankCases =
@@ -28,6 +29,15 @@ internal sealed class TursoQueryCompiler(SqliteParameterCollection parameters, R
         "WHEN 'text' THEN 5 WHEN 'array' THEN 6 WHEN 'object' THEN 6 ELSE 0 END";
 
     private readonly Dictionary<string, string> _paths = [];
+    private string? CandidateParameter => candidates is null ? null : field ??= Parameter(candidates);
+
+    private string From => CandidateParameter is { } ids
+        ? CandidateFrom(rows, ids)
+        : rows.From;
+
+    // Hide json_each.id; TEXT affinity lets Turso seek the collection's unique text id index.
+    internal static string CandidateFrom(RowSource source, string ids) =>
+        $"(SELECT CAST(value AS TEXT) AS hit_id FROM json_each({ids})) AS hits CROSS JOIN {source.From} ON {source.From}.id = hits.hit_id";
 
     /// <summary>
     /// Columns: id, version, JSON byte length, then per sort key its type rank and scalar value.
@@ -42,13 +52,13 @@ internal sealed class TursoQueryCompiler(SqliteParameterCollection parameters, R
         foreach (var (key, index) in query.Sort.Select((key, index) => (key, index)))
         {
             var ordinal = index.ToString(CultureInfo.InvariantCulture);
-            var (rank, value) = (Rank(key.Path), Scalar(key.Path));
+            var (rank, value) = key.Score ? ("4", Score()) : (Rank(key.Path), Scalar(key.Path));
             columns.AppendFormat(", {0} AS k{1}r, {2} AS k{1}v", rank, ordinal, value);
             keys.Add((rank, key.Descending));
             keys.Add((value, key.Descending));
         }
 
-        var leadingId = query.Sort.Count > 0 && query.Sort[0].Path.IsId;
+        var leadingId = query.Sort.Count > 0 && query.Sort[0].Path.IsId && !query.Sort[0].Score;
         var after = leadingId && query.After is { } position
             ? $"id {(query.Sort[0].Descending ? "<" : ">")} {Parameter(position.Id)}"
             : After(keys, query.After);
@@ -64,7 +74,7 @@ internal sealed class TursoQueryCompiler(SqliteParameterCollection parameters, R
             SELECT id, {4} AS version, octet_length({5}) AS size{0}
             FROM {6} WHERE {1}{7} AND {2} AND {3}
             ORDER BY
-            """, columns.ToString(), observe ? "tb_query_scan(id) AND " : "", ScanGuardedFilter(query.Filter), after, rows.Version, rows.Json, rows.From, rows.Live);
+            """, columns.ToString(), observe ? "tb_query_scan(id) AND " : "", ScanGuardedFilter(query.Filter), after, rows.Version, rows.Json, From, rows.Live);
         if (leadingId)
         {
             // Ids are unique within a collection: later sort keys cannot break a tie. Ordering by the
@@ -92,7 +102,16 @@ internal sealed class TursoQueryCompiler(SqliteParameterCollection parameters, R
     /// tombstone test. A separate bounded index scan detects an overflow row without loading its body or
     /// evaluating its filter: only the first <paramref name="maxExamined"/> rows contribute matches.
     /// </summary>
-    public string CompileCount(DocumentFilter? filter, long maxExamined, bool observe = false) => rows == RowSource.System || rows == RowSource.Empty
+    public string CompileCount(DocumentFilter? filter, long maxExamined, bool observe = false) => CandidateParameter is not null
+        ? $"""
+        SELECT count(*) + EXISTS (
+            SELECT 1 FROM {From} ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
+        ), coalesce(sum(matched), 0) FROM (
+            SELECT {BudgetedFilter(filter)} AS matched FROM {From}
+            {(observe ? "WHERE tb_query_scan(id)" : "")} ORDER BY id LIMIT {Parameter(maxExamined)}
+        );
+        """
+        : rows == RowSource.System || rows == RowSource.Empty
         ? $"""
         SELECT count(*) + EXISTS (
             SELECT 1 FROM {Counted} {(observe ? "AND tb_query_scan(id)" : "")} ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
@@ -141,8 +160,13 @@ internal sealed class TursoQueryCompiler(SqliteParameterCollection parameters, R
         ExistsFilter exists => exists.Path.IsId ? "1" : $"({Type(exists.Path)} IS NOT NULL)",
         PrefixFilter prefix => Prefix(prefix),
         ContainsFilter contains => Contains(contains),
+        SearchFilter search => Search(search),
         _ => throw new ArgumentOutOfRangeException(nameof(filter), filter.GetType().Name, "unknown filter"),
     };
+
+    private string Search(SearchFilter search) => $"tb_search_match({searches![search].ToString(CultureInfo.InvariantCulture)}, id)";
+
+    private static string Score() => "tb_search_score(id)";
 
     private string Compare(CompareFilter compare)
     {

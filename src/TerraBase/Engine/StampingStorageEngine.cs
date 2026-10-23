@@ -148,11 +148,13 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
             }
         }
 
-        public ValueTask<bool> HasCollectionAsync(string name, CancellationToken cancellationToken) => inner.HasCollectionAsync(name, cancellationToken);
+        public ValueTask<CollectionInfo?> FindCollectionAsync(string name, CancellationToken cancellationToken) => inner.FindCollectionAsync(name, cancellationToken);
     }
 
     private sealed class Transaction(StampingStorageEngine engine, TenantContext? database, IStorageTransaction inner) : IStorageTransaction
     {
+        public long Work => inner.Work;
+
         // Every operation joins the same gate before returning, so reads cannot overtake queued writes.
         private readonly SemaphoreSlim _gate = new(1, 1);
         private readonly Lock _disposalGate = new();
@@ -196,7 +198,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
         // A collection's metadata document drops or creates its collection, as a replicated delta of a collection it lacks may.
         public ValueTask<bool> JoinAsync(string collection, string id, Lattices.DocumentState delta, Lattices.EntryVersion at, CancellationToken cancellationToken) =>
-            collection == DocumentDelta.Collections
+            collection is DocumentDelta.Collections or DocumentDelta.Indexes
                 ? WriteCollectionAsync(() => inner.JoinAsync(collection, id, delta, at, cancellationToken), cancellationToken)
                 : WriteAsync(collection, id, () => inner.JoinAsync(collection, id, delta, at, cancellationToken), cancellationToken);
 
@@ -297,10 +299,10 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
             RunAsync(() => inner.ListIndexesAsync(cancellationToken), cancellationToken);
 
         public ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.CreateIndexAsync(index, cancellationToken), cancellationToken, mutation: true);
+            WriteCollectionAsync(() => inner.CreateIndexAsync(index, cancellationToken), cancellationToken);
 
         public ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.DropIndexAsync(name, cancellationToken), cancellationToken, mutation: true);
+            WriteCollectionAsync(() => inner.DropIndexAsync(name, cancellationToken), cancellationToken);
 
         public ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetUniqueConstraintsAsync(collection, cancellationToken), cancellationToken);

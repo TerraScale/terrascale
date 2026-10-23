@@ -78,12 +78,22 @@ internal static class QueryParser
 
         var filter = request.Filter.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? null : Filter(request.Filter, 1, ref nodes);
         var near = sort.Any(static key => key.Near is not null) ? Near(sort, request) : null;
-        var keys = (near is null ? sort : []).Select(key => new SortKey(Path(key.Path), key.Order switch
+        var keys = (near is null ? sort : []).Select(key => new SortKey(key.Path.ValueKind == JsonValueKind.String && key.Path.GetString() == "$score" ? DocumentPath.Id : Path(key.Path), key.Order switch
         {
             null or "asc" => false,
             "desc" => true,
             _ => throw Invalid("sort order is asc or desc"),
-        })).ToList();
+        }, key.Path.ValueKind == JsonValueKind.String && key.Path.GetString() == "$score")).ToList();
+        if (keys.Any(key => key.Score) && (keys is not [{ Score: true, Descending: true }] || Searches(filter).Count() != 1))
+        {
+            throw Invalid("$score requires exactly one search filter and is the only sort key, with order desc");
+        }
+
+        if (near is not null && Searches(filter).Any())
+        {
+            throw Invalid("search cannot be combined with near");
+        }
+
         // A repeated path cannot break a tie in its earlier occurrence, regardless of direction.
         // At most four keys: compare decoded segments directly, including embedded NUL.
         for (var i = keys.Count - 1; i > 0; i--)
@@ -416,10 +426,41 @@ internal static class QueryParser
                     : throw Invalid("prefix takes [path, string]");
             case "contains":
                 return new ContainsFilter(path, Scalar(value));
+            case "search":
+                if (path.IsId || value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(value.GetString())
+                    || Encoding.UTF8.GetByteCount(value.GetString()!) > 4096 || value.GetString()!.Contains('\0', StringComparison.Ordinal))
+                {
+                    throw Invalid("search takes [JSON Pointer, nonempty terms of at most 4096 UTF-8 bytes without NUL]");
+                }
+
+                var nesting = 0;
+                foreach (var character in value.GetString()!)
+                {
+                    if (character == '(' && ++nesting > 64)
+                    {
+                        throw Invalid("search terms nest at most 64 parentheses");
+                    }
+
+                    if (character == ')')
+                    {
+                        nesting = Math.Max(0, nesting - 1);
+                    }
+                }
+
+                return new SearchFilter(path, value.GetString()!);
             default:
                 throw Invalid("unknown filter operator");
         }
     }
+
+    internal static IEnumerable<SearchFilter> Searches(DocumentFilter? filter) => filter switch
+    {
+        SearchFilter search => [search],
+        AndFilter and => and.Children.SelectMany(Searches),
+        OrFilter or => or.Children.SelectMany(Searches),
+        NotFilter not => Searches(not.Child),
+        _ => [],
+    };
 
     private static DocumentPath Path(JsonElement path)
     {

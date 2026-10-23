@@ -14,7 +14,7 @@ namespace TerraBase.Features.Replication;
 /// </summary>
 internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirectory tenants, DatabaseLifecycleCheckpoint checkpoint, ReplicationTimings timings) : IChangeGroupSink
 {
-    public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken)
+    public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken, ApplyProgress? progress = null)
     {
         ArgumentNullException.ThrowIfNull(groups);
         var step = timings.Now;
@@ -37,6 +37,7 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             }
 
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+            progress?.Attach(transaction);
             await transaction.RequireAppliedAsync(origin, expected, cancellationToken).ConfigureAwait(false);
             step = timings.Record(ReplicationTimings.ReceiveBegin, step);
             for (; next < end; next++)
@@ -52,6 +53,7 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             step = timings.Record(ReplicationTimings.ReceiveJoin, step);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             step = timings.Record(ReplicationTimings.ReceiveCommit, step);
+            progress?.Commit();
             expected = new Hlc(Math.Max(expected.Value, applied.Value));
             checkpoint("replication.apply.committed", database);
         }

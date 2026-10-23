@@ -46,8 +46,8 @@ public sealed class Invitations(AuthStore store, PlatformDirectory directory, Us
 
     /// <summary>
     /// Invites <paramref name="email"/>: to the organization (needs admin, and owner to invite an owner) or, with
-    /// <paramref name="projectId"/>, to that project (needs its admin role). Emails the accept link when
-    /// <c>TS_AUTH_INVITATION_URL</c> is set and answers the token once.
+    /// <paramref name="projectId"/>, to that project (needs its admin role). Emails the dashboard's accept page
+    /// (<c>&lt;dashboard origin&gt;/invitations/&lt;token&gt;</c>) when the dashboard client is configured and answers the token once.
     /// </summary>
     public async Task<(InvitationRecord Invitation, string Token)> CreateAsync(UserRecord caller, string organizationId, string email, string role, string? projectId, string locale, CancellationToken cancellationToken)
     {
@@ -115,11 +115,12 @@ public sealed class Invitations(AuthStore store, PlatformDirectory directory, Us
             return new PlatformDirectory.Plan<(InvitationRecord, string, string)>(operations, (invitation, token, organizationName), claim, PendingConflict());
         }, cancellationToken).ConfigureAwait(false);
 
-        if (options.InvitationUrl is { } page)
+        // The dashboard serves the accept page at /invitations/{token} on the origin of its first sign-in callback.
+        if (options.DashboardClient is { } dashboard)
         {
             mail.EnqueueInvitation(new AuthEmailValues(invitation.Email)
             {
-                Link = new Uri($"{page.AbsoluteUri}?token={token}"),
+                Link = new Uri($"{dashboard.RedirectUris[0].GetLeftPart(UriPartial.Authority)}/invitations/{token}"),
                 ExpiresIn = Lifetime,
                 Organization = organizationName,
                 Inviter = caller.Email,

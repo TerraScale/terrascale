@@ -112,7 +112,15 @@ message AckFrame {
     Welcome welcome = 1;
     Ack ack = 2;
     StableReport stable = 3;
+    Applying applying = 4;
   }
+}
+
+// Actual work on an in-flight batch, not an ACK: it never confirms durability.
+message Applying {
+  Database database = 1;
+  uint64 change_id = 2;
+  uint64 progress = 3;
 }
 
 // The answer to a Frontier: the receiver's stable stamp of the database (section 11), so a horizon moves while nothing is

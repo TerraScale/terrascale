@@ -21,8 +21,9 @@ public static class StorageFormat
     /// <c>_tb_merkle</c> bucket digests (R9), batched reset 2026-10-22.
     /// 12: persisted collected-state join floors (<c>_tb_gc_floor</c>), batch 3 reset 2026-10-23.
     /// 13: regional auth credential ancestry and authentication-state stamps, batch 5 reset 2026-10-23.
+    /// 14: persisted full-text indexes and derived text tables, batch 5 reset 2026-10-23.
     /// </summary>
-    public const int Version = 13;
+    public const int Version = 14;
 
     /// <summary>The format this build writes, for example <c>2-3f1a09c4e7b2</c>.</summary>
     public static string Id { get; } = $"{Version}-{Convert.ToHexStringLower(TursoDatabaseStore.FormatDigest)[..12]}";

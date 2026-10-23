@@ -308,6 +308,8 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
     private sealed class Transaction(IStorageTransaction inner, UsageCommitHook hook) : IStorageTransaction
     {
+        public long Work => inner.Work;
+
         public ValueTask<long> GetDocumentBytesAsync(string collection, string id, CancellationToken cancellationToken) =>
             inner.GetDocumentBytesAsync(collection, id, cancellationToken);
 

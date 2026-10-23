@@ -67,15 +67,12 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
     private async ValueTask<CollectionResult> ReadCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
-        if (await BeginAsync(database, write: false, cancellationToken).ConfigureAwait(false) is not { } transaction)
+        if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return DocumentRoute.UnknownDatabase;
         }
 
-        await using (transaction.ConfigureAwait(false))
-        {
-            return await transaction.GetCollectionAsync(name, cancellationToken).ConfigureAwait(false) is { } collection ? collection : UnknownCollection;
-        }
+        return await store.FindCollectionAsync(name, cancellationToken).ConfigureAwait(false) is { } collection ? collection : UnknownCollection;
     }
 
     public ValueTask<Found<CollectionPage>> ListCollectionsAsync(
@@ -327,6 +324,10 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         catch (QueryCapacityException error)
         {
             return error.SortBudget ? SortBudget : TooExpensive;
+        }
+        catch (QueryValidationException error)
+        {
+            return new Validation(error.Message, "invalid_query");
         }
     }
 
@@ -784,6 +785,10 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     {
                         return new DocumentRejected(error.SortBudget ? SortBudget : TooExpensive);
                     }
+                    catch (QueryValidationException error)
+                    {
+                        return new DocumentRejected(new Validation(error.Message, "invalid_query"));
+                    }
                 }
 
             case AssertCountOperation assertCount:
@@ -798,6 +803,10 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     catch (QueryCapacityException)
                     {
                         return new DocumentRejected(TooExpensive);
+                    }
+                    catch (QueryValidationException error)
+                    {
+                        return new DocumentRejected(new Validation(error.Message, "invalid_query"));
                     }
 
                     if (!complete)

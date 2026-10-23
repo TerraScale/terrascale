@@ -126,6 +126,11 @@ internal sealed partial class TursoStorageTransaction
             }
         }
 
+        if (!store.IsSystem)
+        {
+            indexes.AddRange(ReadTextIndexes(cancellationToken));
+        }
+
         // The schema table has no name index; sort here instead of a temporary B-tree.
         indexes.Sort((left, right) => string.CompareOrdinal(left.Name, right.Name));
         return indexes;
@@ -151,7 +156,7 @@ internal sealed partial class TursoStorageTransaction
     // Worker-only, inside a mutation.
     private bool CreateIndex(IndexDefinition index, CancellationToken cancellationToken)
     {
-        if (!IndexName().IsMatch(index.Name) || !DatabaseName.TryParse(index.Collection, out _) || index.Fields.Count is < 1 or > 4)
+        if (!IndexName().IsMatch(index.Name) || !DatabaseName.TryParse(index.Collection, out _) || index.Fields.Count is < 1 or > 4 || index.Kind is not ("btree" or "text"))
         {
             throw new ArgumentException("invalid index definition", nameof(index));
         }
@@ -174,6 +179,13 @@ internal sealed partial class TursoStorageTransaction
             {
                 return false;
             }
+        }
+
+        if (index.Kind == "text")
+        {
+            CreateTextIndex(index, cancellationToken);
+            _statisticsChanged = true;
+            return true;
         }
 
         // ANALYZE of the new index alone reads only that index, so the write lock is held for its collection's size.
@@ -228,6 +240,12 @@ internal sealed partial class TursoStorageTransaction
             return false;
         }
 
+        if (!store.IsSystem && ReadTextIndexes(cancellationToken).Find(index => index.Name == name) is { } text)
+        {
+            DropTextIndex(text, cancellationToken);
+            return true;
+        }
+
         var command = PlainCommand($"DROP INDEX \"{IndexPrefix}{name}\";");
         using (command)
         {
@@ -254,6 +272,7 @@ internal sealed partial class TursoStorageTransaction
         {
             writer.WriteStartObject();
             writer.WriteString("collection", index.Collection);
+            writer.WriteString("kind", index.Kind);
             writer.WriteStartArray("fields");
             foreach (var field in index.Fields)
             {
@@ -271,7 +290,7 @@ internal sealed partial class TursoStorageTransaction
     {
         var command = session.Command(TursoStatements.IndexExists, transaction);
         command.Parameters.AddWithValue("$name", IndexPrefix + name);
-        return command.ExecuteScalar() is not null;
+        return command.ExecuteScalar() is not null || (!store.IsSystem && TextIndexExists(name));
     }
 
     // Recovers a definition from the CREATE INDEX statement CreateIndexAsync wrote.
@@ -311,7 +330,7 @@ internal sealed partial class TursoStorageTransaction
             // Turso's planner ignores LIMIT: an unfiltered sort on an indexed field reads every row and sorts them instead
             // of walking that index. Name the index then; with a filter the planner chooses.
             if (query.Filter is null && query.Order is [{ Field: var first }, ..] && !first.IsMetadata && !store.IsSystem
-                && ReadIndexes(CancellationToken.None).FirstOrDefault(index => index.Collection == query.Collection && index.Fields[0] == first) is { } sorted)
+                && ReadIndexes(CancellationToken.None).FirstOrDefault(index => index.Kind == "btree" && index.Collection == query.Collection && index.Fields[0] == first) is { } sorted)
             {
                 sql.AppendFormat(" INDEXED BY \"{0}{1}\"", IndexPrefix, sorted.Name);
             }

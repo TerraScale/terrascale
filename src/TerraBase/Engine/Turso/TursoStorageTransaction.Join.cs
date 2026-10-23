@@ -14,7 +14,9 @@ internal sealed partial class TursoStorageTransaction
     public async ValueTask<bool> JoinAsync(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(delta);
-        return await RunAsync(() => Join(collection, id, delta, at, cancellationToken), cancellationToken, mutation: true).ConfigureAwait(false);
+        var changed = await RunAsync(() => Join(collection, id, delta, at, cancellationToken), cancellationToken, mutation: true).ConfigureAwait(false);
+        _ = Interlocked.Increment(ref _work);
+        return changed;
     }
 
     internal ValueTask<bool> JoinBaselineAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken) =>
@@ -210,6 +212,12 @@ internal sealed partial class TursoStorageTransaction
             return;
         }
 
+        var kind = parsed.RootElement.TryGetProperty("kind", out var type) && type.ValueKind == JsonValueKind.String ? type.GetString() : "btree";
+        if (kind is not ("btree" or "text"))
+        {
+            return;
+        }
+
         List<DocumentField> fields = [];
         foreach (var path in paths.EnumerateArray())
         {
@@ -230,7 +238,7 @@ internal sealed partial class TursoStorageTransaction
 
         if (ReadIndexes(cancellationToken).Find(index => index.Name == name) is { } existing)
         {
-            if (existing.Collection == collection && existing.Fields.SequenceEqual(fields))
+            if (existing.Kind == kind && existing.Collection == collection && existing.Fields.SequenceEqual(fields))
             {
                 return;
             }
@@ -245,7 +253,7 @@ internal sealed partial class TursoStorageTransaction
 
         try
         {
-            _ = CreateIndex(new IndexDefinition(name, collection, fields), cancellationToken);
+            _ = CreateIndex(new IndexDefinition(name, collection, fields, kind), cancellationToken);
         }
         catch (ArgumentException)
         {

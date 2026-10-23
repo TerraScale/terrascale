@@ -391,9 +391,11 @@ internal sealed partial class TursoStorageTransaction
                 return ((long Left, long? Floor)?)null;
             }
 
-            // 0 resets a row GetAckedAsync found stale; an acknowledgement only raises an ack of the same incarnation.
+            // Recheck a zero registration under the writer: a real ACK may have committed after GetAckedAsync read.
             var update = Command("""
-                UPDATE _tb_peers SET acked = CASE WHEN $acked = 0 OR incarnation <> $incarnation THEN $acked ELSE max(acked, $acked) END,
+                UPDATE _tb_peers SET acked = CASE WHEN incarnation <> $incarnation THEN $acked
+                    WHEN $acked = 0 AND acked > (SELECT coalesce(max(change_id), 0) FROM turso_cdc) THEN 0
+                    ELSE max(acked, $acked) END,
                     stable = CASE WHEN incarnation <> $incarnation THEN $stable ELSE max(stable, $stable) END, seen = $seen, incarnation = $incarnation
                 WHERE node = $node;
                 """);

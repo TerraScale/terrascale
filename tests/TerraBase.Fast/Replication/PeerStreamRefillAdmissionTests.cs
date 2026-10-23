@@ -83,7 +83,7 @@ public sealed class PeerStreamRefillAdmissionTests
         IChangeGroupSink sink, ReplicaId chosenOrigin, TaskCompletionSource entered, TaskCompletionSource release) : IChangeGroupSink
     {
         public async ValueTask<Hlc?> ApplyAsync(
-            TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken)
+            TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken, ApplyProgress? progress = null)
         {
             if (database == ChangeGroups.System && origin == chosenOrigin)
             {
@@ -91,7 +91,7 @@ public sealed class PeerStreamRefillAdmissionTests
                 await release.Task.WaitAsync(cancellationToken);
             }
 
-            return await sink.ApplyAsync(database, origin, groups, expected, cancellationToken);
+            return await sink.ApplyAsync(database, origin, groups, expected, cancellationToken, progress);
         }
 
         public ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
