@@ -80,6 +80,10 @@
     {"method": "DELETE", "path": "/v1/projects/{project}/saved-queries/{query}", "operation": "deleteSavedQuery", "source": "src/TerraBase/Features/Management/Queries/DeleteSavedQueryEndpoint.cs", "line": 15},
     {"method": "GET", "path": "/v1/projects/{project}/saved-queries/{query}", "operation": "getSavedQuery", "source": "src/TerraBase/Features/Management/Queries/GetSavedQueryEndpoint.cs", "line": 14},
     {"method": "PUT", "path": "/v1/projects/{project}/saved-queries/{query}", "operation": "updateSavedQuery", "source": "src/TerraBase/Features/Management/Queries/UpdateSavedQueryEndpoint.cs", "line": 14},
-    {"method": "GET", "path": "/v1/projects/{project}/usage", "operation": "getProjectUsage", "source": "src/TerraBase/Features/Management/Usage/GetProjectUsageEndpoint.cs", "line": 18}
+    {"method": "GET", "path": "/v1/projects/{project}/usage", "operation": "getProjectUsage", "source": "src/TerraBase/Features/Management/Usage/GetProjectUsageEndpoint.cs", "line": 18},
+    {"method": "POST", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/webhooks", "operation": "createChangeWebhook", "contract": "change-webhooks.md"},
+    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/webhooks", "operation": "listChangeWebhooks", "contract": "change-webhooks.md"},
+    {"method": "DELETE", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook}", "operation": "deleteChangeWebhook", "contract": "change-webhooks.md"},
+    {"method": "GET", "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook}/deliveries", "operation": "listChangeWebhookDeliveries", "contract": "change-webhooks.md"}
   ]
 }

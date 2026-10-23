@@ -86,6 +86,10 @@ public sealed class TerraBaseContractTests
         static TerraBaseProjectClient ProjectClient(object client) => ((TerraBaseDocumentsClient)client).Project(Project);
         static TerraBaseManagementClient M(object client) => (TerraBaseManagementClient)client;
         var schema = new TerraBaseUniqueSchemaRequest(Indexes: [new("email", ["email"], Unique: true)]);
+        yield return ("documents", "createChangeWebhook", client => Db(client).CreateChangeWebhookAsync("users", "https://receiver.example/events"));
+        yield return ("documents", "listChangeWebhooks", client => Db(client).ListChangeWebhooksAsync("users"));
+        yield return ("documents", "deleteChangeWebhook", client => Db(client).DeleteChangeWebhookAsync("users", User));
+        yield return ("documents", "listChangeWebhookDeliveries", client => Db(client).ListChangeWebhookDeliveriesAsync("users", User));
         yield return ("documents", "createDatabase", client => Db(client).CreateAsync());
         yield return ("documents", "deleteDatabase", client => Db(client).DeleteAsync());
         yield return ("documents", "listCollections", client => Db(client).ListCollectionsAsync());
