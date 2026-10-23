@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -122,8 +121,8 @@ public sealed class StorageRecoveryTests
         await Assert.That(keys.Items.Count).IsEqualTo(1);
 
         await terrabase.StopAsync();
-        // Model death after durable intent publication, before trusted operation retirement.
-        await LeaveInterruptedIntentAsync(terrabase, tenant.Organization.Id, tenant.Project.Id, created.Id);
+        // Model death after a fault of the copy was noted, before its record: its intent is marked Faulting (decision 0013c).
+        await LeaveFaultingMarkAsync(terrabase, tenant.Organization.Id, tenant.Project.Id, created.Id);
         var image = await terrabase.SnapshotDatabaseFilesAsync(tenant.Organization.Id, tenant.Project.Id, created.Id);
         await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", Recovery)).IsTrue();
         await terrabase.RestartAsync();
@@ -179,17 +178,9 @@ public sealed class StorageRecoveryTests
         return jwks.GetProperty("keys").EnumerateArray().Single().GetProperty("kid").GetString()!;
     }
 
-    private static async Task LeaveInterruptedIntentAsync(TerraBaseTestServer server, string organization, string project, string database)
+    private static async Task LeaveFaultingMarkAsync(TerraBaseTestServer server, string organization, string project, string database)
     {
         var root = server.StoppedDataDirectory;
-        var identity = await File.ReadAllBytesAsync(Path.Combine(root, ".terrabase.replica"));
-        if (identity.Length != 44 || identity[0] != 2 || identity[7] != 0)
-        {
-            throw new InvalidOperationException("The fixture needs the killed process's running replica identity.");
-        }
-
-        var replica = ((ulong)BinaryPrimitives.ReadUInt32LittleEndian(identity.AsSpan(1)) << 16)
-            | BinaryPrimitives.ReadUInt16LittleEndian(identity.AsSpan(5));
         await using var tenant = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = Path.Combine(root, organization, project, database + ".db"),
@@ -221,7 +212,8 @@ public sealed class StorageRecoveryTests
         write.Parameters.AddWithValue("$project", project);
         write.Parameters.AddWithValue("$database", database);
         write.Parameters.AddWithValue("$incarnation", incarnation);
-        write.Parameters.AddWithValue("$replica", unchecked((long)replica));
+        // Replica 0, which no replica id uses, is the Faulting mark: the next start faults the copy instead of proving it.
+        write.Parameters.AddWithValue("$replica", 0L);
         _ = await write.ExecuteNonQueryAsync();
     }
 

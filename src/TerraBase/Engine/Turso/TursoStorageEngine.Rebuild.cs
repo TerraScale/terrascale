@@ -30,6 +30,13 @@ internal sealed partial class TursoStorageEngine : IRebuildStorage
     /// <summary>Whether the database's file is in place, without opening it.</summary>
     internal bool FileExists(TenantContext database) => File.Exists(Locate(database).Path);
 
+    /// <summary>Whether the kernel caches no page of the database's file or its sidecars (<see cref="PageCache"/>), unopened.</summary>
+    internal bool Evicted(TenantContext database)
+    {
+        var path = Locate(database).Path;
+        return File.Exists(path) && Sidecars.Prepend(string.Empty).Select(sidecar => path + sidecar).Where(File.Exists).All(PageCache.Evicted);
+    }
+
     public async ValueTask<Ulid?> IncarnationAsync(TenantContext database, CancellationToken cancellationToken) =>
         await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is TursoDatabaseStore store ? store.Incarnation : null;
 
