@@ -632,6 +632,21 @@ sealed class TestWorkspace : ITsAuthPlatform
                 .OrderByDescending(item => item.OccurredAt).ThenByDescending(item => item.Id, StringComparer.Ordinal).ToArray());
         }
     }
+    // ts-auth DELETE /v1/terrascale/account: refuses last_owner of a shared organization, deletes sole-member organizations, leaves the rest.
+    public Task DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            var mine = Organizations.Values.Where(org => ScopedRole(session.UserId, org.Id).Length > 0).ToArray();
+            foreach (var org in mine.Where(org => org.Members.Values.Any(member => member.UserId != session.UserId && member.Status == "active"))) LastOwner(org, session.UserId);
+            foreach (var org in mine)
+            {
+                org.Members.Remove(session.UserId);
+                if (!org.Members.Values.Any(member => member.Status == "active")) Organizations.Remove(org.Id);
+            }
+            return Task.CompletedTask;
+        }
+    }
     // ts-auth e30ffdc2 invitation transactions emit these events; the registry is per test environment.
     private void InvitationAudit(string organizationId, string actor, string action, string target, string? detail = null)
     {

@@ -36,6 +36,9 @@ public interface ITsAuthPlatform
     Task ConfirmOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
     Task CancelOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
     Task<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
+    // Deletes the caller's user, sessions, tokens, memberships and the organizations only they belong to.
+    // ts-auth refuses with last_owner while the caller is the last owner of an organization with other members.
+    Task DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken);
 }
 
 // The official ts-dotnet platform client, called with the user's own sign-in token.
@@ -128,6 +131,9 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
 
     public Task<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
         PagesAsync(after => Client().Platform.ListAuditEventsAsync(Bearer(session), Id(organizationId), 100, after, cancellationToken));
+
+    public Task DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken) =>
+        PlatformAsync(() => Client().Platform.DeleteAccountAsync(Bearer(session), cancellationToken));
 
     private static string Bearer(SessionRecord session) =>
         string.IsNullOrWhiteSpace(session.AccessToken) ? throw new AccountAccessException("Sign in again to continue.", 401) : session.AccessToken;

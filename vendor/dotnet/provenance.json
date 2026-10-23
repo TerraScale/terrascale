@@ -1,28 +1,28 @@
 {
   "package": "TerraScale.DotNet",
-  "version": "0.0.4-dashboard.import.2",
+  "version": "0.0.4-dashboard.account.1",
   "repository": "https://github.com/TerraScale/ts-dotnet",
-  "sourceRevision": "12aa33ece40e235168be1bca4fee403706ef7cb3",
-  "sourceTree": "4a7f75506b0a6764de64d5fd4115015b9808d9ba",
-  "sourceArchiveSha256": "220eecf9f1bd31d2d8ee95b752d4d2f8400207a3666dda42c37cfc3662135f28",
-  "file": "TerraScale.DotNet.0.0.4-dashboard.import.2.nupkg",
-  "sourceDateEpoch": 1792711689,
-  "sha256": "5247972c180fbac0df2f6672dfb16ba154b10a8a71d0461658333cf36606bd08",
+  "sourceRevision": "59c1205cb523d53e8bb66c8ae9f745b407a0b05e",
+  "sourceTree": "5c314e46543cddd96b52fe8b3d52a32fe6c0f95d",
+  "sourceArchiveSha256": "538eb508657b4c745cb41c040acfd7e818d8c54d89d2693d91a073c22e236ced",
+  "file": "TerraScale.DotNet.0.0.4-dashboard.account.1.nupkg",
+  "sourceDateEpoch": 1792719950,
+  "sha256": "5a07cdee24033b00290243dc37a09c186bb9ac961e8596804d52c8aa4aadc348",
   "assemblySha256ByFramework": {
-    "net10.0": "d8bd67af5990319e7646046dac13ce7bd76762bac8fccd476f5639dadf6ce2ca",
-    "net11.0": "3fecd8b82965fb1b324868143a9e48951683fc2791e06d9adb4c2e6ef0c2873e"
+    "net10.0": "84dae27175e35c8bf2f1af75e190c2029dea2ffc8a81b2a50aea7e046150333b",
+    "net11.0": "d3b95b088c7ce2cb22a8492cd1b47ec3e491ea88a35a108498ec6345f11df68c"
   },
   "contractSha256ByPath": {
-    "contracts/auth/README.md": "8b34333c8ac9de52ed8bf5518aed68dec311b502af8b8929a1b16f0cd5c6d4d2",
+    "contracts/auth/README.md": "ea951301236b54d71b94d59792fcf2dff75bc62f211ed7d81b7227ab6ce10e5a",
     "contracts/auth/dtos.json": "6c23c9e7b190dbda56cb5d9092614bb77d69278fe5a1513f4c933618805f5b51",
     "contracts/auth/error-codes.json": "912a7b14b519fd4b060dcf999b036838afc8fc8a5e86ce4d313b022a8a16ce47",
     "contracts/auth/fixtures/oauth.json": "5f45685decb0c2cf6873a9ac8bcbbad28b5ca98dd7cdaed9aa940005dd1f0757",
-    "contracts/auth/fixtures/platform-headless.json": "663bb590fcc3b64c785fbcb803242abae6ff6b8e4a75df4e4fccaef02df1d800",
+    "contracts/auth/fixtures/platform-headless.json": "be7b4d68e6ed8ff34a7448c13abab957eeec309e8616eb9f9a0003c810af8eb3",
     "contracts/auth/fixtures/project-invitation.json": "bc83c3fe34812f639426f383ac5d2cb9a58e7645ee5fec7f59d637910af80919",
     "contracts/auth/provenance.json": "e35f8dd34c84056f68dcc3697d6eed6fc0418fa3516247c9bbfbf0666180cfac",
-    "contracts/auth/routes.json": "935e9578a49b22537026bb358373271ed41277c7d73842168aa667ca7a9d26fd",
+    "contracts/auth/routes.json": "3fe272d9d2c6e5a0806240414bf4b19f4f855e8b9a1640c2042923c84e3d39aa",
     "contracts/auth/security.json": "ceb0c04c112509f960577add03743f83cda9876f193e16935c061efa7d7445a7",
-    "contracts/terrabase/README.md": "6e084abb3d50f988db8f1c80d25fef23e1b01b6ec46bc3d95edac8c8efd24335",
+    "contracts/terrabase/README.md": "44045f74d43dac2d545d18b4d2d5d93ad59e71e6e1103007acb804bde6ba6479",
     "contracts/terrabase/artifacts/terrabase-e30ffdc-source.tar.gz": "962705b1bc9302ea289b65c90d413c8246c542f23bce6de25d3f979bdf8819f3",
     "contracts/terrabase/artifacts/terrabase-r8-2b95f5ef-source.tar.gz": "13edca03ed374fca0841bcb1734ea6512c5246f1bf9a280da8b068a47d759506",
     "contracts/terrabase/current-public-routes.json": "40ff41bd01ca0ed9db1734dc4615c230b7fc5cbf9250b5ef2d1fa75f4b711c96",
@@ -84,7 +84,7 @@
     "contracts/terrabase/producer-pending/r8/src/TerraBase/Features/Documents/DatabaseChanges.cs.txt": "a034850809fa5bf3a65f6e7a576d389c204301d8582f060ff68ce851b7a70bcb",
     "contracts/terrabase/producer-pending/r8/src/TerraBase/Features/Documents/GetDatabaseChangesEndpoint.cs.txt": "b6db592550e24b751c952c002e13251037f417388fb014109d3900d15dce3551",
     "contracts/terrabase/provenance.json": "f72e78500d3dd5be4ba5f027bf8b8d69af0da5d36d853971d3378c2af5bd374f",
-    "contracts/terrabase/routes.json": "8513f531f3bf310222d18860b7f030c286a569e6f538aecf2dd9f3895c964f17",
+    "contracts/terrabase/routes.json": "2f5e135456f4fcb2a698df91d4c6633c02d876bed22af2c3e4e7f922e4e8420f",
     "contracts/terrabase/shape-provenance.json": "a3e71a3e983031b0e42f815bf86ed1d88aa2ffd92fdcdc2bdf84f05ac2deb815",
     "contracts/terrabase/shape-routes.json": "163472b9fb6bbb689fd50b15b8859901ae8a914d45be061edfa3438c3e3e27f0"
   },
@@ -94,12 +94,10 @@
   "composition": {
     "base": {
       "branch": "origin/main",
-      "revision": "846a19e8",
-      "pullRequest": "https://github.com/TerraScale/ts-dotnet/pull/41",
-      "subject": "Add all-regions database placement to the SDK (#41)"
+      "revision": "b89bfa3",
+      "subject": "ts-dotnet main with Platform.DeleteAccountAsync"
     },
-    "versionCommit": "12aa33ece40e235168be1bca4fee403706ef7cb3",
-    "tests": "547/547 on net10.0 and net11.0"
+    "versionCommit": "59c1205cb523d53e8bb66c8ae9f745b407a0b05e"
   },
   "publication": {
     "status": "not published; sourceRevision exists only in a local composition until pushed to ts-dotnet"

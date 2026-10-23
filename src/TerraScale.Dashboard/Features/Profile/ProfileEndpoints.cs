@@ -44,6 +44,7 @@ public static class ProfileEndpoints
             await SaveAsync(http, sessions, accounts, false));
         endpoints.MapPost("/api/v1/dashboard/profile/language", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
             await SaveAsync(http, sessions, accounts, true));
+        endpoints.MapPost("/api/v1/dashboard/profile/delete", AccountDeletion.DeleteAsync);
         return endpoints;
     }
 
