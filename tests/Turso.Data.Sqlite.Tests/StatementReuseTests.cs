@@ -76,6 +76,37 @@ public sealed class StatementReuseTests
         await Assert.That(query.ExecuteScalar()).IsEqualTo("z");
     }
 
+    /// <summary>
+    /// The kept statement's parameter indexes and parsed text are reused: parameters bind by name whatever their order, a
+    /// missing one still fails, and new command text (of another parameter layout) is parsed and indexed again.
+    /// </summary>
+    [Test]
+    public async Task AKeptStatementBindsByNameAcrossExecutionsAndTextChanges()
+    {
+        using var database = new TemporaryDatabase();
+        using var upsert = database.Connection.CreateCommand();
+        upsert.ReuseStatement = true;
+        upsert.CommandText = "INSERT INTO t VALUES ($first || $second);";
+        upsert.Parameters.AddWithValue("$first", "b");
+        upsert.Parameters.AddWithValue("$second", "1");
+        await Assert.That(upsert.ExecuteNonQuery()).IsEqualTo(1);
+        var kept = Kept(upsert);
+        upsert.Parameters.Clear();
+        upsert.Parameters.AddWithValue("$second", "2");
+        upsert.Parameters.AddWithValue("$first", "c");
+        await Assert.That(upsert.ExecuteNonQuery()).IsEqualTo(1);
+        await Assert.That(Kept(upsert)).IsSameReferenceAs(kept);
+        upsert.Parameters.Clear();
+        upsert.Parameters.AddWithValue("$first", "d");
+        _ = Assert.Throws<InvalidOperationException>(() => upsert.ExecuteNonQuery());
+
+        upsert.Parameters.Clear();
+        upsert.CommandText = "INSERT INTO t VALUES ($only);";
+        upsert.Parameters.AddWithValue("$only", "e");
+        await Assert.That(upsert.ExecuteNonQuery()).IsEqualTo(1);
+        await Assert.That(string.Join(",", Ids(database.Connection, "SELECT id FROM t ORDER BY id;"))).IsEqualTo("a,b1,c2,e");
+    }
+
     private static TursoStatementHandle Kept(SqliteCommand command) =>
         (TursoStatementHandle)(typeof(SqliteCommand).GetField("_statement", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(command)
             ?? throw new InvalidOperationException("the command keeps no statement"));

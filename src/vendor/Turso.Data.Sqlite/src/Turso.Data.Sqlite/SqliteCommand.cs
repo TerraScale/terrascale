@@ -19,6 +19,18 @@ public class SqliteCommand : DbCommand
     private bool _reuseStatement;
     private string? _statementSql;
     private bool _statementBusy;
+    // TerraScale: a kept statement's parameter count and parameter indexes by name, read from it once: each native read
+    // cost more than binding the value.
+    private TursoStatementHandle? _indexedStatement;
+    private int _indexedCount;
+    private Dictionary<string, int>? _indexes;
+    // TerraScale: with ReuseStatement, what Execute derives from the command text is kept with that text instance: whether
+    // it is empty, its statements, and the single one that needs no facade rewrite (with whether it counts rows affected).
+    private string? _parsedText;
+    private bool _parsedEmpty;
+    private List<string>? _parsed;
+    private string? _plainStatement;
+    private bool _plainCountsRows;
     private string _commandText = string.Empty;
     private int _commandTimeout = 30;
     private bool _hasOpenReader;
@@ -295,7 +307,8 @@ public class SqliteCommand : DbCommand
                 .GetResult();
         }
 
-        if (IsEmptyCommand(CommandText))
+        ParseCommandText();
+        if (_parsedEmpty)
         {
             _hasOpenReader = true;
             Connection?.ReaderOpened();
@@ -311,13 +324,20 @@ public class SqliteCommand : DbCommand
             throw new SqliteException(Properties.Resources.SqliteNativeError(8, "attempt to write a readonly database"), 8);
 
         var recordsAffected = 0;
-        var statements = SplitStatements(CommandText);
+        var statements = _parsed!;
         try
         {
             for (var i = 0; i < statements.Count; i++)
             {
-                if (TryHandleFacadeStatement(statements[i], out var sql))
+                var plain = ReferenceEquals(statements[i], _plainStatement);
+                var sql = statements[i];
+                if (!plain && TryHandleFacadeStatement(statements[i], out sql))
                     continue;
+
+                if (!plain && _reuseStatement && statements.Count == 1 && ReferenceEquals(sql, statements[i]))
+                {
+                    (_plainStatement, _plainCountsRows, plain) = (sql, CountsRowsAffected(sql), true);
+                }
 
                 var statement = statements.Count == 1 ? Statement(sql) : PrepareSingleStatement(sql);
                 try
@@ -333,7 +353,7 @@ public class SqliteCommand : DbCommand
                     {
                     }
 
-                    if (CountsRowsAffected(statements[i]))
+                    if (plain ? _plainCountsRows : CountsRowsAffected(statements[i]))
                         recordsAffected += TursoBindings.RowsAffected(statement);
                 }
                 catch
@@ -721,9 +741,29 @@ public class SqliteCommand : DbCommand
         }
     }
 
+    // TerraScale: splits the command text once per text instance while ReuseStatement is on, and on every call otherwise.
+    private void ParseCommandText()
+    {
+        if (_reuseStatement && ReferenceEquals(_parsedText, CommandText))
+            return;
+
+        _parsedEmpty = IsEmptyCommand(CommandText);
+        _parsed = _parsedEmpty ? [] : SplitStatements(CommandText);
+        _parsedText = _reuseStatement ? CommandText : null;
+        _plainStatement = null;
+    }
+
     private void BindParameters(TursoStatementHandle statement)
     {
-        var parameterCount = TursoBindings.GetParameterCount(statement);
+        var indexed = _reuseStatement;
+        if (indexed && !ReferenceEquals(statement, _indexedStatement))
+        {
+            (_indexes ??= new(StringComparer.Ordinal)).Clear();
+            _indexedCount = TursoBindings.GetParameterCount(statement);
+            _indexedStatement = statement;
+        }
+
+        var parameterCount = indexed ? _indexedCount : TursoBindings.GetParameterCount(statement);
         var boundParameters = new bool[parameterCount + 1];
 
         for (var i = 0; i < Parameters.Count; i++)
@@ -734,7 +774,11 @@ public class SqliteCommand : DbCommand
             if (!parameter.HasValue)
                 throw new InvalidOperationException(Properties.Resources.RequiresSet(nameof(parameter.Value)));
 
-            var parameterIndex = FindParameterIndex(statement, parameter.ParameterName, parameterCount);
+            int parameterIndex;
+            if (!indexed)
+                parameterIndex = FindParameterIndex(statement, parameter.ParameterName, parameterCount);
+            else if (!_indexes!.TryGetValue(parameter.ParameterName, out parameterIndex))
+                _indexes[parameter.ParameterName] = parameterIndex = FindParameterIndex(statement, parameter.ParameterName, parameterCount);
             if (parameterIndex == 0)
                 continue;
 
