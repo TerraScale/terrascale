@@ -212,7 +212,7 @@ public sealed class EncryptionTests
                 command.ExecuteNonQuery();
                 command.CommandText = "INSERT INTO secret VALUES ('rejected');";
                 var nativeError = Assert.Throws<TursoNativeException>(() => command.ExecuteNonQuery());
-                await Assert.That(nativeError!.StatusCode).IsEqualTo(127U);
+                await Assert.That(nativeError!.StatusCode).IsEqualTo(129U);
             }
             using (var connection = new SqliteConnection(builder.ConnectionString))
             {
@@ -260,7 +260,7 @@ public sealed class EncryptionTests
                 }
                 command.CommandText = "SELECT RAISE(ABORT, 'Decryption failed for page=2');";
                 var nativeError = Assert.Throws<TursoNativeException>(() => command.ExecuteScalar());
-                await Assert.That(nativeError!.StatusCode).IsEqualTo(127U);
+                await Assert.That(nativeError!.StatusCode).IsEqualTo(129U);
             }
             using var connection = new SqliteConnection(builder.ConnectionString);
             connection.Open();
