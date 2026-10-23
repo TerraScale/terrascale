@@ -17,11 +17,11 @@ or its scan budget, so an empty page can still have a continuation cursor.
 Follow cursors until exhaustion; see [queries and pagination](/ru/guides/queries).
 The [change stream](/ru/guides/realtime) keeps events for 7 days.
 
-## Per-organization limits
+## Engine safety tiers
 
-TerraBase enforces these per organization, shared by all of its projects, databases and API keys. Rate, concurrency and memory refusals return HTTP 429 with Retry-After. Enterprise has no plan ceiling but still observes document, page, batch and process safety bounds. TerraBase has no Starter tier yet.
+TerraBase enforces these safety tiers per organization, shared by all its projects, databases and API keys. Rate, concurrency and memory refusals return HTTP 429 with Retry-After. The engine tier names Hobby, Pro and Enterprise are implementation safety tiers, not the commercial Free, Starter, Pro, Team and Enterprise plans. No mapping between commercial plans and engine tiers is published. The Enterprise engine tier still observes document, page, batch and process safety bounds.
 
-| Limit (per organization) | Hobby | Pro | Enterprise |
+| Engine limit (per organization) | Hobby | Pro | Enterprise |
 | --- | --- | --- | --- |
 | Requests/s (burst) | 50 (100) | 500 (1,000) | No plan ceiling |
 | Concurrent HTTP requests | 4 | 16 | No plan ceiling |
@@ -31,10 +31,10 @@ TerraBase enforces these per organization, shared by all of its projects, databa
 
 ## Plan policies
 
-PITR retention (days): Hobby 1 / Pro 7 / Enterprise 30.
+The existing engine PITR defaults (days) are hobby 1 / pro 7 / enterprise 30. These engine defaults do not publish PITR entitlements for the commercial plans. No commercial plan-to-engine-tier mapping is published.
 
-Databases per org: Hobby 1 / Starter 5 / Pro 25 / Enterprise Custom.
+Proposed databases per org: Free 1 / Starter 5 / Pro 25 / Team 100 / Enterprise Custom.
 
-Plan allowances and operation-unit metering are on the [pricing page](./pricing.md).
+Subscription prices, proposed allowances and metering are on the [pricing page](./pricing.md). Usage charges are not yet collected.
 
 </div>

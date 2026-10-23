@@ -20,49 +20,71 @@ const planNames = plans.map((p) => p.name);
 const header = "<!-- GENERATED from data/canonical/pricing.json (https://terrascale.tech/pricing.json) and data/policies.json by scripts/generate-pricing.mjs — do not edit. -->";
 
 const number = (n) => n.toLocaleString("en-US");
-const usd = (n) => `$${number(n)}`;
+const usd = (n) => `$${n.toLocaleString("en-US", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 })}`;
 const storage = (gb) => (gb < 1 ? `${number(Math.round(gb * 1000))} MB` : `${number(gb)} GB`);
 const limit = (value, format = number) => (value === null ? "Custom" : format(value));
 const row = (label, cell) => `| ${label} | ${plans.map((p) => cell(p)).join(" | ")} |`;
 const table = (label) => `| ${label} | ${planNames.join(" | ")} |\n| --- | ${planNames.map(() => "---").join(" | ")} |`;
-const pitr = (id) => (policy.pitrRetentionDays[id] === undefined ? "Not published" : `${policy.pitrRetentionDays[id]} day${policy.pitrRetentionDays[id] === 1 ? "" : "s"}`);
+const subscription = (p) => {
+  switch (p.billingInterval) {
+    case "free": return `${usd(p.priceMonthlyUsd)}; no card`;
+    case "year": return `${usd(p.priceAnnualUsd)}/year only (${usd(p.priceMonthlyUsd)}/month equivalent)`;
+    case "month": return `${usd(p.priceMonthlyUsd)}/month`;
+    case "contact": return `${usd(p.priceMonthlyUsd)}/month support + usage; contact sales`;
+    default: throw new Error(`Unknown billing interval: ${p.billingInterval}`);
+  }
+};
 const regionList = regions.map((r) => `${r.id.toUpperCase()} (${r.name})`).join(", ");
 
 const pricingMd = `${header}
 # Pricing
 
-> **Pre-launch policy.** Public Alpha prices and allowances come from the canonical catalog at
+> **Approved subscription prices; proposed allowances and usage rates.** Prices come from the catalog at
 > [terrascale.tech/pricing.json](https://terrascale.tech/pricing.json); the
 > [pricing page](https://terrascale.tech/pricing) renders the same catalog.
-> All prices are in ${catalog.currency}. Confirm approved enrollment terms and
-> serving-release availability; this catalog does not qualify a workflow.
+> All prices are in ${catalog.currency}. Allowances and overage rates remain pending review.
+> Usage charges are not yet collected. Confirm enrollment and service availability before purchase;
+> a published price does not establish that checkout or billing is available.
 
 ## How usage is metered
 
 - **${metering.operationUnit.name}s.** ${metering.operationUnit.definition} ${metering.operationUnit.rules.join(" ")}
-- **${metering.storage.name}.** ${metering.storage.definition}
+- **${metering.storage.name}.** ${metering.storage.definition} Storage uses decimal GB-region-month, averaged over time during the month.
+- **${metering.egress.name}.** ${metering.egress.definition}
 - **Allowances.** ${metering.allowances.definition}
 
-## Plans
+## Plans and proposed allowances
 
 ${table("")}
-${row("Monthly price", (p) => usd(p.priceMonthlyUsd))}
-${row("Annual price", (p) => usd(p.priceAnnualUsd))}
+${row("Subscription", subscription)}
+${row("Availability", (p) => p.available ? "Public Alpha; confirm enrollment" : "Contact sales; no self-service purchase")}
 ${row("Projects", (p) => limit(p.limits.projects))}
 ${row("Databases", (p) => limit(p.limits.databases))}
 ${row("Members", (p) => limit(p.limits.members))}
-${row("Storage across regions", (p) => limit(p.limits.storageGb, storage))}
-${row("Operation units / month", (p) => limit(p.limits.operationUnitsPerMonth))}
+${row("Proposed storage (GB-region-month)", (p) => limit(p.limits.storageGb, storage))}
+${row("Proposed operation units / month", (p) => limit(p.limits.operationUnitsPerMonth))}
+${row("Proposed client egress / month", (p) => limit(p.limits.egressGbPerMonth, storage))}
 ${row("Regions per database", () => `up to ${policy.maxRegions}`)}
-${row("PITR retention", (p) => pitr(p.id))}
 
 Launch regions: ${regionList}.
 
-${plans.filter((p) => p.trialDays).map((p) => p.name).join(" and ")} include one eligible ${plans.find((p) => p.trialDays)?.trialDays}-day trial per verified payment method and organization.
+No trials or annual Pro/Team discounts are offered.
+
+## Proposed pay-as-you-go rates
+
+Paid plans include the proposed allowances above, then proposed pay-as-you-go usage:
+
+| Meter | Proposed rate (USD) |
+| --- | --- |
+| Operation units | ${usd(metering.overageRates.operationUnitsPerMillionUsd)} per million |
+| Storage | ${usd(metering.overageRates.storageGbRegionMonthUsd)} per GB-region-month |
+| Client egress | ${usd(metering.overageRates.clientEgressGbUsd)} per decimal GB |
+
+These allowances and rates are pending review. Usage charges are not yet collected.
 
 **Shared organization allowances.** ${policy.sharedAllowances}
 
-**Hobby.** ${policy.hobbyEligibility}
+**Free.** ${policy.freeEligibility}
 
 **Enterprise.** ${plans.find((p) => p.id === "enterprise").billing} ${policy.enterpriseNotes}
 
@@ -85,21 +107,21 @@ or its scan budget, so an empty page can still have a continuation cursor.
 Follow cursors until exhaustion; see [queries and pagination](/guides/queries).
 The [change stream](/guides/realtime) keeps events for 7 days.
 
-## Per-organization limits
+## Engine safety tiers
 
 ${e._note}
 
-| Limit (per organization) | ${e.tiers.join(" | ")} |
+| Engine limit (per organization) | ${e.tiers.join(" | ")} |
 | --- | ${e.tiers.map(() => "---").join(" | ")} |
 ${e.rows.map((r) => `| ${r.join(" | ")} |`).join("\n")}
 
 ## Plan policies
 
-PITR retention (days): ${Object.entries(policy.pitrRetentionDays).map(([id, days]) => `${plans.find((p) => p.id === id).name} ${days}`).join(" / ")}.
+The existing engine PITR defaults (days) are ${Object.entries(policy.enginePitrRetentionDays).map(([id, days]) => `${id} ${days}`).join(" / ")}. These engine defaults do not publish PITR entitlements for the commercial plans. No commercial plan-to-engine-tier mapping is published.
 
-Databases per org: ${plans.map((p) => `${p.name} ${limit(p.limits.databases)}`).join(" / ")}.
+Proposed databases per org: ${plans.map((p) => `${p.name} ${limit(p.limits.databases)}`).join(" / ")}.
 
-Plan allowances and operation-unit metering are on the [pricing page](./pricing.md).
+Subscription prices, proposed allowances and metering are on the [pricing page](./pricing.md). Usage charges are not yet collected.
 `;
 
 if (check) {

@@ -17,7 +17,7 @@ These Terms of Service ("Terms") govern your use of the TerraScale website, dash
 
 - You must be at least 18 years old and give accurate account and billing information.
 - You are responsible for activity under your account, organizations, API keys and tokens. Keep credentials secret and tell us promptly at [security@terrascale.tech](mailto:security@terrascale.tech) if you suspect misuse.
-- One Hobby entitlement and one trial apply per verified billing customer, as described on the [pricing page](/zh-cn/pricing).
+- Free requires no payment card. Plan eligibility and availability are described on the [pricing page](/zh-cn/pricing).
 
 ## 2. Your data
 
@@ -37,13 +37,13 @@ You must not use the Service to:
 
 We may suspend access that threatens the Service, other customers or third parties. Where practical, we notify you first and give you time to fix the issue.
 
-## 4. Plans, billing and trials
+## 4. Plans and billing
 
-- Prices, allowances and trial terms are listed on the [pricing page](/zh-cn/pricing). Prices are in USD and exclude taxes, which you pay where applicable.
-- Paid plans are billed in advance through Stripe for the monthly or annual term you choose and renew automatically until cancelled.
-- Starter and Pro trials last 30 days. Unless you cancel before the trial ends, the plan converts to a paid subscription and your payment method is charged.
-- Upgrades apply immediately with prorated charges. Downgrades and cancellations take effect at the end of the current term. Fees already paid are non-refundable except where the law requires otherwise.
-- Allowances are hard limits during Public Alpha: when one is reached, new billable work stops. Reaching an allowance never deletes data or creates overage charges.
+- Approved subscription prices and proposed allowances and usage rates are listed on the [pricing page](/zh-cn/pricing). Prices are in USD and exclude taxes, which you pay where applicable.
+- Starter is billed $30 yearly only ($2.50/month equivalent); Pro is $20/month and Team is $50/month. Enterprise is $999/month support plus usage through sales, without self-service purchase during Public Alpha. Confirm enrollment and payment availability before purchase.
+- No trials or annual Pro/Team discounts are offered.
+- Subscription-change timing, proration and refunds follow the agreed enrollment terms and applicable law. Confirm the available subscription-change workflow before purchase.
+- Free has no automatic overages. Paid plans propose included allowances followed by pay-as-you-go usage. Allowances and overage rates are pending review; usage charges are not yet collected. Reaching an allowance alone does not authorize deletion.
 - If payment fails, we follow the grace period and notice steps on the [pricing page](/zh-cn/pricing) before any data becomes eligible for deletion.
 
 ## 5. Public Alpha
