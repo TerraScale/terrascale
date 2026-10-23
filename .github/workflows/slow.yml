@@ -36,7 +36,7 @@ jobs:
   slow:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 50
     permissions:
       contents: read
       issues: write
@@ -58,7 +58,7 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('tests/TerraScale.Dashboard.E2E/packages.lock.json') }}
       - name: Install pinned Chromium and its system dependencies
-        timeout-minutes: 4
+        timeout-minutes: 8
         run: |
           driver=tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/.playwright
           "$driver/node/linux-x64/node" "$driver/package/cli.js" install --with-deps chromium
