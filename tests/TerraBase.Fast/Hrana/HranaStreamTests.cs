@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -5,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Hrana;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Sql;
 using static TerraBase.Fast.Hrana.HranaPipelineTests;
 
@@ -173,6 +175,36 @@ public sealed class HranaStreamTests
         await AssertExpiredAsync(reuse);
         await Assert.That(fresh.Json.GetProperty("results")[0].GetProperty("error").GetProperty("code").GetString()).IsEqualTo("SQLITE_AUTH");
         await Assert.That(Response(own.Json, 0).GetProperty("result").GetProperty("affected_row_count").GetInt64()).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task An_organization_holds_at_most_its_share_of_open_streams_across_databases()
+    {
+        // The request budget (50 per second) runs on its own clock, moved one second per request, so 257 opens are admitted.
+        var budget = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await DocumentApi.StartAsync(services: services =>
+            services.AddSingleton<IQosAdmission>(provider => new QosAdmission(budget, provider.GetRequiredService<IMeterFactory>())));
+        var databases = Enumerable.Range(0, 5).Select(i => $"db{i}").ToList();
+        foreach (var database in databases)
+        {
+            (await api.SendAsync(HttpMethod.Put, api.DatabasePath(database))).Status.ShouldBe(HttpStatusCode.Created);
+        }
+
+        var opened = 0;
+        foreach (var database in databases.Take(4))
+        {
+            for (var i = 0; i < HranaStreams.MaxDatabaseStreams; i++)
+            {
+                budget.Advance(TimeSpan.FromSeconds(1));
+                opened += (await PostAsync(api, """{"requests":[{"type":"get_autocommit"}]}""", database: database)).Status == HttpStatusCode.OK ? 1 : 0;
+            }
+        }
+
+        budget.Advance(TimeSpan.FromSeconds(1));
+        var refused = await PostAsync(api, """{"requests":[{"type":"get_autocommit"}]}""", database: databases[4]);
+
+        await Assert.That(opened).IsEqualTo(HranaStreams.MaxOrganizationStreams);
+        await Assert.That((refused.Status, Code(refused))).IsEqualTo((HttpStatusCode.ServiceUnavailable, "ORGANIZATION_STREAMS_EXHAUSTED"));
     }
 
     private static string UseStored(string baton) => $$$"""{"baton":"{{{baton}}}","requests":[{"type":"execute","stmt":{"sql_id":1}},{"type":"close"}]}""";

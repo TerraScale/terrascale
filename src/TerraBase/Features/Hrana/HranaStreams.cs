@@ -13,7 +13,10 @@ namespace TerraBase.Features.Hrana;
 /// </summary>
 internal interface IHranaStreams
 {
-    /// <summary>Opens a stream, or refuses past <see cref="HranaStreams.MaxStreams"/> per node or <see cref="HranaStreams.MaxDatabaseStreams"/> per database.</summary>
+    /// <summary>
+    /// Opens a stream, or refuses past <see cref="HranaStreams.MaxStreams"/> per node,
+    /// <see cref="HranaStreams.MaxOrganizationStreams"/> per organization or <see cref="HranaStreams.MaxDatabaseStreams"/> per database.
+    /// </summary>
     HranaOpen Open(TenantContext database, string owner, bool canWrite);
 
     /// <summary>Takes the stream parked under <paramref name="baton"/> for this owner and database; null when unknown, expired or someone else's.</summary>
@@ -38,11 +41,15 @@ internal sealed class HranaStreams : IHranaStreams, IAsyncDisposable
     /// <summary>Open streams per database, so one tenant cannot hold the node's streams.</summary>
     public const int MaxDatabaseStreams = 64;
 
+    /// <summary>Open streams per organization, across its databases.</summary>
+    public const int MaxOrganizationStreams = 256;
+
     /// <summary>How long a parked stream lives without a request.</summary>
     public static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(30);
 
     private readonly ConcurrentDictionary<string, HranaStream> _parked = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, int> _perDatabase = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, int> _perOrganization = new(StringComparer.Ordinal);
     private readonly ISqlService _sql;
     private readonly TimeProvider _time;
     private readonly ILogger<HranaStreams> _logger;
@@ -65,9 +72,15 @@ internal sealed class HranaStreams : IHranaStreams, IAsyncDisposable
             return new HranaError("this node has too many open streams; retry later", "STREAMS_EXHAUSTED");
         }
 
-        if (_perDatabase.AddOrUpdate(Key(database), 1, (_, count) => count + 1) > MaxDatabaseStreams)
+        if (!Enter(_perOrganization, database.OrganizationId, MaxOrganizationStreams))
         {
-            Release(database);
+            Interlocked.Decrement(ref _open);
+            return new HranaError($"an organization has at most {MaxOrganizationStreams} open streams on a node; close streams or retry later", "ORGANIZATION_STREAMS_EXHAUSTED");
+        }
+
+        if (!Enter(_perDatabase, Key(database), MaxDatabaseStreams))
+        {
+            Leave(_perOrganization, database.OrganizationId);
             Interlocked.Decrement(ref _open);
             return new HranaError($"a database has at most {MaxDatabaseStreams} open streams on a node; close streams or retry later", "DATABASE_STREAMS_EXHAUSTED");
         }
@@ -116,17 +129,29 @@ internal sealed class HranaStreams : IHranaStreams, IAsyncDisposable
         finally
         {
             Interlocked.Decrement(ref _open);
-            Release(stream.Database);
+            Leave(_perDatabase, Key(stream.Database));
+            Leave(_perOrganization, stream.Database.OrganizationId);
         }
     }
 
     private static string Key(TenantContext database) => database.DatabaseId ?? string.Empty;
 
-    private void Release(TenantContext database)
+    private static bool Enter(ConcurrentDictionary<string, int> counts, string key, int max)
     {
-        if (_perDatabase.AddOrUpdate(Key(database), 0, (_, count) => count - 1) <= 0)
+        if (counts.AddOrUpdate(key, 1, (_, count) => count + 1) <= max)
         {
-            _perDatabase.TryRemove(new KeyValuePair<string, int>(Key(database), 0));
+            return true;
+        }
+
+        Leave(counts, key);
+        return false;
+    }
+
+    private static void Leave(ConcurrentDictionary<string, int> counts, string key)
+    {
+        if (counts.AddOrUpdate(key, 0, (_, count) => count - 1) <= 0)
+        {
+            counts.TryRemove(new KeyValuePair<string, int>(key, 0));
         }
     }
 
