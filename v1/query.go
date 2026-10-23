@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"math"
 	"net/http"
 )
 
@@ -139,6 +140,46 @@ func Exists[P Path](path P) Filter {
 type SortKey struct {
 	path any
 	desc bool
+	near *near
+	err  error
+}
+
+type near struct {
+	Path   any       `json:"path"`
+	Vector []float32 `json:"vector"`
+	Metric Metric    `json:"metric,omitempty"`
+}
+
+// Metric is a vector distance metric for Near.
+type Metric string
+
+// Vector distance metrics. The server uses Cosine when none is given.
+const (
+	Cosine Metric = "cosine"
+	L2     Metric = "l2"
+)
+
+// Near sorts by distance between vector and the array at path, nearest first.
+// metric is Cosine, L2 or empty (cosine). A near key must be the only sort
+// key; the query then has Limit 0-100, no Cursor, and each item a Distance.
+func Near[P Path](path P, vector []float32, metric Metric) SortKey {
+	k := SortKey{path: pathValue(path), near: &near{Path: pathValue(path), Vector: vector, Metric: metric}}
+	zero := true
+	for _, v := range vector {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			k.err = errors.New("terrabase: near vector must hold finite numbers")
+		}
+		zero = zero && v == 0
+	}
+	switch {
+	case len(vector) == 0 || len(vector) > 4096:
+		k.err = errors.New("terrabase: near vector needs 1-4096 numbers")
+	case metric != "" && metric != Cosine && metric != L2:
+		k.err = fmt.Errorf("terrabase: unknown near metric %q", metric)
+	case zero && metric != L2:
+		k.err = errors.New("terrabase: cosine near vector must not be all zeros")
+	}
+	return k
 }
 
 // Asc sorts by path ascending.
@@ -147,8 +188,14 @@ func Asc[P Path](path P) SortKey { return SortKey{path: pathValue(path)} }
 // Desc sorts by path descending.
 func Desc[P Path](path P) SortKey { return SortKey{path: pathValue(path), desc: true} }
 
-// MarshalJSON encodes {"path":…,"order":"asc"|"desc"}.
+// MarshalJSON encodes {"path":…,"order":"asc"|"desc"} or {"near":{…}}.
 func (k SortKey) MarshalJSON() ([]byte, error) {
+	if k.err != nil {
+		return nil, k.err
+	}
+	if k.near != nil {
+		return json.Marshal(map[string]*near{"near": k.near})
+	}
 	order := "asc"
 	if k.desc {
 		order = "desc"
@@ -193,6 +240,11 @@ type QueryResult struct {
 
 // Query runs one page of q against the collection.
 func (col *Collection) Query(ctx context.Context, q Query) (*QueryResult, error) {
+	for _, k := range q.Sort {
+		if k.near != nil && (len(q.Sort) > 1 || q.Limit > 100 || q.Cursor != "") {
+			return nil, errors.New("terrabase: near must be the only sort key, with Limit <= 100 and no Cursor")
+		}
+	}
 	p, err := col.path("query")
 	if err != nil {
 		return nil, err

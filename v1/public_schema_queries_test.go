@@ -2,6 +2,7 @@ package v1_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	tb "terrascale.tech/sdk/v1"
@@ -117,5 +118,69 @@ func TestPublicSavedQueryContracts(t *testing.T) {
 				t.Fatalf("saved = %+v, %v", out, err)
 			}
 		})
+	}
+}
+
+func TestCollectionTTLContracts(t *testing.T) {
+	const path = parityDatabase + "/collections/users/ttl"
+	t.Run("set", func(t *testing.T) {
+		col := parityClient(t, http.MethodPut, path, "", `{"path":"/expiresAt"}`, `{"path":"/expiresAt"}`, http.StatusOK).Database(parityProject, "main").Collection("users")
+		if err := col.SetTTL(t.Context(), "/expiresAt"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for reply, want := range map[string]string{`{"path":"/expiresAt"}`: "/expiresAt", `{"path":null}`: ""} {
+		t.Run("get "+want, func(t *testing.T) {
+			col := parityClient(t, http.MethodGet, path, "", "", reply, http.StatusOK).Database(parityProject, "main").Collection("users")
+			if got, err := col.TTL(t.Context()); err != nil || got != want {
+				t.Fatalf("TTL = %q, %v; want %q", got, err, want)
+			}
+		})
+	}
+	t.Run("delete", func(t *testing.T) {
+		col := parityClient(t, http.MethodDelete, path, "", "", `{"path":null}`, http.StatusOK).Database(parityProject, "main").Collection("users")
+		if err := col.DeleteTTL(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("reject", func(t *testing.T) {
+		c, err := tb.New(tb.Config{BaseURL: "http://127.0.0.1:1", Token: "header.project.signature"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Database(parityProject, "main").Collection("users").SetTTL(t.Context(), "expiresAt"); err == nil {
+			t.Fatal("non-pointer TTL path accepted")
+		}
+	})
+}
+
+func TestNearQuery(t *testing.T) {
+	const body = `{"filter":{"eq":["/kind","doc"]},"sort":[{"near":{"path":"/embedding","vector":[0.1,0.2],"metric":"l2"}}],"limit":5}`
+	const reply = `{"items":[{"id":"` + parityID + `","version":"opaque","state":"value","document":{},"distance":0.25},{"id":"` + parityID + `","version":"opaque","state":"value","document":{}}]}`
+	col := parityClient(t, http.MethodPost, parityDatabase+"/collections/users/query", "", body, reply, http.StatusOK).Database(parityProject, "main").Collection("users")
+	res, err := col.Query(t.Context(), tb.Query{Filter: tb.Eq("/kind", "doc"), Sort: []tb.SortKey{tb.Near("/embedding", []float32{0.1, 0.2}, tb.L2)}, Limit: 5})
+	if err != nil || len(res.Items) != 2 || res.Items[0].Distance == nil || *res.Items[0].Distance != 0.25 || res.Items[1].Distance != nil || res.NextCursor != "" {
+		t.Fatalf("near = %+v, %v", res, err)
+	}
+}
+
+func TestNearRejects(t *testing.T) {
+	c, err := tb.New(tb.Config{BaseURL: "http://127.0.0.1:1", Token: "header.project.signature", MaxRetries: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	col := c.Database(parityProject, "main").Collection("users")
+	near := tb.Near("/embedding", []float32{1}, "")
+	for name, q := range map[string]tb.Query{
+		"empty vector":   {Sort: []tb.SortKey{tb.Near("/embedding", nil, tb.Cosine)}},
+		"zero cosine":    {Sort: []tb.SortKey{tb.Near("/embedding", []float32{0, 0}, "")}},
+		"unknown metric": {Sort: []tb.SortKey{tb.Near("/embedding", []float32{1}, "dot")}},
+		"second key":     {Sort: []tb.SortKey{near, tb.Asc("/name")}},
+		"limit":          {Sort: []tb.SortKey{near}, Limit: 101},
+		"cursor":         {Sort: []tb.SortKey{near}, Cursor: "next"},
+	} {
+		if _, err := col.Query(t.Context(), q); err == nil || !strings.Contains(err.Error(), "near") {
+			t.Errorf("%s: err = %v", name, err)
+		}
 	}
 }

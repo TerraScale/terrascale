@@ -192,6 +192,18 @@ for doc, err := range users.Items(ctx, q) { … }     // every match across page
 for page, err := range users.Pages(ctx, q) { … }    // page.NextCursor, page.Count
 ```
 
+`tb.Near(path, vector, tb.Cosine|tb.L2)` sorts by vector distance, nearest
+first. It must be the only sort key, with `Limit` at most 100 and no cursor;
+each returned `Document.Distance` holds the distance:
+
+```go
+res, err := docs.Query(ctx, tb.Query{Sort: []tb.SortKey{tb.Near("/embedding", vec, tb.Cosine)}, Limit: 10})
+```
+
+`Collection.SetTTL(ctx, "/expiresAt")`, `TTL` and `DeleteTTL` manage document
+expiry. Documents expire when that member holds a past RFC 3339 UTC time; an
+hourly sweep deletes them, so removal can lag by up to an hour.
+
 ### Public database tooling
 
 `Client.Databases` lists project databases; `Database.Info` reads metadata by

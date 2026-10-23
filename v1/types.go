@@ -88,6 +88,8 @@ type Document struct {
 	Document json.RawMessage `json:"document,omitempty"`
 	// Siblings lists every live and deleted sibling for state "conflict".
 	Siblings []Sibling `json:"siblings,omitempty"`
+	// Distance is set on query results sorted by Near.
+	Distance *float64 `json:"distance,omitempty"`
 }
 
 // Decode decodes the document body into v, keeping numbers as json.Number.
