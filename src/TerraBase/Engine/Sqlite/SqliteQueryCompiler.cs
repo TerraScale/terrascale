@@ -52,6 +52,12 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
         var after = leadingId && query.After is { } position
             ? $"id {(query.Sort[0].Descending ? "<" : ">")} {Parameter(position.Id)}"
             : After(keys, query.After);
+        if (query.Near is not null)
+        {
+            // tb_near (NearDistance) is registered for this statement; +Infinity sorts last and means no comparable vector.
+            columns.AppendFormat(", tb_near({0}) AS k0v", rows.Json);
+        }
+
         using var sql = ZString.CreateStringBuilder();
         // Keep the non-deterministic visit before residual predicates; seek constraints still bound the scan.
         sql.AppendFormat("""
@@ -70,6 +76,11 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
         for (var i = 0; i < keys.Count; i++)
         {
             sql.AppendFormat(" k{0}{1} {2},", (i / 2).ToString(CultureInfo.InvariantCulture), i % 2 == 0 ? "r" : "v", keys[i].Descending ? "DESC" : "ASC");
+        }
+
+        if (query.Near is not null)
+        {
+            sql.Append(" k0v ASC,");
         }
 
         sql.AppendFormat(" id ASC LIMIT {0};", Parameter((long)query.Limit + 1));

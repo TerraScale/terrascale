@@ -14,8 +14,10 @@ public static class QueryShape
     public static string? Normalize(DocumentQuery query)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return Weight(query.Filter) + query.Sort.Sum(key => Weight(key.Path)) > MaxWeight ? null
-            : Serialize("json", Filter(query.Filter), Sort(query.Sort));
+        return Weight(query.Filter) + query.Sort.Sum(key => Weight(key.Path)) + (query.Near is { } weighed ? Weight(weighed.Path) : 0) > MaxWeight ? null
+            : Serialize("json", Filter(query.Filter), query.Near is { } near
+                ? [new JsonArray("near", Path(near.Path), near.Euclidean ? "l2" : "cosine", near.Vector.Count)]
+                : Sort(query.Sort));
     }
 
     /// <summary>Normalizes SQL predicates and effective sorting, separately from JSON comparison semantics.</summary>

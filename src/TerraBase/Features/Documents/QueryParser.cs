@@ -15,8 +15,9 @@ namespace TerraBase.Features.Documents;
 /// <param name="Project">Paths to keep, or <see langword="null"/> for whole documents.</param>
 /// <param name="Limit">Page size.</param>
 /// <param name="Digest">Binds cursors to this database, collection, filter, sort and projection.</param>
+/// <param name="Near">Vector similarity order replacing <paramref name="Sort"/>.</param>
 internal sealed record ParsedQuery(
-    DocumentFilter? Filter, IReadOnlyList<SortKey> Sort, IReadOnlyList<DocumentPath>? Project, int Limit, string Digest);
+    DocumentFilter? Filter, IReadOnlyList<SortKey> Sort, IReadOnlyList<DocumentPath>? Project, int Limit, string Digest, NearSort? Near = null);
 
 /// <summary>Parses the query v1 grammar shared by queries and transaction assertions.</summary>
 internal static class QueryParser
@@ -32,6 +33,8 @@ internal static class QueryParser
     private const int MaxChildren = 64;
     private const int MaxValues = 256;
     private const int MaxSortKeys = 4;
+    private const int MaxNearLimit = 100;
+    private const int MaxNearDimensions = 4096;
     private const int MaxProjection = 64;
     private const int MaxSegments = 16;
     private const int MaxPathLength = 4096;
@@ -74,7 +77,8 @@ internal static class QueryParser
         }
 
         var filter = request.Filter.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? null : Filter(request.Filter, 1, ref nodes);
-        var keys = sort.Select(key => new SortKey(Path(key.Path), key.Order switch
+        var near = sort.Any(static key => key.Near is not null) ? Near(sort, request) : null;
+        var keys = (near is null ? sort : []).Select(key => new SortKey(Path(key.Path), key.Order switch
         {
             null or "asc" => false,
             "desc" => true,
@@ -102,7 +106,39 @@ internal static class QueryParser
         var project = request.Project is null ? null : Projection.Normalize(request.Project.Select(Path));
         var digest = Digest(database, collection, Normalize(request.Filter), JsonSerializer.Serialize(sort, TerraBaseJsonContext.Default.IReadOnlyListQuerySortRequest),
             request.Project is null ? "" : JsonSerializer.Serialize(request.Project, TerraBaseJsonContext.Default.IReadOnlyListJsonElement));
-        return new ParsedQuery(filter, keys, project, request.Limit ?? DefaultLimit, digest);
+        return new ParsedQuery(filter, keys, project, request.Limit ?? DefaultLimit, digest, near);
+    }
+
+    private static NearSort Near(IReadOnlyList<QuerySortRequest> sort, QueryRequest request)
+    {
+        if (sort is not [{ Near: { } near } key] || key.Path.ValueKind != JsonValueKind.Undefined || key.Order is not null)
+        {
+            throw Invalid("near is the only sort key, without path or order");
+        }
+
+        if (request.Cursor is not null || request.Limit is > MaxNearLimit)
+        {
+            throw Invalid("near returns one page of at most 100 documents, without a cursor");
+        }
+
+        if (near.Vector is not { Count: >= 1 and <= MaxNearDimensions } vector || vector.Any(static value => Math.Abs(value) > float.MaxValue))
+        {
+            throw Invalid("near vector has 1 to 4096 numbers within the float32 range");
+        }
+
+        var euclidean = near.Metric switch
+        {
+            null or "cosine" => false,
+            "l2" => true,
+            _ => throw Invalid("near metric is cosine or l2"),
+        };
+        if (!euclidean && vector.All(static value => (float)value == 0))
+        {
+            throw Invalid("a cosine near vector is not all zeros");
+        }
+
+        var path = Path(near.Path);
+        return path.IsId ? throw Invalid("near path is a JSON Pointer") : new NearSort(path, vector, euclidean);
     }
 
     /// <summary>Parses a filter, or answers the first rule it breaks; <paramref name="code"/> names the error of a bad one.</summary>
