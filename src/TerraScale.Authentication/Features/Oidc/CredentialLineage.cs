@@ -47,18 +47,33 @@ public sealed class BindIssuedCredential(IOpenIddictTokenManager tokens) : IOpen
     }
 }
 
-/// <summary>Rejects losing ancestry and replays before OpenIddict can revoke the winning authorization on reuse.</summary>
+/// <summary>Validates stored ancestry and token status without revoking the winning authorization on reuse.</summary>
 public sealed class ValidateCredentialLineage(IOpenIddictTokenStore<OidcToken> tokens) : IOpenIddictServerHandler<ValidateTokenContext>
 {
     /// <inheritdoc />
     public async ValueTask HandleAsync(ValidateTokenContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (context.TokenId is { } id
-            && (await tokens.FindByIdAsync(id, context.CancellationToken).ConfigureAwait(false) is not { } token
-                || token.Status is Statuses.Redeemed or Statuses.Revoked))
+        if (context.TokenId is not { } id)
         {
-            context.Reject(Errors.InvalidToken, CredentialLineage.ConflictNotice);
+            return;
+        }
+
+        var token = await tokens.FindByIdAsync(id, context.CancellationToken).ConfigureAwait(false);
+        switch (token?.Status)
+        {
+            case Statuses.Valid:
+                return;
+            case Statuses.Inactive:
+                context.Reject(Errors.AuthorizationPending, "The device authorization is pending.");
+                return;
+            case Statuses.Rejected:
+                context.Reject(Errors.AccessDenied, "The device authorization was denied.");
+                return;
+            default:
+                context.Reject(context.Principal?.HasTokenType(TokenTypeIdentifiers.Private.ClientAssertion) == true
+                    ? Errors.InvalidClient : Errors.InvalidToken, CredentialLineage.ConflictNotice);
+                return;
         }
     }
 }

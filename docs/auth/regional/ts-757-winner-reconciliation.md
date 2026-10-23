@@ -57,7 +57,12 @@ Losing/replayed OAuth credentials return `invalid_grant` at the token endpoint,
 with a notice naming expiration, prior use, or a concurrent regional sign-in or
 rotation and directing the user to sign in again. Userinfo and ts-auth's
 management authentication reject the losing token entry. Replaying a parent
-never revokes the winning authorization. Explicit RFC 7009 revocation still
+never revokes the winning authorization. One stored-status validator replaces
+OpenIddict's status handler, avoiding a second read that could revoke the
+winning family if another request redeemed the parent between reads. Valid,
+pending, denied and invalid states retain their protocol decisions; signature,
+issuer, lifetime and authorization validation remain enabled. Explicit RFC
+7009 revocation still
 revokes the authorization. OpenIddict entity caching is disabled so payload
 and authorization lookups observe the current regional storage winners.
 Device approval atomically creates a separate
@@ -106,8 +111,9 @@ authorization schema. No SDK expansion or new collection is used.
 
 **Needs format bump: batch 4.** The deploy lane explicitly authorized each of
 PRs #464, #469 and #473 to advance `StorageFormat.Version` by one over current
-main, rebasing before merge. This PR currently advances 12 to 13; if another
-batch member merges first, rebase and advance from that new main version.
+main. This PR currently advances 12 to 13. Enqueue the green head using
+auto-merge; the queue rebuilds against main. If a batch member creates a real
+format conflict, resolve it by advancing from the new main version.
 HANDOFF: send this PR's merge SHA to the batch-4 deploy lane. FR1 owns the
 approved alpha wipe after all three PRs merge, or the lane's 60-minute cutoff.
 This branch does not itself wipe or reset serving data.
