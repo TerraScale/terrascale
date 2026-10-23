@@ -213,6 +213,10 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
             FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
             RunAsync(() => inner.ReadFeedAsync(cursor, collections, maxEvents, maxBytes, cancellationToken), cancellationToken);
 
+        public ValueTask<FeedPage> ReadFeedMetadataAsync(
+            FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.ReadFeedMetadataAsync(cursor, collections, maxEvents, maxBytes, cancellationToken), cancellationToken);
+
         public ValueTask<IReadOnlyDictionary<Lattices.ReplicaId, Lattices.Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetFeedHeadAsync(cancellationToken), cancellationToken);
 

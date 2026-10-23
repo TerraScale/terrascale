@@ -349,6 +349,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<FeedPage> ReadFeedAsync(
             FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
             inner.ReadFeedAsync(cursor, collections, maxEvents, maxBytes, cancellationToken);
+        public ValueTask<FeedPage> ReadFeedMetadataAsync(
+            FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
+            inner.ReadFeedMetadataAsync(cursor, collections, maxEvents, maxBytes, cancellationToken);
         public ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken) => inner.GetFeedHeadAsync(cancellationToken);
         public ValueTask<int> TrimFeedAsync(Hlc before, int limit, CancellationToken cancellationToken) => inner.TrimFeedAsync(before, limit, cancellationToken);
         public async ValueTask<DocumentPage> ListAsync(string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken)

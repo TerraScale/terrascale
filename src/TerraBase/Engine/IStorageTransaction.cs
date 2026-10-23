@@ -193,6 +193,10 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<FeedPage> ReadFeedAsync(
         FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken);
 
+    /// <summary>The durable feed identities without materializing current document bodies, under the same cursor and transaction bounds.</summary>
+    ValueTask<FeedPage> ReadFeedMetadataAsync(
+        FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken);
+
     /// <summary>The cursor at the feed's head: per origin, the highest stamp in the feed.</summary>
     ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken);
 
