@@ -14,4 +14,8 @@
     <!-- Built at test time by WalFaults/WalSyncFaults.cs with the host's C compiler. -->
     <None Include="WalFaults/walfaults.c" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The vs-Turso benchmark's pgwire lane. -->
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
 </Project>
