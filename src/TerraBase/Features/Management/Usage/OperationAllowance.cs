@@ -56,16 +56,7 @@ internal sealed class OperationAllowance : IOperationAllowance
             return new Done();
         }
 
-        var used = await _meter.MonthOperationsAsync(database, cancellationToken).ConfigureAwait(false);
-        if (used is not long operations)
-        {
-            return used switch
-            {
-                Unavailable error => error,
-                long => throw new UnreachableException(),
-            };
-        }
-
+        var operations = _meter.MonthOperations(database);
         return operations < limit
             ? new Done()
             : new QuotaExceeded(string.Create(CultureInfo.InvariantCulture,

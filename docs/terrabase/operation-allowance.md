@@ -26,7 +26,8 @@ Values live in `QosPolicy.MonthlyOperations` (`src/TerraBase/Features/Qos/QosPol
 
 - Counts are per node: each region enforces the allowance on the operations it served.
 - One document operation counts as one unit; the 4 KiB operation-unit size is not yet applied.
-- After a restart a node seeds each database's month from its saved usage the first time it
-  serves the database again (`UsageMeter.MonthOperationsAsync`).
+- After a restart a node seeds each database's month from its saved usage in the background the
+  first time it serves the database again (`UsageMeter.MonthOperations`); writes never wait for
+  that read, so a few writes can pass before it lands.
 
 Covered by `tests/TerraBase.Fast/Qos/OperationAllowanceTests.cs`.
