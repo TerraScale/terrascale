@@ -182,6 +182,7 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         await using var auth = await StartAuthAsync(tenant);
+        await auth.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
         await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(10))).IsTrue();
 
         // Only the startup bootstrap creates collections; the readiness probe never repairs storage.
