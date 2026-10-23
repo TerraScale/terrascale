@@ -30,23 +30,34 @@ public static class AuthEndpoints
         app.MapPost("/api/v1/auth/logout", (Delegate)LogoutAsync);
     }
 
-    // A signed-in visitor continues; everyone else goes to ts-auth's hosted sign-in.
+    // A signed-in visitor continues; everyone else goes to ts-auth's hosted sign-in, or with signup=1 its hosted sign-up.
     private static async Task<IResult> StartAsync(HttpContext context, DashboardSessions sessions)
     {
         var returnTo = Csrf.LocalRedirect(context.Request.Query["returnTo"].ToString());
         if (await sessions.ReadAsync(context) is not null) return HttpRedirects.SeeOther(returnTo);
-        return await AuthorizeAsync(context, returnTo);
+        return await AuthorizeAsync(context, returnTo, signUp: context.Request.Query["signup"] == "1");
     }
 
-    public static async Task<IResult> AuthorizeAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0)
+    public static async Task<IResult> AuthorizeAsync(HttpContext context, string returnTo, string tokenName = "", int tokenDays = 0, bool signUp = false)
     {
         try
         {
             var flow = await context.RequestServices.GetRequiredService<AuthFlows>().StartOidcAsync(context, returnTo, tokenName, tokenDays);
-            return Results.Redirect(await context.RequestServices.GetRequiredService<IAuthOidcGateway>().AuthorizationUrlAsync(flow, context.RequestAborted));
+            var authorize = await context.RequestServices.GetRequiredService<IAuthOidcGateway>().AuthorizationUrlAsync(flow, context.RequestAborted);
+            return Results.Redirect(signUp ? HostedSignUp(authorize) : authorize);
         }
         catch (Exception error) when (DependencyFailure(error, context))
         { return Failure(context, returnTo, "Sign-in is unavailable right now. Try again in a moment.", 503, error); }
+    }
+
+    // ts-auth's hosted sign-up page takes the same next=/{slug}/oauth/authorize?... as its sign-in page, so a new
+    // customer lands on account creation instead of "Welcome back" and still returns through this flow.
+    private static string HostedSignUp(string authorize)
+    {
+        var uri = new Uri(authorize);
+        return uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries) is [var slug, "oauth", "authorize"]
+            ? uri.GetLeftPart(UriPartial.Authority) + "/ui/" + slug + "/sign-up?next=" + Uri.EscapeDataString(uri.PathAndQuery)
+            : authorize;
     }
 
     private static async Task<IResult> CompleteAsync(HttpContext context, AuthFlows flows, IAuthOidcGateway auth, DashboardSessions sessions)

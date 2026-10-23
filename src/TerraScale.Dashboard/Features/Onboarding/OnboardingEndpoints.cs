@@ -22,11 +22,11 @@ public static class OnboardingEndpoints
         var returnTo = context.Request.Query["returnTo"].ToString();
         if (returnTo.Length == 0) returnTo = context.Request.Query["return"].ToString();
         var session = await sessions.ReadAsync(context);
-        // Accounts are created on ts-auth's hosted sign-up, reached from its sign-in page.
+        // Accounts are created on ts-auth's hosted sign-up; a signed-out visitor here is registering, so open it directly.
         if (session is null)
         {
             var target = ReturnPath(returnTo) is { Length: > 0 } path ? path : "/onboarding" + (OfferedPlan(plans, requested) is { Length: > 0 } plan ? "?plan=" + Uri.EscapeDataString(plan) : "");
-            return HttpRedirects.SeeOther("/login?returnTo=" + Uri.EscapeDataString(target));
+            return HttpRedirects.SeeOther("/login?signup=1&returnTo=" + Uri.EscapeDataString(target));
         }
         var page = Page(context) with { Plans = plans, Plan = OfferedPlan(plans, requested) };
         var account = await accounts.EnsureAsync(session, context.RequestAborted);
