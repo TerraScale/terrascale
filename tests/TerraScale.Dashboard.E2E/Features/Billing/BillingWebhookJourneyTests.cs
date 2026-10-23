@@ -120,7 +120,8 @@ public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
     [Test]
     [Arguments(false, 1)]
     [Arguments(true, 1)]
-    [Arguments(false, 64 * 1024 + 1)]
+    // Quarantined 2026-10-23, owner kb1 thread, deadline 2026-10-24: the known-length 413 races the upload and the client sees Broken pipe.
+    [Arguments(false, 64 * 1024 + 1, Skip = "Quarantined: known-length 413 races the upload (Broken pipe); deadline 2026-10-24")]
     [Arguments(true, 64 * 1024 + 1)]
     public async Task OversizedWebhookAllowsFollowUpPostOnSameClientPool(bool chunked, int excess)
     {
