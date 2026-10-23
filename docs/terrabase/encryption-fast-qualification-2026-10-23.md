@@ -113,7 +113,14 @@ Raw logs are outside Git under
   `report.md` SHA-256
   `ce2acb1d9fd33d903c64bf8dff73f4d7bfc3b9f20357b83c41d719360c857693`.
 - `repair-proof-auth-42fa-20261023T150928Z/`: auth prerequisite proof;
-  per-repeat results and exit codes are retained in `results.json`.
+  original per-repeat results and exit codes are retained in `results.json`
+  (SHA-256 `e38cf31800d64fa8ff6fa1d0074ee371a2a4f00597441b75f2b9b0126826aa2f`).
+  Recovered `report.md` SHA-256 is
+  `8b9ce9f48bf1f5a3d42514c4ccc799dfa616c5076a300f5d6892e54f88c2bc9f`.
+  Original logs 1–4 and the original managed TUnit JSON for repetition 5
+  independently support the counts. Empty original wrapper/aggregate output
+  remains preserved; aggregate 0 is calculated from individual exits rather
+  than recovered wrapper output. No auth tests were rerun for this recovery.
 
 Reports retain exact commands, commits, SDK/native identity, loads, timings,
 per-command exits, and actual runner totals. Encryption cost measurements remain
