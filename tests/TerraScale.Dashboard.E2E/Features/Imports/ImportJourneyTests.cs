@@ -17,6 +17,20 @@ public sealed class ImportJourneyTests(DashboardRootFixture fixture)
     private const int Part = 4 * 1024 * 1024;
 
     [Test]
+    public async Task NdjsonExportsAreOfferedAndAcceptedAsAnImportFormat()
+    {
+        await using var scenario = await ImportScenario.StartAsync(fixture.Root);
+        using var client = scenario.CreateClient();
+        using var login = await HttpJourney.LoginAsync(client);
+        var page = await client.GetStringAsync("/imports");
+        await Assert.That(page).Contains("value=\"ndjson\"");
+        var csrf = await HttpJourney.CsrfAsync(client, "/imports");
+        var job = await CreateAsync(client, csrf, Minted(page), "ndjson", Encoding.UTF8.GetBytes("{\"collection\":\"users\",\"email\":\"ada@example.com\"}\n"));
+        await Assert.That(job.GetProperty("state").GetString()).IsEqualTo("awaiting_source");
+        await Assert.That(job.GetProperty("source").GetProperty("format").GetString()).IsEqualTo("ndjson");
+    }
+
+    [Test]
     [Arguments("application/json", "application/problem+json")]
     [Arguments("text/html", "text/html")]
     public async Task CustomDatabaseNameIdentifiesTheFieldWithoutCreatingADestination(string accept, string contentType)
@@ -45,7 +59,7 @@ public sealed class ImportJourneyTests(DashboardRootFixture fixture)
         await HttpJourney.LoginAsync(client);
         await HttpJourney.LoginAsync(replica);
         var page = await HtmlAsync(client, "/imports");
-        await Assert.That(page).Contains("Import from PostgreSQL or Turso");
+        await Assert.That(page).Contains("Import from PostgreSQL, Turso or NDJSON");
         await Assert.That(page).Contains("A partial upload is discarded after 1 day without progress (the upload then starts over); an unconfirmed preview is kept 7 days, and a failed or cancelled import's file 7 days.");
         await Assert.That(page.Contains("type=\"password\"", StringComparison.Ordinal)).IsFalse().Because("The dashboard never collects source credentials.");
         await Assert.That((await JsonAsync(await client.GetAsync("/api/v1/dashboard/imports"))).GetArrayLength()).IsEqualTo(0);

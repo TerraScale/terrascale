@@ -135,7 +135,7 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
 
     private async Task<HttpResponseMessage> CreateAsync(DatabaseScope scope, DatabaseRegion home, string project, string database, Job? existing, byte[] body, CancellationToken ct)
     {
-        if (JsonNode.Parse(body) is not JsonObject request || request["format"]?.GetValue<string>() is not ("postgres_plain" or "sqlite") ||
+        if (JsonNode.Parse(body) is not JsonObject request || request["format"]?.GetValue<string>() is not ("postgres_plain" or "sqlite" or "ndjson") ||
             request["sourceBytes"]?.GetValue<long>() is not (>= 1 and <= 1L << 30) || request["sourceSha256"]?.GetValue<string>() is not { Length: 64 } sha ||
             !sha.All(char.IsAsciiHexDigitLower) || request["options"] is not JsonObject options ||
             options.Any(field => field.Key is not ("exclude" or "collection")) || options["exclude"] is not JsonArray exclude)

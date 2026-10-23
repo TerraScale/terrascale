@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
@@ -15,6 +16,7 @@ public interface IDocumentBackend
     Task<TerraBaseDocument?> GetAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, string id, CancellationToken cancellationToken);
     Task<TerraBaseWriteResult> WriteAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, string operation, string id, JsonElement document, string version, CancellationToken cancellationToken);
     Task<TerraBaseCollectionSchema> SchemaAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken);
+    IAsyncEnumerable<TerraBaseExportLine> ExportAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, CancellationToken cancellationToken);
 }
 
 // Every data request obtains current user/project authority; no customer key is stored.
@@ -82,6 +84,13 @@ public sealed class DocumentBackend(IHttpClientFactory http, IProjectAccessToken
             // The current producer rejects idempotency keys; replay cannot prove a commit.
             throw new DocumentWriteOutcomeUnknownException(attemptId, id, operation);
         }
+    }
+
+    // Every live document from one read snapshot, collection then id order (GET …/export).
+    public async IAsyncEnumerable<TerraBaseExportLine> ExportAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var database = await DatabaseAsync(scope, home, databaseName, "documents:read", cancellationToken);
+        await foreach (var line in database.ExportAsync(cancellationToken: cancellationToken)) yield return line;
     }
 
     public async Task<TerraBaseCollectionSchema> SchemaAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken) =>

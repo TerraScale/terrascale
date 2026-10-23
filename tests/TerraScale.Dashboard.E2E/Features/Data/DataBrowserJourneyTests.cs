@@ -41,6 +41,15 @@ public sealed class DataBrowserJourneyTests(DashboardRootFixture fixture)
         await Assert.That(await page.Locator("form[aria-label='Search documents'] button").CountAsync()).IsEqualTo(0);
         await Assert.That(await page.Locator("#documents tbody tr").CountAsync()).IsEqualTo(3);
         await Assert.That(await page.Locator("#documents th[aria-sort='ascending'] .ts-data-sort svg path").GetAttributeAsync("d")).IsEqualTo("m18 15-6-6-6 6");
+        var export = await context.APIRequest.GetAsync(new Uri(scenario.Origin, database + "/export").ToString());
+        await Assert.That(export.Status).IsEqualTo(200);
+        await Assert.That(export.Headers["content-type"]).StartsWith("application/x-ndjson");
+        await Assert.That(export.Headers["content-disposition"]).IsEqualTo("attachment; filename=\"core-primary.ndjson\"");
+        var exported = (await export.TextAsync()).Split('\n');
+        await Assert.That(exported[^1]).IsEqualTo("").Because("Every exported line ends with a newline.");
+        var orders = exported[..^1].Select(line => System.Text.Json.JsonDocument.Parse(line).RootElement).Where(line => line.GetProperty("collection").GetString() == "orders").ToArray();
+        await Assert.That(orders.Length).IsEqualTo(3);
+        await Assert.That(orders.All(line => line.EnumerateObject().Select(field => field.Name).SequenceEqual(["collection", "id", "document"]))).IsTrue();
         await Assert.That(await page.Locator("#documents th .ts-data-sort svg").CountAsync()).IsEqualTo(1);
         if (width < 600)
         {
