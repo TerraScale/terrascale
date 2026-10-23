@@ -229,7 +229,7 @@ public sealed class QueryValueRegressionTests
             using var cancellation = new CancellationTokenSource();
             await using var rows = transaction.QuerySqlAsync(new SqlQuery("query_values", null, [], 100), cancellation.Token).GetAsyncEnumerator();
             await Assert.That(await rows.MoveNextAsync()).IsTrue();
-            await Assert.That(rows.Current.Id).IsEqualTo("a");
+            await Assert.That(ManagementApi.DocumentName(rows.Current.Id)).IsEqualTo("a");
             // Cancel at a known consumer boundary, not after a timer or during a native call.
             cancellation.Cancel();
             await Assert.That(async () => await rows.MoveNextAsync()).Throws<OperationCanceledException>();
@@ -242,7 +242,7 @@ public sealed class QueryValueRegressionTests
             var resumed = new List<string>();
             await foreach (var row in resumedTransaction.QuerySqlAsync(new SqlQuery("query_values", null, [], 100), CancellationToken.None))
             {
-                resumed.Add(row.Id);
+                resumed.Add(ManagementApi.DocumentName(row.Id));
             }
 
             await Assert.That(resumed).IsEquivalentTo(["a", "b"]);
@@ -270,5 +270,5 @@ public sealed class QueryValueRegressionTests
     }
 
     private static string[] Ids(JsonElement result) =>
-        [.. result.GetProperty("rows").EnumerateArray().Select(row => row.GetProperty("id").GetString()!)];
+        [.. result.GetProperty("rows").EnumerateArray().Select(row => ManagementApi.DocumentName(row.GetProperty("id").GetString()!))];
 }
