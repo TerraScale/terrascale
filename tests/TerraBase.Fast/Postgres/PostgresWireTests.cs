@@ -232,6 +232,77 @@ public sealed class PostgresWireTests
         }
     }
 
+    [Test]
+    public async Task Project_access_tokens_connect_read_and_write_only_with_documents_write()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        var writer = Token(api, database.Project, "documents:read documents:write");
+        var reader = Token(api, database.Project, "documents:read", database.Name);
+
+        await using (var source = Source(api, writer, database.Name))
+        await using (var connection = await source.OpenConnectionAsync())
+        {
+            await ExecuteAsync(connection, People);
+            await ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", Faker.Name.FullName());
+        }
+
+        await using var readOnly = Source(api, reader, $"{database.Project}/{database.Name}");
+        await using var reading = await readOnly.OpenConnectionAsync();
+        var count = await ReadAsync(reading, "SELECT count(*) FROM people");
+        var refused = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(reading, "INSERT INTO people (name) VALUES ('x')"));
+
+        await Assert.That(count[0][0]).IsEqualTo("1");
+        await Assert.That(refused!.SqlState).IsEqualTo("42501");
+    }
+
+    [Test]
+    public async Task Project_access_tokens_outside_their_grant_fail_like_wrong_keys()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        var other = await api.CreateManagedDatabaseAsync("other");
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        await api.VerifyProjectBindingAsync(other.Organization, other.Project);
+        var token = Token(api, database.Project, "documents:read documents:write");
+        var expired = api.Issuer.Mint(api.User, descriptor =>
+        {
+            descriptor.Claims["project_id"] = database.Project;
+            descriptor.Claims["scope"] = "documents:read";
+            (descriptor.IssuedAt, descriptor.NotBefore, descriptor.Expires) = (DateTime.UtcNow.AddHours(-2), DateTime.UtcNow.AddHours(-2), DateTime.UtcNow.AddHours(-1));
+        });
+
+        PostgresException?[] failures =
+        [
+            await OpenFailureAsync(api, token, $"{other.Project}/{other.Name}"),
+            await OpenFailureAsync(api, Token(api, other.Project, "documents:read"), $"{database.Project}/{database.Name}"),
+            await OpenFailureAsync(api, Token(api, database.Project, "documents:read", "elsewhere"), database.Name),
+            await OpenFailureAsync(api, Token(api, database.Project, "databases:read"), database.Name),
+            await OpenFailureAsync(api, api.Issuer.Mint(api.User), $"{database.Project}/{database.Name}"),
+            await OpenFailureAsync(api, expired, database.Name),
+            await OpenFailureAsync(api, token[..^4] + "AAAA", database.Name),
+            await OpenFailureAsync(api, Faker.Random.AlphaNumeric(40), database.Name),
+        ];
+
+        foreach (var failure in failures)
+        {
+            await Assert.That(failure!.SqlState).IsEqualTo("28P01");
+            await Assert.That(failure.MessageText).IsEqualTo("password authentication failed");
+        }
+    }
+
+    // A ts-auth project access token as the client_credentials grant returns it, optionally restricted to one database.
+    private static string Token(ManagementApi api, string project, string scope, string? database = null) => api.Issuer.Mint(api.User, descriptor =>
+    {
+        descriptor.Claims["project_id"] = project;
+        descriptor.Claims["scope"] = scope;
+        if (database is not null)
+        {
+            descriptor.Claims["database"] = database;
+        }
+    });
+
     private static async Task<PostgresException?> OpenFailureAsync(ManagementApi api, string key, string database)
     {
         await using var source = Source(api, key, database);

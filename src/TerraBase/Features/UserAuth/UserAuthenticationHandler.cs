@@ -55,49 +55,68 @@ internal sealed class UserAuthenticationHandler(
             return AuthenticateResult.NoResult();
         }
 
-        // TerraBase starts without waiting for ts-auth: a token that arrives before the keys load joins the running fetch,
-        // and fails closed while ts-auth does not answer. Requests never start a fetch here.
-        if ((issuerKeys.Keys ?? await issuerKeys.JoinAsync(Context.RequestAborted).ConfigureAwait(false)) is not { } keys)
+        var token = header["Bearer ".Length..].Trim();
+        return await ValidateAsync(token, terraBase, issuerKeys, validated, Context.RequestAborted).ConfigureAwait(false) switch
         {
-            return AuthenticateResult.Fail("ts-auth signing keys are not loaded");
+            (ValidatedTokens.Accepted accepted, _) => Success(accepted),
+            (_, var failure) => AuthenticateResult.Fail(failure!),
+        };
+    }
+
+    /// <summary>
+    /// Validates a ts-auth access token as this scheme does, for every transport that accepts one (the PostgreSQL
+    /// password too): what it accepted, or why not. The failure never contains the token.
+    /// </summary>
+    internal static async Task<(ValidatedTokens.Accepted? Accepted, string? Failure)> ValidateAsync(
+        string token, TerraBaseOptions terraBase, IIssuerKeys issuerKeys, ValidatedTokens validated, CancellationToken cancellationToken)
+    {
+        if (terraBase.AuthIssuer is null)
+        {
+            return (null, "auth-issuer is not set");
         }
 
-        var token = header["Bearer ".Length..].Trim();
+        // TerraBase starts without waiting for ts-auth: a token that arrives before the keys load joins the running fetch,
+        // and fails closed while ts-auth does not answer. Requests never start a fetch here.
+        if ((issuerKeys.Keys ?? await issuerKeys.JoinAsync(cancellationToken).ConfigureAwait(false)) is not { } keys)
+        {
+            return (null, "ts-auth signing keys are not loaded");
+        }
+
         var cacheKey = ValidatedTokens.KeyOf(token);
         if (validated.TryGet(cacheKey, keys, out var accepted))
         {
-            return Success(accepted);
+            return (accepted, null);
         }
 
         var checkedWith = keys;
-        var result = await Tokens.ValidateTokenAsync(token, Parameters(keys)).ConfigureAwait(false);
+        var result = await Tokens.ValidateTokenAsync(token, Parameters(terraBase, keys)).ConfigureAwait(false);
         if (result.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
             // A key ts-auth rotated in after the last fetch: one rate-limited refresh, then one more attempt.
-            var refreshed = await issuerKeys.RefreshAsync(Context.RequestAborted).ConfigureAwait(false);
+            var refreshed = await issuerKeys.RefreshAsync(cancellationToken).ConfigureAwait(false);
             if (refreshed is IReadOnlyList<SecurityKey> refreshedKeys && !ReferenceEquals(refreshedKeys, keys))
             {
                 checkedWith = refreshedKeys;
-                result = await Tokens.ValidateTokenAsync(token, Parameters(refreshedKeys)).ConfigureAwait(false);
+                result = await Tokens.ValidateTokenAsync(token, Parameters(terraBase, refreshedKeys)).ConfigureAwait(false);
             }
         }
 
         if (!result.IsValid || result.SecurityToken is not JsonWebToken jwt)
         {
             // The failure kind only, never the token.
-            return AuthenticateResult.Fail(result.Exception?.GetType().Name ?? "invalid token");
+            return (null, result.Exception?.GetType().Name ?? "invalid token");
         }
 
         var user = jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var sub) ? sub : null;
         if (!EntityIds.IsValid(user))
         {
-            return AuthenticateResult.Fail("the token's sub must be a canonical uppercase ULID");
+            return (null, "the token's sub must be a canonical uppercase ULID");
         }
 
         if (jwt.TryGetPayloadValue<bool>("is_anonymous", out var anonymous) && anonymous)
         {
             // ts-auth guests sign in without an account; they must not own organizations.
-            return AuthenticateResult.Fail("guest tokens are not accepted");
+            return (null, "guest tokens are not accepted");
         }
 
         List<Claim> claims = [new(ClaimTypes.NameIdentifier, user)];
@@ -105,7 +124,7 @@ internal sealed class UserAuthenticationHandler(
         {
             if (jwt.TryGetPayloadValue<object>(name, out var claim) && claim is not string)
             {
-                return AuthenticateResult.Fail("project access claims must be strings");
+                return (null, "project access claims must be strings");
             }
         }
 
@@ -114,7 +133,7 @@ internal sealed class UserAuthenticationHandler(
             if (!EntityIds.IsValid(project)
                 || jwt.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(jwt.Kid))
             {
-                return AuthenticateResult.Fail("invalid project access token");
+                return (null, "invalid project access token");
             }
 
             claims.Add(new Claim("project_id", project));
@@ -122,7 +141,7 @@ internal sealed class UserAuthenticationHandler(
             {
                 if (!EntityIds.IsValid(organization))
                 {
-                    return AuthenticateResult.Fail("invalid project access token");
+                    return (null, "invalid project access token");
                 }
 
                 claims.Add(new Claim("org_id", organization));
@@ -133,7 +152,7 @@ internal sealed class UserAuthenticationHandler(
         {
             if (!Engine.DatabaseName.TryParse(database, out _))
             {
-                return AuthenticateResult.Fail("invalid database claim");
+                return (null, "invalid database claim");
             }
 
             claims.Add(new Claim("database", database));
@@ -143,7 +162,7 @@ internal sealed class UserAuthenticationHandler(
         {
             if (scope.Length > 4096)
             {
-                return AuthenticateResult.Fail("scope exceeds its size limit");
+                return (null, "scope exceeds its size limit");
             }
 
             claims.AddRange(scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal)
@@ -166,7 +185,7 @@ internal sealed class UserAuthenticationHandler(
         accepted = new ValidatedTokens.Accepted(
             checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope);
         validated.Add(cacheKey, accepted);
-        return Success(accepted);
+        return (accepted, null);
     }
 
     private AuthenticateResult Success(ValidatedTokens.Accepted accepted)
@@ -176,7 +195,7 @@ internal sealed class UserAuthenticationHandler(
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 
-    private TokenValidationParameters Parameters(IReadOnlyList<SecurityKey> keys) => new()
+    private static TokenValidationParameters Parameters(TerraBaseOptions terraBase, IReadOnlyList<SecurityKey> keys) => new()
     {
         ValidIssuer = terraBase.AuthIssuer,
         ValidAudiences = terraBase.AuthAudiences,

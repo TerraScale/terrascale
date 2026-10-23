@@ -149,5 +149,7 @@ Import NDJSON (an export, or mongoexport-style documents) through the import pip
 
 Relational SQL (tables, joins, transactions) and libSQL clients over Hrana: [design](sql/relational-sql.md).
 
+PostgreSQL wire protocol credentials (API keys and ts-auth access tokens as the password): [postgres-wire-auth.md](postgres-wire-auth.md).
+
 Feature-sliced: `src/TerraBase/Features/<Feature>/` holds everything
 a slice needs. See `AGENTS.md` for the full structure and rules.

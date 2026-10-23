@@ -5,13 +5,17 @@ using System.Collections.ObjectModel;
 using System.IO.Pipelines;
 using System.Security.Cryptography;
 using System.Text;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Connections;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Sql;
+using TerraBase.Features.UserAuth;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -19,8 +23,8 @@ using ZLogger;
 namespace TerraBase.Features.Postgres;
 
 /// <summary>
-/// PostgreSQL wire protocol 3.0 on the postgres listener: plaintext behind the platform's TLS edge, a TerraBase API key as
-/// the password, and one <see cref="ISqlSession"/> per connection under the tenant's QoS admission.
+/// PostgreSQL wire protocol 3.0 on the postgres listener: plaintext behind the platform's TLS edge, a TerraBase API key or a
+/// ts-auth project access token as the password, and one <see cref="ISqlSession"/> per connection under the tenant's QoS admission.
 /// </summary>
 internal sealed class PostgresConnectionHandler(IServiceProvider services) : ConnectionHandler
 {
@@ -215,6 +219,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     // `database` is a name in the key's project, or project/name for a key that reaches the whole organization.
     private async ValueTask<Access> AuthorizeAsync(string secret, string database, CancellationToken cancellationToken)
     {
+        if (!secret.StartsWith(EngineApiKeyStore.SecretPrefix, StringComparison.Ordinal))
+        {
+            return await AuthorizeTokenAsync(secret, database, cancellationToken).ConfigureAwait(false);
+        }
+
         var slash = database.IndexOf('/', StringComparison.Ordinal);
         if (await Keys.FindAsync(secret, cancellationToken).ConfigureAwait(false) is not ApiKey key
             || !key.Scopes.Contains(ApiKeyScopes.DocumentsRead)
@@ -228,6 +237,43 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         return await Tenants.FindDatabaseAsync(key.OrganizationId, project, name.Value, cancellationToken).ConfigureAwait(false) switch
         {
             TenantContext tenant when key.Reaches(tenant) => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite)),
+            Unavailable => new PgError("57P03", "the database is unavailable; retry"),
+            _ => Denied,
+        };
+    }
+
+    // A ts-auth project access token, validated exactly as the HTTP bearer scheme does, reaches its project's databases
+    // (`name`, or `project/name` naming that same project) within its database restriction, like the HTTP routes. Every
+    // refusal is the same Denied, so a token learns nothing about other organizations, projects or databases.
+    private async ValueTask<Access> AuthorizeTokenAsync(string token, string database, CancellationToken cancellationToken)
+    {
+        var slash = database.IndexOf('/', StringComparison.Ordinal);
+        var (accepted, _) = await UserAuthenticationHandler.ValidateAsync(token, services.GetRequiredService<TerraBaseOptions>(),
+            services.GetRequiredService<IIssuerKeys>(), services.GetRequiredService<ValidatedTokens>(), cancellationToken).ConfigureAwait(false);
+        if (accepted is not { Project: { } project })
+        {
+            return Denied;
+        }
+
+        var grant = new ProjectToken(project, accepted.Database, accepted.Scope, new DateTimeOffset(accepted.ValidTo, TimeSpan.Zero));
+        if (!grant.Grants(ApiKeyScopes.DocumentsRead)
+            || (slash >= 0 && !string.Equals(database[..slash], project, StringComparison.Ordinal))
+            || !DatabaseName.TryParse(database[(slash + 1)..], out var name)
+            || !grant.Reaches(project, name.Value))
+        {
+            return Denied;
+        }
+
+        var actor = accepted.Claims.First(claim => claim.Type == ClaimTypes.NameIdentifier).Value;
+        var resolved = await services.GetRequiredService<IProjectCatalog>().ResolveProjectAsync(project, actor, createIn: null, cancellationToken).ConfigureAwait(false);
+        if (resolved is not string organization)
+        {
+            return resolved is Unavailable ? new PgError("57P03", "the database is unavailable; retry") : Denied;
+        }
+
+        return await Tenants.FindDatabaseAsync(organization, project, name.Value, cancellationToken).ConfigureAwait(false) switch
+        {
+            TenantContext tenant => new Authorized(tenant, grant.Grants(ApiKeyScopes.DocumentsWrite)),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
             _ => Denied,
         };
