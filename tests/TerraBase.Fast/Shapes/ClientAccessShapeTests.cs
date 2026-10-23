@@ -5,7 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
@@ -31,7 +31,7 @@ public sealed class ClientAccessShapeTests
         var snapshots = (IShapeSnapshotStorage)transaction;
         var collection = await transaction.GetCollectionAsync(DocumentApi.Collection, CancellationToken.None)
             ?? throw new InvalidOperationException("the collection is missing");
-        var replica = api.Server.Services.GetRequiredService<SqliteStorageEngine>().ReplicaId;
+        var replica = api.Server.Services.GetRequiredService<TursoStorageEngine>().ReplicaId;
         var identity = ShapeHandle.ComputeCanonical(store, replica, collection, "owner-pagination-test");
         var time = new FakeTimeProvider();
         var shape = new ShapeSnapshotDefinition(identity.Handle, identity.ShapeId, collection.Name, collection.Id,

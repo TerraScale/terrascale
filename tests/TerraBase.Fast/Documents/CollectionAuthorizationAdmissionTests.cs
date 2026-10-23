@@ -3,7 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 
 namespace TerraBase.Fast.Documents;
 
@@ -142,11 +142,11 @@ public sealed class CollectionAuthorizationAdmissionTests
         }
     }
 
-    private static async Task<SqliteDatabaseStore> StoreAsync(DocumentApi api) =>
-        (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+    private static async Task<TursoDatabaseStore> StoreAsync(DocumentApi api) =>
+        (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>()
             .OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
 
-    private static async Task IndexOwnerAsync(SqliteDatabaseStore store)
+    private static async Task IndexOwnerAsync(TursoDatabaseStore store)
     {
         await using var write = await store.BeginTransactionAsync(write: true, CancellationToken.None);
         await Assert.That(DocumentField.TryParse("owner", out var field)).IsTrue();
@@ -154,7 +154,7 @@ public sealed class CollectionAuthorizationAdmissionTests
         await write.CommitAsync(CancellationToken.None);
     }
 
-    private static Task<int> SeedAsync(SqliteDatabaseStore store, string owner, int count, int payloadBytes) =>
+    private static Task<int> SeedAsync(TursoDatabaseStore store, string owner, int count, int payloadBytes) =>
         store.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
