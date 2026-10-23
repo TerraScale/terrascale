@@ -11,8 +11,7 @@ public sealed class FaultSoakFeedRecoveryTests
     public async Task Feed_resumes_after_its_region_restarts_with_two_healthy_peers(CancellationToken cancellationToken)
     {
         await using var cluster = await FaultSoakCluster.StartAsync(0, cancellationToken);
-        var feed = await FaultSoakFeed.StartAsync(() => cluster["gru"],
-            $"{cluster.DatabasePath}/changes?collections={cluster.Collection}", cancellationToken);
+        var feed = await FaultSoakFeed.StartAsync(cluster, "gru", cancellationToken);
         var failures = new List<Exception>();
         try
         {
@@ -31,14 +30,23 @@ public sealed class FaultSoakFeedRecoveryTests
                     && feed.Has(before, "put", original);
             }, "the acknowledged write reaches all three replicas and the original feed", cancellationToken);
 
-            // Qualification requires uninterrupted resume; the current refill contract permits explicit cursor expiry.
             // Only the feed's region stops; healthy peers retain the acknowledged write throughout recovery.
+            var incarnation = await cluster.IncarnationAsync("gru", cancellationToken);
             await cluster.KillAsync("gru");
             await cluster.RestartAsync("gru", cancellationToken);
             await FaultSoakChecks.UntilAsync(async () =>
                 FaultSoakChecks.Canonical(await FaultSoakChecks.ReadAsync(cluster["gru"], cluster.Document(before), cancellationToken))
                     == FaultSoakChecks.Canonical(original),
                 "gru serves its acknowledged document after SIGKILL restart", cancellationToken, TimeSpan.FromSeconds(180));
+
+            if (await cluster.IncarnationAsync("gru", cancellationToken) != incarnation)
+            {
+                await FaultSoakChecks.UntilAsync(() => Task.FromResult(feed.ConnectedTo(cluster["gru"])),
+                    "the replacement feed subscribes and resnapshots before a fresh event", cancellationToken);
+                var snapshot = feed.Snapshot;
+                FaultSoakChecks.Check(snapshot is null || snapshot.TryGetValue(before, out var body)
+                    && body == FaultSoakChecks.Canonical(original), "replacement snapshot lost the acknowledged write");
+            }
 
             feed.ThrowIfFailed();
             var after = EntityIds.New().ToString();
@@ -51,8 +59,8 @@ public sealed class FaultSoakFeedRecoveryTests
             await FaultSoakChecks.UntilAsync(() =>
             {
                 feed.ThrowIfFailed();
-                return Task.FromResult(feed.ResumedConnections > 0 && feed.Has(after, "put", fresh));
-            }, "the same feed resumes with Last-Event-ID and delivers the post-restart acknowledged write", cancellationToken);
+                return Task.FromResult(feed.ConnectedTo(cluster["gru"]) && feed.Has(after, "put", fresh));
+            }, "the recovered feed delivers the single post-restart acknowledged write", cancellationToken);
         }
         catch (Exception error)
         {

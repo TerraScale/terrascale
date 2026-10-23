@@ -50,7 +50,7 @@ public sealed class RandomizedReplicationFaultTests
         {
             foreach (var region in regions)
             {
-                feeds.Add(await FaultSoakFeed.StartAsync(() => cluster[region], $"{cluster.DatabasePath}/changes?collections={cluster.Collection}", token));
+                feeds.Add(await FaultSoakFeed.StartAsync(cluster, region, token));
             }
 
             await FaultSoakChecks.SetupUniqueAsync(cluster, token);
@@ -127,19 +127,16 @@ public sealed class RandomizedReplicationFaultTests
             await FaultSoakChecks.UntilAsync(CopiesMatchAsync, "all disks after full-cluster SIGKILL", token, TimeSpan.FromSeconds(180));
             await FaultSoakChecks.VerifyUniqueAsync(cluster, seed, winner, token);
             await CatalogsMatchAsync();
+            await FaultSoakChecks.UntilAsync(() => Task.FromResult(feeds.Select((feed, index) =>
+                feed.ConnectedTo(cluster[regions[index]])).All(connected => connected)),
+                "all restarted feed clients resume or resnapshot before the fresh event", token);
             var resumedId = FaultSoakChecks.Id(seed, 900);
             var resumedBody = new JsonObject { ["afterRestart"] = seed };
             attempted[resumedId] = resumedBody;
-            await FaultSoakChecks.UntilAsync(async () =>
-            {
-                if (!await SendAsync(regions[0], resumedId, "put", () => cluster[regions[0]].PutAsJsonAsync(cluster.Document(resumedId), resumedBody, token)))
-                {
-                    return false;
-                }
-
-                expected[resumedId] = resumedBody;
-                return true;
-            }, "post-restart write acknowledged", token);
+            FaultSoakChecks.Check(await SendAsync(regions[0], resumedId, "put", () =>
+                cluster[regions[0]].PutAsJsonAsync(cluster.Document(resumedId), resumedBody, token)),
+                "the single post-restart write must acknowledge without replay");
+            expected[resumedId] = resumedBody;
             await FaultSoakChecks.UntilAsync(CopiesMatchAsync, "post-restart write converges", token);
             foreach (var region in regions)
             {
@@ -151,8 +148,8 @@ public sealed class RandomizedReplicationFaultTests
                 }
             }
 
-            await FaultSoakChecks.UntilAsync(() => Task.FromResult(feeds.All(feed => feed.ResumedConnections > 0 && acknowledged.All(write => feed.Has(write.Id, write.Op, write.Op == "put" && expected.TryGetValue(write.Id, out var document) ? document : null)))),
-                "every acknowledged put/delete on every resumed change reader", token);
+            await FaultSoakChecks.UntilAsync(() => Task.FromResult(feeds.All(feed => feed.Has(resumedId, "put", resumedBody) && acknowledged.All(write => feed.Covers(write.Id, write.Op, write.Op == "put" && expected.TryGetValue(write.Id, out var document) ? document : null)))),
+                "every acknowledged state change survives resume or verified resnapshot, with a new feed event", token);
 
             async Task CatalogsMatchAsync()
             {

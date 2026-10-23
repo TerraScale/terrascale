@@ -17,17 +17,18 @@ internal sealed class FaultSoakFeed : IAsyncDisposable
     private readonly Task _run;
     private ExceptionDispatchInfo? _failure;
     private string? _cursor;
-    private int _resumedConnections;
+    private HttpClient? _connected;
+    private Dictionary<string, string>? _snapshot;
 
-    private FaultSoakFeed(Func<HttpClient> client, string changesPath, CancellationToken cancellationToken)
+    private FaultSoakFeed(FaultSoakCluster cluster, string region, Ulid incarnation, CancellationToken cancellationToken)
     {
         _stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _run = RunAsync(client, changesPath, _stop.Token);
+        _run = RunAsync(cluster, region, incarnation, _stop.Token);
     }
 
-    public static async Task<FaultSoakFeed> StartAsync(Func<HttpClient> client, string changesPath, CancellationToken cancellationToken)
+    public static async Task<FaultSoakFeed> StartAsync(FaultSoakCluster cluster, string region, CancellationToken cancellationToken)
     {
-        var feed = new FaultSoakFeed(client, changesPath, cancellationToken);
+        var feed = new FaultSoakFeed(cluster, region, await cluster.IncarnationAsync(region, cancellationToken), cancellationToken);
         try
         {
             await feed._ready.Task.WaitAsync(cancellationToken);
@@ -47,9 +48,29 @@ internal sealed class FaultSoakFeed : IAsyncDisposable
             && (operation == "put" && document is null || body == FaultSoakChecks.Canonical(document));
     }
 
-    public void ThrowIfFailed() => Volatile.Read(ref _failure)?.Throw();
+    public bool Covers(string id, string operation, JsonNode? document)
+    {
+        if (Has(id, operation, document))
+        {
+            return true;
+        }
 
-    public int ResumedConnections => Volatile.Read(ref _resumedConnections);
+        // A certified replacement preserves state, but cannot promise the old feed history.
+        var snapshot = Volatile.Read(ref _snapshot);
+        return snapshot is not null && (document is null
+            ? !snapshot.ContainsKey(id) || Has(id, "delete", null)
+            : snapshot.TryGetValue(id, out var body) && body == FaultSoakChecks.Canonical(document));
+    }
+
+    public IReadOnlyDictionary<string, string>? Snapshot => Volatile.Read(ref _snapshot);
+
+    public bool ConnectedTo(HttpClient client)
+    {
+        ThrowIfFailed();
+        return ReferenceEquals(Volatile.Read(ref _connected), client);
+    }
+
+    public void ThrowIfFailed() => Volatile.Read(ref _failure)?.Throw();
 
     public async ValueTask DisposeAsync()
     {
@@ -64,8 +85,10 @@ internal sealed class FaultSoakFeed : IAsyncDisposable
         }
     }
 
-    private async Task RunAsync(Func<HttpClient> client, string changesPath, CancellationToken cancellationToken)
+    private async Task RunAsync(FaultSoakCluster cluster, string region, Ulid incarnation, CancellationToken cancellationToken)
     {
+        var resync = false;
+        var changesPath = $"{cluster.DatabasePath}/changes?collections={cluster.Collection}";
         try
         {
             while (true)
@@ -73,9 +96,10 @@ internal sealed class FaultSoakFeed : IAsyncDisposable
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    // The factory pins the region and returns its current borrowed client after a process restart.
-                    var current = client();
-                    using var request = new HttpRequestMessage(HttpMethod.Get, changesPath)
+                    // Pin the region and borrow its current client after a process restart.
+                    var serving = await cluster.IncarnationAsync(region, cancellationToken);
+                    var current = cluster[region];
+                    using var request = new HttpRequestMessage(HttpMethod.Get, resync && _cursor is null ? changesPath + "&cursor=now" : changesPath)
                     {
                         Version = current.DefaultRequestVersion,
                         VersionPolicy = current.DefaultVersionPolicy,
@@ -94,7 +118,13 @@ internal sealed class FaultSoakFeed : IAsyncDisposable
 
                     if (!response.IsSuccessStatusCode)
                     {
-                        throw new InvalidOperationException($"The changes feed returned HTTP {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync(cancellationToken)}");
+                        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                        if (response.StatusCode == HttpStatusCode.Gone && Expired(body))
+                        {
+                            throw new CursorExpiredException();
+                        }
+
+                        throw new InvalidOperationException($"The changes feed returned HTTP {(int)response.StatusCode}: {body}");
                     }
 
                     if (response.Content.Headers.ContentType?.MediaType != "text/event-stream")
@@ -104,11 +134,54 @@ internal sealed class FaultSoakFeed : IAsyncDisposable
 
                     await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                     using var reader = new StreamReader(stream);
-                    await ReadAsync(reader, request.Headers.Contains("Last-Event-ID"), cancellationToken);
+                    await ReadAsync(reader, async () =>
+                    {
+                        if (await cluster.IncarnationAsync(region, cancellationToken) != serving)
+                        {
+                            throw new CursorExpiredException();
+                        }
+
+                        if (resync)
+                        {
+                            Dictionary<string, string>? snapshot = null;
+                            await FaultSoakChecks.UntilAsync(async () =>
+                            {
+                                snapshot = await FaultSoakChecks.ListAsync(current, cluster.DatabasePath, cluster.Collection, cancellationToken);
+                                return snapshot is not null;
+                            }, "replacement copy snapshot", cancellationToken);
+                            if (await cluster.IncarnationAsync(region, cancellationToken) != incarnation)
+                            {
+                                throw new CursorExpiredException();
+                            }
+
+                            Volatile.Write(ref _snapshot, snapshot);
+                            resync = false;
+                            Console.WriteLine($"R8 feed {region} snapshot resynced incarnation={incarnation}");
+                        }
+
+                        // Bind subsequent expiry to the copy that actually issued this cursor.
+                        incarnation = serving;
+                        Volatile.Write(ref _connected, current);
+                    }, cancellationToken);
+                }
+                catch (CursorExpiredException)
+                {
+                    var replacement = await cluster.IncarnationAsync(region, cancellationToken);
+                    FaultSoakChecks.Check(replacement != incarnation,
+                        $"{region} expired a feed cursor without replacing copy incarnation {incarnation}");
+                    Console.WriteLine($"R8 feed {region} cursor_expired: incarnation {incarnation} -> {replacement}");
+                    incarnation = replacement;
+                    _cursor = null;
+                    resync = true;
+                    Volatile.Write(ref _snapshot, null);
                 }
                 catch (Exception error) when (error is HttpRequestException or IOException && !cancellationToken.IsCancellationRequested)
                 {
                     // A killed process closes the stream; the last complete event remains the resume position.
+                }
+                finally
+                {
+                    Volatile.Write(ref _connected, null);
                 }
 
                 await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
@@ -126,8 +199,9 @@ internal sealed class FaultSoakFeed : IAsyncDisposable
         }
     }
 
-    private async Task ReadAsync(StreamReader reader, bool resumed, CancellationToken cancellationToken)
+    private async Task ReadAsync(StreamReader reader, Func<Task> connected, CancellationToken cancellationToken)
     {
+        var firstCursor = true;
         string? type = null;
         string? cursor = null;
         string? data = null;
@@ -159,6 +233,11 @@ internal sealed class FaultSoakFeed : IAsyncDisposable
             {
                 if (type == "error")
                 {
+                    if (data is not null && Expired(data))
+                    {
+                        throw new CursorExpiredException();
+                    }
+
                     throw new InvalidOperationException("The changes feed emitted a terminal error: " + data);
                 }
 
@@ -191,10 +270,10 @@ internal sealed class FaultSoakFeed : IAsyncDisposable
                 if (cursor is not null)
                 {
                     _cursor = cursor;
-                    if (resumed)
+                    if (firstCursor)
                     {
-                        _ = Interlocked.Increment(ref _resumedConnections);
-                        resumed = false;
+                        await connected();
+                        firstCursor = false;
                     }
 
                     _ = _ready.TrySetResult();
@@ -204,4 +283,9 @@ internal sealed class FaultSoakFeed : IAsyncDisposable
             }
         }
     }
+
+    private static bool Expired(string body) =>
+        JsonNode.Parse(body)?["error"]?["code"]?.GetValue<string>() == "cursor_expired";
+
+    private sealed class CursorExpiredException : Exception;
 }

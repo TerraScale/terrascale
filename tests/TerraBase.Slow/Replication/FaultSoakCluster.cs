@@ -4,8 +4,11 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Grpc.Core;
 using TerraBase.E2E;
 using TerraBase.E2E.WalFaults;
+using TerraBase.Features.Replication;
+using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -43,6 +46,33 @@ internal sealed partial class FaultSoakCluster : IAsyncDisposable
     public HttpClient Management(string region) => _nodes[region].Management!;
     public Uri Document(string id, string? collection = null) =>
         new($"{DatabasePath}/collections/{collection ?? Collection}/documents/by-key?id={Uri.EscapeDataString(id)}", UriKind.Relative);
+
+    public async Task<Ulid> IncarnationAsync(string region, CancellationToken token)
+    {
+        while (true)
+        {
+            token.ThrowIfCancellationRequested();
+            if (_nodes[region].Client is not null)
+            {
+                using var channel = PeerChannel.Create(_nodes[region].Peer!, PeerTls.Credential);
+                try
+                {
+                    var answer = await new TerraBase.Features.Replication.V1.Replication.ReplicationClient(channel)
+                        .DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(Tenant, null) }, cancellationToken: token);
+                    if (answer.Held)
+                    {
+                        return new Ulid(answer.Incarnation.Span);
+                    }
+                }
+                catch (RpcException error) when (error.StatusCode == StatusCode.Unavailable)
+                {
+                    // A feed probes during intentional kills; the test thread checks unexpected exits.
+                }
+            }
+
+            await Task.Delay(100, token);
+        }
+    }
 
     public static Task<FaultSoakCluster> StartAsync(int seed, CancellationToken cancellationToken) =>
         StartAsync(seed, ["gru", "sjc", "fra"], cancellationToken);
