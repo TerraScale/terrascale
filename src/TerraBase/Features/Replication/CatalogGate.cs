@@ -563,11 +563,9 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         cancellationToken = bounded.Token;
 
-        // One writer at a time, and the head read inside: the anchor never moves back.
-        if (!await _anchoring.WaitAsync(0, cancellationToken).ConfigureAwait(false))
-        {
-            throw new IOException("the catalog anchor writer is busy; retry");
-        }
+        // One writer at a time, and the head read inside: the anchor never moves back. A change waits for the writer in flight
+        // (the periodic anchor or another change's) within the deadline, then finds its head already anchored or writes it.
+        await _anchoring.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             // The head is read pinned to the identity it is anchored with: one read transaction checks both.

@@ -467,6 +467,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             return admission switch
             {
                 Unavailable error => new DocumentRejected(error),
+                Conflict error => new DocumentRejected(error),
                 RemoteLease => throw new UnreachableException(),
             };
         }
