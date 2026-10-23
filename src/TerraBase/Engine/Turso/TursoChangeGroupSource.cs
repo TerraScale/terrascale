@@ -508,7 +508,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
                     // A refused copy (faulted, under rebuild, or the node failed closed) takes no retention write; its rebuild
                     // replaces it. Also while stopping, when the catch below would let the refusal end the host.
                 }
-                catch (Exception error) when (!stoppingToken.IsCancellationRequested)
+                catch (Exception error) when (error is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
                 {
                     // The retention pass (ack raises, trim, the tail gauge): the next tick tries again. Logged, so a pass that
                     // keeps failing (and the CDC that would then grow) shows.
@@ -620,7 +620,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
                     (_, _, committed) = await transaction.ReadChangeGroupsAsync(after, 1, 1, _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
                 }
             }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 committed = seen ? known.Committed : null;
             }
