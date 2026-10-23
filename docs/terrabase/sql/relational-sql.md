@@ -95,6 +95,14 @@ WITH "t" AS (SELECT json_extract(doc, '$."c1"') AS "c1", … FROM main."t" WHERE
   transaction read it; retry the transaction", and nothing commits (optimistic, serializable).
   Limits: 256 statements, 1 MiB of log, 1024 rows written (one change group, as any transaction), 30 s idle.
 - Statements using `random()` or the current time inside a multi-request transaction can conflict at `COMMIT`; retry.
+- Any statement that fails inside a transaction ends it: nothing of it commits, and a later `COMMIT` answers "no
+  transaction is active" (DECISION, SQ1-e: a refused document write may leave the storage transaction uncommittable, so
+  the session never keeps one; PostgreSQL behaves alike). `ROLLBACK` without a transaction is a no-op. Parse and scope
+  errors leave the transaction open.
+- `ISqlSession.ExecuteScriptAsync` (added for Hrana `sequence`) splits text with the same parser and runs each
+  statement without arguments; `BEGIN READONLY` is not available inside a script.
+- `…/sql/execute` wraps its statements in `BEGIN` … `COMMIT` (`BEGIN READONLY` when none writes, so reads never take the
+  writer) and refuses transaction statements in the body.
 - Sessions live in memory on the node that opened them, bounded (count and bytes); a restart or an expired baton
   answers "stream not found".
 

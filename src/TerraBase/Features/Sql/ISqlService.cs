@@ -90,6 +90,12 @@ internal interface ISqlSession : IAsyncDisposable
     /// <summary>Runs one statement; <c>BEGIN</c>, <c>COMMIT</c> and <c>ROLLBACK</c> change the session.</summary>
     ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Runs every statement of <paramref name="sql"/> in order without arguments, stopping at the first error; returns
+    /// the last result (Hrana <c>sequence</c>). Added by SQ1-e; existing members are unchanged.
+    /// </summary>
+    ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken);
+
     /// <summary>Describes one statement.</summary>
     ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken);
 

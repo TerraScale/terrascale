@@ -57,7 +57,8 @@ public sealed class SqlReplicationTests
             RunAsync(gru, "UPDATE counters SET n = n + 1, label = 'gru' WHERE id = 1"),
             RunAsync(sjc, "UPDATE counters SET n = n + 1 WHERE id = 1"));
 
-        await Assert.That(updates.All(outcome => outcome is SqlResult { RowsAffected: 1 })).IsTrue();
+        await Assert.That(updates.All(outcome => outcome is SqlResult { RowsAffected: 1 })).IsTrue()
+            .Because(string.Join(", ", updates.Select(outcome => outcome is SqlError error ? error.Code + " " + error.Message : "ok")));
         // Increments add instead of the last writer winning; the label set on gru survives sjc's concurrent write.
         await Assert.That(await UntilAsync(gru, read, "2|gru")).IsTrue();
         await Assert.That(await UntilAsync(sjc, read, "2|gru")).IsTrue();

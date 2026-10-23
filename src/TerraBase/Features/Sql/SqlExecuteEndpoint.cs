@@ -22,7 +22,7 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
         Name("executeSql");
         Summary("Runs relational SQL statements");
         Description("""
-            {"statements":[{"sql":…,"args":[…],"named":{…}}]} with 1 to 1000 statements of at most 16 KiB each, in a body of at most 1 MiB. Tables are collections created with CREATE TABLE; rows are their documents. Arguments are null, numbers, booleans (1 or 0) or strings. Results: one per statement, {"columns","rows","rows_affected","last_insert_rowid"}. A refused statement answers {"error":{"code","message","statement","sqlite_code"}}: 400 sql_error, 403 forbidden_scope (SQLITE_AUTH: writes and DDL need documents:write), 409 sql_conflict (SQLITE_BUSY) or 413 sql_too_large (SQLITE_TOOBIG).
+            {"statements":[{"sql":…,"args":[…],"named":{…}}]} with 1 to 1000 statements of at most 16 KiB each, in a body of at most 1 MiB. Tables are collections created with CREATE TABLE; rows are their documents. Arguments are null, numbers, booleans (1 or 0) or strings. Results: one per statement, {"columns","rows","rows_affected","last_insert_rowid"}. All statements run as one transaction: all or nothing; transaction statements (BEGIN, COMMIT, ROLLBACK) are refused. A refused statement rolls everything back and answers {"error":{"code","message","statement","sqlite_code"}}: 400 sql_error, 403 forbidden_scope (SQLITE_AUTH: writes and DDL need documents:write), 409 sql_conflict (SQLITE_BUSY) or 413 sql_too_large (SQLITE_TOOBIG).
             """);
         Tags("Queries");
         Metadata(new RequestBodyMetadata(typeof(SqlExecuteRequest), DocumentRoute.JsonMediaType));
@@ -77,22 +77,38 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
             }
         }
 
+        // Every request is one transaction: its own transaction statements would break that.
+        var parsed = commands.Select(command => SqlParse.Parse(command.Sql)).ToList();
+        if (parsed.FindIndex(statement => statement is TransactionSql) is var control and >= 0)
+        {
+            return ErrorResponse.From(new Validation("transaction statements are not accepted: every request runs as one transaction"), control);
+        }
+
         var canWrite = (await authorization.AuthorizeAsync(HttpContext.User, ApiKeyScopes.DocumentsWrite)).Succeeded;
         var session = sql.Open(database, canWrite);
         await using (session.ConfigureAwait(false))
         {
+            // Reads only: a READONLY transaction, which never takes the database writer.
+            var begin = parsed.Any(statement => statement is ParsedSql { IsWrite: true }) ? "BEGIN" : "BEGIN READONLY";
+            _ = await session.ExecuteAsync(new SqlCommand(begin, [], new Dictionary<string, SqlValue>()), cancellationToken);
             var results = new List<SqlStatementBody>(commands.Count);
             for (var i = 0; i < commands.Count; i++)
             {
                 switch (await session.ExecuteAsync(commands[i], cancellationToken))
                 {
                     case SqlError error:
+                        _ = await session.ExecuteAsync(new SqlCommand("ROLLBACK", [], new Dictionary<string, SqlValue>()), cancellationToken);
                         return Error(error, i);
                     case SqlResult result:
                         results.Add(new SqlStatementBody(
                             [.. result.Columns.Select(column => new SqlColumnBody(column.Name, column.DeclType))], result.Rows, result.RowsAffected, result.LastInsertRowid));
                         break;
                 }
+            }
+
+            if (await session.ExecuteAsync(new SqlCommand("COMMIT", [], new Dictionary<string, SqlValue>()), cancellationToken) is SqlError failed)
+            {
+                return Error(failed, commands.Count - 1);
             }
 
             await session.EndRequestAsync();

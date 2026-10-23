@@ -1,4 +1,8 @@
-using System.Diagnostics;
+using System.Buffers;
+using System.Security.Cryptography;
+using System.Text.Json;
+using SqlParser;
+using SqlParser.Dialects;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
@@ -18,23 +22,85 @@ internal sealed class SqlService(IStorageEngine engine, IDocumentService documen
     }
 }
 
-/// <summary>One connection: every statement runs in its own storage transaction (autocommit).</summary>
+/// <summary>
+/// One connection (section 5 of the design): autocommit statements run alone; a transaction keeps a log of its statements
+/// and result hashes and never holds the database writer between requests. Each request that continues it replays the log
+/// in a fresh storage transaction and checks every hash: a mismatch is a conflict (<c>SQLITE_BUSY</c>), and nothing commits.
+/// </summary>
 internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, SqlExecutor executor, TenantContext database, bool canWrite)
     : ISqlSession
 {
-    private static readonly SqlError UnknownDatabase = SqlErrors.Error("the database does not exist");
+    private const int MaxStatements = 256;
+    private const long MaxLogBytes = 1024 * 1024;
 
-    public bool IsAutocommit => true;
+    private static readonly SqlResult Empty = new([], [], 0, null);
+    private static readonly SqlError UnknownDatabase = SqlErrors.Error("the database does not exist");
+    private static readonly SqlError Conflict = SqlErrors.Busy("transaction conflict: data changed since the transaction read it; retry the transaction");
+
+    private readonly List<(SqlCommand Command, byte[] Hash)> _log = [];
+    private long _logBytes;
+    private SqlKeys _keys = new();
+    private bool? _readOnly;
+    private Request? _request;
+
+    public bool IsAutocommit => _readOnly is null;
 
     public async ValueTask<SqlOutcome> ExecuteAsync(SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return SqlParse.Parse(command.Sql) switch
+        switch (SqlParse.Parse(command.Sql))
         {
-            SqlError error => error,
-            ParsedSql { IsWrite: true } when !canWrite => SqlErrors.Auth,
-            ParsedSql statement => await RunAsync(statement, command, describe: false, cancellationToken).ConfigureAwait(false),
-        };
+            case SqlError error:
+                return error;
+            case TransactionSql { Kind: TransactionKind.Begin or TransactionKind.BeginReadOnly } begin:
+                if (_readOnly is not null)
+                {
+                    return SqlErrors.Error("cannot start a transaction within a transaction");
+                }
+
+                _readOnly = begin.Kind == TransactionKind.BeginReadOnly;
+                return Empty;
+            case TransactionSql { Kind: TransactionKind.Commit }:
+                return _readOnly is null ? SqlErrors.Error("cannot commit - no transaction is active") : await CommitAsync(cancellationToken).ConfigureAwait(false);
+            case TransactionSql:
+                await AbortAsync().ConfigureAwait(false);
+                return Empty;
+            case ParsedSql { IsWrite: true } when !canWrite:
+                return SqlErrors.Auth;
+            case ParsedSql { IsWrite: true } when _readOnly == true:
+                return new SqlError("SQLITE_READONLY", "a READONLY transaction cannot write");
+            case ParsedSql statement when _readOnly is null:
+                return await AutocommitAsync(statement, command, describe: false, cancellationToken).ConfigureAwait(false);
+            case ParsedSql statement:
+                return await InTransactionAsync(statement, command, cancellationToken).ConfigureAwait(false);
+            default:
+                return SqlErrors.Error("this statement is not supported");
+        }
+    }
+
+    public async ValueTask<SqlOutcome> ExecuteScriptAsync(string sql, CancellationToken cancellationToken)
+    {
+        SqlParser.Sequence<SqlParser.Ast.Statement> statements;
+        try
+        {
+            statements = new Parser().ParseSql(sql, new SQLiteDialect());
+        }
+        catch (Exception error) when (error is ParserException or TokenizeException)
+        {
+            return SqlErrors.Error("SQL syntax error in the script");
+        }
+
+        SqlOutcome last = Empty;
+        foreach (var statement in statements)
+        {
+            last = await ExecuteAsync(new SqlCommand(statement.ToSql(), [], new Dictionary<string, SqlValue>()), cancellationToken).ConfigureAwait(false);
+            if (last is SqlError)
+            {
+                break;
+            }
+        }
+
+        return last;
     }
 
     public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlCommand command, CancellationToken cancellationToken)
@@ -44,7 +110,7 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
         {
             SqlError error => error,
             // Columns come from the statement run with no rows: names and declared types exactly as execution reports them.
-            ReadSql read => await RunAsync(read, command with { Args = [], Named = new Dictionary<string, SqlValue>() }, describe: true, cancellationToken)
+            ReadSql read => await AutocommitAsync(read, command with { Args = [], Named = new Dictionary<string, SqlValue>() }, describe: true, cancellationToken)
                 .ConfigureAwait(false) switch
             {
                 SqlResult result => new SqlDescription(read.Params, result.Columns, IsExplain: false, IsReadOnly: true),
@@ -54,74 +120,193 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
         };
     }
 
-    public ValueTask EndRequestAsync() => ValueTask.CompletedTask;
+    public async ValueTask EndRequestAsync()
+    {
+        if (_request is { } request)
+        {
+            _request = null;
+            await request.DisposeAsync().ConfigureAwait(false);
+        }
+    }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    public ValueTask DisposeAsync() => AbortAsync();
 
-    // One statement in its own storage transaction; a write is admitted by the storage quota and committed.
-    private async ValueTask<SqlOutcome> RunAsync(ParsedSql statement, SqlCommand command, bool describe, CancellationToken cancellationToken)
+    // A statement of the open transaction: run in this request's storage transaction, which first replays the log. Any
+    // failure ends the transaction, so a failed statement never commits part of its work.
+    private async ValueTask<SqlOutcome> InTransactionAsync(ParsedSql statement, SqlCommand command, CancellationToken cancellationToken)
+    {
+        if (await ResumeAsync(cancellationToken).ConfigureAwait(false) is SqlError refused)
+        {
+            return refused;
+        }
+
+        var outcome = await RunAsync(_request!, statement, command, cancellationToken).ConfigureAwait(false);
+        if (outcome is not SqlResult result)
+        {
+            await AbortAsync().ConfigureAwait(false);
+            return outcome;
+        }
+
+        var size = Size(command);
+        if (_log.Count == MaxStatements || _logBytes + size > MaxLogBytes)
+        {
+            await AbortAsync().ConfigureAwait(false);
+            return SqlErrors.TooBig("a transaction holds at most 256 statements and 1 MiB of statements");
+        }
+
+        _log.Add((command, Hash(result)));
+        _logBytes += size;
+        return result;
+    }
+
+    // This request's storage transaction, opened and brought up to date by replaying the log; a replayed statement that
+    // fails or answers differently ends the transaction as a conflict.
+    private async ValueTask<SqlError?> ResumeAsync(CancellationToken cancellationToken)
+    {
+        if (_request is not null)
+        {
+            return null;
+        }
+
+        var (opened, error) = await OpenAsync(write: _readOnly != true, cancellationToken).ConfigureAwait(false);
+        if (opened is not { } request)
+        {
+            await AbortAsync().ConfigureAwait(false);
+            return error;
+        }
+
+        _request = request;
+        _keys.Rewind();
+        foreach (var (command, hash) in _log)
+        {
+            var replayed = SqlParse.Parse(command.Sql) is ParsedSql statement
+                ? await RunAsync(request, statement, command, cancellationToken).ConfigureAwait(false)
+                : SqlErrors.Error("the statement no longer parses");
+            if (replayed is not SqlResult result || !Hash(result).AsSpan().SequenceEqual(hash))
+            {
+                await AbortAsync().ConfigureAwait(false);
+                return replayed is SqlError { Code: "SQLITE_BUSY" } busy ? busy : Conflict;
+            }
+        }
+
+        return null;
+    }
+
+    private async ValueTask<SqlOutcome> CommitAsync(CancellationToken cancellationToken)
+    {
+        if (await ResumeAsync(cancellationToken).ConfigureAwait(false) is SqlError refused)
+        {
+            return refused;
+        }
+
+        var request = _request!;
+        var outcome = request.Lease is { } lease
+            ? await CommitAsync(request, lease, cancellationToken).ConfigureAwait(false)
+            : Empty;
+        await AbortAsync().ConfigureAwait(false);
+        return outcome;
+    }
+
+    private async ValueTask AbortAsync()
+    {
+        await EndRequestAsync().ConfigureAwait(false);
+        _readOnly = null;
+        _log.Clear();
+        _logBytes = 0;
+        _keys = new SqlKeys();
+    }
+
+    // One statement in its own storage transaction, committed when it writes.
+    private async ValueTask<SqlOutcome> AutocommitAsync(ParsedSql statement, SqlCommand command, bool describe, CancellationToken cancellationToken)
+    {
+        var (opened, error) = await OpenAsync(statement.IsWrite, cancellationToken).ConfigureAwait(false);
+        if (opened is not { } request)
+        {
+            return error!;
+        }
+
+        await using (request.ConfigureAwait(false))
+        {
+            var outcome = await RunAsync(request, statement, command, cancellationToken, describe).ConfigureAwait(false);
+            return outcome is SqlResult && request.Lease is { } lease && await CommitAsync(request, lease, cancellationToken).ConfigureAwait(false) is SqlError failed
+                ? failed
+                : outcome;
+        }
+    }
+
+    // A storage transaction; a write one is admitted by the storage quota. An error when the database does not exist or
+    // cannot be admitted now.
+    private async ValueTask<(Request? Request, SqlError? Error)> OpenAsync(bool write, CancellationToken cancellationToken)
     {
         if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
-            return UnknownDatabase;
+            return (null, UnknownDatabase);
         }
 
         StorageQuotaLease? lease = null;
-        if (statement.IsWrite)
+        if (write)
         {
-            var entered = await quota.EnterAsync(database, store, cancellationToken).ConfigureAwait(false);
-            if (entered is not StorageQuotaLease admitted)
+            switch (await quota.EnterAsync(database, store, cancellationToken).ConfigureAwait(false))
             {
-                return entered switch
-                {
-                    Unavailable => SqlErrors.Busy("storage accounting is unavailable; retry"),
-                    StorageQuotaLease => throw new UnreachableException(),
-                };
+                case StorageQuotaLease admitted:
+                    lease = admitted;
+                    break;
+                case Unavailable:
+                    return (null, SqlErrors.Busy("storage accounting is unavailable; retry"));
             }
-
-            lease = admitted;
         }
 
-        using (lease)
+        try
         {
-            try
-            {
-                var transaction = await store.BeginTransactionAsync(statement.IsWrite, cancellationToken).ConfigureAwait(false);
-                await using (transaction.ConfigureAwait(false))
-                {
-                    var tally = new SqlTally(lease is { RequiresAccounting: true });
-                    var outcome = await executor.ExecuteAsync(transaction, statement, command, new SqlKeys(), tally, describe, cancellationToken).ConfigureAwait(false);
-                    if (outcome is not SqlResult result || lease is null)
-                    {
-                        return outcome;
-                    }
+            var transaction = await store.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false);
+            return (new Request(transaction, lease, new SqlTally(lease is { RequiresAccounting: true })), null);
+        }
+        catch (StorageBusyException)
+        {
+            lease?.Dispose();
+            return (null, SqlErrors.Busy("the database is busy; retry"));
+        }
+        catch
+        {
+            lease?.Dispose();
+            throw;
+        }
+    }
 
-                    return await CommitAsync(transaction, lease, tally, result, cancellationToken).ConfigureAwait(false);
-                }
-            }
-            catch (Exception error) when (Failure(error) is { } failure)
-            {
-                return failure;
-            }
+    private async ValueTask<SqlOutcome> RunAsync(Request request, ParsedSql statement, SqlCommand command, CancellationToken cancellationToken, bool describe = false)
+    {
+        try
+        {
+            return await executor.ExecuteAsync(request.Transaction, statement, command, _keys, request.Tally, describe, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (Failure(error) is { } failure)
+        {
+            return failure;
         }
     }
 
     // Commits a write transaction under the storage quota, and meters it.
-    private async ValueTask<SqlOutcome> CommitAsync(
-        IStorageTransaction transaction, StorageQuotaLease lease, SqlTally tally, SqlResult result, CancellationToken cancellationToken)
+    private async ValueTask<SqlOutcome> CommitAsync(Request request, StorageQuotaLease lease, CancellationToken cancellationToken)
     {
-        switch (await lease.CheckAsync(tally.Delta, cancellationToken).ConfigureAwait(false))
+        try
         {
-            case QuotaExceeded:
-                return new SqlError("SQLITE_FULL", "the organization's storage quota is exhausted");
-            case Unavailable:
-                return SqlErrors.Busy("storage accounting is unavailable; retry");
-        }
+            switch (await lease.CheckAsync(request.Tally.Delta, cancellationToken).ConfigureAwait(false))
+            {
+                case QuotaExceeded:
+                    return new SqlError("SQLITE_FULL", "the organization's storage quota is exhausted");
+                case Unavailable:
+                    return SqlErrors.Busy("storage accounting is unavailable; retry");
+            }
 
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        lease.Committed(tally.Delta);
-        usage.RecordWrites(database, (int)Math.Min(result.RowsAffected, int.MaxValue));
-        return result;
+            await request.Transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            lease.Committed(request.Tally.Delta);
+            usage.RecordWrites(database, Math.Max(1, _log.Count));
+            return Empty;
+        }
+        catch (Exception error) when (Failure(error) is { } failure)
+        {
+            return failure;
+        }
     }
 
     // The SQL error an engine failure means, or null for an unexpected one.
@@ -133,4 +318,69 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
         SqlProgramException program => SqlErrors.Error(program.Message),
         _ => null,
     };
+
+    // Bytes a logged statement holds: its text and arguments, as UTF-16.
+    private static long Size(SqlCommand command) =>
+        64 + (2L * command.Sql.Length)
+        + command.Args.Sum(arg => 16L + (2L * (arg.Text?.Length ?? 0)))
+        + command.Named.Sum(pair => 16L + (2L * (pair.Key.Length + (pair.Value.Text?.Length ?? 0))));
+
+    // A digest of everything a statement answered, so a replay can tell whether it would answer the same.
+    private static byte[] Hash(SqlResult result)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartArray();
+            foreach (var column in result.Columns)
+            {
+                writer.WriteStringValue(column.Name);
+                writer.WriteStringValue(column.DeclType);
+            }
+
+            foreach (var row in result.Rows)
+            {
+                writer.WriteStartArray();
+                foreach (var value in row)
+                {
+                    writer.WriteNumberValue((int)value.Kind);
+                    SqlWrite.Write(writer, value);
+                }
+
+                writer.WriteEndArray();
+            }
+
+            writer.WriteNumberValue(result.RowsAffected);
+            if (result.LastInsertRowid is { } rowid)
+            {
+                writer.WriteNumberValue(rowid);
+            }
+
+            writer.WriteEndArray();
+        }
+
+        return SHA256.HashData(buffer.WrittenSpan);
+    }
+
+    /// <summary>A storage transaction of one request, its quota admission and the byte growth of its writes.</summary>
+    private sealed class Request(IStorageTransaction transaction, StorageQuotaLease? lease, SqlTally tally) : IAsyncDisposable
+    {
+        public IStorageTransaction Transaction { get; } = transaction;
+
+        public StorageQuotaLease? Lease { get; } = lease;
+
+        public SqlTally Tally { get; } = tally;
+
+        public async ValueTask DisposeAsync()
+        {
+            try
+            {
+                await Transaction.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                Lease?.Dispose();
+            }
+        }
+    }
 }

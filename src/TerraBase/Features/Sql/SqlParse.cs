@@ -36,6 +36,22 @@ internal sealed record DropTableSql(string Name, bool IfExists) : ParsedSql
     public override bool IsWrite => true;
 }
 
+/// <summary>What a transaction statement does.</summary>
+internal enum TransactionKind
+{
+    Begin,
+    BeginReadOnly,
+    Commit,
+    Rollback,
+}
+
+/// <summary><c>BEGIN</c>, <c>BEGIN READONLY</c>, <c>COMMIT</c>/<c>END</c> or <c>ROLLBACK</c>: handled by the session.</summary>
+/// <param name="Kind">What it does.</param>
+internal sealed record TransactionSql(TransactionKind Kind) : ParsedSql
+{
+    public override bool IsWrite => false;
+}
+
 /// <summary>A statement, or why it is refused.</summary>
 internal readonly union SqlParseResult(ParsedSql, SqlError);
 
@@ -71,6 +87,12 @@ internal static partial class SqlParse
             return SqlErrors.Error("sql must be 1 to 16384 characters");
         }
 
+        // SqlParserCS has no READONLY transactions.
+        if (ReadOnlyBegin().IsMatch(sql))
+        {
+            return new TransactionSql(TransactionKind.BeginReadOnly);
+        }
+
         try
         {
             var (numbered, names) = SqlRead.Number(sql);
@@ -98,6 +120,9 @@ internal static partial class SqlParse
 
     private static ParsedSql Translate(Statement statement) => statement switch
     {
+        Statement.StartTransaction => new TransactionSql(TransactionKind.Begin),
+        Statement.Commit { Chain: false } => new TransactionSql(TransactionKind.Commit),
+        Statement.Rollback { Chain: false, SavePoint: null } => new TransactionSql(TransactionKind.Rollback),
         Statement.Select { Query: var query } => SqlRead.Read(query),
         Statement.Insert { InsertOperation: var insert } => SqlWrite.Insert(insert),
         Statement.Update update => SqlWrite.Update(update),
@@ -245,4 +270,7 @@ internal static partial class SqlParse
 
     [GeneratedRegex(@"\A[A-Za-z][A-Za-z0-9_]{0,63}\z", RegexOptions.CultureInvariant)]
     private static partial Regex ColumnPattern();
+
+    [GeneratedRegex(@"\A\s*BEGIN(\s+TRANSACTION)?\s+READONLY\s*;?\s*\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex ReadOnlyBegin();
 }
