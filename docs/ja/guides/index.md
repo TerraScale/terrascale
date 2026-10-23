@@ -19,6 +19,8 @@ Use the [quickstart](/ja/getting-started/) to establish one working application 
 - [Errors and safe retries](/ja/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/ja/guides/indexes): secondary indexes, recommendations and automatic indexing.
 - [Schema validation](/ja/guides/schema-validation): JSON Schema checks and unique keys per collection.
+- [Expire documents with TTL](/ja/guides/ttl): automatic deletion after a per-document expiry time, with about an hour of lag.
+- [Vector similarity search](/ja/guides/vector-search): nearest-neighbour queries over stored embeddings for semantic search and RAG.
 - [Transactions](/ja/guides/transactions): atomic multi-document writes with conditional asserts.
 - [Realtime changes](/ja/guides/realtime): the server-sent changes feed and filtered collection shapes.
 - [Backups and restore](/ja/guides/backups-and-restore): backup policy, point-in-time restore into a new database.
