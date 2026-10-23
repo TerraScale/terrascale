@@ -404,26 +404,14 @@ internal sealed partial class SqliteDatabaseStore(
                 beginStarted = true;
                 // BEGIN DEFERRED alone still permits a write upgrade. SQLite enforces read-only
                 // access before BEGIN; both setup and native lock acquisition share the caller's budget.
-                if (!write)
-                {
-                    using var readOnly = connection.CreateCommand();
-                    readOnly.CommandText = "PRAGMA query_only = 1;";
-                    readOnly.ExecuteNonQuery();
-                }
-
-                // SQLite refuses to change it inside a transaction; with FULL the commit syncs the WAL (decision 0010).
-                if (durable)
-                {
-                    using var full = connection.CreateCommand();
-                    full.CommandText = "PRAGMA synchronous = FULL;";
-                    full.ExecuteNonQuery();
-                }
+                // SQLite refuses to change synchronous inside a transaction; with FULL the commit syncs the WAL (decision 0010).
+                session.Settings(queryOnly: !write, full: durable);
 
                 // Writers take the lock up front (BEGIN IMMEDIATE) so they wait instead of failing on upgrade.
                 return connection.BeginTransaction(deferred: !write);
             }, cancellationToken).ConfigureAwait(false);
             return new SqliteStorageTransaction(
-                this, session, transaction, runner, write, durable, write ? Committed : null, ownsAdmission)
+                this, session, transaction, runner, write, write ? Committed : null, ownsAdmission)
             {
                 Operation = operation,
             };
@@ -1273,6 +1261,8 @@ internal sealed partial class SqliteDatabaseStore(
         {
             await session.ExecuteAsync(io, () =>
             {
+                // A pooled session may still be read-only from its last transaction.
+                session.Settings(queryOnly: false, full: false);
                 // Bootstrap is atomic and rolls back before a lock error leaves this scope.
                 Bootstrap(name, session.Connection, cancellationToken);
                 _incarnation = new(Ulid.Parse(
