@@ -68,7 +68,7 @@ public static class DashboardMcp
     {
         app.Use(async (context, next) =>
         {
-            if (!context.Request.Path.StartsWithSegments("/mcp") && !context.Request.Host.Host.Equals("mcp.terrascale.tech", StringComparison.OrdinalIgnoreCase))
+            if (!context.Request.Path.StartsWithSegments("/mcp") && (!McpOAuth.IsMcpHost(context) || context.Request.Path.StartsWithSegments("/.well-known")))
             { await next(context); return; }
             if (context.Request.Headers.Origin is { Count: > 0 } origins &&
                 (origins.Count != 1 || !Uri.TryCreate(origins[0], UriKind.Absolute, out var origin) ||
@@ -80,7 +80,9 @@ public static class DashboardMcp
                 !header.Scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(header.Parameter) ||
                 await context.RequestServices.GetRequiredService<AccessTokens>().ResolveAsync(header.Parameter, context.RequestAborted) is not { } principal)
             {
-                context.Response.Headers.WWWAuthenticate = "Bearer realm=\"TerraScale MCP\", error=\"invalid_token\"";
+                // RFC 9728: the challenge points clients without a token at the OAuth sign-in metadata.
+                context.Response.Headers.WWWAuthenticate = $"Bearer realm=\"TerraScale MCP\", resource_metadata=\"{McpOAuth.ResourceMetadataUrl(context)}\"" +
+                    (context.Request.Headers.Authorization.Count == 0 ? "" : ", error=\"invalid_token\"");
                 context.Response.StatusCode = 401;
                 return;
             }

@@ -18,17 +18,51 @@ with `HttpServerSessionMode.Stateless`. The server is configured in
 
 ## Authentication
 
+Clients sign in with OAuth, or send a personal access token.
+
+### OAuth sign-in
+
+Clients that follow the MCP authorization spec (Claude Code, claude.ai
+connectors, Cursor) connect with only the URL. The dashboard is the
+authorization server for its own MCP resource and sends users to ts-auth's
+hosted pages to sign in. The code is in `Platform/Mcp/McpOAuth.cs`.
+
+1. A request without a token gets `401` with
+   `WWW-Authenticate: Bearer realm="TerraScale MCP", resource_metadata="…"`.
+   A request with a rejected token also gets `error="invalid_token"`.
+2. `GET /.well-known/oauth-protected-resource/mcp` (on
+   `mcp.terrascale.tech`: `/.well-known/oauth-protected-resource`) is the
+   RFC 9728 metadata. It names the dashboard origin as the authorization
+   server. Both MCP hosts use `https://dash.terrascale.tech`.
+3. `GET /.well-known/oauth-authorization-server` is the RFC 8414 metadata:
+   authorization code only, PKCE `S256` only, public clients only
+   (`token_endpoint_auth_method: none`).
+4. `POST /oauth/register` is RFC 7591 dynamic registration. It accepts
+   1–10 redirect URIs: `https`, `http` on a loopback host (any port), or a
+   private app scheme such as `cursor:`.
+5. `GET /oauth/authorize` shows a consent page with the client's name and
+   where it returns. **Sign in and allow** starts a fresh ts-auth
+   authorization. When that finishes, the client's redirect URI gets a
+   single-use code that lasts 5 minutes, plus `state` and `iss`. A `resource`
+   (RFC 8707) must name this MCP server.
+6. `POST /oauth/token` redeems the code with the PKCE verifier and returns a
+   bearer access token that lasts 90 days. There is no refresh token. When it
+   expires, the client signs in again.
+
+The access token is a personal access token named `MCP: <client name>`. It
+holds its own ts-auth grant, counts toward the 25-token limit, and is listed
+and revoked on **Profile → Access tokens**. Clients and codes are stored in
+the `dashboard_mcp_oauth_clients` and `dashboard_mcp_oauth_codes`
+collections.
+
+### Personal access tokens
+
 Each request needs `Authorization: Bearer <personal access token>`. Users
 create tokens on **Profile → Access tokens** (`/profile?tab=access-tokens`).
 Only the token's SHA-256 digest is stored, and the secret is shown once.
 Tokens expire after 7, 30, 90, or 365 days, and each account can hold at most
-25 live tokens. A missing, unknown, expired, or revoked token returns `401`
-with a `WWW-Authenticate: Bearer` challenge. A cross-origin `Origin` header or
-`Sec-Fetch-Site: cross-site` returns `403`.
-
-ts-auth tokens are not accepted until MCP OAuth (resource indicators and
-client registration on ts-auth) ships; ts-auth's contract v1.1 leaves it as a
-follow-up.
+25 live tokens. A missing, unknown, expired, or revoked token returns `401`.
+A cross-origin `Origin` header or `Sec-Fetch-Site: cross-site` returns `403`.
 
 A token acts as its user with that user's roles, and the services recheck
 every permission on each call. The Go application's `admin_*` tools are not
@@ -56,6 +90,16 @@ Membership is checked on every call. `get_context` lists the organizations
 and projects the caller can use.
 
 ## Client configuration
+
+With OAuth sign-in:
+
+```sh
+claude mcp add --transport http terrascale https://mcp.terrascale.tech/
+```
+
+Then run `/mcp` in Claude Code and choose **Authenticate**.
+
+With a personal access token:
 
 ```json
 {

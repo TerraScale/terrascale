@@ -93,10 +93,12 @@ public static class DashboardApplication
             var reference = context.Request.Path.StartsWithSegments("/reference");
             var styles = reference ? $"style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'" :
                 editorStyles ? $"style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'; worker-src 'self'" : "style-src 'self'";
-            // form-action covers the redirects that follow forms: sign-out to ts-auth, checkout and portal to Stripe.
-            var policy =
+            // form-action covers the redirects that follow forms: sign-out to ts-auth, checkout and portal to Stripe,
+            // and an MCP consent's return to the client's registered redirect URI.
+            string Policy() =>
                 $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; {styles}; " +
-                "img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self' https://auth.terrascale.tech https://checkout.stripe.com https://billing.stripe.com; base-uri 'none'; frame-ancestors 'none'";
+                "img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self' https://auth.terrascale.tech https://checkout.stripe.com https://billing.stripe.com" +
+                (context.Items[Platform.Mcp.McpOAuth.FormActionKey] is string client ? " " + client : "") + "; base-uri 'none'; frame-ancestors 'none'";
             context.Response.OnStarting(() =>
             {
                 // Error handling can clear headers; preserve endpoint policies and restore the baseline before writing.
@@ -109,7 +111,7 @@ public static class DashboardApplication
                 headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()";
                 if (context.Request.IsHttps)
                     headers.StrictTransportSecurity = "max-age=31536000";
-                headers.TryAdd("Content-Security-Policy", policy);
+                headers.TryAdd("Content-Security-Policy", Policy());
                 if (!context.Request.Path.StartsWithSegments("/js") &&
                     !context.Request.Path.StartsWithSegments("/css") &&
                     !context.Request.Path.StartsWithSegments("/fonts") &&
@@ -205,6 +207,7 @@ public static class DashboardApplication
         app.MapOrganizations();
         app.MapBilling();
         app.MapBillingPlanChanges();
+        app.MapMcpOAuth();
         app.MapDashboardMcp();
         app.MapDevelopmentUpdates();
         app.MapDashboardContracts();
