@@ -153,6 +153,7 @@ then `c`) and `"a b c"~20000` must refuse carrying scratch at 128 MiB for scored
 reader, count and ordered search, while a small admitted three-term slop query works.
 It also checks open-transaction distinct-index reads/rollback and an
 EXPLAIN QUERY PLAN indexed ID seek for
-`json_each($ids) CROSS JOIN collection ON collection.id = hit_id`. It prints the
-actual plan and rejects a collection scan. No seek-plan runtime result is claimed
-until this patched artifact passes its coordinated build.
+`(SELECT CAST(value AS TEXT) AS hit_id FROM json_each($ids)) AS hits CROSS JOIN collection ON collection.id = hits.hit_id`.
+The explicit TEXT affinity is required for the pinned planner to seek the unique
+text ID index; uncast `json_each.value` produces a collection scan. The smoke prints
+each actual query/count/sort/cursor plan and rejects a collection scan.

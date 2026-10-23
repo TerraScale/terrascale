@@ -648,7 +648,7 @@ internal sealed partial class SqliteStorageTransaction(
         if (candidates is not null)
         {
             command.Parameters.AddWithValue("$hits", candidates);
-            from = $"(SELECT value AS hit_id FROM json_each($hits)) AS hits CROSS JOIN {source.From} ON {source.From}.id = hits.hit_id";
+            from = SqliteQueryCompiler.CandidateFrom(source, "$hits");
         }
 
         command.CommandText = $"""

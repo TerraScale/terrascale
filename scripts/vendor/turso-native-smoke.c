@@ -325,38 +325,63 @@ static void carrying_slop_admission_smoke(turso_connection_t *connection) {
 }
 
 static void candidate_seek_smoke(turso_connection_t *connection) {
-    execute(connection, "CREATE TABLE collection(id TEXT NOT NULL UNIQUE, doc TEXT)");
-    execute(connection, "INSERT INTO collection VALUES ('one', '{\"body\":\"native\"}'), ('two', '{}')");
-    const char *from = " FROM (SELECT value AS hit_id FROM json_each(?1)) AS hits CROSS JOIN collection ON collection.id = hits.hit_id";
-    char sql[1024];
-    snprintf(sql, sizeof(sql), "EXPLAIN QUERY PLAN SELECT collection.id, collection.doc%s", from);
-    turso_statement_t *statement = prepare(connection, sql);
-    expect(turso_statement_bind_positional_text(statement, 1, "[\"one\"]", 7), TURSO_OK, "bind candidate ids");
-    int seeks = 0;
-    turso_status_code_t status;
-    while ((status = turso_statement_step(statement, &error)) == TURSO_ROW) {
-        int64_t length = turso_statement_row_value_bytes_count(statement, 3);
-        const char *text = turso_statement_row_value_bytes_ptr(statement, 3);
-        char detail[1024];
-        assert(length >= 0 && (size_t)length < sizeof(detail));
-        memcpy(detail, text, (size_t)length);
-        detail[length] = '\0';
-        printf("candidate plan: %s\n", detail);
-        assert(strstr(detail, "SCAN collection") == NULL);
-        seeks += strstr(detail, "SEARCH collection USING") != NULL;
+    execute(connection, "CREATE TABLE collection(id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL)");
+    execute(connection, "INSERT INTO collection VALUES ('00000000000000000000000001', '{\"body\":\"native\"}'), ('00000000000000000000000010', '{}'), ('000000000000000000000001E1', '{}')");
+    /* Numeric-looking ULIDs must retain their text identity; json_each.value has ANY (numeric) affinity. */
+    const char *ids = "[\"00000000000000000000000010\",\"00000000000000000000001000\",\"00000000000000000000000001\"]";
+    const char *from = " FROM (SELECT CAST(value AS TEXT) AS hit_id FROM json_each(?1)) AS hits CROSS JOIN collection ON collection.id = hits.hit_id";
+    char queries[5][2048];
+    snprintf(queries[0], sizeof(queries[0]), "SELECT id, doc%s ORDER BY id LIMIT 3", from);
+    snprintf(queries[1], sizeof(queries[1]), "SELECT id, doc%s WHERE id > '00000000000000000000000001' ORDER BY id LIMIT 3", from);
+    snprintf(queries[2], sizeof(queries[2]), "SELECT id, doc%s ORDER BY json_extract(doc, '$.body'), id LIMIT 3", from);
+    snprintf(queries[3], sizeof(queries[3]), "SELECT octet_length(doc)%s ORDER BY id LIMIT 10001", from);
+    snprintf(queries[4], sizeof(queries[4]), "SELECT count(*) + EXISTS (SELECT 1%s ORDER BY id LIMIT 1 OFFSET 1), coalesce(sum(matched), 0) FROM (SELECT CASE WHEN octet_length(doc) > 0 THEN 1 ELSE 0 END AS matched%s ORDER BY id LIMIT 1)", from, from);
+    for (size_t i = 0; i < sizeof(queries) / sizeof(queries[0]); i++) {
+        char sql[4096];
+        snprintf(sql, sizeof(sql), "EXPLAIN QUERY PLAN %s", queries[i]);
+        turso_statement_t *statement = prepare(connection, sql);
+        expect(turso_statement_bind_positional_text(statement, 1, ids, strlen(ids)), TURSO_OK, "bind candidate ids");
+        int seeks = 0;
+        turso_status_code_t status;
+        while ((status = turso_statement_step(statement, &error)) == TURSO_ROW) {
+            int64_t length = turso_statement_row_value_bytes_count(statement, 3);
+            const char *text = turso_statement_row_value_bytes_ptr(statement, 3);
+            char detail[1024];
+            assert(length >= 0 && (size_t)length < sizeof(detail));
+            memcpy(detail, text, (size_t)length);
+            detail[length] = '\0';
+            printf("candidate plan %zu: %s\n", i, detail);
+            fflush(stdout);
+            assert(strstr(detail, "SCAN collection") == NULL);
+            seeks += strstr(detail, "SEARCH collection USING INDEX sqlite_autoindex_collection_1 (id=?)") != NULL
+                || strstr(detail, "SEARCH collection USING COVERING INDEX sqlite_autoindex_collection_1 (id=?)") != NULL;
+        }
+        expect(status, TURSO_DONE, sql);
+        assert(seeks == (i == 4 ? 2 : 1));
+        turso_statement_deinit(statement);
     }
-    expect(status, TURSO_DONE, sql);
-    assert(seeks == 1);
+
+    turso_statement_t *statement = prepare(connection, queries[0]);
+    expect(turso_statement_bind_positional_text(statement, 1, ids, strlen(ids)), TURSO_OK, "bind candidate ids");
+    const char *expected[] = {"00000000000000000000000001", "00000000000000000000000010"};
+    for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
+        expect(turso_statement_step(statement, &error), TURSO_ROW, queries[0]);
+        assert(turso_statement_row_value_bytes_count(statement, 0) == 26);
+        assert(memcmp(turso_statement_row_value_bytes_ptr(statement, 0), expected[i], 26) == 0);
+    }
+    expect(turso_statement_step(statement, &error), TURSO_DONE, queries[0]);
     turso_statement_deinit(statement);
-    snprintf(sql, sizeof(sql), "SELECT collection.id%s", from);
-    statement = prepare(connection, sql);
-    expect(turso_statement_bind_positional_text(statement, 1, "[\"one\"]", 7), TURSO_OK, "bind candidate ids");
-    expect(turso_statement_step(statement, &error), TURSO_ROW, sql);
-    assert(turso_statement_row_value_bytes_count(statement, 0) == 3);
-    assert(memcmp(turso_statement_row_value_bytes_ptr(statement, 0), "one", 3) == 0);
-    expect(turso_statement_step(statement, &error), TURSO_DONE, sql);
-    turso_statement_deinit(statement);
-    puts("native smoke: json_each candidate lookup uses indexed id seek");
+    for (int empty = 0; empty < 2; empty++) {
+        const char *hits = empty ? "[]" : ids;
+        statement = prepare(connection, queries[4]);
+        expect(turso_statement_bind_positional_text(statement, 1, hits, strlen(hits)), TURSO_OK, "bind count candidates");
+        expect(turso_statement_step(statement, &error), TURSO_ROW, queries[4]);
+        assert(turso_statement_row_value_int(statement, 0) == (empty ? 0 : 2));
+        assert(turso_statement_row_value_int(statement, 1) == (empty ? 0 : 1));
+        expect(turso_statement_step(statement, &error), TURSO_DONE, queries[4]);
+        turso_statement_deinit(statement);
+    }
+    puts("native smoke: candidate query/cursor/sort/preflight/count use indexed text id seeks; ULIDs, missing hits and empty counts passed");
 }
 
 static int expression_execute(turso_connection_t *connection, const char *sql) {

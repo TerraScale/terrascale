@@ -31,10 +31,13 @@ internal sealed class SqliteQueryCompiler(
     private readonly Dictionary<string, string> _paths = [];
     private string? CandidateParameter => candidates is null ? null : field ??= Parameter(candidates);
 
-    // The bounded hit list drives primary-key seeks instead of scanning the collection. The subquery hides json_each.id.
     private string From => CandidateParameter is { } ids
-        ? $"(SELECT value AS hit_id FROM json_each({ids})) AS hits CROSS JOIN {rows.From} ON {rows.From}.id = hits.hit_id"
+        ? CandidateFrom(rows, ids)
         : rows.From;
+
+    // Hide json_each.id; TEXT affinity lets Turso seek the collection's unique text id index.
+    internal static string CandidateFrom(RowSource source, string ids) =>
+        $"(SELECT CAST(value AS TEXT) AS hit_id FROM json_each({ids})) AS hits CROSS JOIN {source.From} ON {source.From}.id = hits.hit_id";
 
     /// <summary>
     /// Columns: id, version, JSON byte length, then per sort key its type rank and scalar value.

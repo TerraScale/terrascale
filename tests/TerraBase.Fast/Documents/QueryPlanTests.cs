@@ -1,4 +1,5 @@
 using Bogus;
+using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Primitives;
 using TerraBase.Testing;
@@ -95,6 +96,36 @@ public sealed class QueryPlanTests
                     path, statements == SqliteStatements.ClientOnly ? string.Format(System.Globalization.CultureInfo.InvariantCulture, sql, "\"items\"") : sql);
                 await Assert.That($"{database} {name}: {plan}").IsEqualTo($"{database} {name}: {Expected[name]}").Because(plan);
             }
+        }
+    }
+
+    [Test]
+    public async Task Search_candidates_seek_text_ids_for_queries_counts_and_sort_admission()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+        (await api.PutAsync(id, new { body = "native" })).Status.ShouldBe(System.Net.HttpStatusCode.Created);
+        var databaseFile = await api.DatabaseFileAsync();
+        using var command = new Turso.Data.Sqlite.SqliteCommand();
+        var source = RowSource.Client("items");
+        var compiler = new SqliteQueryCompiler(command.Parameters, source, candidates: $"[\"{id}\"]");
+        var query = new DocumentQuery("items", null, [], null, 1, 1024);
+        (string Sql, int Seeks)[] statements =
+        [
+            (compiler.Compile(query), 1),
+            (compiler.Compile(query with { Sort = [new SortKey(DocumentPath.Id, false)], After = new QueryPosition([5L, id], id) }), 1),
+            (compiler.Compile(query with { Sort = [new SortKey(new DocumentPath(["body"]), false)] }), 1),
+            (compiler.CompileCount(null, 1), 2),
+            ($"SELECT octet_length(doc) FROM {SqliteQueryCompiler.CandidateFrom(source, "$hits")} WHERE 1 ORDER BY id LIMIT 10001;", 1),
+        ];
+        foreach (var (sql, expectedSeeks) in statements)
+        {
+            var plan = await QueryPlan.ExplainAsync(databaseFile, sql);
+            await Assert.That(plan.Contains("SCAN items", StringComparison.Ordinal)).IsFalse().Because(plan);
+            var seeks = plan.Split(" | ", StringSplitOptions.None).Count(step =>
+                step.StartsWith("SEARCH items USING ", StringComparison.Ordinal)
+                && step.EndsWith("sqlite_autoindex_items_1 (id=?)", StringComparison.Ordinal));
+            await Assert.That(seeks).IsEqualTo(expectedSeeks).Because(plan);
         }
     }
 
