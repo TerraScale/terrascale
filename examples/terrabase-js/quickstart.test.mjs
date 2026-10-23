@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { runJourney } from './quickstart.mjs'
+import { ensureCollection, runJourney } from './quickstart.mjs'
 
 import { createTerraBaseV1Client } from '@terrascale/sdk'
 
@@ -73,4 +73,22 @@ test('authorization denial is propagated without replaying a mutation', async ()
   const f = fixture({ forbidden: true })
   await assert.rejects(runJourney(f.client, 'quickstart', 'posts', AbortSignal.timeout(5000)), { code: 'forbidden_scope' })
   assert.equal(f.calls(), 1)
+})
+
+test('ensureCollection creates the collection, accepts an existing one and propagates denial', async () => {
+  for (const [status, code, fails] of [[201, null, false], [409, 'name_taken', false], [403, 'forbidden_scope', true]]) {
+    const client = createTerraBaseV1Client({
+      baseUrl: 'https://api.example.invalid', project: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      token: `tb_${'s'.repeat(43)}`,
+      fetch: async (url, options) => {
+        assert.equal(new URL(url).pathname, '/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/quickstart/collections')
+        assert.deepEqual(JSON.parse(options.body), { name: 'posts' })
+        const body = code ? { error: { code } } : { name: 'posts', created_at: '1' }
+        return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+      },
+    })
+    const run = ensureCollection(client, 'quickstart', 'posts', AbortSignal.timeout(5000))
+    if (fails) await assert.rejects(run, { code })
+    else await run
+  }
 })

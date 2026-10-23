@@ -10,7 +10,7 @@ description: Install the published TerraScale SDK and create, read, update, quer
 
 # JavaScript quickstart
 
-Install `@terrascale/sdk@0.0.3` and run one complete document journey. This example uses a provisioned project, database and collection; it does not create account resources or assume public registration is available.
+Install `@terrascale/sdk@0.0.3` and run one complete document journey against `https://api.terrascale.tech`. You need a database and an API key from the dashboard; [Getting started](/ru/getting-started/#create-an-account-a-database-and-an-api-key) walks through creating them.
 
 ## 1. Install the SDK
 
@@ -27,18 +27,21 @@ The package is available on [public npm registry](https://registry.npmjs.org/@te
 
 ## 2. Supply connection details
 
-Set `TERRASCALE_API_URL`, `TERRASCALE_PROJECT_ID`, `TERRASCALE_DATABASE_NAME` and `TERRASCALE_COLLECTION_NAME` from your authorized development allocation. Supply `TERRASCALE_ACCESS_TOKEN` through your secret manager or private shell. The example reads environment variables; it does not load an `.env` file.
+Exchange your dashboard API key for a 15-minute access token, then set the project ID (dashboard **Organization** page, **Current project**), the database name and a collection name. The example creates the collection when it does not exist yet. It reads environment variables; it does not load an `.env` file.
 
 ```bash
-export TERRASCALE_API_URL='https://YOUR_AUTHORIZED_API_HOST'
+read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY  # paste the key, then press Enter
+export TERRASCALE_ACCESS_TOKEN="$(curl -sS --fail-with-body \
+  -u "${TERRASCALE_API_KEY%%_*}:$TERRASCALE_API_KEY" -d grant_type=client_credentials \
+  https://auth.terrascale.tech/terrascale/oauth/token \
+  | sed -nE 's/.*"access_token": *"([^"]+)".*/\1/p')"
+export TERRASCALE_API_URL='https://api.terrascale.tech'
 export TERRASCALE_PROJECT_ID='YOUR_PROJECT_ID'
-export TERRASCALE_DATABASE_NAME='quickstart'
+export TERRASCALE_DATABASE_NAME='YOUR_DATABASE_NAME'
 export TERRASCALE_COLLECTION_NAME='posts'
 ```
 
-Replace the endpoint with the actual provisioned HTTPS origin. These names select customer resources and credentials; they are not feature switches. Never place a privileged credential in browser public settings, source control or screenshots.
-
-The current client requires one explicit endpoint or a caller-supplied resolver. It does not promise automatic region discovery or fallback. See [authentication](/ru/guides/authentication).
+The key is the client secret and its part before `_` is the client ID; sending the key itself as a bearer token answers `401`. Run the exchange again when the token expires. Never place the key or a token in browser public settings, source control or screenshots. See [authentication](/ru/guides/authentication).
 
 ## 3. Connect through the SDK
 
@@ -46,7 +49,11 @@ Download [quickstart.mjs](/examples/terrabase-js/quickstart.mjs) into this direc
 
 <<< @/../examples/terrabase-js/quickstart.mjs#connection{js}
 
-The `token` must be accepted by the serving API. The published client's acceptance of JWT syntax does not verify deployed JWT signature validation, sign-in or access exchange.
+`token` is the access token from step 2. The client sends it as `Authorization: Bearer` on every request.
+
+Before the journey, the example creates the collection and accepts `409` when it already exists:
+
+<<< @/../examples/terrabase-js/quickstart.mjs#collection{js}
 
 ## 4. Create, read, update, query and delete
 

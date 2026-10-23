@@ -9,11 +9,7 @@ title: Getting started
 
 # Getting started
 
-Install the published JavaScript SDK and run the [JavaScript quickstart](/pt-br/getting-started/javascript). It creates, reads, updates, queries and deletes one synthetic document in a database you are authorized to use.
-
-::: warning Service availability
-TerraScale is preparing for public self-service launch. A published SDK does not establish hosted provisioning, dashboard sign-in or production authorization availability. Obtain a provisioned endpoint and scoped credential through the supported access process before running database requests.
-:::
+Create an account in the [TerraScale dashboard](https://dash.terrascale.tech/register), create an API key, then run the [JavaScript quickstart](/pt-br/getting-started/javascript). It creates, reads, updates, queries and deletes one synthetic document in your database.
 
 ## Choose your path
 
@@ -25,17 +21,32 @@ TerraScale is preparing for public self-service launch. A published SDK does not
 
 Package availability checked October 12, 2026 (UTC). There is no documented public Python, Java or Rust SDK release for this contract.
 
-## Prepare an application
+## Create an account, a database and an API key
 
-1. Obtain a project ID, database name and collection name for an isolated development allocation.
-2. Obtain its HTTPS API endpoint and a credential authorized for document reads and writes.
-3. Install the exact SDK version from the relevant guide.
-4. Run the example with synthetic data and verify its success message.
+1. Open [dash.terrascale.tech/register](https://dash.terrascale.tech/register), create your account and enter the code sent to your email.
+2. Finish setup: choose a plan (or continue without a payment method), then name your first project and pick its region.
+3. Open **Databases**, select **New database**, enter a name (lowercase letters, digits and inner hyphens) and create it.
+4. Open **API keys**, select **New project key**, limit **Database access** to that database, choose **Read and write** and create it. Copy the key when the dashboard shows it and keep it in your secret manager.
+5. Open **Organization** and copy the **Current project** ID.
 
-Database handles do not provision identity resources. Keep application data in TerraBase and use the supported identity flow for users and organizations. [Authentication](/pt-br/guides/authentication) explains credential boundaries; [dashboard usage](/pt-br/guides/dashboard) explains the customer workflow.
+The key has the form `<key ID>_<secret>`. It is a client credential, not a bearer token: the API answers `401` when you send it directly.
+
+## Exchange the key for an access token
+
+Every request to the API at `https://api.terrascale.tech` carries a short-lived access token. Get one from the token endpoint with the OAuth 2.0 client credentials grant: the client ID is the part of the key before `_`, and the client secret is the whole key.
+
+```bash
+read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY  # paste the key, then press Enter
+export TERRASCALE_ACCESS_TOKEN="$(curl -sS --fail-with-body \
+  -u "${TERRASCALE_API_KEY%%_*}:$TERRASCALE_API_KEY" -d grant_type=client_credentials \
+  https://auth.terrascale.tech/terrascale/oauth/token \
+  | sed -nE 's/.*"access_token": *"([^"]+)".*/\1/p')"
+```
+
+The token lasts 15 minutes (`expires_in: 900`) and carries the key's scopes, such as `documents:read documents:write`. Run the exchange again when requests start answering `401`. [Authentication](/pt-br/guides/authentication) explains the contract.
 
 ## After the first document
 
-Read [queries and pagination](/pt-br/guides/queries), [errors and safe retries](/pt-br/guides/errors), and [replication boundaries](/pt-br/concepts/replication) before building an application that depends on their behavior.
+Read [queries and pagination](/pt-br/guides/queries), [errors and safe retries](/pt-br/guides/errors), and [replication boundaries](/pt-br/concepts/replication) before building an application that depends on their behavior. [Dashboard usage](/pt-br/guides/dashboard) covers the rest of the customer workflow.
 
 </div>

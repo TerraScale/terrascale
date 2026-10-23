@@ -41,6 +41,14 @@ public static class Program
             RequestTimeout = TimeSpan.FromSeconds(15)
         });
         var database = client.Database(project, databaseName);
+        try
+        {
+            await database.CreateCollectionAsync(collection, cancellationToken);
+        }
+        catch (TerraBaseConflictException)
+        {
+            // Expected after the first run: the collection already exists.
+        }
         var run = Guid.NewGuid().ToString("N");
         var created = await database.CreateDocumentAsync(collection,
             JsonSerializer.SerializeToElement(new { title = "Hello TerraBase", run }), cancellationToken);
