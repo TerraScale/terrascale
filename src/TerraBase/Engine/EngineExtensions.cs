@@ -31,6 +31,12 @@ public static class EngineExtensions
     {
         ArgumentNullException.ThrowIfNull(options);
         services.TryAddSingleton(options);
+        services.TryAddKeyedSingleton<IMasterKey>(DatabaseMasterKey, (provider, _) =>
+        {
+            var configured = provider.GetRequiredService<TerraBaseOptions>();
+            return new MasterKey(configured.DatabaseMasterKey ?? configured.Backup?.MasterKey
+                ?? throw new TerraBaseConfigurationException("master-key is required for database encryption"));
+        });
         services.TryAddSingleton<DatabaseLifecycleCheckpoint>(_ => static (_, _) => { });
         // The engine records metrics; AddMetrics is idempotent and the host adds it too.
         services.AddMetrics();

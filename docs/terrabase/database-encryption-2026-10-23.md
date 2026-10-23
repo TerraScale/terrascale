@@ -21,6 +21,11 @@ runtime tmpfs mount. TerraBase does not create a credential, request broader
 IAM permissions, or copy a key into its data directory. Test hosts inject a
 test-only master-key implementation; production has no test-key fallback.
 
+Database key custody is registered independently of continuous backup.
+Development can supply only `TERRABASE_MASTER_KEY_FILE` without configuring
+an object-store bucket. Starting storage without a master or a test fake
+fails with an explicit configuration error.
+
 Database keys are supplied to the native driver in process memory. Managed
 connection strings containing those keys must never be logged. Errors name
 the failed operation without echoing key material. This protects persistent

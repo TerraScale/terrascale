@@ -800,10 +800,12 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                         || entry.FileName.SequenceEqual(SystemName + FileExtension + "-wal")
                         || entry.FileName.SequenceEqual(SystemName + FileExtension + "-shm")
                         || entry.FileName.SequenceEqual(SystemName + FileExtension + "-journal")
+                        || entry.FileName.SequenceEqual(SystemName + FileExtension + DatabaseKeys.Suffix)
                         || entry.FileName.SequenceEqual(IntentName + FileExtension)
                         || entry.FileName.SequenceEqual(IntentName + FileExtension + "-wal")
                         || entry.FileName.SequenceEqual(IntentName + FileExtension + "-shm")
-                        || entry.FileName.SequenceEqual(IntentName + FileExtension + "-journal"));
+                        || entry.FileName.SequenceEqual(IntentName + FileExtension + "-journal")
+                        || entry.FileName.SequenceEqual(IntentName + FileExtension + DatabaseKeys.Suffix));
                 return reservedRootName
                     ? entry.IsDirectory || link
                     : !entry.IsDirectory || link || CollisionDatabaseIdFromFileName(entry.FileName.ToString()) is not null;
