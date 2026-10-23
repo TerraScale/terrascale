@@ -42,7 +42,9 @@ mod tx;
 mod types;
 
 pub use backups::RestoredDatabase;
-pub use changes::{ChangeBytes, ChangesOptions};
+pub use changes::{
+    ChangeBytes, ChangeEvent, ChangeEvents, ChangeOp, ChangesOptions, DocumentChange,
+};
 pub use client::{
     Client, ClientBuilder, RetryPolicy, DEFAULT_BASE_URL, DEFAULT_MAX_RESPONSE_BYTES,
     MAX_REQUEST_BYTES,

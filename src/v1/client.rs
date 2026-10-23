@@ -579,6 +579,10 @@ impl Client {
         Ok(url)
     }
 
+    pub(crate) fn max_response(&self) -> usize {
+        self.inner.max_response
+    }
+
     pub(crate) async fn changes_response(
         &self,
         database: &str,
