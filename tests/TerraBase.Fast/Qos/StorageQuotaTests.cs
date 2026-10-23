@@ -2,7 +2,7 @@ using System.Net;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Fast.Management;
 using TerraBase.Features.Management;
@@ -61,8 +61,8 @@ public sealed class StorageQuotaTests
     {
         var hook = new UsageCommitHook(storageLimit: plan => plan == PlanTier.Enterprise ? long.MaxValue : 32);
         await using var api = await DocumentApi.StartAsync(services: hook.InstallQuota);
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
         var held = await store.BeginTransactionAsync(write: true, CancellationToken.None);
         Task<ApiResponse> primer;
         Task<ApiResponse>[] contenders;
@@ -269,7 +269,7 @@ public sealed class StorageQuotaTests
         public override long TimestampFrequency => 1000;
         // Background catalog queries must not consume this request-only artificial deadline.
         public override long GetTimestamp() => QosContext.Current is null ? 0
-            : Enabled && Thread.CurrentThread.Name == "terrabase-sqlite"
+            : Enabled && Thread.CurrentThread.Name == "terrabase-turso"
             ? Interlocked.Add(ref _timestamp, 1_000_000) : Volatile.Read(ref _timestamp);
     }
 

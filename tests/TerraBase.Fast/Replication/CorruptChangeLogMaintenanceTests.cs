@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -24,12 +24,12 @@ public sealed class CorruptChangeLogMaintenanceTests
         var (database, store, before, peer) = await DamageAsync(api, time, missingImage);
         var services = api.Server.Services;
         var ledger = services.GetRequiredService<IRebuildLedger>();
-        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None);
+        var transaction = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None);
         await using (transaction)
         {
             // The retention scan catches its decoder error internally, without an outer source read.
             _ = await transaction.TrimAsync(store.BackupAnchor, time.GetUtcNow(),
-                services.GetRequiredService<SqliteStorageEngine>().ReplicaId, CancellationToken.None);
+                services.GetRequiredService<TursoStorageEngine>().ReplicaId, CancellationToken.None);
             await Assert.That(store.CopyFault).IsNotNull();
             await Assert.That(await ledger.GetAsync(database, CancellationToken.None)).IsNull()
                 .Because("the held transaction records its fault only during disposal");
@@ -38,7 +38,7 @@ public sealed class CorruptChangeLogMaintenanceTests
         }
 
         await Assert.That((await ledger.GetAsync(database, CancellationToken.None))?.OldIncarnation).IsEqualTo(store.Incarnation);
-        await using (var read = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        await using (var read = (TursoStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
         {
             await Assert.That((await read.GetAckedAsync(peer, store.Incarnation, CancellationToken.None))?.Acked).IsEqualTo(before);
         }
@@ -68,7 +68,7 @@ public sealed class CorruptChangeLogMaintenanceTests
 
         await using var restarted = await StartAsync(directory.Root, new FakeTimeProvider());
         var services = restarted.Server.Services;
-        var copy = (SqliteDatabaseStore)(await services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+        var copy = (TursoDatabaseStore)(await services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
             ?? throw new InvalidOperationException("the damaged copy is missing"));
         await Assert.That(copy.Incarnation).IsEqualTo(incarnation);
         await Assert.That((await services.GetRequiredService<IRebuildLedger>()
@@ -80,7 +80,7 @@ public sealed class CorruptChangeLogMaintenanceTests
         ManagementApi.StartAsync(settings => settings["data-directory"] = root,
             services => services.AddSingleton<IReplicaRebuild, RefusedRebuild>(), time: time);
 
-    private static async Task<(TenantContext Database, SqliteDatabaseStore Store, long Before, ReplicaId Peer)> DamageAsync(
+    private static async Task<(TenantContext Database, TursoDatabaseStore Store, long Before, ReplicaId Peer)> DamageAsync(
         ManagementApi api, TimeProvider time, bool missingImage)
     {
         var managed = await api.CreateManagedDatabaseAsync();
@@ -88,7 +88,7 @@ public sealed class CorruptChangeLogMaintenanceTests
         var database = await services.GetRequiredService<ITenantDirectory>()
             .FindDatabaseAsync(managed.Organization, managed.Project, managed.Name, CancellationToken.None)
             is TenantContext found ? found : throw new InvalidOperationException("the test database is not registered");
-        var store = (SqliteDatabaseStore)(await services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+        var store = (TursoDatabaseStore)(await services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
             ?? throw new InvalidOperationException("the test copy is missing"));
         await using (var setup = await store.BeginDurableTransactionAsync(CancellationToken.None))
         {
@@ -99,7 +99,7 @@ public sealed class CorruptChangeLogMaintenanceTests
         var before = await services.GetRequiredService<TursoChangeGroupSource>().HeadAsync(database, store.Incarnation, CancellationToken.None)
             ?? throw new InvalidOperationException("the healthy source head was refused");
         var peer = ReplicaId.Of(99, 1, 0);
-        await using (var ack = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        await using (var ack = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             // Seed bookkeeping directly: an ACK through the source would also read its tail gauge.
             _ = await ack.RecordAckedAsync(peer, store.Incarnation, before, default, store.BackupAnchor, time.GetUtcNow(), CancellationToken.None);
@@ -126,7 +126,7 @@ public sealed class CorruptChangeLogMaintenanceTests
         return (database, store, before, peer);
     }
 
-    private static async Task AssertRefusedAsync(ManagementApi api, TenantContext database, SqliteDatabaseStore store, ReplicaId peer, long before)
+    private static async Task AssertRefusedAsync(ManagementApi api, TenantContext database, TursoDatabaseStore store, ReplicaId peer, long before)
     {
         _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () =>
         {

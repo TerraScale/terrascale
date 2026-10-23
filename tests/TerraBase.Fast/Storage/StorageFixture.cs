@@ -2,7 +2,7 @@ using System.Text;
 using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -57,7 +57,7 @@ internal static class StorageFixture
     /// reading session registers, and it takes no more writes. Turso has no generated columns, and only the database's
     /// writer connection may change its schema.
     /// </summary>
-    public static Task ObserveBodiesAsync(SqliteDatabaseStore store, string functionName, string collection = "items") =>
+    public static Task ObserveBodiesAsync(TursoDatabaseStore store, string functionName, string collection = "items") =>
         store.WithWriterAsync(writer =>
         {
             foreach (var sql in new[]
@@ -79,7 +79,7 @@ internal static class StorageFixture
     /// Rents an idle read session of <paramref name="store"/>, opening one first if none is idle: writes use the store's
     /// own writer connection, so earlier writes leave no idle session.
     /// </summary>
-    public static async Task<SqliteSession> RentReaderAsync(SqliteStorageEngine engine, SqliteDatabaseStore store)
+    public static async Task<TursoSession> RentReaderAsync(TursoStorageEngine engine, TursoDatabaseStore store)
     {
         await using (await store.BeginTransactionAsync(write: false, CancellationToken.None))
         {
@@ -95,8 +95,8 @@ internal static class StorageFixture
     /// </summary>
     public static async Task ExecuteWhileWriterHeldAsync(TerraBaseTestServer server, TenantContext? database, string sql)
     {
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
-        var store = (SqliteDatabaseStore)(database is null
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)(database is null
             ? await engine.OpenSystemDatabaseAsync(CancellationToken.None)
             : (await engine.OpenDatabaseAsync(database, CancellationToken.None))!);
         await store.WithWritersHeldAsync(() =>
@@ -146,14 +146,14 @@ internal static class StorageFixture
     }
 
     /// <summary>
-    /// Holds one storage worker inside real SQLite row evaluation, on a scratch database of its own, until the result
+    /// Holds one storage worker inside real Turso row evaluation, on a scratch database of its own, until the result
     /// is disposed. The held read counts as one admission and one running call; other databases stay untouched.
     /// </summary>
-    public static async Task<IAsyncDisposable> HoldWorkerAsync(SqliteStorageEngine engine, CancellationToken cancellationToken)
+    public static async Task<IAsyncDisposable> HoldWorkerAsync(TursoStorageEngine engine, CancellationToken cancellationToken)
     {
         var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
         await engine.CreateDatabaseAsync(database, cancellationToken);
-        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, cancellationToken))!;
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, cancellationToken))!;
         await using (var seed = await store.BeginTransactionAsync(write: true, cancellationToken))
         {
             await seed.PutAsync("held", Id("a"), "{}"u8.ToArray(), cancellationToken);

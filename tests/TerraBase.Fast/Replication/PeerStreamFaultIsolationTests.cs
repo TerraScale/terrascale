@@ -4,7 +4,7 @@ using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
@@ -316,9 +316,9 @@ public sealed class PeerStreamFaultIsolationTests
         var systemStatus = sender.Status(ChangeGroups.System)
             ?? throw new InvalidOperationException("the cold SYSTEM cursor was not observed");
         await Assert.That((systemStatus.Incarnation, systemStatus.Acknowledged)).IsEqualTo((Ulid.Empty, 0L));
-        var engine = sender.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var system = (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(deadline.Token);
-        await using var read = (SqliteStorageTransaction)await system.BeginTransactionAsync(write: false, deadline.Token);
+        var engine = sender.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var system = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(deadline.Token);
+        await using var read = (TursoStorageTransaction)await system.BeginTransactionAsync(write: false, deadline.Token);
         await Assert.That((await read.GetAckedAsync(peer, system.Incarnation, deadline.Token))?.Acked ?? 0).IsEqualTo(0L)
             .Because("a refused SYSTEM cursor cannot publish an acknowledged source prefix");
         await Assert.That(await sender.Api.Server.Services.GetRequiredService<IReplicaCopyFaults>()
@@ -720,8 +720,8 @@ public sealed class PeerStreamFaultIsolationTests
             }
         }
 
-        public async Task<SqliteDatabaseStore> StoreAsync(TenantContext database, CancellationToken cancellationToken = default) =>
-            (SqliteDatabaseStore)(await Api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, cancellationToken)
+        public async Task<TursoDatabaseStore> StoreAsync(TenantContext database, CancellationToken cancellationToken = default) =>
+            (TursoDatabaseStore)(await Api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, cancellationToken)
                 ?? throw new InvalidOperationException("the test database is missing"));
 
         public async Task PutAsync(TenantContext database, string id, CancellationToken cancellationToken = default)

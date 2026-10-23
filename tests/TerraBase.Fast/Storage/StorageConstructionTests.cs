@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
@@ -34,7 +34,7 @@ public sealed class StorageConstructionTests
                 }, services =>
                 {
                     // DI owns a pool if validation regresses; construct it only in the hosted service's StartAsync.
-                    services.AddSingleton(provider => new SqliteIoPool(
+                    services.AddSingleton(provider => new TursoIoPool(
                         threads, maxAdmitted, provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
                         createWorker: _ =>
                         {
@@ -42,7 +42,7 @@ public sealed class StorageConstructionTests
                             throw new InvalidOperationException("Invalid pool limits must not create workers.");
                         }));
                     services.AddSingleton<IHostedService>(provider => new PoolConstructionService(
-                        () => provider.GetRequiredService<SqliteIoPool>()));
+                        () => provider.GetRequiredService<TursoIoPool>()));
                 });
             });
             await Assert.That(failure!.GetType()).IsEqualTo(typeof(ArgumentOutOfRangeException));
@@ -93,10 +93,10 @@ public sealed class StorageConstructionTests
                     }, services => services.AddSingleton(provider =>
                     {
                         var options = provider.GetRequiredService<TerraBaseOptions>();
-                        return new SqliteStorageEngine(
+                        return new TursoStorageEngine(
                             options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                             provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                            provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace,
+                            provider.GetRequiredService<ILogger<TursoStorageEngine>>(), options.ShutdownGrace,
                             createWorker: CreateWorker);
                     }));
                     return (Exception?)null;
@@ -230,12 +230,12 @@ public sealed class StorageConstructionTests
             {
                 var options = provider.GetRequiredService<TerraBaseOptions>();
                 var meter = provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
-                var logger = provider.GetRequiredService<ILogger<SqliteStorageEngine>>();
+                var logger = provider.GetRequiredService<ILogger<TursoStorageEngine>>();
                 try
                 {
                     // The pool rejects this queue after the engine takes the directory's actual file lock.
                     // If validation regresses, return the unexpected engine so DI still owns its cleanup.
-                    return new SqliteStorageEngine(options.DataDirectory, 1, 0, options.MemoryBudget, meter, logger, options.ShutdownGrace);
+                    return new TursoStorageEngine(options.DataDirectory, 1, 0, options.MemoryBudget, meter, logger, options.ShutdownGrace);
                 }
                 catch (ArgumentOutOfRangeException error)
                 {
@@ -243,7 +243,7 @@ public sealed class StorageConstructionTests
                 }
 
                 // Reacquire the same directory immediately, without collection/finalization of the failed engine.
-                return new SqliteStorageEngine(
+                return new TursoStorageEngine(
                     options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                     meter, logger, options.ShutdownGrace);
             }));
@@ -263,7 +263,7 @@ public sealed class StorageConstructionTests
         read.EnsureSuccessStatusCode();
     }
 
-    private sealed class PoolConstructionService(Func<SqliteIoPool> createPool) : IHostedService
+    private sealed class PoolConstructionService(Func<TursoIoPool> createPool) : IHostedService
     {
         public Task StartAsync(CancellationToken cancellationToken)
         {

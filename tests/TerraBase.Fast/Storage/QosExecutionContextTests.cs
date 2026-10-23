@@ -3,7 +3,7 @@ using System.Net;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
@@ -23,7 +23,7 @@ public sealed class QosExecutionContextTests
             services.AddSingleton(provider => new ContextProbe((IMemoryBudget)registration.ImplementationFactory!(provider)));
             services.AddSingleton<IMemoryBudget>(provider => provider.GetRequiredService<ContextProbe>());
             services.AddSingleton<IStartupFilter, RequestMarker>();
-            var engine = services.Single(service => service.ServiceType == typeof(SqliteStorageEngine));
+            var engine = services.Single(service => service.ServiceType == typeof(TursoStorageEngine));
             services.Remove(engine);
             services.AddSingleton(provider =>
             {
@@ -32,7 +32,7 @@ public sealed class QosExecutionContextTests
                 startupProbe.Marker.Value = new RequestState();
                 try
                 {
-                    return (SqliteStorageEngine)engine.ImplementationFactory!(provider);
+                    return (TursoStorageEngine)engine.ImplementationFactory!(provider);
                 }
                 finally
                 {
@@ -41,7 +41,7 @@ public sealed class QosExecutionContextTests
             });
         });
         var probe = api.Server.Services.GetRequiredService<ContextProbe>();
-        probe.Io = api.Server.Services.GetRequiredService<SqliteStorageEngine>().Io;
+        probe.Io = api.Server.Services.GetRequiredService<TursoStorageEngine>().Io;
         var id = DocumentApi.NewId();
         await Assert.That((await api.PutAsync(id, new { n = 0 })).Status).IsEqualTo(HttpStatusCode.Created);
         api.Client.DefaultRequestHeaders.Add("X-Test-Resource-Context", "true");
@@ -56,8 +56,8 @@ public sealed class QosExecutionContextTests
         }
 
         var observations = probe.Observations.ToArray();
-        await Assert.That(observations.Any(observation => observation.Thread == "terrabase-sqlite")).IsTrue();
-        await Assert.That(observations.Count(observation => observation.Thread == "terrabase-sqlite-writer")).IsGreaterThanOrEqualTo(2);
+        await Assert.That(observations.Any(observation => observation.Thread == "terrabase-turso")).IsTrue();
+        await Assert.That(observations.Count(observation => observation.Thread == "terrabase-turso-writer")).IsGreaterThanOrEqualTo(2);
         await Assert.That(observations.Select(observation => observation.Context.Results).Distinct().Count()).IsEqualTo(3);
         foreach (var observation in observations)
         {
@@ -65,7 +65,7 @@ public sealed class QosExecutionContextTests
             await Assert.That(observation.Context.Tenant?.OrganizationId).IsEqualTo(api.Tenant.OrganizationId);
             await Assert.That(observation.Context.Tenant?.Plan).IsEqualTo(PlanTier.Hobby);
             await Assert.That(observation.Context.Results).IsSameReferenceAs(observation.Request.Owner);
-            await Assert.That(observation.Admitted).IsEqualTo(observation.Thread == "terrabase-sqlite-writer");
+            await Assert.That(observation.Admitted).IsEqualTo(observation.Thread == "terrabase-turso-writer");
         }
     }
 
@@ -81,7 +81,7 @@ public sealed class QosExecutionContextTests
         private readonly ConcurrentDictionary<QosContext.ResultMemory, RequestState> _requests = new();
         internal AsyncLocal<RequestState?> Marker { get; } = new();
         internal ConcurrentQueue<Observation> Observations { get; } = new();
-        internal SqliteIoPool? Io { get; set; }
+        internal TursoIoPool? Io { get; set; }
 
         public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, QosContext.Current);
 
@@ -96,7 +96,7 @@ public sealed class QosExecutionContextTests
                     _requests.TryAdd(owner, request);
                 }
 
-                if (tenant is not null && Thread.CurrentThread.Name is "terrabase-sqlite" or "terrabase-sqlite-writer"
+                if (tenant is not null && Thread.CurrentThread.Name is "terrabase-turso" or "terrabase-turso-writer"
                     && _requests.TryGetValue(owner, out var source))
                 {
                     Observations.Enqueue(new(Thread.CurrentThread.Name, Marker.Value, context, source, Io!.HasAdmission));

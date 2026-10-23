@@ -8,7 +8,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -86,7 +86,7 @@ public sealed class PointInTimeHistoryTests
         host.Time.Advance(TimeSpan.FromMilliseconds(500));
         await host.PutAsync("b", cancellationToken);
         var tenant = new TenantContext(host.Database.Organization, PlanTier.Pro, host.Database.Project, host.Database.Id);
-        var store = (SqliteDatabaseStore)(await host.Api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(tenant, cancellationToken))!;
+        var store = (TursoDatabaseStore)(await host.Api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, cancellationToken))!;
         await store.WithWriterAsync(writer =>
         {
             using var delete = writer.Connection.CreateCommand();
@@ -426,7 +426,7 @@ public sealed class PointInTimeHistoryTests
         var directory = Directory.CreateTempSubdirectory("terrabase-tap-snapshot-");
         try
         {
-            var engine = host.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            var engine = host.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
             await using var tap = (TursoChangeTap)(await engine.OpenTapAsync(host.Tenant, cancellationToken))!;
             // The snapshot's rollback fails, leaving its read transaction open.
             tap.BeforeSnapshotEnd = _ => throw new IOException("the snapshot's rollback failed");
@@ -453,7 +453,7 @@ public sealed class PointInTimeHistoryTests
         var directory = Directory.CreateTempSubdirectory("terrabase-tap-snapshot-");
         try
         {
-            var engine = host.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            var engine = host.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
             await using var tap = (TursoChangeTap)(await engine.OpenTapAsync(host.Tenant, cancellationToken))!;
             // The read that would pin the snapshot's transaction fails after BEGIN, leaving the transaction open.
             tap.AfterSnapshotBegin = _ => throw new IOException("the snapshot's pinning read failed");
@@ -628,7 +628,7 @@ public sealed class PointInTimeHistoryTests
 
         public async Task StampAsync(DateTimeOffset? started, DateTimeOffset? commit, CancellationToken cancellationToken)
         {
-            var store = (SqliteDatabaseStore)(await Api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(Tenant, cancellationToken))!;
+            var store = (TursoDatabaseStore)(await Api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(Tenant, cancellationToken))!;
             _stamped = await store.WithWriterAsync(writer =>
             {
                 List<(long Id, bool First)> rows = [];

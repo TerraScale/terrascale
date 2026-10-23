@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 
@@ -59,7 +59,7 @@ public sealed class AntiEntropyGcTests
 
         var store = await RawStoreAsync(machine);
         Task<int?> repair;
-        await using (var writer = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, token))
+        await using (var writer = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, token))
         {
             if (collectFirst)
             {
@@ -92,7 +92,7 @@ public sealed class AntiEntropyGcTests
         var live = Put(1000, """{"value":1}""");
         _ = await RepairAsync(machine, new("items", id, live.Delete(At(2000))));
         var store = await RawStoreAsync(machine);
-        await using (var rolledBack = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, token))
+        await using (var rolledBack = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, token))
         {
             await Assert.That(await rolledBack.CollectAsync(new Hlc(3000), token)).IsEqualTo(1);
         }
@@ -100,7 +100,7 @@ public sealed class AntiEntropyGcTests
         await Assert.That(await RepairAsync(machine, new("items", baseline, live))).IsEqualTo(1);
         await Assert.That(await machine.ReadAsync(baseline)).IsEqualTo("""{"value":1}""");
         await CollectAsync(machine, 3000);
-        await using (var lower = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, token))
+        await using (var lower = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, token))
         {
             await Assert.That(await lower.CollectAsync(new Hlc(1500), token)).IsEqualTo(0);
             _ = await lower.CommitAsync(token);
@@ -162,14 +162,14 @@ public sealed class AntiEntropyGcTests
         await machine.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(
             machine.Cluster.Database, (await machine.StoreAsync()).Incarnation, [state], TestContext.Current!.Execution.CancellationToken);
 
-    private static async Task<SqliteDatabaseStore> RawStoreAsync(PeerStreamTests.Machine machine) =>
-        (SqliteDatabaseStore)(await machine.Api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+    private static async Task<TursoDatabaseStore> RawStoreAsync(PeerStreamTests.Machine machine) =>
+        (TursoDatabaseStore)(await machine.Api.Server.Services.GetRequiredService<TursoStorageEngine>()
             .OpenDatabaseAsync(machine.Cluster.Database, TestContext.Current!.Execution.CancellationToken))!;
 
     private static async Task CollectAsync(PeerStreamTests.Machine machine, ulong horizon)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
-        await using var collect = (SqliteStorageTransaction)await (await RawStoreAsync(machine)).BeginTransactionAsync(write: true, token);
+        await using var collect = (TursoStorageTransaction)await (await RawStoreAsync(machine)).BeginTransactionAsync(write: true, token);
         await Assert.That(await collect.CollectAsync(new Hlc(horizon), token)).IsEqualTo(1);
         _ = await collect.CommitAsync(token);
     }

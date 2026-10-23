@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using ZLogger;
 
 namespace TerraBase.Hosting;
@@ -24,12 +24,12 @@ internal sealed class ApplicationRunCompletion
             logger.ZLogInformation($"Shutdown started; application budget is {Shutdown.Budget.TotalSeconds:@BudgetSeconds} seconds");
         });
         var started = false;
-        SqliteStorageEngine? storage = null;
+        TursoStorageEngine? storage = null;
         try
         {
             // Retain instances even if startup fails after launching only some of their tasks.
             background = [.. app.Services.GetServices<IHostedService>().OfType<BackgroundService>()];
-            storage = app.Services.GetRequiredService<SqliteStorageEngine>();
+            storage = app.Services.GetRequiredService<TursoStorageEngine>();
             await app.StartAsync().ConfigureAwait(false);
             started = true;
             observations = [.. background.Where(service => service.ExecuteTask is not null).Select(ObserveWorkerAsync)];

@@ -4,7 +4,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -91,7 +91,7 @@ public sealed class BackupBacklogRecoveryTests
     public async Task Shutdown_ships_the_whole_backlog_not_one_read(CancellationToken cancellationToken)
     {
         await using var host = await BackupShippingHost.StartAsync(services =>
-            services.AddSingleton<IWalBackup>(provider => new WatchedBackup(provider.GetRequiredService<SqliteStorageEngine>())));
+            services.AddSingleton<IWalBackup>(provider => new WatchedBackup(provider.GetRequiredService<TursoStorageEngine>())));
         var engine = (WatchedBackup)host.Api.Server.Services.GetRequiredService<IWalBackup>();
         engine.Watch(host.Database.Id);
         await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
@@ -111,7 +111,7 @@ public sealed class BackupBacklogRecoveryTests
     public async Task A_customer_destination_switch_during_a_backlog_reads_it_before_the_snapshot_holds_writers(CancellationToken cancellationToken)
     {
         await using var host = await BackupShippingHost.StartAsync(services =>
-            services.AddSingleton<IWalBackup>(provider => new WatchedBackup(provider.GetRequiredService<SqliteStorageEngine>())));
+            services.AddSingleton<IWalBackup>(provider => new WatchedBackup(provider.GetRequiredService<TursoStorageEngine>())));
         var engine = (WatchedBackup)host.Api.Server.Services.GetRequiredService<IWalBackup>();
         engine.Watch(host.Database.Id);
         await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
@@ -144,7 +144,7 @@ public sealed class BackupBacklogRecoveryTests
     public async Task A_failed_change_log_cleanup_puts_the_anchor_back_and_the_next_pass_ships_the_same_changes(CancellationToken cancellationToken)
     {
         await using var host = await BackupShippingHost.StartAsync(services =>
-            services.AddSingleton<IWalBackup>(provider => new WatchedBackup(provider.GetRequiredService<SqliteStorageEngine>())));
+            services.AddSingleton<IWalBackup>(provider => new WatchedBackup(provider.GetRequiredService<TursoStorageEngine>())));
         var engine = (WatchedBackup)host.Api.Server.Services.GetRequiredService<IWalBackup>();
         engine.Watch(host.Database.Id);
         var faker = new Faker();

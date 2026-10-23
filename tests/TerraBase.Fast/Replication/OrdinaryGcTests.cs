@@ -2,7 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 
@@ -31,9 +31,9 @@ public sealed class OrdinaryGcTests
 
         await RepairAsync(receiver, new(DocumentDelta.Collections, "items", metadata), new("items", missing, old));
         await RepairAsync(source, new RepairState(DocumentDelta.Collections, "items", metadata.Delete(At(2000))));
-        var engine = source.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, token))!;
-        await using (var collect = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, token))
+        var engine = source.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, token))!;
+        await using (var collect = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, token))
         {
             await Assert.That(await collect.CollectAsync(new Hlc(3000), token)).IsEqualTo(1);
             _ = await collect.CommitAsync(token);
@@ -83,9 +83,9 @@ public sealed class OrdinaryGcTests
         var deleted = EntityIds.New().ToString();
         await RepairAsync(receiver, new RepairState("items", only, Put(1000, """{"only":true}""")));
         await RepairAsync(source, new RepairState("items", deleted, Put(1000, """{"deleted":true}""").Delete(At(2000))));
-        var store = (SqliteDatabaseStore)(await source.Api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+        var store = (TursoDatabaseStore)(await source.Api.Server.Services.GetRequiredService<TursoStorageEngine>()
             .OpenDatabaseAsync(cluster.Database, token))!;
-        await using (var collect = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, token))
+        await using (var collect = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, token))
         {
             await Assert.That(await collect.CollectAsync(new Hlc(3000), token)).IsEqualTo(1);
             _ = await collect.CommitAsync(token);

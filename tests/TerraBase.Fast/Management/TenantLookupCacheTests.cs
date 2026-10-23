@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Management;
@@ -102,7 +102,7 @@ public sealed class TenantLookupCacheTests
     public async Task Cached_identity_lookups_answer_while_the_only_storage_thread_is_held()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        // One SQLite thread; the frozen clock keeps periodic catalog work from committing between the reads.
+        // One Turso thread; the frozen clock keeps periodic catalog work from committing between the reads.
         await using var api = await ManagementApi.StartAsync(settings =>
         {
             settings["storage-threads"] = "1";
@@ -112,7 +112,7 @@ public sealed class TenantLookupCacheTests
         var database = new TenantContext(created.Organization, PlanTier.Hobby, created.Project, created.Id);
         var tenants = api.Server.Services.GetRequiredService<ITenantDirectory>();
         var record = await AssertLookupsAsync(tenants, database, registered: true, token);
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
 
         await using (await StorageFixture.HoldWorkerAsync(engine, token))
         {
@@ -160,22 +160,22 @@ public sealed class TenantLookupCacheTests
         await Assert.That(RequireRecord(await tenants.DatabaseRecordAsync(database, token)).Placement.Replicas).IsEquivalentTo(replicas);
         await Assert.That(RequireManagedRecord(await management.FindDatabaseRecordAsync(created.Organization, created.Project, created.Name, token)).Replicas).IsEquivalentTo(replicas);
 
-        var sqlite = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var turso = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         Task<DatabaseRecordResult> placement;
-        await using (await StorageFixture.HoldWorkerAsync(sqlite, token))
+        await using (await StorageFixture.HoldWorkerAsync(turso, token))
         {
             placement = tenants.DatabaseRecordAsync(database, token).AsTask();
             await Assert.That(placement.IsCompleted).IsFalse();
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(sqlite.Io.Queued > 0 && !placement.IsCompleted));
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(turso.Io.Queued > 0 && !placement.IsCompleted));
         }
         await Assert.That(RequireRecord(await placement).Placement.Replicas).IsEquivalentTo(replicas);
 
         Task<FindDatabaseRecordResult> named;
-        await using (await StorageFixture.HoldWorkerAsync(sqlite, token))
+        await using (await StorageFixture.HoldWorkerAsync(turso, token))
         {
             named = management.FindDatabaseRecordAsync(created.Organization, created.Project, created.Name, token).AsTask();
             await Assert.That(named.IsCompleted).IsFalse();
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(sqlite.Io.Queued > 0 && !named.IsCompleted));
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(turso.Io.Queued > 0 && !named.IsCompleted));
         }
         await Assert.That(RequireManagedRecord(await named).Replicas).IsEquivalentTo(replicas);
         using var current = await api.Client.GetAsync(ManagementApi.Uri(created.Path), token);
@@ -220,7 +220,7 @@ public sealed class TenantLookupCacheTests
 
         var management = api.Server.Services.GetRequiredService<IManagementService>();
         await Assert.That(await management.FindDatabaseRecordAsync(created.Organization, project, name, token) is NotFound).IsTrue();
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         Task<FindDatabaseRecordResult> lookup;
         await using (await StorageFixture.HoldWorkerAsync(engine, token))
         {

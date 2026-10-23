@@ -8,7 +8,7 @@ using TerraBase.Testing;
 namespace TerraBase.Slow.Management;
 
 // Source contract inspected at e30ffdc287530551b161b0130220be53d3c0475e:
-// SqlSubset.cs, QueryService.cs, SqliteStorageTransaction.Queries.cs and Primitives/DocumentJson.cs.
+// SqlSubset.cs, QueryService.cs, TursoStorageTransaction.Queries.cs and Primitives/DocumentJson.cs.
 // Focused runner (after the locked build): nice -n 19 dotnet run --project tests/TerraBase.Slow --no-build --
 // --treenode-filter '/*/*/QueryValueRegressionTests/*' --minimum-expected-tests 7
 public sealed class QueryValueRegressionTests

@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
@@ -147,7 +147,7 @@ public sealed class RebuildLedgerRecoveryTests
                 database = await services.GetRequiredService<ITenantDirectory>()
                     .FindDatabaseAsync(managed.Organization, managed.Project, managed.Name, CancellationToken.None)
                     is TenantContext found ? found : throw new InvalidOperationException("the test database is not registered");
-                var system = (SqliteDatabaseStore)await services.GetRequiredService<SqliteStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+                var system = (TursoDatabaseStore)await services.GetRequiredService<TursoStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
                 await using var setup = await system.BeginRebuildTransactionAsync(CancellationToken.None);
                 await setup.SuspendCaptureAsync(CancellationToken.None);
                 _ = await setup.LedgerAsync(command =>
@@ -167,8 +167,8 @@ public sealed class RebuildLedgerRecoveryTests
             var engine = restartedServices.GetRequiredService<IStorageEngine>();
             var copy = await engine.OpenDatabaseAsync(database, CancellationToken.None)
                 ?? throw new InvalidOperationException("the test database is missing");
-            var systemCopy = (SqliteDatabaseStore)await restartedServices.GetRequiredService<SqliteStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
-            await using var read = (SqliteStorageTransaction)await systemCopy.BeginTransactionAsync(write: false, CancellationToken.None);
+            var systemCopy = (TursoDatabaseStore)await restartedServices.GetRequiredService<TursoStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+            await using var read = (TursoStorageTransaction)await systemCopy.BeginTransactionAsync(write: false, CancellationToken.None);
             var error = await Assert.ThrowsAsync<SqliteException>(async () =>
             {
                 _ = await read.LedgerAsync(command =>
@@ -224,7 +224,7 @@ public sealed class RebuildLedgerRecoveryTests
                 path = Path.Combine(Path.GetDirectoryName(side)!, database.DatabaseId + ".db");
             }
 
-            await CorruptTablePageAsync(path, SqliteStorageTransaction.Table("items").Trim('"'));
+            await CorruptTablePageAsync(path, TursoStorageTransaction.Table("items").Trim('"'));
 
             await using var restarted = await StartAsync(root);
             var engine = restarted.Server.Services.GetRequiredService<IStorageEngine>();
@@ -395,7 +395,7 @@ public sealed class RebuildLedgerRecoveryTests
                 database = await first.Server.Services.GetRequiredService<ITenantDirectory>()
                     .FindDatabaseAsync(managed.Organization, managed.Project, managed.Name, CancellationToken.None)
                     is TenantContext found ? found : throw new InvalidOperationException("the test database is not registered");
-                var engine = first.Server.Services.GetRequiredService<SqliteStorageEngine>();
+                var engine = first.Server.Services.GetRequiredService<TursoStorageEngine>();
                 rebuilt = await engine.IncarnationAsync(database, CancellationToken.None)
                     ?? throw new InvalidOperationException("the test database is missing");
                 member = engine.ReplicaId.Member;

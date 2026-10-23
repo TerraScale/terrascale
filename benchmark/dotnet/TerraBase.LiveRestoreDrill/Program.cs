@@ -6,13 +6,13 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Configuration;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.LiveRestoreDrill;
 
 var proof = new Proof();
 string? scratch = null;
-SqliteStorageEngine? engine = null;
+TursoStorageEngine? engine = null;
 byte[]? master = null;
 using var stop = new CancellationTokenSource(TimeSpan.FromMinutes(30));
 Console.CancelKeyPress += (_, signal) => { signal.Cancel = true; stop.Cancel(); };
@@ -64,8 +64,8 @@ try
     var options = new TerraBaseOptions { DataDirectory = scratch, MemoryBudget = 64L << 20, StorageThreads = 1, StorageQueue = 32 };
     using var meter = new Meter("TerraBase.LiveRestoreDrill");
     var services = new ServiceCollection();
-    engine = new SqliteStorageEngine(options.DataDirectory, 1, 32, options.MemoryBudget, meter,
-        NullLogger<SqliteStorageEngine>.Instance, TimeSpan.FromSeconds(10));
+    engine = new TursoStorageEngine(options.DataDirectory, 1, 32, options.MemoryBudget, meter,
+        NullLogger<TursoStorageEngine>.Instance, TimeSpan.FromSeconds(10));
     services.AddHttpClient(S3ObjectStore.HttpClientName)
         .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false })
         .AddHttpMessageHandler(() => new ReadOnlyTransport(bucket));

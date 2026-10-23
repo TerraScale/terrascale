@@ -1,7 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Storage;
@@ -36,9 +36,9 @@ public sealed class StorageBeginCancellationTests
             warmed.EnsureSuccessStatusCode();
         }
 
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var name = await tenant.ContextAsync(management.Server, "idle", deadline.Token);
-        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(name, deadline.Token))!;
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(name, deadline.Token))!;
         await Assert.That(store.IdleCount).IsEqualTo(1);
         var begins = new List<Task<IStorageTransaction>>();
         var requests = new List<Task<HttpResponseMessage>>();

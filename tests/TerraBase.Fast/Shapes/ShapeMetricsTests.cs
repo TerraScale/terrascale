@@ -7,7 +7,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Replication;
@@ -232,7 +232,7 @@ public sealed class ShapeMetricsTests
             var page = await transaction.ReadFeedAsync(null, null, 100, 1024 * 1024, token);
             await Assert.That(page.Events.Count).IsGreaterThan(0);
         }
-        var shapeStorage = new SqliteShapeStorage(server.Services.GetRequiredService<SqliteStorageEngine>());
+        var shapeStorage = new TursoShapeStorage(server.Services.GetRequiredService<TursoStorageEngine>());
         await using (var transaction = await shapeStorage.BeginTransactionAsync(store, write: false, token))
         {
             using var absent = await ((IShapeStorageTransaction)transaction).ReadShapeChunkAsync(
@@ -396,7 +396,7 @@ public sealed class ShapeMetricsTests
                 "h1-" + Convert.ToHexStringLower(random.Bytes(8)), DocumentApi.Collection, collection.Id, random.Bytes(16));
         }
 
-        var shapeStorage = new SqliteShapeStorage(api.Server.Services.GetRequiredService<SqliteStorageEngine>());
+        var shapeStorage = new TursoShapeStorage(api.Server.Services.GetRequiredService<TursoStorageEngine>());
         var sealer = new ShapeSealer(api.Server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance,
             shapeStorage, new LocalDurability());
         var before = ShapeStorageReads(await ScrapeAsync(api.Server));

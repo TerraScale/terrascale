@@ -52,7 +52,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The Fast suite checks the query plan of every engine statement (Engine/Sqlite/SqliteStatements.cs);
+    <!-- The Fast suite checks the query plan of every engine statement (Engine/Turso/TursoStatements.cs);
          the shared test harness, linked into both suites, applies the engine's lock-conflict test. -->
     <InternalsVisibleTo Include="TerraBase.Fast" />
     <InternalsVisibleTo Include="TerraBase.Slow" />

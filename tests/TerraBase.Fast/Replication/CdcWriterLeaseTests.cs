@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -39,7 +39,7 @@ public sealed class CdcWriterLeaseTests
             await Assert.That(created.IsSuccessStatusCode).IsTrue().Because(await created.Content.ReadAsStringAsync());
         }
 
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var source = api.Server.Services.GetRequiredService<IChangeGroupSource>();
         var store = await engine.OpenDatabaseAsync(database, deadline.Token) ?? throw new InvalidOperationException("the database is missing");
         _ = await source.HeadAsync(database, store.Incarnation, deadline.Token) ?? throw new InvalidOperationException("the copy refused its own incarnation");

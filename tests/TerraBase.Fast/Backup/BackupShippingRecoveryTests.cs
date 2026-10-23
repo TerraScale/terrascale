@@ -3,7 +3,7 @@ using System.Text;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -86,7 +86,7 @@ public sealed class BackupShippingRecoveryTests
     public async Task A_failed_tap_read_keeps_the_generation_and_its_lag_and_the_next_pass_ships_the_same_changes(CancellationToken cancellationToken)
     {
         await using var host = await BackupShippingHost.StartAsync(services =>
-            services.AddSingleton<IWalBackup>(provider => new FailingBackup(provider.GetRequiredService<SqliteStorageEngine>())));
+            services.AddSingleton<IWalBackup>(provider => new FailingBackup(provider.GetRequiredService<TursoStorageEngine>())));
         var engine = (FailingBackup)host.Api.Server.Services.GetRequiredService<IWalBackup>();
         engine.Watch(host.Database.Id);
         var before = Faker.Lorem.Sentence(8);

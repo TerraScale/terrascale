@@ -3,7 +3,7 @@ using Turso.Data.Sqlite;
 
 namespace TerraBase.Testing;
 
-/// <summary>Reads SQLite query plans from a database file a test server created.</summary>
+/// <summary>Reads Turso query plans from a database file a test server created.</summary>
 public static partial class QueryPlan
 {
     /// <summary>

@@ -9,7 +9,7 @@ namespace TerraBase.Features.Health;
 /// <param name="Status"><c>ok</c> for liveness; <c>ready</c> or <c>unavailable</c> for readiness.</param>
 /// <param name="Version">Service version of the running build.</param>
 /// <param name="Region">Region of this node.</param>
-/// <param name="StorageFormat">On-disk storage format this build writes (<see cref="Engine.Sqlite.StorageFormat.Id"/>); the
+/// <param name="StorageFormat">On-disk storage format this build writes (<see cref="Engine.Turso.StorageFormat.Id"/>); the
 /// deploy gate compares it with a new image's before switching the region. Internal listener only.</param>
 /// <param name="Revision">Source commit of the running build (<see cref="ServiceVersion.Revision"/>), omitted when the build
 /// recorded none. Internal listener only.</param>
@@ -33,7 +33,7 @@ public sealed record StatusBody(
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(options);
         return Listeners.ArrivedOn(context) == TerraBaseListener.Internal
-            ? new(status, ServiceVersion.Value, options.Region, Engine.Sqlite.StorageFormat.Id, ServiceVersion.Revision, options.MachineId)
+            ? new(status, ServiceVersion.Value, options.Region, Engine.Turso.StorageFormat.Id, ServiceVersion.Revision, options.MachineId)
             : new(status, ServiceVersion.Value, options.Region);
     }
 }

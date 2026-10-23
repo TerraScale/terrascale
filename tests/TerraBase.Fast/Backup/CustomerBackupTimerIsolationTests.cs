@@ -7,7 +7,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -28,7 +28,7 @@ public sealed class CustomerBackupTimerIsolationTests
         await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
             s3.Route(services);
-            services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
+            services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<TursoStorageEngine>()));
             // Keep the real hosted service; only its timer gets individually acknowledged fake-clock ticks.
             services.AddSingleton<ContinuousBackup>(provider => ActivatorUtilities.CreateInstance<ContinuousBackup>(provider, timer));
         }, time);

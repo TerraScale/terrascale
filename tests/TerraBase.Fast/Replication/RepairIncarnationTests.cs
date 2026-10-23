@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -24,7 +24,7 @@ public sealed class RepairIncarnationTests
         await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider());
         var managed = await api.CreateManagedDatabaseAsync();
         var database = new TenantContext(managed.Organization, PlanTier.Hobby, managed.Project, managed.Id);
-        var store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, token))!;
+        var store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, token))!;
         var incarnation = store.Incarnation;
         var replacement = Ulid.NewUlid();
         using var body = JsonDocument.Parse("""{"value":"repair"}""");

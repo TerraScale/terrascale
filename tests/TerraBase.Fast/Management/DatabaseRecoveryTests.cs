@@ -189,7 +189,7 @@ public sealed class DatabaseRecoveryTests
 
         if (interruption == "delete.intent")
         {
-            // Shutdown closes real SQLite sidecars; recreate crash leftovers while no host owns them.
+            // Shutdown closes real Turso sidecars; recreate crash leftovers while no host owns them.
             await state.WriteArtifactsAsync(target, sidecars: true);
         }
 
@@ -1702,7 +1702,7 @@ public sealed class DatabaseRecoveryTests
             }
             finally
             {
-                // Restore before disposing cached SQLite stores, whose original paths include this parent.
+                // Restore before disposing cached Turso stores, whose original paths include this parent.
                 RestoreParent();
             }
         }

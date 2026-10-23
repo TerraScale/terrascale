@@ -540,7 +540,7 @@ public sealed class QueryApiTests
     }
 
     [Test]
-    public async Task Large_membership_filters_stay_within_sqlite_parameter_limits()
+    public async Task Large_membership_filters_stay_within_turso_parameter_limits()
     {
         await using var api = await SeedAsync();
         var values = string.Join(',', Enumerable.Range(0, 256));

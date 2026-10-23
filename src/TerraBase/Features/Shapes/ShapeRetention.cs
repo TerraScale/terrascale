@@ -16,7 +16,7 @@ internal interface IShapeRetention
     ValueTask<int> DropHandleAsync(IDatabaseStore store, string handle, CancellationToken cancellationToken);
 }
 
-/// <summary>Storage operations kept on the engine's transaction runner, without exposing SQLite to the feature.</summary>
+/// <summary>Storage operations kept on the engine's transaction runner, without exposing Turso to the feature.</summary>
 internal interface IShapeRetentionTransaction
 {
     ValueTask<long> ReadShapeFloorAsync(string handle, CancellationToken cancellationToken);

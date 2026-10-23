@@ -2,7 +2,7 @@ using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 using TerraBase.LiveRestoreDrill;
 using TerraBase.Testing;
@@ -16,9 +16,9 @@ public sealed class LiveRestoreDrillSafetyTests
     public async Task Replay_normalizes_uncaptured_peer_reports_but_detects_captured_state_damage(CancellationToken token)
     {
         await using var api = await DocumentApi.StartAsync(cancellationToken: token);
-        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var database = await api.TenantOfAsync(cancellationToken: token);
-        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, token))!;
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, token))!;
         var peer = new ReplicaId(1UL << 16);
         await AppliedAsync(1);
         var scratch = Directory.CreateTempSubdirectory("terrabase-drill-checksum-").FullName;
@@ -34,7 +34,7 @@ public sealed class LiveRestoreDrillSafetyTests
             var written = await api.PutAsync(DocumentApi.NewId(), new { value = "captured" }, cancellationToken: token);
             await Assert.That((int)written.Status).IsBetween(200, 299);
             await AppliedAsync(2);
-            await using (var report = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, token))
+            await using (var report = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, token))
             {
                 await report.RecordStableAsync(peer, new Hlc(3), DateTimeOffset.UtcNow, token);
                 await report.RecordStableAsync(new ReplicaId(2UL << 16), new Hlc(4), DateTimeOffset.UtcNow, token);
@@ -79,7 +79,7 @@ public sealed class LiveRestoreDrillSafetyTests
 
         async Task AppliedAsync(ulong value)
         {
-            await using var write = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, token);
+            await using var write = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, token);
             await write.RecordAppliedAsync(peer, new Hlc(value), token);
             _ = await write.CommitAsync(token);
         }
@@ -177,8 +177,8 @@ public sealed class LiveRestoreDrillSafetyTests
         }
     }
 
-    private static SqliteStorageEngine CreateEngine(string scratch, Meter meter) =>
-        new(scratch, 1, 32, 64L << 20, meter, NullLogger<SqliteStorageEngine>.Instance, TimeSpan.Zero);
+    private static TursoStorageEngine CreateEngine(string scratch, Meter meter) =>
+        new(scratch, 1, 32, 64L << 20, meter, NullLogger<TursoStorageEngine>.Instance, TimeSpan.Zero);
 
     private static void Execute(string file, string sql)
     {

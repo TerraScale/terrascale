@@ -3,7 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -22,7 +22,7 @@ public sealed class BackupClosedStoreTests
         {
             s3.Route(services);
             ManualBackupHosting.Configure(services);
-            services.AddSingleton<IWalBackup>(provider => new ClosingBackup(provider.GetRequiredService<SqliteStorageEngine>()));
+            services.AddSingleton<IWalBackup>(provider => new ClosingBackup(provider.GetRequiredService<TursoStorageEngine>()));
             TerraBaseTestServer.CaptureDebugLogs(services, logs);
         }, time);
         var engine = (ClosingBackup)api.Server.Services.GetRequiredService<IWalBackup>();

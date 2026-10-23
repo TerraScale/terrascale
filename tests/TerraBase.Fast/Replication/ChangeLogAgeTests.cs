@@ -14,7 +14,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
@@ -39,9 +39,9 @@ public sealed class ChangeLogAgeTests
     public async Task The_backup_tap_keeps_catalog_rows_a_peer_has_not_acknowledged()
     {
         await using var server = await TerraBaseTestServer.StartAsync();
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var groups = server.Services.GetRequiredService<TursoChangeGroupSource>();
-        var system = (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(CancellationToken.None);
+        var system = (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(CancellationToken.None);
         await using var tap = (await engine.OpenTapAsync(null, CancellationToken.None))!;
         var peer = ReplicaId.Of(2, 7, 0);
         _ = await Run(system, $"INSERT INTO _tb_peers (node, applied, acked, stable, seen, incarnation) VALUES ({unchecked((long)peer.Value)}, 0, 0, 0, {DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}, '{system.Incarnation}');");
@@ -202,14 +202,14 @@ public sealed class ChangeLogAgeTests
     }
 
     // Age the persisted CDC fixture, keeping the live listener and its bookkeeping on the real host clock.
-    private static Task<int> AgePrefixAsync(SqliteDatabaseStore store, long through, TimeSpan age) =>
+    private static Task<int> AgePrefixAsync(TursoDatabaseStore store, long through, TimeSpan age) =>
         Run(store, $"UPDATE turso_cdc SET change_time = unixepoch() - {(long)age.TotalSeconds} WHERE change_id <= {through};");
 
-    private static Task<long> OldestAsync(SqliteDatabaseStore store) => ScalarAsync(store, "SELECT min(change_id) FROM turso_cdc;");
+    private static Task<long> OldestAsync(TursoDatabaseStore store) => ScalarAsync(store, "SELECT min(change_id) FROM turso_cdc;");
 
-    private static Task<long> RowsAsync(SqliteDatabaseStore store) => ScalarAsync(store, "SELECT count(*) FROM turso_cdc;");
+    private static Task<long> RowsAsync(TursoDatabaseStore store) => ScalarAsync(store, "SELECT count(*) FROM turso_cdc;");
 
-    private static Task<long> ScalarAsync(SqliteDatabaseStore store, string sql) =>
+    private static Task<long> ScalarAsync(TursoDatabaseStore store, string sql) =>
         store.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
@@ -217,7 +217,7 @@ public sealed class ChangeLogAgeTests
             return (long)command.ExecuteScalar()!;
         }, "a test reading the change log", CancellationToken.None);
 
-    private static Task<int> Run(SqliteDatabaseStore store, string sql) =>
+    private static Task<int> Run(TursoDatabaseStore store, string sql) =>
         store.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
@@ -389,8 +389,8 @@ public sealed class ChangeLogAgeTests
 
         public IChangeGroupSource Groups => Api.Server.Services.GetRequiredService<IChangeGroupSource>();
 
-        public async Task<SqliteDatabaseStore> StoreAsync() =>
-            (SqliteDatabaseStore)(await Api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+        public async Task<TursoDatabaseStore> StoreAsync() =>
+            (TursoDatabaseStore)(await Api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
                 ?? throw new InvalidOperationException("the database is missing"));
 
         public async Task WriteAsync(Func<IStorageTransaction, Task> work) =>
@@ -417,7 +417,7 @@ public sealed class ChangeLogAgeTests
 
         public async Task<long?> FloorAsync(DateTimeOffset now)
         {
-            var transaction = (SqliteStorageTransaction)await (await StoreAsync()).BeginTransactionAsync(write: false, CancellationToken.None);
+            var transaction = (TursoStorageTransaction)await (await StoreAsync()).BeginTransactionAsync(write: false, CancellationToken.None);
             await using (transaction)
             {
                 return await transaction.GetFloorAsync(now, CancellationToken.None);
@@ -430,7 +430,7 @@ public sealed class ChangeLogAgeTests
             while (DateTime.UtcNow < deadline)
             {
                 var store = await StoreAsync();
-                var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None);
+                var transaction = (TursoStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None);
                 await using (transaction)
                 {
                     if (await transaction.GetAckedAsync(peer, store.Incarnation, CancellationToken.None) is { RequiresRefill: false } cursor

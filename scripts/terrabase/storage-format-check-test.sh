@@ -21,8 +21,8 @@ export PATH="$tmp/bin:$PATH"
 bump='@@ -1 +1 @@
 -    public const int Version = 2;
 +    public const int Version = 3;'
-engine=src/TerraBase/Engine/Sqlite/SqliteDatabaseStore.cs
-version=src/TerraBase/Engine/Sqlite/StorageFormat.cs
+engine=src/TerraBase/Engine/Turso/TursoDatabaseStore.cs
+version=src/TerraBase/Engine/Turso/StorageFormat.cs
 # check <expect pass|fail> <files> <patch> <labels> [body]
 check() {
   local outcome=pass

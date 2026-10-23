@@ -729,8 +729,8 @@ public sealed class PeerStreamTests
         await Assert.That(await gru.RetainsAsync(cluster.Database, acked)).IsTrue();
         var missing = await gru.HeadAsync(cluster.Database);
         // Turso timestamps CDC with real UTC; age only the disconnected history, keeping recovery rows fresh.
-        var engine = gru.Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
-        var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+        var engine = gru.Api.Server.Services.GetRequiredService<TerraBase.Engine.Turso.TursoStorageEngine>();
+        var store = (TerraBase.Engine.Turso.TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
         _ = await store.WithWriterAsync(session =>
         {
             using var age = session.Connection.CreateCommand();
@@ -881,7 +881,7 @@ public sealed class PeerStreamTests
             if (region == "gru")
             {
                 var retention = services.Single(service => service.ServiceType == typeof(IHostedService)
-                    && service.ImplementationFactory?.Method.ReturnType == typeof(TerraBase.Engine.Sqlite.TursoChangeGroupSource));
+                    && service.ImplementationFactory?.Method.ReturnType == typeof(TerraBase.Engine.Turso.TursoChangeGroupSource));
                 services.Remove(retention);
             }
         }, "gru", "sjc");
@@ -1066,12 +1066,12 @@ public sealed class PeerStreamTests
             _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
             _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
         });
-        var engine = gru.Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
-        var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+        var engine = gru.Api.Server.Services.GetRequiredService<TerraBase.Engine.Turso.TursoStorageEngine>();
+        var store = (TerraBase.Engine.Turso.TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
         // An unstarted source avoids unrelated stream reads merging the intentionally sparse subranges.
-        using var source = new TerraBase.Engine.Sqlite.TursoChangeGroupSource(engine,
+        using var source = new TerraBase.Engine.Turso.TursoChangeGroupSource(engine,
             gru.Api.Server.Services.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(),
-            gru.Api.Server.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<TerraBase.Engine.Sqlite.TursoChangeGroupSource>>());
+            gru.Api.Server.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<TerraBase.Engine.Turso.TursoChangeGroupSource>>());
         var incarnation = store.Incarnation;
         var low = (await source.HeadAsync(cluster.Database, incarnation, CancellationToken.None))!.Value;
         await Assert.That(await source.AckAsync(cluster.Database, incarnation, peer, low, default, CancellationToken.None)).IsTrue();
@@ -1094,7 +1094,7 @@ public sealed class PeerStreamTests
             }
         });
         long newest;
-        await using (var transaction = (TerraBase.Engine.Sqlite.SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        await using (var transaction = (TerraBase.Engine.Turso.TursoStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
         {
             var (groups, end, _) = await transaction.ReadChangeGroupsAsync(heldEnd, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, gru.Node, CancellationToken.None);
             await Assert.That(groups.Count).IsEqualTo(0).Because("every seeded subrange is inside proven remote-only CDC rows");
@@ -1755,7 +1755,7 @@ public sealed class PeerStreamTests
     [Test]
     public async Task Coverage_is_checked_again_inside_every_receiver_writer()
     {
-        TerraBase.Engine.Sqlite.SqliteDatabaseStore? store = null;
+        TerraBase.Engine.Turso.TursoDatabaseStore? store = null;
         var reset = false;
         ulong resetAfter = 0;
         TenantContext? clusterDatabase = null;
@@ -1785,8 +1785,8 @@ public sealed class PeerStreamTests
         using var push = await RawPush.StartAsync(sjc, gru.Name);
         await push.FrontierAsync(cluster.Database, stamp);
         _ = await push.FrameAsync();
-        var engine = sjc.Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
-        store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+        var engine = sjc.Api.Server.Services.GetRequiredService<TerraBase.Engine.Turso.TursoStorageEngine>();
+        store = (TerraBase.Engine.Turso.TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
         var origin = ReplicaId.Of(1, 7, 0);
         var first = EntityIds.New().ToString();
         var final = EntityIds.New().ToString();
@@ -2078,8 +2078,8 @@ public sealed class PeerStreamTests
             _ = await transaction.PutAsync("items", pending, Json("""{"n":2}"""), CancellationToken.None);
         });
         await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, renewed!.Value, 0, CancellationToken.None)).IsTrue();
-        var engine = gru.Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
-        var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+        var engine = gru.Api.Server.Services.GetRequiredService<TerraBase.Engine.Turso.TursoStorageEngine>();
+        var store = (TerraBase.Engine.Turso.TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
         var peers = await store.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
@@ -2087,7 +2087,7 @@ public sealed class PeerStreamTests
             return (long)command.ExecuteScalar()!;
         }, "a test checking the rebuilt sender has no peer rows", CancellationToken.None);
         await Assert.That(peers).IsEqualTo(0);
-        await using (var read = (TerraBase.Engine.Sqlite.SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        await using (var read = (TerraBase.Engine.Turso.TursoStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
         {
             await Assert.That(await read.GetAckedAsync(sjc.Node, renewed.Value, CancellationToken.None)).IsNull();
         }
@@ -2422,7 +2422,7 @@ public sealed class PeerStreamTests
         await Assert.That(await gru.HasStateAsync("items", deleted)).IsTrue();
         var states = gru.Api.Server.Services.GetRequiredService<IReplicaStates>();
         var (page, _) = await states.ReadBucketsAsync(cluster.Database, await gru.IncarnationAsync(),
-            [TerraBase.Engine.Sqlite.SqliteStorageTransaction.Bucket("items", deleted)], null,
+            [TerraBase.Engine.Turso.TursoStorageTransaction.Bucket("items", deleted)], null,
             ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, CancellationToken.None)
             ?? throw new InvalidOperationException("the deletion fixture refused its source copy");
         var deletion = page.Single(state => state.Collection == "items" && state.Id == deleted);
@@ -2907,7 +2907,7 @@ public sealed class PeerStreamTests
             {
                 services.AddSingleton<IMemberDirectory>(cluster.Members);
                 services.AddSingleton<IChangeGroupSink>(provider => new HeldSink(ActivatorUtilities.CreateInstance<StorageChangeGroupSink>(provider), this));
-                services.AddSingleton<IReplicaStates>(provider => new LosingStates(provider.GetRequiredService<TerraBase.Engine.Sqlite.TursoChangeGroupSource>(), this));
+                services.AddSingleton<IReplicaStates>(provider => new LosingStates(provider.GetRequiredService<TerraBase.Engine.Turso.TursoChangeGroupSource>(), this));
                 var memory = services.Single(service => service.ServiceType == typeof(IMemoryBudget));
                 services.AddSingleton<IMemoryBudget>(provider => RefillMemory = new RefillMemory((IMemoryBudget)memory.ImplementationFactory!(provider)));
                 if (!cluster.Cdc)
@@ -3102,7 +3102,7 @@ public sealed class PeerStreamTests
             return false;
         }
 
-        public TerraBase.Engine.Sqlite.TursoChangeGroupSource CdcSource => Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.TursoChangeGroupSource>();
+        public TerraBase.Engine.Turso.TursoChangeGroupSource CdcSource => Api.Server.Services.GetRequiredService<TerraBase.Engine.Turso.TursoChangeGroupSource>();
 
         // The database file's incarnation, which keys the CDC source's remembered quiet ranges and which its reads and acks name.
         public Task<Ulid> IncarnationAsync() => IncarnationAsync(cluster.Database);
@@ -3133,18 +3133,18 @@ public sealed class PeerStreamTests
         // One retention pass over the database, as the CDC source's 5 s loop runs it.
         public async Task TrimAsync()
         {
-            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
-            var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
-            await Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.TursoChangeGroupSource>().TrimAsync(store, CancellationToken.None);
+            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Turso.TursoStorageEngine>();
+            var store = (TerraBase.Engine.Turso.TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+            await Api.Server.Services.GetRequiredService<TerraBase.Engine.Turso.TursoChangeGroupSource>().TrimAsync(store, CancellationToken.None);
         }
 
         // The rows of the database's turso_cdc.
         // Whether every CDC row after `after` is still in the file: the rows themselves, no quiet range skipped.
         public async Task<bool> RowsRetainedAsync(long after)
         {
-            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Turso.TursoStorageEngine>();
             var store = (await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
-            var transaction = (TerraBase.Engine.Sqlite.SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None);
+            var transaction = (TerraBase.Engine.Turso.TursoStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None);
             await using (transaction)
             {
                 return await transaction.RetainsAsync(after, CancellationToken.None);
@@ -3153,8 +3153,8 @@ public sealed class PeerStreamTests
 
         public async Task<long> CdcRowsAsync()
         {
-            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
-            var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Turso.TursoStorageEngine>();
+            var store = (TerraBase.Engine.Turso.TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
             return await store.WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
@@ -3168,8 +3168,8 @@ public sealed class PeerStreamTests
         // Deletes rows without a change group; an origin also rolls its persisted applied frontier back.
         public async Task LoseAsync(string collection, string id, ReplicaId? origin = null)
         {
-            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
-            var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Turso.TursoStorageEngine>();
+            var store = (TerraBase.Engine.Turso.TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
             _ = await store.WithWriterAsync(session =>
             {
                 using var transaction = session.Connection.BeginTransaction();
@@ -3190,8 +3190,8 @@ public sealed class PeerStreamTests
         // Overwrites the document's stored state with bytes that do not decode, as a damaged file would hold.
         public async Task DamageAsync(string collection, string id)
         {
-            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
-            var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Turso.TursoStorageEngine>();
+            var store = (TerraBase.Engine.Turso.TursoDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
             _ = await store.WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
@@ -3206,7 +3206,7 @@ public sealed class PeerStreamTests
         public async Task<bool> HasStateAsync(string collection, string id)
         {
             var states = Api.Server.Services.GetRequiredService<IReplicaStates>();
-            var bucket = TerraBase.Engine.Sqlite.SqliteStorageTransaction.Bucket(collection, id);
+            var bucket = TerraBase.Engine.Turso.TursoStorageTransaction.Bucket(collection, id);
             var (page, _) = (await states.ReadBucketsAsync(cluster.Database, await IncarnationAsync(), [bucket], null, ChangeGroups.MaxDeltas, int.MaxValue, CancellationToken.None))
                 ?? throw new InvalidOperationException("the copy refused its own incarnation");
             return page.Any(state => state.Collection == collection && state.Id == id);

@@ -300,7 +300,7 @@ internal sealed class ShapeFilter
         return buffer.ToArray();
     }
 
-    // Mirrors SqliteQueryCompiler: every predicate is true or false, so NOT is a plain complement. $id is text.
+    // Mirrors TursoQueryCompiler: every predicate is true or false, so NOT is a plain complement. $id is text.
     private static bool Match(DocumentFilter filter, string id, JsonElement document) => filter switch
     {
         AndFilter and => and.Children.All(child => Match(child, id, document)),

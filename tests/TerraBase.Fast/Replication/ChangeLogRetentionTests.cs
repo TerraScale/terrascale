@@ -1,7 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
 
 namespace TerraBase.Fast.Replication;
@@ -24,7 +24,7 @@ public sealed class ChangeLogRetentionTests
             (await api.PutAsync(DocumentApi.NewId(), new { n })).Status.ShouldBe(HttpStatusCode.Created);
         }
 
-        var store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+        var store = (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
         var commits = await store.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
@@ -57,9 +57,9 @@ public sealed class ChangeLogRetentionTests
     }
 
     // Records the peer's ack as an acknowledgement on the stream does, at `now`; the floor every live peer acked.
-    private static async Task<long?> AckAsync(SqliteDatabaseStore store, ReplicaId peer, long changeId, DateTimeOffset now)
+    private static async Task<long?> AckAsync(TursoDatabaseStore store, ReplicaId peer, long changeId, DateTimeOffset now)
     {
-        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None);
+        var transaction = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None);
         await using (transaction)
         {
             var (_, floor) = await transaction.RecordAckedAsync(peer, store.Incarnation, changeId, default, backupAnchor: null, now, CancellationToken.None)
@@ -69,7 +69,7 @@ public sealed class ChangeLogRetentionTests
         }
     }
 
-    private static Task<long> OldestAsync(SqliteDatabaseStore store) =>
+    private static Task<long> OldestAsync(TursoDatabaseStore store) =>
         store.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();

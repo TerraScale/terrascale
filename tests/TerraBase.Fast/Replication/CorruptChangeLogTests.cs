@@ -10,7 +10,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
@@ -325,10 +325,10 @@ public sealed class CorruptChangeLogTests
 
             // The copied directory has a new owner. Decode the recovered rows using their original replica;
             // the new owner's source must never present donor writes as its own.
-            var donor = node.Api.Server.Services.GetRequiredService<SqliteStorageEngine>().ReplicaId;
-            await Assert.That(restarted.Api.Server.Services.GetRequiredService<SqliteStorageEngine>().ReplicaId.Member).IsNotEqualTo(donor.Member);
+            var donor = node.Api.Server.Services.GetRequiredService<TursoStorageEngine>().ReplicaId;
+            await Assert.That(restarted.Api.Server.Services.GetRequiredService<TursoStorageEngine>().ReplicaId.Member).IsNotEqualTo(donor.Member);
             List<ChangeDelta> deltas;
-            await using (var recovered = (SqliteStorageTransaction)await (await restarted.StoreAsync(node.Database))
+            await using (var recovered = (TursoStorageTransaction)await (await restarted.StoreAsync(node.Database))
                 .BeginTransactionAsync(false, CancellationToken.None))
             {
                 var (groups, _, _) = await recovered.ReadChangeGroupsAsync(0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, donor, CancellationToken.None);
@@ -399,14 +399,14 @@ public sealed class CorruptChangeLogTests
     // lock file gets the layout record the engine writes there.
     private static bool CopyDirectory(string from, string to)
     {
-        foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories).Where(file => Path.GetFileName(file) != SqliteStorageEngine.LockFileName))
+        foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories).Where(file => Path.GetFileName(file) != TursoStorageEngine.LockFileName))
         {
             var target = Path.Combine(to, Path.GetRelativePath(from, file));
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             File.Copy(file, target);
         }
 
-        File.WriteAllBytes(Path.Combine(to, SqliteStorageEngine.LockFileName), Encoding.ASCII.GetBytes(StorageFormat.Id));
+        File.WriteAllBytes(Path.Combine(to, TursoStorageEngine.LockFileName), Encoding.ASCII.GetBytes(StorageFormat.Id));
         return true;
     }
 
@@ -484,8 +484,8 @@ public sealed class CorruptChangeLogTests
 
         public string Name { get; private init; } = "";
 
-        public async Task<SqliteDatabaseStore> StoreAsync(TenantContext database) =>
-            (SqliteDatabaseStore)(await Api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+        public async Task<TursoDatabaseStore> StoreAsync(TenantContext database) =>
+            (TursoDatabaseStore)(await Api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
                 ?? throw new InvalidOperationException("the database is missing"));
 
         // One queued write of the database's group commit, as the document API makes one.
@@ -533,7 +533,7 @@ public sealed class CorruptChangeLogTests
                     using var reader = read.ExecuteReader();
                     while (reader.Read())
                     {
-                        rows.Add((reader.GetInt64(0), reader.GetInt64(1), reader.IsDBNull(2) ? "" : reader.GetString(2), reader.IsDBNull(3) ? null : SqliteSession.Bytes(reader, 3)));
+                        rows.Add((reader.GetInt64(0), reader.GetInt64(1), reader.IsDBNull(2) ? "" : reader.GetString(2), reader.IsDBNull(3) ? null : TursoSession.Bytes(reader, 3)));
                     }
                 }
 

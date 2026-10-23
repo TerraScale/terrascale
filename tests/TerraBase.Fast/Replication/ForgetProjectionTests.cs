@@ -2,7 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 
@@ -156,9 +156,9 @@ public sealed class ForgetProjectionTests
     private static async Task ForgetAsync(PeerStreamTests.Machine machine, params (string Collection, string Id)[] keys)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
-        var engine = machine.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = machine.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var store = (await engine.OpenDatabaseAsync(machine.Cluster.Database, token))!;
-        await using var forget = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, token);
+        await using var forget = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, token);
         await Assert.That(await forget.ForgetAsync(keys, new Hlc(3000), token)).IsEqualTo(keys.Length);
         _ = await forget.CommitAsync(token);
     }

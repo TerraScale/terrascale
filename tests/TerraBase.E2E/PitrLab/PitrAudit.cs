@@ -297,7 +297,7 @@ internal static class PitrAudit
 internal readonly record struct RecordCounts(long Records, long Upserts, long Deletes, long Commits, long Creates, long Drops, bool EndsOnCommit, string? Error);
 
 /// <summary>
-/// Walks a change log segment, format 1 (TerraBase.Engine.Sqlite.ChangeLog): kind byte, then upsert (table, rowid, record),
+/// Walks a change log segment, format 1 (TerraBase.Engine.Turso.ChangeLog): kind byte, then upsert (table, rowid, record),
 /// delete (table, rowid), commit, create (SQL), drop (type, name), timed commit (two 8-byte times) or read mark (one 8-byte
 /// time, only between transactions). Strings and records are LEB128-length-prefixed, rowids 8 bytes. Names are checked as
 /// strict UTF-8 like the replay; record bodies are skipped. A timed commit counts as a commit.

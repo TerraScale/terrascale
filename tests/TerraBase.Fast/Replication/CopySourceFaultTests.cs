@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
-using TerraBase.Engine.Sqlite;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -41,9 +41,9 @@ public sealed class CopySourceFaultTests
         {
             var services = api.Server.Services;
             var engine = services.GetRequiredService<IStorageEngine>();
-            var concrete = services.GetRequiredService<SqliteStorageEngine>();
+            var concrete = services.GetRequiredService<TursoStorageEngine>();
             var store = await OpenAsync(api, source.Database);
-            var system = (SqliteDatabaseStore)await concrete.OpenSystemDatabaseAsync(CancellationToken.None);
+            var system = (TursoDatabaseStore)await concrete.OpenSystemDatabaseAsync(CancellationToken.None);
             var target = Target(source);
             await Assert.That(store.CurrentWriter()).IsNull();
             await Assert.That(HasIntent(system.FilePath, source, concrete.ReplicaId)).IsFalse()
@@ -102,8 +102,8 @@ public sealed class CopySourceFaultTests
         await using var api = await StartAsync(directory.Root, services =>
             services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) => checkpoint?.Invoke(step, database)));
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
-        var concrete = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var system = (SqliteDatabaseStore)await concrete.OpenSystemDatabaseAsync(CancellationToken.None);
+        var concrete = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var system = (TursoDatabaseStore)await concrete.OpenSystemDatabaseAsync(CancellationToken.None);
         var target = Target(source);
         var targetPath = TargetPath(source, target);
         var openedWithIntent = false;
@@ -145,8 +145,8 @@ public sealed class CopySourceFaultTests
             services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) => checkpoint?.Invoke(step, database)));
         var services = api.Server.Services;
         var engine = services.GetRequiredService<IStorageEngine>();
-        var concrete = services.GetRequiredService<SqliteStorageEngine>();
-        var system = (SqliteDatabaseStore)await concrete.OpenSystemDatabaseAsync(CancellationToken.None);
+        var concrete = services.GetRequiredService<TursoStorageEngine>();
+        var system = (TursoDatabaseStore)await concrete.OpenSystemDatabaseAsync(CancellationToken.None);
         var target = Target(source);
         var native = new TursoNativeException(133U, "the private target failed initialization with corruption");
         var openedWithIntent = false;
@@ -204,8 +204,8 @@ public sealed class CopySourceFaultTests
         var source = new Fixture(database, crashed.Path, Ulid.Parse(crashed.Incarnation));
         await using var api = await StartAsync(Path.Combine(directory.Root, "data"));
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
-        var concrete = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
-        var system = (SqliteDatabaseStore)await concrete.OpenSystemDatabaseAsync(CancellationToken.None);
+        var concrete = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var system = (TursoDatabaseStore)await concrete.OpenSystemDatabaseAsync(CancellationToken.None);
         await Assert.That((int)concrete.ReplicaId.Epoch).IsGreaterThan(crashed.Epoch);
         await AssertRefusedAsync(api, source);
         await Assert.That(ReadSystemText(system.FilePath, database, "SELECT reason FROM _tb_rebuild WHERE organization = $organization AND project = $project AND database = $database;"))
@@ -228,9 +228,9 @@ public sealed class CopySourceFaultTests
         await using var api = await StartAsync(data, services =>
             services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) => checkpoint?.Invoke(step, database)));
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
-        var concrete = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var concrete = api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var store = await OpenAsync(api, source.Database);
-        var system = (SqliteDatabaseStore)await concrete.OpenSystemDatabaseAsync(CancellationToken.None);
+        var system = (TursoDatabaseStore)await concrete.OpenSystemDatabaseAsync(CancellationToken.None);
         var target = Target(source);
         await Assert.That(store.CurrentWriter()).IsNull();
         await Assert.That(HasIntent(system.FilePath, source, concrete.ReplicaId)).IsFalse();
@@ -303,8 +303,8 @@ public sealed class CopySourceFaultTests
         return new Fixture(database, store.FilePath, store.Incarnation);
     }
 
-    private static async Task<SqliteDatabaseStore> OpenAsync(ManagementApi api, TenantContext database) =>
-        (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+    private static async Task<TursoDatabaseStore> OpenAsync(ManagementApi api, TenantContext database) =>
+        (TursoDatabaseStore)(await api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
             ?? throw new InvalidOperationException("the source database is missing"));
 
     private static async Task WriteAsync(ManagementApi api, TenantContext database, string id)
@@ -327,7 +327,7 @@ public sealed class CopySourceFaultTests
 
     // Separate connections observe committed journal state while the ledger's recording checkpoint owns its gate.
     private static bool HasIntent(string systemPath, Fixture source, ReplicaId replica) =>
-        ReadSystemText(Path.Combine(Path.GetDirectoryName(systemPath)!, SqliteStorageEngine.IntentName + ".db"), source.Database,
+        ReadSystemText(Path.Combine(Path.GetDirectoryName(systemPath)!, TursoStorageEngine.IntentName + ".db"), source.Database,
             "SELECT incarnation || ':' || replica FROM _tb_write_intent WHERE organization = $organization AND project = $project AND database = $database;")
         == source.Incarnation + ":" + unchecked((long)replica.Value).ToString(CultureInfo.InvariantCulture);
 
@@ -359,7 +359,7 @@ public sealed class CopySourceFaultTests
             command.CommandText = "PRAGMA page_size;";
             var size = Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
             command.CommandText = "SELECT rootpage FROM sqlite_schema WHERE name = $table;";
-            command.Parameters.AddWithValue("$table", SqliteStorageTransaction.Table("damaged").Trim('"'));
+            command.Parameters.AddWithValue("$table", TursoStorageTransaction.Table("damaged").Trim('"'));
             var page = Convert.ToInt64(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
             await Assert.That(page).IsGreaterThan(1);
             offset = (page - 1) * size;
@@ -373,7 +373,7 @@ public sealed class CopySourceFaultTests
         using var healthy = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         await healthy.OpenAsync();
         using var readable = healthy.CreateCommand();
-        readable.CommandText = $"SELECT count(*) FROM {SqliteStorageTransaction.Table("healthy")};";
+        readable.CommandText = $"SELECT count(*) FROM {TursoStorageTransaction.Table("healthy")};";
         await Assert.That(Convert.ToInt64(await readable.ExecuteScalarAsync(), CultureInfo.InvariantCulture)).IsEqualTo(1);
     }
 

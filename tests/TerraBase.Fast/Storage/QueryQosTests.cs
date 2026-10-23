@@ -39,7 +39,7 @@ public sealed class QueryQosTests
         using var downgraded = await plans.PutAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/plan"), new { plan = "hobby" });
         downgraded.EnsureSuccessStatusCode();
         // The first over-budget candidate has invalid legacy JSON. The guard must reject it before
-        // either SQLite JSON predicates or managed materialization reads its body.
+        // either Turso JSON predicates or managed materialization reads its body.
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database,
             "UPDATE \"items\" SET doc = 'invalid-json' WHERE id = printf('00000000000000000000%06d', 10001);");
         // Change the predicate to avoid a previously cached Pro result.
@@ -168,7 +168,7 @@ public sealed class QueryQosTests
 
         public void AdvanceReads() => Volatile.Write(ref _step, 1500);
 
-        public override long GetTimestamp() => Thread.CurrentThread.Name == "terrabase-sqlite"
+        public override long GetTimestamp() => Thread.CurrentThread.Name == "terrabase-turso"
             ? Interlocked.Add(ref _timestamp, Volatile.Read(ref _step)) : Volatile.Read(ref _timestamp);
     }
 
