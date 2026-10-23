@@ -91,7 +91,9 @@ WITH "t" AS (SELECT json_extract(doc, '$."c1"') AS "c1", … FROM main."t" WHERE
 - Join fan-out: every SELECT of a statement (top level, subqueries, CTE bodies, both sides of a compound) gets
   `WHERE tb_sql_row(coalesce(<a column of each FROM item>, 0)) AND (…)`, which charges one work unit per evaluated row
   combination (Turso evaluates a function of constants once, so the argument names every joined item). A joined
-  subquery or CTE whose first column has no name is refused (SQ1-e3).
+  subquery or CTE whose first column has no name is refused (SQ1-e3). The guard runs in SELECTs over CTEs and
+  `VALUES` too, and checks the deadline. Besides each statement's budget, all statements of one request (a replay
+  included) share a 5 s deadline, so a write request cannot hold the writer for 256 budgets (SQ1-e5).
 
 ## 5. Transactions
 

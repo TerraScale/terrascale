@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using SqlParser;
@@ -71,6 +72,7 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
 {
     private const int MaxStatements = 256;
     private const long MaxLogBytes = 1024 * 1024;
+    private static readonly TimeSpan MaxRequestTime = TimeSpan.FromSeconds(5);
 
     private static readonly SqlResult Empty = new([], [], 0, null);
     private static readonly SqlError UnknownDatabase = SqlErrors.Error("the database does not exist");
@@ -315,6 +317,13 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
 
     private async ValueTask<SqlOutcome> RunAsync(Request request, ParsedSql statement, SqlCommand command, CancellationToken cancellationToken, bool describe = false)
     {
+        // Each statement has its own work budget; a request's statements (and a replay) also share one deadline, so a
+        // request that holds the writer cannot hold it for 256 budgets.
+        if (Stopwatch.GetElapsedTime(request.Started) > MaxRequestTime)
+        {
+            return SqlErrors.Interrupt;
+        }
+
         try
         {
             return await executor.ExecuteAsync(request.Transaction, statement, command, _keys, request.Tally, describe, cancellationToken).ConfigureAwait(false);
@@ -411,6 +420,9 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
         public StorageQuotaLease? Lease { get; } = lease;
 
         public SqlTally Tally { get; } = tally;
+
+        /// <summary>When the storage transaction opened: one request's statements share one deadline.</summary>
+        public long Started { get; } = Stopwatch.GetTimestamp();
 
         public async ValueTask DisposeAsync()
         {

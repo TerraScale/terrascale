@@ -18,6 +18,7 @@ public sealed class SqlBudgetTests
     [Arguments("SELECT count(*) FROM {digits7}")]
     [Arguments("SELECT count(*) FROM people WHERE id IN (SELECT t0.id FROM {people16})")]
     [Arguments("SELECT 1 UNION ALL SELECT count(*) FROM {people16}")]
+    [Arguments("WITH a(x) AS (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)) SELECT count(*) FROM a, a b, a c, a d, a e, a f, a g, a h, a i, a j")]
     public async Task Join_fan_out_past_the_work_budget_is_interrupted(string template)
     {
         await using var api = await DocumentApi.StartAsync();
@@ -32,6 +33,24 @@ public sealed class SqlBudgetTests
         await Assert.That(SqlApi.Error(response)).IsEqualTo((HttpStatusCode.BadRequest, "sql_error", "SQLITE_INTERRUPT", 0));
         await Assert.That(response.Message).IsEqualTo("query too expensive: it exceeds the work budget");
         await Assert.That(watch.Elapsed).IsLessThan(TimeSpan.FromSeconds(6));
+    }
+
+    // Each statement stays under its own budget; together they pass the request's 5 s deadline, holding the writer.
+    [Test]
+    public async Task A_request_shares_one_deadline_across_its_statements()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api, "CREATE TABLE t (id INTEGER PRIMARY KEY)");
+        var heavy = $"SELECT count(*) FROM {string.Join(", ", Enumerable.Range(0, 5).Select(i => $"{Digits} d{i}"))}";
+        var watch = Stopwatch.StartNew();
+
+        var one = await SqlApi.ExecuteAsync(api, heavy);
+        var many = await SqlApi.ExecuteAsync(api, [.. Enumerable.Repeat(heavy, 255).Prepend("INSERT INTO t VALUES (1)")]);
+
+        await Assert.That(one.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(SqlApi.Error(many).Sqlite).IsEqualTo("SQLITE_INTERRUPT");
+        await Assert.That(watch.Elapsed).IsLessThan(TimeSpan.FromSeconds(15));
+        await Assert.That((await SqlApi.OkAsync(api, "SELECT count(*) FROM t"))[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(0);
     }
 
     [Test]
