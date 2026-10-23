@@ -303,8 +303,8 @@ internal static class DocumentRoute
     public static string Decimal(long value) => value.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// Reads a bounded JSON body of one of <paramref name="mediaTypes"/> whose strings are valid text; a body that
-    /// breaks either rule fails with <paramref name="code"/> (413 for size).
+    /// Reads a bounded JSON body of one of <paramref name="mediaTypes"/> (any Content-Type, or none, when empty) whose
+    /// strings are valid text; a body that breaks either rule fails with <paramref name="code"/> (413 for size).
     /// </summary>
     public static async ValueTask<BodyResult> CheckBodyAsync(
         HttpContext context, int maxBytes, string code, CancellationToken cancellationToken, params string[] mediaTypes)
@@ -314,8 +314,8 @@ internal static class DocumentRoute
             return new UnsupportedMediaType("Content-Encoding is not accepted");
         }
 
-        if (!MediaTypeHeaderValue.TryParse(context.Request.ContentType, out var contentType)
-            || !mediaTypes.Contains(contentType.MediaType.Value, StringComparer.OrdinalIgnoreCase))
+        if (mediaTypes.Length > 0 && (!MediaTypeHeaderValue.TryParse(context.Request.ContentType, out var contentType)
+            || !mediaTypes.Contains(contentType.MediaType.Value, StringComparer.OrdinalIgnoreCase)))
         {
             return new UnsupportedMediaType($"Content-Type must be {string.Join(" or ", mediaTypes)}");
         }

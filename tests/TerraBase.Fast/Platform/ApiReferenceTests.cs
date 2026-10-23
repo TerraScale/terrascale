@@ -74,6 +74,7 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/import/start TsAuth(databases:write,documents:write) startImport Imports
         POST /v1/projects/{project}/databases/{database}/index-recommendations/{recommendation}/apply TsAuth(databases:write) applyIndexRecommendation Indexes
         POST /v1/projects/{project}/databases/{database}/indexes TsAuth(databases:write) createIndex Indexes
+        POST /v1/projects/{project}/databases/{database}/libsql/{version}/pipeline TsAuth(documents:read) libsqlPipeline SQL
         POST /v1/projects/{project}/databases/{database}/point-in-time/plan TsAuth(databases:read) planPointInTime Backups
         POST /v1/projects/{project}/databases/{database}/point-in-time/restore TsAuth(databases:write) restorePointInTime Backups
         POST /v1/projects/{project}/databases/{database}/sql TsAuth(databases:read) runSql Queries

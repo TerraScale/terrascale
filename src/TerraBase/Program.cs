@@ -8,6 +8,7 @@ using TerraBase.Features.ApiReference;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Health;
+using TerraBase.Features.Hrana;
 using TerraBase.Features.Import;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
@@ -112,6 +113,7 @@ builder.Services.AddTerraBasePressure();
 builder.Services.AddTerraBaseStats();
 builder.Services.AddTerraBaseImport();
 TerraBase.Features.Shapes.ShapesExtensions.AddTerraBaseShapes(builder.Services);
+builder.Services.AddTerraBaseHrana();
 TerraBase.Features.Shapes.ShapeResumeExtensions.AddTerraBaseShapeResume(builder.Services);
 builder.AddTerraBaseReplication();
 
