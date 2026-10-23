@@ -64,6 +64,8 @@ func load(args []string) error {
 	shard, shards := fs.Int("shard", 0, "this shard"), fs.Int("shards", 1, "load processes")
 	steps := fs.String("steps", "1,100,1000,10000", "readers per step, all shards")
 	out := fs.String("out", "", "shard record (JSON)")
+	originURL := fs.String("origin", "", "a running node's client URL instead of a local host (an OCI test cell); its key is TS_BENCH_API_KEY")
+	metrics := fs.String("metrics", "", "comma-separated /metrics URLs of the nodes, with -origin")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -78,21 +80,28 @@ func load(args []string) error {
 	ctx := context.Background()
 	reg, token, nodes := region, os.Getenv("TS_BENCH_API_KEY"), []string(nil)
 	var origin string
-	work, err := os.MkdirTemp("", "shape-bench-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(work)
-	h, err := startHost(ctx, work)
-	if err != nil {
-		return err
-	}
-	defer h.stop()
-	hostTargets := h.targets
-	*project, *database, origin, token = hostTargets.Project, hostTargets.Database, hostTargets.Regions[region].URL, hostTargets.Regions[region].Token
-	*collection, *start = "v3-"+strings.ToLower(ulid.Make().String()), time.Now().Add(10*time.Second).Unix()
-	if nodes, _, err = metricsListeners(ctx, hostTargets.PID); err != nil {
-		return err
+	if *originURL != "" {
+		origin = *originURL
+		if *shard == 0 {
+			nodes = strings.Split(*metrics, ",")
+		}
+	} else {
+		work, err := os.MkdirTemp("", "shape-bench-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(work)
+		h, err := startHost(ctx, work)
+		if err != nil {
+			return err
+		}
+		defer h.stop()
+		hostTargets := h.targets
+		*project, *database, origin, token = hostTargets.Project, hostTargets.Database, hostTargets.Regions[region].URL, hostTargets.Regions[region].Token
+		*collection, *start = "v3-"+strings.ToLower(ulid.Make().String()), time.Now().Add(10*time.Second).Unix()
+		if nodes, _, err = metricsListeners(ctx, hostTargets.PID); err != nil {
+			return err
+		}
 	}
 	if *project == "" || *database == "" || *collection == "" || token == "" || *start == 0 {
 		return fmt.Errorf("load needs -project, -database, -collection, -start and TS_BENCH_API_KEY")
@@ -120,7 +129,10 @@ func load(args []string) error {
 		rec = append(rec, runLoadStep(ctx, b, at, n, *shard, *shards, nodes))
 		fmt.Fprintf(os.Stderr, "step N=%d: admitted %d delivered %d %s\n", n, rec[i].Admitted, rec[i].Delivered, rec[i].Error)
 	}
-	return mergeReport(*out, [][]shardStep{rec})
+	if *originURL == "" {
+		return mergeReport(*out, [][]shardStep{rec})
+	}
+	return replbench.WriteJSON(*out, rec)
 }
 
 // runLoadStep runs this shard's share of n readers through one step starting at at.
