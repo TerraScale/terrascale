@@ -1189,6 +1189,8 @@ public sealed class RemoteAckTests
             await pair.Proof.Committed.Task.WaitAsync(pair.Token);
 
             var store = await pair.OriginStoreAsync();
+            // Force the background retention path while the proof walk must still be stopped.
+            await pair.OriginServer.Services.GetRequiredService<TursoChangeGroupSource>().TrimAsync(await pair.OriginSqliteAsync(), pair.Token);
             var sealer = pair.OriginSealer;
             var head = await (await pair.OriginSqliteAsync()).WithWriterAsync(session =>
             {
