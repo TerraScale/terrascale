@@ -16,6 +16,8 @@ namespace TerraBase.Slow;
 
 public sealed class BenchmarkReadinessTests
 {
+    private static readonly string[] RemoteRegions = ["sjc", "fra"];
+
     [Test]
     public async Task Quiescence_joins_backgrounds_while_the_peer_listener_remains_live(CancellationToken cancellationToken)
     {
@@ -145,8 +147,9 @@ public sealed class BenchmarkReadinessTests
         await Assert.That(unavailable.Payloads.GroupBy(payload => payload).All(group => group.Count() == 2)).IsTrue();
         await Assert.That(unavailable.Payloads.Distinct().Select(payload => JsonNode.Parse(payload)!["ops"]!.AsArray().Count).SequenceEqual([4, 16, 1])).IsTrue();
         await Assert.That(BenchmarkProcessHost.DatabaseIds(config).Count).IsEqualTo(18);
-        foreach (var invalid in new[] { new JsonArray("idle-1"), new JsonArray(config["database"]!.GetValue<string>()),
-            new JsonArray("01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAV") })
+        JsonArray[] invalidDatabases = [["idle-1"], [config["database"]!.GetValue<string>()],
+            ["01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAV"]];
+        foreach (var invalid in invalidDatabases)
         {
             var badConfig = (JsonObject)config.DeepClone();
             badConfig["extra_databases"] = invalid;
@@ -244,7 +247,7 @@ public sealed class BenchmarkReadinessTests
         Task ready = Task.CompletedTask;
         try
         {
-            foreach (var (index, region) in new[] { "sjc", "fra" }.Index())
+            foreach (var (index, region) in RemoteRegions.Index())
             {
                 Directory.CreateDirectory(Path.Combine(root, region));
                 await File.WriteAllTextAsync(Path.Combine(root, region, "bootstrap.json"),
@@ -305,8 +308,8 @@ public sealed class BenchmarkReadinessTests
                 }
             }
             await ready;
-            var canary = bounds.Single(bound => bound.Database.DatabaseId == database.Id);
-            await Assert.That((await source.HeadAsync(canary.Database, canary.Incarnation, deadline.Token))!.Value).IsGreaterThan(canary.Head);
+            var (canary, canaryIncarnation, canaryHead) = bounds.Single(bound => bound.Database.DatabaseId == database.Id);
+            await Assert.That((await source.HeadAsync(canary, canaryIncarnation, deadline.Token))!.Value).IsGreaterThan(canaryHead);
         }
         finally
         {
