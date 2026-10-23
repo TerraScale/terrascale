@@ -765,7 +765,7 @@ public sealed class DataDirectoryTests
         // Like the harness, clear every ambient TERRABASE setting through entry-point arguments.
         foreach (var name in TerraBaseOptions.SettingNames)
         {
-            if (BackupSettings.Keys.Contains(name, StringComparer.Ordinal))
+            if (name == "master-key" || BackupSettings.Keys.Contains(name, StringComparer.Ordinal))
             {
                 continue;
             }

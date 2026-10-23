@@ -11,6 +11,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -779,6 +780,7 @@ public sealed class DatabaseRecoveryTests
             var options = new TerraBaseOptions { DataDirectory = state.Directory, MemoryBudget = 64 * 1024 * 1024, StorageThreads = 1, StorageQueue = 16 };
             var services = new ServiceCollection();
             services.AddTerraBaseEngine(options);
+            services.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
             await using var provider = services.BuildServiceProvider();
             var engine = provider.GetRequiredService<IStorageEngine>();
             var inventory = engine.EnumerateDatabaseFiles().ToArray();
@@ -822,6 +824,7 @@ public sealed class DatabaseRecoveryTests
         externalServices.AddSingleton(externalOptions);
         externalServices.AddLogging();
         externalServices.AddTerraBaseEngine(externalOptions);
+        externalServices.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
         await using (var provider = externalServices.BuildServiceProvider())
         {
             // A real store with an old catalog version would be changed by management migration.
@@ -854,6 +857,7 @@ public sealed class DatabaseRecoveryTests
             services.AddSingleton(options);
             services.AddLogging();
             services.AddTerraBaseEngine(options);
+            services.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
             await using (var provider = services.BuildServiceProvider())
             {
                 // No management existence probe: the default engine must reject the link itself.
@@ -1046,14 +1050,14 @@ public sealed class DatabaseRecoveryTests
         // Add crash sidecars only after the seeded host has closed its real tenant stores.
         foreach (var database in new[] { state.Source, state.Neighbor })
         {
-            foreach (var suffix in state.Sidecars)
+            foreach (var suffix in state.Sidecars.Where(suffix => suffix != ".key"))
             {
                 await File.WriteAllBytesAsync(state.Path(database) + suffix, state.Faker.Random.Bytes(31));
             }
         }
 
         var paths = System.IO.Directory.GetFiles(System.IO.Path.GetDirectoryName(state.Path(state.Source))!);
-        await Assert.That(paths.Length).IsEqualTo(8);
+        await Assert.That(paths.Length).IsEqualTo(10);
         var before = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         foreach (var path in paths)
         {
@@ -1430,7 +1434,7 @@ public sealed class DatabaseRecoveryTests
         await File.WriteAllBytesAsync(notes, state.Faker.Random.Bytes(41));
         var paths = System.IO.Directory.GetFiles(System.IO.Path.GetDirectoryName(state.Path(target))!)
             .Where(path => System.IO.Path.GetFileName(path).Contains(target, StringComparison.Ordinal) || path == notes).ToArray();
-        await Assert.That(paths.Length).IsEqualTo(9);
+        await Assert.That(paths.Length).IsEqualTo(11);
         var before = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         foreach (var path in paths)
         {
@@ -1485,6 +1489,7 @@ public sealed class DatabaseRecoveryTests
         services.AddSingleton(options);
         services.AddLogging();
         services.AddTerraBaseEngine(options);
+        services.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
         await using (var provider = services.BuildServiceProvider())
         {
             var engine = provider.GetRequiredService<IStorageEngine>();
@@ -1499,7 +1504,8 @@ public sealed class DatabaseRecoveryTests
         await using var restarted = await state.StartAsync(registered => registered.AddSingleton<ILoggerProvider>(logs));
         await Assert.That((await File.ReadAllBytesAsync(path)).SequenceEqual(bytes)).IsTrue();
         await Assert.That(logs.Messages).Contains("Warning: Preserved database file without a catalog registration: " + path);
-        await AssertUnknownCountAsync(restarted, 1);
+        await Assert.That(logs.Messages).Contains("Warning: Preserved database file without a catalog registration: " + path + ".key");
+        await AssertUnknownCountAsync(restarted, 2);
         await AssertReadyAsync(restarted);
         await Assert.That((await PendingAsync(restarted)).Documents).IsEmpty();
         using var owner = restarted.As(state.User);
@@ -2349,7 +2355,7 @@ public sealed class DatabaseRecoveryTests
         private readonly Lazy<Task> _cleanup;
 
         public Faker Faker { get; } = new();
-        public IReadOnlyList<string> Sidecars { get; } = ["-wal", "-shm", "-journal"];
+        public IReadOnlyList<string> Sidecars { get; } = ["-wal", "-shm", "-journal", ".key"];
         public string Directory { get; } = System.IO.Directory.CreateTempSubdirectory("terrabase-recovery-").FullName;
         public string User { get; }
         public string Organization { get; private set; } = string.Empty;
@@ -2450,7 +2456,7 @@ public sealed class DatabaseRecoveryTests
             foreach (var suffix in Sidecars.Prepend(string.Empty))
             {
                 await File.WriteAllBytesAsync(temporary + suffix, Faker.Random.Bytes(31));
-                if (sidecars && suffix.Length != 0)
+                if (sidecars && suffix.Length != 0 && suffix != ".key")
                 {
                     await File.WriteAllBytesAsync(path + suffix, Faker.Random.Bytes(31));
                 }

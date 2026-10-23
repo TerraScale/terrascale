@@ -3,6 +3,7 @@ using System.Net;
 using System.Text.Json.Nodes;
 using Bogus;
 using TerraBase.Primitives;
+using TerraBase.Testing;
 using Turso.Data.Sqlite;
 
 namespace TerraBase.E2E;
@@ -233,12 +234,12 @@ public sealed class ReplicationMatrixTests
 
         foreach (var region in All)
         {
-            await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
             {
                 DataSource = cluster.DatabaseFile(region),
                 Mode = SqliteOpenMode.ReadOnly,
                 Pooling = false,
-            }.ToString());
+            }));
             await connection.OpenAsync(token);
             await using var query = connection.CreateCommand();
             query.CommandText = "SELECT count(*) FROM _tb_state WHERE collection = $collection AND id = $id AND live = 0";

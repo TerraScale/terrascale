@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json.Nodes;
 using TerraBase.Primitives;
+using TerraBase.Testing;
 using Turso.Data.Sqlite;
 
 namespace TerraBase.E2E;
@@ -227,7 +228,7 @@ public sealed class LatticeE2ETests
     // The tombstones (dead state rows) of `ids` in the collection, read from a stopped region's database file.
     private static async Task<long> TombstonesAsync(string file, string collection, string[] ids)
     {
-        await using var connection = new SqliteConnection($"Data Source={file};Pooling=False");
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(file));
         await connection.OpenAsync();
         long tombstones = 0;
         foreach (var id in ids)

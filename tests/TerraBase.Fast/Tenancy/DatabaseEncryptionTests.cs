@@ -47,6 +47,8 @@ public sealed class DatabaseEncryptionTests
             using var read = await data.GetAsync(seed.Document);
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(await read.Content.ReadAsStringAsync()).IsEqualTo(seed.Response);
+            await Assert.That(restarted.Server.Services.GetRequiredService<IStorageEngine>()
+                .EnumerateDatabaseFiles().Any(file => file.Database is null)).IsFalse();
             await AssertNoPlaintextAsync(directory, marker);
         }
         finally

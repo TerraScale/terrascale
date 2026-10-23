@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using TerraBase.Engine.Sqlite;
@@ -13,7 +14,7 @@ internal sealed class TestMasterKey : IMasterKey
 
     private static byte[] Material() => SHA256.HashData("TerraBase integration fixtures only; never a production master"u8);
 
-    /// <summary>Configures a real child binary with synthetic credentials, without keys in argv or files.</summary>
+    /// <summary>Configures a real child binary with a synthetic master, without keys in argv or files.</summary>
     internal static void ConfigureProcess(ProcessStartInfo start)
     {
         foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("AWS_", StringComparison.Ordinal)
@@ -22,11 +23,6 @@ internal sealed class TestMasterKey : IMasterKey
             start.Environment.Remove(name);
         }
 
-        start.Environment["AWS_ENDPOINT_URL_S3"] = "https://127.0.0.1:1";
-        start.Environment["AWS_REGION"] = "auto";
-        start.Environment["BUCKET_NAME"] = "terrabase-test";
-        start.Environment["AWS_ACCESS_KEY_ID"] = "test";
-        start.Environment["AWS_SECRET_ACCESS_KEY"] = "test";
         var material = Material();
         try
         {
@@ -86,4 +82,3 @@ internal sealed class TestMasterKey : IMasterKey
         }
     }
 }
-using System.Diagnostics;
