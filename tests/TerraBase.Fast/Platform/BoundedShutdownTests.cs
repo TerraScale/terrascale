@@ -202,6 +202,61 @@ public sealed class BoundedShutdownTests
     }
 
     [Test]
+    public async Task A_changes_page_failed_by_the_host_stop_ends_its_stream_cleanly()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var api = await DocumentApi.StartAsync();
+        var server = api.Server;
+        var lifetime = server.Services.GetRequiredService<IHostApplicationLifetime>();
+        var completion = server.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
+        var tenant = await api.TenantOfAsync(cancellationToken: token);
+        var store = (await server.Services.GetRequiredService<TursoStorageEngine>().OpenDatabaseAsync(tenant, token))!;
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(api.DatabasePath() + "/changes?cursor=now", UriKind.Relative));
+        using var response = await api.Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(token));
+        await ReadEventAsync(reader, "cursor", token);
+
+        // Stopping callbacks run newest first: this one runs before the stream's older linked stop token sees the stop. A
+        // commit here makes the stream read a page whose producer, bound to the host stop, fails before that token does.
+        var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ended = Task.Run(async () =>
+        {
+            await stopping.Task;
+            await using (var write = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+            {
+                _ = await write.PutAsync(DocumentApi.Collection, DocumentApi.NewId(), JsonSerializer.SerializeToUtf8Bytes(new { text = new Faker().Lorem.Sentence() }), CancellationToken.None);
+                _ = await write.CommitAsync(CancellationToken.None);
+            }
+
+            try
+            {
+                while (await reader.ReadLineAsync(CancellationToken.None) is not null)
+                {
+                }
+
+                return null;
+            }
+            catch (HttpIOException error)
+            {
+                return error;
+            }
+        }, token);
+        using (lifetime.ApplicationStopping.Register(() =>
+        {
+            stopping.TrySetResult();
+            _ = ended.Wait(TimeSpan.FromSeconds(10), CancellationToken.None);
+        }))
+        {
+            lifetime.StopApplication();
+        }
+
+        await completion.WaitAsync(TimeSpan.FromSeconds(45), token);
+        await Assert.That(ended.IsCompleted).IsTrue().Because("the page failed by the stop ends the stream before the stop reaches it");
+        await Assert.That(await ended).IsNull().Because("a stream the host stops ends with EOF, not an aborted response");
+    }
+
+    [Test]
     public async Task A_healthy_reader_can_retire_its_intent_after_the_shutdown_grace_expires()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
