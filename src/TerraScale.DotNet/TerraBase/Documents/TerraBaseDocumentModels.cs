@@ -36,7 +36,8 @@ public sealed record TerraBaseCollectionPage(
 /// </param>
 /// <param name="State"><c>value</c>, or <c>conflict</c> on causal reads; <see cref="Document"/> then holds the last-writer-wins value. Other states may be added.</param>
 /// <param name="Document">The JSON object, or its projection for queries that project.</param>
-public sealed record TerraBaseDocument(string Id, string Version, string State, JsonElement Document);
+/// <param name="Distance">Distance to the query vector of a <see cref="TerraBaseSort.Near"/> query; otherwise null.</param>
+public sealed record TerraBaseDocument(string Id, string Version, string State, JsonElement Document, double? Distance = null);
 
 /// <summary>A count of query matches.</summary>
 /// <param name="Value">Number of matches; a lower bound when <paramref name="Exact"/> is false.</param>
@@ -119,9 +120,52 @@ public sealed class TerraBasePrecondition
 }
 
 /// <summary>One sort key of a query.</summary>
-/// <param name="Path">A JSON Pointer to object members, or <c>$id</c>.</param>
+/// <param name="Path">A JSON Pointer to object members, or <c>$id</c>; null for a <see cref="Near"/> sort.</param>
 /// <param name="Order"><c>asc</c> (the default) or <c>desc</c>.</param>
-public sealed record TerraBaseSort(string Path, string? Order = null);
+public sealed record TerraBaseSort(string? Path, string? Order = null)
+{
+    private const int MaxNearDimensions = 4096;
+
+    /// <summary>The vector similarity order of a <see cref="Near"/> sort.</summary>
+    [JsonPropertyName("near")]
+    public TerraBaseNearSort? Nearest { get; private init; }
+
+    /// <summary>
+    /// Nearest documents first, by ascending distance from <paramref name="vector"/> to the numeric array at <paramref name="path"/>
+    /// (brute force). It must be the only sort key; the query returns one page of at most 100 documents, without a cursor, and
+    /// each item's <see cref="TerraBaseDocument.Distance"/>. Only documents whose member is a numeric array of the same length match.
+    /// </summary>
+    /// <param name="path">JSON Pointer of the embedding member.</param>
+    /// <param name="vector">1 to 4096 finite numbers; not all zero for <c>cosine</c>.</param>
+    /// <param name="metric"><c>cosine</c> (the default) or <c>l2</c>.</param>
+    public static TerraBaseSort Near(string path, IReadOnlyList<float> vector, string metric = "cosine")
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        ArgumentNullException.ThrowIfNull(vector);
+        if (metric is not ("cosine" or "l2"))
+        {
+            throw new ArgumentException("metric must be cosine or l2.", nameof(metric));
+        }
+
+        if (vector.Count is < 1 or > MaxNearDimensions || !vector.All(float.IsFinite))
+        {
+            throw new ArgumentException("vector must have 1 to 4096 finite numbers.", nameof(vector));
+        }
+
+        if (metric == "cosine" && vector.All(static value => value == 0))
+        {
+            throw new ArgumentException("a cosine vector must not be all zeros.", nameof(vector));
+        }
+
+        return new(Path: null) { Nearest = new(path, vector, metric) };
+    }
+}
+
+/// <summary>A vector similarity order; create it with <see cref="TerraBaseSort.Near"/>.</summary>
+/// <param name="Path">JSON Pointer of the embedding member.</param>
+/// <param name="Vector">Query vector.</param>
+/// <param name="Metric"><c>cosine</c> or <c>l2</c>.</param>
+public sealed record TerraBaseNearSort(string Path, IReadOnlyList<float> Vector, string Metric);
 
 /// <summary>
 /// A query (TerraBase query v1). Every member is optional. <see cref="Filter"/> uses TerraBase's JSON filter grammar,
@@ -132,7 +176,7 @@ public sealed record TerraBaseQuery
     /// <summary>The filter; every document matches when absent.</summary>
     public JsonElement? Filter { get; init; }
 
-    /// <summary>At most 4 sort keys; results are finally ordered by id.</summary>
+    /// <summary>At most 4 sort keys; results are finally ordered by id. A <see cref="TerraBaseSort.Near"/> sort is the only key.</summary>
     public IReadOnlyList<TerraBaseSort>? Sort { get; init; }
 
     /// <summary>At most 64 JSON Pointers to keep in each returned document.</summary>
