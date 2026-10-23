@@ -134,7 +134,7 @@ impl Shape {
         if let Some(key) = keys.get(&identity) {
             return Ok(key.clone());
         }
-        let (base, region) = client.shape_endpoint(database.name(), false).await?;
+        let (base, region) = client.shape_endpoint().await?;
         let query = [
             ("handle", handle.to_owned()),
             ("epoch", epoch.to_string()),
@@ -471,7 +471,7 @@ impl ShapeSync {
         let mut refreshed = false;
         let mut attempt = 0;
         loop {
-            let endpoint = self.client.shape_endpoint(&self.database, false).await?;
+            let endpoint = self.client.shape_endpoint().await?;
             let moved = self
                 .endpoint
                 .as_ref()
@@ -521,7 +521,7 @@ impl ShapeSync {
                 Err(error) if is_route_error(&error) => {
                     if !refreshed {
                         refreshed = true;
-                        let fresh = self.client.shape_endpoint(&self.database, true).await?;
+                        let fresh = self.client.shape_endpoint().await?;
                         let moved = fresh.0 != base || fresh.1 != region;
                         self.endpoint = Some(fresh);
                         if moved {

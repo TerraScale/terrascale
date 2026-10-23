@@ -16,7 +16,7 @@ pub use auth_idp::{
     verify_auth_idp_webhook, verify_auth_idp_webhook_with_tolerance, AuthIdpClient,
 };
 pub use client::TerraScaleClient;
-pub use config::{ClientConfig, ClientConfigBuilder, ATLAS_BASE_URL};
+pub use config::{ClientConfig, ClientConfigBuilder};
 pub use error::{Error, ErrorKind, Result};
 pub use regions::{normalize_base_url, RegionCode};
 pub use transport::{HttpTransport, Method, Request, ReqwestTransport, Response};

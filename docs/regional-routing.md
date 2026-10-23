@@ -11,8 +11,7 @@ Direct native endpoints use `https://<region>.api.terrascale.tech`, such as
 `RegionRtt` hints supply bounded measured ranking inputs through the admitted
 header. They do not admit a region or override the receiver's ordered response.
 There is no caller-selected region affinity or synthetic regional destination.
-`atlas_base_url` defaults to canonical Atlas; a custom discovery origin fails
-before native credentials are sent. All valid discovered serving regions
+All valid discovered serving regions
 participate automatically, subject to tenant admission and residency. Existing
 direct `api_base_url` paths are restricted to reviewed isolated tests and real
 producer qualification, not first-party node startup or region activation.

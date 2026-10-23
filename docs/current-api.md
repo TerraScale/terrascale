@@ -13,7 +13,7 @@ Use this guide for the current SDK. Tests use HTTP fakes only, never producer bi
 
 ## Client and IDs
 
-Use `Client::for_project(project_ulid, access_token)` with verified Atlas routing,
+Use `Client::for_project(project_ulid, access_token)` against `https://api.terrascale.tech`,
 or `.endpoint(origin)` for a static endpoint. `Client::builder(origin, token)`
 requires `.project(project_ulid)`. Public platform exploration uses
 `Client::for_platform(origin, access_token)` and accepts `ts-auth`/`ts-dashboard`
