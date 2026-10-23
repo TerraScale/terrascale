@@ -254,13 +254,50 @@ public sealed class A6ProductionRebuildTests
         _ = await Assert.ThrowsAsync<IOException>(async () => await tap.ReadAsync(Stream.Null, CancellationToken.None));
         tap.BeforeTrim = null;
         await Assert.That(await IntentAsync()).IsFalse().Because("an idle tap and a clean output failure leave no native work");
-        await using var first = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-        await using var second = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        await using (var read = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            await Assert.That(await IntentAsync()).IsFalse().Because("a read-only transaction cannot leave unsynced pages behind");
+        }
+
+        var sqlite = (SqliteDatabaseStore)store;
+        var first = await sqlite.PrepareCopyAsync(CancellationToken.None) ?? throw new InvalidOperationException("no ledger");
+        var second = await sqlite.PrepareCopyAsync(CancellationToken.None) ?? throw new InvalidOperationException("no ledger");
         await Assert.That(await IntentAsync()).IsTrue();
+        first.Complete();
         await first.DisposeAsync();
         await Assert.That(await IntentAsync()).IsTrue().Because("the other native operation is still active");
+        second.Complete();
         await second.DisposeAsync();
         await Assert.That(await IntentAsync()).IsFalse();
+    }
+
+    // FlagAsync writes the mark without the ledger's gate, so an operation that starts later must not turn it back into an
+    // ordinary intent the restart proof would clear.
+    [Test]
+    public async Task A_faulting_mark_outlives_a_later_operation_of_the_same_copy()
+    {
+        await using var api = await StartAsync(directory: null);
+        var (database, _) = await CreateDatabaseAsync(api);
+        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None)
+            ?? throw new InvalidOperationException("the test copy is missing"));
+        Task<long?> ReplicaAsync()
+        {
+            return engine.IntentStore!.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT replica FROM _tb_write_intent WHERE database = $database;";
+                command.Parameters.AddWithValue("$database", database.DatabaseId);
+                return command.ExecuteScalar() as long?;
+            }, "checking the faulting mark", CancellationToken.None);
+        }
+        store.NoteCopyFault("a test fault");
+        await store.Flagged;
+        await Assert.That(await ReplicaAsync()).IsEqualTo(0L);
+        var operation = await store.BeginOperationAsync(CancellationToken.None) ?? throw new InvalidOperationException("no ledger");
+        operation.Complete();
+        await operation.DisposeAsync();
+        await Assert.That(await ReplicaAsync()).IsEqualTo(0L).Because("only the durable record turns a mark ordinary");
     }
 
     [Test]
