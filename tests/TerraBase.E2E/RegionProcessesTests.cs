@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -25,6 +26,11 @@ public sealed class RegionProcessesTests
         var second = regions.Document(EntityIds.New().ToString());
         await Docs.PutAsync(regions[Cluster.Gru], second, new JsonObject { ["step"] = 2 });
         await regions.StartAgainAsync(Cluster.Sjc);
+        // gru and fra are up: sjc verifies its catalog against both within seconds, then serves.
+        var back = Stopwatch.GetTimestamp();
+        _ = await Converge.UntilAsync(() => regions[Cluster.Sjc].GetFromJsonAsync<JsonElement>(new Uri("/v1/catalog-gate", UriKind.Relative)),
+            gate => gate.GetProperty("open").GetBoolean(), "sjc's catalog verifies after its restart", TimeSpan.FromSeconds(15));
+        Console.WriteLine($"sjc's catalog gate opened {Stopwatch.GetElapsedTime(back).TotalMilliseconds:F0} ms after its restart");
         _ = await Converge.UntilAsync(() => Docs.ReadAsync(regions[Cluster.Sjc], second), document => document?["step"]?.GetValue<int>() == 2, "gru's write on sjc after its restart");
     }
 
