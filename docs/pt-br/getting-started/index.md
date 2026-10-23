@@ -26,7 +26,7 @@ There is no Python, Java or Rust SDK yet; call the HTTP API directly from those 
 1. Open [dash.terrascale.tech/register](https://dash.terrascale.tech/register), create your account and enter the code sent to your email.
 2. Finish setup: choose a plan (or continue without a payment method), then name your first project and pick its region.
 3. Open **Databases**, select **New database**, enter a name (lowercase letters, digits and inner hyphens) and create it.
-4. Open **API keys**, select **New project key**, limit **Database access** to that database, choose **Read and write** and create it. Copy the key when the dashboard shows it and keep it in your secret manager.
+4. Open **API keys**, select **Create credential**, then **API key**. Name it, limit **Database access** to that database, choose **Read and write** and select **Create key**. Copy the key when the dashboard shows it and keep it in your secret manager.
 5. Open **Organization** and copy the **Current project** ID.
 
 The key has the form `<key ID>_<secret>`. It is a client credential, not a bearer token: the API answers `401` when you send it directly.
@@ -44,6 +44,23 @@ export TERRASCALE_ACCESS_TOKEN="$(curl -sS --fail-with-body \
 ```
 
 The token lasts 15 minutes (`expires_in: 900`) and carries the key's scopes, such as `documents:read documents:write`. Run the exchange again when requests start answering `401`. [Authentication](/pt-br/guides/authentication) explains the contract.
+
+## Write and read a document with curl
+
+With the token exported, create a collection, write a document and read it back. Use the project ID and database name from the dashboard.
+
+```bash
+export TERRASCALE_PROJECT_ID='YOUR_PROJECT_ID' TERRASCALE_DATABASE_NAME='YOUR_DATABASE_NAME'
+DB="https://api.terrascale.tech/v1/projects/$TERRASCALE_PROJECT_ID/databases/$TERRASCALE_DATABASE_NAME"
+AUTH="Authorization: Bearer $TERRASCALE_ACCESS_TOKEN"
+curl -sS --fail-with-body -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"name":"customers"}' "$DB/collections"  # 409 name_taken when it already exists
+curl -sS --fail-with-body -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"email":"team@example.com","seats":12}' "$DB/collections/customers/documents"
+curl -sS --fail-with-body -H "$AUTH" "$DB/collections/customers/documents?limit=10"
+```
+
+The write answers `201` with the new document's `id` and `version`; `GET $DB/collections/customers/documents/by-key?id=<id>` reads one document. The [JavaScript quickstart](/pt-br/getting-started/javascript) runs the full create, read, update, query and delete journey.
 
 ## After the first document
 
