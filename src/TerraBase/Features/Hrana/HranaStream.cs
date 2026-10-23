@@ -22,6 +22,11 @@ internal sealed class HranaStream(ISqlSession session, string owner, TenantConte
 
     public TenantContext Database { get; } = database;
 
+    public long ParkedAt { get; set; }
+
+    /// <summary>Whether a fresh session is equivalent: no transaction and no stored statements.</summary>
+    public bool IsStateless => Session.IsAutocommit && _sql.Count == 0;
+
     /// <summary>A stored statement, or null.</summary>
     public string? Sql(int id) => _sql.TryGetValue(id, out var entry) ? entry.Sql : null;
 

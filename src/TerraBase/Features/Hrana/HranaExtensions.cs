@@ -5,8 +5,9 @@ namespace TerraBase.Features.Hrana;
 /// <summary>Registers the Hrana-over-HTTP slice.</summary>
 public static class HranaExtensions
 {
-    /// <summary>Registers the slice's JSON metadata and its API reference examples.</summary>
+    /// <summary>Registers the stream store, the slice's JSON metadata and its API reference examples.</summary>
     public static IServiceCollection AddTerraBaseHrana(this IServiceCollection services) => services
+        .AddSingleton<IHranaStreams, HranaStreams>()
         .ConfigureHttpJsonOptions(json => json.SerializerOptions.TypeInfoResolverChain.Insert(0, HranaJsonContext.Default))
         // Runs after the generic examples, which do not know the Hrana bodies.
         .AddOpenApi("v1", options => options.AddOperationTransformer((operation, _, _) =>

@@ -1,6 +1,8 @@
+using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
 using TerraBase.Tenancy;
 
@@ -81,5 +83,40 @@ internal static class HranaRoute
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// The request's stream: the one parked under the baton for this key and database, else a new one when there is no
+    /// baton or the baton's stream held no state (suffix <see cref="HranaStreams.StatelessSuffix"/>), so idle
+    /// connections of long-running apps survive expiry. A lost stream with a transaction or stored SQL is refused.
+    /// </summary>
+    public static (HranaStream? Stream, IResult? Refusal) Acquire(HttpContext context, IHranaStreams streams, TenantContext database, string? baton)
+    {
+        var owner = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? string.Empty;
+        if (baton is not null)
+        {
+            if (streams.Take(baton, owner, database) is { } taken)
+            {
+                return (taken, null);
+            }
+
+            if (!baton.EndsWith(HranaStreams.StatelessSuffix, StringComparison.Ordinal))
+            {
+                return (null, Refuse(StatusCodes.Status400BadRequest, "STREAM_EXPIRED", "stream not found: the baton is unknown or expired; open a new stream"));
+            }
+        }
+
+        var canWrite = context.User.HasClaim(ApiKeyAuthenticationHandler.ScopeClaim, ApiKeyScopes.DocumentsWrite);
+        return streams.Open(database, owner, canWrite) switch
+        {
+            HranaStream opened => (opened, null),
+            HranaError refused => (null, RetryLater(context, refused)),
+        };
+    }
+
+    private static IResult RetryLater(HttpContext context, HranaError refused)
+    {
+        context.Response.Headers.RetryAfter = "1";
+        return Refuse(StatusCodes.Status503ServiceUnavailable, refused.Code, refused.Message);
     }
 }
