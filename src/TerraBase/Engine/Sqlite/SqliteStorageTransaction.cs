@@ -1748,6 +1748,17 @@ internal sealed partial class SqliteStorageTransaction(
 
             throw new OperationCanceledException("the storage operation was cancelled", error, cancellationToken);
         }
+        catch when (_copyFault is not null)
+        {
+            // Durable before the caller sees the damage: a read records no intent, so a crash from here still faults the copy.
+            await store.Flagged.ConfigureAwait(false);
+            if (mutation)
+            {
+                _faulted = true;
+            }
+
+            throw;
+        }
         catch when (mutation)
         {
             // Includes pre-cancellation and queue cancellation before the worker callback runs.
