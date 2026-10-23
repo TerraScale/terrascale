@@ -15,7 +15,7 @@ public sealed class TerraBasePublicInventoryTests
         using var inventory = JsonDocument.Parse(TerraBaseIntegrationFixture.ReadContract("current-public-routes.json"));
         await Assert.That(inventory.RootElement.GetProperty("serverCommit").GetString()).IsEqualTo("e7fa366ddb289f5612c93d316b316fb92c568151");
         var expected = inventory.RootElement.GetProperty("operations").EnumerateArray().ToDictionary(r => r.GetProperty("operation").GetString()!, r => r);
-        await Assert.That(expected.Count).IsEqualTo(76);
+        await Assert.That(expected.Count).IsEqualTo(79);
         (string Method, string Path)? sent = null;
         using var handler = new TerraBaseTestHandler((request, _) =>
         {
@@ -49,6 +49,7 @@ public sealed class TerraBasePublicInventoryTests
             ("declareCollectionSchema", () => db.DeclareSchemaAsync("items", new())),
             ("deleteBackupDestination", () => project.DeleteBackupDestinationAsync()),
             ("deleteDatabase", () => project.DeleteDatabaseAsync("app")),
+            ("deleteCollectionTtl", () => db.ClearCollectionTtlAsync("items")),
             ("deleteDeclaredCollectionSchema", () => db.DeleteDeclaredSchemaAsync("items")),
             ("deleteDocument", () => db.DeleteDocumentAsync("items", "01JA00000000000000000000D1")),
             ("deleteSavedQuery", () => project.DeleteSavedQueryAsync(EntityId)),
@@ -60,6 +61,7 @@ public sealed class TerraBasePublicInventoryTests
             ("getBackupPolicy", () => db.GetBackupPolicyAsync()),
             ("getCollection", () => db.GetCollectionAsync("items")),
             ("getCollectionSchema", () => db.GetInferredSchemaAsync("items")),
+            ("getCollectionTtl", () => db.GetCollectionTtlAsync("items")),
             ("getDatabase", () => project.GetDatabaseAsync("app")),
             ("getDatabaseAnalytics", () => db.GetAnalyticsAsync()),
             ("getDatabaseReplication", () => db.GetReplicationAsync()),
@@ -90,6 +92,7 @@ public sealed class TerraBasePublicInventoryTests
             ("listSavedQueries", () => project.ListSavedQueriesAsync()),
             ("patchDocument", () => db.PatchDocumentAsync("items", "01JA00000000000000000000D1", json)),
             ("planPointInTime", () => db.PlanPointInTimeAsync(DateTimeOffset.UnixEpoch)),
+            ("putCollectionTtl", () => db.SetCollectionTtlAsync("items", "/expiresAt")),
             ("putDeclaredCollectionSchema", () => db.PutDeclaredSchemaAsync("items", json)),
             ("putDocument", () => db.PutDocumentAsync("items", "01JA00000000000000000000D1", json)),
             ("queryDocuments", () => db.QueryAsync("items", new())),

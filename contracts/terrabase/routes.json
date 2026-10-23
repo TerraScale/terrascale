@@ -441,6 +441,24 @@
     },
     {
       "client": "documents",
+      "operation": "getCollectionTtl",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/ttl"
+    },
+    {
+      "client": "documents",
+      "operation": "putCollectionTtl",
+      "method": "PUT",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/ttl"
+    },
+    {
+      "client": "documents",
+      "operation": "deleteCollectionTtl",
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/ttl"
+    },
+    {
+      "client": "documents",
       "operation": "branchDatabase",
       "method": "POST",
       "path": "/v1/projects/{project}/databases/{database}/branches"

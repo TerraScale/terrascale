@@ -50,6 +50,7 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBaseProjectUsage))]
 [JsonSerializable(typeof(TerraBaseCollectionList))]
 [JsonSerializable(typeof(TerraBaseDeclaredSchema))]
+[JsonSerializable(typeof(TerraBaseCollectionTtl))]
 [JsonSerializable(typeof(TerraBaseChange))]
 [JsonSerializable(typeof(TerraBaseChangeCursor))]
 [JsonSerializable(typeof(TerraBaseStreamError))]

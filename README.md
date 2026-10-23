@@ -148,6 +148,19 @@ list of `TerraBasePatchOperation`. `TransactAsync` applies `Create`, `Put`,
 `Patch`, `Delete`, `Assert`, `AssertAbsent` and `AssertCount` operations
 atomically.
 
+`TerraBaseSort.Near(path, vector, metric)` orders a query by vector distance
+(`cosine`, the default, or `l2`). It must be the only sort key; the query
+returns one page of at most 100 documents, each with `Distance`.
+`SetCollectionTtlAsync`, `GetCollectionTtlAsync` and `ClearCollectionTtlAsync`
+manage a collection's expiry member: documents whose member holds a past
+RFC 3339 UTC time are deleted within about an hour and stay readable until then.
+
+```csharp
+await database.SetCollectionTtlAsync("sessions", "/expiresAt", cancellationToken);
+TerraBaseDocumentPage nearest = await database.QueryAsync("items",
+    new TerraBaseQuery { Sort = [TerraBaseSort.Near("/embedding", embedding)], Limit = 10 }, cancellationToken);
+```
+
 ```csharp
 // Use the ts-orch NetBird service address; the caller configures the required peer credential on httpClient.
 // Qualify this pinned-contract example against the OCI server before use.
