@@ -78,7 +78,7 @@ internal sealed partial class SqliteDatabaseStore
 
     internal async Task RecordOperationDamageAsync(Exception error)
     {
-        if (SqliteStorageTransaction.Damaged(error) || error is TursoNativeException { StatusCode: 132 or 133 or 134 } or TursoNativeException { IsPageAuthenticationFailure: true })
+        if (SqliteStorageTransaction.Damaged(error) || error is TursoNativeException { StatusCode: 132 or 133 or 134 })
         {
             NoteCopyFault("a storage operation reported I/O failure or corruption");
             await RecordCopyFaultAsync(CopyFault!).ConfigureAwait(false);

@@ -1,0 +1,40 @@
+<Project>
+  <PropertyGroup>
+    <_TerraScaleTursoRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_TerraScaleTursoRid>
+    <_TerraScaleTursoRid Condition="'$(_TerraScaleTursoRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</_TerraScaleTursoRid>
+    <_TerraScaleTursoRoot>$(MSBuildThisFileDirectory)artifacts/turso-native-v1/</_TerraScaleTursoRoot>
+    <_TerraScaleTursoFile>$(_TerraScaleTursoRoot)$(_TerraScaleTursoRid)/libturso_sdk_kit.so</_TerraScaleTursoFile>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'Turso.Raw' and ('$(_TerraScaleTursoRid)' == 'linux-x64' or '$(_TerraScaleTursoRid)' == 'linux-arm64')">
+    <_TerraScaleTursoNative Include="$(_TerraScaleTursoFile)">
+      <Sha256 Condition="'$(_TerraScaleTursoRid)' == 'linux-x64'">A8E66163067435DE33627E2231F1F409A78FB5E2ED1A10ADE478A815D4AD702F</Sha256>
+      <Sha256 Condition="'$(_TerraScaleTursoRid)' == 'linux-arm64'">C14FE3965580B762FD4F8D128A8B5043C393AD3E0AB98559875175917B8DCCB4</Sha256>
+      <Url>https://github.com/TerraScale/terrascale/releases/download/turso-native-v1/terrascale-turso-$(_TerraScaleTursoRid).so</Url>
+    </_TerraScaleTursoNative>
+    <None Include="@(_TerraScaleTursoNative)"
+          Link="libturso_sdk_kit.so" TargetPath="libturso_sdk_kit.so"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+          ExcludeFromSingleFile="false" />
+  </ItemGroup>
+  <Target Name="VerifyTerraScaleTursoNative" BeforeTargets="PrepareForBuild;GetCopyToOutputDirectoryItems;GetCopyToPublishDirectoryItems"
+          Condition="'@(_TerraScaleTursoNative)' != ''">
+    <Error Condition="'%(_TerraScaleTursoNative.Sha256)' == 'PENDING_NATIVE_BUILD'"
+           Text="The patched native artifact must be built and its reviewed digest pinned before this branch can build." />
+    <MakeDir Directories="$(_TerraScaleTursoRoot)$(_TerraScaleTursoRid)/" />
+    <DownloadFile SourceUrl="%(_TerraScaleTursoNative.Url)"
+                  DestinationFolder="$(_TerraScaleTursoRoot)$(_TerraScaleTursoRid)/" DestinationFileName="libturso_sdk_kit.so"
+                  Condition="!Exists('$(_TerraScaleTursoFile)')" />
+    <GetFileHash Files="@(_TerraScaleTursoNative)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_TerraScaleTursoHashed" />
+    </GetFileHash>
+    <Error Condition="'%(_TerraScaleTursoHashed.FileHash)' != '%(_TerraScaleTursoHashed.Sha256)'"
+           Text="The patched Turso native artifact does not match its reviewed SHA-256 digest." />
+  </Target>
+  <!-- Publish collection strips custom metadata from transitive content items. -->
+  <Target Name="ClassifyTerraScaleTursoNative" BeforeTargets="_ComputeFilesToBundle"
+          Condition="'$(PublishSingleFile)' == 'true' and ('$(_TerraScaleTursoRid)' == 'linux-x64' or '$(_TerraScaleTursoRid)' == 'linux-arm64')">
+    <ItemGroup>
+      <ResolvedFileToPublish Update="$(_TerraScaleTursoFile)" AssetType="native" />
+    </ItemGroup>
+  </Target>
+</Project>

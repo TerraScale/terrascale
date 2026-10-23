@@ -1,6 +1,7 @@
 <Project>
   <!-- Imported after every project file, so these rules can key on properties the
        projects set (UseTerraScaleEndpoints, IsTestProject) and the area flags of Directory.Build.props. -->
+  <Import Project="Turso.Native.targets" Condition="'$(MSBuildProjectName)' == 'TerraBase'" />
 
   <!-- TerraScale.Endpoints (src/): opt in with <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>. Its generator
        is referenced as an analyzer only, so endpoint registration happens at compile time. -->
