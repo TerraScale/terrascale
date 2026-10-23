@@ -486,6 +486,7 @@ public sealed class RemoteAckTests
 
         var head = pair.HoldDatabaseHead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         Task<HttpResponseMessage>? pending = null;
+        Task<HttpResponseMessage>? later = null;
         try
         {
             await pair.AgeOriginCaptureAsync(TimeSpan.FromHours(25));
@@ -510,11 +511,12 @@ public sealed class RemoteAckTests
             var marker = await pair.ReachedWait.Task.WaitAsync(pair.Token);
             if (large)
             {
-                var padding = Encoding.UTF8.GetBytes("{\"padding\":\"" + new string('x', 900 * 1024) + "\"}");
-                // Real captured documents, not a mocked byte count: keep more than 64 MiB above the pending marker.
+                var paddingId = EntityIds.New().ToString();
+                var padding = new string('x', 900 * 1024);
+                // Real updates keep over 64 MiB of capture above the marker, with one document to repair in the refill.
                 for (var n = 0; n < 76; n++)
                 {
-                    await LocalAsync(EntityIds.New().ToString(), padding);
+                    await LocalAsync(paddingId, Encoding.UTF8.GetBytes("{\"padding\":\"" + padding + n.ToString(CultureInfo.InvariantCulture) + "\"}"));
                 }
 
                 var bytes = await store.WithWriterAsync(session =>
@@ -541,10 +543,33 @@ public sealed class RemoteAckTests
                 _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
             }
 
+            if (unregistered && large)
+            {
+                pair.HoldReplay = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
             var replay = pair.ReplayStart = new(TaskCreationOptions.RunContinuationsAsynchronously);
             pair.PeerAck.Refuse = false;
             head.TrySetResult();
+            long? captured = null;
+            if (pair.HoldReplay is { } held)
+            {
+                captured = await pair.ReplayReached.Task.WaitAsync(pair.Token);
+                pair.HoldWait!.TrySetResult();
+                _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+                pair.ExpectWait();
+                pair.HoldWait = null;
+                later = pair.Client.PutAsJsonAsync(pair.Document(EntityIds.New().ToString()), new { n = 2 }, pair.Token);
+                _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+                held.TrySetResult();
+            }
+
             var start = await replay.Task.WaitAsync(pair.Token);
+            if (captured is { } capturedHead)
+            {
+                await Assert.That(start).IsLessThanOrEqualTo(capturedHead).Because("a later admission must remain above the capped refill");
+            }
+
             var unknown = cutWrite || (unregistered && large);
             if (unknown)
             {
@@ -569,15 +594,28 @@ public sealed class RemoteAckTests
             using var remote = await pair.PeerClient.GetAsync(pair.Document(id), pair.Token);
             await Assert.That(remote.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That((await remote.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
+            if (later is not null)
+            {
+                using var following = await later.WaitAsync(pair.Token);
+                await Assert.That(following.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                await Assert.That((await following.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString())
+                    .IsEqualTo("remote_durable");
+            }
         }
         finally
         {
+            pair.HoldReplay?.TrySetResult();
             pair.PeerAck.Refuse = false;
             head.TrySetResult();
             pair.HoldWait?.TrySetResult();
             if (pending is not null)
             {
                 using var response = await pending.WaitAsync(pair.Token);
+            }
+
+            if (later is not null)
+            {
+                using var response = await later.WaitAsync(pair.Token);
             }
         }
     }
@@ -1713,6 +1751,10 @@ public sealed class RemoteAckTests
 
         public TaskCompletionSource<long>? ReplayStart { get; set; }
 
+        public TaskCompletionSource? HoldReplay { get; set; }
+
+        public TaskCompletionSource<long> ReplayReached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         // Copies db on the origin through the management service (as a restore copies its snapshot) and binds it on the peer.
         public async Task<TenantContext> CopyAsync(string name)
         {
@@ -2157,8 +2199,13 @@ public sealed class RemoteAckTests
             // This gate models a cut through the marker, so the retained boundary overrides the requested replay start.
             if (refill.Refills(database, 0))
             {
-                var currentHead = await inner.HeadAsync(database, incarnation, cancellationToken);
-                return currentHead is { } current ? Math.Min(current, refill.Boundary) : null;
+                return Math.Min(head, refill.Boundary);
+            }
+
+            if (ReferenceEquals(refill, pair.Refill) && pair.HoldReplay is { } held && (database with { Plan = PlanTier.Hobby }) == pair.Database)
+            {
+                pair.ReplayReached.TrySetResult(head);
+                await held.Task.WaitAsync(cancellationToken);
             }
 
             var start = await inner.RetainedAfterAsync(database, incarnation, through, head, cancellationToken);

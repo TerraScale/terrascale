@@ -842,6 +842,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     }
 
                     head = heldHead;
+                    // Capture head before the waiter snapshot: later admissions must remain above every chosen resume.
                     // Keep admitted writes in live batches after the refill, even when the earlier log was cut.
                     var retainedStart = retained ? acked : await _source.RetainedAfterAsync(database, incarnation,
                         _acks.ReplayThrough(database, incarnation, head), head, cancellationToken).ConfigureAwait(false);

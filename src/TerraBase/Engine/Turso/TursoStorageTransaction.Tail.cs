@@ -277,21 +277,38 @@ internal sealed partial class TursoStorageTransaction
                 return 0L;
             }
 
-            if (through is null && Command("SELECT coalesce(sum(length(after)), 0) FROM turso_cdc;").ExecuteScalar() is long bytes
-                && bytes > MaxUnknownReplayBytes)
+            // Retention deletes strictly below a commit row; never resume inside a transaction's captured deltas.
+            var floor = Command("""
+                SELECT coalesce((SELECT CASE WHEN change_type = 2 THEN change_id ELSE change_id - 1 END
+                    FROM turso_cdc ORDER BY change_id LIMIT 1), 0);
+                """).ExecuteScalar() is long first ? first : 0;
+            if (through is null)
             {
-                through = head;
+                var size = Command("SELECT length(after) FROM turso_cdc WHERE change_id > $floor AND change_id <= $head ORDER BY change_id;");
+                size.Parameters.AddWithValue("$floor", floor);
+                size.Parameters.AddWithValue("$head", head);
+                using var reader = size.ExecuteReader();
+                long bytes = 0;
+                while (reader.Read())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    bytes += reader.IsDBNull(0) ? 0 : reader.GetInt64(0);
+                    if (bytes > MaxUnknownReplayBytes)
+                    {
+                        through = head;
+                        break;
+                    }
+                }
             }
 
-            // Retention deletes strictly below a commit row; never resume inside a transaction's captured deltas.
-            var command = Command("""
-                SELECT max(coalesce((SELECT change_id FROM turso_cdc
-                    WHERE change_type = 2 AND change_id <= $through ORDER BY change_id DESC LIMIT 1), 0),
-                    coalesce((SELECT CASE WHEN change_type = 2 THEN change_id ELSE change_id - 1 END
-                        FROM turso_cdc ORDER BY change_id LIMIT 1), 0));
-                """);
-            command.Parameters.AddWithValue("$through", through is { } bound ? bound : DBNull.Value);
-            return (long)command.ExecuteScalar()!;
+            if (through is null)
+            {
+                return floor;
+            }
+
+            var command = Command("SELECT change_id FROM turso_cdc WHERE change_type = 2 AND change_id <= $through ORDER BY change_id DESC LIMIT 1;");
+            command.Parameters.AddWithValue("$through", through.Value);
+            return Math.Max(floor, command.ExecuteScalar() is long previous ? previous : 0);
         }, cancellationToken);
 
     /// <summary>
