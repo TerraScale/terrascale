@@ -39,11 +39,11 @@ We may suspend access that threatens the Service, other customers or third parti
 
 ## 4. Plans and billing
 
-- Approved subscription prices and proposed allowances and usage rates are listed on the [pricing page](/ru/pricing). Prices are in USD and exclude taxes, which you pay where applicable.
+- Approved subscription prices, allowances and usage rates are listed on the [pricing page](/ru/pricing). Prices are in USD and exclude taxes, which you pay where applicable.
 - Starter is billed $30 yearly only ($2.50/month equivalent); Pro is $20/month and Team is $50/month. Enterprise is $999/month support plus usage through sales, without self-service purchase during Public Alpha. Confirm enrollment and payment availability before purchase.
 - No trials or annual Pro/Team discounts are offered.
 - Subscription-change timing, proration and refunds follow the agreed enrollment terms and applicable law. Confirm the available subscription-change workflow before purchase.
-- Free has no automatic overages. Paid plans propose included allowances followed by pay-as-you-go usage. Allowances and overage rates are pending review; usage charges are not yet collected. Reaching an allowance alone does not authorize deletion.
+- Free has no automatic overages. Paid plans include allowances followed by pay-as-you-go usage. Allowances and overage rates are approved; usage charges are not yet collected. Reaching an allowance alone does not authorize deletion.
 - If payment fails, we follow the grace period and notice steps on the [pricing page](/ru/pricing) before any data becomes eligible for deletion.
 
 ## 5. Public Alpha

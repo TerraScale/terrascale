@@ -1,5 +1,5 @@
 {
-  "$comment": "Canonical TerraScale plan catalog. Subscription prices approved 2026-10-23; allowances and overage rates are proposed for review.",
+  "$comment": "Canonical TerraScale plan catalog. Subscription prices, allowances and overage rates approved 2026-10-23.",
   "version": 1,
   "currency": "USD",
   "metering": {
@@ -19,7 +19,7 @@
     },
     "allowances": {
       "paidOverages": true,
-      "definition": "Free includes small allowances without a card and has no automatic overages. Paid plans include monthly allowances, then pay-as-you-go usage. Allowances and overage rates are proposed for review; usage charges are not yet collected."
+      "definition": "Free includes small allowances without a card and has no automatic overages. Paid plans include monthly allowances, then pay-as-you-go usage. Usage charges are not yet collected."
     },
     "egress": {
       "name": "Client egress",
@@ -29,7 +29,7 @@
       "operationUnitsPerMillionUsd": 5,
       "storageGbRegionMonthUsd": 0.5,
       "clientEgressGbUsd": 0.1,
-      "status": "proposed"
+      "status": "approved"
     }
   },
   "plans": [
@@ -121,5 +121,5 @@
       "billing": "$999 per month support plus usage; contact sales."
     }
   ],
-  "reviewStatus": "allowances-proposed"
+  "reviewStatus": "approved"
 }

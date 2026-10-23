@@ -26,6 +26,6 @@ TerraBase enforces these safety tiers per organization, shared by all its projec
 
 The existing engine PITR defaults (days) are hobby 1 / pro 7 / enterprise 30. These engine defaults do not publish PITR entitlements for the commercial plans. No commercial plan-to-engine-tier mapping is published.
 
-Proposed databases per org: Free 1 / Starter 5 / Pro 25 / Team 100 / Enterprise Custom.
+Databases per org: Free 1 / Starter 5 / Pro 25 / Team 100 / Enterprise Custom.
 
-Subscription prices, proposed allowances and metering are on the [pricing page](./pricing.md). Usage charges are not yet collected.
+Subscription prices, allowances and metering are on the [pricing page](./pricing.md). Usage charges are not yet collected.

@@ -1,10 +1,10 @@
 <!-- GENERATED from data/canonical/pricing.json (https://terrascale.tech/pricing.json) and data/policies.json by scripts/generate-pricing.mjs — do not edit. -->
 # Pricing
 
-> **Approved subscription prices; proposed allowances and usage rates.** Prices come from the catalog at
+> **Approved subscription prices, allowances and usage rates.** Prices come from the catalog at
 > [terrascale.tech/pricing.json](https://terrascale.tech/pricing.json); the
 > [pricing page](https://terrascale.tech/pricing) renders the same catalog.
-> All prices are in USD. Allowances and overage rates remain pending review.
+> All prices are in USD. Allowances and overage rates are approved.
 > Usage charges are not yet collected. Confirm enrollment and service availability before purchase;
 > a published price does not establish that checkout or billing is available.
 
@@ -13,9 +13,9 @@
 - **Operation units.** One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Writes count once per selected region; reads count only in the serving region. Failed, denied, invalid, throttled, and not-found requests are not billed.
 - **Storage across regions.** Stored bytes count once in every selected region. Storage uses decimal GB-region-month, averaged over time during the month.
 - **Client egress.** Outbound application response bytes to clients, excluding replication traffic; decimal GB.
-- **Allowances.** Free includes small allowances without a card and has no automatic overages. Paid plans include monthly allowances, then pay-as-you-go usage. Allowances and overage rates are proposed for review; usage charges are not yet collected.
+- **Allowances.** Free includes small allowances without a card and has no automatic overages. Paid plans include monthly allowances, then pay-as-you-go usage. Usage charges are not yet collected.
 
-## Plans and proposed allowances
+## Plans and allowances
 
 |  | Free | Starter | Pro | Team | Enterprise |
 | --- | --- | --- | --- | --- | --- |
@@ -24,28 +24,28 @@
 | Projects | 1 | 5 | 25 | 100 | Custom |
 | Databases | 1 | 5 | 25 | 100 | Custom |
 | Members | 1 | 5 | 25 | 100 | Custom |
-| Proposed storage (GB-region-month) | 100 MB | 1 GB | 10 GB | 25 GB | 100 GB |
-| Proposed operation units / month | 50,000 | 250,000 | 2,000,000 | 5,000,000 | 10,000,000 |
-| Proposed client egress / month | 1 GB | 5 GB | 50 GB | 100 GB | 250 GB |
+| Storage (GB-region-month) | 100 MB | 1 GB | 10 GB | 25 GB | 100 GB |
+| Operation units / month | 50,000 | 250,000 | 2,000,000 | 5,000,000 | 10,000,000 |
+| Client egress / month | 1 GB | 5 GB | 50 GB | 100 GB | 250 GB |
 | Regions per database | up to 3 | up to 3 | up to 3 | up to 3 | up to 3 |
 
 Launch regions: GRU (São Paulo), SJC (San Jose), FRA (Frankfurt).
 
 No trials or annual Pro/Team discounts are offered.
 
-## Proposed pay-as-you-go rates
+## Pay-as-you-go rates
 
-Paid plans include the proposed allowances above, then proposed pay-as-you-go usage:
+Paid plans include the allowances above, then pay-as-you-go usage at the approved rates:
 
-| Meter | Proposed rate (USD) |
+| Meter | Rate (USD) |
 | --- | --- |
 | Operation units | $5 per million |
 | Storage | $0.50 per GB-region-month |
 | Client egress | $0.10 per decimal GB |
 
-These allowances and rates are pending review. Usage charges are not yet collected.
+These allowances and rates are approved. Usage charges are not yet collected.
 
-**Shared organization allowances.** Databases and branches share their owning organization’s proposed plan allowances. There is no additional branch allowance. Writes consume operation units once per selected region. Storage is decimal GB-region-month, averaged over time: 100 MB stored across three regions for a full month consumes 0.3 GB-region-month.
+**Shared organization allowances.** Databases and branches share their owning organization’s plan allowances. There is no additional branch allowance. Writes consume operation units once per selected region. Storage is decimal GB-region-month, averaged over time: 100 MB stored across three regions for a full month consumes 0.3 GB-region-month.
 
 **Free.** Free requires no payment card and has no automatic overages. No trial or first-paid-month promotion is offered by this catalog.
 
@@ -53,7 +53,7 @@ These allowances and rates are pending review. Usage charges are not yet collect
 
 ## Billing cycle
 
-Starter is billed yearly only; its monthly price is an equivalent, not a monthly purchase. Pro and Team are billed monthly. Enterprise support plus usage is arranged through sales. Proposed operation-unit and client-egress allowances are monthly, including on Starter; they are not annual usage pools. Storage is averaged over time during the month. Usage charges are not yet collected. No trials or annual Pro/Team discounts are offered.
+Starter is billed yearly only; its monthly price is an equivalent, not a monthly purchase. Pro and Team are billed monthly. Enterprise support plus usage is arranged through sales. Operation-unit and client-egress allowances are monthly, including on Starter; they are not annual usage pools. Storage is averaged over time during the month. Usage charges are not yet collected. No trials or annual Pro/Team discounts are offered.
 
 ## Subscription changes
 
@@ -61,7 +61,7 @@ Confirm the available enrollment and subscription-change workflow before purchas
 
 ## Exhausted allowances
 
-Free has no automatic overages. Paid plans propose included allowances followed by pay-as-you-go usage at the proposed rates above. Allowances and overage rates are pending review; usage charges are not yet collected. This pricing proposal does not establish current overage enforcement or payment collection. Reaching an allowance alone does not authorize deletion; account/database closure and retention deletion are separate workflows.
+Free has no automatic overages. Paid plans include allowances followed by pay-as-you-go usage at the approved rates above. Allowances and overage rates are approved; usage charges are not yet collected. Approved pricing does not establish current overage enforcement or payment collection. Reaching an allowance alone does not authorize deletion; account/database closure and retention deletion are separate workflows.
 
 ## Unpaid storage
 

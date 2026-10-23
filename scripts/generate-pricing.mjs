@@ -39,10 +39,10 @@ const regionList = regions.map((r) => `${r.id.toUpperCase()} (${r.name})`).join(
 const pricingMd = `${header}
 # Pricing
 
-> **Approved subscription prices; proposed allowances and usage rates.** Prices come from the catalog at
+> **Approved subscription prices, allowances and usage rates.** Prices come from the catalog at
 > [terrascale.tech/pricing.json](https://terrascale.tech/pricing.json); the
 > [pricing page](https://terrascale.tech/pricing) renders the same catalog.
-> All prices are in ${catalog.currency}. Allowances and overage rates remain pending review.
+> All prices are in ${catalog.currency}. Allowances and overage rates are approved.
 > Usage charges are not yet collected. Confirm enrollment and service availability before purchase;
 > a published price does not establish that checkout or billing is available.
 
@@ -53,7 +53,7 @@ const pricingMd = `${header}
 - **${metering.egress.name}.** ${metering.egress.definition}
 - **Allowances.** ${metering.allowances.definition}
 
-## Plans and proposed allowances
+## Plans and allowances
 
 ${table("")}
 ${row("Subscription", subscription)}
@@ -61,26 +61,26 @@ ${row("Availability", (p) => p.available ? "Public Alpha; confirm enrollment" : 
 ${row("Projects", (p) => limit(p.limits.projects))}
 ${row("Databases", (p) => limit(p.limits.databases))}
 ${row("Members", (p) => limit(p.limits.members))}
-${row("Proposed storage (GB-region-month)", (p) => limit(p.limits.storageGb, storage))}
-${row("Proposed operation units / month", (p) => limit(p.limits.operationUnitsPerMonth))}
-${row("Proposed client egress / month", (p) => limit(p.limits.egressGbPerMonth, storage))}
+${row("Storage (GB-region-month)", (p) => limit(p.limits.storageGb, storage))}
+${row("Operation units / month", (p) => limit(p.limits.operationUnitsPerMonth))}
+${row("Client egress / month", (p) => limit(p.limits.egressGbPerMonth, storage))}
 ${row("Regions per database", () => `up to ${policy.maxRegions}`)}
 
 Launch regions: ${regionList}.
 
 No trials or annual Pro/Team discounts are offered.
 
-## Proposed pay-as-you-go rates
+## Pay-as-you-go rates
 
-Paid plans include the proposed allowances above, then proposed pay-as-you-go usage:
+Paid plans include the allowances above, then pay-as-you-go usage at the approved rates:
 
-| Meter | Proposed rate (USD) |
+| Meter | Rate (USD) |
 | --- | --- |
 | Operation units | ${usd(metering.overageRates.operationUnitsPerMillionUsd)} per million |
 | Storage | ${usd(metering.overageRates.storageGbRegionMonthUsd)} per GB-region-month |
 | Client egress | ${usd(metering.overageRates.clientEgressGbUsd)} per decimal GB |
 
-These allowances and rates are pending review. Usage charges are not yet collected.
+These allowances and rates are approved. Usage charges are not yet collected.
 
 **Shared organization allowances.** ${policy.sharedAllowances}
 
@@ -119,9 +119,9 @@ ${e.rows.map((r) => `| ${r.join(" | ")} |`).join("\n")}
 
 The existing engine PITR defaults (days) are ${Object.entries(policy.enginePitrRetentionDays).map(([id, days]) => `${id} ${days}`).join(" / ")}. These engine defaults do not publish PITR entitlements for the commercial plans. No commercial plan-to-engine-tier mapping is published.
 
-Proposed databases per org: ${plans.map((p) => `${p.name} ${limit(p.limits.databases)}`).join(" / ")}.
+Databases per org: ${plans.map((p) => `${p.name} ${limit(p.limits.databases)}`).join(" / ")}.
 
-Subscription prices, proposed allowances and metering are on the [pricing page](./pricing.md). Usage charges are not yet collected.
+Subscription prices, allowances and metering are on the [pricing page](./pricing.md). Usage charges are not yet collected.
 `;
 
 if (check) {

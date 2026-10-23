@@ -9,7 +9,7 @@ title: Pricing and limits
 
 # Pricing and limits
 
-The [pricing sheet](/ja/pricing) and [limits](/ja/limits) are generated from the public [pricing catalog](https://terrascale.tech/pricing.json) and documentation policy. Subscription prices are approved. Free requires no card; Starter is $30/year only ($2.50/month equivalent), Pro $20/month, Team $50/month, and Enterprise $999/month support plus usage through sales. Allowances and usage rates are proposed and pending review. Paid plans propose included allowances then pay-as-you-go; usage charges are not yet collected.
+The [pricing sheet](/ja/pricing) and [limits](/ja/limits) are generated from the public [pricing catalog](https://terrascale.tech/pricing.json) and documentation policy. Subscription prices, allowances and usage rates are approved. Free requires no card; Starter is $30/year only ($2.50/month equivalent), Pro $20/month, Team $50/month, and Enterprise $999/month support plus usage through sales. Paid plans include allowances then pay-as-you-go; usage charges are not yet collected.
 
 ## Operation units and storage
 
