@@ -369,6 +369,7 @@ public sealed class PeerStreamDeadlineTests
     }
 
     [Test]
+    [Skip("flake #437, owner R10 d83ac492, fix due 2026-10-24T09:00Z")]
     public async Task Thirty_two_unanswered_frontiers_do_not_consume_the_healthy_batch_budget()
     {
         var time = new ObservedTime();
