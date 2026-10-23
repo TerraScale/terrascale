@@ -68,6 +68,19 @@ internal sealed class TablePlan
     /// <summary>The document id and body of row number <paramref name="ordinal"/>, or throws <see cref="ImportValueException"/>.</summary>
     public (string Id, byte[] Json) Map(SourceRow row, long ordinal, string jobId, DateTimeOffset createdAt, ArrayBufferWriter<byte> buffer)
     {
+        if (IdPolicy == "document")
+        {
+            // NDJSON: the line's body as it is, under its own id or a generated ULID.
+            var documentId = row.Values[1].Text ?? ImportMapping.GeneratedId(jobId, createdAt, Source.Display, ordinal);
+            if (!ImportNames.ValidId(documentId))
+            {
+                throw new ImportValueException("invalid_document_id", "the document id must be 1 to 256 characters without control characters", "id");
+            }
+
+            ImportMapping.Check(row.Values[0].Blob!);
+            return (documentId, row.Values[0].Blob!);
+        }
+
         var (key, write) = Layout(row.Columns);
         buffer.ResetWrittenCount();
         using (var writer = ImportMapping.Writer(buffer))
@@ -146,8 +159,9 @@ internal static class ImportPlanner
     public const int MaxPreviewBytes = 512 * 1024;
 
     /// <summary>The table plans of <paramref name="source"/> under <paramref name="options"/>, in source order.</summary>
-    public static List<TablePlan> Plan(IImportSource source, ImportOptionsBody options, bool sqlite)
+    public static List<TablePlan> Plan(IImportSource source, ImportOptionsBody options, string format)
     {
+        var sqlite = format == ImportFormats.Sqlite;
         var excludes = (options.Exclude ?? []).Select(ImportNames.Parse).OfType<List<string>>().ToList();
         var comparison = sqlite ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         bool Excludes(SourceTable table, string? column)
@@ -169,7 +183,8 @@ internal static class ImportPlanner
             var plan = new TablePlan
             {
                 Source = table,
-                Collection = ImportNames.CollectionFor(table.Schema, table.Name),
+                // NDJSON names its collections; tables map to one.
+                Collection = format == ImportFormats.Ndjson ? table.Name : ImportNames.CollectionFor(table.Schema, table.Name),
                 Excluded = Excludes(table, null),
                 IgnoreCase = sqlite,
             };
@@ -208,7 +223,11 @@ internal static class ImportPlanner
                 }
             }
 
-            if (table.PrimaryKey.Count > 0)
+            if (format == ImportFormats.Ndjson)
+            {
+                plan.IdPolicy = "document";
+            }
+            else if (table.PrimaryKey.Count > 0)
             {
                 var keyColumns = table.PrimaryKey.Select(name => table.Column(name, sqlite)).ToList();
                 if (keyColumns.Any(column => column is null || !ImportMapping.KeyAllowed(plan.Mappings[column])))
@@ -253,7 +272,7 @@ internal static class ImportPlanner
         IImportSource source;
         try
         {
-            source = Open(path, format, cancellationToken);
+            source = Open(path, format, options, cancellationToken);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
@@ -268,7 +287,7 @@ internal static class ImportPlanner
                 return new(null, new ImportError("too_many_tables", "an import holds at most 1000 tables", Retryable: false), new Dictionary<string, TableChecksum>(), null);
             }
 
-            var plans = Plan(source, options, sqlite);
+            var plans = Plan(source, options, format);
             var byTable = plans.ToDictionary(plan => plan.Source);
             var buffer = new ArrayBufferWriter<byte>(4096);
             ImportError? fatal = null;
@@ -316,7 +335,7 @@ internal static class ImportPlanner
                 ?? tables.Where(table => !table.Excluded).SelectMany(table => table.Issues.Where(issue => issue.Severity == "blocking")
                     .Select(issue => new ImportError(issue.Code, issue.Message, Retryable: false, table.Source, issue.Row, issue.Column))).FirstOrDefault();
             var checksums = plans.Where(plan => !plan.Excluded).ToDictionary(plan => plan.Source.Display, plan => new TableChecksum(plan.Rows, ImportMapping.Hex(plan.Sum)));
-            return new(preview, error, checksums, Digest(plans, sqlite));
+            return new(preview, error, checksums, Digest(plans, format));
         }
     }
 
@@ -326,14 +345,17 @@ internal static class ImportPlanner
         : new ImportError("malformed_source", "the source cannot be read: it is damaged or uses a structure the reader does not support", Retryable: false);
 
     /// <summary>Opens a staged source of <paramref name="format"/> and reads its schema.</summary>
-    public static IImportSource Open(string path, string format, CancellationToken cancellationToken) => format == ImportFormats.Sqlite
-        ? SqliteFile.Open(path, cancellationToken)
-        : PostgresDump.Open(path, cancellationToken);
+    public static IImportSource Open(string path, string format, ImportOptionsBody options, CancellationToken cancellationToken) => format switch
+    {
+        ImportFormats.Sqlite => SqliteFile.Open(path, cancellationToken),
+        ImportFormats.Ndjson => NdjsonFile.Open(path, options.Collection, cancellationToken),
+        _ => PostgresDump.Open(path, cancellationToken),
+    };
 
     /// <summary>A digest of the parts of a preview the copy applies, to check that a new plan still matches a confirmed preview.</summary>
-    public static string Digest(IEnumerable<TablePlan> plans, bool sqlite)
+    public static string Digest(IEnumerable<TablePlan> plans, string format)
     {
-        var text = new StringBuilder(sqlite ? "sqlite\n" : "postgres\n");
+        var text = new StringBuilder(format).Append('\n');
         foreach (var plan in plans)
         {
             text.Append(plan.Source.Display).Append('\0').Append(plan.Collection).Append('\0').Append(plan.Excluded).Append('\0').Append(plan.IdPolicy).Append('\0')

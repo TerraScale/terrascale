@@ -261,10 +261,9 @@ internal sealed class ImportRunner : BackgroundService
             return;
         }
 
-        using var source = ImportPlanner.Open(_staging.Source(job.DatabaseId), job.Format, stop);
-        var sqlite = job.Format == ImportFormats.Sqlite;
-        var plans = ImportPlanner.Plan(source, job.Options, sqlite);
-        if (ImportPlanner.Digest(plans, sqlite) != job.PlanDigest)
+        using var source = ImportPlanner.Open(_staging.Source(job.DatabaseId), job.Format, job.Options, stop);
+        var plans = ImportPlanner.Plan(source, job.Options, job.Format);
+        if (ImportPlanner.Digest(plans, job.Format) != job.PlanDigest)
         {
             // TerraBase changed between preview and copy: analyze again, and the user confirms the new preview.
             var again = await UpdateAsync(database, current => (current.Job with { Preview = null, PlanDigest = null, Checksums = null }, current.State with

@@ -142,6 +142,8 @@ Optional declared JSON Schema per collection: [attach, validate, and detach](col
 
 Export a database as NDJSON, resumable by cursor: [export](export.md).
 
+Import NDJSON (an export, or mongoexport-style documents) through the import pipeline: [NDJSON import](import-ndjson.md).
+
 Relational SQL (tables, joins, transactions) and libSQL clients over Hrana: [design](sql/relational-sql.md).
 
 Feature-sliced: `src/TerraBase/Features/<Feature>/` holds everything
