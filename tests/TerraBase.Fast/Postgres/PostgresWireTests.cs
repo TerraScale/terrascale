@@ -9,7 +9,7 @@ namespace TerraBase.Fast.Postgres;
 
 public sealed class PostgresWireTests
 {
-    private const string People = "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email VARCHAR(80) UNIQUE, team TEXT)";
+    private const string People = "CREATE TABLE people (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email VARCHAR(80) UNIQUE, team TEXT)";
 
     private static readonly Faker Faker = new();
 
@@ -27,7 +27,7 @@ public sealed class PostgresWireTests
         await ExecuteAsync(connection, "SET application_name = 'wire test'");
         var shown = await ReadAsync(connection, "SHOW application_name");
         var unsupported = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "SELECT relname FROM pg_catalog.pg_class"));
-        var values = await ReadAsync(connection, "SELECT 40 + 2, 2.5, upper('xy'), count(*) FROM people WHERE name LIKE 'A%'");
+        var values = await ReadAsync(connection, "SELECT 40 + 2, '2.5'::float8, upper('xy'), count(*) FROM people WHERE name ILIKE 'A%'");
         var missing = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "SELECT * FROM nowhere"));
 
         await Assert.That(connection.PostgreSqlVersion).IsEqualTo(new Version(16, 0));
@@ -81,8 +81,8 @@ public sealed class PostgresWireTests
         var teams = await ExecuteAsync(connection, "INSERT INTO teams (code, label) VALUES ($1, $2), ($3, $4)", "core", "Core", "edge", "Edge");
         var people = await ExecuteAsync(connection, "INSERT INTO people (name, email, team) VALUES ($1, $2, $3), ($4, $5, $6)",
             ann, Faker.Internet.Email(), "core", bob, Faker.Internet.Email(), "edge");
-        var updated = await ExecuteAsync(connection, "UPDATE people SET team = $1 WHERE name LIKE $2", "core", bob.ToUpperInvariant());
-        var joined = await ReadAsync(connection, "SELECT p.name, t.label, p.id FROM people p JOIN teams t ON t.code = p.team ORDER BY p.name");
+        var updated = await ExecuteAsync(connection, "UPDATE people SET team = $1 WHERE name ILIKE $2", "core", bob.ToUpperInvariant());
+        var joined = await ReadAsync(connection, "SELECT p.name, t.label, p.id::text FROM people p JOIN teams t ON t.code = p.team ORDER BY p.name");
         var deleted = await ExecuteAsync(connection, "DELETE FROM people WHERE name = $1", ann);
 
         await Assert.That((teams, people, updated, deleted)).IsEqualTo((2, 2, 1, 1));

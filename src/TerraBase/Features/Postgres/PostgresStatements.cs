@@ -31,8 +31,8 @@ internal sealed record PgStatement(PgKind Kind, string Text, string Sql, int Par
 internal readonly union PgParse(PgStatement[], PgError);
 
 /// <summary>
-/// Maps PostgreSQL onto <see cref="ISqlSession"/>: session commands drivers send, statements split on tokens with
-/// <c>$n</c> as <c>?n</c>, SQLSTATEs, and every value as text.
+/// Maps PostgreSQL onto <see cref="ISqlSession"/>: session commands drivers send, a token-level PG-to-SQLite dialect
+/// layer, SQLSTATEs, type OIDs and the text and binary value formats.
 /// </summary>
 internal static partial class PostgresStatements
 {
@@ -129,27 +129,233 @@ internal static partial class PostgresStatements
         };
     }
 
-    // $n becomes ?n on tokens, so string literals, quoted identifiers and comments are never rewritten.
+    // PG to SQLite on tokens, so string literals, quoted identifiers and comments are never rewritten.
     private static PgOne Translate(string text, List<Token> tokens)
     {
         var output = tokens.Select(token => token.ToString()).ToArray();
+        int[] at = [.. Enumerable.Range(0, tokens.Count).Where(i => tokens[i] is not Whitespace)];
+        var create = tokens[at[0]] is Word { Keyword: Keyword.CREATE };
+        var castStart = new Dictionary<int, int>();
         var parameters = 0;
-        for (var i = 0; i < tokens.Count; i++)
+        for (var s = 0; s < at.Length; s++)
         {
-            if (tokens[i] is Placeholder { Value: ['$', .. var digits] })
+            var token = tokens[at[s]];
+            switch (token)
             {
-                if (!int.TryParse(digits, NumberStyles.None, Invariant, out var number) || number is < 1 or > short.MaxValue)
-                {
-                    return new PgError("42P02", "parameter numbers must be $1 to $32767");
-                }
+                case Placeholder { Value: ['$', .. var digits] }:
+                    if (!int.TryParse(digits, NumberStyles.None, Invariant, out var number) || number is < 1 or > short.MaxValue)
+                    {
+                        return new PgError("42P02", "parameter numbers must be $1 to $32767");
+                    }
 
-                parameters = Math.Max(parameters, number);
-                output[i] = "?" + number.ToString(Invariant);
+                    parameters = Math.Max(parameters, number);
+                    output[at[s]] = "?" + number.ToString(Invariant);
+                    break;
+                case Word { QuoteStyle: null } word when Is(word, "ILIKE"):
+                    // SQLite's LIKE is already case-insensitive for ASCII.
+                    output[at[s]] = "LIKE";
+                    break;
+                case Word { QuoteStyle: null } word when create && (Is(word, "SERIAL") || Is(word, "BIGSERIAL") || Is(word, "SMALLSERIAL")):
+                    // BIGINT, not PostgreSQL's int4: generated integer keys pass 2^31 (relational-sql.md section 3).
+                    output[at[s]] = "BIGINT";
+                    break;
+                case Word { QuoteStyle: null } word when Is(word, "RETURNING"):
+                    return Unsupported("RETURNING");
+                case Word { QuoteStyle: null } word when Is(word, "now") && s + 2 < at.Length && tokens[at[s + 1]] is LeftParen && tokens[at[s + 2]] is RightParen:
+                    output[at[s]] = "CURRENT_TIMESTAMP";
+                    output[at[++s]] = output[at[++s]] = "";
+                    break;
+                case DollarQuotedString:
+                    return Unsupported("dollar-quoted strings");
+                case EscapedStringLiteral:
+                    return Unsupported("E'' escape strings");
+                case DoubleColon:
+                    if (Cast(ref s) is { } error)
+                    {
+                        return error;
+                    }
+
+                    break;
             }
         }
 
         return new PgStatement(PgKind.Sql, text, string.Concat(output).Trim(), parameters);
+
+        // `operand::type` becomes CAST(operand AS type), or the bare literal for a text-like cast of a string literal.
+        PgError? Cast(ref int s)
+        {
+            var q = s - 1;
+            if (q < 0)
+            {
+                return Unsupported("this :: cast");
+            }
+
+            if (castStart.TryGetValue(q, out var chained))
+            {
+                q = chained;
+            }
+            else if (tokens[at[q]] is RightParen)
+            {
+                for (var depth = 0; q >= 0; q--)
+                {
+                    depth += tokens[at[q]] is RightParen ? 1 : tokens[at[q]] is LeftParen ? -1 : 0;
+                    if (depth == 0)
+                    {
+                        break;
+                    }
+                }
+
+                if (q < 0)
+                {
+                    return new PgError("42601", "SQL syntax error: unbalanced parentheses");
+                }
+
+                // A function call: its name touches the parenthesis.
+                q -= q > 0 && tokens[at[q - 1]] is Word && at[q - 1] == at[q] - 1 ? 1 : 0;
+            }
+            else if (tokens[at[q]] is Word or SingleQuotedString or Number or Placeholder)
+            {
+                for (; q >= 2 && tokens[at[q - 1]] is Period && tokens[at[q - 2]] is Word; q -= 2)
+                {
+                }
+            }
+            else
+            {
+                return Unsupported("this :: cast; use CAST(expression AS type)");
+            }
+
+            var t = s + 1;
+            t += t + 1 < at.Length && tokens[at[t]] is Word schema && Is(schema, "pg_catalog") && tokens[at[t + 1]] is Period ? 2 : 0;
+            if (t >= at.Length || tokens[at[t]] is not Word type)
+            {
+                return new PgError("42601", "SQL syntax error: :: needs a type name");
+            }
+
+            var name = type.Value.ToLowerInvariant();
+            for (; t + 1 < at.Length && tokens[at[t + 1]] is Word { QuoteStyle: null } more && TypeWords().IsMatch(more.Value); t++)
+            {
+                name += " " + more.Value.ToLowerInvariant();
+            }
+
+            if (t + 1 < at.Length && tokens[at[t + 1]] is LeftParen)
+            {
+                for (t++; t < at.Length && tokens[at[t]] is not RightParen; t++)
+                {
+                }
+            }
+
+            if (t + 1 < at.Length && tokens[at[t + 1]] is LeftBracket || t >= at.Length)
+            {
+                return Unsupported("array types");
+            }
+
+            var target = name switch
+            {
+                "int2" or "int4" or "int8" or "smallint" or "integer" or "int" or "bigint" => "INTEGER",
+                "float4" or "float8" or "real" or "double precision" or "float" => "REAL",
+                "numeric" or "decimal" => "NUMERIC",
+                "bool" or "boolean" => "BOOLEAN",
+                "text" or "varchar" or "character varying" or "char" or "character" or "bpchar" or "name" or "json" or "jsonb" or "uuid" or "date"
+                    or "timestamp" or "timestamptz" or "timestamp without time zone" or "timestamp with time zone" => "TEXT",
+                _ => null,
+            };
+            if (target is null)
+            {
+                return Unsupported($"casts to {name}");
+            }
+
+            var literal = q == s - 1 && tokens[at[q]] is SingleQuotedString ? (SingleQuotedString)tokens[at[q]] : null;
+            if (literal is not null && target == "BOOLEAN")
+            {
+                if (Bool(literal.Value) is not { } flag)
+                {
+                    return new PgError("22P02", "invalid input syntax for type boolean");
+                }
+
+                output[at[q]] = flag ? "TRUE" : "FALSE";
+            }
+
+            for (var k = at[s]; k <= at[t]; k++)
+            {
+                output[k] = "";
+            }
+
+            if (literal is null || target is "INTEGER" or "REAL" or "NUMERIC")
+            {
+                output[at[q]] = "CAST(" + output[at[q]];
+                output[at[s]] = $" AS {target})";
+            }
+
+            castStart[t] = q;
+            s = t;
+            return null;
+        }
     }
+
+    /// <summary>
+    /// Fills untyped parameters (OID 0) with the type PostgreSQL would infer from context: the column of an INSERT column
+    /// list, or the column a parameter is compared with or assigned to, in the tables the statement names.
+    /// </summary>
+    public static void InferParameters(PgStatement statement, int[] oids, IReadOnlyList<SqlTableInfo> tables)
+    {
+        var tokens = new Tokenizer().Tokenize(statement.Text, Dialect).Where(token => token is not Whitespace).ToList();
+        var named = tables.Where(table => tokens.Any(token => token is Word word && word.Value.Equals(table.Name, StringComparison.OrdinalIgnoreCase))).ToList();
+        // The column's type where its name is unambiguous; numeric binds as float8, dates and times as text.
+        int TypeOf(Token? token)
+        {
+            return token is Word word
+                && named.SelectMany(table => table.Columns).Where(column => column.Name.Equals(word.Value, StringComparison.OrdinalIgnoreCase))
+                    .Select(column => Oid(column.DeclType) switch { 1700 => 701, 1082 or 1114 or 1184 => TextOid, var oid => oid }).Distinct().ToList() is [var only]
+                ? only
+                : 0;
+        }
+        void Set(Token token, int oid)
+        {
+            if (token is Placeholder { Value: ['$', .. var digits] } && int.TryParse(digits, NumberStyles.None, Invariant, out var n) && n <= oids.Length && oids[n - 1] == 0 && oid > 0)
+            {
+                oids[n - 1] = oid;
+            }
+        }
+
+        // INSERT INTO t (c1, c2, …) VALUES ($1, $2, …), …: each tuple position takes its column's type.
+        var open = tokens.FindIndex(token => token is LeftParen);
+        if (tokens is [Word { Keyword: Keyword.INSERT }, ..] && open > 0)
+        {
+            var close = tokens.FindIndex(open, token => token is RightParen);
+            var columns = tokens[(open + 1)..Math.Max(open + 1, close)].Where(token => token is Word).ToList();
+            for (int i = close + 1, depth = 0, position = 0; close > 0 && i < tokens.Count; i++)
+            {
+                (depth, position) = tokens[i] switch
+                {
+                    LeftParen => (depth + 1, depth == 0 ? 0 : position),
+                    RightParen => (depth - 1, position),
+                    Comma when depth == 1 => (depth, position + 1),
+                    _ => (depth, position),
+                };
+                if (depth == 1 && position < columns.Count)
+                {
+                    Set(tokens[i], TypeOf(columns[position]));
+                }
+            }
+        }
+
+        // column = $n, $n < column, column LIKE $n, SET column = $n.
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            if (tokens[i] is Placeholder)
+            {
+                Set(tokens[i], i >= 2 && Comparison(tokens[i - 1]) ? TypeOf(tokens[i - 2]) : 0);
+                Set(tokens[i], i + 2 < tokens.Count && Comparison(tokens[i + 1]) ? TypeOf(tokens[i + 2]) : 0);
+            }
+        }
+    }
+
+    private static bool Comparison(Token token) => token is Equal or NotEqual or LessThan or GreaterThan or LessThanOrEqual or GreaterThanOrEqual
+        || token is Word { QuoteStyle: null } word && (Is(word, "LIKE") || Is(word, "ILIKE"));
+
+    private static bool Is(Word word, string value) => word.Value.Equals(value, StringComparison.OrdinalIgnoreCase);
+
+    private static PgError Unsupported(string feature) => new("0A000", $"not supported: {feature}");
 
     /// <summary>Runs SET or SHOW against the session's settings.</summary>
     public static PgOutcome RunCommand(PgKind kind, string text, Dictionary<string, string> settings)
@@ -180,10 +386,17 @@ internal static partial class PostgresStatements
         return new[] { new PgResult(null, [], "SET") };
     }
 
-    /// <summary>A statement's result, every column text.</summary>
+    /// <summary>A statement's result: types from declared types, else from the first non-null value.</summary>
     public static PgResult Result(PgStatement statement, SqlResult result)
     {
-        PgColumn[]? columns = result.Columns.Count == 0 ? null : [.. result.Columns.Select(column => new PgColumn(column.Name, TextOid))];
+        PgColumn[]? columns = result.Columns.Count == 0 ? null : [.. result.Columns.Select((column, i) => new PgColumn(column.Name,
+            Oid(column.DeclType) is > 0 and var oid ? oid
+            : result.Rows.Select(row => row[i].Kind).FirstOrDefault(value => value != SqlValueKind.Null) switch
+            {
+                SqlValueKind.Integer => 20,
+                SqlValueKind.Real => 701,
+                _ => TextOid,
+            }))];
         var verb = VerbPattern().Match(statement.Sql);
         var tag = verb.Groups[1].Value.ToUpperInvariant() switch
         {
@@ -195,6 +408,37 @@ internal static partial class PostgresStatements
         };
         return new PgResult(columns, result.Rows, tag);
     }
+
+    /// <summary>The OID of a declared type as PostgreSQL names it, 0 when unknown.</summary>
+    public static int Oid(string? declared) => (declared?.Split('(')[0].Trim().ToUpperInvariant() ?? "") switch
+    {
+        "BIGINT" or "INT8" => 20,
+        "SMALLINT" or "INT2" => 21,
+        "INTEGER" or "INT" or "INT4" => 23,
+        "REAL" or "FLOAT" or "FLOAT4" or "FLOAT8" or "DOUBLE" or "DOUBLE PRECISION" => 701,
+        "NUMERIC" or "DECIMAL" => 1700,
+        "TEXT" => TextOid,
+        "VARCHAR" or "CHAR" or "CHARACTER" or "CHARACTER VARYING" => 1043,
+        "BOOLEAN" or "BOOL" => 16,
+        "JSON" => 114,
+        "JSONB" => 3802,
+        "DATE" => 1082,
+        "TIMESTAMP" or "TIMESTAMP WITHOUT TIME ZONE" => 1114,
+        "TIMESTAMPTZ" or "TIMESTAMP WITH TIME ZONE" => 1184,
+        _ => 0,
+    };
+
+    /// <summary>
+    /// A column's type before the statement runs: its declared type, else (an expression, which SQLite leaves untyped) the
+    /// type PostgreSQL gives well-known aggregates and casts, else text.
+    /// </summary>
+    public static int DescribedOid(SqlColumn column) => Oid(column.DeclType) is > 0 and var declared ? declared
+        : ExpressionPattern().Match(column.Name) is { Success: true } match
+            ? match.Groups[1].Success ? 20 : match.Groups[2].Success ? 701 : Oid(match.Groups[3].Value) is > 0 and var cast ? cast : TextOid
+            : TextOid;
+
+    [GeneratedRegex(@"\A(?:((?:count|length|instr|unicode|row_number|rank|dense_rank|ntile)\()|((?:avg|total)\()|CAST\(.+\bAS\s+(\w+)\)\z)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static partial Regex ExpressionPattern();
 
     /// <summary>The SQLSTATE of a <see cref="SqlError"/>; SQLITE_BUSY is always 40001, which drivers and ORMs retry.</summary>
     public static PgError Error(SqlError error) => new(error.Code switch
@@ -216,20 +460,97 @@ internal static partial class PostgresStatements
         },
     }, error.Message);
 
-    /// <summary>Whether a column of the type is sent in binary when the client asks: text sends the same bytes.</summary>
-    public static bool Binary(int oid) => oid == TextOid;
+    /// <summary>Whether a column of the type is sent in binary when the client asks; others are always text.</summary>
+    public static bool Binary(int oid) => oid is 16 or 20 or 21 or 23 or TextOid or 114 or 701 or 1043 or 3802;
 
-    /// <summary>A value as text: integers and reals in their shortest round-trip form.</summary>
+    /// <summary>
+    /// A value in the column's format; false when it does not fit the binary type (SQLite keeps 64-bit integers in an int4
+    /// or int2 column).
+    /// </summary>
     public static bool TryEncode(SqlValue value, int oid, bool binary, out byte[]? bytes)
     {
-        bytes = value.Kind switch
+        bytes = null;
+        if (value.Kind == SqlValueKind.Null)
         {
-            SqlValueKind.Null => null,
-            SqlValueKind.Integer => Utf8.GetBytes(value.Integer.ToString(Invariant)),
-            SqlValueKind.Real => Utf8.GetBytes(value.Real.ToString("R", Invariant).Replace('E', 'e')),
-            _ => Utf8.GetBytes(value.Text ?? ""),
+            return true;
+        }
+
+        var text = value.Kind switch
+        {
+            SqlValueKind.Integer when oid == 16 => value.Integer != 0 ? "t" : "f",
+            SqlValueKind.Integer => value.Integer.ToString(Invariant),
+            SqlValueKind.Real => double.IsFinite(value.Real) ? value.Real.ToString("R", Invariant).Replace('E', 'e') : value.Real.ToString(Invariant),
+            _ => value.Text ?? "",
         };
-        return oid == TextOid || !binary;
+        if (!binary || oid is TextOid or 114 or 1043)
+        {
+            bytes = Utf8.GetBytes(text);
+            return true;
+        }
+
+        if (oid == 3802)
+        {
+            bytes = [1, .. Utf8.GetBytes(text)];
+            return true;
+        }
+
+        if (oid == 701)
+        {
+            double real;
+            switch (value.Kind)
+            {
+                case SqlValueKind.Integer:
+                    real = value.Integer;
+                    break;
+                case SqlValueKind.Real:
+                    real = value.Real;
+                    break;
+                case SqlValueKind.Text when double.TryParse(value.Text, NumberStyles.Float, Invariant, out real):
+                    break;
+                default:
+                    return false;
+            }
+
+            bytes = new byte[8];
+            BinaryPrimitives.WriteDoubleBigEndian(bytes, real);
+            return true;
+        }
+
+        long integer;
+        switch (value.Kind)
+        {
+            case SqlValueKind.Integer:
+                integer = value.Integer;
+                break;
+            case SqlValueKind.Real when value.Real == Math.Truncate(value.Real) && Math.Abs(value.Real) < 9e18:
+                integer = (long)value.Real;
+                break;
+            case SqlValueKind.Text when long.TryParse(value.Text, NumberStyles.AllowLeadingSign, Invariant, out integer):
+                break;
+            default:
+                return false;
+        }
+
+        switch (oid)
+        {
+            case 16:
+                bytes = [integer != 0 ? (byte)1 : (byte)0];
+                return true;
+            case 21 when integer is >= short.MinValue and <= short.MaxValue:
+                bytes = new byte[2];
+                BinaryPrimitives.WriteInt16BigEndian(bytes, (short)integer);
+                return true;
+            case 23 when integer is >= int.MinValue and <= int.MaxValue:
+                bytes = new byte[4];
+                BinaryPrimitives.WriteInt32BigEndian(bytes, (int)integer);
+                return true;
+            case 20:
+                bytes = new byte[8];
+                BinaryPrimitives.WriteInt64BigEndian(bytes, integer);
+                return true;
+            default:
+                return false;
+        }
     }
 
     /// <summary>A bound parameter as a SQL value: booleans as 1 or 0. Null when invalid, or binary of an unsupported type.</summary>
@@ -264,6 +585,11 @@ internal static partial class PostgresStatements
                     (1700, var text) => long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var whole) ? SqlValue.Of(whole)
                         : decimal.TryParse(text, NumberStyles.Float, Invariant, out var exact) && (decimal)(double)exact == exact ? SqlValue.Of((double)exact)
                         : Text(text),
+                    // Untyped (psql \bind, node-postgres): PostgreSQL types them from context; a canonical number binds as one,
+                    // because the CTE columns of a SQL read carry no affinity to convert '2' for an integer column.
+                    (0 or 705, var text) when long.TryParse(text, NumberStyles.AllowLeadingSign, Invariant, out var untyped) && untyped.ToString(Invariant) == text => SqlValue.Of(untyped),
+                    (0 or 705, var text) when text.Contains('.', StringComparison.Ordinal) && double.TryParse(text, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, Invariant, out var untypedReal)
+                        && untypedReal.ToString("R", Invariant) == text => SqlValue.Of(untypedReal),
                     (_, var text) => Text(text),
                 };
         }
@@ -286,6 +612,9 @@ internal static partial class PostgresStatements
 
     [GeneratedRegex(@"\A(\w+)(?:\s+(?:UNIQUE\s+)?(\w+))?", RegexOptions.CultureInvariant)]
     private static partial Regex VerbPattern();
+
+    [GeneratedRegex(@"\A(?:precision|varying|with|without|time|zone)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TypeWords();
 
     [GeneratedRegex(@"\ASET\s+(?:SESSION\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|\s+TO\s+)\s*(.*)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
     private static partial Regex SetPattern();
