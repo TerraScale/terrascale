@@ -81,7 +81,7 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                result.ActivityNote = "TerraBase doesn't report this project: it isn't stored there yet, or this account isn't a member of it there.";
+                result.ActivityNote = "Activity for this project isn't available yet. It appears once TerraBase reports its reads and writes.";
                 return;
             }
             response.EnsureSuccessStatusCode();
