@@ -97,7 +97,7 @@ public sealed class BenchmarkProcessHost
             await using var api = await ManagementApi.StartAsync(settings =>
             {
                 settings["region"] = region;
-                settings["node-name"] = Get("machine");
+                settings["node-name"] = Get("machine").ToLowerInvariant();
                 settings["data-directory"] = Path.Combine(directory, "data");
             }, services =>
             {
@@ -122,7 +122,7 @@ public sealed class BenchmarkProcessHost
             {
                 ["kind"] = "local-process",
                 ["region"] = region,
-                ["machine"] = Get("machine"),
+                ["machine"] = Get("machine").ToLowerInvariant(),
                 ["organization"] = Get("organization"),
                 ["project"] = Get("project"),
                 ["database"] = "canary",
@@ -228,7 +228,8 @@ public sealed class BenchmarkProcessHost
 
     private static async Task SmokeAsync(CancellationToken cancellationToken)
     {
-        await using var api = await ManagementApi.StartAsync(services: MeasureDurability, cancellationToken: cancellationToken);
+        await using var api = await ManagementApi.StartAsync(settings =>
+            settings["node-name"] = EntityIds.New().ToString().ToLowerInvariant(), services: MeasureDurability, cancellationToken: cancellationToken);
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await WaitForWritesAsync(data, new Uri($"{database.Data}/collections", UriKind.Relative), null, cancellationToken);
@@ -239,6 +240,23 @@ public sealed class BenchmarkProcessHost
         written.EnsureSuccessStatusCode();
         using var read = await data.GetAsync(path, cancellationToken);
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var feedDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        feedDeadline.CancelAfter(TimeSpan.FromSeconds(30));
+        using var feed = await data.GetAsync(new Uri($"{database.Data}/changes?cursor=now", UriKind.Relative),
+            HttpCompletionOption.ResponseHeadersRead, feedDeadline.Token);
+        feed.EnsureSuccessStatusCode();
+        using var reader = new StreamReader(await feed.Content.ReadAsStreamAsync(feedDeadline.Token));
+        var cursor = false;
+        while (await reader.ReadLineAsync(feedDeadline.Token) is { } line)
+        {
+            if (line == "event: cursor")
+            {
+                cursor = true;
+                break;
+            }
+        }
+
+        await Assert.That(cursor).IsTrue();
         using var anonymous = api.DataClient();
         using var denied = await anonymous.GetAsync(path, cancellationToken);
         await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
@@ -308,7 +326,7 @@ public sealed class BenchmarkProcessHost
                     if (File.ReadAllText(file).Split('\n') is [var region, var address] && region is "gru" or "sjc" or "fra")
                     {
                         ValidatePeer(address);
-                        members.Add(new ClusterMember(Path.GetFileName(file), address, region, string.Empty));
+                        members.Add(new ClusterMember(Path.GetFileName(file).ToLowerInvariant(), address, region, string.Empty));
                     }
                 }
                 catch (FileNotFoundException)
