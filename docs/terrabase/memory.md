@@ -95,6 +95,6 @@ closed. Nothing is forcibly closed. An admitted copy can need further SQLite cal
 
 [Organization QoS](qos.md) admits foreground request bodies, materialized results and retained cache
 entries against both process capacity and the current organization plan. CLOCK cache eviction is
-confined to the organization's partition, with a global 4096-entry and quarter-process byte ceiling.
+confined to the organization's partition, with a quarter-process byte ceiling and one entry per 4 KiB of it (4096 entries at a 64 MiB budget).
 Downgrades trim retained entries before admitting the next request. Null/system reservations retain
 process limits without a commercial share.
