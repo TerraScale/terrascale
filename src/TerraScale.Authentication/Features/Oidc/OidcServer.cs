@@ -44,6 +44,12 @@ public static class OidcIssuer
     public const string StatusRedirectUri = "https://status.terrascale.tech/admin/callback";
 
     /// <summary>
+    /// The public device-flow (RFC 8628) client of the ts CLI. Client ids are TerraScale ids, so the contract's
+    /// <c>ts-cli</c> is this reserved id with that display name.
+    /// </summary>
+    public const string CliClientId = "00000000000000000000000007";
+
+    /// <summary>
     /// The user's authentication epoch, in codes, refresh tokens and sign-in access tokens: a grant or a management call
     /// whose epoch is not the user's current one (after sign-out everywhere or a password reset) is refused.
     /// </summary>
@@ -107,6 +113,10 @@ public static class OidcIssuer
                     .SetUserInfoEndpointUris("oauth/userinfo")
                     .SetEndSessionEndpointUris("oauth/logout")
                     .SetRevocationEndpointUris("oauth/revoke")
+                    // RFC 8628 for the ts CLI: the user approves on ts-auth's own hosted page, outside the issuer path.
+                    .SetDeviceAuthorizationEndpointUris("oauth/device")
+                    .SetEndUserVerificationEndpointUris(new Uri(options.PublicOrigin, DeviceFlow.PagePath.TrimStart('/')))
+                    .AllowDeviceAuthorizationFlow()
                     .AllowAuthorizationCodeFlow()
                     .AllowRefreshTokenFlow()
                     .AllowClientCredentialsFlow()
@@ -165,12 +175,25 @@ public static class OidcIssuer
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ApplyEndSessionResponseContext>(handler => handler.UseSingletonHandler<RenderLocalErrorPage<ApplyEndSessionResponseContext>>()
                         .SetOrder(OpenIddictServerAspNetCoreHandlers.ProcessLocalErrorResponse<ApplyEndSessionResponseContext>.Descriptor.Order - 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ValidateEndUserVerificationRequestContext>(handler => handler.UseScopedHandler<DeviceGate>()
+                        .SetOrder(OpenIddictServerHandlers.Device.ValidateVerificationAuthentication.Descriptor.Order - 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ApplyEndUserVerificationResponseContext>(handler => handler.UseSingletonHandler<RenderDeviceDecision>()
+                        .SetOrder(OpenIddictServerAspNetCoreHandlers.ProcessHostRedirectionResponse.Descriptor.Order - 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ApplyDeviceAuthorizationResponseContext>(handler => handler.UseSingletonHandler<AnnouncePollInterval>()
+                        .SetOrder(OpenIddictServerAspNetCoreHandlers.ProcessJsonResponse<ApplyDeviceAuthorizationResponseContext>.Descriptor.Order - 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ProcessAuthenticationContext>(handler => handler.UseScopedHandler<PollNoFasterThanInterval>()
+                        .SetOrder(OpenIddictServerHandlers.ValidateDeviceCode.Descriptor.Order - 1)
                         .SetType(OpenIddictServerHandlerType.Custom));
                 server.UseAspNetCore()
                     .EnableAuthorizationEndpointPassthrough()
                     .EnableTokenEndpointPassthrough()
                     .EnableUserInfoEndpointPassthrough()
                     .EnableEndSessionEndpointPassthrough()
+                    .EnableEndUserVerificationEndpointPassthrough()
                     // TLS terminates in front of the service; AuthOptions requires an HTTPS public origin in production.
                     .DisableTransportSecurityRequirement();
             });
@@ -225,6 +248,13 @@ public sealed class TrustPublicOrigin(AuthOptions options, AuthStore store) : IO
 
         // Endpoint matching ignores case, as routing does; the issuer stays the canonical slug.
         if (string.Equals(tenant, OidcIssuer.Slug, StringComparison.OrdinalIgnoreCase))
+        {
+            return OidcIssuer.Slug;
+        }
+
+        // The hosted device page is the platform issuer's end-user verification endpoint: the device codes it
+        // approves carry the issuer the token endpoint validates.
+        if (string.Equals(path.Value?.TrimEnd('/'), DeviceFlow.PagePath, StringComparison.OrdinalIgnoreCase))
         {
             return OidcIssuer.Slug;
         }
@@ -304,8 +334,8 @@ public sealed class PublishKeyRing(KeyRing ring) : IOpenIddictServerHandler<Hand
 }
 
 /// <summary>
-/// Replaces OpenIddict's redemption step, which ignores a lost redemption for refresh tokens. Here a code or refresh
-/// token is redeemed by a conditional write on the version this request validated, so of any number of concurrent
+/// Replaces OpenIddict's redemption step, which ignores a lost redemption for refresh tokens. Here a code, device code,
+/// device user code or refresh token is redeemed by a conditional write on the version this request validated, so of any number of concurrent
 /// redemptions exactly one succeeds. A loser is treated as reuse: the authorization is revoked, which rejects every
 /// token issued under it, the winner's new ones included, wherever ts-auth validates them.
 /// </summary>
@@ -315,14 +345,16 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenManager tokens) : IOpenIdd
     public async ValueTask HandleAsync(ProcessSignInContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (context.EndpointType is not OpenIddictServerEndpointType.Token)
+        if (context.EndpointType is not (OpenIddictServerEndpointType.Token or OpenIddictServerEndpointType.EndUserVerification))
         {
             return;
         }
 
         var authentication = context.Transaction.GetProperty<ProcessAuthenticationContext>(typeof(ProcessAuthenticationContext).FullName!)
             ?? throw new InvalidOperationException("The authentication context is missing.");
-        var principal = context.Request.IsAuthorizationCodeGrantType() ? authentication.AuthorizationCodePrincipal
+        var principal = context.EndpointType is OpenIddictServerEndpointType.EndUserVerification ? authentication.UserCodePrincipal
+            : context.Request.IsAuthorizationCodeGrantType() ? authentication.AuthorizationCodePrincipal
+            : context.Request.IsDeviceCodeGrantType() ? authentication.DeviceCodePrincipal
             : context.Request.IsRefreshTokenGrantType() ? authentication.RefreshTokenPrincipal
             : null;
         if (principal?.GetTokenId() is not { Length: > 0 } identifier)
@@ -343,8 +375,9 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenManager tokens) : IOpenIdd
             await tokens.RevokeByAuthorizationIdAsync(authorizationId, context.CancellationToken).ConfigureAwait(false);
         }
 
-        context.Reject(Errors.InvalidGrant, context.Request.IsAuthorizationCodeGrantType()
-            ? "The authorization code has already been redeemed."
+        context.Reject(Errors.InvalidGrant, context.EndpointType is OpenIddictServerEndpointType.EndUserVerification ? "The device code has already been decided."
+            : context.Request.IsAuthorizationCodeGrantType() ? "The authorization code has already been redeemed."
+            : context.Request.IsDeviceCodeGrantType() ? "The device code has already been redeemed."
             : "The refresh token has already been redeemed.");
     }
 }
@@ -368,7 +401,7 @@ public sealed class RevokeTheSignIn(IOpenIddictTokenManager tokens) : IOpenIddic
 }
 
 /// <summary>
-/// Registers or updates the public ts-status client, the ts-dashboard client (<c>TS_AUTH_DASHBOARD_*</c>) and the service clients
+/// Registers or updates the public ts-status and ts-cli clients, the ts-dashboard client (<c>TS_AUTH_DASHBOARD_*</c>) and the service clients
 /// (<c>TS_AUTH_SERVICE_CLIENTS</c>). The storage bootstrap (<see cref="SigningKeys.SigningKeyRotation"/>) runs it and retries
 /// until storage answers, so ts-auth starts without TerraBase and stays not ready until they are registered. Concurrent
 /// replicas converge through conditional writes. Clients removed from configuration stay registered.
@@ -380,6 +413,7 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
     {
         var descriptors = options.ServiceClients.Select(Service).ToList();
         descriptors.Add(Status());
+        descriptors.Add(Cli());
         if (options.DashboardClient is { } dashboard)
         {
             descriptors.Add(Dashboard(dashboard));
@@ -407,6 +441,27 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
         },
         Requirements = { Requirements.Features.ProofKeyForCodeExchange },
     };
+
+    // The ts CLI: a public device-flow client. Its sign-in tokens are exchanged for organization and project tokens (TS-598).
+    private static OpenIddictApplicationDescriptor Cli()
+    {
+        var descriptor = new OpenIddictApplicationDescriptor
+        {
+            ClientId = OidcIssuer.CliClientId,
+            ClientType = ClientTypes.Public,
+            ApplicationType = ApplicationTypes.Native,
+            ConsentType = ConsentTypes.Explicit,
+            DisplayName = "ts-cli",
+            Permissions =
+            {
+                Permissions.Endpoints.DeviceAuthorization, Permissions.Endpoints.Token, Permissions.Endpoints.Revocation,
+                Permissions.GrantTypes.DeviceCode, Permissions.GrantTypes.RefreshToken, Permissions.GrantTypes.TokenExchange,
+                Permissions.Scopes.Email, Permissions.Scopes.Profile,
+            },
+        };
+        descriptor.Permissions.UnionWith(TerraBaseScopes.All.Select(scope => Permissions.Prefixes.Scope + scope));
+        return descriptor;
+    }
 
     private static OpenIddictApplicationDescriptor Dashboard(DashboardClientOptions dashboard)
     {

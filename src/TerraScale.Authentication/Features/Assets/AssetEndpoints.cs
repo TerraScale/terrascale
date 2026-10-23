@@ -11,6 +11,8 @@ public static class EmbeddedAssets
         ["datastar.js"] = ("assets/admin/datastar.js", "text/javascript; charset=utf-8"),
         ["logo.svg"] = ("assets/admin/logo.svg", "image/svg+xml"),
         ["logo-icon-blue.svg"] = ("assets/admin/logo-icon-blue.svg", "image/svg+xml"),
+        // The Lucide icons of the hosted pages, as one sprite: <svg><use href="/admin/icons.svg#i-mail"/></svg>.
+        ["icons.svg"] = ("assets/admin/icons.svg", "image/svg+xml"),
         // Email clients do not show SVG; these are the dashboard's horizontal logos rasterized at 2x.
         ["email-logo.png"] = ("assets/email/logo.png", "image/png"),
         ["email-logo-dark.png"] = ("assets/email/logo-dark.png", "image/png"),
@@ -21,6 +23,7 @@ public static class EmbeddedAssets
         ["oxanium-latin-wght-normal.woff2"] = ("assets/fonts/oxanium-latin-wght-normal.woff2", "font/woff2"),
         ["jetbrains-mono-latin-wght-normal.woff2"] = ("assets/fonts/jetbrains-mono-latin-wght-normal.woff2", "font/woff2"),
         ["Geist-Variable.woff2"] = ("assets/fonts/Geist-Variable.woff2", "font/woff2"),
+        ["GeistMono-Variable.woff2"] = ("assets/fonts/GeistMono-Variable.woff2", "font/woff2"),
     };
 
     /// <summary>Serves an admin asset by exact name.</summary>

@@ -22,11 +22,13 @@ TUnit and Playwright integration tests.
 > TS-491 adds an OpenID Connect provider on OpenIddict 7.7.1 for the issuer
 > `https://auth.terrascale.tech/terrascale`, so ts-dashboard can sign in: the
 > authorization code flow with S256 PKCE, rotating refresh tokens, discovery,
-> JWKS, userinfo, RP-initiated logout and a hosted email-passcode sign-in page
-> for existing accounts. Authorization and logout errors that cannot go back to
+> JWKS, userinfo, RP-initiated logout and hosted sign-in pages. Authorization and logout errors that cannot go back to
 > the client (an unknown client, an unregistered redirect URI, a malformed
 > request) answer with the hosted error page and the OAuth error code, in
-> OpenIddict's status, instead of plain text. Device flow, guest accounts, CORS and SAML are
+> OpenIddict's status, instead of plain text. HA1 (2026-10-22) makes the hosted
+> pages the only TerraScale sign-in, in the v3 design: email code, password,
+> sign-up, password reset, the signed-out page and the RFC 8628 device page of
+> the ts CLI. Guest accounts, CORS and SAML are
 > follow-up TS-495. The other identity features below are being ported stream
 > by stream. Until a stream lands, its routes are not served.
 > [`docs/auth/parity.md`](parity.md) tracks each capability, and
@@ -246,7 +248,10 @@ with `client_secret_basic` or `client_secret_post`, must use PKCE with S256
 (`plain` is disabled for every client), and gets implicit consent. It is also the
 only client allowed the TS-582 headless API: its own sign-up, password,
 email-code and password-reset pages call ts-auth server-to-server and receive
-the same tokens ([port guide](csharp-port.md#headless-api-ts-582)). Service
+the same tokens ([port guide](csharp-port.md#headless-api-ts-582)); it stays
+served until the dashboard runs on the hosted pages (HA1), then a follow-up
+removes it. The public `ts-cli` client (id `00000000000000000000000007`) may
+use only the device-code and refresh-token grants and the token exchange. Service
 clients from `TS_AUTH_SERVICE_CLIENTS` may use only the client-credentials
 grant: their access token has `sub` = the client id, the same `typ` and `aud`,
 no scopes and no email, and they get no identity or refresh token. Authorization requests must exactly match a registered redirect URI;
@@ -428,9 +433,20 @@ OpenID Connect routes for the slug `terrascale` (other slugs answer 404):
   `GET /terrascale/.well-known/jwks.json`
 - `GET /terrascale/oauth/authorize`, `POST /terrascale/oauth/token`,
   `GET /terrascale/oauth/userinfo`, `GET /terrascale/oauth/logout`
-  (RP-initiated logout) and `POST /terrascale/oauth/revoke` (RFC 7009, TS-582)
-- `GET` and `POST /ui/terrascale/sign-in`, `POST /ui/terrascale/sign-in/verify`
-  (hosted email-passcode sign-in)
+  (RP-initiated logout: always the hosted Signed out page, which continues to a
+  validated `post_logout_redirect_uri` by link and a 2-second meta refresh) and
+  `POST /terrascale/oauth/revoke` (RFC 7009, TS-582)
+- `POST /terrascale/oauth/device` (RFC 8628 device authorization for `ts-cli`;
+  `verification_uri` is `{public origin}/ui/terrascale/device`, codes live 10
+  minutes, `interval` 5 with `slow_down` enforced; the token endpoint redeems
+  `urn:ietf:params:oauth:grant-type:device_code`)
+- Hosted pages (v3 design, light/dark/system, no JavaScript needed): `GET` and
+  `POST /ui/terrascale/sign-in`, `POST /ui/terrascale/sign-in/verify` (email
+  code), `POST /ui/terrascale/sign-in/password`, `GET` and `POST
+  /ui/terrascale/sign-up`, `POST /ui/terrascale/sign-up/verify`, `GET` and
+  `POST /ui/terrascale/reset`, `POST /ui/terrascale/reset/complete`, and `GET`
+  and `POST /ui/terrascale/device` (sign in first, then explicit Approve or
+  Deny; opening the link never approves)
 - The TS-582 headless API for ts-dashboard: `POST
   /terrascale/headless/v1/email-code/start`, `/sign-up`,
   `/password-reset/start` and `/password-reset/complete`, plus the token
@@ -444,7 +460,7 @@ email, including unknown addresses; earlier repeats answer 429 with
 is shared with hosted sign-in and applies to unknown emails too.
 
 All of them appear in `/openapi/v1.json` under the `OAuth`, `Sign-in` and
-`Headless` tags. Introspection and device authorization are not served. The
+`Headless` tags. Introspection is not served. The
 target surface below is the contract the
 port streams restore (from the Rust service); each stream keeps its paths,
 methods and operation ids. [The port guide](csharp-port.md#openid-connect-ts-491)

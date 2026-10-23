@@ -9,14 +9,17 @@ using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
+using ZLogger;
 
 namespace TerraScale.Authentication.Features.SignIn;
 
 /// <summary>The fields the hosted sign-in forms post (<c>application/x-www-form-urlencoded</c>).</summary>
 /// <param name="Email">The account's email address.</param>
 /// <param name="Code">The six-digit emailed code (verify only).</param>
-/// <param name="Next">The authorization request to resume, <c>/{slug}/oauth/authorize?…</c>.</param>
-public sealed record SignInForm(string? Email, string? Code, string? Next);
+/// <param name="Next">The page to resume: an authorization request, <c>/{slug}/oauth/authorize?…</c>, or the device page.</param>
+/// <param name="Password">The account password (password sign-in, sign-up and reset only).</param>
+/// <param name="PendingToken">The pending sign-up's token (sign-up verification only).</param>
+public sealed record SignInForm(string? Email, string? Code, string? Next, string? Password = null, string? PendingToken = null);
 
 /// <summary><c>GET /ui/{slug}/sign-in</c>: asks for the email address to send a sign-in code to.</summary>
 public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
@@ -27,7 +30,7 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
         Get("/ui/{slug}/sign-in");
         Name("ui_sign_in");
         Summary("Hosted sign-in page");
-        Description("Email passcode sign-in for existing accounts. next is honoured only when it is this issuer's /{slug}/oauth/authorize URL.");
+        Description("Email passcode or password sign-in for existing accounts, with links to sign-up and password reset. next is honoured only when it is this issuer's /{slug}/oauth/authorize URL or the /ui/{slug}/device page.");
         Tags("Sign-in");
         Produces<string>(StatusCodes.Status200OK, "text/html");
         AllowAnonymous();
@@ -143,35 +146,371 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         if (await passcodes.VerifyAsync(OidcIssuer.InstanceId, address, form.Code ?? string.Empty, cancellationToken) is not { } session)
         {
             AuthMetrics.SignIn("hosted_code", "refused");
-            return SignInPageModel.Render(this.HttpContext,
-                new SignInPageModel(SignInStep.Code, OidcIssuer.Slug, address, next, "That code is wrong or has expired. Request a new one if needed."), StatusCodes.Status401Unauthorized);
+            return SignInFlow.WrongCode(this.HttpContext, SignInStep.Code, address, next);
         }
 
-        // The browser's previous session, if any, ends with this sign-in.
-        await sessions.RevokeAsync(OidcIssuer.InstanceId, this.HttpContext.Request.Cookies[SecuritySchemes.SessionCookieName], cancellationToken);
-        BrowserSecurity.SetSessionCookie(this.HttpContext.Response, session.Token);
         AuthMetrics.SignIn("hosted_code", "succeeded");
-        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, OidcIssuer.Slug, Next: next));
+        return await SignInFlow.SignedInAsync(this.HttpContext, sessions, session, next, cancellationToken);
+    }
+}
+
+/// <summary>
+/// <c>POST /ui/{slug}/sign-in/password</c>: without a password, shows the password step for the address; with one,
+/// checks it, opens a fresh session and resumes like the code sign-in.
+/// </summary>
+public sealed class PasswordSignInEndpoint(Sessions sessions, HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post("/ui/{slug}/sign-in/password");
+        Name("ui_sign_in_password");
+        Summary("Sign in with a password");
+        Description("Same-origin form post. A post without password shows the password step. With email and password it shares the headless password budgets: 30 calls per IP per minute and 10 attempts per normalized email per 15 minutes, including unknown emails; exhaustion answers 429 with Retry-After and queues one best-effort lockout email notice per real account. A wrong email or password, an account without a password and an active MFA user all answer the same 401 page. Success sets the tsauth_session cookie and continues to next.");
+        Tags("Sign-in");
+        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
+        Produces<string>(StatusCodes.Status200OK, "text/html");
+        Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
+        Produces<string>(StatusCodes.Status403Forbidden, "text/html");
+        Produces<string>(StatusCodes.Status429TooManyRequests, "text/html");
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        AllowAnonymous();
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
+        {
+            return SignInFlow.Refused(this.HttpContext);
+        }
+
+        var address = form.Email?.Trim() ?? string.Empty;
+        var next = SignInFlow.SafeNext(form.Next);
+        if (string.IsNullOrEmpty(form.Password))
+        {
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Password, OidcIssuer.Slug, address, next));
+        }
+
+        var ip = SignInFlow.Ip(this.HttpContext);
+        if (await headless.LimitIpAsync(ip, mails: false, cancellationToken) is { } ipWait)
+        {
+            AuthMetrics.SignIn("hosted_password", "rate_limited");
+            return SignInFlow.Limited(this.HttpContext, SignInStep.Password, ipWait, address, next);
+        }
+
+        var (user, wait) = await headless.CheckPasswordAsync(address, form.Password, cancellationToken);
+        if (wait is { } retry)
+        {
+            AuthMetrics.SignIn("hosted_password", "rate_limited");
+            return SignInFlow.Limited(this.HttpContext, SignInStep.Password, retry, address, next);
+        }
+
+        if (user is null || await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
+        {
+            AuthMetrics.SignIn("hosted_password", "refused");
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Password, OidcIssuer.Slug, address, next,
+                "Check both and try again, or email yourself a sign-in code.")
+            { ErrorTitle = "Wrong email or password" }, StatusCodes.Status401Unauthorized);
+        }
+
+        AuthMetrics.SignIn("hosted_password", "succeeded");
+        return await SignInFlow.SignedInAsync(this.HttpContext, sessions, session, next, cancellationToken);
+    }
+}
+
+/// <summary><c>GET /ui/{slug}/sign-up</c>: asks for the new account's email address and password.</summary>
+public sealed class SignUpPageEndpoint : EndpointWithoutRequest<IResult>
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Get("/ui/{slug}/sign-up");
+        Name("ui_sign_up");
+        Summary("Hosted sign-up page");
+        Description("Creates an account with an email address and a password; the account exists once the emailed code is entered. next is honoured as on the sign-in page.");
+        Tags("Sign-in");
+        Produces<string>(StatusCodes.Status200OK, "text/html");
+        AllowAnonymous();
+    }
+
+    /// <inheritdoc />
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        ValueTask.FromResult(SignInFlow.WrongSlug(this.HttpContext)
+            ? Results.NotFound()
+            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, OidcIssuer.Slug, Next: SignInFlow.SafeNext(this.HttpContext.Request.Query["next"]))));
+}
+
+/// <summary>
+/// <c>POST /ui/{slug}/sign-up</c>: starts a sign-up as the headless API does and asks for the emailed code. The page is
+/// the same whether or not the address has an account; an existing account is mailed a sign-in code instead.
+/// </summary>
+public sealed class StartSignUpEndpoint(HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post("/ui/{slug}/sign-up");
+        Name("ui_sign_up_start");
+        Summary("Start a sign-up");
+        Description("Same-origin form post with email and password (8 to 1024 UTF-8 bytes). Shares the headless sign-up limits: the IP call and mail budgets, a 60-second cooldown per normalized email across every mail start, and 5 codes per normalized email per UTC clock hour; exhaustion answers 429 with Retry-After. A new address is mailed a verification code bound to a random pending token the page carries; an address with an account is mailed a sign-in code and the password is discarded.");
+        Tags("Sign-in");
+        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
+        Produces<string>(StatusCodes.Status200OK, "text/html");
+        Produces<string>(StatusCodes.Status400BadRequest, "text/html");
+        Produces<string>(StatusCodes.Status403Forbidden, "text/html");
+        Produces<string>(StatusCodes.Status429TooManyRequests, "text/html");
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        AllowAnonymous();
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
+        {
+            return SignInFlow.Refused(this.HttpContext);
+        }
+
+        var address = form.Email?.Trim() ?? string.Empty;
+        var next = SignInFlow.SafeNext(form.Next);
+        if (Users.NormalizeEmail(address) is null || !PasswordHasher.Acceptable(form.Password))
+        {
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, OidcIssuer.Slug, address, next,
+                "Enter a valid email address and a password of at least 8 characters.")
+            { ErrorTitle = "Check your details" }, StatusCodes.Status400BadRequest);
+        }
+
+        var (pending, wait) = await headless.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext), cancellationToken);
+        return wait is { } retry
+            ? SignInFlow.Limited(this.HttpContext, SignInStep.SignUp, retry, address, next)
+            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUpCode, OidcIssuer.Slug, address, next) { PendingToken = pending });
+    }
+}
+
+/// <summary>
+/// <c>POST /ui/{slug}/sign-up/verify</c>: redeems the emailed code. A sign-up code with its pending token creates the
+/// account; a sign-in code (the address already had one) signs that account in. Either way a session opens.
+/// </summary>
+public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions, HeadlessAuth headless, AuthOptions options, ILogger<VerifySignUpEndpoint> logger) : EndpointWithoutRequest<IResult>
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post("/ui/{slug}/sign-up/verify");
+        Name("ui_sign_up_verify");
+        Summary("Verify a sign-up");
+        Description("Same-origin form post with email, code and pending_token. Shares the sign-in code budgets: 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes; exhaustion answers 429 with Retry-After. A wrong, expired or used code, or another requester's token, answers 401. Success creates the account (or signs the existing one in), sets the tsauth_session cookie and continues to next.");
+        Tags("Sign-in");
+        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
+        Produces<string>(StatusCodes.Status200OK, "text/html");
+        Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
+        Produces<string>(StatusCodes.Status403Forbidden, "text/html");
+        Produces<string>(StatusCodes.Status429TooManyRequests, "text/html");
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        AllowAnonymous();
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
+        {
+            return SignInFlow.Refused(this.HttpContext);
+        }
+
+        var address = form.Email?.Trim() ?? string.Empty;
+        var next = SignInFlow.SafeNext(form.Next);
+        var code = form.Code ?? string.Empty;
+        if ((await headless.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken)
+            ?? await headless.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: false, cancellationToken,
+                AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage))) is { } wait)
+        {
+            AuthMetrics.SignIn("hosted_sign_up", "rate_limited");
+            return SignInFlow.Limited(this.HttpContext, SignInStep.SignUpCode, wait, address, next, form.PendingToken);
+        }
+
+        var user = await passcodes.RedeemAsync(OidcIssuer.InstanceId, address, code, PasscodePurpose.SignIn, cancellationToken);
+        if (user is null && form.PendingToken is { Length: > 0 } pending
+            && await passcodes.RedeemSignUpAsync(OidcIssuer.InstanceId, address, code, pending, cancellationToken) is { } created)
+        {
+            logger.ZLogInformation($"Audit: hosted sign-up created user {created.Id:@UserId}");
+            user = created;
+        }
+
+        if (user is null || await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
+        {
+            AuthMetrics.SignIn("hosted_sign_up", "refused");
+            return SignInFlow.WrongCode(this.HttpContext, SignInStep.SignUpCode, address, next, form.PendingToken);
+        }
+
+        AuthMetrics.SignIn("hosted_sign_up", "succeeded");
+        return await SignInFlow.SignedInAsync(this.HttpContext, sessions, session, next, cancellationToken);
+    }
+}
+
+/// <summary><c>GET /ui/{slug}/reset</c>: asks for the email address of the account whose password to reset.</summary>
+public sealed class ResetPageEndpoint : EndpointWithoutRequest<IResult>
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Get("/ui/{slug}/reset");
+        Name("ui_password_reset");
+        Summary("Hosted password reset page");
+        Description("Emails a reset code, then sets a new password with it. next is honoured as on the sign-in page.");
+        Tags("Sign-in");
+        Produces<string>(StatusCodes.Status200OK, "text/html");
+        AllowAnonymous();
+    }
+
+    /// <inheritdoc />
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        ValueTask.FromResult(SignInFlow.WrongSlug(this.HttpContext)
+            ? Results.NotFound()
+            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Reset, OidcIssuer.Slug, Next: SignInFlow.SafeNext(this.HttpContext.Request.Query["next"]))));
+}
+
+/// <summary><c>POST /ui/{slug}/reset</c>: emails a reset code when the address has an account; the page is the same either way.</summary>
+public sealed class StartResetEndpoint(HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post("/ui/{slug}/reset");
+        Name("ui_password_reset_start");
+        Summary("Email a password reset code");
+        Description("Same-origin form post with email. Shares the headless password-reset/start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After. The response never reveals whether the address has an account.");
+        Tags("Sign-in");
+        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
+        Produces<string>(StatusCodes.Status200OK, "text/html");
+        Produces<string>(StatusCodes.Status403Forbidden, "text/html");
+        Produces<string>(StatusCodes.Status429TooManyRequests, "text/html");
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        AllowAnonymous();
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
+        {
+            return SignInFlow.Refused(this.HttpContext);
+        }
+
+        var address = form.Email?.Trim() ?? string.Empty;
+        var next = SignInFlow.SafeNext(form.Next);
+        return await headless.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext), cancellationToken) is { } wait
+            ? SignInFlow.Limited(this.HttpContext, SignInStep.Reset, wait, address, next)
+            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, OidcIssuer.Slug, address, next));
+    }
+}
+
+/// <summary><c>POST /ui/{slug}/reset/complete</c>: sets a new password with the emailed reset code.</summary>
+public sealed class CompleteResetEndpoint(HeadlessAuth headless, AuthOptions options) : EndpointWithoutRequest<IResult>
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Post("/ui/{slug}/reset/complete");
+        Name("ui_password_reset_complete");
+        Summary("Set a new password with a reset code");
+        Description("Same-origin form post with email, code and password. As headless password-reset/complete: 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and shows a link back to sign-in.");
+        Tags("Sign-in");
+        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
+        Produces<string>(StatusCodes.Status200OK, "text/html");
+        Produces<string>(StatusCodes.Status400BadRequest, "text/html");
+        Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
+        Produces<string>(StatusCodes.Status403Forbidden, "text/html");
+        Produces<string>(StatusCodes.Status429TooManyRequests, "text/html");
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        AllowAnonymous();
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
+        {
+            return SignInFlow.Refused(this.HttpContext);
+        }
+
+        var address = form.Email?.Trim() ?? string.Empty;
+        var next = SignInFlow.SafeNext(form.Next);
+        if (!PasswordHasher.Acceptable(form.Password))
+        {
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, OidcIssuer.Slug, address, next,
+                "Choose a password of at least 8 characters.")
+            { ErrorTitle = "Password too short" }, StatusCodes.Status400BadRequest);
+        }
+
+        var (reset, wait) = await headless.CompletePasswordResetAsync(address, form.Code ?? string.Empty, form.Password!, SignInFlow.Ip(this.HttpContext), cancellationToken);
+        return wait is { } retry ? SignInFlow.Limited(this.HttpContext, SignInStep.ResetCode, retry, address, next)
+            : reset ? SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetDone, OidcIssuer.Slug, address, next))
+            : SignInFlow.WrongCode(this.HttpContext, SignInStep.ResetCode, address, next);
     }
 }
 
 /// <summary>Checks shared by the sign-in forms.</summary>
 internal static class SignInFlow
 {
-    public static IResult Limited(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next)
+    public static IResult Limited(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null)
     {
         var retryAfter = ((long)wait.TotalSeconds).ToString(CultureInfo.InvariantCulture);
         context.Response.Headers.RetryAfter = retryAfter;
         context.Response.Headers.CacheControl = "no-store";
         return SignInPageModel.Render(context,
-            new SignInPageModel(step, OidcIssuer.Slug, email, next, $"Too many attempts. Try again in {retryAfter} seconds."), StatusCodes.Status429TooManyRequests);
+            new SignInPageModel(step, OidcIssuer.Slug, email, next, $"Try again in {retryAfter} seconds.") { ErrorTitle = "Too many attempts", Limited = true, PendingToken = pendingToken },
+            StatusCodes.Status429TooManyRequests);
+    }
+
+    public static IResult WrongCode(HttpContext context, SignInStep step, string email, string? next, string? pendingToken = null) =>
+        SignInPageModel.Render(context, new SignInPageModel(step, OidcIssuer.Slug, email, next, "Check the latest email, or request a new code.")
+        {
+            ErrorTitle = "That code is wrong or expired",
+            PendingToken = pendingToken,
+        }, StatusCodes.Status401Unauthorized);
+
+    /// <summary>The browser's rate-limit subject; a request without a peer address cannot be limited, so it is refused.</summary>
+    public static string Ip(HttpContext context) =>
+        HeadlessAuth.Subject(context.Connection.RemoteIpAddress?.ToString()) ?? throw ApiException.Unavailable();
+
+    /// <summary>A primary-only session for <paramref name="user"/>, or null when MFA or a newer epoch refuses one.</summary>
+    public static async Task<IssuedSession?> OpenSessionAsync(Sessions sessions, UserRecord user, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await sessions.CreateAsync(user, cancellationToken);
+        }
+        catch (ApiException error) when (error.Status == StatusCodes.Status401Unauthorized && error.Code == "invalid_credentials")
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Replaces the browser's session with <paramref name="session"/> and resumes <paramref name="next"/>.</summary>
+    public static async Task<IResult> SignedInAsync(HttpContext context, Sessions sessions, IssuedSession session, string? next, CancellationToken cancellationToken)
+    {
+        // The browser's previous session, if any, ends with this sign-in.
+        await sessions.RevokeAsync(OidcIssuer.InstanceId, context.Request.Cookies[SecuritySchemes.SessionCookieName], cancellationToken);
+        BrowserSecurity.SetSessionCookie(context.Response, session.Token);
+        return SignInPageModel.Render(context, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, OidcIssuer.Slug, Next: next));
     }
 
     public static bool WrongSlug(HttpContext context) => !string.Equals(context.GetRouteValue("slug") as string, OidcIssuer.Slug, StringComparison.Ordinal);
 
-    /// <summary>Only this issuer's authorization endpoint may be resumed, as a same-origin path.</summary>
+    /// <summary>The device page, which a sign-in may resume.</summary>
+    public static string DevicePath => $"/ui/{OidcIssuer.Slug}/device";
+
+    /// <summary>Only this issuer's authorization endpoint or device page may be resumed, as a same-origin path.</summary>
     public static string? SafeNext(string? next) =>
-        next is not null && next.StartsWith($"/{OidcIssuer.Slug}/oauth/authorize?", StringComparison.Ordinal) && next.Length <= 4096
+        next is not null && (next.StartsWith($"/{OidcIssuer.Slug}/oauth/authorize?", StringComparison.Ordinal) || next == DevicePath || next.StartsWith(DevicePath + "?", StringComparison.Ordinal))
+            && next.Length <= 4096
             && !next.Any(character => character is '\\' or '#' || char.IsControl(character) || char.IsWhiteSpace(character))
             ? next
             : null;
@@ -189,7 +528,7 @@ internal static class SignInFlow
         }
 
         var form = await context.Request.ReadFormAsync(cancellationToken);
-        return new SignInForm(form["email"], form["code"], form["next"]);
+        return new SignInForm(form["email"], form["code"], form["next"], form["password"], form["pending_token"]);
     }
 
     /// <summary>

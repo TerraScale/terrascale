@@ -3,9 +3,10 @@
 The internal slices implement TOTP and recovery-code persistence, atomic
 composition with the caller's authorization transition, and refusal of
 primary-only authentication for users with active MFA. The service
-does not expose enrollment or MFA sign-in endpoints yet. The
-headless API, WebAuthn, and organization policies follow in separate slices;
-dashboard authentication stays on the dashboard's native pages.
+does not expose enrollment or MFA sign-in endpoints yet, so no user can hold an
+active factor. MFA enrollment, the hosted MFA challenge, WebAuthn and
+organization policies follow in separate slices. Sign-in for the dashboard and
+the ts CLI happens on ts-auth's hosted pages (HA1).
 
 ## Credential state
 

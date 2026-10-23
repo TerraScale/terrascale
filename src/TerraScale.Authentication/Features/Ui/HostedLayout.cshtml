@@ -4,11 +4,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>@Model.Title · ts-auth</title>
+<title>@Model.Title · @Model.Name</title>
+<link rel="icon" href="/admin/logo-icon-blue.svg" type="image/svg+xml">
 <style nonce="@Model.Nonce">@WriteHtml(HostedLayoutModel.PageCss)</style>
 @if (Model.AccentColor is { } accent)
 {
 <style nonce="@Model.Nonce">:root{--accent:@accent}</style>
+}
+@if (Model.TitleSize is { } titleSize)
+{
+<style nonce="@Model.Nonce">:root{--title-size:@(titleSize.ToString(CultureInfo.InvariantCulture))px}</style>
 }
 @await RenderSectionAsync("head")
 <script nonce="@Model.Nonce">
@@ -22,17 +27,28 @@
 <body>
 <main class="auth-page">
 <div class="card">
-<div class="brand"><img src="@(Model.LogoUrl ?? "/admin/logo-icon-blue.svg")" alt="" class="logo-img"><span>@(Model.LogoUrl is null ? "TerraScale" : "ts-auth")</span></div>
+<div class="brand"><img src="@(Model.LogoUrl ?? "/admin/logo-icon-blue.svg")" alt="" class="logo-img"><span>@Model.Name</span></div>
 @await RenderBodyAsync()
 </div>
 </main>
 <footer class="auth-foot">
+<nav class="foot-links" aria-label="Footer">
+@foreach (var (label, url) in Model.Footer)
+{
+<a href="@url">@label</a>
+}
+</nav>
+<div class="foot-row">
 <select class="theme-picker" aria-label="Theme">
 <option value="system">System</option>
 <option value="light">Light</option>
 <option value="dark">Dark</option>
 </select>
+@if (Model.Powered)
+{
 <p class="auth-powered">Powered by <b>TerraScale</b></p>
+}
+</div>
 </footer>
 <script nonce="@Model.Nonce">
 (function () {

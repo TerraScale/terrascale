@@ -1,51 +1,228 @@
 @inherits RazorSlice<SignInPageModel>
 @implements IUsesLayout<HostedLayout, HostedLayoutModel>
-<h1>@Model.Title</h1>
+<div class="head">
+<h1>@Model.Heading</h1>
+@switch (Model.Step)
+{
+case SignInStep.Email:
+<p class="sub">Welcome back. Use the email you signed up with.</p>
+break;
+case SignInStep.Password:
+<p class="sub">Or get a one-time code by email.</p>
+break;
+case SignInStep.Code:
+<p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 10 minutes.</p>
+break;
+case SignInStep.Continue:
+<p class="sub">Returning to the application…</p>
+break;
+case SignInStep.SignedIn:
+<p class="sub">You can close this page.</p>
+break;
+case SignInStep.SignedOut:
+<p class="sub">@(Model.ReturnTo is null ? "You can close this page." : "Returning to the application…")</p>
+break;
+case SignInStep.Rejected:
+<p class="sub">Start again from the application you were signing in to.</p>
+break;
+case SignInStep.SignUp:
+<p class="sub">Get started with @HostedLayoutModel.DefaultName in under a minute.</p>
+break;
+case SignInStep.SignUpCode:
+<p class="sub">We emailed a six-digit code to <strong>@Model.Email</strong>. It expires in 10 minutes.</p>
+break;
+case SignInStep.Reset:
+<p class="sub">Enter your account email and we will send you a reset code.</p>
+break;
+case SignInStep.ResetCode:
+<p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 10 minutes.</p>
+break;
+case SignInStep.ResetDone:
+<p class="sub">You were signed out everywhere. Sign in with your new password.</p>
+break;
+case SignInStep.DeviceEnter:
+<p class="sub">Enter the code shown in your terminal.</p>
+break;
+case SignInStep.DeviceConfirm:
+<p class="sub">Approve only if you started this sign-in from the TerraScale CLI and the code matches your terminal.</p>
+break;
+case SignInStep.DeviceApproved:
+<p class="sub">The TerraScale CLI is signed in. You can close this page and return to your terminal.</p>
+break;
+case SignInStep.DeviceDenied:
+<p class="sub">The device was not signed in. You can close this page.</p>
+break;
+}
+</div>
 @if (Model.Error is { } error)
 {
-<p class="error" role="alert">@error</p>
+<div class="alert" data-state="@(Model.Limited ? "limited" : "error")" role="alert"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#@(Model.Limited ? "i-clock" : "i-circle-alert")"></use></svg><div>@if (Model.ErrorTitle is { } errorTitle)
+{<strong>@errorTitle</strong>}<p>@error</p></div></div>
 }
 @switch (Model.Step)
 {
 case SignInStep.Email:
 <form method="post" action="/ui/@Model.Slug/sign-in">
 <input type="hidden" name="next" value="@Model.Next">
+<div class="field">
 <label for="sign-in-email">Email</label>
-<input id="sign-in-email" name="email" type="email" autocomplete="username" required autofocus value="@Model.Email">
-<button type="submit">Email me a sign-in code</button>
+<input id="sign-in-email" name="email" type="email" autocomplete="username" placeholder="you@company.com" required autofocus value="@Model.Email">
+</div>
+<div class="actions">
+<button type="submit">Email me a sign-in code<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></button>
+<button type="submit" class="secondary" formaction="/ui/@Model.Slug/sign-in/password"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>Use a password instead</button>
+</div>
+</form>
+<div class="row">
+<a href="@Model.Link("reset")">Forgot password?</a>
+<span class="alt">New here? <a href="@Model.Link("sign-up")">Create account</a></span>
+</div>
+break;
+case SignInStep.Password:
+<form method="post" action="/ui/@Model.Slug/sign-in/password">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="email" value="@Model.Email">
+<div class="chip"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg><span>@Model.Email</span><a href="@Model.Link("sign-in")">Change</a></div>
+<div class="field">
+<label for="sign-in-password">Password <a href="@Model.Link("reset")">Forgot password?</a></label>
+<input id="sign-in-password" name="password" type="password" autocomplete="current-password" required autofocus>
+</div>
+<button type="submit">Sign in</button>
+</form>
+<form method="post" action="/ui/@Model.Slug/sign-in">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="email" value="@Model.Email">
+<button type="submit" class="secondary"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg>Email me a sign-in code</button>
 </form>
 break;
 case SignInStep.Code:
-<p class="muted">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 10 minutes.</p>
 <form method="post" action="/ui/@Model.Slug/sign-in/verify">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
-<label for="sign-in-code">Code</label>
-<input id="sign-in-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus>
-<button type="submit">Sign in</button>
+<div class="field">
+<label for="sign-in-code">Sign-in code</label>
+<input id="sign-in-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
+</div>
+<button type="submit">Verify and sign in</button>
 </form>
 <form method="post" action="/ui/@Model.Slug/sign-in">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <button type="submit" class="secondary">Send a new code</button>
 </form>
+<div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Different email</a></div>
 break;
 case SignInStep.Continue:
-<p class="muted">Returning to the application…</p>
-<p class="hint"><a href="@Model.Next">Continue</a></p>
+<a class="btn" href="@Model.Next">Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.SignedIn:
-<p class="success" role="status">You are signed in. You can close this page.</p>
+<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>You are signed in.</p></div>
 break;
 case SignInStep.SignedOut:
-<p class="success" role="status">You are signed out. You can close this page.</p>
+<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-log-out"></use></svg><p>You are signed out.</p></div>
+@if (Model.ReturnTo is { } returnTo)
+{
+<a class="btn" href="@returnTo">Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+}
 break;
 case SignInStep.Rejected:
-<p class="muted">Start again from the application you were signing in to.</p>
 @if (Model.Detail is { } detail)
 {
 <p class="hint">Error code: @detail</p>
 }
+break;
+case SignInStep.SignUp:
+<form method="post" action="/ui/@Model.Slug/sign-up">
+<input type="hidden" name="next" value="@Model.Next">
+<div class="field">
+<label for="sign-up-email">Email</label>
+<input id="sign-up-email" name="email" type="email" autocomplete="username" placeholder="you@company.com" required autofocus value="@Model.Email">
+</div>
+<div class="field">
+<label for="sign-up-password">Password</label>
+<input id="sign-up-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+<span class="hint">At least 8 characters.</span>
+</div>
+<button type="submit">Create account</button>
+</form>
+<p class="alt">Already have an account? <a href="@Model.Link("sign-in")">Sign in</a></p>
+break;
+case SignInStep.SignUpCode:
+<form method="post" action="/ui/@Model.Slug/sign-up/verify">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="email" value="@Model.Email">
+<input type="hidden" name="pending_token" value="@Model.PendingToken">
+<div class="field">
+<label for="sign-up-code">Verification code</label>
+<input id="sign-up-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
+</div>
+<button type="submit">Verify email</button>
+</form>
+<div class="row"><a href="@Model.Link("sign-up")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Change email</a></div>
+break;
+case SignInStep.Reset:
+<form method="post" action="/ui/@Model.Slug/reset">
+<input type="hidden" name="next" value="@Model.Next">
+<div class="field">
+<label for="reset-email">Email</label>
+<input id="reset-email" name="email" type="email" autocomplete="username" placeholder="you@company.com" required autofocus value="@Model.Email">
+</div>
+<button type="submit">Email me a reset code</button>
+</form>
+<p class="alt">Remembered it? <a href="@Model.Link("sign-in")">Sign in</a></p>
+break;
+case SignInStep.ResetCode:
+<form method="post" action="/ui/@Model.Slug/reset/complete">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="email" value="@Model.Email">
+<div class="field">
+<label for="reset-code">Reset code</label>
+<input id="reset-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
+</div>
+<div class="field">
+<label for="reset-password">New password</label>
+<input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+<span class="hint">At least 8 characters. Every session ends when it changes.</span>
+</div>
+<button type="submit">Set new password</button>
+</form>
+<div class="row"><a href="@Model.Link("reset")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Different email</a></div>
+break;
+case SignInStep.ResetDone:
+<a class="btn" href="@Model.Link("sign-in")">Sign in<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+break;
+case SignInStep.DeviceEnter:
+<form method="get" action="/ui/@Model.Slug/device">
+<div class="field">
+<label for="device-code">Device code</label>
+<input id="device-code" class="code" name="user_code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="32" placeholder="0000-0000-0000" required autofocus value="@Model.UserCode">
+</div>
+<button type="submit">Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></button>
+</form>
+@if (Model.Account is { } enterAccount)
+{
+<p class="alt">Signed in as <strong>@enterAccount</strong></p>
+}
+break;
+case SignInStep.DeviceConfirm:
+<div class="device-code" aria-label="Device code">@Model.UserCode</div>
+<dl class="facts">
+<div><dt>Application</dt><dd>TerraScale CLI</dd></div>
+<div><dt>Account</dt><dd>@Model.Account</dd></div>
+</dl>
+<form method="post" action="/ui/@Model.Slug/device">
+<input type="hidden" name="user_code" value="@Model.UserCode">
+<div class="actions">
+<button type="submit" name="decision" value="approve"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-terminal"></use></svg>Approve</button>
+<button type="submit" name="decision" value="deny" class="secondary">Deny</button>
+</div>
+</form>
+break;
+case SignInStep.DeviceApproved:
+<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>Device approved.</p></div>
+break;
+case SignInStep.DeviceDenied:
+<div class="alert" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-x"></use></svg><p>Device denied.</p></div>
 break;
 }
 @functions {
@@ -59,6 +236,12 @@ break;
         if (name == "head" && Model.Step == SignInStep.Continue)
         {
 <meta http-equiv="refresh" content="0;url=@Model.Next">
+        }
+
+        // The client's validated post-logout URI, after a moment to read the page; the Continue link also goes there.
+        if (name == "head" && Model.Step == SignInStep.SignedOut && Model.ReturnTo is { } returnTo)
+        {
+<meta http-equiv="refresh" content="2;url=@returnTo">
         }
 
         return Task.CompletedTask;

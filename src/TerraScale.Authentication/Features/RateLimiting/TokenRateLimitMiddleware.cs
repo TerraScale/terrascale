@@ -21,6 +21,9 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
     public const int ProxyFactor = 4;
 
     private const string TokenPath = "/" + OidcIssuer.Slug + "/oauth/token";
+
+    // The device authorization endpoint writes two tokens per unauthenticated call, so it shares the token budget.
+    private const string DevicePath = "/" + OidcIssuer.Slug + "/oauth/device";
     private static readonly TimeSpan Window = TimeSpan.FromMinutes(1);
     private static readonly object TrustedProxyKey = new();
 
@@ -39,7 +42,9 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
         // OpenIddict treats casing and a single trailing slash as equivalent endpoint paths.
         if (!HttpMethods.IsPost(context.Request.Method)
             || !(context.Request.Path.Equals(TokenPath, StringComparison.OrdinalIgnoreCase)
-                || context.Request.Path.Equals(TokenPath + "/", StringComparison.OrdinalIgnoreCase)))
+                || context.Request.Path.Equals(TokenPath + "/", StringComparison.OrdinalIgnoreCase)
+                || context.Request.Path.Equals(DevicePath, StringComparison.OrdinalIgnoreCase)
+                || context.Request.Path.Equals(DevicePath + "/", StringComparison.OrdinalIgnoreCase)))
         {
             await next(context);
             return;

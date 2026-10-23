@@ -11,7 +11,7 @@ namespace TerraScale.Authentication.Fast.Oidc;
 public sealed class StatusClientTests(TerraBaseFixture fixture)
 {
     [Test]
-    public async Task Startup_registers_one_secretless_status_client_without_dashboard_configuration()
+    public async Task Startup_registers_the_secretless_status_and_cli_clients_without_dashboard_configuration()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture, values =>
         {
@@ -21,7 +21,14 @@ public sealed class StatusClientTests(TerraBaseFixture fixture)
         });
         await oidc.Server.App.Services.GetRequiredService<ClientRegistration>().RegisterAllAsync(CancellationToken.None);
 
-        var stored = (await oidc.Database.ListDocumentsAsync(AuthStore.OidcApplicationCollection)).Items.Single().Document;
+        // The two built-in public clients: ts-status and the ts CLI (device flow), neither with a secret.
+        var clients = (await oidc.Database.ListDocumentsAsync(AuthStore.OidcApplicationCollection)).Items.Select(item => item.Document).ToList();
+        await Assert.That(clients.Select(client => client.GetProperty("clientId").GetString()!)).IsEquivalentTo([OidcIssuer.StatusClientId, OidcIssuer.CliClientId]);
+        var cli = clients.Single(client => client.GetProperty("clientId").GetString() == OidcIssuer.CliClientId);
+        await Assert.That(cli.GetProperty("clientType").GetString()).IsEqualTo("public");
+        await Assert.That(cli.GetProperty("clientSecret").ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.Null);
+        await Assert.That(cli.GetProperty("redirectUris").GetArrayLength()).IsEqualTo(0);
+        var stored = clients.Single(client => client.GetProperty("clientId").GetString() == OidcIssuer.StatusClientId);
         await Assert.That(stored.GetProperty("clientId").GetString()).IsEqualTo(OidcIssuer.StatusClientId);
         await Assert.That(stored.GetProperty("clientType").GetString()).IsEqualTo("public");
         await Assert.That(stored.GetProperty("clientSecret").ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.Null);

@@ -107,14 +107,12 @@ public sealed class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentia
         UserRecord? user;
         if (request.GrantType == HeadlessGrants.Password)
         {
-            var normalized = Users.NormalizeEmail(email);
-            if (await this.LimitEmailAsync(email, "headless-password-email", PasswordPerEmail, PasswordWindow, notify: true, cancellationToken) is { } passwordWait)
+            (user, var passwordWait) = await this.CheckPasswordAsync(email, secret, cancellationToken);
+            if (passwordWait is { } passwordRetry)
             {
                 AuthMetrics.SignIn(metric, "rate_limited");
-                return TooMany(passwordWait);
+                return TooMany(passwordRetry);
             }
-
-            user = normalized is null ? null : await this.CheckPasswordAsync(normalized, secret, cancellationToken);
         }
         else
         {
@@ -246,7 +244,21 @@ public sealed class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentia
     public static IResult TooMany(TimeSpan wait) => new RetryAfterResult(wait,
         Results.Json(new OAuthErrorBody("rate_limited", "Too many attempts; retry later."), statusCode: StatusCodes.Status429TooManyRequests));
 
-    private async Task<UserRecord?> CheckPasswordAsync(string email, string password, CancellationToken cancellationToken)
+    /// <summary>
+    /// Charges the email's password budget, then checks <paramref name="password"/>. The account, null for any wrong
+    /// email or password alike, or how long to wait. Callers charge the IP budget first and check MFA after.
+    /// </summary>
+    public async Task<(UserRecord? User, TimeSpan? Wait)> CheckPasswordAsync(string email, string password, CancellationToken cancellationToken)
+    {
+        if (await this.LimitEmailAsync(email, "headless-password-email", PasswordPerEmail, PasswordWindow, notify: true, cancellationToken) is { } wait)
+        {
+            return (null, wait);
+        }
+
+        return (Users.NormalizeEmail(email) is { } normalized ? await this.VerifyPasswordAsync(normalized, password, cancellationToken) : null, null);
+    }
+
+    private async Task<UserRecord?> VerifyPasswordAsync(string email, string password, CancellationToken cancellationToken)
     {
         if (!PasswordHasher.Acceptable(password))
         {
