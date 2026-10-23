@@ -11,6 +11,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
@@ -641,7 +642,8 @@ public sealed class StateAdmissionTests
     private sealed class Fixture(ManagementApi api, TenantContext database, TursoDatabaseStore store, Probe probe, string id) : IAsyncDisposable
     {
         private static readonly string[] SideSuffixes = ["", "-wal", "-shm", "-journal"];
-        private readonly long _foregroundBaseline = Volatile.Read(ref probe.ForegroundReserved);
+        // Applied batches' replication analytics hold foreground memory until the usage meter flushes: not counted here.
+        private readonly long _foregroundBaseline = Volatile.Read(ref probe.ForegroundReserved) - api.Server.Services.GetRequiredService<UsageMeter>().MeasurementBytesHeld;
         public ManagementApi Api => api;
         public TenantContext Database => database;
         public TursoDatabaseStore Store => store;
@@ -745,7 +747,8 @@ public sealed class StateAdmissionTests
         }
 
         public Task SourceReleasedAsync() => TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(
-            Volatile.Read(ref probe.SourceReserved) == 0 && Volatile.Read(ref probe.ForegroundReserved) == _foregroundBaseline), TimeSpan.FromSeconds(10));
+            Volatile.Read(ref probe.SourceReserved) == 0
+            && Volatile.Read(ref probe.ForegroundReserved) - Service<UsageMeter>().MeasurementBytesHeld == _foregroundBaseline), TimeSpan.FromSeconds(10));
 
         public Task AllReleasedAsync(long baseline) => TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(
             Volatile.Read(ref probe.Reserved) == baseline), TimeSpan.FromSeconds(10));
