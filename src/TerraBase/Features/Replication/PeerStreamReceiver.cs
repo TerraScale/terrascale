@@ -173,7 +173,8 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             }
 
             cut = _cut.TryRemove(origin, out var carried) ? carried : [];
-            await responseStream.WriteAsync(new AckFrame { Welcome = new Welcome { Node = _self.Id.Value } }, stream.Token).ConfigureAwait(false);
+            await responseStream.WriteAsync(new AckFrame { Welcome = new Welcome { Node = _self.Id.Value, Protocol = ReplicationProtocol.Version } }, stream.Token)
+                .ConfigureAwait(false);
             reading = requestStream.MoveNext(stream.Token);
             while (true)
             {
@@ -251,6 +252,12 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 var received = _timings.Now;
                 silent.CancelAfter(ReplicationProtocol.ProgressTimeout);
                 reading = requestStream.MoveNext(stream.Token);
+                if (frame.KindCase == PushFrame.KindOneofCase.None)
+                {
+                    // A kind of a newer protocol than this build's: its sender knows this machine does not read it.
+                    continue;
+                }
+
                 if (frame.KindCase == PushFrame.KindOneofCase.Heartbeat)
                 {
                     // An empty frame answers it, so the sender's deadline for answers also holds on an idle link.
@@ -304,7 +311,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
                 if (frame.Batch is not { } batch)
                 {
-                    throw new RpcException(new Status(StatusCode.InvalidArgument, "a push stream carries batches and heartbeats after its hello"));
+                    throw new RpcException(new Status(StatusCode.InvalidArgument, "a push stream carries one hello, first"));
                 }
 
                 // A batch that names no database or incarnation cannot be refused for one: it ends the stream.

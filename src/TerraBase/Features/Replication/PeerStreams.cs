@@ -286,7 +286,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         using var call = new V1.Replication.ReplicationClient(channel).Push(cancellationToken: cancellationToken);
         await call.RequestStream.WriteAsync(new PushFrame
         {
-            Hello = new Hello { Node = _self.Id.Value, Hlc = _self.Clock.Tick().Value, Region = _options.Region, Machine = _membership.Self.Name },
+            Hello = new Hello
+            {
+                Node = _self.Id.Value,
+                Hlc = _self.Clock.Tick().Value,
+                Region = _options.Region,
+                Machine = _membership.Self.Name,
+                Protocol = ReplicationProtocol.Version,
+            },
         }, cancellationToken).ConfigureAwait(false);
         if (!await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false) || call.ResponseStream.Current.Welcome is not { Node: not 0 })
         {
@@ -298,7 +305,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         var peer = new ReplicaId(call.ResponseStream.Current.Welcome.Node);
         lock (link.Gate)
         {
-            (link.Connected, link.Origin) = (true, peer);
+            (link.Connected, link.Origin, link.Protocol) = (true, peer, ReplicationProtocol.Negotiate(call.ResponseStream.Current.Welcome.Protocol));
             foreach (var cursor in link.Cursors.Values)
             {
                 (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.RequiresRefill, cursor.Refilling, cursor.Live, cursor.Stamps) =
@@ -1211,6 +1218,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
         // The node the peer welcomed this connection with: the replica id its own commits carry. Null while not connected.
         public ReplicaId? Origin { get; set; }
+
+        // The protocol this connection uses (ReplicationProtocol.Negotiate of the peer's Welcome).
+        public uint Protocol { get; set; }
 
         public Dictionary<TenantContext, Cursor> Cursors { get; } = [];
 
