@@ -394,8 +394,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     var admitted = token.StartsWith("Bearer ", StringComparison.Ordinal) ? ResolveAccessToken(token[7..]) : null;
                     Require(admitted is not null, "Management uses admitted user access token");
                     Require(TerraScaleIds.IsValid(admitted!.Value.UserId), "The current producer accepts canonical ULID bearer subjects");
-                    http.Items["producer-subject"] = admitted!.Value.UserId;
-                    return await ManagementAsync(http);
+                    // Organization and project identity left management for ts-auth; database routes are canonical project routes.
+                    throw new InvalidOperationException("Unsupported management protocol route");
                 }
                 if (path.StartsWith("/v1/projects/", StringComparison.Ordinal))
                 {
@@ -572,46 +572,16 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             });
         }
 
-        private async Task<IResult> ManagementAsync(HttpContext http)
-        {
-            var parts = http.Request.Path.Value!.Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Uri.UnescapeDataString).ToArray();
-            var subject = (string)http.Items["producer-subject"]!;
-            if (http.Request.Headers.TryGetValue("X-TerraBase-User-Id", out var acting))
-                Require(acting == subject, "Official management SDK acting subject matches admitted bearer");
-            // Organization and project identity left management for ts-auth. Backup aliases and the restored-database
-            // confirmation consult the fixture's canonical ts-auth membership; nothing here creates or stores identity.
-            Require(parts.Length >= 8 && parts[2] == "organizations" && parts[4] == "projects" && parts[6] == "databases", "Scoped management database route");
-            var org = parts[3];
-            var project = parts[5];
-            Require(http.Request.Headers["X-TerraBase-Organization-Id"] == org, "Management organization header matches route");
-            Require(Workspace.ProjectRole(subject, org, project).Length > 0, "Management tenant membership matches admitted subject");
-            ManagedDatabase current;
-            lock (gate) { Require(databases.TryGetValue(parts[7], out current!) && current.ProjectId == project, "Database ownership matches project"); }
-            if (parts.Length >= 9 && parts[8] is "backups" or "backup-policy")
-                return await BackupsAsync(http, parts, project, current, KeyRole(subject, org, project));
-            if (parts.Length == 8 && http.Request.Method == "GET")
-            {
-                Require(acting == subject, "Official restored-database confirmation acting subject");
-                // The real managed GET uses ManagedDatabaseBody, whose replica
-                // list is normalized even though raw restore201 permits null.
-                var confirmed = backupFailure == "foreign-confirm" && current.BranchedFrom is not null ? current with { ProjectId = ids.NewId() } : current;
-                return Results.Json(Wire(confirmed, http.Response.Headers["X-TerraBase-Region"].ToString()));
-            }
-            throw new InvalidOperationException("Unsupported management protocol route");
-        }
-
-        // Frozen producer b4919bd3 backup contract: legacy authenticated ID
-        // aliases, full-only policy, complete snapshots, new-database restore.
+        // Producer project backup contract: /v1/projects/{project}/databases/{name}/backups and backup-policy
+        // with an action-scoped project token, full-only policy, complete snapshots, new-database restore.
         // The test producer really copies its stored snapshot; it is not live
         // engine/storage admission or scheduler qualification.
         private async Task<IResult> BackupsAsync(HttpContext http, string[] parts, string project, ManagedDatabase source, string callerRole)
         {
-            var subject = (string)http.Items["producer-subject"]!;
-            Require(http.Request.Headers["X-TerraBase-User-Id"] == subject, "Backup acting subject equals admitted bearer");
             if (callerRole.Length == 0) return Error(404, "not_found");
             if (http.Request.Method != "GET" && callerRole is not ("owner" or "admin")) return Error(403, "role_too_low");
             if (backupFailure == "outage") return Error(503, "unavailable");
-            if (parts.Length == 9 && parts[8] == "backup-policy")
+            if (parts.Length == 6 && parts[5] == "backup-policy")
             {
                 if (http.Request.Method == "GET")
                 { lock (gate) return Results.Json(policies.GetValueOrDefault(source.Id) ?? new ProducerBackupPolicy("0 2 * * *", 7, false, null)); }
@@ -629,7 +599,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 Interlocked.Increment(ref policyWrites);
                 return Results.Json(policy);
             }
-            if (parts.Length == 9 && parts[8] == "backups")
+            if (parts.Length == 6 && parts[5] == "backups")
             {
                 if (http.Request.Method == "GET")
                 {
@@ -659,12 +629,12 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     return Results.Json(backup, statusCode: 201);
                 }
             }
-            Require(parts.Length == 11 && parts[8] == "backups" && parts[10] == "restore" && http.Request.Method == "POST", "Producer restore route");
+            Require(parts.Length == 8 && parts[5] == "backups" && parts[7] == "restore" && http.Request.Method == "POST", "Producer restore route");
             var request = await JsonAsync(http);
             Require(request.EnumerateObject().Count() == 1 && request.TryGetProperty("name", out _), "Producer restore accepts only optional name");
             lock (gate)
             {
-                if (!snapshots.TryGetValue(parts[9], out var snapshot) || snapshot.Backup.DatabaseId != source.Id) return Error(404, "not_found");
+                if (!snapshots.TryGetValue(parts[6], out var snapshot) || snapshot.Backup.DatabaseId != source.Id) return Error(404, "not_found");
                 var name = request.GetProperty("name").GetString();
                 if (name is null)
                 {
@@ -712,6 +682,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 [_, _, _, _, _, "schema"] => "databases:read",
                 [_, _, _, _, _, "schema", _] when method == "GET" => "databases:read",
                 [_, _, _, _, _, "indexes"] when method == "GET" => "databases:read",
+                [_, _, _, _, _, "backups" or "backup-policy"] when method == "GET" => "databases:read",
                 _ => "databases:write"
             };
             if (Authorize(http, project, scope) is { } denied) return denied;
@@ -763,10 +734,12 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 if (found is null) return Error(404, "not_found");
                 current = found;
             }
+            if (parts.Length >= 6 && parts[5] is "backups" or "backup-policy") return await BackupsAsync(http, parts, project, current, callerRole);
             var atHome = current.HomeRegion == answering;
             switch (parts.Length, method, parts.ElementAtOrDefault(5))
             {
-                case (5, "GET", _): return Results.Json(Wire(current, answering));
+                // The managed GET normalizes the replica list even though raw restore 201 permits null.
+                case (5, "GET", _): return Results.Json(Wire(backupFailure == "foreign-confirm" && current.BranchedFrom is not null ? current with { ProjectId = ids.NewId() } : current, answering));
                 case (5, "PATCH", _):
                     if (callerRole is not ("owner" or "admin")) return Error(403, "role_too_low");
                     if (!atHome) return WrongRegion(http, current);
