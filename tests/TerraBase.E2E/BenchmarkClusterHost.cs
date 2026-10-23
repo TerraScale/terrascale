@@ -6,9 +6,10 @@ namespace TerraBase.E2E;
 /// <summary>
 /// Hosts gru, sjc and fra (or the regions <c>TERRABASE_BENCH_REGIONS</c> names, for example <c>gru</c> while nothing
 /// replicates between R2a-1 and R4a) as local nodes for the replication benchmark (benchmark/cmd/repl-bench, run by
-/// <c>make benchmark-repl-local</c>). It writes the targets file named by <c>TERRABASE_BENCH_CLUSTER_FILE</c> once every
+/// <c>make benchmark-repl-local</c>). It writes the targets file named by <c>TERRABASE_BENCH_TARGETS</c> once every
 /// region serves the database, and keeps the nodes up until the benchmark deletes that file. Without the variable it
-/// skips: it is a host, not a scenario.
+/// skips: it is a host, not a scenario. <c>TERRABASE_BENCH_LINK_DELAYS</c> (for example <c>gru-sjc=85,gru-fra=94,sjc-fra=69</c>)
+/// gives each named pair of regions a one-way delay in milliseconds on its peer links, as the real routes have.
 /// </summary>
 [Category("benchmark-host")]
 public sealed class BenchmarkClusterHost
@@ -18,18 +19,25 @@ public sealed class BenchmarkClusterHost
     [Timeout(6 * 3600 * 1000)]
     public async Task Hosts_three_local_regions_until_the_benchmark_deletes_its_targets_file(CancellationToken cancellationToken)
     {
-        var file = Environment.GetEnvironmentVariable("TERRABASE_BENCH_CLUSTER_FILE");
+        var file = Environment.GetEnvironmentVariable("TERRABASE_BENCH_TARGETS");
         Skip.When(string.IsNullOrEmpty(file), "the replication benchmark's local cluster host: run it with make benchmark-repl-local");
         var chosen = Environment.GetEnvironmentVariable("TERRABASE_BENCH_REGIONS") is { Length: > 0 } list
             ? list.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             : [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
         await using var cluster = await Cluster.StartLocalAsync(chosen);
+        foreach (var pair in (Environment.GetEnvironmentVariable("TERRABASE_BENCH_LINK_DELAYS") ?? "")
+            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            var (regionPair, milliseconds) = (pair.Split('=')[0].Split('-'), double.Parse(pair.Split('=')[1], System.Globalization.CultureInfo.InvariantCulture));
+            cluster.Delay(regionPair[0], regionPair[1], TimeSpan.FromMilliseconds(milliseconds));
+        }
+
         var regions = new JsonObject();
         var dataDirectories = new JsonObject();
         foreach (var region in cluster.Regions)
         {
             var (address, token, directory) = cluster.Endpoint(region);
-            regions[region] = new JsonObject { ["url"] = address.ToString(), ["token"] = token };
+            regions[region] = new JsonObject { ["url"] = address.ToString(), ["token"] = token, ["metrics"] = cluster.MetricsAddress(region).ToString() };
             dataDirectories[region] = directory;
         }
 
