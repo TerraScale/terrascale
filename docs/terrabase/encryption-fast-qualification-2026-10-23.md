@@ -192,6 +192,30 @@ manifest SHA-256:
 The prior failed qualification is retained unchanged. Exact-head CI remains
 the integration gate after rebasing onto main's replication-progress fix.
 
+## Changes-feed shutdown cancellation
+
+CI at `07846f10c` passed 2,544/2,545 TerraBase Fast cases and all 44 vendor
+cases. The bounded-shutdown test failed while requiring clean SSE EOF after
+its budget/storage cleanup assertions had passed. Server logs show the shared
+read observing `ApplicationStopping` cancellation before the linked stream
+callback ran. Recognizing the original host token in the stream cancellation
+filter preserves clean termination; the EOF assertion and budgets are unchanged.
+
+At literal `1ebb01295a6449299ed970070390919e0d41bcca`, five complete
+`BoundedShutdownTests` repetitions passed all 25 cases, including both boolean
+variants each time, without failures, skips, retries or omissions. One Release
+build passed; .128 SDK, owned clean bcd20603 sibling and all actual mapped
+runtime-AEGIS native digests were verified. The host was shared; loads are
+retained. Evidence on delta and mariogk-dev is under
+`~/.t3/test-artifacts/database-encryption/bounded-1ebb01295-dev-20261023T223234Z/`;
+all 92 manifested files were independently rehashed on both hosts. Manifest
+SHA-256: `0f4fab91e7541ac014d317a27998ce9e593e585ad348c4db5475cba4b863e76b`.
+
+CI run `40033976361` passed libs, auth, TerraBase and both Slow jobs on that
+commit. Its aggregate gate failed because the required `storage-format` label
+was missing; that metadata is corrected. Rebasing onto later main still
+requires CI on the resulting exact head.
+
 ## Retained evidence
 
 Raw logs are outside Git under
