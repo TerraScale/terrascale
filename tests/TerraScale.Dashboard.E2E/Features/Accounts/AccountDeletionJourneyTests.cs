@@ -1,5 +1,6 @@
 using System.Net;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Billing;
 using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.E2E.Features.Accounts;
@@ -60,6 +61,38 @@ public sealed class AccountDeletionJourneyTests
         await Assert.That(session.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
+    [Test]
+    public async Task RenewingPaidPlanRefusesDeletionAndLeavesStripeUntouched()
+    {
+        await using var scenario = await Scenario.StartAsync();
+        var personal = scenario.PersonalOrganizationId();
+        var subscription = await scenario.SubscribeAsync(personal, switchToFree: false);
+        using (var refused = await scenario.DeleteAsync("user@example.com"))
+        {
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            await Assert.That(await refused.Content.ReadAsStringAsync()).Contains("to the Free plan in Billing before deleting your account.");
+        }
+        await Assert.That(scenario.Environment.BillingPlans.Canceled(subscription)).IsFalse();
+        await Assert.That(await scenario.ExistsAsync(StripeBilling.Collection, personal)).IsTrue();
+        await Assert.That(await scenario.ExistsAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(UserId))).IsTrue();
+        await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsTrue();
+    }
+
+    [Test]
+    public async Task PlanSwitchedToFreeEndsNowWhenTheAccountIsDeleted()
+    {
+        await using var scenario = await Scenario.StartAsync();
+        var personal = scenario.PersonalOrganizationId();
+        var subscription = await scenario.SubscribeAsync(personal, switchToFree: true);
+        await Assert.That(scenario.Environment.BillingPlans.Canceled(subscription)).IsFalse().Because("Free applies only at the end of the paid period");
+        using (var deleted = await scenario.DeleteAsync("user@example.com"))
+            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await Assert.That(scenario.Environment.BillingPlans.Canceled(subscription)).IsTrue();
+        await Assert.That(await scenario.ExistsAsync(StripeBilling.Collection, personal)).IsFalse();
+        await Assert.That(await scenario.ExistsAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(UserId))).IsFalse();
+        await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
+    }
+
     private sealed class Scenario : IAsyncDisposable
     {
         public required DemoEnvironment Environment { get; init; }
@@ -97,6 +130,28 @@ public sealed class AccountDeletionJourneyTests
         {
             var csrf = await HttpJourney.CsrfAsync(Client, "/profile?tab=danger");
             return await HttpJourney.PostFormAsync(Client, "/api/v1/dashboard/profile/delete", new() { ["_csrf"] = csrf, ["email"] = email });
+        }
+
+        public async Task<string> SubscribeAsync(string orgId, bool switchToFree)
+        {
+            var csrf = await HttpJourney.CsrfAsync(Client, "/organization?tab=billing");
+            using var checkout = await HttpJourney.PostFormAsync(Client, "/billing/checkout", new()
+            { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "annual", ["return"] = "/organization?tab=billing" });
+            await Assert.That(checkout.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            using var paid = await Client.GetAsync(checkout.Headers.Location);
+            await Assert.That(paid.StatusCode).IsEqualTo(HttpStatusCode.Found);
+            using var bound = await Client.GetAsync(paid.Headers.Location);
+            await Assert.That(bound.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            if (switchToFree)
+            {
+                using var free = await HttpJourney.PostFormAsync(Client, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "free" });
+                await Assert.That(free.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+                using var page = await Client.GetAsync("/organization?tab=billing");
+                await Assert.That(await page.Content.ReadAsStringAsync()).Contains("Change scheduled");
+            }
+            var subscription = StripeBilling.ReadBinding((await Environment.State.GetAsync(StripeBilling.Collection, orgId, default))!, orgId).SubscriptionId;
+            await Assert.That(subscription).IsNotEmpty();
+            return subscription;
         }
 
         public async Task<bool> ExistsAsync(string collection, string id) => await Environment.State.GetAsync(collection, id, default) is not null;

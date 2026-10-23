@@ -152,7 +152,7 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
         {
             var form = QueryHelpers.ParseQuery(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
             var key = request.Headers.TryGetValues("Idempotency-Key", out var keys) ? keys.Single() : "";
-            if (request.Method == HttpMethod.Post && !isPreview() && key.Length == 0) throw new HttpRequestException("Stripe mutations must retain an idempotency key.");
+            if ((request.Method == HttpMethod.Post || request.Method == HttpMethod.Delete) && !isPreview() && key.Length == 0) throw new HttpRequestException("Stripe mutations must retain an idempotency key.");
             if (key.Length > 0)
             {
                 var fingerprint = path + "?" + string.Join('&', form.OrderBy(pair => pair.Key).Select(pair => pair.Key + "=" + pair.Value));
@@ -177,7 +177,12 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
                 if (scenario == "offline" || scenario == "reconcile-outage" && request.Method == HttpMethod.Get && outages.ContainsKey(customer))
                     return Json(new JsonObject { ["error"] = new JsonObject { ["message"] = "Test-only Stripe outage." } }, HttpStatusCode.ServiceUnavailable);
                 if (scenario == "foreign-customer") { var foreign = subscription.DeepClone(); foreign["customer"] = "cus_foreign"; return Json(foreign); }
-                if (request.Method == HttpMethod.Post)
+                if (request.Method == HttpMethod.Delete)
+                {
+                    if (subscription["status"]!.GetValue<string>() == "canceled") return Json(new JsonObject { ["error"] = new JsonObject { ["message"] = "The subscription is already canceled." } }, HttpStatusCode.BadRequest);
+                    mutations.Enqueue((customer, "DELETE " + path)); subscription["status"] = "canceled";
+                }
+                else if (request.Method == HttpMethod.Post)
                 {
                     mutations.Enqueue((customer, path));
                     if (scenario == "reconcile-outage") outages[customer] = 0; else outages.TryRemove(customer, out _);
@@ -291,6 +296,7 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
         }
         finally { serial.Release(); }
     }
+    internal bool Canceled(string subscriptionId) => subscriptions.TryGetValue(subscriptionId, out var subscription) && subscription["status"]!.GetValue<string>() == "canceled";
     private async Task<JsonObject> SubscriptionAsync(string id, CancellationToken cancellationToken)
     {
         if (subscriptions.TryGetValue(id, out var known)) return known;

@@ -11,6 +11,7 @@ public sealed record BillingPlanState(string PlanKey, string Interval, DateTimeO
 public sealed record BillingPlanPreview(string PlanKey, string Interval,
     [property: Description("Whether the change applies now (upgrade) instead of at renewal (downgrade).")] bool Immediate, DateTimeOffset EffectiveAt,
     [property: Description("Estimated charge today in the smallest currency unit.")] long AmountDueCents, long ProrationCents, string Currency, string Note);
+public enum SubscriptionEnd { None, Ended, AtPeriodEnd, Renews }
 
 // Stripe owns all current, pending and scheduled plan facts. The separate CAS
 // receipt only serializes changes and preserves their provider idempotency key.
@@ -145,6 +146,21 @@ public sealed partial class StripeBilling
         await SettleChangeAsync(context, receipt);
         return "undone";
     }
+
+    // Account deletion reads Stripe's live subscription: the binding status changes only through webhooks.
+    public async Task<(SubscriptionEnd End, string SubscriptionId)> SubscriptionEndAsync(string orgId, CancellationToken cancellationToken)
+    {
+        if (await ReadAsync(orgId, cancellationToken) is not { Kind: "stripe", SubscriptionId.Length: > 0 } binding) return (SubscriptionEnd.None, "");
+        var client = await ClientAsync(cancellationToken);
+        var subscription = await client.V1.Subscriptions.GetAsync(binding.SubscriptionId, cancellationToken: cancellationToken);
+        if (subscription.Id != binding.SubscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId)
+            throw new IOException("Subscription ownership does not match.");
+        return (subscription.Status is "canceled" or "incomplete_expired" ? SubscriptionEnd.Ended : subscription.CancelAtPeriodEnd ? SubscriptionEnd.AtPeriodEnd : SubscriptionEnd.Renews, subscription.Id);
+    }
+
+    // The customer already chose to end this subscription; deleting the account only ends it sooner, without proration.
+    public async Task EndNowAsync(string subscriptionId, CancellationToken cancellationToken) =>
+        await (await ClientAsync(cancellationToken)).V1.Subscriptions.CancelAsync(subscriptionId, new(), Idempotent("account-delete-" + subscriptionId), cancellationToken);
 
     public async Task<string> CancelCheckoutAsync(AccountContext context, string checkoutId, CancellationToken cancellationToken)
     {
