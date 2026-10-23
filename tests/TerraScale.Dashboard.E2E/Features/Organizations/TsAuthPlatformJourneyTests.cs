@@ -154,17 +154,14 @@ public sealed class TsAuthPlatformJourneyTests
         using var client = platform.Client();
         using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         var personal = (await Me(client)).GetProperty("organizationId").GetString()!;
-        // Review of #13 at 2a04b403: a project made at ts-auth showed in context but saving its cap answered 404.
+        // A project made at ts-auth stays visible without exposing a customer spending setter.
         var outside = platform.Producer.AddProject(personal, "Made outside", owner.Subject);
         var csrf = await HttpJourney.CsrfAsync(client, "/organization");
         using (var cap = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/usage/spending-controls", new() { ["_csrf"] = csrf, ["projCap_" + outside] = "12.50" }))
-        {
-            await Assert.That(cap.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            await Assert.That(cap.Headers.Location?.OriginalString).IsEqualTo("/usage?tab=settings&saved=ok");
-        }
+            await Assert.That(cap.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         var project = (await Context(client)).GetProperty("organizations").EnumerateArray().Single(org => org.GetProperty("id").GetString() == personal)
             .GetProperty("projects").GetProperty(outside);
-        await Assert.That(project.GetProperty("spendCapCents").GetInt64()).IsEqualTo(1250);
+        await Assert.That(project.TryGetProperty("spendCapCents", out _)).IsFalse();
         await Assert.That(project.GetProperty("name").GetString()).IsEqualTo("Made outside");
 
         // Review of #13 at 2a04b403: confirming deletion with the name ts-auth now holds answered 422.
@@ -258,6 +255,7 @@ public sealed class TsAuthPlatformJourneyTests
         using (var switched = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-organization", new()
         { ["_csrf"] = csrf, ["organizationId"] = business, ["returnUrl"] = "/organization" }))
             await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await platform.PlanAsync(business, OrganizationRecord.StarterPlanId);
         csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=invitations");
         using var resent = await HttpJourney.PostFormAsync(client, "/api/v1/access/invitations/" + invitation + "/resend?tab=invitations", new()
         { ["_csrf"] = csrf });
@@ -283,6 +281,7 @@ public sealed class TsAuthPlatformJourneyTests
         var project = platform.Producer.AddProject(business, "Scoped project", owner.Subject);
         var invitation = platform.Producer.InvitationId(business, platform.Producer.AddInvitation(business, "project-member@example.test", "member", owner.Subject, project));
         var csrf = await SwitchAsync(client, business);
+        await platform.PlanAsync(business, OrganizationRecord.StarterPlanId);
         using (var resent = await HttpJourney.PostFormAsync(client, "/api/v1/access/invitations/" + invitation + "/resend?tab=invitations", new() { ["_csrf"] = csrf }))
             await Assert.That(resent.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using var created = JsonDocument.Parse(platform.Producer.Bodies("POST", "/v1/terrascale/organizations/" + business + "/invitations").Single());

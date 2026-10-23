@@ -7,7 +7,7 @@ public sealed class OnboardingService(AccountService accounts, StripeBilling pay
 {
     public async Task<IReadOnlyList<BillingPlan>> PlansAsync(CancellationToken cancellationToken) =>
         (await payments.PlansAsync(cancellationToken)).Where(plan => plan.PriceCents > 0)
-            .OrderBy(plan => plan.Key switch { "starter" => 0, "pro" => 1, "business" => 2, _ => 3 })
+            .OrderBy(plan => plan.PriceCents)
             .ThenBy(plan => plan.Key, StringComparer.Ordinal).ToArray();
 
     public async Task ConfirmPaymentAsync(SessionRecord session, CancellationToken cancellationToken)

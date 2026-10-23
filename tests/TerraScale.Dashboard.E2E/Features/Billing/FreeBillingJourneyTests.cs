@@ -30,17 +30,20 @@ public sealed class FreeBillingJourneyTests
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
         using var page = await client.GetAsync("/organization?tab=billing");
         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await page.Content.ReadAsStringAsync()).Contains("Free plan. No subscription or payment method is required; no Stripe charges.");
+        await Assert.That(await page.Content.ReadAsStringAsync()).Contains("Hobby plan. No subscription or payment method is required; no Stripe charges.");
         var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
-        using var checkout = await HttpJourney.PostFormAsync(client, "/billing/checkout", new()
+        foreach (var rejectedPlan in new[] { "free", "business", "enterprise", "unknown" })
         {
-            ["_csrf"] = csrf,
-            ["plan"] = "free",
-            ["interval"] = "monthly",
-            ["return"] = "/organization?tab=billing"
-        });
-        await Assert.That(checkout.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-        await Assert.That(vendor.Calls).IsEqualTo(0);
+            using var checkout = await HttpJourney.PostFormAsync(client, "/billing/checkout", new()
+            {
+                ["_csrf"] = csrf,
+                ["plan"] = rejectedPlan,
+                ["interval"] = "monthly",
+                ["return"] = "/organization?tab=billing"
+            });
+            await Assert.That(checkout.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+            await Assert.That(vendor.Calls).IsEqualTo(0);
+        }
         await Assert.That(plans.Requests).IsNotEmpty();
         await Assert.That(plans.Requests.All(request => request.Plan == "hobby" && request.Status == HttpStatusCode.NotFound)).IsTrue();
         await app.StopAsync();

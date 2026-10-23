@@ -21,7 +21,7 @@
     <div class="ts-onboarding-card">
         @if (Model.Step == "payment-method" && Model.PaymentCanceled)
         {
-            <div class="ts-alert ts-alert-warning" role="status"><strong class="ts-alert-title">Payment setup canceled</strong><p class="ts-alert-body">Your earlier account progress is still saved. No payment method was changed; you can continue on the Free plan or try checkout again.</p></div>
+            <div class="ts-alert ts-alert-warning" role="status"><strong class="ts-alert-title">Payment setup canceled</strong><p class="ts-alert-body">Your earlier account progress is still saved. No payment method was changed; you can continue on the @PlanCatalog.For("free").Name plan or try checkout again.</p></div>
         }
         @if (Model.Error.Length != 0)
         { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
@@ -47,11 +47,11 @@
                 <fieldset class="ts-onboarding-plans"><legend class="ts-sr-only">Select a plan</legend>
                     @foreach (var plan in Model.Plans ?? [])
                     {
-                        <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" required /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@plan.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price" data-interval="monthly">@plan.MonthlyPrice<span class="ts-meta"> / month</span></span><span class="ts-onboarding-plan-price" data-interval="annual">@plan.AnnualPrice<span class="ts-meta"> / year</span></span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.ReadsAllowance · @plan.WritesAllowance</span><span class="ts-badge ts-badge-blue">@plan.TrialDays-day trial</span></label>
+                        <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" required /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@plan.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price" data-interval="monthly">@plan.MonthlyPrice<span class="ts-meta"> / month</span></span><span class="ts-onboarding-plan-price" data-interval="annual">@plan.AnnualPrice<span class="ts-meta"> / year</span></span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.OperationsAllowance</span><span class="ts-badge ts-badge-blue">@plan.TrialDays-day trial</span></label>
                     }
                 </fieldset>
-                <p class="ts-meta">Continue to Stripe Checkout or stay on Free without payment.</p>
-                <div class="ts-onboarding-footer"><button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit" name="bypass" value="1" formnovalidate>Continue on Free</button><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Continue to checkout <span aria-hidden="true">→</span></button></div>
+                <p class="ts-meta">Continue to Stripe Checkout or stay on @PlanCatalog.For("free").Name without payment.</p>
+                <div class="ts-onboarding-footer"><button class="ts-btn ts-btn-secondary ts-btn-lg" type="submit" name="bypass" value="1" formnovalidate>Continue on @PlanCatalog.For("free").Name</button><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Continue to checkout <span aria-hidden="true">→</span></button></div>
             </form>
         }
         else

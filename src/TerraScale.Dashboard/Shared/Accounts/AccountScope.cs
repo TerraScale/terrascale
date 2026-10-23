@@ -8,7 +8,7 @@ public static class AccountScope
         CancellationToken cancellationToken, bool requireProject = false)
     {
         if (context.UserId != context.Session.UserId) throw new AccountAccessException("Account identity does not match.", 401);
-        var fresh = await accounts.GetContextAsync(context.Session, cancellationToken);
+        var fresh = await accounts.GetContextAsync(context.Session, cancellationToken, context.Organization?.Id, context.Project?.Id);
         if (fresh.UserId != context.UserId) throw new AccountAccessException("Account identity does not match.", 401);
         var organization = fresh.Organizations.SingleOrDefault(item => item.Id == context.Organization?.Id)
             ?? throw new AccountAccessException("Organization is unavailable.", 404);

@@ -16,7 +16,6 @@
     var planName = org.BillingStatus == "billing_required" && !subscribed ? "No plan" : plan?.Name ?? "Not reported";
     var clearHref = new InvoiceHistoryPage(invoicePage.Listing, "", "").Href(Model.Shell.Context.Project?.Id ?? "", 1);
     var renewalLabel = binding?.RenewalAt?.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture) ?? "";
-    var spendingCap = Model.History.SpendingCapCents;
     var interval = binding?.EffectiveInterval is { Length: > 0 } effective ? effective : binding?.Interval ?? "";
     var price = interval == "annual" ? plan?.AnnualPriceCents ?? 0 : plan?.PriceCents ?? 0;
 }
@@ -43,7 +42,6 @@
                     <div class="ts-stat"><dt class="ts-stat-label">Next recorded invoice</dt><dd class="ts-stat-value">@summary.NextInvoice</dd><dd class="ts-stat-detail">@summary.NextDetail</dd></div>
                     <div class="ts-stat"><dt class="ts-stat-label">Billing period</dt><dd class="ts-stat-value">@summary.Period</dd>@if (summary.HasPeriod) { <dd><span class="ts-chart-meter" tabindex="0" role="img" aria-label="Billing period elapsed: @summary.PeriodPercent percent of the recorded billing period"><svg class="ts-svg-sharebar" viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true"><rect class="ts-svg-sharebar-track" x="0" y="0" width="100" height="8"></rect><rect class="ts-svg-sharebar-fill" x="0" y="0" width="@summary.PeriodPercent" height="8"></rect></svg><span class="ts-chart-tooltip" aria-hidden="true"><span class="ts-chart-tooltip-label">Billing period elapsed</span><strong>@summary.PeriodPercent%</strong></span></span></dd> }<dd class="ts-stat-detail">@summary.PeriodDetail</dd></div>
                     <div class="ts-stat"><dt class="ts-stat-label">Outstanding balance</dt><dd class="ts-stat-value">@summary.Outstanding</dd><dd class="ts-stat-detail">@summary.OutstandingDetail</dd></div>
-                    <div class="ts-stat"><dt class="ts-stat-label">Current spending limit</dt><dd class="ts-stat-value">@SpendingService.CapLabel(spendingCap)</dd><dd class="ts-stat-detail">Configured for the selected project and database scope</dd></div>
                 </dl>
             }
         </div>

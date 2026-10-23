@@ -68,7 +68,7 @@ public sealed class UsageStorageFormatJourneyTests(DashboardRootFixture fixture)
                 await Assert.That(row.GetProperty("logicalBytes").GetInt64()).IsEqualTo(bytes);
                 await Assert.That(row.GetProperty("documents").GetInt64()).IsEqualTo(secondDocumentExists ? 2L : 1L);
                 await Assert.That(row.GetProperty("metered").GetBoolean()).IsFalse();
-                await Assert.That(usage.GetProperty("allowances").EnumerateArray().Single(item => item.GetProperty("name").GetString() == "Storage").GetProperty("used").GetInt64()).IsEqualTo(bytes);
+                await Assert.That(usage.GetProperty("allowances").EnumerateArray().Single(item => item.GetProperty("name").GetString() == "Storage across regions").GetProperty("used").ValueKind).IsEqualTo(JsonValueKind.Null);
                 using var native = await client.GetAsync("/usage?project=" + projectId + "&database=" + databaseId);
                 await Assert.That(native.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 var html = WebUtility.HtmlDecode(await native.Content.ReadAsStringAsync());

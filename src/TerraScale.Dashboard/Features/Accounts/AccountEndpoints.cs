@@ -28,7 +28,7 @@ public static class AccountEndpoints
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             try { await accounts.SwitchOrganizationAsync(session, form["organizationId"].ToString(), http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-            var selected = await accounts.GetContextAsync(session, http.RequestAborted);
+            var selected = await accounts.GetContextAsync(session, http.RequestAborted, organizationId: form["organizationId"].ToString());
             return HttpRedirects.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
         }).WithGroupName("integration").WithName("switchDashboardOrganization").WithTags("Workspace")
             .WithSummary("Select an organization the current user can access")
@@ -43,7 +43,7 @@ public static class AccountEndpoints
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             try { await accounts.SwitchProjectAsync(session, form["projectId"].ToString(), http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-            var selected = await accounts.GetContextAsync(session, http.RequestAborted);
+            var selected = await accounts.GetContextAsync(session, http.RequestAborted, projectId: form["projectId"].ToString());
             return HttpRedirects.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
         }).WithGroupName("integration").WithName("switchDashboardProject").WithTags("Workspace")
             .WithSummary("Select a project the current user can access")
@@ -58,16 +58,14 @@ public static class AccountEndpoints
         var path = Csrf.LocalRedirect(returnUrl);
         var route = path.Split('?', '#')[0];
         const string prefix = "/databases/";
-        if (!route.StartsWith(prefix, StringComparison.Ordinal)) return path;
+        if (!route.StartsWith(prefix, StringComparison.Ordinal)) return WorkspaceUrl.For(selected, path, replace: true);
         var databaseId = Uri.UnescapeDataString(route[prefix.Length..].Split('/')[0]);
-        return selected.Project?.Databases.ContainsKey(databaseId) == true ? path : "/databases";
+        return WorkspaceUrl.For(selected, selected.Project?.Databases.ContainsKey(databaseId) == true ? path : "/databases", replace: true);
     }
 
     public static async Task<AccountContext?> RequireAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)
     {
-        var session = await sessions.ReadAsync(http);
-        if (session is null) return null;
-        return await accounts.GetContextAsync(session, http.RequestAborted);
+        return await AccountRequest.RequireAsync(http, sessions, accounts);
     }
 
     public static IResult LoginRedirect(HttpContext http) => Results.Redirect("/login?returnTo=" + Uri.EscapeDataString(http.Request.Path + http.Request.QueryString));

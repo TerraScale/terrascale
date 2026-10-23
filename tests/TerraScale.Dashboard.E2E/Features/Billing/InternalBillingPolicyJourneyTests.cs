@@ -15,6 +15,39 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
     private const string InvalidAmount = "The internal bill exceeds the supported amount or has invalid reporting rates.";
 
     [Test]
+    public async Task NativeCapRemainsInternalReportOnlyAndRejectsLegacyCustomerControls()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var producer = scenario.CreateProviderClient();
+        using var browser = scenario.CreateClient();
+        var setup = await PrepareAsync(browser, producer);
+        var csrf = await HttpJourney.CsrfAsync(browser, "/usage?tab=settings");
+        using (var customer = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/internal-spending-cap", new()
+            { ["_csrf"] = csrf, ["spendCap"] = "200.00" }))
+            await CheckAsync(customer.StatusCode == HttpStatusCode.NotFound, "An ordinary customer cannot use the internal cap endpoint");
+        await SuccessAsync(await RunAsync(scenario, Configure(setup.Organization)), setup.Organization);
+        var html = await browser.GetStringAsync("/usage?tab=settings");
+        await CheckAsync(html.Contains("Save report-only cap", StringComparison.Ordinal) &&
+            !html.Contains("id=\"paid-excess\"", StringComparison.Ordinal) &&
+            !html.Contains("name=\"projCap_", StringComparison.Ordinal) && !html.Contains("name=\"dbCap_", StringComparison.Ordinal),
+            "The internal form exposes only its report-only organization cap");
+        csrf = await HttpJourney.CsrfAsync(browser, "/usage?tab=settings");
+        using (var noCsrf = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/internal-spending-cap", new() { ["spendCap"] = "200.00" }))
+            await CheckAsync(noCsrf.StatusCode == HttpStatusCode.BadRequest, "The internal cap requires CSRF validation");
+        using (var legacy = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/internal-spending-cap", new()
+            { ["_csrf"] = csrf, ["spendCap"] = "200.00", ["paidExcess"] = "true" }))
+            await CheckAsync(legacy.StatusCode == HttpStatusCode.SeeOther && legacy.Headers.Location?.OriginalString == "/usage?tab=settings&saved=invalid",
+                "The internal endpoint rejects legacy customer overage controls without applying the cap");
+        await CheckAsync(Organization(await ObserveAsync(producer), setup.Organization).GetProperty("SpendCapCents").GetInt64() == 12000,
+            "Rejected legacy controls preserve the configured report-only cap");
+        await CapAsync(browser, "200.00");
+        await CheckAsync(Organization(await ObserveAsync(producer), setup.Organization).GetProperty("SpendCapCents").GetInt64() == 20000,
+            "The internal report-only cap still persists through its scoped endpoint");
+        await ActiveAsync(browser);
+        await NoStripeAsync(await ObserveAsync(producer));
+    }
+
+    [Test]
     public async Task ConfigurationAndCapAlertPersistBillingWithoutCanonicalMemberIdentities()
     {
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
@@ -78,7 +111,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             "The report-only cap alert is visible through the native owner inbox");
         using var card = await browser.GetAsync("/organization?tab=billing");
         var html = await card.Content.ReadAsStringAsync();
-        await CheckAsync(card.StatusCode == HttpStatusCode.OK && new[] { "US$ 99.00", "US$ 25.00", "US$ 0.40", "US$ 124.40", "US$ 1.00 per million", "US$ 0.20 per GiB-month", "$120.00", CapAlert }
+        await CheckAsync(card.StatusCode == HttpStatusCode.OK && new[] { "US$ 50.00", "US$ 74.00", "US$ 0.40", "US$ 124.40", "US$ 1.00 per million", "US$ 0.20 per GiB-month", "$120.00", CapAlert }
             .All(value => html.Contains(value, StringComparison.Ordinal)),
             "The native card retains original US$ prices, overage rates and alert text while the organization cap label keeps its source dollar format");
         await scenario.RestartAsync();
@@ -359,8 +392,8 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             "A real reconfiguration copies the new rates under a new proposal while preserving the one hidden plan identity");
         var result = await RunAsync(scenario, Report(setup.Organization));
         var bill = Json(result);
-        await CheckAsync(result.Exit == 0 && bill.GetProperty("available").GetBoolean() && bill.GetProperty("writeCents").GetInt64() == 5000 &&
-            bill.GetProperty("storageCents").GetInt64() == 40 && bill.GetProperty("totalCents").GetInt64() == 14940 &&
+        await CheckAsync(result.Exit == 0 && bill.GetProperty("available").GetBoolean() && bill.GetProperty("writeCents").GetInt64() == 14800 &&
+            bill.GetProperty("storageCents").GetInt64() == 40 && bill.GetProperty("totalCents").GetInt64() == 19840 &&
             bill.GetProperty("spendCapCents").GetInt64() == 20000 && !bill.GetProperty("capReached").GetBoolean(),
             "The public report uses the current copied contract and exact measured overages instead of stale configuration rates");
         await CheckAsync(Alerts(await ObserveAsync(producer), setup.Organization).Length == 0, "A measured estimate below the current cap creates no cap notification");
@@ -551,7 +584,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             using var context = await browser.GetAsync("/api/v1/dashboard/context");
             await CheckAsync(context.StatusCode == HttpStatusCode.ServiceUnavailable,
                 "Native account context rejects a well-formed organization payload returned under a foreign producer document key");
-            using var spending = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/spending-controls", new()
+            using var spending = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/internal-spending-cap", new()
             { ["_csrf"] = csrf, ["spendCap"] = "200.00" });
             await CheckAsync(spending.StatusCode == HttpStatusCode.ServiceUnavailable,
                 "The actual spending form cannot authorize or write through a misbound organization read");
@@ -572,13 +605,13 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
     {
         var csrf = await HttpJourney.CsrfAsync(browser, "/profile");
         return await HttpJourney.PostFormAsync(browser, "/billing/checkout", new()
-        { ["_csrf"] = csrf, ["plan"] = "business", ["interval"] = "monthly", ["return"] = "/organization?tab=billing" });
+        { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly", ["return"] = "/organization?tab=billing" });
     }
 
     private static async Task CapAsync(HttpClient browser, string value)
     {
         var csrf = await HttpJourney.CsrfAsync(browser, "/usage?tab=settings");
-        using var response = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/spending-controls", new()
+        using var response = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/usage/internal-spending-cap", new()
         { ["_csrf"] = csrf, ["spendCap"] = value });
         await CheckAsync(response.StatusCode == HttpStatusCode.SeeOther && response.Headers.Location?.OriginalString == "/usage?tab=settings&saved=ok",
             "The actual native owner spending form commits the organization cap");
@@ -661,11 +694,11 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
             usage.GetProperty("internalBill").GetProperty("totalCents").GetInt64() == 12440 &&
             Alerts(await ObserveAsync(producer), setup.Organization).Length == 0,
             "Read-only current-protocol MCP estimates real monthly usage without appending owner notifications");
-        var controls = await ToolAsync(browser, secret, "set_spending_controls", new { organizationId = setup.Organization, paidExcess = false });
-        await CheckAsync(controls.GetProperty("paidExcessEnabled").GetBoolean(),
-            "The native internal contract retains report-only paid excess when a public MCP caller submits false");
+        var discovery = await HttpJourney.McpAsync(browser, secret, "tools/list", new { });
+        await CheckAsync(!discovery.GetProperty("result").GetProperty("tools").EnumerateArray().Any(tool => tool.GetProperty("name").GetString() == "set_spending_controls"),
+            "The obsolete public spending setter is absent even for an internal organization; its report-only cap remains a native internal control");
         var checkout = await HttpJourney.McpAsync(browser, secret, "tools/call", new
-        { name = "create_checkout", arguments = new { organizationId = setup.Organization, plan = "business", interval = "monthly" } });
+        { name = "create_checkout", arguments = new { organizationId = setup.Organization, plan = "pro", interval = "monthly" } });
         await CheckAsync(checkout.GetProperty("result").GetProperty("isError").GetBoolean(),
             "Current MCP cannot create a Stripe checkout for the internal organization");
         await NoStripeAsync(await ObserveAsync(producer));
@@ -892,7 +925,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
     }
 
     private static string[] Configure(string organization, string cap = "12000", string writeRate = "100") =>
-        ["configure-internal-billing", "--org", organization, "--admin-email", "user@example.com", "--base-plan", "business", "--spend-cap-cents", cap, "--write-cents-per-million", writeRate, "--storage-cents-per-gib-month", "20"];
+        ["configure-internal-billing", "--org", organization, "--admin-email", "user@example.com", "--base-plan", "pro", "--spend-cap-cents", cap, "--write-cents-per-million", writeRate, "--storage-cents-per-gib-month", "20"];
     private static string[] Report(string organization) => ["report-internal-billing", "--org", organization, "--admin-email", "user@example.com"];
 
     private static async Task<Command> RunAsync(AuthProviderScenario scenario, string[] args, Func<Task>? beforeDecision = null)
@@ -929,7 +962,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
     }
 
     private static async Task SuccessAsync(Command result, string organization) => await CheckAsync(result.Exit == 0 && result.Error == "" &&
-        result.Output.EndsWith($"configured report-only internal billing for organization {organization} using base plan business\n", StringComparison.Ordinal),
+        result.Output.EndsWith($"configured report-only internal billing for organization {organization} using base plan pro\n", StringComparison.Ordinal),
         "The actual public configure entry completes with the original report-only receipt");
 
     private static async Task BillAsync(Command result, DateTimeOffset month)
@@ -938,9 +971,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         await CheckAsync(result.Exit == 0 && result.Error == "" && bill.GetProperty("available").GetBoolean() && bill.GetProperty("reportOnly").GetBoolean() &&
             bill.GetProperty("periodStart").GetDateTimeOffset() == month &&
             bill.GetProperty("periodEnd").GetDateTimeOffset().Offset == TimeSpan.Zero &&
-            bill.GetProperty("reads").GetInt64() == 123_456 && bill.GetProperty("writes").GetInt64() == 75_000_000 &&
-            bill.GetProperty("logicalBytes").GetInt64() == (5L << 40) + (2L << 30) &&
-            bill.GetProperty("baseCents").GetInt64() == 9900 && bill.GetProperty("writeCents").GetInt64() == 2500 &&
+            bill.GetProperty("reads").GetInt64() == 123_456 && bill.GetProperty("writes").GetInt64() == 174_000_000 &&
+            bill.GetProperty("logicalBytes").GetInt64() == 25_000_000_000L + (2L << 30) &&
+            bill.GetProperty("baseCents").GetInt64() == 5000 && bill.GetProperty("writeCents").GetInt64() == 7400 &&
             bill.GetProperty("storageCents").GetInt64() == 40 && bill.GetProperty("totalCents").GetInt64() == 12440 &&
             bill.GetProperty("spendCapCents").GetInt64() == 12000 && bill.GetProperty("capReached").GetBoolean() && bill.GetProperty("alert").GetString() == CapAlert,
             "The actual CLI reports exact measured UTC-month counters and copied-plan overage charges without creating a Stripe invoice");
@@ -949,7 +982,7 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
     private static async Task UnknownMeteringAsync(JsonElement bill) => await CheckAsync(
         bill.GetProperty("periodStart").GetDateTimeOffset() == default && bill.GetProperty("periodEnd").GetDateTimeOffset() == default &&
         bill.GetProperty("reads").GetInt64() == 0 && bill.GetProperty("writes").GetInt64() == 0 && bill.GetProperty("logicalBytes").GetInt64() == 0 &&
-        bill.GetProperty("baseCents").GetInt64() == 9900 && bill.GetProperty("writeCents").GetInt64() == 0 &&
+        bill.GetProperty("baseCents").GetInt64() == 5000 && bill.GetProperty("writeCents").GetInt64() == 0 &&
         bill.GetProperty("storageCents").GetInt64() == 0 && bill.GetProperty("totalCents").GetInt64() == 0 &&
         !bill.TryGetProperty("alert", out _),
         "An incomplete or overflowing metering aggregate publishes no invented period, partial counters, variable charges or alert; the copied base contract remains known");
@@ -958,8 +991,8 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
         !bill.GetProperty("available").GetBoolean() && bill.GetProperty("reportOnly").GetBoolean() && !bill.GetProperty("capReached").GetBoolean() &&
         bill.GetProperty("error").GetString() == InvalidAmount && bill.GetProperty("periodStart").GetDateTimeOffset() == month &&
         bill.GetProperty("periodEnd").GetDateTimeOffset() > bill.GetProperty("periodStart").GetDateTimeOffset() &&
-        bill.GetProperty("reads").GetInt64() == 123456 && bill.GetProperty("writes").GetInt64() == 75000000 &&
-        bill.GetProperty("logicalBytes").GetInt64() == (5L << 40) + (2L << 30) && bill.GetProperty("baseCents").GetInt64() == 9900 &&
+        bill.GetProperty("reads").GetInt64() == 123456 && bill.GetProperty("writes").GetInt64() == 174000000 &&
+        bill.GetProperty("logicalBytes").GetInt64() == 25_000_000_000L + (2L << 30) && bill.GetProperty("baseCents").GetInt64() == 5000 &&
         bill.GetProperty("writeCents").GetInt64() == 0 && bill.GetProperty("storageCents").GetInt64() == 0 && bill.GetProperty("totalCents").GetInt64() == 0 &&
         bill.GetProperty("writeCentsPerMillion").GetInt64() == long.MaxValue && !bill.TryGetProperty("alert", out _),
         "Pricing overflow preserves the actual coherent UTC-month metering and valid configured rate without publishing an amount or cap alert");
@@ -968,10 +1001,10 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixtu
     {
         var policy = organization.GetProperty("InternalBilling");
         await CheckAsync(policy.ValueKind == JsonValueKind.Object && organization.GetProperty("PlanId").GetString() == policy.GetProperty("PlanId").GetString() &&
-            policy.GetProperty("PlanId").GetString() != "09XCWRH05BWWBADSBPTPDMFA7D" &&
-            policy.GetProperty("Plan").GetProperty("Key").GetString() == "internal" && policy.GetProperty("Plan").GetProperty("PriceCents").GetInt64() == 9900 &&
-            policy.GetProperty("Allowances").GetProperty("MonthlyWrites").GetInt64() == 50_000_000 &&
-            policy.GetProperty("Allowances").GetProperty("StorageBytes").GetInt64() == 5L << 40 &&
+            policy.GetProperty("PlanId").GetString() != "7CNW2H87JE68ATZX224CV2G625" &&
+            policy.GetProperty("Plan").GetProperty("Key").GetString() == "internal" && policy.GetProperty("Plan").GetProperty("PriceCents").GetInt64() == 5000 &&
+            policy.GetProperty("Allowances").GetProperty("MonthlyOperations").GetInt64() == 100_000_000 &&
+            policy.GetProperty("Allowances").GetProperty("StorageBytes").GetInt64() == 25_000_000_000L &&
             organization.GetProperty("BillingStatus").GetString() == "active" && organization.GetProperty("PaidExcess").GetBoolean() &&
             organization.GetProperty("Projects").EnumerateObject().All(row => row.Value.GetProperty("Status").GetString() == "active"),
             "The running command persists the copied paid contract under its distinct hidden identity while services remain active");

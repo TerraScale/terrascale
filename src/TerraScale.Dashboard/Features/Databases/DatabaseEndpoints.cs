@@ -6,6 +6,7 @@ using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.ApiKeys;
 using TerraScale.Dashboard.Features.Onboarding;
 using TerraScale.Dashboard.Features.Backups;
+using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.Shared.UI;
@@ -22,7 +23,7 @@ public static class DatabaseEndpoints
         .AddSingleton<DataService>().AddSingleton<SavedQueryService>().AddSingleton<DocumentChangesService>()
         .AddSingleton<ApiKeyService>().AddSingleton<IWorkspacePlacement, WorkspacePlacement>()
         .AddSingleton<IOnboardingProjectProvisioner, OnboardingProjectProvisioner>()
-        .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>();
+        .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>().AddDatabaseLogs();
 
     public static IEndpointRouteBuilder MapDatabaseFeatures(this IEndpointRouteBuilder endpoints)
     {
@@ -97,6 +98,7 @@ public static class DatabaseEndpoints
                 });
         }
         endpoints.MapDataFeatures();
+        endpoints.MapDatabaseLogs();
         endpoints.MapApiKeyFeatures();
         endpoints.MapBackupFeatures((http, context, databaseId, error, status) => DetailPageAsync(http, context, databaseId, "backups",
             http.RequestServices.GetRequiredService<IDatabaseBackend>(), http.RequestServices.GetRequiredService<DatabaseService>(), error, status: status));

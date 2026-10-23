@@ -139,7 +139,7 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         var page = await context.NewPageAsync();
         await page.GotoAsync(new Uri(fixture.Origin, Billing).ToString());
         await page.GetByRole(AriaRole.Button, new() { Name = "Cancel checkout", Exact = true }).PressAsync("Enter");
-        await page.WaitForURLAsync(new Uri(fixture.Origin, Billing + "&payment=canceled").ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == new Uri(fixture.Origin, Billing + "&payment=canceled").ToString());
         await Assert.That(await page.GetByRole(AriaRole.Button, new() { Name = "Cancel checkout", Exact = true }).CountAsync()).IsEqualTo(0);
         await CaptureAsync(page, "canceled-checkout-390");
         var message = await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "Checkout canceled" }).CountAsync();
@@ -208,11 +208,11 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
         await Assert.That(await page.EvaluateAsync<bool>("document.documentElement.scrollWidth <= innerWidth")).IsTrue();
         await CaptureAsync(page, $"keyboard-review-{width}");
         await page.GetByRole(AriaRole.Link, new() { Name = "Close plan review", Exact = true }).PressAsync("Enter");
-        await page.WaitForURLAsync(new Uri(fixture.Origin, Billing).ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == new Uri(fixture.Origin, Billing).ToString());
         await page.GoBackAsync();
         await page.Locator("#review-billing-plan[open]").WaitForAsync();
         await page.GoForwardAsync();
-        await page.WaitForURLAsync(new Uri(fixture.Origin, Billing).ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == new Uri(fixture.Origin, Billing).ToString());
         await Assert.That(await page.Locator("#review-billing-plan").CountAsync()).IsEqualTo(0);
         await Assert.That(errors).IsEmpty();
     }

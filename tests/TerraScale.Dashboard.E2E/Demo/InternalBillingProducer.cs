@@ -239,8 +239,8 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
         var items = databases.Select((database, index) =>
         {
             long reads = ordinal == 0 && index == 0 ? 123_456 : 0;
-            long writes = usageMode == "overflow" && ordinal < 2 && index == 0 ? long.MaxValue : ordinal == 0 && index == 0 ? 75_000_000 : 0;
-            long bytes = ordinal == 0 && index == 0 ? (5L << 40) + (2L << 30) : 0;
+            long writes = usageMode == "overflow" && ordinal < 2 && index == 0 ? long.MaxValue : ordinal == 0 && index == 0 ? 174_000_000 : 0;
+            long bytes = ordinal == 0 && index == 0 ? 25_000_000_000L + (2L << 30) : 0;
             return new
             {
                 databaseId = database.Id,

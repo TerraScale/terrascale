@@ -33,10 +33,10 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
                 await ShotAsync("home");
                 await GotoAsync("/profile");
                 await page.Locator("#displayName").FillAsync("QA Test User");
-                await SubmitAsync("form[action=\"/api/v1/dashboard/profile\"]", "Save profile");
+                await SubmitAsync("form:is([action=\"/api/v1/dashboard/profile\"],[action^=\"/api/v1/dashboard/profile?\"])", "Save profile");
                 await Assert.That(await page.Locator("#displayName").InputValueAsync()).IsEqualTo("QA Test User");
                 await page.Locator("#displayName").FillAsync("Test User");
-                await SubmitAsync("form[action=\"/api/v1/dashboard/profile\"]", "Save profile");
+                await SubmitAsync("form:is([action=\"/api/v1/dashboard/profile\"],[action^=\"/api/v1/dashboard/profile?\"])", "Save profile");
 
                 await GotoAsync("/databases");
                 await page.GetByRole(AriaRole.Button, new() { Name = "New database", Exact = true }).First.ClickAsync();
@@ -88,7 +88,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
                 await Assert.That(await page.Locator("#schema-json").InputValueAsync()).Contains("score").Because("Schema includes live fields");
                 await GotoAsync($"/databases/{databaseId}/sql?collection=users");
                 await EditorAsync("#sql", "SELECT * FROM users LIMIT 100");
-                await SubmitAsync("form[action=\"/api/v1/dashboard/data/sql\"]", "Run query");
+                await SubmitAsync("form:is([action=\"/api/v1/dashboard/data/sql\"],[action^=\"/api/v1/dashboard/data/sql?\"])", "Run query");
                 await page.GetByText("Ada", new() { Exact = true }).WaitForAsync();
                 await ShotAsync("sql");
 
@@ -164,7 +164,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
                     await GotoAsync("/organization?tab=billing");
                     await page.GetByText("Starter", new() { Exact = true }).First.WaitForAsync();
                     await Assert.That(await page.Locator("#billing-summary").InnerTextAsync()).Contains("On file").Because("Stripe confirmation activates the bound organization");
-                    await Assert.That(await page.Locator("form[action=\"/billing/checkout\"]").CountAsync()).IsEqualTo(0).Because("Active paid subscriptions use the customer portal");
+                    await Assert.That(await page.Locator("form:is([action=\"/billing/checkout\"],[action^=\"/billing/checkout?\"])").CountAsync()).IsEqualTo(0).Because("Active paid subscriptions use the customer portal");
                     await ShotAsync("paid-billing");
                     await page.GetByRole(AriaRole.Link, new() { Name = "Manage payment", Exact = true }).ClickAsync();
                     await page.GetByRole(AriaRole.Heading, new() { Name = "Test-only Stripe customer portal" }).WaitForAsync();

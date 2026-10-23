@@ -40,7 +40,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         var plan = PlanCatalog.For(planKey);
         var org = context.Organization!;
         if (plan.PriceCents == 0)
-            throw new OnboardingValidationException("The Free plan does not require Stripe checkout.");
+            throw new OnboardingValidationException(plan.Name + " does not require Stripe checkout.");
         var wizardReturn = "/organization?newOrganization=project&organizationID=" + Uri.EscapeDataString(org.Id);
         if (interval is not ("monthly" or "annual") || returnPath is not ("/onboarding" or "/billing" or "/organization?tab=billing") && returnPath != wizardReturn)
             throw new OnboardingValidationException("Choose a valid billing interval.");

@@ -128,7 +128,8 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         }
     }
 
-    public async Task<AccountContext> GetContextAsync(SessionRecord session, CancellationToken cancellationToken)
+    public async Task<AccountContext> GetContextAsync(SessionRecord session, CancellationToken cancellationToken,
+        string? organizationId = null, string? projectId = null)
     {
         var account = await EnsureAsync(session, cancellationToken);
         var organizations = new List<OrganizationRecord>();
@@ -150,6 +151,19 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             }
             if (org.ContainsMember(session.UserId)) organizations.Add(org);
         }
+        if (organizationId is not null || projectId is not null)
+        {
+            var selected = organizations.SingleOrDefault(org => (organizationId is null || org.Id == organizationId) &&
+                (projectId is null || org.Projects.ContainsKey(projectId)))
+                ?? throw new AccountAccessException("Workspace is unavailable.", 404);
+            await HydrateAccessAsync(selected, session, cancellationToken);
+            var selectedProject = projectId is null ? DefaultProject(selected) : selected.Projects[projectId];
+            if (selectedProject is not null && selectedProject.OrganizationId != selected.Id)
+                throw new AccountAccessException("Project belongs to another organization.");
+            var selectedContext = new AccountContext(session, account, organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray(), selected, selectedProject);
+            await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(state, selectedContext, cancellationToken);
+            return selectedContext;
+        }
         var active = organizations.FirstOrDefault(item => item.Id == account.ActiveOrganizationId);
         if (active is not null) await HydrateAccessAsync(active, session, cancellationToken);
         var project = active?.Projects.GetValueOrDefault(account.ActiveProjectId);
@@ -168,7 +182,9 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             account.ActiveProjectId = project?.Id ?? "";
         }
         if (project is not null && project.OrganizationId != active!.Id) throw new AccountAccessException("Project belongs to another organization.");
-        return new(session, account, organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray(), active, project);
+        var context = new AccountContext(session, account, organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray(), active, project);
+        await TerraScale.Dashboard.Features.Notifications.AllowanceNotificationInbox.HydrateAsync(state, context, cancellationToken);
+        return context;
     }
 
     // An organization created outside the dashboard starts as a business workspace that needs billing.

@@ -23,6 +23,7 @@ public static class DashboardStateSchema
         "dashboard_internal_billing",
         "dashboard_stripe_customers",
         "dashboard_billing_changes",
-        "dashboard_stripe_checkouts"
+        "dashboard_stripe_checkouts",
+        "dashboard_allowance_alerts"
     });
 }

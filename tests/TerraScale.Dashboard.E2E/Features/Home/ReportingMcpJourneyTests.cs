@@ -32,31 +32,22 @@ public sealed class ReportingMcpJourneyTests(DashboardRootFixture fixture)
 
         var discovery = await HttpJourney.McpAsync(browser, secret, "tools/list", new { });
         var tools = discovery.GetProperty("result").GetProperty("tools").EnumerateArray().ToDictionary(item => item.GetProperty("name").GetString()!);
-        foreach (var name in new[] { "get_usage", "set_spending_controls", "get_project_settings", "set_audit_retention", "delete_project" })
+        foreach (var name in new[] { "get_usage", "get_project_settings", "set_audit_retention", "delete_project" })
         {
             await Assert.That(tools.ContainsKey(name)).IsTrue();
             await Assert.That(tools[name].TryGetProperty("outputSchema", out _)).IsTrue();
         }
         await Assert.That(tools.ContainsKey("set_project_authentication")).IsFalse();
 
-        var controls = await CallAsync("set_spending_controls", new
-        {
-            organizationId,
-            projectId,
-            organizationCapCents = 5025L,
-            paidExcess = true,
-            projectCaps = new[] { new { id = projectId, capCents = 2000L, readLimit = 12345L, writeLimit = 54321L, replicationLimit = 654L } }
-        });
-        await Assert.That(controls.GetProperty("organizationId").GetString()).IsEqualTo(organizationId);
+        await Assert.That(tools.ContainsKey("set_spending_controls")).IsFalse();
         var usage = await CallAsync("get_usage", new { organizationId, projectId, range = "24h" }, useReplica: true);
-        foreach (var name in new[] { "allowances", "allowanceError", "planUsageNote", "spendCapCents", "paidExcessEnabled", "projectEffectiveCapCents", "projects", "databases", "totals", "activeDatabases", "regionCount", "canManage" })
+        foreach (var name in new[] { "allowances", "allowanceError", "planUsageNote", "projects", "databases", "totals", "activeDatabases", "regionCount", "canManage" })
             await Assert.That(usage.TryGetProperty(name, out _)).IsTrue().Because("Original get_usage report field: " + name);
-        await Assert.That(usage.GetProperty("spendCapCents").GetInt64()).IsEqualTo(5025L);
-        await Assert.That(usage.GetProperty("paidExcessEnabled").GetBoolean()).IsTrue();
-        await Assert.That(usage.GetProperty("projectEffectiveCapCents").GetInt64()).IsEqualTo(2000L);
+        foreach (var name in new[] { "spendCapCents", "paidExcessEnabled", "projectEffectiveCapCents" })
+            await Assert.That(usage.TryGetProperty(name, out _)).IsFalse();
         var project = usage.GetProperty("projects").EnumerateArray().Single(item => item.GetProperty("id").GetString() == projectId);
-        await Assert.That(project.GetProperty("effectiveCapCents").GetInt64()).IsEqualTo(2000L);
-        await Assert.That(project.GetProperty("operationLimits").GetProperty("readLimit").GetInt64()).IsEqualTo(12345L);
+        foreach (var name in new[] { "spendCapCents", "effectiveCapCents", "operationLimits" })
+            await Assert.That(project.TryGetProperty(name, out _)).IsFalse();
         await Assert.That(usage.GetProperty("totals").GetProperty("range").GetString()).IsEqualTo("24h");
 
         var selectedUsage = await CallAsync("get_usage", new { organizationId = selectedOrganization, projectId = selectedProject, range = "24h" }, useReplica: true);
@@ -83,6 +74,8 @@ public sealed class ReportingMcpJourneyTests(DashboardRootFixture fixture)
         await Assert.That(totals.GetProperty("writes").GetInt64()).IsEqualTo(7L * databaseCount);
         await Assert.That(totals.GetProperty("logicalBytes").GetInt64()).IsEqualTo(4096L * databaseCount);
         var databaseRow = selectedUsage.GetProperty("databases")[0];
+        foreach (var name in new[] { "spendCapCents", "effectiveCapCents", "operationLimits" })
+            await Assert.That(databaseRow.TryGetProperty(name, out _)).IsFalse();
         await Assert.That(databaseRow.GetProperty("metered").GetBoolean()).IsTrue();
         await Assert.That(databaseRow.GetProperty("documents").GetInt64()).IsEqualTo(2L);
         await Assert.That(databaseRow.GetProperty("reads").GetInt64()).IsEqualTo(12L);
@@ -140,8 +133,6 @@ public sealed class ReportingMcpJourneyTests(DashboardRootFixture fixture)
         await Assert.That(settings.GetProperty("auditRetentionDays").GetInt32()).IsEqualTo(30);
         await ErrorAsync("delete_project", new { organizationId, projectId, confirmName = "Personal" }, "default or last project");
         await ErrorAsync("set_audit_retention", new { organizationId, projectId, days = 0 }, "1 to 90");
-        await ErrorAsync("set_spending_controls", new { organizationId, projectId, projectCaps = new[] { new { id = projectId, capCents = 1L }, new { id = projectId, capCents = 2L } } }, "distinct project IDs");
-        await ErrorAsync("set_spending_controls", new { organizationId, projectId, organizationCapCents = -1L }, "zero or positive");
         using var probeBefore = JsonDocument.Parse(await browser.GetStringAsync("/__test/reporting/probe"));
         var requestCount = probeBefore.RootElement.GetProperty("requests").GetArrayLength();
         await ErrorAsync("get_usage", new { organizationId = "foreign-organization", projectId }, "Organization is unavailable");

@@ -23,7 +23,7 @@ public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture
         // Datastar aborts each finished SSE fetch and Chromium can drop that body, so assert the body Playwright fetched for the browser.
         var bodies = new ConcurrentDictionary<IRequest, string>();
         await page.RouteAsync("**/notifications/dialog**", FulfillFromServerAsync);
-        await page.RouteAsync("**/api/v1/notifications/read-all", FulfillFromServerAsync);
+        await page.RouteAsync("**/api/v1/notifications/read-all**", FulfillFromServerAsync);
         page.SetDefaultTimeout(15000);
         var errors = new ConcurrentQueue<string>();
         page.PageError += (_, error) => errors.Enqueue(error);
@@ -40,7 +40,7 @@ public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture
         var projectId = selected.GetProperty("projectId").GetString()!;
 
         await BrowserAudit.SignInAsync(page, scenario.Origin, email: persona.Email, password: persona.Password);
-        await page.WaitForURLAsync(scenario.Origin.ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
         await NavigateAsync("/notifications?status=unread");
         await Assert.That(await page.Locator("main .ts-notification-unread").CountAsync()).IsEqualTo(2);
         await Assert.That(await page.Locator("main .ts-notifications-summary").InnerTextAsync()).Contains("2 unread");
@@ -66,10 +66,10 @@ public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture
 
         var native = await page.RunAndWaitForResponseAsync(
             () => first.GetByRole(AriaRole.Button, new() { Name = "Mark read", Exact = true }).ClickAsync(),
-            response => response.Request.IsNavigationRequest && response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == action);
+            response => response.Request.IsNavigationRequest && response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == action.Split('?')[0]);
         await Assert.That(native.Status).IsEqualTo(303);
         await page.WaitForFunctionAsync("() => document.querySelectorAll('main .ts-notification-unread').length === 1 && document.querySelector('main .ts-notifications-summary')?.textContent.includes('1 unread')");
-        await Assert.That(new Uri(page.Url).PathAndQuery).IsEqualTo("/notifications?status=unread");
+        await Assert.That(new Uri(BrowserAudit.WithoutWorkspace(page.Url)).PathAndQuery).IsEqualTo("/notifications?status=unread");
         await Assert.That(await page.Locator("main .ts-notification-unread").CountAsync()).IsEqualTo(1);
         await AssertBadgeAsync(1);
         var afterNative = await InboxAsync();
@@ -107,7 +107,7 @@ public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture
         await AssertPatchAsync(filtered);
         await page.WaitForFunctionAsync("() => document.querySelector('#ts-notifications-body input[name=status]')?.value === 'unread' && document.querySelectorAll('#ts-notifications-body .ts-notification-list article').length === 1");
         await Assert.That(await dialog.Locator(".ts-notification-list article").CountAsync()).IsEqualTo(1);
-        await Assert.That(await dialog.Locator("form[action='/api/v1/notifications/read-all']").GetAttributeAsync("data-on:submit"))
+        await Assert.That(await dialog.Locator("form:is([action='/api/v1/notifications/read-all'],[action^='/api/v1/notifications/read-all?'])").GetAttributeAsync("data-on:submit"))
             .IsEqualTo("@post('/api/v1/notifications/read-all', {contentType:'form'})");
         var pageUrl = page.Url;
         var marked = await page.RunAndWaitForResponseAsync(

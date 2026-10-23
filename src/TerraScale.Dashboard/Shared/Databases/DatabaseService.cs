@@ -223,29 +223,15 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
     }
     public static int DatabaseLimit(OrganizationRecord org) => org.InternalBilling is not null
         ? PlanCatalog.ResourceLimits(org).Databases is > 0 and var limit ? limit : int.MaxValue
-        : PlanCatalog.Plans.SingleOrDefault(plan => plan.Id == org.PlanId)?.Key switch
-        {
-            "free" => 1,
-            "starter" => 5,
-            "pro" => 25,
-            "business" => 100,
-            _ => throw new AccountAccessException("The organization plan is unavailable.", 503)
-        };
+        : PlanCatalog.For(org)?.Resources.Databases
+            ?? throw new AccountAccessException("The organization plan is unavailable.", 503);
     internal static void DemandRoom(OrganizationRecord org)
     {
         if (org.Projects.Values.Sum(project => project.Databases.Count) >= DatabaseLimit(org))
             throw new AccountAccessException("Your organization has reached its plan's database limit. Upgrade the plan or delete a database.", 409);
     }
-    internal async Task<AccountContext> CurrentAsync(AccountContext context, CancellationToken cancellationToken)
-    {
-        var current = await accounts.GetContextAsync(context.Session, cancellationToken);
-        var organization = current.Organizations.FirstOrDefault(item => item.Id == context.Organization?.Id)
-            ?? throw new AccountAccessException("Organization is unavailable.", 404);
-        var project = organization.Projects.GetValueOrDefault(context.Project?.Id ?? "")
-            ?? throw new AccountAccessException("Project is unavailable.", 404);
-        if (project.OrganizationId != organization.Id) throw new AccountAccessException("Project belongs to another organization.");
-        return new(current.Session, current.Account, current.Organizations, organization, project);
-    }
+    internal Task<AccountContext> CurrentAsync(AccountContext context, CancellationToken cancellationToken) =>
+        AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
     internal static DatabaseRecord Record(ManagedDatabase remote, IReadOnlyList<DatabaseRegion> placement, string status) => new()
     {
         Id = remote.Id,

@@ -1,0 +1,45 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Logs.DatabaseLogPage>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
+@using System.Globalization
+<main class="ts-page ts-db-detail" data-database-id="@Model.Database.Id">
+    @(await RenderPartialAsync<TerraScale.Dashboard.Shared.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "logs")))
+    <section class="ts-card" aria-labelledby="request-logs-title">
+        <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="request-logs-title">Request logs</h2><p class="ts-card-description">The latest 100 recorded requests within 24 hours, newest first. Restarts and capacity limits can omit requests. Recent requests from other regions may arrive later. Requests older than 24 hours are excluded; stored records are pruned on the next database log flush.</p></div></header>
+        <div class="ts-card-body">
+            <form method="get" class="ts-row" action="@DatabaseService.Path(Model.Database.Id, "logs")">
+                <label class="ts-label" for="request-status">HTTP status</label>
+                <select class="ts-select" id="request-status" name="status">
+                    <option value="" selected="@(Model.Status == "")">All statuses</option>
+                    @foreach (var status in new[] { "2xx", "3xx", "4xx", "5xx" }) { <option value="@status" selected="@(Model.Status == status)">@status</option> }
+                </select>
+                <button class="ts-btn ts-btn-secondary" type="submit">Filter</button>
+                <a class="ts-btn ts-btn-ghost" href="@(DatabaseService.Path(Model.Database.Id, "logs") + (Model.Status.Length == 0 ? "" : "?status=" + Uri.EscapeDataString(Model.Status)))">Retry</a>
+            </form>
+            @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
+            else
+            {
+                @if (Model.Logs!.RecordingLimited) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">Recording reached capacity on this server. Some requests may be missing.</p></div> }
+                @if (Model.Logs.Truncated) { <p class="ts-meta" role="status">Only the latest 100 recorded requests are searched by this filter.</p> }
+                @if (Model.Logs.Items.Count == 0) { <p class="ts-empty">No recorded requests match this filter in the recent window.</p> }
+                else {
+                <p class="ts-meta" id="request-operations">Operations counts committed document operations, not billing units.</p>
+                <div class="ts-table-wrap"><table class="ts-table" aria-describedby="request-operations"><caption class="ts-sr-only">Recent requests for @Model.Database.Name</caption><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Route</th><th scope="col">Status</th><th scope="col">Latency</th><th scope="col">Operations</th></tr></thead><tbody>
+                @foreach (var log in Model.Logs.Items)
+                {
+                    <tr><td><time datetime="@log.Time.ToString("O", CultureInfo.InvariantCulture)">@log.Time.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</time><div class="ts-meta">@log.Region</div></td><td><code>@log.Method @log.Route</code></td><td><span class="ts-badge ts-badge-tone" data-tone="@(log.Status >= 400 ? "danger" : "success")">@log.Status</span></td><td>@log.LatencyMs.ToString("0.##", CultureInfo.InvariantCulture) ms</td><td>@log.Operations.ToString("N0", CultureInfo.InvariantCulture)</td></tr>
+                }
+                </tbody></table></div>
+                }
+            }
+        </div>
+    </section>
+    <section class="ts-card" aria-labelledby="slow-queries-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="slow-queries-title">Slow queries</h2><p class="ts-card-description">Query requests taking at least 100 ms in the same recent window and status filter. Query text and values are never recorded.</p></div></header><div class="ts-card-body">
+        @if (Model.Error.Length > 0) { <p class="ts-meta">Slow query requests are unavailable until request logs load.</p> }
+        else if (Model.SlowQueries.Count == 0) { <p class="ts-empty">No slow query requests match this filter in the recent window.</p> }
+        else { <div class="ts-table-wrap"><table class="ts-table"><caption class="ts-sr-only">Slow query requests for @Model.Database.Name</caption><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Route</th><th scope="col">Status</th><th scope="col">Latency</th></tr></thead><tbody>
+            @foreach (var log in Model.SlowQueries) { <tr><td>@log.Time.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</td><td><code>@log.Method @log.Route</code></td><td>@log.Status</td><td>@log.LatencyMs.ToString("0.##", CultureInfo.InvariantCulture) ms</td></tr> }
+        </tbody></table></div> }
+    </div></section>
+</main>
+
+@functions { public ShellModel LayoutModel => Model.Shell; }

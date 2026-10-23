@@ -5,6 +5,7 @@
     <WebRoot>web/static</WebRoot>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Shared/Accounts/pricing.json" />
     <PackageReference Include="Cronos" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" />

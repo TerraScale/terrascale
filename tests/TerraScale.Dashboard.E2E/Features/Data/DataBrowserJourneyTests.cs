@@ -32,7 +32,7 @@ public sealed class DataBrowserJourneyTests(DashboardRootFixture fixture)
             if (path.StartsWith("/js/", StringComparison.Ordinal)) bootFailures.Enqueue(path + ": " + request.Failure);
         };
         await BrowserAudit.SignInAsync(page, scenario.Origin, email: scenario.Personas.Seeded.Email, password: scenario.Personas.Seeded.Password);
-        await page.WaitForURLAsync(scenario.Origin.ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
         const string database = "/databases/0Z793APJ2ECFW2F7P6J9F2RKVY";
         await NavigateAsync(database + "/documents");
         await Assert.That(await page.TitleAsync()).IsEqualTo("core-primary · Documents · TerraScale");
@@ -47,32 +47,32 @@ public sealed class DataBrowserJourneyTests(DashboardRootFixture fixture)
             await Assert.That(await page.Locator("#collection-select").IsVisibleAsync()).IsTrue();
             await page.Locator("#collection-select").SelectOptionAsync("orders");
             await page.Locator(".ts-data-nav-select").GetByRole(AriaRole.Button, new() { Name = "Open", Exact = true }).ClickAsync();
-            await page.WaitForURLAsync("**/documents?collection=orders");
+            await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url).EndsWith("/documents?collection=orders", StringComparison.Ordinal));
         }
         await page.Locator("input[name=q]").FillAsync("cus_1002");
         await page.Locator("input[name=q]").PressAsync("Enter");
-        await page.WaitForURLAsync("**/documents/orders?q=cus_1002");
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url).EndsWith("/documents/orders?q=cus_1002", StringComparison.Ordinal));
         await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
         await Assert.That(await page.Locator("#documents tbody tr").CountAsync()).IsEqualTo(1);
         await Assert.That(await page.Locator("#documents tbody").InnerTextAsync()).Contains("980.0");
         await page.GetByRole(AriaRole.Link, new() { Name = "Clear", Exact = true }).ClickAsync();
-        await page.WaitForURLAsync("**/documents/orders");
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url).EndsWith("/documents/orders", StringComparison.Ordinal));
         await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
         await Assert.That(await page.Locator("#documents tbody tr").CountAsync()).IsEqualTo(3);
         var ascendingIds = await page.Locator("#documents .ts-data-doc-id").AllTextContentsAsync();
         await page.Locator("#documents thead th").First.Locator(".ts-data-sort").ClickAsync();
-        await page.WaitForURLAsync("**/documents/orders?order=desc");
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url).EndsWith("/documents/orders?order=desc", StringComparison.Ordinal));
         await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
         await Assert.That(await page.Locator("#documents th[aria-sort='descending'] .ts-data-sort svg path").GetAttributeAsync("d")).IsEqualTo("m6 9 6 6 6-6");
         var descendingIds = await page.Locator("#documents .ts-data-doc-id").AllTextContentsAsync();
         await Assert.That(descendingIds.SequenceEqual(ascendingIds.Reverse())).IsTrue()
             .Because("Native descending IDs must reverse ascending IDs. Ascending: " + string.Join(",", ascendingIds) + "; descending: " + string.Join(",", descendingIds));
         await page.Locator("#documents thead th").First.Locator(".ts-data-sort").ClickAsync();
-        await page.WaitForURLAsync("**/documents/orders");
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url).EndsWith("/documents/orders", StringComparison.Ordinal));
         await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
         await Assert.That(await page.Locator("#documents th[aria-sort='ascending'] .ts-data-sort svg path").GetAttributeAsync("d")).IsEqualTo("m18 15-6-6-6 6");
         await page.Locator("#documents thead").GetByRole(AriaRole.Link, new() { Name = "total", Exact = true }).ClickAsync();
-        await page.WaitForURLAsync("**/documents/orders?sort=total");
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url).EndsWith("/documents/orders?sort=total", StringComparison.Ordinal));
         await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
         await Assert.That(await page.Locator("#documents th[aria-sort='ascending'] .ts-data-sort span").TextContentAsync()).IsEqualTo("total");
         await Assert.That((await page.Locator("#documents .ts-data-doc-id").AllTextContentsAsync()).SequenceEqual(new[] { ascendingIds[2], ascendingIds[0], ascendingIds[1] })).IsTrue();

@@ -14,7 +14,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
     [Test]
     public async Task NativePlanReviewUpgradePendingDowngradeUndoAndCheckoutCancellation()
     {
-        const string Starter = "09XCWRH05BWWBADSBPTPDMFA7D", Pro = "7CNW2H87JE68ATZX224CV2G625", Business = "443RCMMF70MNP6S1QMT230NF99";
+        const string Starter = "443RCMMF70MNP6S1QMT230NF99", Pro = "7CNW2H87JE68ATZX224CV2G625";
         var output = BrowserAudit.Output(fixture.Root, "billing-plan-journey");
         var origin = fixture.Origin.ToString().TrimEnd('/');
         using var playwright = await Playwright.CreateAsync();
@@ -32,19 +32,24 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             var password = "E2E-plan-" + Guid.NewGuid();
             var signedUp = await BrowserAudit.SignInAsync(page, fixture.Origin, "/onboarding?plan=starter", "plan-owner-" + suffix + "@example.test", password, signUp: true);
             await Assert.That(signedUp!.Status).IsEqualTo(200);
-            await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Save and continue");
+            await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Save and continue");
             var starter = page.Locator("input[name=plan][value=starter]");
             await page.Locator("label").Filter(new() { Has = starter }).ClickAsync();
             await Assert.That(await starter.IsCheckedAsync()).IsTrue();
-            await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Continue to checkout");
+            await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue to checkout");
             await page.Locator("#projectName").FillAsync("Plan project " + suffix);
             await page.Locator("#region").SelectOptionAsync("GRU");
-            await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Create project and open Dashboard");
+            await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Create project and open Dashboard");
 
             await ChooseAsync("pro");
             await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("US$ 6.66 estimated by Stripe (including US$ 1.66 in prorations)");
             await ScreenshotAsync("upgrade-review-desktop");
+            await ScenarioAsync("pending");
             await ConfirmAsync();
+            await page.GetByText("Awaiting payment", new() { Exact = true }).WaitForAsync();
+            await Assert.That(await PlanAsync()).IsEqualTo(Starter).Because("Pending payment keeps the existing allowance.");
+            await ScenarioAsync("confirm-payment");
+            await GotoAsync("/organization?tab=billing&payment=success");
             await Assert.That(await page.Locator("#billing-summary").InnerTextAsync()).Contains("Pro");
             await Assert.That(await PlanAsync()).IsEqualTo(Pro);
             var upgraded = await MutationsAsync(path => path.StartsWith("/v1/subscriptions/", StringComparison.Ordinal));
@@ -52,36 +57,24 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(await MutationsAsync(path => path.StartsWith("/v1/subscriptions/", StringComparison.Ordinal))).IsEqualTo(upgraded).Because("repeated confirmed change never calls the vendor again");
             checks.Add("native Stripe invoice preview, confirmed immediate upgrade and idempotent replay");
 
-            await ScenarioAsync("pending");
-            await ChooseAsync("business", "annual");
-            await ConfirmAsync();
-            await page.GetByText("Awaiting payment", new() { Exact = true }).WaitForAsync();
-            await Assert.That(await PlanAsync()).IsEqualTo(Pro).Because("pending payment keeps the current paid entitlement");
-            var pending = await MutationsAsync(path => path.StartsWith("/v1/subscriptions/", StringComparison.Ordinal));
-            await PostAsync("/billing/change", new() { ["plan"] = "business", ["interval"] = "annual" });
-            await Assert.That(await MutationsAsync(path => path.StartsWith("/v1/subscriptions/", StringComparison.Ordinal))).IsEqualTo(pending);
-            await PostAsync("/billing/change", new() { ["plan"] = "starter", ["interval"] = "monthly" }, 409);
-            await ScenarioAsync("confirm-payment");
-            await GotoAsync("/organization?tab=billing&payment=success");
-            await Assert.That(await PlanAsync()).IsEqualTo(Starter);
             await ChooseAsync("starter");
             await Assert.That(await page.Locator("#review-billing-plan").InnerTextAsync()).Contains("No charge today");
             await ConfirmAsync();
             await page.GetByText("Change scheduled", new() { Exact = true }).WaitForAsync();
-            await Assert.That(await PlanAsync()).IsEqualTo(Starter).Because("a scheduled downgrade keeps current resources until renewal");
+            await Assert.That(await PlanAsync()).IsEqualTo(Pro).Because("a scheduled downgrade keeps current resources until renewal");
             var schedules = await MutationsAsync(path => path == "/v1/subscription_schedules");
             await PostAsync("/billing/change", new() { ["plan"] = "starter", ["interval"] = "monthly" });
             await Assert.That(await MutationsAsync(path => path == "/v1/subscription_schedules")).IsEqualTo(schedules);
             await PostAsync("/billing/change", new() { ["plan"] = "pro", ["interval"] = "monthly" }, 409);
-            await SubmitAsync(page, "form[action=\"/billing/change/undo\"]", "Undo scheduled change");
+            await SubmitAsync(page, "form:is([action=\"/billing/change/undo\"],[action^=\"/billing/change/undo?\"])", "Undo scheduled change");
             await Assert.That(await page.GetByText("Change scheduled", new() { Exact = true }).CountAsync()).IsEqualTo(0);
             await ChooseAsync("free");
             await ConfirmAsync();
             await page.GetByText("Change scheduled", new() { Exact = true }).WaitForAsync();
-            await Assert.That(await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "Change scheduled" }).InnerTextAsync()).Contains("Free");
-            await Assert.That(await PlanAsync()).IsEqualTo(Starter);
-            await SubmitAsync(page, "form[action=\"/billing/change/undo\"]", "Undo scheduled change");
-            checks.Add("pending payment cannot grant a new plan; provider confirmation, scheduled downgrade/replay/undo and Personal Free cancellation use real SDK operations");
+            await Assert.That(await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "Change scheduled" }).InnerTextAsync()).Contains("Hobby");
+            await Assert.That(await PlanAsync()).IsEqualTo(Pro);
+            await SubmitAsync(page, "form:is([action=\"/billing/change/undo\"],[action^=\"/billing/change/undo?\"])", "Undo scheduled change");
+            checks.Add("pending payment cannot grant a new plan; provider confirmation, scheduled downgrade/replay/undo and Personal Hobby cancellation use real SDK operations");
 
             var personal = await SelectedAsync();
             var personalId = personal.GetProperty("id").GetString();
@@ -91,10 +84,10 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await GotoAsync("/organization?tab=billing&review=1&plan=pro&interval=monthly");
             await Assert.That(await page.Locator("#review-billing-plan button").CountAsync()).IsEqualTo(0);
             await Assert.That(await page.Locator("#billing-summary").InnerTextAsync()).Matches(@"Payment method\s+Not reported");
-            await Assert.That(await PlanAsync()).IsEqualTo(Starter);
+            await Assert.That(await PlanAsync()).IsEqualTo(Pro);
             await ScenarioAsync("confirmed");
             await page.SetViewportSizeAsync(390, 844);
-            await ChooseAsync("pro");
+            await ChooseAsync("starter");
             await ScreenshotAsync("downgrade-review-mobile");
             await GotoAsync("/organization?newOrganization=organization");
             await page.Locator("#create-organization input[name=name]").FillAsync("Pending billing " + suffix);
@@ -104,7 +97,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             var checkout = CheckoutId(await PostAsync("/billing/checkout", new() { ["plan"] = "starter", ["interval"] = "monthly", ["return"] = "/organization?tab=billing" }));
             await Assert.That(checkout).IsNotNull().And.IsNotEmpty();
             await GotoAsync("/organization?tab=billing");
-            await SubmitAsync(page, "form[action=\"/billing/checkout/cancel\"]", "Cancel checkout");
+            await SubmitAsync(page, "form:is([action=\"/billing/checkout/cancel\"],[action^=\"/billing/checkout/cancel?\"])", "Cancel checkout");
             await Assert.That((await SelectedAsync()).GetProperty("billingStatus").GetString()).IsEqualTo("billing_required");
             var ended = await ReturnAsync(owner, checkout!);
             await Assert.That(ended.Status).IsEqualTo(303);
@@ -125,9 +118,9 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(await PlanAsync()).IsEqualTo(personalPlan);
             await Assert.That((await JsonAsync(owner, "/api/v1/auth/me")).GetProperty("projectId").GetString()).IsEqualTo(personalProject);
             await page.GotoAsync(originalCheckoutUrl, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
-            await Assert.That(page.Url).EndsWith("/organization?tab=billing&payment=success");
+            await Assert.That(BrowserAudit.WithoutWorkspace(page.Url)).EndsWith("/organization?tab=billing&payment=success");
             await Assert.That((await SelectedAsync()).GetProperty("id").GetString()).IsEqualTo(businessId).Because("callback restores the original organization after a native shell switch");
-            await Assert.That(await PlanAsync()).IsEqualTo(Business);
+            await Assert.That(await PlanAsync()).IsEqualTo(Starter);
             await Assert.That((await JsonAsync(owner, "/api/v1/auth/me")).GetProperty("projectId").ValueKind).IsEqualTo(JsonValueKind.Null).Because("the other organization project is never adopted by the original checkout");
             var afterCallback = (await JsonAsync(owner, "/api/v1/dashboard/context")).GetProperty("organizations").EnumerateArray().Single(org => org.GetProperty("id").GetString() == personalId);
             await Assert.That(afterCallback.GetProperty("planId").GetString()).IsEqualTo(personalPlan).Because("only the original organization receives the checkout entitlement");
@@ -147,11 +140,11 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             guestPage.PageError += (_, error) => errors.Enqueue(error);
             var email = "plan-member-" + suffix + "@example.test";
             await BrowserAudit.SignInAsync(guestPage, fixture.Origin, "/onboarding", email, password, signUp: true);
-            await SubmitAsync(guestPage, "form[action=\"/onboarding/step\"]", "Save and continue", null);
-            await SubmitAsync(guestPage, "form[action=\"/onboarding/step\"]", "Continue on Free", null);
+            await SubmitAsync(guestPage, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Save and continue", null);
+            await SubmitAsync(guestPage, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue on Hobby", null);
             await guestPage.Locator("#projectName").FillAsync("Member project " + suffix);
             await guestPage.Locator("#region").SelectOptionAsync("GRU");
-            await SubmitAsync(guestPage, "form[action=\"/onboarding/step\"]", "Create project and open Dashboard", null);
+            await SubmitAsync(guestPage, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Create project and open Dashboard", null);
             var unrelated = await ReturnAsync(guest, originalCheckoutId!);
             await Assert.That(unrelated.Status).IsEqualTo(404).Because("an unrelated authenticated account cannot resolve the original organization");
             await GotoAsync("/organization?tab=members");
@@ -322,7 +315,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
                 await Task.Delay(25);
             }
             await Assert.That(waiting).IsTrue().Because("The real second Stripe read must wait after the app persisted its reservation.");
-            using var competing = await HttpJourney.PostFormAsync(first, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "business", ["interval"] = "monthly" });
+            using var competing = await HttpJourney.PostFormAsync(first, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "annual" });
             await Assert.That(competing.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
             using var release = await HttpJourney.PostFormAsync(first, "/__test/billing/plans/scenario", new() { ["_csrf"] = csrf, ["scenario"] = "release-source-race" });
             await Assert.That(release.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -331,14 +324,14 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
             using var beforeRetry = JsonDocument.Parse(await first.GetStringAsync("/__test/billing/plans/probe"));
             await Assert.That(beforeRetry.RootElement.GetProperty("mutations").EnumerateArray().Count(item => item.GetString()!.StartsWith("/v1/subscriptions/", StringComparison.Ordinal))).IsEqualTo(0);
-            using var retry = await HttpJourney.PostFormAsync(replica, "/billing/change", new() { ["_csrf"] = replicaCsrf, ["plan"] = "business", ["interval"] = "monthly" });
+            using var retry = await HttpJourney.PostFormAsync(replica, "/billing/change", new() { ["_csrf"] = replicaCsrf, ["plan"] = "pro", ["interval"] = "monthly" });
             await Assert.That(retry.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because(await retry.Content.ReadAsStringAsync());
             using var afterRetry = JsonDocument.Parse(await first.GetStringAsync("/__test/billing/plans/probe"));
             await Assert.That(afterRetry.RootElement.GetProperty("mutations").EnumerateArray().Count(item => item.GetString()!.StartsWith("/v1/subscriptions/", StringComparison.Ordinal))).IsEqualTo(1);
             using var me = JsonDocument.Parse(await first.GetStringAsync("/api/v1/auth/me"));
             using var context = JsonDocument.Parse(await first.GetStringAsync("/api/v1/dashboard/context"));
             var organization = context.RootElement.GetProperty("organizations").EnumerateArray().Single(item => item.GetProperty("id").GetString() == me.RootElement.GetProperty("organizationId").GetString());
-            await Assert.That(organization.GetProperty("planId").GetString()).IsEqualTo("09XCWRH05BWWBADSBPTPDMFA7D");
+            await Assert.That(organization.GetProperty("planId").GetString()).IsEqualTo("7CNW2H87JE68ATZX224CV2G625");
         }
         finally
         {
@@ -370,7 +363,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             using var lost = await HttpJourney.PostFormAsync(first, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly" });
             await Assert.That(lost.StatusCode).IsEqualTo(HttpStatusCode.BadGateway);
             await Assert.That(await lost.Content.ReadAsStringAsync()).Contains("Stripe could not complete this billing change.");
-            using var conflicting = await HttpJourney.PostFormAsync(replica, "/billing/change", new() { ["_csrf"] = replicaCsrf, ["plan"] = "business", ["interval"] = "monthly" });
+            using var conflicting = await HttpJourney.PostFormAsync(replica, "/billing/change", new() { ["_csrf"] = replicaCsrf, ["plan"] = "pro", ["interval"] = "annual" });
             await Assert.That(conflicting.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
             using var outage = await HttpJourney.PostFormAsync(first, "/__test/billing/plans/scenario", new() { ["_csrf"] = csrf, ["scenario"] = "offline" });
             await Assert.That(outage.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -519,7 +512,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         other.Headers.Accept.ParseAdd("text/html");
         using var blocked = await client.SendAsync(other);
         await Assert.That(blocked.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because("a browser form post gets a page, not problem+json");
-        await Assert.That(blocked.Headers.Location!.OriginalString).IsEqualTo("/organization?tab=billing&payment=blocked");
+        await Assert.That(BrowserAudit.WithoutWorkspace(new Uri(fixture.Origin, blocked.Headers.Location!.OriginalString).ToString())).IsEqualTo(new Uri(fixture.Origin, "/organization?tab=billing&payment=blocked").ToString());
         using var notice = await client.GetAsync(blocked.Headers.Location);
         await Assert.That(await notice.Content.ReadAsStringAsync()).Contains("Checkout did not open");
 
@@ -548,7 +541,7 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(completed.Headers.Location!.OriginalString.StartsWith("/billing/checkout/return?session_id=", StringComparison.Ordinal)).IsTrue();
         using var callback = await client.GetAsync(completed.Headers.Location);
         await Assert.That(callback.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        await Assert.That(callback.Headers.Location!.OriginalString).IsEqualTo("/onboarding?payment=success");
+        await Assert.That(BrowserAudit.WithoutWorkspace(new Uri(client.BaseAddress!, callback.Headers.Location!.OriginalString).ToString())).IsEqualTo(new Uri(client.BaseAddress!, "/onboarding?payment=success").ToString());
         using var confirmation = await client.GetAsync(callback.Headers.Location);
         await Assert.That(confirmation.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using var project = await HttpJourney.PostFormAsync(client, "/onboarding/step", new()

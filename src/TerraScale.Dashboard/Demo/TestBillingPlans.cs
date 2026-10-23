@@ -282,7 +282,7 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
     private JsonObject Price(string id)
     {
         var canonicalId = id.EndsWith("_replacement", StringComparison.Ordinal) ? id[..^12] : id;
-        var plan = PlanCatalog.Plans.FirstOrDefault(plan => canonicalId.StartsWith("price_" + plan.Key + "_", StringComparison.Ordinal)) ?? throw new HttpRequestException("Unknown published price.");
+        var plan = PlanCatalog.Plans.FirstOrDefault(plan => plan.PriceCents > 0 && canonicalId.StartsWith("price_" + plan.Key + "_", StringComparison.Ordinal)) ?? throw new HttpRequestException("Unknown published price.");
         var interval = canonicalId[("price_" + plan.Key + "_").Length..]; if (interval is not ("monthly" or "annual")) throw new HttpRequestException("Unknown published interval.");
         return new()
         {

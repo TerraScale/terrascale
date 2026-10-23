@@ -1,6 +1,4 @@
-using Microsoft.AspNetCore.Http.Features;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.QuerySubscriptions;
@@ -24,20 +22,6 @@ public static class QuerySubscriptionEndpoints
             }
             catch (AccountAccessException error) { return Results.Text(error.Message + "\n", statusCode: error.StatusCode); }
         });
-        foreach (var action in new[] { "attach", "pause", "resume", "detach" })
-            endpoints.MapPost("/api/v1/dashboard/subscriptions/" + action, RefuseAsync);
         return endpoints;
-    }
-
-    private static async Task<IResult> RefuseAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, QuerySubscriptionService service)
-    {
-        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-        if (context is null) return Results.Unauthorized();
-        if (http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } body) body.MaxRequestBodySize = 16 * 1024;
-        var form = await http.Request.ReadFormAsync(http.RequestAborted);
-        if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
-        try { await service.RefuseMutationAsync(context, http.RequestAborted); }
-        catch (AccountAccessException error) { return Results.Text(error.Message + "\n", statusCode: error.StatusCode); }
-        throw new InvalidOperationException("An unavailable producer mutation cannot complete.");
     }
 }

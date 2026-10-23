@@ -75,9 +75,8 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
                     : "This month's reads and writes could not be loaded from TerraBase. Try again shortly.";
         var organizationStorage = complete ? logical : stored?.OrganizationBytes;
         var allowances = new[] {
-            Allowance("Reads this month", plan?.ReadsAllowance ?? "Limit not published", limits.MonthlyReads, reads, false, complete),
-            Allowance("Writes this month", plan?.WritesAllowance ?? "Limit not published", limits.MonthlyWrites, writes, false, complete),
-            Allowance("Storage", plan?.StorageAllowance ?? "Limit not published", limits.StorageBytes, organizationStorage ?? 0, true, organizationStorage is not null)
+            Allowance("Operation units this month", plan?.OperationsAllowance ?? "Limit not published", limits.MonthlyOperations, 0, false, false),
+            Allowance("Storage across regions", plan?.StorageAllowance ?? "Limit not published", limits.StorageBytes, 0, true, false)
         };
         var scope = result.Scope.State == UsageSourceState.Measured ? result.Scope.Reading : null;
         if (scope is not null && (scope.ProjectId != selection.Context.Project?.Id || scope.DatabaseId != selection.DatabaseId)) throw new IOException("Selected usage scope is invalid.");
@@ -112,8 +111,7 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
             [new("Reads", scope.Series.Select(point => point.Reads).ToArray()), new("Writes", scope.Series.Select(point => point.Writes).ToArray())]) : null;
         return new(shell, selection, tab, saved, controls, projects, databaseRows, allowances, name, scope, history, source,
             result.Scope.State == UsageSourceState.Unavailable ? "Metered reads and writes could not be loaded. Try again shortly." : "", monthError,
-            !complete && monthError.Length == 0 ? "This month's reads and writes aren't metered here, so their utilization is unavailable."
-                : "UTC month-to-date best-effort counts. Estimates are not settled charges; a crash can lose counts since the last save.", organizationStorage is not null, await replicationRead)
+            "Published allowances count 4 KiB operation units and storage across selected regions. These document counters do not measure allowance utilization.", organizationStorage is not null, await replicationRead)
         {
             StoredScope = stored?.Scope(selection),
             InternalBill = selection.Context.Organization!.InternalBilling is not null

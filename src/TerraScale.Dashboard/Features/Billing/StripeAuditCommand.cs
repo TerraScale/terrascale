@@ -51,8 +51,8 @@ public sealed class StripeAuditCommand
             };
             var client = clientFactory(key);
             await AuditPricesAsync(client, live, checks, cancellationToken);
-            checks["six_published_prices_valid"] = new[] { "starter_monthly", "starter_annual", "pro_monthly", "pro_annual", "business_monthly", "business_annual" }
-                .All(name => checks.GetValueOrDefault(name));
+            checks["published_prices_valid"] = PlanCatalog.Plans.Where(plan => plan.PriceCents > 0)
+                .SelectMany(plan => new[] { plan.Key + "_monthly", plan.Key + "_annual" }).All(name => checks.GetValueOrDefault(name));
             var webhookEndpoints = new List<WebhookEndpoint>();
             await foreach (var endpoint in client.V1.WebhookEndpoints.ListAutoPagingAsync(new() { Limit = 100 }, cancellationToken: cancellationToken))
                 webhookEndpoints.Add(endpoint);

@@ -36,7 +36,7 @@ public sealed class BillingBrowserJourneyTests(DashboardE2EFixture fixture)
         await page.Locator("#projectName").FillAsync("Billing project " + suffix);
         await page.Locator("#region").SelectOptionAsync("GRU");
         await SubmitAsync("/onboarding/step", "Create project and open Dashboard →");
-        await page.WaitForURLAsync(fixture.Origin.ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == fixture.Origin.ToString());
 
         await NavigateAsync("/organization?tab=billing");
         await Assert.That(await page.Locator("#billing-summary").InnerTextAsync()).Contains("Starter");
@@ -130,7 +130,7 @@ public sealed class BillingBrowserJourneyTests(DashboardE2EFixture fixture)
             if (sourceId.Length > 0) await ToolAsync("delete_database", new { databaseId = sourceId, confirmName = name });
         }
         await page.GetByRole(AriaRole.Link, new() { Name = "Manage payment", Exact = true }).ClickAsync();
-        await page.WaitForURLAsync("**/__test/portal");
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url).EndsWith("/__test/portal", StringComparison.Ordinal));
         await Assert.That(await page.GetByRole(AriaRole.Heading).InnerTextAsync()).IsEqualTo("Test-only Stripe customer portal");
         await Assert.That(errors.ToArray()).IsEmpty();
         var screenshots = Path.Combine(fixture.Root, "test-results", "tunit", "billing");
@@ -146,7 +146,7 @@ public sealed class BillingBrowserJourneyTests(DashboardE2EFixture fixture)
         async Task SubmitAsync(string path, string label, int status = 303, bool exact = true)
         {
             if (label.EndsWith(" →", StringComparison.Ordinal)) label = label[..^2];
-            var button = page.Locator("form[action='" + path + "']").GetByRole(AriaRole.Button, new() { Name = label, Exact = exact });
+            var button = page.Locator("form:is([action='" + path + "'],[action^='" + path + "?'])").GetByRole(AriaRole.Button, new() { Name = label, Exact = exact });
             await button.WaitForAsync();
             var response = await page.RunAndWaitForResponseAsync(() => button.ClickAsync(),
                 response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == path);

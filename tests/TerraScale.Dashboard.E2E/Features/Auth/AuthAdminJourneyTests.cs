@@ -143,7 +143,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
         {
             user.Name += " Updated";
             await page.Locator("#displayName").FillAsync(user.Name);
-            await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Save and continue →");
+            await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Save and continue →");
             await page.GetByRole(AriaRole.Heading, new() { Name = "Choose your plan", Exact = true }).WaitForAsync();
             await GotoAsync(page, "/onboarding");
             await page.GetByRole(AriaRole.Heading, new() { Name = "Choose your plan", Exact = true }).WaitForAsync();
@@ -161,7 +161,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
                 await Assert.That(await page.Locator("input[name=plan][value=pro]").IsCheckedAsync()).IsTrue();
                 await page.Locator("label.ts-onboarding-plan").Filter(new() { Has = page.Locator("input[name=plan][value=starter]") }).ClickAsync();
                 await Assert.That(await page.Locator("input[name=plan][value=starter]").IsCheckedAsync()).IsTrue();
-                var checkout = await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Continue to checkout →");
+                var checkout = await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue to checkout →");
                 await Assert.That(checkout.Status).IsEqualTo(303);
                 await Assert.That(Regex.IsMatch(checkout.Headers.GetValueOrDefault("location") ?? "", "/__test/checkout\\?id=cs_")).IsTrue()
                     .Because("official Stripe SDK uses test-only provider checkout");
@@ -169,7 +169,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             }
             else
             {
-                await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Continue on Free");
+                await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue on Hobby");
                 checks.Add("free personal onboarding bypass");
             }
             await page.GetByRole(AriaRole.Heading, new() { Name = "Create your first project", Exact = true }).WaitForAsync();
@@ -179,14 +179,14 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             if (!paid)
             {
                 await page.Locator("#region").EvaluateAsync("select => { select.add(new Option('Invalid', 'MARS')); select.value = 'MARS'; }");
-                await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Create project and open Dashboard →");
+                await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Create project and open Dashboard →");
                 await page.GetByRole(AriaRole.Alert).Filter(new() { HasText = "Choose a supported project region." }).WaitForAsync();
                 await page.Locator("#projectName").FillAsync("Browser " + size + " Project");
                 checks.Add("unsupported project region is rejected without advancing onboarding");
             }
             await page.Locator("#region").SelectOptionAsync(paid ? "SFO" : "GRU");
-            await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Create project and open Dashboard →");
-            await page.WaitForURLAsync(origin + "/");
+            await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Create project and open Dashboard →");
+            await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == origin + "/");
             var me = (await (await context.APIRequest.GetAsync(origin + "/api/v1/auth/me")).JsonAsync())!.Value;
             await Assert.That(me.GetProperty("email").GetString()).IsEqualTo(user.Email);
             await Assert.That(me.GetProperty("name").GetString()).IsEqualTo(user.Name);
@@ -194,11 +194,11 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(!string.IsNullOrEmpty(me.GetProperty("organizationId").GetString()) && !string.IsNullOrEmpty(me.GetProperty("projectId").GetString()) &&
                 me.GetProperty("role").GetString() == "owner").IsTrue();
             await GotoAsync(page, "/onboarding");
-            await Assert.That(page.Url).IsEqualTo(origin + "/").Because("completed onboarding redirects to dashboard");
+            await Assert.That(BrowserAudit.WithoutWorkspace(page.Url)).IsEqualTo(origin + "/").Because("completed onboarding redirects to dashboard");
             await ShotAsync(page, "complete-" + size);
             await GotoAsync(page, "/organization?tab=billing");
             var summary = await page.Locator("#billing-summary").InnerTextAsync();
-            await Assert.That(summary).Contains(paid ? "Starter" : "Free").Because("confirmed plan is persisted");
+            await Assert.That(summary).Contains(paid ? "Starter" : "Hobby").Because("confirmed plan is persisted");
             if (paid) await Assert.That(summary).Contains("On file").Because("confirmed Stripe subscription stores payment status");
             if (paid) await Assert.That(summary).Contains("Annual").Because("confirmed subscription retains selected annual interval");
             checks.Add(size + " completed account/project persistence and billing");
@@ -210,7 +210,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             if (!await page.Locator("details.ts-account summary").IsVisibleAsync())
                 await page.GetByRole(AriaRole.Button, new() { Name = "Open navigation", Exact = true }).ClickAsync();
             await page.Locator("details.ts-account summary").ClickAsync();
-            var logout = await SubmitAsync(page, "form[action=\"/api/v1/auth/logout\"]", "Sign out", keyboard);
+            var logout = await SubmitAsync(page, "form:is([action=\"/api/v1/auth/logout\"],[action^=\"/api/v1/auth/logout?\"])", "Sign out", keyboard);
             await Assert.That(logout.Status).IsEqualTo(303);
             await Assert.That(logout.Headers.GetValueOrDefault("location")).IsEqualTo("/login").Because("the test host's end-session URL");
             await Assert.That(new Uri(page.Url).AbsolutePath).IsEqualTo("/__test/oidc");

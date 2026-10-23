@@ -24,7 +24,7 @@ public sealed class PaymentCurrencyEvidenceJourneyTests
         await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
         var page = await context.NewPageAsync();
         await BrowserAudit.SignInAsync(page, scenario.Origin);
-        await page.WaitForURLAsync(scenario.Origin.ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
         await page.GotoAsync(new Uri(scenario.Origin, "/organization?tab=billing").ToString());
         var table = page.Locator("#recent-invoices .ts-table-wrap");
         await table.FocusAsync();

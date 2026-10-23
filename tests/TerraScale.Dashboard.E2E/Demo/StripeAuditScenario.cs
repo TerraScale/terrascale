@@ -185,9 +185,7 @@ public sealed class StripeAuditScenario : IAsyncDisposable
                 ("starter", "monthly", 500, "price_starter_monthly", true, true),
                 ("starter", "annual", 5000, "price_starter_annual", true, true),
                 ("pro", "monthly", 5000, "price_pro_monthly", true, true),
-                ("pro", "annual", 50000, "price_pro_annual", true, true),
-                ("business", "monthly", 9900, "price_business_monthly", true, true),
-                ("business", "annual", 99000, "price_business_annual", true, true)
+                ("pro", "annual", 50000, "price_pro_annual", true, true)
             };
             if (fault == "missing-price") all.RemoveAll(row => row.Id == "price_starter_monthly");
             if (fault == "duplicate-price") all.Add(("pro", "monthly", 5000, "price_pro_monthly_duplicate", true, true));

@@ -14,8 +14,8 @@ public sealed class StripeSetupJourneyTests
     public async Task SetupCreatesCatalogPricesAndPortalOnceThenChangesNothing()
     {
         var stripe = new FakeStripe();
-        Check(await Run(stripe, "sk_test_SETUP") == (0, "{\"mode\":\"test\",\"changes\":[\"product_starter_created\",\"price_starter_monthly_created\",\"price_starter_annual_created\",\"product_pro_created\",\"price_pro_monthly_created\",\"price_pro_annual_created\",\"product_business_created\",\"price_business_monthly_created\",\"price_business_annual_created\",\"portal_created\"]}"),
-            "The first run creates three products, six prices and the default portal");
+        Check(await Run(stripe, "sk_test_SETUP") == (0, "{\"mode\":\"test\",\"changes\":[\"product_starter_created\",\"price_starter_monthly_created\",\"price_starter_annual_created\",\"product_pro_created\",\"price_pro_monthly_created\",\"price_pro_annual_created\",\"portal_created\"]}"),
+            "The first run creates two products, four prices and the default portal");
         Check(stripe.Prices.Select(price => (string)price["unit_amount"]! + "/" + (string)price["recurring[interval]"]!).Order().SequenceEqual(
                 PlanCatalog.Plans.Where(plan => plan.PriceCents > 0).SelectMany(plan => new[] { plan.PriceCents + "/month", plan.AnnualPriceCents + "/year" }).Order()),
             "Price amounts come from PlanCatalog");

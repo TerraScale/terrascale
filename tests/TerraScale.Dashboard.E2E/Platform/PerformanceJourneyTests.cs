@@ -122,7 +122,7 @@ public sealed class PerformanceJourneyTests(DashboardRootFixture fixture)
         {
             var response = await BrowserAudit.SignInAsync(page, scenario.Origin, email: "mario@terrascale.tech", password: "terrascale");
             await Assert.That(response!.Status).IsEqualTo(200);
-            await Assert.That(page.Url).IsEqualTo(origin + "/");
+            await Assert.That(BrowserAudit.WithoutWorkspace(page.Url)).IsEqualTo(origin + "/");
         }
     }
 }

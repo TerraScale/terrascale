@@ -32,7 +32,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
                 mutations.Add(path);
         };
         await BrowserAudit.SignInAsync(page, scenario.Origin, email: account.Email, password: account.Password);
-        await page.WaitForURLAsync(scenario.Origin.ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
         foreach (var (path, status, message) in new[]
         {
             ("/api-keys?kind=key", 200, "No credentials match these filters."),
@@ -93,7 +93,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
         var page = await context.NewPageAsync();
         await BrowserAudit.SignInAsync(page, scenario.Origin, email: account.Email, password: account.Password);
-        await page.WaitForURLAsync(scenario.Origin.ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
         await page.GotoAsync(new Uri(scenario.Origin, "/databases/" + id + "/sql").ToString());
         await page.Locator("#sql-editor ts-code-editor[data-ready]").WaitForAsync();
         const string statement = "SELECT * FROM users WHERE name = $1 LIMIT 20";
@@ -133,7 +133,7 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
         await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
         var page = await context.NewPageAsync();
         await BrowserAudit.SignInAsync(page, scenario.Origin, email: account.Email, password: account.Password);
-        await page.WaitForURLAsync(scenario.Origin.ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
         var sqlPath = new Uri(scenario.Origin, "/databases/" + id + "/sql").ToString();
         var response = await page.GotoAsync(sqlPath);
         await Assert.That(response!.Status).IsEqualTo((int)HttpStatusCode.OK);

@@ -36,7 +36,7 @@ public sealed class SyntheticNotificationsBrowserJourneyTests(DashboardRootFixtu
         var errors = new ConcurrentQueue<string>();
         page.PageError += (_, error) => errors.Enqueue(error);
         await BrowserAudit.SignInAsync(page, host.Origin);
-        await page.WaitForURLAsync(host.Origin.ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == host.Origin.ToString());
         await NavigateAsync("/notifications?status=unread&page=2");
         await Assert.That(await page.Locator("main .ts-notification-unread").CountAsync()).IsEqualTo(2);
         await BrowserAudit.AssertAccessibleAsync(page, "Synthetic notification page 2 at " + width);
@@ -44,12 +44,12 @@ public sealed class SyntheticNotificationsBrowserJourneyTests(DashboardRootFixtu
         var action = (await first.GetAttributeAsync("action"))!;
         var marked = await page.RunAndWaitForResponseAsync(
             () => first.GetByRole(AriaRole.Button, new() { Name = "Mark read", Exact = true }).ClickAsync(),
-            response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == action);
+            response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == action.Split('?')[0]);
         await Assert.That(marked.Status).IsEqualTo(303);
         await page.WaitForFunctionAsync("() => document.querySelectorAll('main .ts-notification-unread').length === 1");
-        await Assert.That(new Uri(page.Url).PathAndQuery).IsEqualTo("/notifications?page=2&status=unread");
+        await Assert.That(new Uri(BrowserAudit.WithoutWorkspace(page.Url)).PathAndQuery).IsEqualTo("/notifications?page=2&status=unread");
         await page.GetByRole(AriaRole.Button, new() { Name = "Mark all read", Exact = true }).ClickAsync();
-        await page.WaitForURLAsync(new Uri(host.Origin, "/notifications?status=unread").ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == new Uri(host.Origin, "/notifications?status=unread").ToString());
         await Assert.That(await page.GetByText("No unread notifications in this scope.", new() { Exact = true }).IsVisibleAsync()).IsTrue();
         await Assert.That(await page.GetByRole(AriaRole.Button, new() { Name = "Mark all read", Exact = true }).IsDisabledAsync()).IsTrue();
 

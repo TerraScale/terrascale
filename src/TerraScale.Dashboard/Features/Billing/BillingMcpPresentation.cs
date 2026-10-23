@@ -8,8 +8,8 @@ public sealed record BillingMcpPlan(string Key, string Name, long MonthlyPriceCe
     [property: Description("Price for a year billed annually; 0 when the plan bills monthly only.")] long AnnualPriceCents,
     int TrialDays, [property: Description("Database limit; 0 means unlimited.")] int MaxDatabases,
     [property: Description("Member limit; 0 means unlimited.")] int MaxMembers,
-    [property: Description("Included reads per month; 0 means no published limit.")] long ReadsPerMonth,
-    [property: Description("Included writes per month, counted apart from reads; 0 means no published limit.")] long WritesPerMonth,
+    [property: Description("Included operation units per month, shared by reads and writes.")] long OperationUnitsPerMonth,
+    [property: Description("Bytes in one started operation unit.")] int OperationUnitBytes,
     IReadOnlyList<string> Features, [property: Description("Whether the organization is on this plan.")] bool Current);
 public sealed record BillingMcpPlans(IReadOnlyList<BillingMcpPlan> Plans, string CurrentPlanKey,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CurrentInterval);
@@ -46,8 +46,8 @@ public sealed partial class StripeBilling
                 var limits = PlanCatalog.ResourceLimits(plan.Id);
                 var allowance = PlanCatalog.Limits(plan.Id);
                 return new BillingMcpPlan(plan.Key, plan.Name, plan.PriceCents, plan.AnnualPriceCents, plan.TrialDays, limits.Databases,
-                    limits.Members, allowance.MonthlyReads, allowance.MonthlyWrites,
-                    new[] { plan.StorageAllowance, plan.ReadsAllowance, plan.WritesAllowance, plan.DatabaseAllowance, plan.MemberAllowance }
+                    limits.Members, allowance.MonthlyOperations, PlanCatalog.OperationUnitBytes,
+                    new[] { plan.StorageAllowance, plan.OperationsAllowance, plan.DatabaseAllowance, plan.MemberAllowance }
                         .Where(value => value != "Limit not published").ToArray(), plan.Key == facts.PlanKey);
             }).ToArray(), facts.PlanKey, Empty(facts.Interval));
     }

@@ -32,12 +32,12 @@ public static class OrganizationEndpoints
             if (http.Request.Query["tab"] == "billing" && http.Request.Query["payment"] == "success" && context.Role == "owner")
             {
                 await http.RequestServices.GetRequiredService<TerraScale.Dashboard.Features.Billing.StripeBilling>().ConfirmAsync(context, http.RequestAborted);
-                context = await accounts.GetContextAsync(context.Session, http.RequestAborted);
+                context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted);
             }
             else if (http.Request.Query["tab"] == "billing" && context.Organization is not null)
             {
                 // A provider failure leaves the stored state; the page still loads and the next reload retries.
-                try { if (await billing.ReconcileCheckoutAsync(context, http.RequestAborted)) context = await accounts.GetContextAsync(context.Session, http.RequestAborted); }
+                try { if (await billing.ReconcileCheckoutAsync(context, http.RequestAborted)) context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted); }
                 catch (Exception error) when (error is AccountAccessException or IOException or HttpRequestException or Stripe.StripeException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested) { }
             }
             context = await OrganizationWizard.PrepareAsync(http, context, accounts);
@@ -153,7 +153,7 @@ public static class OrganizationEndpoints
                 var invitations = http.RequestServices.GetRequiredService<InvitationService>();
                 var created = operation == "invite" ? await invitations.CreateAsync(context, form["email"].ToString(), form["role"].ToString() is { Length: > 0 } role ? role : "member", http.RequestAborted)
                     : await invitations.ResendAsync(context, id!, http.RequestAborted);
-                context = await accounts.GetContextAsync(context.Session, http.RequestAborted);
+                context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted);
                 var view = await access.ReadAsync(context, http.RequestAborted);
                 http.Response.Headers.CacheControl = "no-store";
                 http.Response.Headers["Referrer-Policy"] = "strict-origin";
@@ -189,14 +189,18 @@ public static class OrganizationEndpoints
             if (operation == "leave") await lifecycle.LeaveAsync(context, http.RequestAborted);
             else if (operation == "delete-project") await lifecycle.DeleteProjectAsync(context, projectId!, form["confirmation"].ToString(), http.RequestAborted);
             else await lifecycle.RequestDeletionAsync(context, form["confirmation"].ToString(), http.RequestAborted);
-            return HttpRedirects.SeeOther(operation == "delete-project" ? "/organization?tab=projects" : operation == "delete" ? "/organization?tab=danger" : "/organization");
+            if (operation == "leave" || operation == "delete-project" && context.Project?.Id == projectId)
+                context = await accounts.GetContextAsync(context.Session, http.RequestAborted,
+                    organizationId: operation == "leave" ? null : context.Organization?.Id);
+            return HttpRedirects.SeeOther(WorkspaceUrl.For(context,
+                operation == "delete-project" ? "/organization?tab=projects" : operation == "delete" ? "/organization?tab=danger" : "/organization", replace: true));
         }
         catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode, operation == "delete-project" ? "projects" : "danger"); }
     }
 
-    internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement, string operation, string? projectId = null)
+    internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement, string operation, string? projectId = null, AccountContext? scopedContext = null)
     {
-        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        var context = scopedContext ?? await AccountRequest.RequireAsync(http, sessions, accounts);
         if (context is null) return Results.Unauthorized();
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
@@ -205,8 +209,9 @@ public static class OrganizationEndpoints
             var name = AccountService.ValidName(form["name"].ToString());
             if (operation == "create")
             {
-                await accounts.CreateBusinessAsync(context.Session, name, http.RequestAborted);
-                return HttpRedirects.SeeOther("/organization?tab=billing");
+                var organization = await accounts.CreateBusinessAsync(context.Session, name, http.RequestAborted);
+                var selected = await accounts.GetContextAsync(context.Session, http.RequestAborted, organizationId: organization.Id);
+                return HttpRedirects.SeeOther(WorkspaceUrl.For(selected, "/organization?tab=billing", replace: true));
             }
             var operations = http.RequestServices.GetRequiredService<OrganizationOperations>();
             if (operation == "rename")
@@ -226,7 +231,7 @@ public static class OrganizationEndpoints
                 var project = context.Organization?.Projects.GetValueOrDefault(projectId ?? "") ?? throw new AccountAccessException("Project is unavailable.", 404);
                 await operations.UpdateProjectAsync(context with { Project = project }, name, primary, backup, regions, http.RequestAborted);
             }
-            return HttpRedirects.SeeOther("/organization?tab=projects");
+            return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/organization?tab=projects", replace: true));
         }
         catch (AccountAccessException error)
         {

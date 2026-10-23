@@ -26,7 +26,11 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(input.Contains("checked", StringComparison.Ordinal)).IsEqualTo(value == interval);
         }
         await Assert.That(html).Contains("Checkout canceled");
-        await Assert.That(html).Contains("Free plan. No subscription or payment method is required; no Stripe charges.");
+        await Assert.That(Regex.Matches(chooser, "name=\"plan\"").Count).IsEqualTo(2);
+        await Assert.That(chooser).Contains("operation units/month (4 KiB)");
+        await Assert.That(chooser.Contains("writes/month", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(chooser.Contains("reads/month", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(html).Contains("Hobby plan. No subscription or payment method is required; no Stripe charges.");
         await Assert.That(html.Contains("ts-plan-current", StringComparison.Ordinal)).IsFalse();
         await Assert.That(Regex.IsMatch(chooser, "<input[^>]*name=\"plan\"[^>]*checked", RegexOptions.CultureInvariant)).IsFalse().Because("An unsubscribed organization has no current plan to preselect.");
     }
@@ -41,7 +45,7 @@ public sealed class BillingChooserJourneyTests(DashboardE2EFixture fixture)
         var chooser = Regex.Match(html, "<dialog id=\"change-billing-plan\".*?</dialog>", RegexOptions.Singleline | RegexOptions.CultureInvariant).Value;
         await Assert.That(Regex.IsMatch(chooser, "<input[^>]*name=\"interval\"[^>]*value=\"annual\"[^>]*checked", RegexOptions.CultureInvariant)).IsTrue();
         await Assert.That(Regex.IsMatch(chooser, "<input[^>]*name=\"plan\"[^>]*value=\"starter\"[^>]*checked", RegexOptions.CultureInvariant)).IsTrue();
-        await Assert.That(html).Contains("interval=annual\" aria-current=\"page\"");
+        await Assert.That(Regex.IsMatch(html, "href=\"[^\"]*[?&](?:amp;)?interval=annual(?:&[^\"]*)?\" aria-current=\"page\"", RegexOptions.CultureInvariant)).IsTrue();
         await Assert.That(Regex.Matches(html, "class=\"ts-plan ts-plan-current\"").Count).IsEqualTo(1);
         await Assert.That(html).Contains("aria-labelledby=\"plan-starter\" aria-current=\"true\"");
     }
