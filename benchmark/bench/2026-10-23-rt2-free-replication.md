@@ -138,3 +138,39 @@ d=$(tx); e=$(date +%s)                            # bytes/write = (d - c - rate*
 ```
 
 Not verified: the NetBird interface name (`wt0` is NetBird's default) and the `ts-orch netbird ssh` argument form.
+
+## 8. Live cells (gru, sjc, fra; main 888ea413; 2026-10-23 03:00 to 04:30 UTC)
+
+Lane B's test cells (`terrabase-rt2` units; gru on an E2.1.Micro VM). Test database `rt2laned` (all regions), created for
+this lane so other lanes' probes on `rt2` do not touch its counts.
+
+**Billing (old binary, without the fix).** `GET .../databases/<id>/usage` on each region after the runs below:
+
+| Region | Documents | Writes billed | Reads billed |
+|---|---|---|---|
+| sjc | 7227 | 4812 | 132 |
+| gru | 7227 | 4812 | 132 |
+| fra | 7227 | 4812 | 132 |
+
+Every document took at least one client write and none were deleted, so at least 2,415 writes (33%) were never billed:
+concurrent flushes from three regions overwrote each other, as in section 1. Identical totals in every region show whole
+flushes were overwritten. Replicated applies added nothing: no region bills more writes than there were. The fix
+(`rt2/free-repl-1`) is not deployed on the cells.
+
+**Bytes.** `benchmark/scripts/repl-bytes-live.sh` (kernel `bytes_sent` of each host's sockets on peer port 18081, sampled
+every second; TCP payload only, NetBird's WireGuard headers come on top), 1000 writes per run from ts-sjc-1, 3 runs per size:
+
+| Document | Idle-subtracted B/write/receiver (median, runs) | Raw (runs) | Idle peer B/s, cell (runs) | Load s (runs) |
+|---|---|---|---|---|
+| 256 B | **426** (339, 426, 472) | 971, 987, 1032 | 13243, 12091, 12697 | 95.5, 92.9, 88.2 |
+| 4096 B | **4303** (4183, 4303, 4447) | 5007, 4953, 4900 | 11136, 13125, 14641 | 100.6, 99.0, 98.0 |
+
+Other lanes' traffic on the cells (about 12 KB/s) is two thirds of a 256 B run's window, hence the spread. Live costs
+match local within the noise for small writes; 4 KB writes cost about 9% more live (NetBird's 1228-byte MSS splits
+frames into more segments, and `bytes_sent` counts retransmissions). The free-tier conclusion of section 4 holds.
+
+**Links.** Kernel minimum RTT on the peer sockets: sjc-fra 130 ms, sjc-gru 168 ms, fra-gru 181 ms. One-way delivery fits
+p99 < 200 ms on every link; anything that needs a round trip on fra-gru has about 19 ms left.
+
+**Verify on gru.** repl-bench's verify listing fails on the gru VM with `400 invalid_query "query too expensive"` after
+every run (the load itself completes and replicates: end markers reached every region within 24 s).
