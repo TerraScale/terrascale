@@ -67,7 +67,7 @@ internal sealed class TerraBaseConnection
             throw new ArgumentException($"Set either {secretName} or AccessTokenProvider, not both.", nameof(accessTokenProvider));
         }
 
-        // Anonymous requests reach only TerraBase's plain-HTTP private (6PN) listener, which trusts its network instead of a credential.
+        // Anonymous requests follow the pinned producer's plain-HTTP private-listener contract.
         anonymous = anonymousAllowed && !publicAnonymous && secret is null && accessTokenProvider is null;
         if (accessTokenProvider is null && !anonymous && !publicAnonymous) ValidateSecret(secret, secretName);
         if (anonymous && baseAddress?.Scheme == Uri.UriSchemeHttps) ValidateSecret(secret, secretName);

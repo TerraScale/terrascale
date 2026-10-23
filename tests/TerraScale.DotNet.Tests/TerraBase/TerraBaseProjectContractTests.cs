@@ -10,7 +10,7 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 public sealed class TerraBaseProjectContractTests
 {
     [Test]
-    [Arguments("provenance.json", "e30ffdc287530551b161b0130220be53d3c0475e")]
+    [Arguments("provenance.json", "8db4c792142dcd6644e1d14a2b2efd6bc04a107a")]
     [Arguments("pending-r8.json", "2b95f5ef0641d3a8b8695ec1989e02943befbef2")]
     public async Task Exported_sources_match_the_commit_stamped_producer_artifact(string manifestName, string commit)
     {

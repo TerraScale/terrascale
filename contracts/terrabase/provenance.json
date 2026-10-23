@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/TerraScale/terrascale",
-  "commit": "e30ffdc287530551b161b0130220be53d3c0475e",
+  "commit": "8db4c792142dcd6644e1d14a2b2efd6bc04a107a",
   "sources": [
     {
       "path": "src/TerraBase/Features/Management/ProjectApiRoute.cs",
@@ -10,12 +10,12 @@
     {
       "path": "src/TerraBase/Features/Management/ManagedDatabaseBody.cs",
       "export": "producer/src/TerraBase/Features/Management/ManagedDatabaseBody.cs.txt",
-      "sha256": "eaafeb932f4189f3f5f8246408a16adc33772c36ba11ab1cec972281d8a5a2fc"
+      "sha256": "17093b73938a331e100e28345b69f32aa0ad27775ff5739df7ec437dfc619a33"
     },
     {
       "path": "src/TerraBase/Features/Management/DatabaseRegions.cs",
       "export": "producer/src/TerraBase/Features/Management/DatabaseRegions.cs.txt",
-      "sha256": "b25dd27ce0864e4d2fba10c7f54595aa21b263ef6a59d20583d3b20916722e31"
+      "sha256": "16a54232cdf1e6d0d63555a43807a3104807b994a12c5018b5ade3cd051548c6"
     },
     {
       "path": "src/TerraBase/Features/Management/ManagementRoute.cs",
@@ -25,7 +25,7 @@
     {
       "path": "src/TerraBase/Features/Management/CreateManagedDatabaseEndpoint.cs",
       "export": "producer/src/TerraBase/Features/Management/CreateManagedDatabaseEndpoint.cs.txt",
-      "sha256": "8302ef780cf65c92aa5f2a86e26fdd811c68e9446fa27f292d53ddf7207aa06a"
+      "sha256": "d14d0fb71fe065e1ed73791faa1dabaee795a229bc7bd8bf742dc58e3146080d"
     },
     {
       "path": "src/TerraBase/Features/Management/ListManagedDatabasesEndpoint.cs",
@@ -40,12 +40,12 @@
     {
       "path": "src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs",
       "export": "producer/src/TerraBase/Features/Management/UpdateManagedDatabaseEndpoint.cs.txt",
-      "sha256": "08120d2aa197b7739dfcdb471dd753f08a5f597e96a62c6631b710f7e148021b"
+      "sha256": "f34b3a239b785b303e333e5aafd4e5e1670e1411b71c0a085a5c183aa47beba3"
     },
     {
       "path": "src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs",
       "export": "producer/src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs.txt",
-      "sha256": "1f6c26915734fb2e8eefceb613b72a08952c72aafc95a83c658e8caec36f81da"
+      "sha256": "1bd3038277ac6397724921491e45b0efc824c0ff3e3cc3fe7261a2782c28bcc5"
     },
     {
       "path": "src/TerraBase/Features/Management/Usage/GetDatabaseUsageEndpoint.cs",
@@ -80,7 +80,7 @@
     {
       "path": "src/TerraBase/Features/Documents/GetDatabaseChangesEndpoint.cs",
       "export": "producer/src/TerraBase/Features/Documents/GetDatabaseChangesEndpoint.cs.txt",
-      "sha256": "13ca12352bf33d2e687f4a7fb4d78d6f28f3048f936b14e1db8f9fd947745dd8"
+      "sha256": "22a6028fd5d961cdbd307876aef7df171e0d69f6094add382c4d36444f86b191"
     },
     {
       "path": "src/TerraBase/Features/Documents/DatabaseChangeModels.cs",
@@ -90,22 +90,22 @@
     {
       "path": "src/TerraBase/Features/Documents/DatabaseChanges.cs",
       "export": "producer/src/TerraBase/Features/Documents/DatabaseChanges.cs.txt",
-      "sha256": "bbe8ee1e1cf3dacc2ba32967538bbbb427530edbe96fbe165bba8e52400a3406"
+      "sha256": "653e1b45684fb8778267375f73d381b4417e4e52c65907b3602377c432677b19"
     },
     {
       "path": "src/TerraBase/Features/Documents/ChangeCursor.cs",
       "export": "producer/src/TerraBase/Features/Documents/ChangeCursor.cs.txt",
-      "sha256": "0ba18e88079fc019f81b708afcfbf949b02ef9746e2aa9420d2f52470bc3224e"
+      "sha256": "1e441a7c2f6b7af31ba6cfae40311374488737fa46557822fc230adeaa464613"
     },
     {
       "path": "src/TerraBase/Features/Documents/DocumentRoute.cs",
       "export": "producer/src/TerraBase/Features/Documents/DocumentRoute.cs.txt",
-      "sha256": "1ccdf60170c6ccffdbce3dae444fed0ebefb920658b0700f8f410b3983dc53a8"
+      "sha256": "830b42f7ad595dcf6cd24353bd7c0944c8eaaf59ecb3f2d611f625e10f29844d"
     },
     {
       "path": "src/TerraBase/Features/Documents/DocumentService.Schemas.cs",
       "export": "producer/src/TerraBase/Features/Documents/DocumentService.Schemas.cs.txt",
-      "sha256": "425921c7e47a952e03765f48cd8b2ad06d0c1d702a54989c0b76236e63dd1504"
+      "sha256": "182172f4320c73e890133b042aa75037ff4edba031791be542c88b5eefd137ba"
     },
     {
       "path": "src/TerraBase/Features/Documents/CollectionSchemaRoute.cs",
@@ -130,12 +130,12 @@
     {
       "path": "src/TerraBase/Hosting/Listeners.cs",
       "export": "producer/src/TerraBase/Hosting/Listeners.cs.txt",
-      "sha256": "9d27b4831b327ea794a141af88ed10ebd4bb4575ff36fd08fe7f56cfa0f509c6"
+      "sha256": "060f331c48b6b7667ab3904d62721bdb81859d93b6fa1ec9ccaf99968a502a75"
     },
     {
       "path": "src/TerraBase/Hosting/TerraBaseJsonContext.cs",
       "export": "producer/src/TerraBase/Hosting/TerraBaseJsonContext.cs.txt",
-      "sha256": "c6663e420335a8c67078c80abb92f65f220f425b802c8d74b4699700de232b4d"
+      "sha256": "af09fd4633ddf4a334e92b864e1c6d3dc60949181cfb8681ebd61b043e115a2b"
     },
     {
       "path": "src/TerraBase/Features/Management/BranchManagedDatabaseEndpoint.cs",
@@ -193,11 +193,11 @@
       "sha256": "3c2c3d0b43883fe2efb2f501ab9ab9c81f4a651f1d25c0c3a4c2f417e7c2b8b6"
     }
   ],
-  "qualification": "Exact source exports, synthetic wire fixtures derived from these DTOs. No producer or live service executed. R8 #165 remains open.",
+  "qualification": "Exact exports from merged producer source and synthetic HTTP/SSE fixtures. No producer binary or live service executed; interoperability and OCI deployment remain separately qualified.",
   "artifact": {
-    "path": "artifacts/terrabase-e30ffdc-source.tar.gz",
-    "sha256": "962705b1bc9302ea289b65c90d413c8246c542f23bce6de25d3f979bdf8819f3",
+    "path": "artifacts/terrabase-8db4c792-source.tar.gz",
+    "sha256": "7f49e1f71f45d8a81191905fccf0a628c16a27f44d87ae87fc3daff2029087bd",
     "format": "git archive --format=tar, gzip mtime=0",
-    "commit": "e30ffdc287530551b161b0130220be53d3c0475e"
+    "commit": "8db4c792142dcd6644e1d14a2b2efd6bc04a107a"
   }
 }

@@ -476,5 +476,5 @@
       "path": "/v1/projects/{project}/databases/{database}/schema"
     }
   ],
-  "producerCommit": "e30ffdc287530551b161b0130220be53d3c0475e"
+  "producerCommit": "8db4c792142dcd6644e1d14a2b2efd6bc04a107a"
 }

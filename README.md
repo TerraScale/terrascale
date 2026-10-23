@@ -150,6 +150,7 @@ atomically.
 
 ```csharp
 // Use the ts-orch NetBird service address; the caller configures the required peer credential on httpClient.
+// Qualify this pinned-contract example against the OCI server before use.
 var management = new TerraBaseManagementClient(httpClient, new TerraBaseManagementClientOptions
 {
     BaseAddress = new Uri("http://100.64.0.1:8081"),
@@ -161,8 +162,9 @@ TerraBaseOrganization organization = await management.CreateOrganizationAsync(
 
 Every management call takes the acting `userId` first and sends it as `X-TerraBase-User-Id`; organization routes also
 send `X-TerraBase-Organization-Id`. Take the user id from an authenticated session, never from browser input. On the
-public HTTPS listener, pass the user's ts-auth access token through `AccessTokenProvider` instead. Requests without a
-credential (private listener only) go out as HTTP/2 with prior knowledge (TerraBase's internal listener is h2c only). Pages are
+public HTTPS listener, pass the user's ts-auth access token through `AccessTokenProvider` instead. Production runs on
+OCI under ts-orch. Requests without a credential (private listener only) go out as HTTP/2 with prior knowledge
+(TerraBase's internal listener is h2c only). Pages are
 `TerraBasePage<T>(Items, Next)`; pass `Next` as `after` with an optional `limit`.
 
 Both clients accept `AccessTokenProvider`
@@ -212,7 +214,7 @@ and cancellation token, and every returned origin is validated before credential
 are sent.
 
 Regions follow TerraBase's regional contract (monorepo `docs/terrabase/region-identity.md`). Without `Region`, a request
-goes to `BaseAddress` (for example `https://api.terrascale.tech`, where Fly's anycast picks the nearest region) and
+goes to `BaseAddress` (for example `https://api.terrascale.tech`) and
 carries no routing header. With `Region = "gru"` (a lowercase region id), every request is sent to
 `https://gru.api.terrascale.tech` (unless `BaseAddress`/`EndpointResolver` is set) and pinned with
 `X-TerraScale-Region-Pin: gru`, so no other region serves it. A region that does not serve the request answers `421`,

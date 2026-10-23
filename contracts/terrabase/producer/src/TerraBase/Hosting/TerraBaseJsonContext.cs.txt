@@ -6,6 +6,7 @@ using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Health;
+using TerraBase.Features.Import;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management.Credentials;
@@ -16,6 +17,7 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Replication;
+using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
 using TerraBase.Tenancy;
 
@@ -23,8 +25,18 @@ namespace TerraBase.Hosting;
 
 /// <summary>Source-generated JSON metadata for every request and response type (fast startup, no reflection-based serialization).</summary>
 [JsonSerializable(typeof(Ulid))]
+[JsonSerializable(typeof(Features.Replication.CatalogGateStatus))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredDocumentMaxDepth + 8)]
 [JsonSerializable(typeof(AcceptInvitationRequest))]
+[JsonSerializable(typeof(CreateImportRequest))]
+[JsonSerializable(typeof(UpdateImportRequest))]
+[JsonSerializable(typeof(StartImportRequest))]
+[JsonSerializable(typeof(ImportJobBody))]
+[JsonSerializable(typeof(ImportJobRecord))]
+[JsonSerializable(typeof(ImportStateRecord))]
+[JsonSerializable(typeof(ImportManifest))]
+[JsonSerializable(typeof(ImportStored))]
+[JsonSerializable(typeof(ImportPreview))]
 [JsonSerializable(typeof(AddMemberRequest))]
 [JsonSerializable(typeof(ApiKey))]
 [JsonSerializable(typeof(AppliedIndexRecommendation))]
@@ -57,6 +69,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(DatabaseUsage))]
 [JsonSerializable(typeof(CollectionBody))]
 [JsonSerializable(typeof(CollectionSchemaBody))]
+[JsonSerializable(typeof(CollectionTtlBody))]
 [JsonSerializable(typeof(CollectionPageBody))]
 [JsonSerializable(typeof(CommitBody))]
 [JsonSerializable(typeof(CommitRequest))]
@@ -65,6 +78,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(CreateCollectionRequest))]
 [JsonSerializable(typeof(DocumentBody))]
 [JsonSerializable(typeof(DocumentPageBody))]
+[JsonSerializable(typeof(ExportLineBody))]
 [JsonSerializable(typeof(PlatformDatabaseListBody))]
 [JsonSerializable(typeof(IndexBody))]
 [JsonSerializable(typeof(IndexListBody))]
@@ -108,7 +122,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(OpCounts))]
 [JsonSerializable(typeof(UsageTotals))]
 [JsonSerializable(typeof(UsageReading))]
-[JsonSerializable(typeof(UsageSender))]
 [JsonSerializable(typeof(Organization))]
 [JsonSerializable(typeof(OrganizationMember))]
 [JsonSerializable(typeof(OwnershipTransfer))]
@@ -134,9 +147,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(QueryShapeListBody))]
 [JsonSerializable(typeof(QueryShapeRecord))]
 [JsonSerializable(typeof(QueryShapeStats))]
-[JsonSerializable(typeof(QueryShapeTransfer))]
-[JsonSerializable(typeof(QueryShapeForwardPayload))]
-[JsonSerializable(typeof(QueryShapeSenderRecord))]
 [JsonSerializable(typeof(RestoreWindow))]
 [JsonSerializable(typeof(RoleRequest))]
 [JsonSerializable(typeof(ReplicationHealthBody))]
@@ -146,6 +156,12 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(SqlCheckBody))]
 [JsonSerializable(typeof(SqlRequest))]
 [JsonSerializable(typeof(SqlResultBody))]
+[JsonSerializable(typeof(SqlExecuteRequest))]
+[JsonSerializable(typeof(SqlExecuteBody))]
+[JsonSerializable(typeof(SqlErrorBody))]
+[JsonSerializable(typeof(SqlTableDefinition))]
+[JsonSerializable(typeof(long))]
+[JsonSerializable(typeof(double))]
 [JsonSerializable(typeof(StatusBody))]
 [JsonSerializable(typeof(StoredInvitation))]
 [JsonSerializable(typeof(TenantContext))]

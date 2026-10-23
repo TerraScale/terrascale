@@ -18,13 +18,13 @@ public sealed record TerraBaseManagementClientOptions
     /// <summary>
     /// A region id such as <c>gru</c>: every request is pinned to that region (<c>X-TerraScale-Region-Pin</c>) and, unless
     /// BaseAddress or EndpointResolver is set, sent to <c>https://&lt;region&gt;.api.terrascale.tech</c>. Another region
-    /// answers <see cref="TerraBaseWrongRegionException"/> instead of serving it. Unset, Fly's anycast picks the region.
+    /// answers <see cref="TerraBaseWrongRegionException"/> instead of serving it. Unset, requests use the configured origin without a region pin.
     /// </summary>
     public string? Region { get; init; }
 
     /// <summary>
     /// Supplies the acting user's ts-auth access token per request, for TerraBase's public HTTPS listener. Leave it unset
-    /// for TerraBase's private plain-HTTP (6PN) listener, which trusts its network and acts as the platform operator.
+    /// for TerraBase's private plain-HTTP listener, which trusts its network and acts as the platform operator.
     /// The provider must be thread-safe and honor cancellation; acquisition shares the request deadline.
     /// </summary>
     public Func<CancellationToken, ValueTask<string>>? AccessTokenProvider { get; init; }

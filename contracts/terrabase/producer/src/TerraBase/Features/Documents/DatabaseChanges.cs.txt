@@ -4,7 +4,9 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
+using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
@@ -19,12 +21,13 @@ namespace TerraBase.Features.Documents;
 public interface IDatabaseChanges
 {
     /// <summary>
-    /// Streams the feed of <paramref name="database"/> after <paramref name="cursor"/> (the feed's head when null), only
+    /// Streams the feed of <paramref name="database"/> after <paramref name="cursor"/>, or from the feed's head when
+    /// <paramref name="head"/>, or else from the start of retention, only
     /// events of <paramref name="collections"/> when given, until the client leaves, the connection's lifetime ends or the
     /// feed fails. Before the first byte, failures answer with their status.
     /// </summary>
     ValueTask<IResult> StreamAsync(
-        HttpContext context, TenantContext database, Dictionary<ReplicaId, Hlc>? cursor, IReadOnlySet<string>? collections, CancellationToken cancellationToken);
+        HttpContext context, TenantContext database, FeedCursor? cursor, bool head, IReadOnlySet<string>? collections, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -32,11 +35,11 @@ public interface IDatabaseChanges
 /// commit or the 15 s heartbeat. No per-connection queue: a slow client holds back only its own reads, and one that takes
 /// no bytes for 10 s is dropped.
 /// </summary>
-internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memory, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters)
+internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memory, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters, TerraBaseOptions options, IMembership membership)
     : IDatabaseChanges
 {
     /// <summary>Open streams per database on one machine.</summary>
-    internal const int MaxPerDatabase = 32;
+    internal const int MaxPerDatabase = 128;
 
     private const int MaxConnections = 1024;
     private const int PageEvents = 256;
@@ -52,15 +55,17 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
     private static readonly Gone Expired = new("events after the cursor are no longer retained here; start again with cursor=now and re-read", "cursor_expired");
 
     private readonly Lock _gate = new();
-    private readonly Dictionary<string, int> _open = [with(StringComparer.Ordinal)];
+    private readonly Dictionary<DatabaseKey, DatabaseState> _open = [];
     private int _total;
+    private int _running;
     private readonly UpDownCounter<long> _streams = meters.Create(Telemetry.MeterName)
         .CreateUpDownCounter<long>("terrabase.changes.streams", "{connection}", "Open changes feed streams.");
 
     public async ValueTask<IResult> StreamAsync(
-        HttpContext context, TenantContext database, Dictionary<ReplicaId, Hlc>? cursor, IReadOnlySet<string>? collections, CancellationToken cancellationToken)
+        HttpContext context, TenantContext database, FeedCursor? cursor, bool head, IReadOnlySet<string>? collections, CancellationToken cancellationToken)
     {
-        var key = database.DatabaseId ?? throw new ArgumentException("a client database has an id", nameof(database));
+        var id = database.DatabaseId ?? throw new ArgumentException("a client database has an id", nameof(database));
+        var key = new DatabaseKey(database.OrganizationId, database.ProjectId, id);
         if (!TryOpen(key))
         {
             context.Response.Headers.RetryAfter = "1";
@@ -76,27 +81,42 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
 
         using var expiry = new CancellationTokenSource(lasts, time);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token, lifetime.ApplicationStopping);
-        var buffer = new ArrayBufferWriter<byte>(4096);
+        var buffer = new ArrayBufferWriter<byte>();
+        using var bufferMemory = new QosContext.ResultMemory(memory);
         // Documents a page reads are charged to the tenant until the page is sent.
         var results = QosContext.Enter(database, memory);
         try
         {
-            if (cursor is null)
+            bufferMemory.Reserve(4096, database);
+            // A cursor older than the retention may lack an origin whose events all aged out since and were forgotten.
+            if (cursor is not null && cursor.Issued.Value < FeedCursor.At(time.GetUtcNow() - FeedCursor.Retention).Value)
             {
-                if (await HeadAsync(database, stop.Token).ConfigureAwait(false) is not { } head)
-                {
-                    return ErrorResponse.From(DocumentRoute.UnknownDatabase);
-                }
-
-                cursor = head;
+                return ErrorResponse.From(Expired);
             }
 
-            if (await ReadAsync(database, cursor, collections, stop.Token).ConfigureAwait(false) is not var (store, sequence, page))
+            // An issue instant in the future would weaken the cursor's own promise about origins it lacks: it counts as now.
+            if (cursor is not null && cursor.Issued.Value > FeedCursor.At(time.GetUtcNow()).Value)
+            {
+                cursor = cursor with { Issued = FeedCursor.At(time.GetUtcNow()) };
+            }
+
+            // The edge replays to the issuer's region; an issuer no longer listed is answered here, verifying the prefix.
+            if (cursor?.Machine is { Length: > 0 } machine && machine != options.MachineId
+                && Listeners.ArrivedOn(context) == TerraBaseListener.Client
+                && !context.Request.Headers.ContainsKey("ts-replay-src") && !context.Request.Headers.ContainsKey("ts-replay-failed")
+                && await IssuerRegionAsync(machine, context.RequestAborted).ConfigureAwait(false) is { } issuerRegion)
+            {
+                context.Response.Headers["ts-replay"] = $"region={issuerRegion};instance={machine};fallback=self";
+                context.Response.Headers.CacheControl = "no-store";
+                return new IssuerReplay();
+            }
+
+            if (await ReadAsync(database, key, cursor, head, collections, stop.Token).ConfigureAwait(false) is not { } answer)
             {
                 return ErrorResponse.From(DocumentRoute.UnknownDatabase);
             }
 
-            if (page.Expired)
+            if (answer.Page.Expired)
             {
                 return ErrorResponse.From(Expired);
             }
@@ -107,55 +127,43 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers["X-Accel-Buffering"] = "no";
             context.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
-            Cursor(buffer, cursor);
-            await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
+            await SendAsync(context, answer.Initial, stop.Token).ConfigureAwait(false);
             var beat = time.GetUtcNow() + Heartbeat;
             while (true)
             {
-                foreach (var change in page.Events)
+                for (var i = 0; i < answer.Chunks.Count; i++)
                 {
-                    cursor[change.Origin] = change.Stamp;
-                    Change(buffer, change, cursor);
-                    if (buffer.WrittenCount >= 64 * 1024)
-                    {
-                        await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
-                    }
+                    await SendAsync(context, answer.Chunks[i], stop.Token).ConfigureAwait(false);
                 }
 
-                // Past events the collection filter left out: the next event or heartbeat carries it.
-                foreach (var (origin, stamp) in page.Scanned)
+                if (!answer.Page.More)
                 {
-                    cursor[origin] = stamp;
-                }
-
-                await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
-                results.Dispose();
-                if (!page.More)
-                {
-                    await WaitAsync(store, sequence, beat, stop.Token).ConfigureAwait(false);
+                    await WaitAsync(answer.Store, answer.Sequence, beat, stop.Token).ConfigureAwait(false);
                 }
 
                 if (time.GetUtcNow() >= beat)
                 {
-                    Cursor(buffer, cursor);
-                    await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
+                    await SendAsync(context, answer.Heartbeat, stop.Token).ConfigureAwait(false);
                     beat = time.GetUtcNow() + Heartbeat;
                 }
 
+                cursor = answer.Cursor;
+                answer = null!;
+                results.Dispose();
                 results = QosContext.Enter(database, memory);
-                if (await ReadAsync(database, cursor, collections, stop.Token).ConfigureAwait(false) is not var (nextStore, nextSequence, nextPage))
+                if (await ReadAsync(database, key, cursor, head: false, collections, stop.Token).ConfigureAwait(false) is not { } next)
                 {
                     await FailAsync(context, buffer, DocumentRoute.UnknownDatabase.Code, DocumentRoute.UnknownDatabase.Message, stop.Token).ConfigureAwait(false);
                     return TypedResults.Empty;
                 }
 
-                if (nextPage.Expired)
+                if (next.Page.Expired)
                 {
                     await FailAsync(context, buffer, Expired.Code, Expired.Message, stop.Token).ConfigureAwait(false);
                     return TypedResults.Empty;
                 }
 
-                (store, sequence, page) = (nextStore, nextSequence, nextPage);
+                answer = next;
             }
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
@@ -197,63 +205,299 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
         return TypedResults.Empty;
     }
 
-    private bool TryOpen(string database)
+    private bool TryOpen(DatabaseKey database)
     {
         lock (_gate)
         {
-            var open = _open.GetValueOrDefault(database);
-            if (open >= MaxPerDatabase || _total >= MaxConnections)
+            var state = _open.GetValueOrDefault(database);
+            if (state?.Open >= MaxPerDatabase || _total >= MaxConnections)
             {
                 return false;
             }
 
-            _open[database] = open + 1;
+            state ??= new DatabaseState();
+            state.Open++;
+            _open[database] = state;
             _total++;
             return true;
         }
     }
 
-    private void Close(string database)
+    private void Close(DatabaseKey database)
     {
         lock (_gate)
         {
             _total--;
-            if (--_open[database] == 0)
+            var state = _open[database];
+            if (--state.Open == 0)
             {
-                _ = _open.Remove(database);
+                foreach (var flight in state.Pages)
+                {
+                    flight.Detached = true;
+                    flight.Memory.Dispose();
+                }
+
+                _ = state.Pages.RemoveAll(flight => flight.Result.Task.IsCompleted);
+                if (state.Pages.Count == 0)
+                {
+                    _ = _open.Remove(database);
+                }
             }
         }
     }
 
-    private async ValueTask<Dictionary<ReplicaId, Hlc>?> HeadAsync(TenantContext database, CancellationToken cancellationToken)
+    // The commit sequence keys current-document snapshots as well as feed history; a new write never reuses a ready page.
+    private async ValueTask<Answer?> ReadAsync(
+        TenantContext database, DatabaseKey databaseKey, FeedCursor? cursor, bool head, IReadOnlySet<string>? collections, CancellationToken cancellationToken)
     {
-        if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        QosContext.ReserveResult((5L * (81 + (56 * (cursor?.Stamps.Count ?? 0)))) + (collections?.Sum(value => 4L * value.Length + 16) ?? 0) + 1024);
+        var text = cursor is null ? null : ChangeCursor.Encode(cursor);
+        var filter = collections is null ? null : string.Concat(collections.Order(StringComparer.Ordinal).Select(value => $"{value.Length}:{value}"));
+        while (true)
         {
-            return null;
-        }
+            if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+            {
+                return null;
+            }
 
-        var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
-        await using (transaction.ConfigureAwait(false))
-        {
-            return (await transaction.GetFeedHeadAsync(cancellationToken).ConfigureAwait(false)).ToDictionary();
+            Flight? flight = null;
+            Task<Answer>? drain = null;
+            var start = false;
+            try
+            {
+                lock (_gate)
+                {
+                    var pages = _open[databaseKey].Pages;
+                    var now = time.GetUtcNow();
+                    var window = now.ToUnixTimeSeconds() / (long)Heartbeat.TotalSeconds;
+                    var incarnation = store.Incarnation;
+                    var sequence = store.CommitSequence;
+                    // Cohorts emit the same issue instant and converge; idle cursors renew within one heartbeat.
+                    var issued = pages.Find(value => value.Key.Incarnation == incarnation && value.Key.Sequence == sequence && value.Key.Window == window)?.Key.Issued
+                        ?? FeedCursor.At(now);
+                    var key = new PageKey(database, incarnation, sequence, window, issued, text, filter, head);
+                    // In-flight pages keep their slots until they finish, even if their commit sequence is now old.
+                    for (var i = pages.Count - 1; i >= 0; i--)
+                    {
+                        if (pages[i].Result.Task.IsCompleted && (pages[i].Result.Task.IsFaulted || pages[i].Store.IsClosed
+                            || pages[i].Key.Incarnation != key.Incarnation || pages[i].Key.Sequence != key.Sequence || pages[i].Key.Window != window))
+                        {
+                            pages[i].Memory.Dispose();
+                            pages.RemoveAt(i);
+                        }
+                    }
+
+                    flight = pages.Find(value => !value.Detached && !value.Store.IsClosed && value.Key == key);
+                    if (flight is null && pages.Count == 4)
+                    {
+                        var ready = pages.FindIndex(value => value.Result.Task.IsCompleted);
+                        if (ready < 0)
+                        {
+                            drain = pages[0].Result.Task;
+                        }
+                        else
+                        {
+                            pages[ready].Memory.Dispose();
+                            pages.RemoveAt(ready);
+                        }
+                    }
+
+                    if (flight is null && drain is null)
+                    {
+                        if (_running == 4 * MaxConnections)
+                        {
+                            throw new QosMemoryException();
+                        }
+
+                        var admission = new QosContext.ResultMemory(memory);
+                        var producer = new QosContext.ResultMemory(memory);
+                        try
+                        {
+                            admission.Reserve((4L * ChangeCursor.MaxBytes) + (filter?.Length * 2L ?? 0) + 4096, database);
+                            producer.Attach(admission);
+                            flight = new Flight(key, store, admission, producer);
+                            pages.Add(flight);
+                            _running++;
+                            start = true;
+                        }
+                        catch
+                        {
+                            admission.Dispose();
+                            producer.Dispose();
+                            throw;
+                        }
+                    }
+
+                    if (flight is not null)
+                    {
+                        QosContext.AttachResults(flight.Memory);
+                    }
+                }
+            }
+            finally
+            {
+                if (start)
+                {
+                    _ = ProduceAsync(databaseKey, flight!, cursor, collections);
+                }
+            }
+
+            if (drain is not null)
+            {
+                // Its own readers observe failure; waiting for capacity must not inherit another cursor's failure.
+                try
+                {
+                    _ = await drain.WaitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception) when (drain.IsFaulted && !cancellationToken.IsCancellationRequested)
+                {
+                }
+
+                continue;
+            }
+
+            return await flight!.Result.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
-    // The next page, with the store and its commit sequence from before the read: a commit after it wakes the wait.
-    private async ValueTask<(IDatabaseStore Store, long Sequence, FeedPage Page)?> ReadAsync(
-        TenantContext database, Dictionary<ReplicaId, Hlc> cursor, IReadOnlySet<string>? collections, CancellationToken cancellationToken)
+    private async Task ProduceAsync(DatabaseKey databaseKey, Flight flight, FeedCursor? cursor, IReadOnlySet<string>? collections)
     {
-        if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        // A producer holds admission independently of the cache and readers, including when the last stream leaves.
+        using var hold = flight.Producer;
+        try
         {
-            return null;
+            using var scope = QosContext.EnterFlight(flight.Key.Database, flight.Memory);
+            var issued = flight.Key.Issued;
+            var transaction = await flight.Store.BeginTransactionAsync(write: false, lifetime.ApplicationStopping).ConfigureAwait(false);
+            FeedPage page;
+            await using (transaction.ConfigureAwait(false))
+            {
+                if (flight.Key.Head)
+                {
+                    cursor = new FeedCursor(await transaction.GetFeedHeadAsync(lifetime.ApplicationStopping).ConfigureAwait(false), issued);
+                }
+
+                page = await transaction.ReadFeedAsync(cursor, collections, PageEvents, PageBytes, lifetime.ApplicationStopping).ConfigureAwait(false);
+            }
+
+            flight.Result.SetResult(Serialize(flight, page, cursor, issued, ChangeCursor.Scope(flight.Key.Database, collections)));
+        }
+        catch (Exception error)
+        {
+            flight.Result.SetException(error);
+            _ = flight.Result.Task.Exception;
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _running--;
+                if (_open.TryGetValue(databaseKey, out var state))
+                {
+                    if (flight.Detached || flight.Result.Task.IsFaulted)
+                    {
+                        _ = state.Pages.Remove(flight);
+                        flight.Memory.Dispose();
+                    }
+
+                    if (state.Open == 0 && state.Pages.Count == 0)
+                    {
+                        _ = _open.Remove(databaseKey);
+                    }
+                }
+            }
+        }
+    }
+
+    private Answer Serialize(Flight flight, FeedPage page, FeedCursor? input, Hlc issued, ReadOnlyMemory<byte> scope)
+    {
+        if (page.Expired)
+        {
+            return new Answer(flight.Store, flight.Key.Sequence, page, new FeedCursor(page.Scanned, issued), default, default, []);
         }
 
-        var sequence = store.CommitSequence;
-        var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
-        await using (transaction.ConfigureAwait(false))
+        var origins = Math.Max(input?.Stamps.Count ?? 0, page.Scanned.Count);
+        var cursorBytes = 4L * ((128 + (56 * origins) + 2) / 3);
+        var bytes = page.Events.Sum(change => (long)(change.Document?.Length ?? 0) + (6L * (change.Collection.Length + change.Id.Length)) + 256 + (4 * cursorBytes));
+        QosContext.ReserveResult((3 * bytes) + (16 * cursorBytes) + (256 * 1024));
+        var position = new Dictionary<ReplicaId, Hlc>(input?.Stamps ?? new Dictionary<ReplicaId, Hlc>());
+        var prefixes = page.Before.ToDictionary();
+        FeedCursor Current()
         {
-            return (store, sequence, await transaction.ReadFeedAsync(cursor, collections, PageEvents, PageBytes, cancellationToken).ConfigureAwait(false));
+            return new FeedCursor(position, issued) { Issuer = page.Issuer, Machine = options.MachineId, Prefixes = prefixes };
         }
+        var buffer = new ArrayBufferWriter<byte>();
+        Cursor(buffer, Current(), scope);
+        var initial = buffer.WrittenMemory.ToArray();
+        buffer.ResetWrittenCount();
+        foreach (var origin in position.Keys.Where(origin => !page.Scanned.ContainsKey(origin)).ToList())
+        {
+            _ = position.Remove(origin);
+            _ = prefixes.Remove(origin);
+        }
+
+        var chunks = new List<ReadOnlyMemory<byte>>();
+        var chunk = new ArrayBufferWriter<byte>(4096);
+        for (var i = 0; i < page.Events.Count; i++)
+        {
+            var change = page.Events[i];
+            position[change.Origin] = change.Stamp;
+            prefixes[change.Origin] = change.Prefix!;
+            // Advance only after the final event of the stamp, preserving at-least-once resumes inside a transaction.
+            var last = i + 1 == page.Events.Count || (page.Events[i + 1].Origin, page.Events[i + 1].Stamp) != (change.Origin, change.Stamp);
+            Change(buffer, change, last ? ChangeCursor.Encode(Current(), scope) : null);
+            if (chunk.WrittenCount > 0 && chunk.WrittenCount + buffer.WrittenCount > 64 * 1024)
+            {
+                chunks.Add(chunk.WrittenMemory.ToArray());
+                chunk.ResetWrittenCount();
+            }
+
+            if (buffer.WrittenCount > 64 * 1024)
+            {
+                chunks.Add(buffer.WrittenMemory.ToArray());
+            }
+            else
+            {
+                chunk.Write(buffer.WrittenSpan);
+            }
+
+            buffer.ResetWrittenCount();
+        }
+
+        if (chunk.WrittenCount > 0)
+        {
+            chunks.Add(chunk.WrittenMemory.ToArray());
+        }
+
+        var next = new FeedCursor(page.Scanned, issued) { Issuer = page.Issuer, Machine = options.MachineId, Prefixes = page.Prefixes };
+        Cursor(buffer, next, scope);
+        return new Answer(flight.Store, flight.Key.Sequence, page, next, initial, buffer.WrittenMemory.ToArray(), chunks);
+    }
+
+    private readonly record struct DatabaseKey(string Organization, string? Project, string Database);
+    private sealed record PageKey(TenantContext Database, Ulid Incarnation, long Sequence, long Window, Hlc Issued, string? Cursor, string? Collections, bool Head);
+    private sealed record Answer(IDatabaseStore Store, long Sequence, FeedPage Page, FeedCursor Cursor,
+        ReadOnlyMemory<byte> Initial, ReadOnlyMemory<byte> Heartbeat, IReadOnlyList<ReadOnlyMemory<byte>> Chunks);
+    private sealed class DatabaseState
+    {
+        public int Open { get; set; }
+
+        public List<Flight> Pages { get; } = [];
+    }
+
+    private sealed class Flight(PageKey key, IDatabaseStore store, QosContext.ResultMemory memory, QosContext.ResultMemory producer)
+    {
+        public PageKey Key { get; } = key;
+
+        public IDatabaseStore Store { get; } = store;
+
+        public QosContext.ResultMemory Memory { get; } = memory;
+
+        public QosContext.ResultMemory Producer { get; } = producer;
+
+        public bool Detached { get; set; }
+
+        public TaskCompletionSource<Answer> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     // Until the database's next commit after `sequence`, or the heartbeat.
@@ -276,9 +520,17 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
         }
     }
 
-    private static void Change(ArrayBufferWriter<byte> buffer, FeedEvent change, Dictionary<ReplicaId, Hlc> cursor)
+    private static void Change(ArrayBufferWriter<byte> buffer, FeedEvent change, string? id)
     {
-        Line(buffer, "event: change\nid: ", ChangeCursor.Encode(cursor));
+        if (id is null)
+        {
+            buffer.Write("event: change\n"u8);
+        }
+        else
+        {
+            Line(buffer, "event: change\nid: ", id);
+        }
+
         buffer.Write("data: "u8);
         using (var json = new Utf8JsonWriter(buffer))
         {
@@ -305,9 +557,9 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
         buffer.Write("\n\n"u8);
     }
 
-    private static void Cursor(ArrayBufferWriter<byte> buffer, Dictionary<ReplicaId, Hlc> cursor)
+    private static void Cursor(ArrayBufferWriter<byte> buffer, FeedCursor cursor, ReadOnlyMemory<byte> scope)
     {
-        var text = ChangeCursor.Encode(cursor);
+        var text = ChangeCursor.Encode(cursor, scope);
         Line(buffer, "event: cursor\nid: ", text);
         buffer.Write("data: "u8);
         using (var json = new Utf8JsonWriter(buffer))
@@ -345,6 +597,18 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
         }
     }
 
+    private async ValueTask<string?> IssuerRegionAsync(string machine, CancellationToken cancellationToken)
+    {
+        var view = await membership.RefreshAsync(cancellationToken).ConfigureAwait(false);
+        return view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).FirstOrDefault(member => member.Name == machine)?.Region;
+    }
+
+    private sealed class IssuerReplay : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext) =>
+            BadRequests.WriteAsync(httpContext, StatusCodes.Status421MisdirectedRequest, "cursor_elsewhere", "the cursor resumes on its issuing machine", op: null);
+    }
+
     private static async Task SendAsync(HttpContext context, ArrayBufferWriter<byte> buffer, CancellationToken cancellationToken)
     {
         if (buffer.WrittenCount == 0)
@@ -352,20 +616,28 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
             return;
         }
 
+        try
+        {
+            await SendAsync(context, buffer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            buffer.ResetWrittenCount();
+        }
+    }
+
+    private static async Task SendAsync(HttpContext context, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
+    {
         using var timeout = new CancellationTokenSource(SendTimeout);
         using var send = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
-            await context.Response.Body.WriteAsync(buffer.WrittenMemory, send.Token).ConfigureAwait(false);
+            await context.Response.Body.WriteAsync(bytes, send.Token).ConfigureAwait(false);
             await context.Response.Body.FlushAsync(send.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             throw new IOException("the client took no bytes for 10 s");
-        }
-        finally
-        {
-            buffer.ResetWrittenCount();
         }
     }
 }
