@@ -18,7 +18,15 @@ port=${PEER_PORT:-18081}
 run=rt2-bytes-$(date +%s)-$$
 IFS=';' read -ra hosts <<<"$HOSTS"
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+# Stops this run's samplers and removes its files on every host, also when the run fails.
+cleanup() {
+  for h in "${hosts[@]}"; do
+    # shellcheck disable=SC2086 # ssh arguments
+    ssh -o BatchMode=yes $h "pkill -f 'bash /tmp/$run[.]sh'; rm -rf /tmp/$run.sh /tmp/$run.samples /tmp/$run-bench /tmp/$run-bench.log" || true
+  done
+  rm -rf "$work"
+}
+trap cleanup EXIT
 
 # Runs on each host: one line per peer socket per second, "time endpoints bytes_sent".
 sampler=$(cat <<'SAMPLER'
@@ -38,15 +46,17 @@ done
 sleep 3
 t0=$(date +%s.%N); sleep "$idle"; t1=$(date +%s.%N)
 t2=$(date +%s.%N)
+# A verify failure after a completed load still measured the load; anything else ends the run.
 ssh -o BatchMode=yes "$RUNNER" "cd /tmp && $BENCH --targets $TARGETS --out /tmp/$run-bench --docs $docs --sizes $size:100 --batch 1 \
-  --concurrency 4 --delete-pct 0 --conflict-docs 0 --probe-every 0 > /tmp/$run-bench.log 2>&1" || { ssh "$RUNNER" "tail -20 /tmp/$run-bench.log"; exit 1; }
+  --concurrency 4 --delete-pct 0 --conflict-docs 0 --probe-every 0 > /tmp/$run-bench.log 2>&1" ||
+  ssh -o BatchMode=yes "$RUNNER" "grep -q 'end markers everywhere' /tmp/$run-bench.log && grep 'repl-bench converge' /tmp/$run-bench.log >&2" ||
+  { ssh "$RUNNER" "tail -20 /tmp/$run-bench.log" >&2; exit 1; }
 t3=$(date +%s.%N)
 sleep 3
 for i in "${!hosts[@]}"; do
   # shellcheck disable=SC2086 # ssh arguments
-  ssh -o BatchMode=yes ${hosts[$i]} "pkill -f 'bash /tmp/$run[.]sh' || true; cat /tmp/$run.samples; rm -f /tmp/$run.sh /tmp/$run.samples" | sed "s/^/$i /" >>"$work/samples"
+  ssh -o BatchMode=yes ${hosts[$i]} "cat /tmp/$run.samples" | sed "s/^/$i /" >>"$work/samples"
 done
-ssh -o BatchMode=yes "$RUNNER" "rm -rf /tmp/$run-bench /tmp/$run-bench.log"
 
 # Each socket's bytes at time T: its largest sample at or before T (0 when it did not exist yet).
 awk -v t0="$t0" -v t1="$t1" -v t2="$t2" -v t3="$t3" -v size="$size" -v docs="$docs" '
