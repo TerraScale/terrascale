@@ -38,7 +38,7 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
                 .Any(version => version.GetString() == "2026-07-28")).IsTrue();
             var discovery = await HttpJourney.McpAsync(client, secret, "tools/list", new { });
             var tools = discovery.GetProperty("result").GetProperty("tools").EnumerateArray().ToDictionary(tool => tool.GetProperty("name").GetString()!);
-            var names = new[] { "list_databases", "get_database", "create_database", "set_database_regions", "branch_database", "delete_database", "list_collections", "list_documents", "get_document", "create_document", "replace_document", "patch_document", "delete_document", "get_document_history", "get_collection_schema", "set_collection_schema", "list_indexes", "create_index", "list_index_recommendations", "apply_index_recommendation", "get_index_migration", "check_sql", "run_sql", "list_saved_queries", "save_query", "delete_saved_query", "list_api_keys", "create_api_key", "create_m2m_client", "rotate_api_key", "revoke_api_key" };
+            var names = new[] { "list_databases", "get_database", "create_database", "set_database_regions", "branch_database", "delete_database", "list_collections", "create_collection", "list_documents", "get_document", "create_document", "replace_document", "patch_document", "delete_document", "get_document_history", "get_collection_schema", "set_collection_schema", "list_indexes", "create_index", "list_index_recommendations", "apply_index_recommendation", "get_index_migration", "check_sql", "run_sql", "list_saved_queries", "save_query", "delete_saved_query", "list_api_keys", "create_api_key", "create_m2m_client", "rotate_api_key", "revoke_api_key" };
             await Assert.That(names.All(tools.ContainsKey)).IsTrue();
             foreach (var name in names)
             {
@@ -69,8 +69,10 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await ErrorAsync(replica, "get_database", new() { ["databaseId"] = databaseId, ["projectId"] = Guid.NewGuid().ToString() });
             await ErrorAsync(replica, "set_database_regions", new() { ["databaseId"] = databaseId, ["regions"] = new[] { "SFO" } });
             var csrf = await HttpJourney.CsrfAsync(client, "/databases/" + databaseId + "/documents");
-            using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new() { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["name"] = "users" }))
-                await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await ErrorAsync(client, "create_document", new() { ["databaseId"] = databaseId, ["collection"] = "users", ["document"] = new { name = "Before collection" } });
+            var createdCollection = await CallAsync(client, "create_collection", new() { ["databaseId"] = databaseId, ["name"] = "users" });
+            await Assert.That(createdCollection.GetProperty("collection").GetString()).IsEqualTo("users");
+            await ErrorAsync(replica, "create_collection", new() { ["databaseId"] = databaseId, ["name"] = "Bad Name" });
             var collections = await CallAsync(replica, "list_collections", new() { ["databaseId"] = databaseId });
             await Assert.That(collections.GetProperty("collections")[0].GetString()).IsEqualTo("users");
             var docFields = new Dictionary<string, object?> { ["databaseId"] = databaseId, ["collection"] = "users" };
@@ -226,6 +228,8 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             fields.TryAdd("projectId", projectId);
             var rpc = await HttpJourney.McpAsync(caller, secret, "tools/call", new { name, arguments = fields });
             await Assert.That(rpc.TryGetProperty("error", out _) || rpc.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();
+            // The SDK's fallback text hides the cause; every refusal must carry the dashboard's own message.
+            await Assert.That(rpc.GetRawText()).DoesNotContain("An error occurred invoking");
         }
         async Task CleanupAsync(string name, Dictionary<string, object?> fields)
         { try { await CallAsync(client, name, fields); } catch (Exception error) { Console.Error.WriteLine("E2E cleanup " + name + ": " + error.Message); } }

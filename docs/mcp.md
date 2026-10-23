@@ -97,6 +97,10 @@ public Task<McpDatabaseList> ListDatabases(string? organizationId = null, string
   `DashboardMcp.Scope` for tools that act on an organization or project.
 - Throw `AccountAccessException` for rejected input or access. The call-tool
   filter in `DashboardMcp.cs` returns its message as an `isError` tool result.
+  It also maps data-plane, ts-auth and Stripe failures (missing collection,
+  duplicate ID, stale version, outages) to the same wording the dashboard
+  pages use and logs them, so no tool returns the SDK's generic
+  `An error occurred invoking` text.
 - Set `ReadOnly`, `Destructive`, `Idempotent`, and `OpenWorld` accurately. They
   become the tool annotations clients use to decide what needs confirmation.
 - A new tool class must be added to `AddDashboardMcp`.

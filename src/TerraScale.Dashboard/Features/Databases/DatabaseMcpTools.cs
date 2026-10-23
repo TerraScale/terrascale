@@ -58,6 +58,7 @@ public sealed class DatabaseMcpTools(IHttpContextAccessor http, AccountService a
     public async Task<McpDatabase> CreateDatabase(string name, string? region = null, string[]? regions = null, bool allRegions = false, string? organizationId = null, string? projectId = null)
     {
         var context = Scope(organizationId, projectId);
+        DatabaseService.Scope(context);
         var placement = regions is { Length: > 0 } ? regions : [string.IsNullOrEmpty(region) ? context.Project!.Region : region];
         return DatabaseOutput(await databases.CreateAsync(context, name, placement, allRegions, Cancellation));
     }

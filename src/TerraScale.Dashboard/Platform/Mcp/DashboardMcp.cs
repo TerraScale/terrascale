@@ -3,6 +3,9 @@ using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Data;
+using TerraScale.Dashboard.Shared.Databases;
+using TerraScale.Dashboard.Shared.Validation;
 
 namespace TerraScale.Dashboard.Platform.Mcp;
 
@@ -21,9 +24,22 @@ public static class DashboardMcp
             .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (request, cancellationToken) =>
             {
                 try { return await next(request, cancellationToken); }
-                catch (AccountAccessException error)
+                catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
                 {
-                    return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = error.Message }] };
+                    return Failure(error.Message);
+                }
+                // Upstream refusals (missing collection, duplicate ID, stale version) and outages keep the
+                // dashboard's own wording instead of the SDK's generic "An error occurred invoking" result.
+                catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException or DatabaseWrongRegionException or DocumentWriteOutcomeUnknownException ||
+                                              error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                {
+                    Log(request.Services).LogWarning(error, "MCP tool {Tool} failed upstream with {Status}", request.Params?.Name, DatabaseResults.Status(error));
+                    return Failure(DatabaseResults.Message(error));
+                }
+                catch (Stripe.StripeException error)
+                {
+                    Log(request.Services).LogWarning(error, "MCP tool {Tool} failed at the billing provider", request.Params?.Name);
+                    return Failure("The billing provider could not complete the request. Return to billing to reconcile before trying again.");
                 }
             }))
             .WithTools<DashboardMcpTools>()
@@ -42,6 +58,11 @@ public static class DashboardMcp
             .WithTools<TerraScale.Dashboard.Features.Organizations.OrganizationMcpTools>()
             .WithTools<TerraScale.Dashboard.Features.QuerySubscriptions.QuerySubscriptionMcpTools>();
     }
+
+    private static CallToolResult Failure(string message) => new() { IsError = true, Content = [new TextContentBlock { Text = message }] };
+
+    private static ILogger Log(IServiceProvider? services) =>
+        services?.GetService<ILoggerFactory>()?.CreateLogger("TerraScale.Dashboard.Mcp") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
 
     public static void MapDashboardMcp(this WebApplication app)
     {
