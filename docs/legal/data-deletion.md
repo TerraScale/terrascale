@@ -21,6 +21,7 @@ Removing data from normal reads, removing retained history and erasing every phy
 | Organization | An owner must delete its projects first. Organization deletion removes the organization used for authorization and attempts to clean up memberships, API keys, invitations and audit events. | Related records whose cleanup failed, storage history and backups. Organization deletion does not by itself delete a person's account. |
 
 Document tombstones prevent older replicated writes from bringing deleted data back. Their garbage collection depends on replication progress and safety checks, rather than a fixed number of days. **There is no guaranteed upper bound for tombstone cleanup or physical storage purge in the reviewed implementation.**
+Only opaque ULIDs and content hashes may remain in replication safety metadata (tombstones, GC floors and Merkle digests), never document content, field values, user-chosen keys, emails or names; their required retention cap is 30 days plus the plan's PITR window (at most 30 additional days), using safe tombstone garbage collection without allowing deleted data to return. This cap remains unverified in the reviewed implementation.
 
 Organization cleanup can fail after the organization has been removed. The reviewed implementation does not establish a guaranteed completion deadline for those remaining records. Removal of authorization is not confirmation of complete erasure.
 
