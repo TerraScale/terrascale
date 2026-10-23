@@ -19,6 +19,8 @@ service Replication {
   rpc ReadBucket(BucketRequest) returns (stream StatePage);
 }
 
+// A receiver ignores a frame of a kind it does not know (a newer sender's): a sender sends a new kind only to a receiver
+// whose Welcome names a protocol that has it.
 message PushFrame {
   oneof kind {
     Hello hello = 1;
@@ -39,12 +41,14 @@ message Frontier {
 }
 
 // The first frame: the sending machine's replica id (the origin of every group on this stream), its clock and region, and
-// its name in the machine list, where the receiver reaches it for a refill.
+// its name in the machine list, where the receiver reaches it for a refill; and the newest protocol it speaks
+// (ReplicationProtocol.Version; 0 from a build before the field, which speaks 1).
 message Hello {
   fixed64 node = 1;
   fixed64 hlc = 2;
   string region = 3;
   string machine = 4;
+  uint32 protocol = 5;
 }
 
 // The sender no longer holds the change groups after the receiver's last ack (retention cut a silent or far-behind peer,
@@ -119,9 +123,11 @@ message StableReport {
   bool refill_required = 3;
 }
 
-// The first answer: the receiving machine's replica id, under which the sender keeps its cursor.
+// The first answer: the receiving machine's replica id, under which the sender keeps its cursor, and the newest protocol it
+// speaks (0 from a build before the field, which speaks 1). The stream uses the lower of the two versions.
 message Welcome {
   fixed64 node = 1;
+  uint32 protocol = 2;
 }
 
 // A batch committed durably (change_id = its last_change_id), with the highest stamp of the origin joined. Refused: the
