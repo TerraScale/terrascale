@@ -31,6 +31,31 @@ public sealed class PeerStreamTests
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
 
     [Test]
+    public async Task Catalog_wake_observes_the_advanced_commit_sequence(CancellationToken cancellationToken)
+    {
+        await using var api = await ManagementApi.StartAsync(cancellationToken: cancellationToken);
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken);
+        var source = api.Server.Services.GetRequiredService<IChangeGroupSource>();
+        long observed = -1;
+        var armed = 0;
+        using var subscription = source.Subscribe(database =>
+        {
+            if (database == ChangeGroups.System && Volatile.Read(ref armed) == 1)
+            {
+                _ = Interlocked.CompareExchange(ref observed, store.CommitSequence, -1);
+            }
+        });
+        await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken);
+        _ = await transaction.CreateCollectionAsync(new CollectionInfo("wake-order", 1), cancellationToken);
+        var before = store.CommitSequence;
+        Volatile.Write(ref armed, 1);
+        _ = await transaction.CommitAsync(cancellationToken);
+        Volatile.Write(ref armed, 0);
+        await Assert.That(observed).IsGreaterThan(before);
+    }
+
+    [Test]
     public async Task Three_regions_converge_through_concurrent_reordered_and_duplicated_groups()
     {
         await using var cluster = await Cluster.StartAsync("gru", "sjc", "fra");
