@@ -30,16 +30,20 @@ internal sealed partial class TursoStorageTransaction
             return (long)command.ExecuteScalar()!;
         }, cancellationToken), cancellationToken);
 
-    // A client database reads its counts from _tb_collection_stats: one row per collection, whatever its size.
+    // A client database reads its counts from _tb_collection_stats, one row per collection whatever its size, so only the
+    // query's time budget can refuse it; the system database still counts its documents table under the scan budget.
     public ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken) =>
-        store.IsSystem
-            ? RunAsync(() => WithQueryBudget<IReadOnlyList<CollectionStats>>(() =>
+        RunAsync(() => WithQueryBudget<IReadOnlyList<CollectionStats>>(() =>
+        {
+            if (!store.IsSystem)
             {
-                using var command = PlainCommand(TursoStatements.ListCollectionStats.Replace(
-                    "documents.body IS NOT NULL", "documents.body IS NOT NULL AND tb_qos_scan(octet_length(documents.body))", StringComparison.Ordinal));
-                return ReadCollectionStats(command, cancellationToken);
-            }, cancellationToken), cancellationToken)
-            : RunAsync<IReadOnlyList<CollectionStats>>(() => ReadCollectionStats(Command(TursoStatements.ClientCollectionStats), cancellationToken), cancellationToken);
+                return ReadCollectionStats(Command(TursoStatements.ClientCollectionStats), cancellationToken);
+            }
+
+            using var command = PlainCommand(TursoStatements.ListCollectionStats.Replace(
+                "documents.body IS NOT NULL", "documents.body IS NOT NULL AND tb_qos_scan(octet_length(documents.body))", StringComparison.Ordinal));
+            return ReadCollectionStats(command, cancellationToken);
+        }, cancellationToken), cancellationToken);
 
     private static List<CollectionStats> ReadCollectionStats(SqliteCommand command, CancellationToken cancellationToken)
     {
