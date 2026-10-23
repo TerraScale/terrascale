@@ -128,12 +128,12 @@ public sealed class RequestLogApiTests
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, time: time))
             {
                 database = await api.CreateManagedDatabaseAsync();
-                await api.SetPlanAsync(api.User, database.Organization, "enterprise");
                 await api.VerifyProjectBindingAsync(database.Organization, database.Project);
                 using var project = Project(api, database.Project, "databases:read");
                 using var data = await api.CreateClientAsync(database.Organization, "documents:read");
                 for (var i = 0; i < 110; i++)
                 {
+                    time.Advance(TimeSpan.FromMilliseconds(20));
                     using var response = await data.GetAsync(ManagementApi.Uri(database.Data + "/collections"));
                     response.EnsureSuccessStatusCode();
                 }
