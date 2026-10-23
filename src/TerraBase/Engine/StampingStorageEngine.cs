@@ -307,10 +307,10 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         public ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetUniqueConstraintsAsync(collection, cancellationToken), cancellationToken);
 
-        public async ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, CancellationToken cancellationToken) =>
+        public async ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, bool reindex, CancellationToken cancellationToken) =>
             await WriteCollectionAsync(async () =>
             {
-                await inner.SetUniqueConstraintsAsync(collection, constraints, cancellationToken).ConfigureAwait(false);
+                await inner.SetUniqueConstraintsAsync(collection, constraints, reindex, cancellationToken).ConfigureAwait(false);
                 return true;
             }, cancellationToken).ConfigureAwait(false);
 

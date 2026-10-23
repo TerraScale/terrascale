@@ -614,7 +614,7 @@ public sealed class PeerStreamTests
         var member = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "sjc");
         cluster.Members.Leave(member.Name);
         await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
-        await gru.WriteAsync(async transaction => await transaction.SetUniqueConstraintsAsync("items", [new UniqueConstraint("email", ["email"])], CancellationToken.None));
+        await gru.WriteAsync(async transaction => await transaction.SetUniqueConstraintsAsync("items", [new UniqueConstraint("email", ["email"])], reindex: false, CancellationToken.None));
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", larger, Json("""{"email":"same@example.test","from":"gru"}"""), CancellationToken.None));
         await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", smaller, Json("""{"email":"same@example.test","from":"sjc"}"""), CancellationToken.None));
         await Assert.That(await gru.UntilUniqueLoserAsync(larger)).IsTrue();

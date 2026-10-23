@@ -79,7 +79,8 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
         }
 
         // Every request is one transaction: its own transaction statements would break that.
-        var parsed = commands.Select(command => SqlParse.Parse(command.Sql)).ToList();
+        Dictionary<string, SqlParseResult> distinct = [with(StringComparer.Ordinal)];
+        var parsed = commands.Select(command => distinct.TryGetValue(command.Sql, out var known) ? known : distinct[command.Sql] = SqlParse.Parse(command.Sql)).ToList();
         if (parsed.FindIndex(statement => statement is TransactionSql) is var control and >= 0)
         {
             return ErrorResponse.From(new Validation("transaction statements are not accepted: every request runs as one transaction"), control);

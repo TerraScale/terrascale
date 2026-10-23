@@ -148,6 +148,7 @@ Export a database as NDJSON, resumable by cursor: [export](export.md).
 Import NDJSON (an export, or mongoexport-style documents) through the import pipeline: [NDJSON import](import-ndjson.md).
 
 Relational SQL (tables, joins, transactions) and libSQL clients over Hrana: [design](sql/relational-sql.md).
+SQL indexes and batch-write costs: [indexes](sql/indexes.md).
 
 Feature-sliced: `src/TerraBase/Features/<Feature>/` holds everything
 a slice needs. See `AGENTS.md` for the full structure and rules.

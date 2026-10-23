@@ -66,7 +66,7 @@ public sealed class CollectionDropMemoryTests
             _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
             if (unique)
             {
-                await transaction.SetUniqueConstraintsAsync("items", [new UniqueConstraint("email", ["email"])], CancellationToken.None);
+                await transaction.SetUniqueConstraintsAsync("items", [new UniqueConstraint("email", ["email"])], reindex: false, CancellationToken.None);
             }
         });
         foreach (var chunk in ids.Chunk(MaxWrites))

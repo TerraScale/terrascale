@@ -394,7 +394,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken) => inner.CreateIndexAsync(index, cancellationToken);
         public ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken) => inner.DropIndexAsync(name, cancellationToken);
         public ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken) => inner.GetUniqueConstraintsAsync(collection, cancellationToken);
-        public ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, CancellationToken cancellationToken) => inner.SetUniqueConstraintsAsync(collection, constraints, cancellationToken);
+        public ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, bool reindex, CancellationToken cancellationToken) => inner.SetUniqueConstraintsAsync(collection, constraints, reindex, cancellationToken);
         public ValueTask DisposeAsync() => inner.DisposeAsync();
 
         public ValueTask<long> PatchAsync(

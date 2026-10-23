@@ -36,6 +36,25 @@ internal sealed record DropTableSql(string Name, bool IfExists) : ParsedSql
     public override bool IsWrite => true;
 }
 
+/// <summary><c>CREATE [UNIQUE] INDEX [IF NOT EXISTS]</c>: a secondary index, and for UNIQUE also a unique key of the same name.</summary>
+/// <param name="Name">Index name, unique in the database.</param>
+/// <param name="Table">Table name.</param>
+/// <param name="Columns">1 to 4 indexed columns, as written.</param>
+/// <param name="Unique">Whether the columns are a unique key.</param>
+/// <param name="IfNotExists">Whether an existing index name is a no-op.</param>
+internal sealed record CreateIndexSql(string Name, string Table, IReadOnlyList<string> Columns, bool Unique, bool IfNotExists) : ParsedSql
+{
+    public override bool IsWrite => true;
+}
+
+/// <summary><c>DROP INDEX [IF EXISTS]</c>.</summary>
+/// <param name="Name">Index name.</param>
+/// <param name="IfExists">Whether a missing index is a no-op.</param>
+internal sealed record DropIndexSql(string Name, bool IfExists) : ParsedSql
+{
+    public override bool IsWrite => true;
+}
+
 /// <summary>What a transaction statement does.</summary>
 internal enum TransactionKind
 {
@@ -129,6 +148,8 @@ internal static partial class SqlParse
         Statement.Delete { DeleteOperation: var delete } => SqlWrite.Delete(delete),
         Statement.CreateTable { Element: var create } => CreateTable(create),
         Statement.Drop { ObjectType: ObjectType.Table } drop => DropTable(drop),
+        Statement.CreateIndex { Element: var index } => CreateIndex(index),
+        Statement.Drop { ObjectType: ObjectType.Index } drop => DropIndex(drop),
         _ => throw new FormatException("this statement is not supported"),
     };
 
@@ -147,6 +168,41 @@ internal static partial class SqlParse
             : drop.Names is [var name]
                 ? new DropTableSql(TableName(name), drop.IfExists)
                 : throw new FormatException("DROP TABLE drops one table");
+
+    /// <summary>An index name: lowercased, a lowercase letter, then lowercase letters, digits or <c>_</c>, at most 63 characters.</summary>
+    public static string IndexName(ObjectName? name) => name?.Values switch
+    {
+        [var ident] when IndexPattern().IsMatch(ident.Value.ToLowerInvariant()) => ident.Value.ToLowerInvariant(),
+        [_] or null => throw new FormatException("index names are a letter, then letters, digits or _, at most 63 characters"),
+        _ => throw new FormatException("schema-qualified names are not supported"),
+    };
+
+    private static DropIndexSql DropIndex(Statement.Drop drop) =>
+        drop != new Statement.Drop(drop.Names) { ObjectType = ObjectType.Index, IfExists = drop.IfExists }
+            ? throw new FormatException("DROP INDEX takes no options")
+            : drop.Names is [var name]
+                ? new DropIndexSql(IndexName(name), drop.IfExists)
+                : throw new FormatException("DROP INDEX drops one index");
+
+    private static CreateIndexSql CreateIndex(CreateIndex create)
+    {
+        if (create != new CreateIndex(create.Name, create.TableName) { Columns = create.Columns, Unique = create.Unique, IfNotExists = create.IfNotExists })
+        {
+            throw new FormatException("CREATE INDEX supports UNIQUE, IF NOT EXISTS and columns only (no partial or expression indexes)");
+        }
+
+        if (create.Columns is not { Count: > 0 and <= 4 } columns)
+        {
+            throw new FormatException("an index has 1 to 4 columns");
+        }
+
+        var named = columns.Select(column => column is { Expression: Expression.Identifier { Ident: var ident }, NullsFirst: null, WithFill: null }
+            ? ColumnName(ident)
+            : throw new FormatException("an index lists columns, each optionally ASC or DESC")).ToList();
+        return named.Distinct(StringComparer.OrdinalIgnoreCase).Count() == named.Count
+            ? new CreateIndexSql(IndexName(create.Name), TableName(create.TableName), named, create.Unique, create.IfNotExists)
+            : throw new FormatException("an index names each column once");
+    }
 
     private static CreateTableSql CreateTable(CreateTable create)
     {
@@ -270,6 +326,9 @@ internal static partial class SqlParse
 
     [GeneratedRegex(@"\A[A-Za-z][A-Za-z0-9_]{0,63}\z", RegexOptions.CultureInvariant)]
     private static partial Regex ColumnPattern();
+
+    [GeneratedRegex(@"\A[a-z][a-z0-9_]{0,62}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex IndexPattern();
 
     [GeneratedRegex(@"\A\s*BEGIN(\s+TRANSACTION)?\s+READONLY\s*;?\s*\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex ReadOnlyBegin();

@@ -84,7 +84,7 @@ public sealed class StorageJoinTests
         await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
-            await transaction.SetUniqueConstraintsAsync("items", [new UniqueConstraint("email", ["email"])], CancellationToken.None);
+            await transaction.SetUniqueConstraintsAsync("items", [new UniqueConstraint("email", ["email"])], reindex: false, CancellationToken.None);
             _ = await transaction.CommitAsync(CancellationToken.None);
         }
 
@@ -107,7 +107,7 @@ public sealed class StorageJoinTests
         await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
-            await transaction.SetUniqueConstraintsAsync("items", [new UniqueConstraint("email", ["email"])], CancellationToken.None);
+            await transaction.SetUniqueConstraintsAsync("items", [new UniqueConstraint("email", ["email"])], reindex: false, CancellationToken.None);
             _ = await transaction.CommitAsync(CancellationToken.None);
         }
 

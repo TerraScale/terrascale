@@ -110,7 +110,7 @@ public sealed class A6LocalRebuildE2ETests
         // Each document's unique keys are replaced too, which reads the collection's definition.
         _ = await store.WriteAsync(async (transaction, cancellation) =>
         {
-            await transaction.SetUniqueConstraintsAsync("items", [new UniqueConstraint("email", ["email"])], cancellation);
+            await transaction.SetUniqueConstraintsAsync("items", [new UniqueConstraint("email", ["email"])], reindex: false, cancellation);
             return true;
         }, static _ => true, token);
         foreach (var chunk in ids.Chunk(1024))

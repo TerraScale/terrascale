@@ -31,13 +31,19 @@ internal sealed class SqlKeys
     }
 }
 
-/// <summary>The net document bytes a transaction's writes added, measured when the storage quota needs it.</summary>
+/// <summary>
+/// The net document bytes a transaction's writes added, measured when the storage quota needs it, and the table
+/// definitions it read, so its statements read each one once.
+/// </summary>
 /// <param name="Measure">Whether to measure.</param>
 internal sealed class SqlTally(bool Measure)
 {
     public bool Measure { get; } = Measure;
 
     public long Delta { get; set; }
+
+    /// <summary>Definitions by table name, null for no SQL table; DDL of the table removes its entry.</summary>
+    public Dictionary<string, SqlTableDefinition?> Tables { get; } = [with(StringComparer.Ordinal)];
 }
 
 /// <summary>Runs one statement in a storage transaction the caller commits; writes go through the document service.</summary>
@@ -51,16 +57,19 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         CancellationToken cancellationToken) =>
         statement switch
         {
-            ReadSql read => await ReadAsync(transaction, read, command, describe, null, cancellationToken).ConfigureAwait(false),
+            ReadSql read => await ReadAsync(transaction, read, command, tally, describe, null, cancellationToken).ConfigureAwait(false),
             InsertSql insert => await InsertAsync(transaction, insert, command, keys, tally, cancellationToken).ConfigureAwait(false),
             ChangeSql change => await ChangeAsync(transaction, change, command, tally, cancellationToken).ConfigureAwait(false),
-            CreateTableSql create => await CreateAsync(transaction, create, cancellationToken).ConfigureAwait(false),
-            DropTableSql drop => await DropAsync(transaction, drop, cancellationToken).ConfigureAwait(false),
+            CreateTableSql create => await CreateAsync(transaction, create, tally, cancellationToken).ConfigureAwait(false),
+            DropTableSql drop => await DropAsync(transaction, drop, tally, cancellationToken).ConfigureAwait(false),
+            CreateIndexSql index => await CreateIndexAsync(transaction, index, tally, cancellationToken).ConfigureAwait(false),
+            DropIndexSql drop => await DropIndexAsync(transaction, drop, tally, cancellationToken).ConfigureAwait(false),
             _ => SqlErrors.Error("this statement is not supported here"),
         };
 
-    private async ValueTask<SqlOutcome> CreateAsync(IStorageTransaction transaction, CreateTableSql create, CancellationToken cancellationToken)
+    private async ValueTask<SqlOutcome> CreateAsync(IStorageTransaction transaction, CreateTableSql create, SqlTally tally, CancellationToken cancellationToken)
     {
+        tally.Tables.Remove(create.Name);
         if (await transaction.GetCollectionAsync(create.Name, cancellationToken).ConfigureAwait(false) is not null)
         {
             return create.IfNotExists && await SqlTable.ReadAsync(transaction, create.Name, cancellationToken).ConfigureAwait(false) is not null
@@ -73,32 +82,111 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         await SqlTable.WriteAsync(transaction, create.Name, create.Table, cancellationToken).ConfigureAwait(false);
         if (create.Unique.Count > 0)
         {
-            await transaction.SetUniqueConstraintsAsync(create.Name, create.Unique, cancellationToken).ConfigureAwait(false);
+            await transaction.SetUniqueConstraintsAsync(create.Name, create.Unique, reindex: false, cancellationToken).ConfigureAwait(false);
         }
 
         return Empty;
     }
 
-    private static async ValueTask<SqlOutcome> DropAsync(IStorageTransaction transaction, DropTableSql drop, CancellationToken cancellationToken)
+    private static async ValueTask<SqlOutcome> DropAsync(IStorageTransaction transaction, DropTableSql drop, SqlTally tally, CancellationToken cancellationToken)
     {
-        if (await SqlTable.ReadAsync(transaction, drop.Name, cancellationToken).ConfigureAwait(false) is null)
+        if (await TableAsync(transaction, drop.Name, tally, cancellationToken).ConfigureAwait(false) is null)
         {
             return drop.IfExists ? Empty : SqlErrors.Error("no such table");
         }
 
+        tally.Tables.Remove(drop.Name);
         await transaction.DropCollectionAsync(drop.Name, cancellationToken).ConfigureAwait(false);
+        return Empty;
+    }
+
+    // A secondary index over the columns; a UNIQUE one also declares a unique key of the same name, checked against the
+    // table's rows. The secondary index names it database-wide, as SQLite names indexes.
+    private static async ValueTask<SqlOutcome> CreateIndexAsync(IStorageTransaction transaction, CreateIndexSql create, SqlTally tally, CancellationToken cancellationToken)
+    {
+        if (await TableAsync(transaction, create.Table, tally, cancellationToken).ConfigureAwait(false) is not { } table)
+        {
+            return SqlErrors.Error("no such table");
+        }
+
+        var fields = new List<DocumentField>(create.Columns.Count);
+        foreach (var name in create.Columns)
+        {
+            if (table.Columns.FirstOrDefault(column => column.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) is not { } column
+                || !DocumentField.TryParse(column.Name, out var field))
+            {
+                return SqlErrors.Error("no such column");
+            }
+
+            fields.Add(field);
+        }
+
+        var constraints = await transaction.GetUniqueConstraintsAsync(create.Table, cancellationToken).ConfigureAwait(false);
+        if ((await transaction.ListIndexesAsync(cancellationToken).ConfigureAwait(false)).Any(index => index.Name == create.Name)
+            || constraints.Any(constraint => constraint.Name == create.Name))
+        {
+            return create.IfNotExists ? Empty : SqlErrors.Error("an index with this name already exists");
+        }
+
+        if (create.Unique)
+        {
+            if (constraints.Count == UniqueKeys.MaxConstraints)
+            {
+                return SqlErrors.Error("a table has at most 32 UNIQUE constraints and indexes");
+            }
+
+            try
+            {
+                UniqueConstraint key = new(create.Name, [.. fields.Select(field => field.Path)]);
+                await transaction.SetUniqueConstraintsAsync(create.Table, [.. constraints, key], reindex: true, cancellationToken).ConfigureAwait(false);
+            }
+            catch (UniqueConstraintException)
+            {
+                return SqlErrors.Constraint("UNIQUE", "the table's rows already hold duplicate values for a UNIQUE index");
+            }
+        }
+
+        _ = await transaction.CreateIndexAsync(new IndexDefinition(create.Name, create.Table, fields), cancellationToken).ConfigureAwait(false);
+        return Empty;
+    }
+
+    private static async ValueTask<SqlOutcome> DropIndexAsync(IStorageTransaction transaction, DropIndexSql drop, SqlTally tally, CancellationToken cancellationToken)
+    {
+        // Only an index on a SQL table: indexes of document collections belong to the indexes API.
+        if ((await transaction.ListIndexesAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(index => index.Name == drop.Name) is not { } index
+            || await TableAsync(transaction, index.Collection, tally, cancellationToken).ConfigureAwait(false) is null)
+        {
+            return drop.IfExists ? Empty : SqlErrors.Error("no such index");
+        }
+
+        var constraints = await transaction.GetUniqueConstraintsAsync(index.Collection, cancellationToken).ConfigureAwait(false);
+        if (constraints.Any(constraint => constraint.Name == drop.Name))
+        {
+            try
+            {
+                await transaction.SetUniqueConstraintsAsync(
+                    index.Collection, [.. constraints.Where(constraint => constraint.Name != drop.Name)], reindex: true, cancellationToken).ConfigureAwait(false);
+            }
+            catch (UniqueConstraintException)
+            {
+                // Rows a concurrent region's write hid under another key: they still conflict.
+                return SqlErrors.Constraint("UNIQUE", "the table's rows hold duplicate values for another UNIQUE key");
+            }
+        }
+
+        _ = await transaction.DropIndexAsync(drop.Name, cancellationToken).ConfigureAwait(false);
         return Empty;
     }
 
     // The engine read of `read`: its tables' definitions, its parameters bound, its rows converted. `keyed` names the
     // table whose rows also expose their document id (`_id`), for UPDATE and DELETE.
     private static async ValueTask<SqlOutcome> ReadAsync(
-        IStorageTransaction transaction, ReadSql read, SqlCommand command, bool describe, string? keyed, CancellationToken cancellationToken)
+        IStorageTransaction transaction, ReadSql read, SqlCommand command, SqlTally tally, bool describe, string? keyed, CancellationToken cancellationToken)
     {
         var tables = new Dictionary<string, SqlTableDefinition>(StringComparer.Ordinal);
         foreach (var name in read.Tables)
         {
-            if (await SqlTable.ReadAsync(transaction, name, cancellationToken).ConfigureAwait(false) is not { } table)
+            if (await TableAsync(transaction, name, tally, cancellationToken).ConfigureAwait(false) is not { } table)
             {
                 return SqlErrors.Error("no such table");
             }
@@ -194,7 +282,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
     private async ValueTask<SqlOutcome> InsertAsync(
         IStorageTransaction transaction, InsertSql insert, SqlCommand command, SqlKeys keys, SqlTally tally, CancellationToken cancellationToken)
     {
-        if (await SqlTable.ReadAsync(transaction, insert.Table, cancellationToken).ConfigureAwait(false) is not { } table)
+        if (await TableAsync(transaction, insert.Table, tally, cancellationToken).ConfigureAwait(false) is not { } table)
         {
             return SqlErrors.Error("no such table");
         }
@@ -214,7 +302,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         IReadOnlyList<IReadOnlyList<SqlValue>> rows = [[]];
         if (insert.Source is { } source)
         {
-            switch (await ReadAsync(transaction, source with { Params = insert.Params }, command, false, null, cancellationToken).ConfigureAwait(false))
+            switch (await ReadAsync(transaction, source with { Params = insert.Params }, command, tally, false, null, cancellationToken).ConfigureAwait(false))
             {
                 case SqlError error:
                     return error;
@@ -270,19 +358,15 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
                 return new SqlError("SQLITE_MISMATCH", "a primary key is an integer or text, and a key at most 256 characters without control characters");
             }
 
-            var existing = await transaction.GetAsync(insert.Table, id, cancellationToken).ConfigureAwait(false) is not null;
-            if (existing && insert.Mode == InsertMode.Plain)
-            {
-                return SqlErrors.Constraint("PRIMARYKEY", "a row with this primary key exists");
-            }
-
-            if (existing && insert.Mode == InsertMode.Ignore)
+            // A plain INSERT's Absent precondition refuses an existing row itself.
+            if (insert.Mode == InsertMode.Ignore && await transaction.GetVersionAsync(insert.Table, id, cancellationToken).ConfigureAwait(false) is { Deleted: false })
             {
                 continue;
             }
 
-            var put = new PutOperation(insert.Table, id, Document(values), insert.Mode == InsertMode.Replace ? new Precondition(null, false, false) : Precondition.Absent);
-            if (await ApplyAsync(transaction, put, id, tally, cancellationToken).ConfigureAwait(false) is { } refused)
+            var absent = insert.Mode != InsertMode.Replace;
+            var put = new PutOperation(insert.Table, id, Document(values), absent ? Precondition.Absent : new Precondition(null, false, false));
+            if (await ApplyAsync(transaction, put, id, tally, cancellationToken, absent).ConfigureAwait(false) is { } refused)
             {
                 return refused;
             }
@@ -297,7 +381,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
     private async ValueTask<SqlOutcome> ChangeAsync(
         IStorageTransaction transaction, ChangeSql change, SqlCommand command, SqlTally tally, CancellationToken cancellationToken)
     {
-        if (await SqlTable.ReadAsync(transaction, change.Table, cancellationToken).ConfigureAwait(false) is not { } table)
+        if (await TableAsync(transaction, change.Table, tally, cancellationToken).ConfigureAwait(false) is not { } table)
         {
             return SqlErrors.Error("no such table");
         }
@@ -318,7 +402,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             columns.Add(column);
         }
 
-        var read = await ReadAsync(transaction, change.Rows with { Params = change.Params }, command, false, change.Table, cancellationToken).ConfigureAwait(false);
+        var read = await ReadAsync(transaction, change.Rows with { Params = change.Params }, command, tally, false, change.Table, cancellationToken).ConfigureAwait(false);
         if (read is not SqlResult { Rows: var rows })
         {
             return read;
@@ -383,18 +467,23 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         return new SqlResult([], [], rows.Count, null);
     }
 
-    // The document service's refusal of one operation, in SQLite's vocabulary, or null when it applied.
+    // The document service's refusal of one operation, in SQLite's vocabulary, or null when it applied. Each storage call
+    // costs a hop to the database's worker, so bytes already known are not read: none before a write to an `absent`
+    // row, none after a delete, and a patch's stored document after it.
     private async ValueTask<SqlError?> ApplyAsync(
-        IStorageTransaction transaction, DocumentOperation operation, string id, SqlTally tally, CancellationToken cancellationToken)
+        IStorageTransaction transaction, DocumentOperation operation, string id, SqlTally tally, CancellationToken cancellationToken, bool absent = false)
     {
-        var before = tally.Measure ? await transaction.GetDocumentBytesAsync(operation.Collection, id, cancellationToken).ConfigureAwait(false) : 0;
-        var refused = Refusal(await documents.ApplyAsync(transaction, operation, cancellationToken).ConfigureAwait(false));
-        if (refused is null && tally.Measure)
+        var before = tally.Measure && !absent ? await transaction.GetDocumentBytesAsync(operation.Collection, id, cancellationToken).ConfigureAwait(false) : 0;
+        var outcome = await documents.ApplyAsync(transaction, operation, cancellationToken).ConfigureAwait(false);
+        if (outcome is OperationResult result && tally.Measure)
         {
-            tally.Delta += await transaction.GetDocumentBytesAsync(operation.Collection, id, cancellationToken).ConfigureAwait(false) - before;
+            var after = operation is DeleteOperation ? 0
+                : result.Document is { } stored ? stored.Length
+                : await transaction.GetDocumentBytesAsync(operation.Collection, id, cancellationToken).ConfigureAwait(false);
+            tally.Delta += after - before;
         }
 
-        return refused;
+        return Refusal(outcome);
     }
 
     private static SqlError? Refusal(ApplyOutcome outcome) =>
@@ -423,6 +512,17 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
                 return key;
             }
         }
+    }
+
+    private static async ValueTask<SqlTableDefinition?> TableAsync(IStorageTransaction transaction, string name, SqlTally tally, CancellationToken cancellationToken)
+    {
+        if (!tally.Tables.TryGetValue(name, out var table))
+        {
+            table = await SqlTable.ReadAsync(transaction, name, cancellationToken).ConfigureAwait(false);
+            tally.Tables[name] = table;
+        }
+
+        return table;
     }
 
     private static SqlColumnDefinition Column(SqlTableDefinition table, string name) => table.Columns.First(column => column.Name == name);
