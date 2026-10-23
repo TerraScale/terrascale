@@ -5,15 +5,20 @@ collapse and ETag), T1 (bucket objects) and T2 (Cloudflare shape edge). Readers 
 
 ## 1. Status
 
-- **Payload reads per sealed chunk are flat up to N = 100 with the fixes** (dev host, 2 repeats): about 1 per sealed
-  chunk, plus one snapshot-page read per joining reader. Before the closed-chunk cache they grew with N (77.9 per chunk at
-  N = 100).
-- **N = 1000 is not measured cleanly anywhere yet.** Dev host: every repeat stopped on a `503 storage_busy` mid-step
-  (section 5). Live cells: the tenant's request plan refused 95 % of requests (section 6).
-- **T2 works end to end** (section 4): one bucket GET per object per Cloudflare location, the rest are edge hits, and no
-  origin payload read.
-- Not yet run: the T0/T1/T2 catch-up repeats on the dev host, the live cells on the enterprise plan, and R2 (no R2 token:
-  parent NEED). Section 8 lists the commands.
+- **T0 at the head, live OCI cells (`f06647f22`, enterprise plan, 3 repeats): payload reads do not grow with readers.**
+  Every step seals 2–3 chunks; payload reads are one per sealed chunk plus about one snapshot-page read per joining
+  reader (100 readers: 102; 1000 readers: 498–620). Document (`point`) reads stay at 10–12.6k per step for N = 1 to 1000.
+  All 1000 readers were admitted and parked in every repeat. N = 1, 10, 100 delivered every write.
+- **N = 1000 on the cells delivers only 14–26 % of writes inside the step** (82,940 / 84,180 / 158,469 of 600,000):
+  delivery waits for the remote-durable frontier, p50 17.5–18.3 s at every N, and the step's 5 s grace ends first. That
+  lag is replication's (lane I), not the read path's.
+- **T1 and T2 (dev host, 3 repeats, 11 objects per reader): no origin payload read at any N.** T1 costs N × 11 bucket
+  GETs; T2 costs about 11 bucket GETs per Cloudflare location (126 at N = 1000, edge hit ratio 0.989). On the live
+  cells (1 repeat), T2 with 1000 readers × 6 objects: 0 origin payload reads, 61 bucket GETs, hit ratio 0.990.
+- **Dev host N = 1000 live load still stops on `503 storage_busy`** in all three repeats (section 5).
+- **Hobby plan (finding, section 6):** 1000 readers of one shape spend the tenant's whole request budget and stall its
+  writer 10–32 s.
+- Not run: R2 (no R2 token: parent NEED).
 
 ## 2. Binaries and hosts
 
@@ -22,7 +27,8 @@ collapse and ETag), T1 (bucket objects) and T2 (Cloudflare shape edge). Readers 
 | dev, before the chunk cache | `56a1b6c4c` (rt2/free-reads-4 before its harness commits; server = 1f5cab388) | mariogk-dev (46 CPUs), local gru + sjc in one process | shared with other lanes; not sampled |
 | dev, with the chunk cache | `0d09176f7` (rt2/free-reads-5) | mariogk-dev | load 43 (r1), 17.6 (r2) at step start |
 | cells, main baseline | `888ea413` (image eb0e8e62) | ts-sjc-1 (2 CPUs, arm64) → sjc cell :9465 | **contaminated**: lane B's convergence load ran 03:00–03:31Z, this run 03:13–03:22Z |
-| cells, after | `f06647f22` = rt2/cells-1 = 0d09176f7 + a16947f52 (billing fix, no read-path change) | ts-sjc-1 → sjc cell | load 3.4 on 2 CPUs before the run |
+| cells, after, hobby plan | `f06647f22` = rt2/cells-1 = 0d09176f7 + a16947f52 (billing fix, no read-path change) | ts-sjc-1 → sjc cell | load 3.4 on 2 CPUs before the run |
+| cells, after, enterprise plan | `f06647f22` | ts-sjc-1 → sjc cell, 04:14–04:40Z, org on enterprise 04:12–04:57Z, no other lane on the cells | load 3.8–4.2 on 2 CPUs (ts-sjc-1 also runs prod) |
 
 Tool: `benchmark/cmd/shape-bench load` (README "Live load"): readers join over 60 s, then a writer sends 20 documents/s;
 30 s window, 5 s grace, 6 s settle. Storage reads are `terrabase.storage.reads{path}` deltas over the whole step.
@@ -57,19 +63,64 @@ payload reads. `shape` also counts the replication tailer's frontier reads per c
 (not committed): 50 parked live readers cost 0 `point` and 1 `shape` read to park; one wake costs 9 `point` (the write),
 41 `shape` and 1 `shape_body`, the same as for one reader.
 
+## 3a. Live readers on the OCI cells (T0, enterprise plan)
+
+`f06647f22`, readers on ts-sjc-1 against the sjc cell (home region of database `rt2`; replicas gru and fra). Median
+over 3 repeats, range in brackets when they differ. Storage reads are the sjc node's.
+
+| N | admitted | delivered / expected | p50 / p99 ms | sealed | shape_body | point | shape |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 600 / 600 | 17711 / 32031 | 3 | 4 | 10276 (10009–10278) | 13754 (13599–13786) |
+| 10 | 10 | 6,000 / 6,000 | 17973 / 32031 | 2 | 12 | 10527 (10435–10789) | 14331 (14233–14408) |
+| 100 | 100 | 60,000 / 60,000 | 18039 / 32244 | 2 | 102 | 10394 (10366–10447) | 21600 (21369–21674) |
+| 1000 | 1000 | 84,180 (82,940–158,469) / 600,000 | 26231 / 34210 | 2 | 618 (498–620) | 12233 (12041–12558) | 68961 (59269–69620) |
+
+- Every reader's first live poll answers `503 unavailable: the shape head is not remote durable yet` once (1, 10, 100,
+  1000 per step), then parks: the head waits for gru or fra to hold the write.
+- 429 `shape_busy` at N = 1000: 16, 30 and 89 per step, retried.
+- `shape` (metadata) still grows with N, about 5 per response at N = 1000: per-flight frontier, head and retention reads
+  for readers that are not yet on the same offset.
+
 ## 4. Catch-up readers (T0, T1, T2)
 
-`shape-bench catchup`: readers join behind the head and read a snapshot page plus `-chunks` sealed chunks. Smoke run on
-beta, 3 readers, 10 chunks, 1 repeat (`0d09176f7`, real Tigris test bucket, live edge), so 11 objects per reader:
+`shape-bench catchup`: readers join behind the head over 10 s and read a snapshot page plus 10 sealed chunks (11
+objects). Dev host, `0d09176f7`, real Tigris test bucket and the live edge, 3 repeats, 0 failures, mariogk-dev load
+23.6 at start, 11.9 at end. Median (range).
 
-| tier | origin shape_body reads | origin requests | object GETs | bucket GETs | edge hits | bucket PUTs |
-| --- | --- | --- | --- | --- | --- | --- |
-| t0 | 33 | 33 | 0 | 0 | 0 | 3 |
-| t2 | 0 | 0 (6 manifest calls) | 33 | 11 | 22 (0.667) | 0 |
+| tier | N | origin requests | origin shape_body | object GETs | bucket GETs | edge hit ratio | origin shape (metadata) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| t0 | 1 | 11 | 3 (2–6) | 0 | 0 | – | 158 |
+| t0 | 10 | 110 | 15 (14–15) | 0 | 0 | – | 1148 |
+| t0 | 100 | 1,100 | 104 (103–105) | 0 | 0 | – | 11124 |
+| t0 | 1000 | 11,000 | 123 (104–129) | 0 | 0 | – | 8369 |
+| t1 | 1 | 0 (2 manifest) | 0 | 11 | 11 | – | 14 |
+| t1 | 10 | 0 (20) | 0 | 110 | 110 | – | 86 |
+| t1 | 100 | 0 (200) | 0 | 1,100 | 1,100 | – | 809 |
+| t1 | 1000 | 0 (2,000) | 0 | 11,000 | 11,000 | – | 8006 |
+| t2 | 1 | 0 (2) | 0 | 11 | 11 | 0 | 14 |
+| t2 | 10 | 0 (20) | 0 | 110 | 16 (14–16) | 0.855 | 86 |
+| t2 | 100 | 0 (200) | 0 | 1,100 | 110 (83–111) | 0.900 | 807 |
+| t2 | 1000 | 0 (2,000) | 0 | 11,000 | 126 (36–709) | 0.989 | 8006 |
 
-t2 is the target shape: 3 readers × 11 objects cost 11 bucket GETs (one per object, one Cloudflare location) and no
-origin payload read. The t1 smoke hit a `429 shape_busy` in the seal driver (since fixed with retries). The 3-repeat run
-for N = 1…1000 is in progress (section 8).
+- t0: 10× more readers, 10× more origin requests, about the same payload reads (104 → 123): flights plus the
+  closed-chunk cache; most remaining reads are snapshot pages, which the cache does not hold.
+- t1: the origin reads no payload; the bucket serves every object once per reader.
+- t2: about one bucket GET per object per Cloudflare location; concurrent first misses at one location each go to the
+  bucket (Cache API has no request collapsing), hence 110 rather than 11 at N = 100.
+- Manifest calls cost about 4 metadata reads each (retention floor and lineage), so t1/t2 metadata still grows with N.
+
+Live OCI cells, `f06647f22`, enterprise plan, readers on ts-sjc-1 against the sjc cell, which mirrors to its own Tigris
+bucket (`terrascale-terrabase-rt2-test`); edge objects through Cloudflare's location nearest San Jose. 5 chunks (6 objects
+per reader), **1 repeat** (the plan window allowed one), so no spread:
+
+| tier | N | origin requests | origin shape_body | object GETs | bucket GETs | edge hit ratio | origin shape (metadata) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| t0 | 100 | 600 | 99 | 0 | 0 | – | 5965 |
+| t0 | 1000 | 6,000 | 239 | 0 | 0 | – | 11486 |
+| t2 | 100 | 0 (100 manifest) | 0 | 600 | 20 | 0.967 | 447 |
+| t2 | 1000 | 0 (1,000 manifest) | 0 | 6,000 | 61 | 0.990 | 4024 |
+
+**T2 on the live cells: 1000 readers × 6 objects cost the origin no payload read and the bucket 61 GETs.**
 
 ## 5. N = 1000 on the dev host: what stops it
 
@@ -126,19 +177,20 @@ responses at the CDN; adding it would need live responses that are safe to share
 | rt2/free-reads-4 | f51ed6c | `shape-bench catchup`; local host on a real bucket; `-origin` for running cells; bench host env rename (`TERRABASE_BENCH_CLUSTER_FILE` was read as a secret file) |
 | rt2/free-reads-5 | 0d09176 | closed-chunk memory cache (512 chunks, 16 MiB) |
 
-## 8. Pending runs and their commands
+## 8. Commands
 
-Dev host (catch-up, all tiers; bucket env file holds `BUCKET_NAME`, `AWS_*`, `TERRABASE_MASTER_KEY`):
+Dev host (catch-up, all tiers; the bucket env file holds `BUCKET_NAME`, `AWS_*`, `TERRABASE_MASTER_KEY`):
 
 ```sh
-~/.local/bin/ts-heavy-any bash -c 'make terrabase-build CONFIGURATION=Release && dotnet build tests/TerraBase.E2E -c Release && cd benchmark && set -a && . ~/.config/terrascale/rt2-free-reads-s3.env && set +a && go run ./cmd/shape-bench catchup -chunks 10 -repeats 3 -out bench/2026-10-23-rt2-catchup' --repo terrascale --branch rt2/free-reads-bench5
+~/.local/bin/ts-heavy-any bash -c 'make terrabase-build CONFIGURATION=Release && dotnet build tests/TerraBase.E2E -c Release && cd benchmark && go run ./cmd/shape-bench load -steps 1,10,100,1000 -out <base> && set -a && . <bucket env> && set +a && go run ./cmd/shape-bench catchup -chunks 10 -repeats 3 -out <base>' --repo terrascale --branch <branch>
 ```
 
-Live cells, from ts-sjc-1, once the org is on enterprise (`~/rt2/rt2fr-run.sh <label> t0,t1,t2`):
+Live cells, from a NetBird host with the cell's metrics on loopback (ts-sjc-1), key in `TS_BENCH_API_KEY`:
 
 ```sh
-shape-bench load -origin http://10.200.109.193:9465 -metrics http://127.0.0.1:19091/metrics -project 01M5K94R1P7TBK9K69CXRB2F3A -database rt2 -collection <new> -start <unix+15> -steps 1,10,100,1000 -out load.json
+shape-bench load -origin http://10.200.109.193:9465 -metrics http://127.0.0.1:19091/metrics -project 01M5K94R1P7TBK9K69CXRB2F3A -database rt2 -collection <new> -start <unix+15> -steps 1,10,100,1000 -out load.json && shape-bench merge -out load load.json
 shape-bench catchup -origin http://10.200.109.193:9465 -metrics http://127.0.0.1:19091/metrics -project 01M5K94R1P7TBK9K69CXRB2F3A -database rt2 -tiers t0,t1,t2 -chunks 10 -repeats 3 -out catchup
 ```
 
-R2: the same catch-up with an env file naming the R2 endpoint, bucket and keys; no code change. Blocked on an R2 token.
+R2: the same catch-up with an env file naming the R2 endpoint, bucket and keys; no code change. Not run: the Cloudflare
+token has no R2 permission (parent NEED).
