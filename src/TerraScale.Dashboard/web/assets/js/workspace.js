@@ -6,6 +6,7 @@ const selection = {organizationId, projectId};
 
 function scoped(value) {
   const url = new URL(value, location.href);
+  // Invitation tokens carry their own authority, independent of the sender's workspace.
   if (url.origin !== location.origin || /^\/(login|logout|invitations|js|css|fonts|brand|flags|img)(\/|$)/.test(url.pathname)) return url;
   const targetOrganization = url.searchParams.get('organizationId') ?? url.searchParams.get('organizationID');
   if (targetOrganization && targetOrganization !== organizationId) return url;
@@ -35,9 +36,11 @@ if (organizationId) {
           element.setAttribute('href', target.origin === location.origin ? target.pathname + target.search + target.hash : target.href);
         }
       } else {
-        const url = scoped(element.action);
+        // A control named "action" shadows the form's action property.
+        const action = element.getAttribute('action') || location.href;
+        const url = scoped(action);
         if (url.origin !== location.origin) continue;
-        if (element.action !== url.href) element.setAttribute('action', url.pathname + url.search + url.hash);
+        if (new URL(action, location.href).href !== url.href) element.setAttribute('action', url.pathname + url.search + url.hash);
         // Browsers replace a GET form action's query with its successful controls.
         if (element.method === 'get') {
           for (const key of Object.keys(selection)) {
