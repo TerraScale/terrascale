@@ -25,6 +25,7 @@ async fn ttl_methods_set_read_and_clear_the_expiry_path() {
 
     let requests = fixture.requests.lock().unwrap();
     let path = format!("/v1/projects/{PROJECT}/databases/orders/collections/items/ttl");
+    let path = path.as_str();
     let seen: Vec<_> = requests
         .iter()
         .map(|r| (r.method.as_str(), r.uri.as_str()))
@@ -32,10 +33,10 @@ async fn ttl_methods_set_read_and_clear_the_expiry_path() {
     assert_eq!(
         seen,
         [
-            ("PUT", path.as_str()),
-            ("GET", &path),
-            ("GET", &path),
-            ("DELETE", &path)
+            ("PUT", path),
+            ("GET", path),
+            ("GET", path),
+            ("DELETE", path)
         ]
     );
     assert_eq!(

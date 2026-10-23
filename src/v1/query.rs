@@ -364,10 +364,10 @@ pub struct Near {
 impl Near {
     /// A cosine sort on `path`.
     #[must_use]
-    pub fn new(path: impl Into<String>, vector: impl Into<Vec<f32>>) -> Self {
+    pub fn new(path: impl Into<String>, vector: Vec<f32>) -> Self {
         Self {
             path: path.into(),
-            vector: vector.into(),
+            vector,
             metric: Metric::Cosine,
         }
     }
