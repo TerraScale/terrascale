@@ -14,10 +14,9 @@ public sealed record AnalyticsLinePlot(string Label, string Area, IReadOnlyList<
             return new(label, "", [], [], [], [], []);
         bool Missing(AnalyticsSeries row, int index) => row.Missing?[index] == true;
         var maximum = series.SelectMany(row => row.Values.Where((value, index) => !Missing(row, index))).DefaultIfEmpty().Max();
-        double magnitude = 1;
-        while (magnitude <= maximum / 10d) magnitude *= 10;
-        // Counts are whole numbers: a scale under 4 would label quarter steps as repeated integers (2, 1, 1, 0).
-        var scale = maximum == 0 ? 1 : Math.Max(4, new[] { 1d, 2d, 5d, 10d }.Select(factor => factor * magnitude).First(value => value >= maximum));
+        // Four whole, round grid steps (1, 2 or 5 × 10ⁿ each): 40 → 0, 10, 20, 30, 40 rather than 0, 12, 25, 37, 50.
+        var gridStep = Enumerable.Range(0, 20).SelectMany(power => new[] { 1d, 2d, 5d }.Select(factor => factor * Math.Pow(10, power))).First(value => value * 4 >= maximum);
+        var scale = maximum == 0 ? 1 : gridStep * 4;
         double X(int index) => 48 + 660d * index / Math.Max(1, starts.Count - 1);
         double Y(long value) => 14 + 154 * (1 - value / scale);
         string C(double value) => ChartGeometry.Coordinate(value);

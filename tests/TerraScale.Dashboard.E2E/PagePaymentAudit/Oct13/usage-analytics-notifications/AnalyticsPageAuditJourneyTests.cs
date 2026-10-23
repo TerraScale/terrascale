@@ -39,6 +39,7 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
         var history = await GetPageAsync(client, "/analytics?range=1h");
         await Assert.That(history).Contains("<dt class=\"ts-stat-label\">Requests</dt><dd class=\"ts-stat-value\">10</dd>")
             .Because("TerraBase keeps observations for a region the database has left.");
+        await Assert.That(history).Contains("text-anchor=\"end\">15</text>").Because("10 requests get round grid steps 0, 5, 10, 15, 20.");
         producer.Mode = "latest-partial";
         var partial = await GetPageAsync(client, "/analytics?range=1h&region=gru");
         await Assert.That(partial).Contains("value=\"GRU\" selected=\"selected\"").Because("Region cards link with lowercase codes.");
