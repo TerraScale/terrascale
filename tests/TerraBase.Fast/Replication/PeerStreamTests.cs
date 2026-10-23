@@ -121,31 +121,35 @@ public sealed class PeerStreamTests
     [Test]
     public async Task A_write_after_an_empty_snapshot_ships_without_another_write()
     {
-        var clock = new ShiftedTime { Timestamp = TimeProvider.System.GetTimestamp() };
+        var clock = new ShiftedTime();
         await using var cluster = await Cluster.StartAsync(cdc: false, clock, "gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         var stamp = Stamp();
         var id = EntityIds.New().ToString();
+        var drained = NextEmptyReadAsync(gru.Source, cluster.Database);
+        await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, id, """{"n":1}"""));
+        await drained.WaitAsync(Deadline);
+        clock.FreezeTimestamp();
         var committed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gru.Source.AfterNextEmptyRead(cluster.Database, async cancellationToken =>
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await gru.CommitAsync(Set(gru, stamp + 1, id, "n", "2"));
+            await gru.CommitAsync(Set(gru, stamp + 2, id, "n", "3"));
             committed.SetResult();
         });
 
-        await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, id, """{"n":1}"""));
+        await gru.CommitAsync(Set(gru, stamp + 1, id, "n", "2"));
         await committed.Task.WaitAsync(Deadline);
         using var deadline = new CancellationTokenSource(Deadline);
-        await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, 2, deadline.Token);
-        await Assert.That(await sjc.ReadAsync(id)).IsEqualTo("""{"n":2}""");
-        await Assert.That(gru.Source.AckedBy(cluster.Database, sjc.Node)).IsEqualTo(2);
+        await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, 3, deadline.Token);
+        await Assert.That(await sjc.ReadAsync(id)).IsEqualTo("""{"n":3}""");
+        await Assert.That(gru.Source.AckedBy(cluster.Database, sjc.Node)).IsEqualTo(3);
     }
 
     [Test]
     public async Task Writes_to_one_database_do_not_read_a_quiet_database_before_frontier_maintenance_is_due()
     {
-        var clock = new ShiftedTime { Timestamp = TimeProvider.System.GetTimestamp() };
+        var clock = new ShiftedTime();
         await using var cluster = await Cluster.StartAsync(cdc: false, clock, "gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         var stamp = Stamp();
@@ -158,6 +162,7 @@ public sealed class PeerStreamTests
         var quietDrained = NextEmptyReadAsync(gru.Source, quiet);
         await gru.CommitAsync(quiet, Metadata(gru, stamp, "items"), Put(gru, stamp, quietId, """{"n":1}"""));
         await quietDrained.WaitAsync(Deadline);
+        clock.FreezeTimestamp();
         var quietReads = gru.Source.ReadCount(quiet);
 
         using var deadline = new CancellationTokenSource(Deadline);
@@ -234,9 +239,21 @@ public sealed class PeerStreamTests
     [Test]
     public async Task Repeated_dirty_queue_overflow_does_not_restart_discovery_ahead_of_a_later_database()
     {
-        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: false, clock, "gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         var stamp = Stamp();
+        var (warmId, id) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        var drained = NextEmptyReadAsync(gru.Source, cluster.Database);
+        await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, warmId, """{"n":0}"""));
+        await drained.WaitAsync(Deadline);
+        var later = await gru.CreateOtherDatabaseAsync();
+        _ = await sjc.CreateOtherDatabaseAsync(later.DatabaseId);
+        drained = NextEmptyReadAsync(gru.Source, later);
+        await gru.CommitAsync(later, Metadata(gru, stamp, "items"), Put(gru, stamp, id, """{"n":0}"""));
+        await drained.WaitAsync(Deadline);
+        using var deadline = new CancellationTokenSource(Deadline);
+        await gru.Source.UntilAckedAsync(later, sjc.Node, 1, deadline.Token);
         var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var rounds = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -247,22 +264,22 @@ public sealed class PeerStreamTests
         });
         try
         {
-            await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, EntityIds.New().ToString(), """{"n":0}"""));
+            await gru.CommitAsync(Set(gru, stamp + 1, warmId, "n", "1"));
             await reading.Task.WaitAsync(Deadline);
-            var later = await gru.CreateOtherDatabaseAsync();
-            _ = await sjc.CreateOtherDatabaseAsync(later.DatabaseId);
+            var before = gru.Source.ReadCount(later);
             // Valid earlier ULIDs exceed the dirty queue's capacity without creating 1,025 database files.
             var candidates = Enumerable.Range(1, 1025).Select(value => cluster.Database with
             {
                 DatabaseId = value.ToString("D26", System.Globalization.CultureInfo.InvariantCulture),
             }).ToArray();
             gru.Source.Announce(candidates);
-            var id = EntityIds.New().ToString();
-            await gru.CommitAsync(later, Metadata(gru, stamp, "items"), Put(gru, stamp, id, """{"n":1}"""));
+            await gru.CommitAsync(later, Set(gru, stamp + 1, id, "n", "2"));
+            // The initialized later copy is overdue before any candidate receives its first discovery deadline.
+            clock.AdvanceTimestamp(TimeSpan.FromSeconds(6));
             var reconciliations = 0;
             gru.Source.AfterListing = () =>
             {
-                if (++reconciliations == 12)
+                if (++reconciliations == 3)
                 {
                     var reads = gru.Source.ReadCount(later);
                     gru.Source.AfterListing = null;
@@ -273,11 +290,10 @@ public sealed class PeerStreamTests
                 gru.Source.Announce(candidates);
             };
             release.SetResult();
-            await Assert.That(await rounds.Task.WaitAsync(Deadline)).IsGreaterThan(0)
-                .Because("overflows must preserve older discovery deadlines rather than repeatedly visiting earlier database IDs");
-            using var deadline = new CancellationTokenSource(Deadline);
-            await gru.Source.UntilAckedAsync(later, sjc.Node, 1, deadline.Token);
-            await Assert.That(await sjc.ReadAsync(later, id)).IsEqualTo("""{"n":1}""");
+            await Assert.That(await rounds.Task.WaitAsync(deadline.Token)).IsGreaterThan(before)
+                .Because("the overdue initialized database must run before repeated discovery can restart its deadline");
+            await gru.Source.UntilAckedAsync(later, sjc.Node, 2, deadline.Token);
+            await Assert.That(await sjc.ReadAsync(later, id)).IsEqualTo("""{"n":2}""");
         }
         finally
         {
@@ -3614,6 +3630,8 @@ public sealed class PeerStreamTests
     internal sealed class ShiftedTime : TimeProvider
     {
         private long _offset;
+        private long _timestamp;
+        private long _timestampAdvance;
 
         public TimeSpan Offset
         {
@@ -3621,10 +3639,16 @@ public sealed class PeerStreamTests
             set => Interlocked.Exchange(ref _offset, value.Ticks);
         }
 
-        // Pin only monotonic time for shipping tests; UTC and timers keep advancing normally.
-        public long? Timestamp { get; init; }
+        // Freeze only after initial peer discovery and shipping; UTC and timers keep advancing normally.
+        public void FreezeTimestamp() => Interlocked.Exchange(ref _timestamp, System.GetTimestamp());
 
-        public override long GetTimestamp() => Timestamp ?? System.GetTimestamp();
+        public void AdvanceTimestamp(TimeSpan elapsed) => Interlocked.Add(ref _timestampAdvance, (long)(elapsed.TotalSeconds * TimestampFrequency));
+
+        public override long GetTimestamp()
+        {
+            var frozen = Interlocked.Read(ref _timestamp);
+            return (frozen > 0 ? frozen : System.GetTimestamp()) + Interlocked.Read(ref _timestampAdvance);
+        }
 
         public override DateTimeOffset GetUtcNow() => System.GetUtcNow() + Offset;
     }
