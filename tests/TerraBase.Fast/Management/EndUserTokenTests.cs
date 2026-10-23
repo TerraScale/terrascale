@@ -8,6 +8,8 @@ namespace TerraBase.Fast.Management;
 
 public sealed class EndUserTokenTests
 {
+    private static readonly string[] AdminRoles = ["admin"];
+
     [Test]
     public async Task End_users_cannot_use_SQL_management_or_collection_metadata_even_with_an_admin_role()
     {
@@ -113,7 +115,7 @@ public sealed class EndUserTokenTests
             token.Claims["token_kind"] = "end_user";
             token.Claims["project_id"] = project;
             token.Claims["instance_id"] = project;
-            token.Claims["roles"] = new[] { "admin" };
+            token.Claims["roles"] = AdminRoles;
             edit?.Invoke(token);
         });
 }
