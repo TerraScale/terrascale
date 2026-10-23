@@ -290,6 +290,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             flow.Checks.Add("empty notification filtering/paging, native mutation authorization and live Datastar modal patch");
             flow.Checks.Add("Empty new-account inbox checked here; NotificationBrowserJourneyTests separately covers seeded native per-item and Datastar read-all updates on desktop/mobile.");
 
+            await fixture.PlanAsync(Text(original, "organizationId")!, OrganizationRecord.StarterPlanId); // Free allows only the onboarding project
             await flow.GotoAsync(ownerPage, "/organization?tab=projects&newProject=1");
             await ownerPage.Locator("#create-project[open]").WaitForAsync();
             await ownerPage.Locator("#project-name").FillAsync("Disposable " + slug);

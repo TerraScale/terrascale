@@ -1,8 +1,11 @@
 using System.Net;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.DotNet.TerraBase;
 using TUnit.Core.Interfaces;
 
 namespace TerraScale.Dashboard.E2E;
@@ -40,6 +43,18 @@ public sealed class DashboardE2EFixture : IAsyncInitializer, IAsyncDisposable
         CookieContainer = new CookieContainer()
     })
     { BaseAddress = replica ? ReplicaOrigin : Origin, Timeout = TimeSpan.FromSeconds(30) };
+
+    // Test admission permits more projects than Free allows; it does not simulate a paid checkout.
+    public async Task PlanAsync(string organizationId, string planId)
+    {
+        var state = first!.Services.GetRequiredService<IDashboardState>();
+        var current = await state.GetAsync(AccountService.OrganizationsCollection, organizationId, default)
+            ?? throw new InvalidOperationException("The fixture plan targets an existing organization");
+        var organization = current.Document.Deserialize<OrganizationRecord>()!;
+        organization.PlanId = planId;
+        await state.PutAsync(AccountService.OrganizationsCollection, organizationId, JsonSerializer.SerializeToElement(organization),
+            TerraBasePrecondition.Matches(current.Version), default);
+    }
 
     public async ValueTask DisposeAsync()
     {
