@@ -1,0 +1,27 @@
+name: publish
+
+# Publishes to PyPI with trusted publishing (no token) when a v* tag is pushed.
+# PyPI side: project "terrascale", owner TerraScale, repo ts-python,
+# workflow publish.yml, environment pypi.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: tag matches version
+        run: test "v$(sed -n 's/__version__ = "\(.*\)"/\1/p' src/terrascale/_version.py)" = "${GITHUB_REF_NAME}"
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1

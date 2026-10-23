@@ -1,0 +1,163 @@
+"""API key token exchange with ts-auth.
+
+A TerraScale API key (``<ULID>_<52 secret chars>``) is an OAuth client
+credential. It is exchanged at ``<issuer>/oauth/token`` (client_credentials,
+HTTP Basic) for a short-lived project access token, which TerraBase accepts
+as ``Authorization: Bearer``. Sending the API key itself as a bearer fails.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import re
+import threading
+import time
+from collections.abc import Sequence
+from typing import Any
+from urllib.parse import quote_plus
+
+import httpx
+
+from .errors import TokenError, parse_retry_after
+from .ids import validate_id
+
+__all__ = ["DEFAULT_ISSUER", "SCOPES", "APIKeyTokenSource", "AsyncAPIKeyTokenSource"]
+
+DEFAULT_ISSUER = "https://auth.terrascale.tech/terrascale"
+SCOPES = ("databases:read", "databases:write", "documents:read", "documents:write")
+
+_KEY = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$")
+
+
+class _Exchange:
+    """Validated request parts and the shared caching rule."""
+
+    def __init__(self, api_key: str, project: str | None, scopes: Sequence[str] | None, issuer: str | None):
+        if not isinstance(api_key, str) or not _KEY.fullmatch(api_key):
+            # Never echo the value: it is a secret.
+            raise ValueError("api_key must be a TerraScale API key: a ULID, '_' and 52 secret characters")
+        for scope in scopes or ():
+            if scope not in SCOPES:
+                raise ValueError(f"scope {scope!r} is not one of {', '.join(SCOPES)}")
+        if project is not None:
+            validate_id(project, "project")
+        issuer = (issuer or DEFAULT_ISSUER).rstrip("/")
+        url = httpx.URL(issuer)
+        loopback = url.host in ("localhost", "127.0.0.1", "::1")
+        if url.scheme != "https" and not (url.scheme == "http" and loopback):
+            raise ValueError("issuer must be an https URL")
+        self.endpoint = issuer + "/oauth/token"
+        self.form: dict[str, str] = {"grant_type": "client_credentials"}
+        if project:
+            self.form["project"] = project
+        if scopes:
+            self.form["scope"] = " ".join(scopes)
+        client_id = api_key[:26]
+        pair = f"{quote_plus(client_id)}:{quote_plus(api_key)}".encode()
+        self._auth = "Basic " + base64.b64encode(pair).decode()
+        self.token: str | None = None
+        self.refresh_at = 0.0
+
+    def headers(self) -> dict[str, str]:
+        return {"Authorization": self._auth, "Accept": "application/json"}
+
+    def cached(self) -> str | None:
+        if self.token and time.monotonic() < self.refresh_at:
+            return self.token
+        return None
+
+    def accept(self, response: httpx.Response, started: float) -> str:
+        if response.status_code != 200:
+            try:
+                body: Any = response.json()
+            except ValueError:
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+            raise TokenError(
+                response.status_code,
+                str(body.get("error") or ""),
+                str(body.get("error_description") or ""),
+                parse_retry_after(response.headers.get("retry-after")),
+            )
+        try:
+            body = response.json()
+            token = body["access_token"]
+            lifetime = float(body["expires_in"])
+            ok = isinstance(token, str) and token and str(body.get("token_type", "")).lower() == "bearer"
+        except (ValueError, KeyError, TypeError):
+            ok = False
+        if not ok or lifetime <= 0:
+            # The body may hold credentials: never include it.
+            raise TokenError(response.status_code, "invalid_token_response", "not a Bearer access_token with expires_in")
+        self.token = token
+        # Refresh a minute early (or at half-life for short tokens); the
+        # lifetime counts from before the request.
+        self.refresh_at = started + lifetime - min(60.0, lifetime / 2)
+        return token
+
+    def invalidate(self, token: str) -> None:
+        if self.token == token:
+            self.token = None
+
+
+class APIKeyTokenSource:
+    """Thread-safe, caching source of access tokens for an API key."""
+
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        project: str | None = None,
+        scopes: Sequence[str] | None = None,
+        issuer: str | None = None,
+        http_client: httpx.Client | None = None,
+    ):
+        self._x = _Exchange(api_key, project, scopes, issuer)
+        self._http = http_client or httpx.Client(timeout=30.0, follow_redirects=False)
+        self._lock = threading.Lock()
+
+    def token(self) -> str:
+        with self._lock:
+            cached = self._x.cached()
+            if cached:
+                return cached
+            started = time.monotonic()
+            response = self._http.post(self._x.endpoint, data=self._x.form, headers=self._x.headers())
+            return self._x.accept(response, started)
+
+    def invalidate(self, token: str) -> None:
+        """Drop token after a resource server refused it (401)."""
+        self._x.invalidate(token)
+
+
+class AsyncAPIKeyTokenSource:
+    """Asyncio counterpart of :class:`APIKeyTokenSource`."""
+
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        project: str | None = None,
+        scopes: Sequence[str] | None = None,
+        issuer: str | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ):
+        self._x = _Exchange(api_key, project, scopes, issuer)
+        self._http = http_client or httpx.AsyncClient(timeout=30.0, follow_redirects=False)
+        self._lock: asyncio.Lock | None = None
+
+    async def token(self) -> str:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            cached = self._x.cached()
+            if cached:
+                return cached
+            started = time.monotonic()
+            response = await self._http.post(self._x.endpoint, data=self._x.form, headers=self._x.headers())
+            return self._x.accept(response, started)
+
+    def invalidate(self, token: str) -> None:
+        self._x.invalidate(token)
