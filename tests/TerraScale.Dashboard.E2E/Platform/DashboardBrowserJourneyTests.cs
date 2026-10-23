@@ -122,6 +122,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
                 await page.Locator("#accessTokenName").FillAsync(name);
                 // Creating a token signs in again through the hosted page; the callback renders the secret once.
                 await SubmitAsync("#profile-access-token-create form", "Create token");
+                await page.GetByRole(AriaRole.Link, new() { Name = "Continue as Test User", Exact = true }).ClickAsync();
                 var secret = await page.Locator("#access-token-secret").InputValueAsync();
                 await Assert.That(secret).Matches("^tspat_[A-Za-z0-9_-]{43}$");
                 var mcp = await McpAsync(new { jsonrpc = "2.0", id = 1, method = "tools/call", @params = new { name = "list_databases", arguments = new { } } });

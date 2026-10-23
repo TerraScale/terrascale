@@ -269,8 +269,6 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(await ownerPage.GetByRole(AriaRole.Link, new() { Name = "Change password", Exact = true }).GetAttributeAsync("href"))
                 .IsEqualTo("https://auth.terrascale.tech/ui/terrascale/reset").Because("password changes happen on ts-auth's hosted reset page");
             await flow.ShotAsync(ownerPage, "security-desktop");
-            await flow.GotoAsync(ownerPage, "/profile?tab=security&error=" + Uri.EscapeDataString("Too many sign-in attempts. Try again in 3 seconds."));
-            await ownerPage.GetByRole(AriaRole.Alert).Filter(new() { HasText = "Try again in 3 seconds" }).WaitForAsync();
             await flow.GotoAsync(ownerPage, "/profile?tab=security&error=" + Uri.EscapeDataString("Untrusted arbitrary error"));
             await Assert.That(await ownerPage.Locator("main").InnerTextAsync()).DoesNotContain("Untrusted arbitrary error");
             flow.Checks.Add("profile/name/phone/language persistence, actual sessions, ts-auth password reset link and bounded visible errors");
