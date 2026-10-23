@@ -86,6 +86,26 @@ internal sealed record HranaError(string Message, string Code)
 /// </summary>
 internal sealed record HranaErrorBody(string Error, string Message, string Code);
 
+/// <summary>A cursor body: the stream's baton and one batch.</summary>
+internal sealed record HranaCursorRequest(string? Baton, HranaBatch Batch);
+
+/// <summary>The cursor's first line: the baton that continues the stream; no base URL.</summary>
+internal sealed record HranaCursorHead(string? Baton, string? BaseUrl);
+
+/// <summary>A cursor line: <c>step_begin</c> (step, cols), <c>row</c> (row), <c>step_error</c> (step, error) or <c>error</c> (error).</summary>
+internal sealed record HranaCursorEntry(
+    string Type,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Step = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<HranaCol>? Cols = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<SqlValue>? Row = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HranaError? Error = null);
+
+/// <summary>
+/// A cursor <c>step_end</c>. Unlike a pipeline result, the Rust client reads this <c>last_insert_rowid</c> as a JSON
+/// number, not a string.
+/// </summary>
+internal sealed record HranaStepEnd(string Type, long AffectedRowCount, long? LastInsertRowid);
+
 /// <summary>Writes SQL values in Hrana's JSON form (integers as decimal strings).</summary>
 internal sealed class HranaValueConverter : JsonConverter<SqlValue>
 {
@@ -140,4 +160,8 @@ internal sealed class HranaValueConverter : JsonConverter<SqlValue>
 [JsonSerializable(typeof(HranaBatchResult))]
 [JsonSerializable(typeof(HranaDescribeResult))]
 [JsonSerializable(typeof(HranaErrorBody))]
+[JsonSerializable(typeof(HranaCursorRequest))]
+[JsonSerializable(typeof(HranaCursorHead))]
+[JsonSerializable(typeof(HranaCursorEntry))]
+[JsonSerializable(typeof(HranaStepEnd))]
 internal sealed partial class HranaJsonContext : JsonSerializerContext;

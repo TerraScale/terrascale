@@ -12,19 +12,26 @@ public static class HranaExtensions
         // Runs after the generic examples, which do not know the Hrana bodies.
         .AddOpenApi("v1", options => options.AddOperationTransformer((operation, _, _) =>
         {
-            if (operation.OperationId != "libsqlPipeline")
+            if (operation.OperationId is not ("libsqlPipeline" or "libsqlCursor"))
             {
                 return Task.CompletedTask;
             }
 
-            Example(operation.RequestBody?.Content, """{"baton":null,"requests":[{"type":"execute","stmt":{"sql":"SELECT name FROM people WHERE id = ?","args":[{"type":"integer","value":"1"}]}},{"type":"close"}]}""");
+            var cursor = operation.OperationId == "libsqlCursor";
+            Example(operation.RequestBody?.Content, cursor
+                ? """{"baton":null,"batch":{"steps":[{"stmt":{"sql":"SELECT name FROM people WHERE id = ?","args":[{"type":"integer","value":"1"}],"want_rows":true}}]}}"""
+                : """{"baton":null,"requests":[{"type":"execute","stmt":{"sql":"SELECT name FROM people WHERE id = ?","args":[{"type":"integer","value":"1"}]}},{"type":"close"}]}""");
             if (operation.Responses?["400"] is Microsoft.OpenApi.OpenApiResponse invalid)
             {
                 invalid.Description = "Bad request: PROTOCOL_ERROR (malformed body) or STREAM_EXPIRED (unknown, closed or idle baton).";
                 Example(invalid.Content, """{"error":"stream not found: the baton is unknown or expired; open a new stream","message":"stream not found: the baton is unknown or expired; open a new stream","code":"STREAM_EXPIRED"}""");
             }
 
-            Example(operation.Responses?["200"].Content, """{"baton":null,"base_url":null,"results":[{"type":"ok","response":{"type":"execute","result":{"cols":[{"name":"name","decltype":"TEXT"}],"rows":[[{"type":"text","value":"Ada"}]],"affected_row_count":0,"last_insert_rowid":null}}},{"type":"ok","response":{"type":"close"}}]}""");
+            Example(operation.Responses?["200"].Content, cursor
+                ? """
+                  "{\"baton\":\"opaque-baton\",\"base_url\":null}\n{\"type\":\"step_begin\",\"step\":0,\"cols\":[{\"name\":\"name\",\"decltype\":\"TEXT\"}]}\n{\"type\":\"row\",\"row\":[{\"type\":\"text\",\"value\":\"Ada\"}]}\n{\"type\":\"step_end\",\"affected_row_count\":0,\"last_insert_rowid\":null}\n"
+                  """
+                : """{"baton":null,"base_url":null,"results":[{"type":"ok","response":{"type":"execute","result":{"cols":[{"name":"name","decltype":"TEXT"}],"rows":[[{"type":"text","value":"Ada"}]],"affected_row_count":0,"last_insert_rowid":null}}},{"type":"ok","response":{"type":"close"}}]}""");
             return Task.CompletedTask;
         }));
 
