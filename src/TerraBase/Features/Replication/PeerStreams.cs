@@ -36,6 +36,10 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private static readonly Unavailable NoRemote =
         new("no machine of another region that holds the database is connected; this write executed nothing, retry later", "remote_region_unavailable");
 
+    private static readonly Conflict SingleCopy =
+        new("the database is placed in its home region alone and takes no writes; this write executed nothing, add replicaRegions or allRegions",
+            "placement_needs_two_regions");
+
     private readonly IMembership _membership;
     private readonly PeerCredential _credential;
     private readonly IChangeGroupSource _source;
@@ -90,10 +94,15 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         return view.Elsewhere.IsDefault ? [] : [.. view.Elsewhere.Select(member => member.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
     }
 
-    public async ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) =>
-        Eligible(await PlacementAsync(database, cancellationToken).ConfigureAwait(false))
-            ? _acks.TryAdmit(database)
+    public async ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        // Every replica region removed (the step before a delete): no other region will ever confirm until a placement update
+        // adds one, so the refusal is a conflict, not a retryable outage. An all-regions database waits for regions to serve.
+        var placement = await PlacementAsync(database, cancellationToken).ConfigureAwait(false);
+        return placement is { AllRegions: false, Replicas.Count: 0 } ? SingleCopy
+            : Eligible(placement) ? _acks.TryAdmit(database)
             : NoRemote;
+    }
 
     public async ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken)
     {

@@ -43,7 +43,7 @@ internal static class DocumentRoute
     public const string Document = Collection + "/by-key";
 
     /// <summary>The durability barrier and retry semantics shared by single-document mutations.</summary>
-    public const string WriteDurabilityDescription = "Mutations in a cell wait up to 10 seconds for another placed region's durable acknowledgement and answer remote_durable; a cell of one answers local_durable. Before execution, 503 remote_region_unavailable or confirmation_busy carries Retry-After. An ambiguous commit or missing acknowledgement answers 503 write_outcome_unknown with region and machine, without Retry-After; never replay it automatically.";
+    public const string WriteDurabilityDescription = "Mutations in a cell wait up to 10 seconds for another placed region's durable acknowledgement and answer remote_durable; a cell of one answers local_durable. Before execution, 503 remote_region_unavailable or confirmation_busy carries Retry-After; a database placed in its home region alone answers 409 placement_needs_two_regions until a placement update adds a region. An ambiguous commit or missing acknowledgement answers 503 write_outcome_unknown with region and machine, without Retry-After; never replay it automatically.";
 
     /// <summary>Largest request body of any other route.</summary>
     public const int MaxRequestBytes = 4 * 1024 * 1024;

@@ -248,6 +248,41 @@ public sealed class CatalogGateTests
         }
     }
 
+    // A change that commits while another anchor write is in flight (the periodic one, or another change's) waits for it and
+    // is acknowledged, rather than answering catalog_anchor_unavailable for a change that committed.
+    [Test]
+    public async Task An_anchor_write_waits_for_the_one_in_flight_and_a_deletion_behind_it_succeeds()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var host = await BackupShippingHost.StartAsync();
+        var gate = host.Api.Server.Services.GetRequiredService<ICatalogGate>();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var held = 0;
+        host.S3.BeforePut = async (key, cancellationToken) =>
+        {
+            if (key.StartsWith("catalog-anchor/", StringComparison.Ordinal) && Interlocked.Exchange(ref held, 1) == 0)
+            {
+                entered.SetResult();
+                await release.Task.WaitAsync(cancellationToken);
+            }
+        };
+        await host.Api.CreateOrganizationAsync("anchor-in-flight");
+        var inFlight = gate.TryAnchorAsync(token);
+        await entered.Task.WaitAsync(token);
+
+        await host.Api.CreateOrganizationAsync("anchor-behind");
+        var behind = gate.TryAnchorAsync(token);
+        await Assert.That(behind.IsCompleted).IsFalse().Because("a second anchor write waits for the writer in flight instead of failing");
+        var deleting = host.Api.Client.DeleteAsync(ManagementApi.Uri(host.Database.Path), token);
+
+        release.SetResult();
+        await Assert.That(await inFlight).IsTrue();
+        await Assert.That(await behind).IsTrue();
+        using var deleted = await deleting;
+        await Assert.That(deleted.IsSuccessStatusCode).IsTrue().Because(await deleted.Content.ReadAsStringAsync(token));
+    }
+
     [Test]
     [Arguments("present")]
     [Arguments("missing")]

@@ -26,8 +26,9 @@ public interface IRemoteDurability
 
     /// <summary>
     /// Admits one write attempt of <paramref name="database"/> before it executes (decision 0013a section 2): refused with
-    /// <c>remote_region_unavailable</c> while no machine of another placed region has a connected stream, and with
-    /// <c>confirmation_busy</c> past the waiter bounds. Dispose the lease once the attempt is answered.
+    /// <c>remote_region_unavailable</c> while no machine of another placed region has a connected stream, with
+    /// <c>confirmation_busy</c> past the waiter bounds, and with the conflict <c>placement_needs_two_regions</c> while the
+    /// database is placed in its home region alone (no retry can succeed until a placement update adds a region). Dispose the lease once the attempt is answered.
     /// </summary>
     ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken);
 
@@ -49,7 +50,7 @@ public interface IRemoteDurability
 }
 
 /// <summary>An admitted write attempt, or why it was refused before execution.</summary>
-public readonly union RemoteAdmission(RemoteLease, Unavailable);
+public readonly union RemoteAdmission(RemoteLease, Unavailable, Conflict);
 
 /// <summary>One admitted write attempt's waiter slot; disposing it releases the slot once.</summary>
 public sealed class RemoteLease(Action? release) : IDisposable

@@ -229,6 +229,32 @@ public sealed class RemoteAckTests
         await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
+    // Every replica region removed (the step before a delete): no retry can succeed, so the write is refused with a conflict and
+    // no Retry-After, until a placement update adds a region back.
+    [Test]
+    public async Task A_database_left_in_its_home_region_alone_refuses_writes_with_a_conflict_until_a_region_is_added()
+    {
+        await using var pair = await Pair.StartAsync();
+        await Assert.That(await pair.SetReplicaRegionsAsync([])).IsTrue();
+        var id = EntityIds.New().ToString();
+        using var response = await pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("error").GetProperty("code").GetString())
+            .IsEqualTo("placement_needs_two_regions");
+        await Assert.That(response.Headers.RetryAfter).IsNull();
+        using (var absent = await pair.Client.GetAsync(pair.Document(id), pair.Token))
+        {
+            await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+
+        await Assert.That(await pair.SetReplicaRegionsAsync(["sjc"])).IsTrue();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            using var written = await pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 2 }, token);
+            return written.IsSuccessStatusCode;
+        }, TimeSpan.FromSeconds(30));
+    }
+
     [Test]
     public async Task An_unknown_database_keeps_its_404_even_when_the_peer_is_down()
     {
@@ -1549,6 +1575,11 @@ public sealed class RemoteAckTests
 
         // Holds the sender's head capture of every database of the tenant but db (a copy) until it completes.
         public TaskCompletionSource? HoldHead { get; set; }
+
+        // Sets db's replica regions on the origin through the management service; whether it was updated.
+        public async Task<bool> SetReplicaRegionsAsync(IReadOnlyList<string> regions) =>
+            await _origin!.Server.Services.GetRequiredService<IManagementService>().SetDatabaseRegionsAsync(
+                _tenant!.UserId, _tenant.OrganizationId, _tenant.ProjectId, Database.DatabaseId!, regions, Token) is ManagedDatabase;
 
         // Copies db on the origin through the management service (as a restore copies its snapshot) and binds it on the peer.
         public async Task<TenantContext> CopyAsync(string name)

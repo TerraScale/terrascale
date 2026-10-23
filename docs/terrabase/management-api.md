@@ -301,7 +301,8 @@ Region ids are Atlas region ids (`gru-1`, `sfo-1`), the values of `X-TerraBase-R
     answers `503 remote_region_unavailable` and creates nothing.
   - A create with an empty `replicaRegions` answers `400 placement_needs_two_regions`.
   - A `PATCH` may still remove every replica region, which is the step before a delete. That database then takes no
-    writes until a region is added back: under 0013a its writes are refused with `503 remote_region_unavailable`.
+    writes until a region is added back: its writes are refused with `409 placement_needs_two_regions`, without
+    `Retry-After` ([0013c](decisions/0013c-single-region-write-conflict.md)).
   - A machine without a member directory (development, single-machine tests) is a cell of one. It still
     defaults to no replica regions.
 - `PATCH` sets the complete new `replicaRegions`; `homeRegion` may be repeated but cannot change. An added region takes
