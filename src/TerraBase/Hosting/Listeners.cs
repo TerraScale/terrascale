@@ -1,11 +1,13 @@
 using System.Diagnostics.Metrics;
 using System.Net;
+using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.OpenApi;
 using TerraBase.Configuration;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.Management;
+using TerraBase.Features.Postgres;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Replication;
 
@@ -25,6 +27,9 @@ public enum TerraBaseListener
 
     /// <summary>The Prometheus scrape Fly's metrics collector reads (<c>[[metrics]]</c>); every interface, no Fly Proxy service.</summary>
     Metrics,
+
+    /// <summary>PostgreSQL wire protocol 3.0, plaintext behind the platform edge (TLS ends there), authorized by API keys.</summary>
+    Postgres,
 }
 
 /// <summary>
@@ -184,7 +189,7 @@ public static class Listeners
         {
             connection.Items[ListenerKey] = listener;
             using var drain = listen.ApplicationServices.GetRequiredService<Shutdown>().Drain(connection);
-            var pressure = listener == TerraBaseListener.Client ? listen.ApplicationServices.GetRequiredService<IPressureSignals>() : null;
+            var pressure = listener is TerraBaseListener.Client or TerraBaseListener.Postgres ? listen.ApplicationServices.GetRequiredService<IPressureSignals>() : null;
             pressure?.ConnectionOpened();
             try
             {
@@ -209,8 +214,8 @@ public static class Listeners
     }
 
     /// <summary>
-    /// Binds the internal listener on <paramref name="internalAddress"/>, then the public and the metrics listeners, in that
-    /// order. Those two bind every interface, except in local development (Development off Fly), where nothing but this
+    /// Binds the internal listener on <paramref name="internalAddress"/>, then the public, metrics and postgres listeners, in
+    /// that order. Those three bind every interface, except in local development (Development off Fly), where nothing but this
     /// machine may reach them: loopback only.
     /// </summary>
     public static void AddTerraBaseListeners(this KestrelServerOptions kestrel, TerraBaseOptions options, IPAddress internalAddress, string environmentName)
@@ -226,6 +231,7 @@ public static class Listeners
         });
         Bind(options.Port, TerraBaseListener.Client);
         Bind(options.MetricsPort, TerraBaseListener.Metrics);
+        Bind(options.PostgresPort, TerraBaseListener.Postgres);
 
         void Bind(int port, TerraBaseListener listener)
         {
@@ -233,6 +239,10 @@ public static class Listeners
             {
                 listen.Protocols = HttpProtocols.Http1;
                 listen.UseTerraBaseListener(listener);
+                if (listener == TerraBaseListener.Postgres)
+                {
+                    listen.UseConnectionHandler<PostgresConnectionHandler>();
+                }
             }
 
             // Not ListenLocalhost: it refuses port 0, which tests use.

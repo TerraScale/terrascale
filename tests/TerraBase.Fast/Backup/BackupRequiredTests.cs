@@ -68,6 +68,7 @@ public sealed class BackupRequiredTests
             start.ArgumentList.Add("--port=0");
             start.ArgumentList.Add("--internal-port=0");
             start.ArgumentList.Add("--metrics-port=0");
+            start.ArgumentList.Add("--postgres-port=0");
             start.ArgumentList.Add($"--data-directory={directory}");
 
             using var process = Process.Start(start) ?? throw new InvalidOperationException("the TerraBase process did not start");
