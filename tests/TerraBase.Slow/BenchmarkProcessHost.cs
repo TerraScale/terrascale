@@ -107,7 +107,7 @@ public sealed class BenchmarkProcessHost
             await WriteAsync(listening, new JsonObject { ["peer_url"] = api.Server.PeerAddress!.ToString() }.ToJsonString(), cancellationToken);
             await WriteAsync(member, $"{region}\n{advertised ?? api.Server.PeerAddress!.ToString()}", cancellationToken);
             await RegisterAsync(api, config, cancellationToken);
-            await api.VerifyProjectBindingAsync(Get("organization"), Get("project"));
+            await WaitForProjectBindingAsync(api, Get("organization"), Get("project"), cancellationToken);
             var token = api.Issuer.Mint(api.User, descriptor =>
             {
                 descriptor.Claims["project_id"] = Get("project");
@@ -159,6 +159,24 @@ public sealed class BenchmarkProcessHost
             File.Delete(listening);
             File.Delete(member);
         }
+    }
+
+    internal static async Task WaitForProjectBindingAsync(ManagementApi api, string organization, string project, CancellationToken cancellationToken)
+    {
+        using var client = api.As(api.User);
+        await TerraBaseTestServer.EventuallyAsync(async cancel =>
+        {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancel, cancellationToken);
+            try
+            {
+                await api.VerifyProjectBindingAsync(organization, project, client).WaitAsync(linked.Token);
+                return true;
+            }
+            catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.ServiceUnavailable)
+            {
+                return false;
+            }
+        }, TimeSpan.FromMinutes(2));
     }
 
     internal static async Task WaitForWritesAsync(HttpClient client, Uri collections, string? requiredCollection, CancellationToken cancellationToken)
