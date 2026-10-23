@@ -247,13 +247,19 @@ public sealed class A6ProductionRebuildTests
                 return command.ExecuteScalar() is not null;
             }, "checking operation protection", CancellationToken.None);
         }
-        await Assert.That(await IntentAsync()).IsFalse();
+        // The last operation's intent lingers while the copy may be written again, then retires (decision 0013e).
+        Task RetiredAsync()
+        {
+            return TerraBaseTestServer.EventuallyAsync(async _ => !await IntentAsync(), TimeSpan.FromSeconds(30));
+        }
+        await RetiredAsync();
         await using var tap = (TursoChangeTap)(await engine.OpenTapAsync(database, CancellationToken.None))!;
         await DurableWriteAsync(api, database);
         tap.BeforeTrim = _ => throw new IOException("backup destination failed after reading");
         _ = await Assert.ThrowsAsync<IOException>(async () => await tap.ReadAsync(Stream.Null, CancellationToken.None));
         tap.BeforeTrim = null;
-        await Assert.That(await IntentAsync()).IsFalse().Because("an idle tap and a clean output failure leave no native work");
+        // An idle tap and a clean output failure leave no native work: nothing keeps the intent.
+        await RetiredAsync();
         await using (var read = await store.BeginTransactionAsync(write: false, CancellationToken.None))
         {
             await Assert.That(await IntentAsync()).IsFalse().Because("a read-only transaction cannot leave unsynced pages behind");
@@ -268,7 +274,51 @@ public sealed class A6ProductionRebuildTests
         await Assert.That(await IntentAsync()).IsTrue().Because("the other native operation is still active");
         second.Complete();
         await second.DisposeAsync();
-        await Assert.That(await IntentAsync()).IsFalse();
+        await RetiredAsync();
+    }
+
+    // Back-to-back operations share one recorded intent (no journal commit between them): it is retired once the copy stayed
+    // idle for IntentLinger, and the next operation records it again (decision 0013e).
+    [Test]
+    public async Task Back_to_back_operations_share_one_intent_that_retires_once_the_copy_stays_idle()
+    {
+        await using var api = await StartAsync(directory: null);
+        var (database, _) = await CreateDatabaseAsync(api);
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None)
+            ?? throw new InvalidOperationException("the test copy is missing"));
+        Task<long?> IntentRowAsync()
+        {
+            return engine.IntentStore!.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT rowid FROM _tb_write_intent WHERE database = $database;";
+                command.Parameters.AddWithValue("$database", database.DatabaseId);
+                return command.ExecuteScalar() as long?;
+            }, "reading the copy's intent", CancellationToken.None);
+        }
+        async Task OperateAsync()
+        {
+            var operation = await store.BeginOperationAsync(CancellationToken.None) ?? throw new InvalidOperationException("no ledger");
+            operation.Complete();
+            await operation.DisposeAsync();
+        }
+
+        await TerraBaseTestServer.EventuallyAsync(async _ => await IntentRowAsync() is null, TimeSpan.FromSeconds(30));
+        var clock = new FakeTimeProvider();
+        store.IntentClock = clock;
+        await OperateAsync();
+        await Assert.That(await IntentRowAsync()).IsNotNull();
+        var journal = engine.IntentStore!.CommitSequence;
+        await OperateAsync();
+        await OperateAsync();
+        await Assert.That(engine.IntentStore!.CommitSequence).IsEqualTo(journal).Because("the later operations reuse the lingering intent");
+        await Assert.That(await IntentRowAsync()).IsNotNull();
+
+        clock.Advance(TursoDatabaseStore.IntentLinger);
+        await TerraBaseTestServer.EventuallyAsync(async _ => await IntentRowAsync() is null, TimeSpan.FromSeconds(30));
+        await OperateAsync();
+        await Assert.That(await IntentRowAsync()).IsNotNull().Because("an operation after the retire records the intent again");
     }
 
     // FlagAsync writes the mark without the ledger's gate, so an operation that starts later must not turn it back into an

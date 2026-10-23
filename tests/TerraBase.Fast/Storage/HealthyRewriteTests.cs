@@ -135,6 +135,45 @@ public sealed class HealthyRewriteTests
         await Assert.That(await read.GetAsync(Probe, StorageFixture.Id("queued"), token)).IsNotNull();
     }
 
+    // A write's intent lingers after it (decision 0013f); a rewrite retires it before the swap, so the next write records one
+    // for the new incarnation and no row names the old one.
+    [Test]
+    public async Task A_rewrite_retires_the_lingering_intent_and_the_next_write_records_one_for_the_new_incarnation()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var engine = server.Services.GetRequiredService<TursoStorageEngine>();
+        var (database, store) = await CreateAsync(engine, token);
+        Task<string[]> IntentsAsync()
+        {
+            return engine.IntentStore!.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT incarnation FROM _tb_write_intent WHERE database = $database ORDER BY incarnation;";
+                command.Parameters.AddWithValue("$database", database.DatabaseId);
+                using var reader = command.ExecuteReader();
+                var found = new List<string>();
+                while (reader.Read())
+                {
+                    found.Add(reader.GetString(0));
+                }
+
+                return found.ToArray();
+            }, "a test reading write intents", token);
+        }
+
+        await PutAsync(store, StorageFixture.Id("first"), """{"name":"first"}""", token);
+        var source = store.Incarnation;
+        await Assert.That(await IntentsAsync()).IsEquivalentTo([source.ToString()]).Because("the intent lingers after the write");
+
+        var rewrite = await engine.RewriteAsync(database, 0, token);
+        await Assert.That(rewrite.TargetIncarnation).IsNotEqualTo(source);
+        await Assert.That(await IntentsAsync()).IsEmpty();
+
+        await PutAsync(store, StorageFixture.Id("second"), """{"name":"second"}""", token);
+        await Assert.That(await IntentsAsync()).IsEquivalentTo([rewrite.TargetIncarnation.ToString()]);
+    }
+
     [Test]
     public async Task A_rewrite_that_does_not_drain_is_refused_and_leaves_the_old_file_serving()
     {

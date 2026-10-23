@@ -40,6 +40,18 @@ internal sealed partial class TursoDatabaseStore
                     await _operations.WaitAsync(cancellationToken).ConfigureAwait(false);
                     if (_activeOperations == 0)
                     {
+                        // A lingering intent names this incarnation: retire it before the swap, so the next operation records
+                        // one for the new incarnation (decision 0013f).
+                        try
+                        {
+                            await RetireLingeringIntentAsync().ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            _operations.Release();
+                            throw;
+                        }
+
                         quiesced.Operations = true;
                         break;
                     }
