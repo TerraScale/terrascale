@@ -339,7 +339,10 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                 return new Forbidden("the collection rules deny this operation", "access_denied");
             }
 
-            query = query with { Filter = CollectionRuleAccess.And(query.Filter, CollectionRuleAccess.Filter(rules!, access)) };
+            if (CollectionRuleAccess.Filter(rules!, access) is { } authorization)
+            {
+                query = query with { Filter = new AuthorizedFilter(authorization, query.Filter) };
+            }
         }
 
         try
@@ -882,7 +885,10 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                         if (access is { IsEndUser: true }
                             && await transaction.GetCollectionRulesAsync(assertCount.Collection, cancellationToken).ConfigureAwait(false) is { } rules)
                         {
-                            filter = CollectionRuleAccess.And(filter, CollectionRuleAccess.Filter(rules, access));
+                            if (CollectionRuleAccess.Filter(rules, access) is { } authorization)
+                            {
+                                filter = new AuthorizedFilter(authorization, filter);
+                            }
                         }
 
                         (count, complete) = await transaction.CountAsync(assertCount.Collection, filter, MaxAssertCount, cancellationToken)
