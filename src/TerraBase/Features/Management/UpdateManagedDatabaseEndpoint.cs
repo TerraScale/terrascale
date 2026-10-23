@@ -1,6 +1,7 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Regions;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -8,7 +9,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>PATCH …/databases/{database}</c>: sets a database's replica regions (docs/cross-region.md).</summary>
-public sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<DatabaseRegionsRequest, IResult>
+public sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions) : Endpoint<DatabaseRegionsRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -17,7 +18,7 @@ public sealed class UpdateManagedDatabaseEndpoint(IManagementService management,
         Metadata(AnchoredRevocation.Instance);
         Name("updateDatabase");
         Summary("Sets a database's replica regions");
-        Description("Body {\"replicaRegions\":[…]}, the complete new list of regions besides the home region that hold a full copy and serve the database, or {\"allRegions\":true}: a full copy in every serving region, including regions that join later (400 placement_conflict with both). A replicaRegions list turns allRegions off. homeRegion may be sent but cannot change; a name cannot change. Sent to the database's home region; any other answers 421 wrong_region with X-TerraBase-Database-Home. An added region takes the database once it registers the project under the same ids; a removed region stops serving it and drops its copy." + " " + ProjectApiRoute.IdentityDescription);
+        Description("Body {\"replicaRegions\":[…]}, the complete new list of regions besides the home region that hold a full copy and serve the database, or {\"allRegions\":true}: a full copy in every serving region, including regions that join later (400 placement_conflict with both). A replicaRegions list turns allRegions off; it names regions of GET /v1/regions or regions the database is already placed in (400 invalid_request naming the serving regions otherwise), so a removed region can be added back. homeRegion may be sent but cannot change; a name cannot change. Sent to the database's home region; any other answers 421 wrong_region with X-TerraBase-Database-Home. An added region takes the database once it registers the project under the same ids; a removed region stops serving it and drops its copy." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -57,7 +58,9 @@ public sealed class UpdateManagedDatabaseEndpoint(IManagementService management,
             : request.HomeRegion is { } requested && requested != home ? new Validation("homeRegion cannot change")
             : request.AllRegions == true ? request.ReplicaRegions is null ? Array.Empty<string>() : DatabaseRegions.AllOrListed
             : request.ReplicaRegions is not { } replicas ? new Validation("replicaRegions or allRegions is required")
-            : DatabaseRegions.Check(home, replicas, created: false);
+            : DatabaseRegions.Check(home, replicas, created: false) is Validation invalid ? invalid
+            : DatabaseRegions.Unserved("replicaRegions", replicas, [.. (await regions.ServingAsync(cancellationToken).ConfigureAwait(false)).Union(database.Regions(home), StringComparer.Ordinal)]) is { } unserved ? unserved
+            : replicas;
         return checkedRegions switch
         {
             Validation error => ErrorResponse.From(error),

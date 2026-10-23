@@ -17,6 +17,7 @@ using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Pressure;
+using TerraBase.Features.Regions;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
@@ -164,6 +165,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(QueryShapeStats))]
 [JsonSerializable(typeof(RestoreWindow))]
 [JsonSerializable(typeof(RoleRequest))]
+[JsonSerializable(typeof(RegionsBody))]
 [JsonSerializable(typeof(ReplicationHealthBody))]
 [JsonSerializable(typeof(SavedQuery))]
 [JsonSerializable(typeof(SavedQueryEntry))]

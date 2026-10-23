@@ -200,7 +200,7 @@ public sealed class ImportHardeningTests
     [Test]
     public async Task One_organization_cannot_take_the_whole_staging_budget_and_replicated_destinations_import()
     {
-        await using var client = await ImportClient.StartAsync();
+        await using var client = await ImportClient.StartAsync(new OtherRegions(ReplicaRegions).Register);
         const long Declared = 600L * 1024 * 1024;
         var first = await client.CreateDestinationAsync();
         var second = await client.CreateDestinationAsync();
