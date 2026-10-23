@@ -12,7 +12,8 @@ namespace TerraScale.Authentication.Fast.Management;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed partial class InvitationTests(TerraBaseFixture fixture)
 {
-    private const string AcceptPage = "https://dash.example.test/invitations/accept";
+    // The dashboard's accept page, on the origin of the harness's first dashboard redirect URI.
+    private static readonly string AcceptPage = $"{new Uri(OidcHarness.RedirectUri).GetLeftPart(UriPartial.Authority)}/invitations/";
 
     [Test]
     public async Task An_invitation_is_emailed_works_once_for_its_invitee_and_is_audited()
@@ -35,7 +36,7 @@ public sealed partial class InvitationTests(TerraBaseFixture fixture)
         // The invitee is emailed the dashboard's accept link with the token.
         var (recipient, mail) = await NextInvitationAsync(oidc);
         await Assert.That(recipient).IsEqualTo("bob@example.test");
-        await Assert.That(mail.Text).Contains($"{AcceptPage}?token={token}");
+        await Assert.That(mail.Text).Contains($"{AcceptPage}{token}");
         await Assert.That(mail.Text).Contains("Acme");
 
         var lookup = await oidc.OkAsync(HttpMethod.Post, "/v1/terrascale/invitations/lookup", carolToken, new { token });
@@ -222,7 +223,7 @@ public sealed partial class InvitationTests(TerraBaseFixture fixture)
     public async Task An_invitation_paused_while_its_organization_is_deleted_is_refused()
     {
         var pause = new PausingTransactions { InnerHandler = TerraBaseFixture.NewHandler() };
-        await using var oidc = await OidcHarness.StartAsync(fixture, values => values["invitation-url"] = AcceptPage, services: services => services.AddSingleton(new HttpClient(pause)));
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: services => services.AddSingleton(new HttpClient(pause)));
         var (_, aliceToken) = await oidc.SignInUserAsync("alice@example.test");
         var id = await oidc.CreateOrganizationAsync(aliceToken);
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
@@ -289,7 +290,7 @@ public sealed partial class InvitationTests(TerraBaseFixture fixture)
     }
 
     private Task<OidcHarness> StartAsync(TimeProvider? clock = null) =>
-        OidcHarness.StartAsync(fixture, values => values["invitation-url"] = AcceptPage, clock: clock);
+        OidcHarness.StartAsync(fixture, clock: clock);
 
     private static async Task<(string Recipient, TerraScale.Authentication.Features.Email.EmailMessage Message)> NextInvitationAsync(OidcHarness oidc)
     {

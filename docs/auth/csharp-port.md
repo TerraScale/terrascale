@@ -767,10 +767,11 @@ The rest of the platform management API (contract section 7), in
   invitation works once even on two replicas at once. Accepting needs a
   sign-in token whose email is the invitation's; a project invitation makes a
   collaborator of a user who is not a member.
-- **Email.** With `TS_AUTH_INVITATION_URL` set, the invitation is mailed after
+- **Email.** With the dashboard client configured, the invitation is mailed after
   the response through the existing delivery queue (`SignInMail`, now also
   carrying invitations), rendered with the `invitation` email kind and the
-  instance's branding (TS-583), linking to `TS_AUTH_INVITATION_URL?token=…`.
+  instance's branding (TS-583), linking to the dashboard's accept page
+  `<origin of the first dashboard redirect URI>/invitations/<token>`.
   The create call also answers the token once.
 - **Ownership transfer** is a field of the organization record, written with
   a conditional write. It lapses when it expires (7 days), its starter is no
