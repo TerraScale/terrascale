@@ -41,7 +41,8 @@ Other assets: `checksums.txt`, `install.sh` and the generated Homebrew `ts.rb`.
 
 1. Merge the reviewed PR after CI is green on its exact head. Confirm the release
    commit is on current main and select the next unused **v0.0.X** tag.
-2. Only with release authorization, create and push that tag. The tag workflow
+2. Complete the Homebrew handoff below before pushing the tag. Only with
+   release authorization, create and push that tag. The tag workflow
    builds all six targets and publishes the GitHub release with its own
    `GITHUB_TOKEN`; no registry token is needed. No tag is created by this PR.
 3. Confirm the release assets, checksums and installed `ts --version` before
@@ -53,7 +54,8 @@ packages for three days. This does not run or download TerraBase.
 
 ## Homebrew handoff (held until tap authorization)
 
-The release generates `ts.rb` but never writes to a tap. The pinned GoReleaser
+The release generates `ts.rb`; the dependent `homebrew` job publishes it to the
+tap only after the GitHub release succeeds. The pinned GoReleaser
 still supports `brews`; this deprecated integration is retained because
 formulas cover both Linux and macOS, whereas casks only cover macOS.
 
@@ -65,7 +67,10 @@ supplies a separate token limited to writing that tap using this single command
 gh secret set HOMEBREW_TAP_TOKEN --repo TerraScale/ts-go
 ```
 
-Then the owner can explicitly run **Publish Homebrew formula** with a published
-`0.0.X` version. It downloads `ts.rb` from that release and commits it to
-`Formula/ts.rb` in the tap. This workflow is manual and cannot create the tap.
+The next authorized **v0.0.X** tag then publishes Homebrew automatically after
+the GitHub release succeeds. The `homebrew` job validates the tag, downloads
+`ts.rb` from that exact release and commits it to `Formula/ts.rb` in the tap.
+It cannot create the tap; a missing tap or token fails the Homebrew job without
+undoing the GitHub release. After correcting the prerequisite, re-run the
+failed job for the same tag. No separate manual dispatch is needed.
 Once published, installation is `brew install TerraScale/tap/ts`.

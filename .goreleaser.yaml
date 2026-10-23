@@ -36,7 +36,7 @@ brews:
     homepage: https://terrascale.tech
     description: TerraScale CLI
     license: Apache-2.0
-    # Generate for the release; publishing is a separate, authorized handoff.
+    # Generate for the release; the dependent Homebrew job publishes to the tap.
     skip_upload: true
     install: bin.install "ts"
     test: |
