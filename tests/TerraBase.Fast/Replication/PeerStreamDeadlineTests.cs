@@ -911,7 +911,8 @@ public sealed class PeerStreamDeadlineTests
         var waiter = api.Server.Services.GetRequiredService<RemoteAckWaiter>();
         using var lease = waiter.TryAdmit(database) is RemoteLease admitted ? admitted : throw new InvalidOperationException("a free confirmation slot was refused");
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
-        await Assert.That((await peer.NextAsync()).KindCase).IsEqualTo(refill ? PushFrame.KindOneofCase.Refill : PushFrame.KindOneofCase.Batch);
+        var sent = await peer.NextAsync();
+        await Assert.That(sent.KindCase).IsEqualTo(refill ? PushFrame.KindOneofCase.Refill : PushFrame.KindOneofCase.Batch);
         await time.UntilTimerAsync(Idle, after: 0, period: Idle);
         if (refill)
         {
@@ -934,14 +935,24 @@ public sealed class PeerStreamDeadlineTests
         await Assert.That(waiting.IsCompleted).IsFalse();
         release.SetResult();
         using var deadline = new CancellationTokenSource(Deadline);
-        await source.UntilAckedAsync(database, ReplicaId.Of(1, 9, 0), marker.ChangeId, deadline.Token);
+        // Admission can move a refill below the marker; only the frame's own position was acknowledged.
+        var acknowledged = (long)(refill ? sent.Refill.ChangeId : sent.Batch.LastChangeId);
+        await source.UntilAckedAsync(database, ReplicaId.Of(1, 9, 0), acknowledged, deadline.Token);
         await Assert.That(peer.Streams).IsEqualTo(1);
+        if (refill && acknowledged < marker.ChangeId)
+        {
+            var replay = (await peer.NextAsync()).Batch;
+            await Assert.That(replay).IsNotNull();
+            await Assert.That((long)replay!.LastChangeId).IsEqualTo(marker.ChangeId);
+            await Assert.That(source.AckedBy(database, ReplicaId.Of(1, 9, 0))).IsEqualTo(acknowledged);
+            await Assert.That(waiting.IsCompleted).IsFalse();
+        }
         if (!refill)
         {
             await Assert.That(await waiter.WaitAsync(database, marker, () => true, deadline.Token)).IsTrue();
         }
 
-        _ = await waiting;
+        await Assert.That(await waiting).IsEqualTo(!refill);
     }
 
     // The sender calls it on its response reader: count only, never block.
