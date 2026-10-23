@@ -207,7 +207,7 @@ export const ptBr: Messages = {
       },
       {
         title: 'Unidades de operação',
-        text: 'Cada 4 KiB iniciados lidos ou escritos; escritas contam em cada região selecionada',
+        text: 'Cada 4 KiB iniciados lidos ou escritos; escritas contam uma vez e a replicação é grátis',
       },
       {
         title: 'Franquias e uso adicional',
@@ -238,7 +238,7 @@ export const ptBr: Messages = {
         {
           item: 'Unidades de operação',
           unit: '/milhão de unidades',
-          details: 'Cada 4 KiB iniciados de cada leitura ou escrita bem-sucedida contam separadamente. Escritas multiplicam pelas regiões selecionadas; leituras contam na região que atende.',
+          details: 'Cada 4 KiB iniciados de cada leitura ou escrita bem-sucedida contam separadamente. Escritas contam uma vez, independentemente das regiões selecionadas; leituras contam na região que atende. A replicação é grátis.',
         },
         {
           item: 'Armazenamento entre regiões',
@@ -261,7 +261,7 @@ export const ptBr: Messages = {
       items: [
         {
           q: 'O que é uma unidade de operação?',
-          a: 'Uma unidade de operação é cada 4 KiB (4.096 bytes) iniciados de um objeto lógico lido ou gravado com sucesso. Listas, consultas e lotes contam cada item separadamente. Gravações contam uma vez por região selecionada; leituras contam apenas na região que as atende. Solicitações com falha, negadas, inválidas, limitadas e não encontradas não são cobradas.',
+          a: 'Uma unidade de operação é cada 4 KiB (4.096 bytes) iniciados de um objeto lógico lido ou gravado com sucesso. Listas, consultas e lotes contam cada item separadamente. Gravações contam uma vez, independentemente do número de regiões selecionadas; leituras contam apenas na região que as atende. A replicação entre regiões não é cobrada. Solicitações com falha, negadas, inválidas, limitadas e não encontradas não são cobradas.',
         },
         {
           q: 'E se eu precisar de mais operações, armazenamento ou saída?',

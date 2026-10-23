@@ -13,8 +13,20 @@ const usageCaveats = {
   es: /aún no se cobran cargos por uso/i,
   'pt-BR': /cobranças por uso ainda não são coletadas/i,
 };
+const operationRules = {
+  en: [/writes count once/i, /replication (?:is free|between regions is not billed)/i],
+  es: [/escrituras cuentan una vez/i, /replicación (?:es gratis|entre regiones no se factura)/i],
+  'pt-BR': [/(?:escritas|gravações) contam uma vez/i, /replicação (?:é grátis|entre regiões não é cobrada)/i],
+};
 
 for (const [locale, messages] of locales) {
+  test(`${locale}: operation units bill each write once and exclude replication`, () => {
+    for (const copy of [messages.pricing.triad[1].text, messages.pricing.detailed.rows[0].details,
+      messages.pricing.faq.items[0].a]) {
+      for (const rule of operationRules[locale]) assert.match(copy, rule);
+    }
+    assert.ok(catalog.metering.operationUnit.rules.includes('Writes count once regardless of the number of selected regions; reads count only in the serving region. Replication between regions is not billed.'));
+  });
   test(`${locale}: approved pricing preserves the usage collection caveat`, () => {
     const pricingCopy = JSON.stringify(messages.pricing);
     assert.doesNotMatch(pricingCopy, /propos|pending review|pendientes de revisión|pendentes de revisão|propõem|proponen/i);
