@@ -489,8 +489,7 @@ public sealed class PeerStreamTests
     [Test]
     public async Task A_peer_silent_for_24_hours_stops_holding_change_groups_and_refills_when_it_returns()
     {
-        var clock = new ShiftedTime();
-        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         var (first, second) = (EntityIds.New().ToString(), EntityIds.New().ToString());
         await gru.WriteAsync(async transaction =>
@@ -506,13 +505,19 @@ public sealed class PeerStreamTests
         await sjc.StopAsync();
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", second, Json("""{"n":2}"""), CancellationToken.None));
         await Assert.That(await gru.RetainsAsync(cluster.Database, acked)).IsTrue();
-        clock.Offset = TimeSpan.FromHours(25);
-        var deadline = DateTime.UtcNow + Deadline;
-        while (await gru.RetainsAsync(cluster.Database, acked) && DateTime.UtcNow < deadline)
+        var missing = await gru.HeadAsync(cluster.Database);
+        // Turso timestamps CDC with real UTC; age only the disconnected history, keeping recovery rows fresh.
+        var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)await gru.StoreAsync();
+        _ = await store.WithWriterAsync(session =>
         {
-            await Task.Delay(200);
-        }
-
+            using var age = session.Connection.CreateCommand();
+            age.CommandText = "UPDATE turso_cdc SET change_time = unixepoch() - 90000 WHERE change_id <= $through; UPDATE _tb_peers SET seen = min(seen, $seen) WHERE node = $peer;";
+            age.Parameters.AddWithValue("$through", missing);
+            age.Parameters.AddWithValue("$seen", DateTimeOffset.UtcNow.AddHours(-25).ToUnixTimeMilliseconds());
+            age.Parameters.AddWithValue("$peer", unchecked((long)sjcNode.Value));
+            return age.ExecuteNonQuery();
+        }, "a test aging the disconnected CDC prefix and peer", CancellationToken.None);
+        await gru.TrimAsync();
         await Assert.That(await gru.RetainsAsync(cluster.Database, acked)).IsFalse();
 
         // Back, sjc cannot get the group from the stream any more: gru tells it to refill, and it joins what differs.
