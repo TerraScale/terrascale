@@ -21,11 +21,11 @@ function fixture({ acceptStale = false, forbidden = false } = {}) {
       assert.equal(new Headers(options.headers).get('idempotency-key'), null)
       if (forbidden) return json(403, { error: { code: 'forbidden_scope' } })
       if (options.method === 'POST' && path.pathname.endsWith('/documents')) {
-        document = JSON.parse(options.body)
+        document = JSON.parse(await new Response(options.body).text())
         return json(201, write())
       }
       if (options.method === 'POST' && path.pathname.endsWith('/query')) {
-        const query = JSON.parse(options.body)
+        const query = JSON.parse(await new Response(options.body).text())
         assert.deepEqual(query.filter, { eq: ['/run', document.run] })
         assert.equal(query.limit, 20)
         queryCalls++
@@ -43,7 +43,7 @@ function fixture({ acceptStale = false, forbidden = false } = {}) {
         return json(412, { error: { code: 'precondition_failed' } })
       if (options.method === 'PATCH') {
         assert.equal(new Headers(options.headers).get('content-type'), 'application/merge-patch+json')
-        document = { ...document, ...JSON.parse(options.body) }
+        document = { ...document, ...JSON.parse(await new Response(options.body).text()) }
         version = 'test-version-2'
         return json(200, write())
       }
@@ -82,8 +82,8 @@ test('ensureCollection creates the collection, accepts an existing one and propa
       token: `tb_${'s'.repeat(43)}`,
       fetch: async (url, options) => {
         assert.equal(new URL(url).pathname, '/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/quickstart/collections')
-        assert.deepEqual(JSON.parse(options.body), { name: 'posts' })
-        const body = code ? { error: { code } } : { name: 'posts', created_at: '1' }
+        assert.deepEqual(JSON.parse(await new Response(options.body).text()), { name: 'posts' })
+        const body = code ? { error: { code } } : { id: '01ARZ3NDEKTSV4RRFFQ69G5FAW', name: 'posts', created_at: '1' }
         return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
       },
     })

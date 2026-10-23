@@ -1,7 +1,7 @@
 # TerraScale documentation
 
 > TerraBase stores project-scoped JSON documents. The JavaScript SDK
-> @terrascale/sdk@0.0.3 is on npm, the Go module terrascale.tech/sdk@v0.0.1
+> @terrascale/sdk@0.0.5 is on npm, the Go module terrascale.tech/sdk@v0.0.2
 > is on the Go proxy, and the C# package builds from source. Exchange a
 > dashboard API key at https://auth.terrascale.tech/terrascale/oauth/token and
 > call https://api.terrascale.tech.
@@ -10,7 +10,7 @@
 
 - [Developer documentation](https://docs.terrascale.tech/)
 - [Current quickstarts and service availability](https://docs.terrascale.tech/getting-started/)
-- [Published JavaScript SDK 0.0.3 installation and CRUD/query example](https://docs.terrascale.tech/getting-started/javascript)
+- [Published JavaScript SDK 0.0.5 installation and CRUD/query example](https://docs.terrascale.tech/getting-started/javascript)
 - [C# quickstart with the SDK package built from source](https://docs.terrascale.tech/getting-started/csharp)
 - [Go SDK installation and document, query, SQL and changes quickstart](https://docs.terrascale.tech/getting-started/go)
 - [Supported runtimes, installation and SDK contracts](https://docs.terrascale.tech/guides/sdks)

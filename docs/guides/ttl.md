@@ -68,7 +68,13 @@ await sessions.getTtl()               // { path: '/expiresAt' } or { path: null 
 await sessions.deleteTtl()            // documents stop expiring
 ```
 
-The Go SDK (`terrascale.tech/sdk` v0.0.1) has no TTL methods yet; call the HTTP API above.
+Go (`terrascale.tech/sdk` v0.0.2 or newer), where `sessions` is `db.Collection("sessions")`:
+
+```go
+err := sessions.SetTTL(ctx, "/expiresAt")
+path, err := sessions.TTL(ctx) // "" when documents never expire
+err = sessions.DeleteTTL(ctx)
+```
 
 C# (`TerraScale.DotNet`):
 
