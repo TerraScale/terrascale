@@ -67,9 +67,9 @@ public static class PlatformCalls
         (await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organizationId}/projects", token, new { name }, System.Net.HttpStatusCode.Created)).GetProperty("id").GetString()!;
 
     /// <summary>POSTs a form to the token endpoint, with HTTP Basic credentials when <paramref name="clientId"/> is set.</summary>
-    public static Task<HttpResponseMessage> PostTokenAsync(this OidcHarness oidc, Dictionary<string, string> form, string? clientId, string? secret, HttpClient? client = null)
+    public static Task<HttpResponseMessage> PostTokenAsync(this OidcHarness oidc, Dictionary<string, string> form, string? clientId, string? secret, HttpClient? client = null, string tenant = "terrascale")
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, "/terrascale/oauth/token") { Content = new FormUrlEncodedContent(form) };
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/{tenant}/oauth/token") { Content = new FormUrlEncodedContent(form) };
         if (clientId is not null)
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{secret}")));

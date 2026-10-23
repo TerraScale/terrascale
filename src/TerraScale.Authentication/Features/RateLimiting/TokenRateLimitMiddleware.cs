@@ -6,6 +6,8 @@ using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Oidc;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
+using TerraScale.DotNet;
+
 namespace TerraScale.Authentication.Features.RateLimiting;
 
 /// <summary>
@@ -44,7 +46,8 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
             || !(context.Request.Path.Equals(TokenPath, StringComparison.OrdinalIgnoreCase)
                 || context.Request.Path.Equals(TokenPath + "/", StringComparison.OrdinalIgnoreCase)
                 || context.Request.Path.Equals(DevicePath, StringComparison.OrdinalIgnoreCase)
-                || context.Request.Path.Equals(DevicePath + "/", StringComparison.OrdinalIgnoreCase)))
+                || context.Request.Path.Equals(DevicePath + "/", StringComparison.OrdinalIgnoreCase)
+                || IsProjectTokenPath(context.Request.Path)))
         {
             await next(context);
             return;
@@ -70,6 +73,14 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
 
         await next(context);
     }
+
+    // A project tenant's token endpoint, existing or not, charges the same per-peer budget as the platform's: the
+    // budget belongs to the caller's address, not to the tenant it names.
+    private static bool IsProjectTokenPath(PathString path) =>
+        (path.Value ?? string.Empty).Split('/') is [_, var tenant, var oauth, var token, ..] rest
+        && rest.Length <= 5 && (rest.Length == 4 || rest[4].Length == 0)
+        && string.Equals(oauth, "oauth", StringComparison.OrdinalIgnoreCase) && string.Equals(token, "token", StringComparison.OrdinalIgnoreCase)
+        && TerraScaleIds.IsValid(tenant);
 
     private async Task<TimeSpan?> LimitAsync(HttpContext context)
     {
