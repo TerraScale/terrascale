@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use http::{reply, Fixture, PROJECT};
 use serde_json::json;
 use std::time::Duration;
-use terrascale::v1::{ChangesOptions, Client};
+use terrascale::v1::{ChangeEvent, ChangeOp, ChangesOptions, Client};
 
 #[tokio::test]
 async fn changes_are_sse_with_once_encoded_filters_and_last_event_id() {
@@ -137,4 +137,93 @@ async fn invalid_change_filters_do_not_dispatch() {
         assert!(db.change_bytes(&options).await.is_err());
     }
     assert!(fixture.requests.lock().unwrap().is_empty());
+}
+
+const ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+fn change(id: Option<&str>, op: &str, document: &str) -> String {
+    let id = id.map(|id| format!("id: {id}\n")).unwrap_or_default();
+    format!("{id}event: change\ndata: {{\"collection\":\"items\",\"id\":\"{ID}\",\"op\":\"{op}\",\"version\":\"7\",\"origin\":\"00000000000000a1\",\"document\":{document}}}\n\n")
+}
+
+#[tokio::test]
+async fn changes_parse_events_resume_from_last_cursor_and_type_cursor_expired() {
+    let first = format!(
+        ": keepalive\r\n\r\n{}{}id: c2\nevent: cursor\ndata: {{\"cursor\":\"c2\"}}\n\n",
+        change(None, "upsert", r#"{"n":1}"#),
+        change(Some("c1"), "delete", "null"),
+    );
+    let expired = json!({"error":{"code":"cursor_expired","message":"gone"}}).to_string();
+    let fixture = Fixture::with_type(
+        vec![
+            reply(200, &first),
+            reply(200, &change(Some("c3"), "upsert", "{}")),
+            reply(410, &expired),
+        ],
+        "text/event-stream",
+    )
+    .await;
+    let mut events = fixture
+        .client()
+        .database("orders")
+        .changes(&ChangesOptions {
+            cursor: Some("start".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut seen = Vec::new();
+    let error = loop {
+        match events.next().await.unwrap() {
+            Ok(event) => seen.push(event),
+            Err(error) => break error,
+        }
+    };
+    assert!(events.next().await.is_none());
+    assert!(error.is_cursor_expired(), "{error:?}");
+    assert_eq!(error.status(), Some(410));
+    let cursors: Vec<_> = seen.iter().map(ChangeEvent::cursor).collect();
+    assert_eq!(cursors, [None, Some("c1"), Some("c2"), Some("c3")]);
+    let ChangeEvent::Change(upsert) = &seen[0] else {
+        panic!("{seen:?}")
+    };
+    assert_eq!((upsert.op, upsert.version), (ChangeOp::Upsert, 7));
+    assert_eq!(upsert.id.to_string(), ID);
+    assert_eq!(upsert.document.as_ref().unwrap().get(), r#"{"n":1}"#);
+    let ChangeEvent::Change(delete) = &seen[1] else {
+        panic!("{seen:?}")
+    };
+    assert!(delete.op == ChangeOp::Delete && delete.document.is_none());
+    let requests = fixture.requests.lock().unwrap();
+    let resumed: Vec<_> = requests
+        .iter()
+        .map(|r| r.headers.get("last-event-id").map(|v| v.to_str().unwrap()))
+        .collect();
+    assert_eq!(resumed, [None, Some("c2"), Some("c3")]);
+}
+
+#[tokio::test]
+async fn malformed_change_events_end_the_stream_without_reconnecting() {
+    for body in [
+        "event: mystery\ndata: {}\n\n".to_owned(),
+        "event: change\ndata: {\"collection\":\"items\"}\n\n".to_owned(),
+        "id: c1\nevent: cursor\ndata: {\"cursor\":\"other\"}\n\n".to_owned(),
+        change(Some("c1"), "upsert", "[1]"),
+        change(Some("c1"), "upsert", "{}").replace("\n\n", "\n"),
+        change(None, "upsert", "{}"),
+    ] {
+        let fixture = Fixture::with_type(vec![reply(200, &body)], "text/event-stream").await;
+        let mut events = fixture
+            .client()
+            .database("orders")
+            .changes(&ChangesOptions::default())
+            .await
+            .unwrap();
+        let mut results = Vec::new();
+        while let Some(result) = events.next().await {
+            results.push(result);
+        }
+        assert!(results.last().unwrap().is_err(), "{body}: {results:?}");
+        assert_eq!(fixture.requests.lock().unwrap().len(), 1, "{body}");
+    }
 }

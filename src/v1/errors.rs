@@ -72,6 +72,10 @@ pub enum Error {
     /// `500 internal_error`: a mutation may have taken effect.
     #[error("terrabase: 500 internal_error")]
     InternalError,
+    /// `410 cursor_expired`: the changes cursor fell out of retention;
+    /// restart from a fresh position.
+    #[error("terrabase: 410 cursor_expired")]
+    CursorExpired,
     /// Any other non-2xx response.
     #[error("terrabase: {status} {code}{}{}", fmt_msg(message), fmt_op(*op))]
     Api {
@@ -144,6 +148,7 @@ impl Error {
             Self::Forbidden { .. } => 403,
             Self::InvalidKey => 401,
             Self::InternalError => 500,
+            Self::CursorExpired => 410,
             Self::Api { status, .. } => *status,
             Self::InvalidTxOp { .. }
             | Self::Transport(_)
@@ -167,6 +172,7 @@ impl Error {
             Self::Forbidden { .. } => "forbidden_scope",
             Self::InvalidKey => "invalid_key",
             Self::InternalError => "internal_error",
+            Self::CursorExpired => "cursor_expired",
             Self::Api { code, .. } => code,
             Self::ResponseTooLarge { .. }
             | Self::InvalidTxOp { .. }
@@ -202,6 +208,12 @@ impl Error {
             Self::Api { status, code, .. } => *status == 404 && code == "not_found",
             _ => false,
         }
+    }
+
+    /// True for `cursor_expired` from the changes feed, as a 410 or a stream error event.
+    #[must_use]
+    pub fn is_cursor_expired(&self) -> bool {
+        self.code() == Some("cursor_expired")
     }
 
     /// Exact bytes of a project API error response, including unknown problem
@@ -348,6 +360,7 @@ pub(crate) fn from_response(
         (403, "forbidden_scope") => Error::Forbidden { op },
         (401, "invalid_key") => Error::InvalidKey,
         (500, "internal_error") => Error::InternalError,
+        (410, "cursor_expired") => Error::CursorExpired,
         _ => Error::Api {
             status,
             code,
