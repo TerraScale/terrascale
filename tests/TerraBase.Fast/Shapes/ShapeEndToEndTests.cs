@@ -412,6 +412,34 @@ public sealed class ShapeEndToEndTests
     }
 
     [Test]
+    public async Task Readers_of_a_closed_chunk_one_after_another_share_one_payload_read()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
+        var client = new ShapeClient(api, query: null);
+        await client.SyncAsync();
+        var closedAt = client.NextOffset!;
+        await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
+        await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var first = await client.Get(client.Uri(closedAt, live: false));
+        await Assert.That(first.Status).IsEqualTo(HttpStatusCode.OK);
+
+        // Each reader starts after the previous answered, so no flight is shared: the immutable bytes are.
+        var before = await Scrape(api.Server, token);
+        for (var reader = 0; reader < 8; reader++)
+        {
+            var answer = await client.Get(client.Uri(closedAt, live: false));
+            await Assert.That(answer.Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(answer.Body.AsSpan().SequenceEqual(first.Body)).IsTrue().Because("a closed chunk answers the same bytes");
+        }
+
+        var after = await Scrape(api.Server, token);
+        await Assert.That(Delta(before, after, "terrabase_storage_reads_total", "path=\"shape_body\"")).IsEqualTo(0d)
+            .Because("the first read retained the closed chunk; later readers read no payload");
+    }
+
+    [Test]
     public async Task Concurrent_identical_snapshot_page_reads_share_one_flight_and_one_payload_read()
     {
         var gate = new PageGate();
