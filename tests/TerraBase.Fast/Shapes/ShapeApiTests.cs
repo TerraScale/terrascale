@@ -628,7 +628,7 @@ public sealed class ShapeApiTests
 
     private sealed class FixtureLiveTail : IShapeLiveTail
     {
-        public ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, long? cursor, CancellationToken cancellationToken) =>
+        public ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken) =>
             ValueTask.FromResult<ShapeRead>(new ShapeBody(JsonSerializer.SerializeToUtf8Bytes(
                 new ShapeResponse(ShapeId, Handle, "0", "0", "0", "0", true, ResumeToken(), []), ShapeJsonContext.Default.ShapeResponse), "0", true));
     }

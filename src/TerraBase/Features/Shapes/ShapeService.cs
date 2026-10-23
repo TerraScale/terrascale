@@ -21,6 +21,7 @@ internal sealed class ShapeService(
     IShapeFlights<ShapeRead> flights, IMemoryBudget memory, IRemoteDurability durability, IHostApplicationLifetime lifetime, ILogger<ShapeService> logger) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail, IShapeResume
 {
     private int _maintaining;
+    private readonly ClosedChunks _closed = new(memory);
     private static readonly QuotaExceeded Busy = new("shape reads are at capacity; retry later", "shape_busy");
     private static readonly NotFound UnknownDatabase = new("the database does not exist", "unknown_database");
 
@@ -182,7 +183,7 @@ internal sealed class ShapeService(
             return UnknownDatabase;
         }
 
-        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, ShapeSnapshots.PageOffset(snapshot, afterId), false, null);
+        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, ShapeSnapshots.PageOffset(snapshot, afterId), false);
         return Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
 
         async ValueTask<ShapeRead> Read(IDatabaseStore current, CancellationToken token)
@@ -262,7 +263,7 @@ internal sealed class ShapeService(
             return UnknownDatabase;
         }
 
-        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, DocumentRoute.Decimal(offset), false, null);
+        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, DocumentRoute.Decimal(offset), false);
         return Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
 
         async ValueTask<ShapeRead> Read(IDatabaseStore current, CancellationToken token)
@@ -278,20 +279,20 @@ internal sealed class ShapeService(
     /// flight answers fresh: a request behind F gets the closed chunk.
     /// The read revalidates the lineage after the wake, so a re-created collection refetches.
     /// </remarks>
-    public async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, long? cursor, CancellationToken cancellationToken)
+    public async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken)
     {
         if (await engine.OpenDatabaseAsync(scope.Database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return UnknownDatabase;
         }
 
-        var key = new GateKey(scope.Database.OrganizationId, scope.Database.ProjectId, scope.Database.DatabaseId, lineage.Handle, offset, cursor);
+        var key = new GateKey(scope.Database.OrganizationId, scope.Database.ProjectId, scope.Database.DatabaseId, lineage.Handle, offset);
         var group = gate.Enter(key);
         var parked = false;
         var admitted = false;
         try
         {
-            var request = new ShapeFlightRequest(scope.Database, lineage.Handle, DocumentRoute.Decimal(offset), true, cursor, () =>
+            var request = new ShapeFlightRequest(scope.Database, lineage.Handle, DocumentRoute.Decimal(offset), true, () =>
             {
                 admitted = true;
                 gate.Admit(group);
@@ -431,6 +432,11 @@ internal sealed class ShapeService(
     // The sealed chunk at offset, sealed now when it is not yet. Its bytes are immutable and keep their admission until sent.
     private async ValueTask<ShapeRead> ClosedAsync(IDatabaseStore store, ShapeSealDefinition definition, long offset, CancellationToken cancellationToken)
     {
+        if (_closed.Get(definition.Handle, offset) is { } cached)
+        {
+            return cached;
+        }
+
         var chunk = await sealer.ReadChunkAsync(store, definition.Handle, offset, cancellationToken).ConfigureAwait(false);
         if (chunk is null)
         {
@@ -443,7 +449,9 @@ internal sealed class ShapeService(
             return new MustRefetch("the offset is not a retained commit boundary");
         }
 
-        return new ShapeBody(chunk.Body, DocumentRoute.Decimal(chunk.EndOffset), false, chunk);
+        var body = new ShapeBody(chunk.Body, DocumentRoute.Decimal(chunk.EndOffset), false, chunk);
+        _closed.Add(definition.Handle, offset, body);
+        return body;
     }
 
     // A fresh body at offset: built from the sealed chunk's payload in one transaction, sealing the chunk first when needed.
@@ -629,4 +637,59 @@ internal sealed class ShapeService(
         new(lineage.Handle, lineage.ShapeId, scope.Collection.Name, scope.Collection.Id, ResumeScope(scope.Database, scope.Collection, scope.CanonicalFilter), Predicate(scope));
 
     private static Func<StoredDocument, bool>? Predicate(ShapeScope scope) => scope.Filter.Filter is null ? null : scope.Filter.Matches;
+}
+
+/// <summary>
+/// Recently served closed chunks (T0, free-reads-edge.md): a sealed chunk's bytes never change for its handle, so live readers
+/// that leave the head one after another read the payload once instead of once each. Bounded by count and bytes and reserved
+/// as shared work, so it never takes a tenant's memory share; the callers still check lineage and the retention floor on every read.
+/// </summary>
+internal sealed class ClosedChunks(IMemoryBudget memory)
+{
+    private const int MaxEntries = 512;
+    private const long MaxBytes = 16 * 1024 * 1024;
+    private readonly Lock _gate = new();
+    private readonly Dictionary<(string Handle, long Offset), Entry> _entries = [];
+    private readonly Queue<(string Handle, long Offset)> _order = new();
+    private long _bytes;
+
+    public ShapeBody? Get(string handle, long offset)
+    {
+        lock (_gate)
+        {
+            return _entries.TryGetValue((handle, offset), out var entry) ? new ShapeBody(entry.Json, entry.NextOffset, false) : null;
+        }
+    }
+
+    public void Add(string handle, long offset, ShapeBody body)
+    {
+        if (body.Json.Length > MaxBytes / 8 || memory.TryReserve(MemoryLane.Bulk, body.Json.Length, null) is not { } admission)
+        {
+            return;
+        }
+
+        var entry = new Entry(body.Json.ToArray(), body.NextOffset, admission);
+        lock (_gate)
+        {
+            if (!_entries.TryAdd((handle, offset), entry))
+            {
+                admission.Dispose();
+                return;
+            }
+
+            _order.Enqueue((handle, offset));
+            _bytes += entry.Json.Length;
+            while (_entries.Count > MaxEntries || _bytes > MaxBytes)
+            {
+                var oldest = _order.Dequeue();
+                if (_entries.Remove(oldest, out var evicted))
+                {
+                    _bytes -= evicted.Json.Length;
+                    evicted.Admission.Dispose();
+                }
+            }
+        }
+    }
+
+    private sealed record Entry(byte[] Json, string NextOffset, IMemoryReservation Admission);
 }

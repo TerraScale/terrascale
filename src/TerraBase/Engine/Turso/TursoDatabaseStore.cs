@@ -1064,20 +1064,20 @@ internal sealed partial class TursoDatabaseStore(
         public void Cancel() => _done.TrySetCanceled(cancellationToken);
     }
 
-    // The collection names of this database, loaded on first use and forgotten by every commit that changes them, so
-    // point operations do not open a Turso read transaction to find their collection.
-    private volatile FrozenSet<string>? _collections;
+    // The collections of this database, loaded on first use and forgotten by every commit that changes them, so point
+    // operations and shape polls do not open a Turso read transaction to find their collection.
+    private volatile FrozenDictionary<string, CollectionInfo>? _collections;
     private long _collectionsVersion;
 
-    public async ValueTask<bool> HasCollectionAsync(string name, CancellationToken cancellationToken)
+    public async ValueTask<CollectionInfo?> FindCollectionAsync(string name, CancellationToken cancellationToken)
     {
         if (_collections is { } known)
         {
-            return known.Contains(name);
+            return known.GetValueOrDefault(name);
         }
 
         var version = Interlocked.Read(ref _collectionsVersion);
-        var names = new HashSet<string>(StringComparer.Ordinal);
+        var names = new Dictionary<string, CollectionInfo>(StringComparer.Ordinal);
         var transaction = await BeginAsync(write: false, durable: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
@@ -1087,7 +1087,7 @@ internal sealed partial class TursoDatabaseStore(
                 var (page, hasMore) = await transaction.ListCollectionsAsync(after, 1000, cancellationToken).ConfigureAwait(false);
                 foreach (var collection in page)
                 {
-                    names.Add(collection.Name);
+                    names.Add(collection.Name, collection);
                 }
 
                 if (!hasMore || page.Count == 0)
@@ -1099,7 +1099,7 @@ internal sealed partial class TursoDatabaseStore(
             }
         }
 
-        var loaded = names.ToFrozenSet(StringComparer.Ordinal);
+        var loaded = names.ToFrozenDictionary(StringComparer.Ordinal);
 
         // A commit that changed the collections while this load ran leaves the set unknown instead of stale.
         lock (_queueGate)
@@ -1110,7 +1110,7 @@ internal sealed partial class TursoDatabaseStore(
             }
         }
 
-        return loaded.Contains(name);
+        return loaded.GetValueOrDefault(name);
     }
 
     /// <summary>Called by a commit that created or dropped a collection.</summary>

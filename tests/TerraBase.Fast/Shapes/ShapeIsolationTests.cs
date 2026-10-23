@@ -24,17 +24,19 @@ public sealed class ShapeIsolationTests
     public async Task An_organization_parked_at_its_requester_share_is_refused_while_another_organization_reads()
     {
         await using var api = await StartAsync(new FakeTimeProvider(Start));
+        // Enterprise has no request-rate plan limit, so a full requester share of polls reaches the flights.
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var token = TestContext.Current!.Execution.CancellationToken;
         var shape = ShapeOf(api.Tenant.ProjectId);
         var (handle, offset) = await SyncAsync(api.Client, shape, token);
         var live = $"{shape}?handle={handle}&offset={offset}&live=true";
 
-        // Every reader shares one flight and one requester share of the organization.
+        // Every reader, each on its own cursor, shares one flight and one requester share of the organization.
         using var leaving = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var parked = await ParkAsync(api, ShapeFlights<ShapeRead>.MaxRequestersPerOrganization, _ => live, leaving.Token);
+        var parked = await ParkTogetherAsync(api, ShapeFlights<ShapeRead>.MaxRequestersPerOrganization, cursor => $"{live}&cursor={cursor}", leaving.Token);
 
         var refused = await DocumentApi.SendAsync(api.Client, HttpMethod.Get, live, cancellationToken: token);
-        await Assert.That(refused.Status).IsEqualTo(HttpStatusCode.TooManyRequests).Because("the organization's 65th requester is over its share");
+        await Assert.That(refused.Status).IsEqualTo(HttpStatusCode.TooManyRequests).Because("the requester past the organization's share is refused");
         await Assert.That(refused.Code).IsEqualTo("shape_busy");
 
         await ReadOtherOrganizationAsync(api, token);
@@ -53,15 +55,20 @@ public sealed class ShapeIsolationTests
         await using var api = await StartAsync(new FakeTimeProvider(Start));
         var token = TestContext.Current!.Execution.CancellationToken;
         var shape = ShapeOf(api.Tenant.ProjectId);
-        var (handle, offset) = await SyncAsync(api.Client, shape, token);
-        var live = $"{shape}?handle={handle}&offset={offset}&live=true";
 
-        // Each distinct cursor is its own flight, so one parked reader per cursor fills the organization's flight share.
+        // Each filter is its own handle and so its own flight: one parked reader per filter fills the organization's flight share.
+        var lives = new List<string>();
+        for (var n = 0; n <= ShapeFlights<ShapeRead>.MaxFlightsPerOrganization; n++)
+        {
+            var where = $"where={Uri.EscapeDataString($$"""{"eq":["/n",{{n}}]}""")}";
+            var (handle, offset) = await SyncAsync(api.Client, $"{shape}?{where}", token);
+            lives.Add($"{shape}?{where}&handle={handle}&offset={offset}&live=true");
+        }
+
         using var leaving = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var parked = await ParkAsync(api, ShapeFlights<ShapeRead>.MaxFlightsPerOrganization, cursor => $"{live}&cursor={cursor}", leaving.Token);
+        var parked = await ParkAsync(api, ShapeFlights<ShapeRead>.MaxFlightsPerOrganization, n => lives[n - 1], leaving.Token);
 
-        var refused = await DocumentApi.SendAsync(api.Client, HttpMethod.Get,
-            $"{live}&cursor={ShapeFlights<ShapeRead>.MaxFlightsPerOrganization + 1}", cancellationToken: token);
+        var refused = await DocumentApi.SendAsync(api.Client, HttpMethod.Get, lives[^1], cancellationToken: token);
         await Assert.That(refused.Status).IsEqualTo(HttpStatusCode.TooManyRequests).Because("the organization's ninth flight is over its share");
         await Assert.That(refused.Code).IsEqualTo("shape_busy");
 
@@ -100,6 +107,21 @@ public sealed class ShapeIsolationTests
         return parked;
     }
 
+    // Parks <paramref name="count"/> live readers of one flight at once, then waits until every one is counted as waiting.
+    private static async Task<List<Task<HttpResponseMessage>>> ParkTogetherAsync(DocumentApi api, int count, Func<int, string> target, CancellationToken cancellationToken)
+    {
+        List<Task<HttpResponseMessage>> parked = [.. Enumerable.Range(1, count).Select(n => api.Client.GetAsync(target(n), cancellationToken))];
+        await TerraBaseTestServer.EventuallyAsync(async ct =>
+            parked.Any(request => request.IsCompleted) || await WaitingAsync(api.Server, ct) >= count);
+        foreach (var completed in parked.Where(request => request.IsCompleted))
+        {
+            using var early = await completed;
+            throw new InvalidOperationException($"reader answered before all {count} parked: {early.StatusCode}, {await early.Content.ReadAsStringAsync(cancellationToken)}");
+        }
+
+        return parked;
+    }
+
     // The waiting gauge has no sample until the first reader parks, so an absent gauge reads as zero.
     private static async Task<double> WaitingAsync(TerraBaseTestServer server, CancellationToken token)
     {
@@ -132,7 +154,8 @@ public sealed class ShapeIsolationTests
     // Bootstraps the newest snapshot, then reads closed chunks until the sealed head, and returns the handle and that head's offset.
     private static async Task<(string Handle, string Offset)> SyncAsync(HttpClient client, string shape, CancellationToken token)
     {
-        using var bootstrap = await client.GetAsync($"{shape}?offset=-1", token);
+        var query = shape.Contains('?', StringComparison.Ordinal) ? "&" : "?";
+        using var bootstrap = await client.GetAsync($"{shape}{query}offset=-1", token);
         await Assert.That(bootstrap.StatusCode).IsEqualTo(HttpStatusCode.TemporaryRedirect);
         var handle = bootstrap.Headers.GetValues("TB-Shape-Handle").Single();
         using var page = await client.GetAsync(bootstrap.Headers.Location, token);
@@ -140,7 +163,7 @@ public sealed class ShapeIsolationTests
         var offset = page.Headers.GetValues("TB-Shape-Next-Offset").Single();
         while (offset.StartsWith("snap.", StringComparison.Ordinal))
         {
-            using var next = await client.GetAsync($"{shape}?handle={handle}&offset={offset}", token);
+            using var next = await client.GetAsync($"{shape}{query}handle={handle}&offset={offset}", token);
             await Assert.That(next.StatusCode).IsEqualTo(HttpStatusCode.OK);
             offset = next.Headers.GetValues("TB-Shape-Next-Offset").Single();
         }
@@ -148,7 +171,7 @@ public sealed class ShapeIsolationTests
         string upToDate;
         do
         {
-            using var chunk = await client.GetAsync($"{shape}?handle={handle}&offset={offset}", token);
+            using var chunk = await client.GetAsync($"{shape}{query}handle={handle}&offset={offset}", token);
             await Assert.That(chunk.StatusCode).IsEqualTo(HttpStatusCode.OK);
             offset = chunk.Headers.GetValues("TB-Shape-Next-Offset").Single();
             upToDate = chunk.Headers.GetValues("TB-Shape-Up-To-Date").Single();
