@@ -15,7 +15,8 @@ try
     for (var repeat = 1; repeat <= repeats; repeat++)
     {
         // Alternate order to avoid always favoring the second cipher with a warm runtime.
-        foreach (var cipher in repeat % 2 == 0 ? new[] { "aegis256", "plain" } : new[] { "plain", "aegis256" })
+        string[] ciphers = repeat % 2 == 0 ? ["aegis256", "plain"] : ["plain", "aegis256"];
+        foreach (var cipher in ciphers)
         {
             var path = Path.Combine(directory, $"{repeat}-{cipher}.db");
             var builder = new SqliteConnectionStringBuilder { DataSource = path, Pooling = false };
@@ -61,7 +62,9 @@ try
                 {
                     read.Parameters["$id"].Value = index.ToString("D26", CultureInfo.InvariantCulture);
                     if (read.ExecuteScalar() as string != payload)
+                    {
                         throw new InvalidOperationException("Read returned incorrect benchmark payload.");
+                    }
                 }
                 readMs = clock.Elapsed.TotalMilliseconds;
                 walBytes = new FileInfo(path + "-wal").Length;
@@ -70,7 +73,9 @@ try
                 using (var checkpoint = setup.ExecuteReader())
                 {
                     if (!checkpoint.Read() || checkpoint.GetInt64(0) != 0)
+                    {
                         throw new InvalidOperationException("Benchmark checkpoint did not complete.");
+                    }
                 }
                 checkpointMs = clock.Elapsed.TotalMilliseconds;
             }
@@ -82,7 +87,9 @@ try
                 using var count = reopened.CreateCommand();
                 count.CommandText = "SELECT count(*) FROM documents;";
                 if (Convert.ToInt64(count.ExecuteScalar(), CultureInfo.InvariantCulture) != rowCount)
+                {
                     throw new InvalidOperationException("Reopened database lost benchmark rows.");
+                }
             }
             var reopenMs = reopenClock.Elapsed.TotalMilliseconds;
             Console.WriteLine(FormattableString.Invariant($"| {repeat} | {cipher} | {writeMs:F3} | {readMs:F3} | {checkpointMs:F3} | {reopenMs:F3} | {new FileInfo(path).Length} | {walBytes} |"));

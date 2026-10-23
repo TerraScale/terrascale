@@ -45,7 +45,7 @@ public sealed class EncryptionTests
                 command.CommandText = "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE secret(value TEXT); INSERT INTO secret VALUES ('private-payload-marker');";
                 command.ExecuteNonQuery();
                 await Assert.That(File.Exists(path + "-wal")).IsTrue();
-                foreach (var file in new[] { path, path + "-wal" })
+                foreach (var file in (string[])[path, path + "-wal"])
                 {
                     var bytes = File.ReadAllBytes(file);
                     await Assert.That(Encoding.Latin1.GetString(bytes).Contains("private-payload-marker", StringComparison.Ordinal)).IsFalse();
@@ -134,7 +134,9 @@ public sealed class EncryptionTests
 
         await Assert.That(error).IsNotNull();
         if (key.Length > 0)
+        {
             await Assert.That(error!.ToString().Contains(key, StringComparison.Ordinal)).IsFalse();
+        }
     }
 
     private static string? ReadValue(string connectionString)
