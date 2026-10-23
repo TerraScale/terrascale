@@ -216,7 +216,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
 
         var digest = Tokens.Sha256Hex(secret);
         var matched = false;
-        foreach (var candidate in this.Digests(key))
+        foreach (var candidate in await this.DigestsAsync(key, cancellationToken).ConfigureAwait(false))
         {
             matched |= Tokens.FixedTimeEquals(digest, candidate);
         }

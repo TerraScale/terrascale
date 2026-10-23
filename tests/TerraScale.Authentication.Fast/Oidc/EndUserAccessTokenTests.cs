@@ -68,6 +68,33 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task Unproven_key_ancestry_is_rejected_independently_for_current_and_previous_secrets(bool previous)
+    {
+        await using var oidc = await this.StartAsync();
+        var (owner, organization, project) = await SetupAsync(oidc);
+        var original = await KeyAsync(oidc, owner, organization, project);
+        var rotation = await oidc.OkAsync(HttpMethod.Post, $"{Keys(organization, project)}/{original[..26]}/rotate", owner,
+            new { previous_secret_ttl = 60 });
+        var current = rotation.GetProperty("key").GetString()!;
+        var body = new { user_id = AuthStore.NewId() };
+        await oidc.OkAsync(HttpMethod.Post, Path(project), original, body);
+        await oidc.OkAsync(HttpMethod.Post, Path(project), current, body);
+
+        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
+        var key = (await store.GetAsync(AuthStore.ApiKeyCollection, OidcIssuer.InstanceId, original[..26]))!;
+        var record = JsonNode.Parse(key.Document.GetRawText())!.AsObject();
+        record.Remove(previous ? "previousSecretBindings" : "secretBindings");
+        await Assert.That(await store.ReplaceAsync(AuthStore.ApiKeyCollection, OidcIssuer.InstanceId, original[..26],
+            JsonSerializer.SerializeToElement(record), key.Version)).IsNotNull();
+
+        await Assert.That(await oidc.FailAsync(HttpMethod.Post, Path(project), previous ? original : current, body))
+            .IsEqualTo((401, "unauthorized"));
+        await oidc.OkAsync(HttpMethod.Post, Path(project), previous ? current : original, body);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task Revocation_or_expiry_after_initial_key_authentication_is_rechecked_before_signing(bool expires)
     {
         var clock = new ManualClock(DateTimeOffset.UtcNow);
