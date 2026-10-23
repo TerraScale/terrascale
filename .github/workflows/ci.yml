@@ -238,7 +238,9 @@ jobs:
           tags: |
             ghcr.io/terrascale/${{ env.AREA == 'auth' && 'ts-auth' || 'terrabase' }}:${{ github.sha }}
             ${{ github.ref == 'refs/heads/main' && format('ghcr.io/terrascale/{0}:main', env.AREA == 'auth' && 'ts-auth' || 'terrabase') || '' }}
-          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
           build-args: *build-args
           cache-from: *cache-from
           cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', env.AREA) || '' }}
