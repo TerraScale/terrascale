@@ -285,6 +285,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private int unsupportedIntrospectionRequests;
         private int forgedIdRoleTokens;
         private bool dropRefresh;
+        private bool unavailableRefresh;
         private bool revoked;
         private bool storedClaimSpoof;
         private bool signupPending;
@@ -411,6 +412,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             if (kind == "urn:ietf:params:oauth:grant-type:token-exchange") return ProjectExchange(form);
             if (kind == "refresh_token")
             {
+                if (unavailableRefresh) { unavailableRefresh = false; return OAuthError("temporarily_unavailable", 503); }
                 Interlocked.Increment(ref refreshes);
                 var secret = form["refresh_token"].ToString();
                 if (!refresh.TryGetValue(secret, out var previous) || previous.Revoked || revoked || !consumedRefresh.TryAdd(secret, 0))
@@ -724,6 +726,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                     break;
                 case "release-userinfo": ReleaseUserInfo(); break;
                 case "drop-refresh-response": dropRefresh = true; break;
+                case "unavailable-refresh": unavailableRefresh = true; break;
                 case "revoke": revoked = true; break;
                 case "expire-access":
                     foreach (var grant in access.Values) grant.ActivityExpiresAt = clock.GetUtcNow().AddSeconds(-1);

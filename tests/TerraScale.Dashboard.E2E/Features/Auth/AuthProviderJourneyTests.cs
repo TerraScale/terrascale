@@ -126,6 +126,26 @@ public sealed class AuthProviderJourneyTests(DashboardRootFixture fixture)
     }
 
     [Test]
+    public async Task SessionSurvivesARefreshTsAuthCouldNotStart()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var controls = scenario.CreateProviderClient();
+        using var first = scenario.CreateClient();
+        await Control(controls, new { command = "short-grants" });
+        using var signedIn = await HttpJourney.LoginAsync(first, returnTo: "/api/v1/auth/me");
+        Check(signedIn.StatusCode == HttpStatusCode.SeeOther, "The browser obtains a short-lived signed provider grant");
+        await Control(controls, new { command = "advance", seconds = 2 });
+        await Control(controls, new { command = "unavailable-refresh" });
+        using (var unavailable = await first.GetAsync("/api/v1/auth/me"))
+            Check(unavailable.StatusCode == HttpStatusCode.ServiceUnavailable, "A restarting ts-auth makes the request unavailable");
+        await Control(controls, new { command = "advance", seconds = 61 });
+        using (var recovered = await first.GetAsync("/api/v1/auth/me"))
+            Check(recovered.StatusCode == HttpStatusCode.OK, "The same session refreshes once ts-auth is back");
+        Check((await Observations(controls)).GetProperty("refreshes").GetInt32() == 1, "The unread secret is rotated exactly once");
+        CheckProtocol(await Observations(controls));
+    }
+
+    [Test]
     public async Task LostRefreshResponseIsNeverReplayedByAnotherReplica()
     {
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
