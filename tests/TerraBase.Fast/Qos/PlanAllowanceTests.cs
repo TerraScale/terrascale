@@ -10,16 +10,19 @@ namespace TerraBase.Fast.Qos;
 public sealed class PlanAllowanceTests
 {
     [Test]
-    public async Task A_starter_plan_raises_the_allowance_and_hobby_restores_it()
+    public async Task Paid_plans_raise_the_allowance_and_hobby_restores_it()
     {
-        // The real plan allowances scaled down 100,000 times: hobby 1, starter 10.
+        // The real plan allowances (pricing.json) scaled down 50,000 times: hobby 1, starter 5, team 100.
         await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<IOperationAllowance>(provider =>
             new OperationAllowance(provider.GetRequiredService<UsageMeter>(), provider.GetRequiredService<ITenantDirectory>(),
-                plan => QosPolicy.For(plan).MonthlyOperations / 100_000)));
+                plan => QosPolicy.For(plan).MonthlyOperations / 50_000)));
         (await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Code).IsEqualTo("operation_allowance");
 
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "starter");
+        (await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "team");
         (await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
 
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "hobby");

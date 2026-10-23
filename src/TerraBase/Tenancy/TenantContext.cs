@@ -20,6 +20,10 @@ public enum PlanTier
     [JsonStringEnumMemberName("pro")]
     Pro,
 
+    /// <summary>Team paid plan, above pro.</summary>
+    [JsonStringEnumMemberName("team")]
+    Team,
+
     /// <summary>Contracted plan.</summary>
     [JsonStringEnumMemberName("enterprise")]
     Enterprise,

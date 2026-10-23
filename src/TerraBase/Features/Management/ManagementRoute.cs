@@ -193,8 +193,9 @@ internal static class ManagementRoute
         "hobby" => PlanTier.Hobby,
         "starter" => PlanTier.Starter,
         "pro" => PlanTier.Pro,
+        "team" => PlanTier.Team,
         "enterprise" => PlanTier.Enterprise,
-        _ => new Validation("plan must be hobby, starter, pro or enterprise"),
+        _ => new Validation("plan must be hobby, starter, pro, team or enterprise"),
     };
 
     /// <summary>A database name, or the rule it breaks.</summary>

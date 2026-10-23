@@ -19,9 +19,10 @@ public sealed record QosPolicy(
     int RequestsPerSecond, int Burst, int Concurrency, int Weight, double MemoryShare, double CacheShare,
     TimeSpan QueryTimeout, long QueryWork, long ScanRows, long ScanBytes, long StorageBytes, long MonthlyOperations)
 {
-    private static readonly QosPolicy Hobby = new(50, 100, 4, 1, .0625, .0625, TimeSpan.FromSeconds(1), 1_000_000, 10_000, 16 * 1024 * 1024, 1024L * 1024 * 1024, 100_000);
-    private static readonly QosPolicy Starter = new(200, 400, 8, 2, .125, .125, TimeSpan.FromSeconds(2), 2_000_000, 50_000, 64 * 1024 * 1024, 5L * 1024 * 1024 * 1024, 1_000_000);
-    private static readonly QosPolicy Pro = new(500, 1000, 16, 4, .25, .25, TimeSpan.FromSeconds(5), 5_000_000, 100_000, 128 * 1024 * 1024, 100L * 1024 * 1024 * 1024, 100_000_000);
+    private static readonly QosPolicy Hobby = new(50, 100, 4, 1, .0625, .0625, TimeSpan.FromSeconds(1), 1_000_000, 10_000, 16 * 1024 * 1024, 1024L * 1024 * 1024, 50_000);
+    private static readonly QosPolicy Starter = new(200, 400, 8, 2, .125, .125, TimeSpan.FromSeconds(2), 2_000_000, 50_000, 64 * 1024 * 1024, 5L * 1024 * 1024 * 1024, 250_000);
+    private static readonly QosPolicy Pro = new(500, 1000, 16, 4, .25, .25, TimeSpan.FromSeconds(5), 5_000_000, 100_000, 128 * 1024 * 1024, 100L * 1024 * 1024 * 1024, 2_000_000);
+    private static readonly QosPolicy Team = new(500, 1000, 16, 4, .25, .25, TimeSpan.FromSeconds(5), 5_000_000, 100_000, 128 * 1024 * 1024, 100L * 1024 * 1024 * 1024, 5_000_000);
     private static readonly QosPolicy Enterprise = new(0, 0, 0, 16, 1, 1, Timeout.InfiniteTimeSpan, long.MaxValue, long.MaxValue, long.MaxValue, long.MaxValue, long.MaxValue);
 
     /// <summary>Limits for a validated plan; enterprise retains only process-wide safety bounds.</summary>
@@ -30,6 +31,7 @@ public sealed record QosPolicy(
         PlanTier.Hobby => Hobby,
         PlanTier.Starter => Starter,
         PlanTier.Pro => Pro,
+        PlanTier.Team => Team,
         PlanTier.Enterprise => Enterprise,
         _ => throw new ArgumentOutOfRangeException(nameof(plan)),
     };
