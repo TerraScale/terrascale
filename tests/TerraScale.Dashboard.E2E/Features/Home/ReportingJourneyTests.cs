@@ -610,6 +610,8 @@ file sealed class BrowserFlow(IBrowser browser, Uri origin, string output, float
         }
         catch (Exception error)
         {
+            await ReportAsync(false, error.ToString());
+            Console.Error.WriteLine(error);
             if (active is { IsClosed: false } page)
             {
                 if (probe is not null) await File.WriteAllTextAsync(Path.Combine(output, "failure-provider.json"), await (await page.Context.APIRequest.GetAsync(Origin + probe)).TextAsync());
@@ -617,7 +619,6 @@ file sealed class BrowserFlow(IBrowser browser, Uri origin, string output, float
                 await File.WriteAllTextAsync(Path.Combine(output, "failure.html"), await page.ContentAsync());
                 Console.Error.WriteLine("Failed at " + page.Url);
             }
-            await ReportAsync(false, error.ToString());
             throw;
         }
     }
