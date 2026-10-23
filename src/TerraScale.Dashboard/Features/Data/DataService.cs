@@ -119,6 +119,13 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         return await documents.SchemaAsync(scope, home, database.Name, collection, cancellationToken);
     }
 
+    public async Task<(string Name, IAsyncEnumerable<TerraBaseExportLine> Lines)> ExportAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
+    {
+        var database = DatabaseService.Database(context, databaseId);
+        var home = await databases.HomeAsync(context, database, cancellationToken);
+        return (database.Name, documents.ExportAsync(DatabaseService.Scope(context), home, database.Name, cancellationToken));
+    }
+
     public async Task<DatabaseSqlResult> SqlAsync(AccountContext context, string databaseId, string statement, CancellationToken cancellationToken)
     {
         var database = DatabaseService.Database(context, databaseId);

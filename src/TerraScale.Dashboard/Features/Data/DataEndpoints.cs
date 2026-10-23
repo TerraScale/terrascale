@@ -27,6 +27,42 @@ public static class DataEndpoints
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             return context is null ? AccountRequest.LoginRedirect(http) : await PageAsync(http, context, databaseId, "documents", data, saved, collection);
         });
+        // The documented NDJSON export: one {"collection","id","document"} object per line. Failures before the first line
+        // answer normally; a failure mid-stream aborts the connection, so a cut download is never mistaken for a complete one.
+        endpoints.MapGet("/databases/{databaseId}/export", async (HttpContext http, string databaseId, DashboardSessions sessions, AccountService accounts, DataService data) =>
+        {
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null) return AccountRequest.LoginRedirect(http);
+            string name;
+            IAsyncEnumerator<TerraBaseExportLine>? lines = null;
+            bool more;
+            try
+            {
+                (name, var all) = await data.ExportAsync(context, databaseId, http.RequestAborted);
+                lines = all.GetAsyncEnumerator(http.RequestAborted);
+                more = await lines.MoveNextAsync();
+            }
+            catch (Exception error) when (DatabaseResults.KnownFailure(error))
+            {
+                if (lines is not null) await lines.DisposeAsync();
+                return DatabaseResults.PageFailure(http, context, error);
+            }
+            await using (lines)
+            {
+                http.Response.ContentType = "application/x-ndjson";
+                http.Response.Headers.ContentDisposition = $"attachment; filename=\"{name}.ndjson\"";
+                http.Response.Headers.CacheControl = "no-store";
+                var newline = "\n"u8.ToArray();
+                while (more)
+                {
+                    var line = lines.Current;
+                    await JsonSerializer.SerializeAsync(http.Response.Body, new { collection = line.Collection, id = line.Id, document = line.Document }, cancellationToken: http.RequestAborted);
+                    await http.Response.Body.WriteAsync(newline, http.RequestAborted);
+                    more = await lines.MoveNextAsync();
+                }
+            }
+            return Results.Empty;
+        });
         endpoints.MapGet("/api/v1/dashboard/data/documents", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);

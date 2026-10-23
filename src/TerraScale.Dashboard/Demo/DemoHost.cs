@@ -789,6 +789,14 @@ sealed partial class TestDocuments : IDocumentBackend
             return Task.FromResult(new TerraBaseWriteResult(id, nextVersion, ++offset, "local_durable"));
         }
     }
+    public async IAsyncEnumerable<TerraBaseExportLine> ExportAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var prefix = scope.ProjectId + "/" + databaseName + "/";
+        TerraBaseExportLine[] lines;
+        lock (collections) lines = collections.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal)).OrderBy(item => item.Key, StringComparer.Ordinal)
+            .SelectMany(item => item.Value.Values.OrderBy(document => document.Id, StringComparer.Ordinal).Select(document => new TerraBaseExportLine(item.Key[prefix.Length..], document.Id, document.Document.Clone()))).ToArray();
+        foreach (var line in lines) { cancellationToken.ThrowIfCancellationRequested(); await Task.Yield(); yield return line; }
+    }
     public Task<TerraBaseCollectionSchema> SchemaAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken)
     { lock (collections) { var documents = collections.GetValueOrDefault(Key(scope, databaseName, collection))?.Values.ToArray() ?? []; var fields = documents.SelectMany(document => document.Document.EnumerateObject()).GroupBy(property => property.Name).Select(field => new TerraBaseSchemaField(field.Key, field.Count(), field.GroupBy(property => property.Value.ValueKind.ToString().ToLowerInvariant()).ToDictionary(group => group.Key, group => group.Count()))).ToArray(); return Task.FromResult(new TerraBaseCollectionSchema(collection, documents.Length, documents.Length, fields)); } }
     public DatabaseSqlResult Query(DatabaseScope scope, string databaseName, string statement)
