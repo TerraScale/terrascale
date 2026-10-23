@@ -10,8 +10,8 @@ description: Integrate per-user TerraBase todos without sending project credenti
 
 # Browser todos with end-user access
 
-::: warning Pending integration and release
-This example targets **`@terrascale/sdk@0.0.5`**, which is pending release; **0.0.4 is currently the latest published version**. App sign-in integration, collection-rule rollout, and live authorization proof are pending. This page describes the coordinated contract, not a production readiness claim. Do not substitute a project access token to make the browser demo run. Hosted login is outside this example's scope.
+::: warning Integration pending
+This example uses the published **`@terrascale/sdk@0.0.5`**. App sign-in integration, collection-rule rollout, and live authorization proof are pending. This page describes the coordinated contract, not a production readiness claim. Do not substitute a project access token to make the browser demo run. Hosted login is outside this example's scope.
 :::
 
 Integrate an already authenticated end-user session with the [browser example source](https://github.com/TerraScale/ts-docs/tree/main/examples/browser-todos). The browser creates, lists, edits, completes and deletes that user's todos through the SDK. It never creates collections, sets rules, exchanges project credentials, or owns identity records. Identity, organizations, projects and keys belong to ts-auth; todo data belongs to TerraBase.
@@ -67,16 +67,16 @@ There is no working tenant sign-in route provided by this ticket: the existing r
 
 Mounting another session on the same root aborts the old requests and stream and clears the old view immediately. Call `dispose()` before logout even when no new account is mounted. A `401`, `403` or `rules_changed` error from reads, writes or the changes stream also aborts the session view and clears its records.
 
-## 3. Run the example after the SDK release
+## 3. Run the example
 
-Use Node.js **24.21.0 or newer** and npm **11 or newer**. From `examples/browser-todos`, after 0.0.5 is published:
+Use Node.js **24.21.0 or newer** and npm **11 or newer**. From `examples/browser-todos`:
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-Open the Vite URL and wire `showAuthenticatedTodos` into your application's sign-in lifecycle in `app.mjs`. The initial page intentionally offers no credential input and no fake login. The example uses Vite for browser module resolution and the SDK as its sole runtime dependency. A lockfile is pending the real 0.0.5 release; none is fabricated for an unavailable package.
+Open the Vite URL and wire `showAuthenticatedTodos` into your application's sign-in lifecycle in `app.mjs`. The initial page intentionally offers no credential input and no fake login. The example uses Vite for browser module resolution and the SDK as its sole runtime dependency. The committed lockfile pins the published SDK and browser build tools.
 
 The client uses the public HTTPS API and a dynamic token provider:
 
@@ -105,14 +105,14 @@ Each stream runs for at most sixty seconds. A `cursor_expired`, `reset` or `rese
 
 ## 5. Verify before serving users
 
-Run the focused HTTP-fake tests after installing the released SDK:
+Run the focused HTTP-fake tests:
 
 ```bash
 npm test
 npm run build
 ```
 
-These checks exercise the browser integration and SDK request contract without starting or downloading TerraBase. The repository's `npm test` also installs this example and runs its tests; that CI step is blocked until SDK 0.0.5 is published. They are not evidence of deployed authorization.
+These checks exercise the browser integration and SDK request contract without starting or downloading TerraBase. The repository's `npm test` also installs this example and runs its tests. They are not evidence of deployed authorization.
 
 Before treating this as a live working data path, the owning integration must demonstrate two real end-user sessions: user A creates a todo; user B cannot read, modify, delete, query or receive it through changes. Confirm immutable ownership, anonymous denial, no-rules denial, expired-token behavior, account-switch clearing, rule-revocation clearing and rejected collection/rule provisioning. Confirm the browser network trace contains end-user access tokens only and that bearer requests complete CORS preflight with the wildcard origin and no cookies. Record the SDK release and deployed producer version with that evidence. Until those checks and sign-in integration are complete, live proof remains **pending**.
 
