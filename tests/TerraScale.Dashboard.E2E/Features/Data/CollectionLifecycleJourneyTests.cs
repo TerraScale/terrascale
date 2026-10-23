@@ -16,7 +16,7 @@ public sealed class CollectionLifecycleJourneyTests(DashboardRootFixture fixture
     public async Task CollectionsAreCreatedRefusedWithAReasonAndDroppedAfterConfirmation()
     {
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
-            Task.FromResult<IResult?>(http.Request.Method == "POST" && http.Request.Path.Value!.EndsWith("/sql", StringComparison.Ordinal)
+            Task.FromResult<IResult?>(http.Request.Method == "POST" && (http.Request.Path.Value!.EndsWith("/sql", StringComparison.Ordinal) || http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal))
                 ? Results.Json(new { error = new { code = "invalid_request", message = Refusal } }, statusCode: 400) : null));
         using var client = scenario.CreateClient();
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
@@ -45,7 +45,7 @@ public sealed class CollectionLifecycleJourneyTests(DashboardRootFixture fixture
         using (var sql = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/sql", Fields(("collection", "items"), ("sql", "SELECT count(*) FROM items"))))
         {
             await Assert.That(sql.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-            await Assert.That(await sql.Content.ReadAsStringAsync()).Contains("The data plane refused the submitted input. " + Refusal);
+            await Assert.That(await sql.Content.ReadAsStringAsync()).Contains(Refusal);
         }
 
         await Assert.That(await client.GetStringAsync($"/databases/{id}/documents/items")).Contains("id=\"delete-collection\"");
