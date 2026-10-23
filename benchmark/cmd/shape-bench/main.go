@@ -98,6 +98,8 @@ func main() {
 			run = func() error { return load(os.Args[2:]) }
 		case "merge":
 			run = func() error { return mergeCmd(os.Args[2:]) }
+		case "catchup":
+			run = func() error { return catchup(os.Args[2:]) }
 		}
 	}
 	if err := run(); err != nil {

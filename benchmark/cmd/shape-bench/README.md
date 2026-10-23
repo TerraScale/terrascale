@@ -110,3 +110,24 @@ deliveries count through a 5 s grace, and the after scrape follows a 6 s settle.
   the node, plus Tigris for each mirrored object (`reads > sealed + mirrored`). `point` reads are reported, not gated:
   they are node-wide and include the writer's. Any step over the bound, or any shard error, makes `merge` exit non-zero
   and print why.
+
+## Catch-up tiers (free reads T0, T1, T2)
+
+`shape-bench catchup [-tiers t0,t1,t2] [-readers 1,10,100,1000] [-chunks 100] [-repeats 3] [-out <base>]` measures
+readers that join behind the head (docs/terrabase/free-reads-edge.md). Each step uses a new collection, so a new handle
+and new objects: one bootstrap seals the snapshot, then a write every 50 ms and a read at the head seal `-chunks` chunks
+behind it. On t1 and t2 the step waits until the manifest chain lists every object. Then N readers join evenly over
+10 s and each reads the snapshot page and every chunk to the head: t0 from the origin; t1 through the manifest and each
+object straight from the bucket; t2 through the manifest and the shape edge (`tb-edge-cache: HIT` or `MISS`). Every
+object's size and sha256 are checked against the manifest.
+
+- t1 and t2 need a private test bucket: `BUCKET_NAME` (a `ts-*-test` name), the `AWS_*` variables and the bucket's
+  `TERRABASE_MASTER_KEY`, passed to the local host, whose nodes then back up and mirror to it.
+- Reported per (tier, readers), median and range over the repeats: origin storage reads (`shape_body` payload and `shape`
+  metadata, both nodes, from just before the first reader to 2 s after the last), origin shape requests, manifest calls,
+  object GETs, bucket GETs (every object GET on t1, edge misses on t2), the edge hit ratio, bucket PUTs (mirror uploads
+  during the readers) and bytes.
+- Against running nodes (an OCI test cell): `-origin <client URL> -project <id> -database <id> -metrics <url,url>` with
+  `TS_BENCH_API_KEY`; the cell mirrors to its own bucket.
+- The edge counts toward the Cloudflare account's Workers requests: a full run is about 3 × 1111 × (chunks + 1) object
+  GETs on t2.
