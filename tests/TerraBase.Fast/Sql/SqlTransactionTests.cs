@@ -106,7 +106,41 @@ public sealed class SqlTransactionTests
         await Assert.That(read).IsEqualTo("0");
         await Assert.That(commit is SqlResult).IsTrue();
         await Assert.That(SqlHarness.Code(last)).IsEqualTo("SQLITE_TOOBIG");
-        await Assert.That(session.IsAutocommit).IsTrue();
+        await Assert.That(session.IsAutocommit).IsFalse();
+        await Assert.That(await RunAsync(session, "ROLLBACK") is SqlResult && session.IsAutocommit).IsTrue();
+    }
+
+    [Test]
+    public async Task A_failed_statement_undoes_only_itself_and_a_failed_commit_returns_to_autocommit()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api, "CREATE TABLE t (id INTEGER PRIMARY KEY, email TEXT UNIQUE)", "INSERT INTO t VALUES (9, 'taken')");
+        await using var session = SqlHarness.Open(api, canWrite: true);
+        await using var other = SqlHarness.Open(api, canWrite: true);
+
+        await RunAsync(session, "BEGIN");
+        await RunAsync(session, "INSERT INTO t VALUES (1, 'a')");
+        var duplicate = await RunAsync(session, "INSERT INTO t VALUES (2, 'taken')");
+        var open = !session.IsAutocommit;
+        await RunAsync(session, "INSERT INTO t VALUES (3, 'c')");
+        var committed = await RunAsync(session, "COMMIT");
+        var rows = await ScalarAsync(other, "SELECT group_concat(id) FROM (SELECT id FROM t ORDER BY id)");
+
+        await RunAsync(session, "BEGIN");
+        await RunAsync(session, "SELECT count(*) FROM t");
+        await session.EndRequestAsync();
+        await RunAsync(other, "INSERT INTO t VALUES (4, 'd')");
+        var conflict = await RunAsync(session, "COMMIT");
+        var afterConflict = session.IsAutocommit;
+        var rollback = await RunAsync(session, "ROLLBACK");
+
+        await Assert.That(duplicate is SqlError { Code: "SQLITE_CONSTRAINT_UNIQUE", Kind: "constraint" }).IsTrue();
+        await Assert.That(open).IsTrue();
+        await Assert.That(committed is SqlResult).IsTrue();
+        await Assert.That(rows).IsEqualTo("1,3,9");
+        await Assert.That(conflict is SqlError { Code: "SQLITE_BUSY", Kind: "conflict" }).IsTrue();
+        await Assert.That(afterConflict).IsTrue();
+        await Assert.That(rollback is SqlResult).IsTrue();
     }
 
     [Test]

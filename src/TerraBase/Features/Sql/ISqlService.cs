@@ -63,7 +63,28 @@ internal sealed record SqlResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList
 /// database), <c>SQLITE_TOOBIG</c> (a limit), <c>SQLITE_INTERRUPT</c> (work budget or timeout).
 /// </param>
 /// <param name="Message">Human-readable reason; never quotes client text.</param>
-internal sealed record SqlError(string Code, string Message);
+internal sealed record SqlError(string Code, string Message)
+{
+    /// <summary>
+    /// A stable sub-code for front ends that map errors (added by SQ1-e2): <c>no_such_table</c>, <c>no_such_column</c>,
+    /// <c>already_exists</c>, <c>syntax</c>, <c>invalid_input</c>, <c>constraint</c>, <c>conflict</c>, <c>auth</c>,
+    /// <c>too_big</c> or <c>interrupt</c>. The message prefixes it reads (<c>no such table</c>, <c>no such column</c>,
+    /// <c>already exists</c>, <c>SQL syntax error</c>) are stable too.
+    /// </summary>
+    public string Kind => Code switch
+    {
+        "SQLITE_AUTH" => "auth",
+        "SQLITE_BUSY" => "conflict",
+        "SQLITE_TOOBIG" => "too_big",
+        "SQLITE_INTERRUPT" => "interrupt",
+        _ when Code.StartsWith("SQLITE_CONSTRAINT", StringComparison.Ordinal) => "constraint",
+        _ when Message.StartsWith("no such table", StringComparison.Ordinal) => "no_such_table",
+        _ when Message.StartsWith("no such column", StringComparison.Ordinal) => "no_such_column",
+        _ when Message.StartsWith("already exists", StringComparison.Ordinal) => "already_exists",
+        _ when Message.StartsWith("SQL syntax error", StringComparison.Ordinal) => "syntax",
+        _ => "invalid_input",
+    };
+}
 
 /// <summary>What a statement would take and return, without running its writes.</summary>
 /// <param name="Params">One entry per parameter: its name with prefix, or <see langword="null"/> for <c>?</c>.</param>
@@ -106,9 +127,27 @@ internal interface ISqlSession : IAsyncDisposable
     ValueTask EndRequestAsync();
 }
 
+/// <summary>A column of a SQL table, as <see cref="ISqlService.ListTablesAsync"/> reports it.</summary>
+/// <param name="Name">Column name.</param>
+/// <param name="DeclType">Declared type, or <see langword="null"/> when none was declared.</param>
+/// <param name="NotNull">Whether the column is <c>NOT NULL</c> (primary key columns always are).</param>
+/// <param name="PrimaryKey">Whether the column is part of the primary key.</param>
+internal sealed record SqlTableColumn(string Name, string? DeclType, bool NotNull, bool PrimaryKey);
+
+/// <summary>A SQL table of a database.</summary>
+/// <param name="Name">Table name.</param>
+/// <param name="Columns">Columns in declaration order.</param>
+internal sealed record SqlTableInfo(string Name, IReadOnlyList<SqlTableColumn> Columns);
+
 /// <summary>Runs relational SQL over a database's collections; shared by the HTTP SQL API, Hrana and PostgreSQL wire.</summary>
 internal interface ISqlService
 {
+    /// <summary>
+    /// Lists the SQL tables of <paramref name="database"/> in name order, at most 10,000 (added by SQ1-e2); empty when the
+    /// database does not exist.
+    /// </summary>
+    ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken);
+
     /// <summary>Opens a session; writes and DDL fail with <c>SQLITE_AUTH</c> unless <paramref name="canWrite"/>.</summary>
     ISqlSession Open(TenantContext database, bool canWrite);
 }

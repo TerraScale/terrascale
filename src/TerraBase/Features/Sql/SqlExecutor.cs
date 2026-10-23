@@ -65,7 +65,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         {
             return create.IfNotExists && await SqlTable.ReadAsync(transaction, create.Name, cancellationToken).ConfigureAwait(false) is not null
                 ? Empty
-                : SqlErrors.Error("the table already exists, or a document collection has its name");
+                : SqlErrors.Error("already exists: a table or a document collection has this name");
         }
 
         var collection = new CollectionInfo(create.Name, time.GetUtcNow().ToUnixTimeMilliseconds(), EntityIds.New(time).ToString());

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Sql;
 
@@ -84,6 +85,31 @@ public sealed class SqlReadTests
         await Assert.That(description.Columns.Select(column => column.Name)).IsEquivalentTo(["n"]);
         await Assert.That(description.IsReadOnly).IsTrue();
         await Assert.That(ddl is SqlDescription { Columns.Count: 0, IsReadOnly: false }).IsTrue();
+    }
+
+    [Test]
+    public async Task Arity_is_the_highest_parameter_number_and_tables_and_error_kinds_are_listed()
+    {
+        await using var api = await SeedAsync();
+        await using var session = SqlHarness.Open(api, canWrite: false);
+        var service = api.Server.Services.GetRequiredService<ISqlService>();
+
+        // PostgreSQL clients send $2 as ?2 with two arguments even when $1 is unused.
+        var second = await RowsAsync(api, new { sql = "SELECT ?2", args = new object[] { "unused", "b" } });
+        var described = await session.DescribeAsync(SqlHarness.Command("SELECT ?2"), CancellationToken.None);
+        var tables = await service.ListTablesAsync(await api.TenantOfAsync(), CancellationToken.None);
+        var missingTable = await session.ExecuteAsync(SqlHarness.Command("SELECT * FROM missing_table"), CancellationToken.None);
+        var missingColumn = await session.ExecuteAsync(SqlHarness.Command("SELECT missing_column FROM people"), CancellationToken.None);
+        var syntax = await session.ExecuteAsync(SqlHarness.Command("SELECT FROM WHERE"), CancellationToken.None);
+
+        await Assert.That(second).IsEqualTo("""[["b"]]""");
+        await Assert.That(described is SqlDescription { Params: [null, "?2"] }).IsTrue();
+        await Assert.That(tables.Select(table => table.Name)).IsEquivalentTo(["people", "teams"]);
+        await Assert.That(tables[0].Columns[0]).IsEqualTo(new SqlTableColumn("id", "INTEGER", NotNull: true, PrimaryKey: true));
+        await Assert.That(tables[0].Columns[4]).IsEqualTo(new SqlTableColumn("score", "REAL", NotNull: false, PrimaryKey: false));
+        await Assert.That(missingTable is SqlError { Kind: "no_such_table" }).IsTrue();
+        await Assert.That(missingColumn is SqlError { Kind: "no_such_column" }).IsTrue();
+        await Assert.That(syntax is SqlError { Kind: "syntax" }).IsTrue();
     }
 
     [Test]

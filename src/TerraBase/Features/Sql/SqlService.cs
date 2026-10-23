@@ -20,6 +20,45 @@ internal sealed class SqlService(IStorageEngine engine, IDocumentService documen
         ArgumentNullException.ThrowIfNull(database);
         return new SqlSession(engine, quota, usage, new SqlExecutor(documents, time), database, canWrite);
     }
+
+    public async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        if (await engine.BeginTransactionAsync(database, write: false, cancellationToken).ConfigureAwait(false) is not { } transaction)
+        {
+            return [];
+        }
+
+        await using (transaction.ConfigureAwait(false))
+        {
+            var tables = new List<SqlTableInfo>();
+            string? after = null;
+            for (var scanned = 0; scanned < MaxTables;)
+            {
+                var (collections, hasMore) = await transaction.ListCollectionsAsync(after, 200, cancellationToken).ConfigureAwait(false);
+                foreach (var collection in collections)
+                {
+                    if (await SqlTable.ReadAsync(transaction, collection.Name, cancellationToken).ConfigureAwait(false) is { } table)
+                    {
+                        tables.Add(new SqlTableInfo(collection.Name, [.. table.Columns.Select(column => new SqlTableColumn(
+                            column.Name, column.Type.Length == 0 ? null : column.Type, column.NotNull, table.PrimaryKey.Contains(column.Name)))]));
+                    }
+                }
+
+                scanned += collections.Count;
+                if (!hasMore || collections.Count == 0)
+                {
+                    break;
+                }
+
+                after = collections[^1].Name;
+            }
+
+            return tables;
+        }
+    }
+
+    private const int MaxTables = 10_000;
 }
 
 /// <summary>
@@ -131,8 +170,7 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
 
     public ValueTask DisposeAsync() => AbortAsync();
 
-    // A statement of the open transaction: run in this request's storage transaction, which first replays the log. Any
-    // failure ends the transaction, so a failed statement never commits part of its work.
+    // A statement of the open transaction: run in this request's storage transaction, which first replays the log.
     private async ValueTask<SqlOutcome> InTransactionAsync(ParsedSql statement, SqlCommand command, CancellationToken cancellationToken)
     {
         if (await ResumeAsync(cancellationToken).ConfigureAwait(false) is SqlError refused)
@@ -140,17 +178,19 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
             return refused;
         }
 
+        // A failed statement undoes only itself, as in SQLite: this request's storage transaction (which a refused write
+        // may leave uncommittable) is dropped, and the next statement replays the log without it.
         var outcome = await RunAsync(_request!, statement, command, cancellationToken).ConfigureAwait(false);
         if (outcome is not SqlResult result)
         {
-            await AbortAsync().ConfigureAwait(false);
+            await EndRequestAsync().ConfigureAwait(false);
             return outcome;
         }
 
         var size = Size(command);
         if (_log.Count == MaxStatements || _logBytes + size > MaxLogBytes)
         {
-            await AbortAsync().ConfigureAwait(false);
+            await EndRequestAsync().ConfigureAwait(false);
             return SqlErrors.TooBig("a transaction holds at most 256 statements and 1 MiB of statements");
         }
 
@@ -315,6 +355,7 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
         StorageBusyException => SqlErrors.Busy("the database is busy; retry"),
         ChangeGroupCapacityException or StorageWriteLimitException => SqlErrors.TooBig("a transaction writes at most 1024 rows and 2 MiB"),
         QueryCapacityException => SqlErrors.Interrupt,
+        SqlProgramException { Message: "syntax error" } => SqlErrors.Error("SQL syntax error"),
         SqlProgramException program => SqlErrors.Error(program.Message),
         _ => null,
     };
