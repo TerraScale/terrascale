@@ -339,13 +339,17 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 start.Environment["SSL_CERT_FILE"] = regional.TrustFile;
             }
 
-            // The external test binary needs a stable test master for encrypted files in either environment.
-            // Port 1 refuses uploads; this fixture never contacts a production bucket.
-            start.Environment["AWS_ENDPOINT_URL_S3"] = "https://127.0.0.1:1";
-            start.Environment["AWS_REGION"] = "auto";
-            start.Environment["BUCKET_NAME"] = "terrabase-test";
-            start.Environment["AWS_ACCESS_KEY_ID"] = "test";
-            start.Environment["AWS_SECRET_ACCESS_KEY"] = "test";
+            if (this.production)
+            {
+                // Production admission tests require backup settings; no test contacts a production bucket.
+                start.Environment["AWS_ENDPOINT_URL_S3"] = "https://127.0.0.1:1";
+                start.Environment["AWS_REGION"] = "auto";
+                start.Environment["BUCKET_NAME"] = "terrabase-test";
+                start.Environment["AWS_ACCESS_KEY_ID"] = "test";
+                start.Environment["AWS_SECRET_ACCESS_KEY"] = "test";
+            }
+
+            // Database encryption needs the same test master across restarts, independently of backups.
             // Secrets arrive as files with a trailing newline, as OCI Vault mounts them; each file wins over a malformed
             // variable, which would stop the start if it were read.
             var secrets = Directory.CreateDirectory(Path.Combine(this.directory, "secrets")).FullName;

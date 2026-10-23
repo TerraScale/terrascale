@@ -1,6 +1,5 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
-using TerraBase.Engine;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
@@ -37,7 +36,6 @@ public static class BackupExtensions
             .AddSingleton<S3ObjectStore>()
             .AddSingleton<IObjectStore>(provider => provider.GetRequiredService<S3ObjectStore>())
             .AddSingleton<IMasterKey>(master)
-            .AddKeyedSingleton<IMasterKey>(EngineExtensions.DatabaseMasterKey, master)
             .AddSingleton<DataKeys>()
             .AddSingleton<BackupTargets>()
             .AddSingleton<ContinuousBackup>()
