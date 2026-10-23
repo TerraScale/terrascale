@@ -829,7 +829,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                         ETags.Version(transaction.Scope, delete.Collection, delete.Id, version!.Value, ReadOnlyMemory<byte>.Empty, deleted: true));
                 }
 
-            case AssertOperation { Filter: null } absent:
+            case AssertOperation { Filter: null } absent when access is not { IsEndUser: true }:
                 {
                     return await transaction.GetVersionAsync(absent.Collection, absent.Id, cancellationToken).ConfigureAwait(false) is not { Deleted: false }
                         ? new OperationResult(absent.Id, null, false, null)
@@ -838,12 +838,29 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
             case AssertOperation assert:
                 {
-                    var filter = new AndFilter([assert.Filter, new CompareFilter(DocumentPath.Id, Comparison.Equal, new ScalarValue(ScalarKind.Text, assert.Id))]);
+                    DocumentFilter filter = new CompareFilter(DocumentPath.Id, Comparison.Equal, new ScalarValue(ScalarKind.Text, assert.Id));
+                    if (assert.Filter is not null)
+                    {
+                        filter = new AndFilter([assert.Filter, filter]);
+                    }
+
+                    if (access is { IsEndUser: true }
+                        && await transaction.GetCollectionRulesAsync(assert.Collection, cancellationToken).ConfigureAwait(false) is { } rules
+                        && CollectionRuleAccess.Filter(rules, access) is { } authorization)
+                    {
+                        filter = new AuthorizedFilter(authorization, filter);
+                    }
+
                     try
                     {
                         var page = await transaction.QueryAsync(new DocumentQuery(assert.Collection, filter, [], null, 1, long.MaxValue), cancellationToken)
                             .ConfigureAwait(false);
-                        return page.Rows.Count == 1 ? new OperationResult(assert.Id, null, false, null) : new DocumentRejected(Failed("the document does not match"));
+                        if (page.Rows.Count == (assert.Filter is null ? 0 : 1))
+                        {
+                            return new OperationResult(assert.Id, null, false, null);
+                        }
+
+                        return new DocumentRejected(Failed(assert.Filter is null ? "the document exists" : "the document does not match"));
                     }
                     catch (QueryCapacityException error)
                     {
