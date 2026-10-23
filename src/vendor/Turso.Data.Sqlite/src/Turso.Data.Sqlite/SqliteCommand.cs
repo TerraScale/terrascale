@@ -982,12 +982,13 @@ public class SqliteCommand : DbCommand
         return new SqliteException(Properties.Resources.SqliteNativeError(code, message), code);
     }
 
-    // TerraScale: damage keeps its SQLite code (SQLITE_IOERR 10, SQLITE_CORRUPT 11, SQLITE_NOTADB 26); every other local
-    // status stays SQLITE_ERROR, as upstream reports it.
+    // TerraScale: damage keeps its SQLite code (SQLITE_IOERR 10, SQLITE_CORRUPT 11, SQLITE_NOTADB 26),
+    // including native authenticated-page failure; other local errors stay SQLITE_ERROR.
     internal static int GetNativeSqliteErrorCode(TursoException ex)
         => ex is TursoNativeException native
             ? native.StatusCode switch
             {
+                127 when native.IsPageAuthenticationFailure => 11,
                 132 => 26,
                 133 => 11,
                 134 => 10,

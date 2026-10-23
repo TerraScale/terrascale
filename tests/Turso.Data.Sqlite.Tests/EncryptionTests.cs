@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Turso.Raw.Public;
 
 namespace Turso.Data.Sqlite.Tests;
 
@@ -103,6 +104,73 @@ public sealed class EncryptionTests
                 write.ExecuteNonQuery();
             }
             await Assert.That(ReadValue(builder.ConnectionString)).IsEqualTo("backup-payload");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>Authenticated-page tamper remains native damage through both driver surfaces.</summary>
+    [Test]
+    public async Task EncryptedPageTamperPreservesDamageClassification()
+    {
+        var directory = Directory.CreateTempSubdirectory("turso-encrypted-tamper-").FullName;
+        try
+        {
+            var builder = new SqliteConnectionStringBuilder
+            {
+                DataSource = Path.Combine(directory, "tamper.db"),
+                EncryptionCipher = "aegis256",
+                EncryptionKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),
+                Pooling = false,
+            };
+            long offset;
+            using (var connection = new SqliteConnection(builder.ConnectionString))
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "CREATE TABLE secret(value TEXT); INSERT INTO secret VALUES ('authenticated');";
+                command.ExecuteNonQuery();
+                command.CommandText = "PRAGMA page_size;";
+                var pageSize = Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+                command.CommandText = "SELECT rootpage FROM sqlite_schema WHERE name='secret';";
+                offset = (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) - 1) * pageSize;
+                command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+                command.ExecuteNonQuery();
+
+                // A tenant-supplied error resembling the native message must remain an ordinary SQL error.
+                command.CommandText = "CREATE TRIGGER reject_insert BEFORE INSERT ON secret BEGIN SELECT RAISE(ABORT, 'Decryption failed for page=2'); END;";
+                command.ExecuteNonQuery();
+                command.CommandText = "INSERT INTO secret VALUES ('rejected');";
+                var sqlError = Assert.Throws<SqliteException>(() => command.ExecuteNonQuery());
+                await Assert.That(sqlError!.SqliteErrorCode).IsNotEqualTo(11);
+            }
+
+            using (var file = new FileStream(builder.DataSource, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                file.Position = offset;
+                var original = file.ReadByte();
+                await Assert.That(original).IsGreaterThanOrEqualTo(0);
+                file.Position = offset;
+                file.WriteByte((byte)(original ^ 0x80));
+                file.Flush(flushToDisk: true);
+            }
+
+            using (var raw = new Turso.TursoConnection(builder.ConnectionString))
+            {
+                var nativeError = Assert.Throws<TursoNativeException>(() =>
+                {
+                    raw.Open();
+                    using var read = raw.CreateCommand();
+                    read.CommandText = "SELECT value FROM secret;";
+                    read.ExecuteScalar();
+                });
+                await Assert.That(nativeError!.StatusCode).IsEqualTo(127U);
+                await Assert.That(nativeError.IsPageAuthenticationFailure).IsTrue();
+            }
+            var facadeError = Assert.Throws<SqliteException>(() => ReadValue(builder.ConnectionString));
+            await Assert.That(facadeError!.SqliteErrorCode).IsEqualTo(11);
         }
         finally
         {

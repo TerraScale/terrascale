@@ -4,7 +4,6 @@ using System.Text;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -172,13 +171,15 @@ public sealed class DatabaseEncryptionTests
     private static async Task AssertNoPlaintextAsync(string directory, string marker)
     {
         var expected = Encoding.UTF8.GetBytes(marker);
-        foreach (var path in Directory.GetFiles(directory, "*", SearchOption.AllDirectories))
+        // Logical backup .frames spools can contain plaintext; this proof covers encrypted database pages and wrapped keys.
+        var paths = Directory.GetFiles(directory, "*", SearchOption.AllDirectories)
+            .Where(path => Path.GetExtension(path) is ".db" or ".key" or ".creating" or ".rebuild"
+                || path.EndsWith("-wal", StringComparison.Ordinal)
+                || path.EndsWith("-shm", StringComparison.Ordinal)
+                || path.EndsWith("-journal", StringComparison.Ordinal)).ToArray();
+        await Assert.That(paths.Any(path => Path.GetExtension(path) == ".db")).IsTrue();
+        foreach (var path in paths)
         {
-            if (Path.GetFileName(path) == SqliteStorageEngine.LockFileName)
-            {
-                continue;
-            }
-
             var bytes = await File.ReadAllBytesAsync(path);
             await Assert.That(bytes.AsSpan().IndexOf(expected) < 0).IsTrue().Because(Path.GetFileName(path));
         }
