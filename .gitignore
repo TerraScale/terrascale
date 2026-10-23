@@ -3,3 +3,6 @@ __pycache__/
 
 # Private generated CI release candidates and signatures
 /.terrascale-develop-release/
+
+# GoReleaser packaging output
+/dist/

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"slices"
@@ -35,9 +36,21 @@ func TestPagesFollowsNextAndStopsOnError(t *testing.T) {
 }
 
 func TestRunRejectsUnknownCommandsOffline(t *testing.T) {
-	for _, args := range [][]string{nil, {"auth"}, {"db"}, {"-nope"}, {"version"}} {
+	for _, args := range [][]string{nil, {"auth"}, {"db"}, {"-nope"}, {"version", "extra"}, {"--version", "extra"}} {
 		if err := run(t.Context(), args, io.Discard); !errors.Is(err, errUsage) {
 			t.Errorf("run(%q) = %v, want usage", args, err)
+		}
+	}
+}
+
+func TestVersionOffline(t *testing.T) {
+	for _, arg := range []string{"version", "--version"} {
+		var out bytes.Buffer
+		if err := run(t.Context(), []string{arg}, &out); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := out.String(), "ts "+version+"\n"; got != want {
+			t.Fatalf("version = %q, want %q", got, want)
 		}
 	}
 }
