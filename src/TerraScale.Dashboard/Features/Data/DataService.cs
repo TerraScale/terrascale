@@ -119,6 +119,15 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         return await documents.SchemaAsync(scope, home, database.Name, collection, cancellationToken);
     }
 
+    public async Task DropCollectionAsync(AccountContext context, string databaseId, string collection, string confirmation, CancellationToken cancellationToken)
+    {
+        var database = DatabaseService.Database(context, databaseId);
+        collection = ValidCollection(collection);
+        if (confirmation != collection) throw new AccountAccessException("Type the collection name to confirm deletion.", 422);
+        var home = await databases.HomeAsync(context, database, cancellationToken);
+        await documents.DropCollectionAsync(DatabaseService.Scope(context), home, database.Name, collection, cancellationToken);
+    }
+
     public async Task<(string Name, IAsyncEnumerable<TerraBaseExportLine> Lines)> ExportAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
     {
         var database = DatabaseService.Database(context, databaseId);

@@ -96,8 +96,8 @@ public sealed class DataBrowserJourneyTests(DashboardRootFixture fixture)
         { throw new InvalidOperationException("The native SQL editor did not become ready: " + string.Join(" | ", bootFailures.Concat(errors))); }
         await Assert.That(await page.TitleAsync()).IsEqualTo("core-primary · SQL console · TerraScale");
         await Assert.That(await page.Locator("#sql").GetAttributeAsync("aria-hidden")).IsEqualTo("true");
-        await Assert.That(await page.Locator("#sql").InputValueAsync()).IsEqualTo("SELECT * FROM users LIMIT 20");
-        await Assert.That(await page.Locator("#sql-analysis").InnerTextAsync()).Contains("EXPLAIN QUERY PLAN SELECT * FROM users LIMIT 20");
+        await Assert.That(await page.Locator("#sql").InputValueAsync()).IsEqualTo("SELECT * FROM orders LIMIT 20");
+        await Assert.That(await page.Locator("#sql-analysis").InnerTextAsync()).Contains("EXPLAIN QUERY PLAN SELECT * FROM orders LIMIT 20");
         await Assert.That((await page.Locator("#sql-analysis").InnerTextAsync()).Contains("Server check passed.", StringComparison.Ordinal)).IsFalse();
         await EditorAsync("SELECT * FROM orders WHERE total > 500 ORDER BY createdAt");
         await page.GetByRole(AriaRole.Button, new() { Name = "Format", Exact = true }).ClickAsync();

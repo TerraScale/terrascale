@@ -11,6 +11,7 @@ public interface IDocumentBackend
 {
     Task<IReadOnlyList<TerraBaseCollection>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, CancellationToken cancellationToken);
     Task CreateCollectionAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken);
+    Task DropCollectionAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken);
     Task<TerraBaseDocumentPage> DocumentsAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, TerraBaseQuery query, CancellationToken cancellationToken);
     Task<TerraBaseDocumentPage> ListAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, int limit, string? cursor, CancellationToken cancellationToken);
     Task<TerraBaseDocument?> GetAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, string id, CancellationToken cancellationToken);
@@ -43,6 +44,10 @@ public sealed class DocumentBackend(IHttpClientFactory http, IProjectAccessToken
 
     public async Task CreateCollectionAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken) =>
         await (await DatabaseAsync(scope, home, databaseName, "documents:write", cancellationToken)).CreateCollectionAsync(collection, cancellationToken);
+
+    // Drops the collection and every document in it, in one TerraBase transaction.
+    public async Task DropCollectionAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken) =>
+        await (await DatabaseAsync(scope, home, databaseName, "documents:write", cancellationToken)).DropCollectionAsync(collection, cancellationToken);
 
     public async Task<TerraBaseDocumentPage> DocumentsAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, TerraBaseQuery query, CancellationToken cancellationToken) =>
         PlatformDatabases.IsPlatform(scope.OrganizationId) ? await PlatformDatabases.DocumentsAsync(http.CreateClient("platform"), Session(scope), databaseName, collection, query, cancellationToken) :
