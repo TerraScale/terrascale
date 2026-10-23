@@ -223,10 +223,15 @@ public sealed partial class TerraBaseDatabase
     public async Task<TerraBaseDocumentPage> QueryAsync(string collection, TerraBaseQuery query, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
-        if (query.Sort?.Any(static sort => sort.Nearest is not null) == true
-            && (query.Sort.Count != 1 || query.Cursor is not null || query.Limit > 100))
+        if (query.Sort?.Any(sort => sort.Path == "$score" && (sort.Order != "desc" || query.Sort?.Count != 1 || TerraBaseFilter.SearchCount(query.Filter) != 1)) == true)
         {
-            throw new ArgumentException("A near sort is the only sort key, without a cursor, and limit is at most 100.", nameof(query));
+            throw new ArgumentException("$score requires descending order as the only sort key and exactly one search predicate.", nameof(query));
+        }
+
+        if (query.Sort?.Any(static sort => sort.Nearest is not null) == true
+            && (query.Sort.Count != 1 || query.Cursor is not null || query.Limit > 100 || TerraBaseFilter.SearchCount(query.Filter) != 0))
+        {
+            throw new ArgumentException("A near sort is the only sort key, without a cursor or search, and limit is at most 100.", nameof(query));
         }
 
         if (query.Aggregate is { } aggregate)

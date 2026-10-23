@@ -1,10 +1,11 @@
 using System.Buffers;
+using System.Text;
 using System.Text.Json;
 
 namespace TerraScale.DotNet.TerraBase;
 
 /// <summary>
-/// Builds TerraBase geo filter nodes for <see cref="TerraBaseQuery.Filter"/>. Points are objects with numeric <c>lat</c> and
+/// Builds TerraBase search and geo filter nodes for <see cref="TerraBaseQuery.Filter"/>. Points are objects with numeric <c>lat</c> and
 /// <c>lon</c> members (WGS 84 degrees), for example <c>{"loc":{"lat":-23.55,"lon":-46.63}}</c>. A <c>within</c> node nests
 /// under <c>and</c>, <c>or</c> and <c>not</c>, and works in counts, aggregates and transaction assertions; a document without
 /// a numeric point is not within.
@@ -88,5 +89,76 @@ public static class TerraBaseFilter
 
         using var document = JsonDocument.Parse(buffer.WrittenMemory);
         return document.RootElement.Clone();
+    }
+
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    /// <summary>Searches the text at a document member's RFC 6901 JSON Pointer, excluding the $id pseudo-path.</summary>
+    /// <param name="path">A JSON Pointer of 1–16 segments.</param>
+    /// <param name="terms">Nonempty native Tantivy query text: at most 4096 UTF-8 bytes, without NUL.</param>
+    public static JsonElement Search(string path, string terms)
+    {
+        RequirePointer(path);
+        return CreateSearch(path, terms);
+    }
+
+    private static void RequirePointer(string path)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        if (path.Length > 4096 || path[0] != '/' || path.Count(static c => c == '/') > 16)
+        {
+            throw new ArgumentException("search requires a JSON Pointer of 1–16 segments, excluding $id.", nameof(path));
+        }
+
+        for (var i = 0; i < path.Length; i++)
+        {
+            if (path[i] == '~' && (i + 1 == path.Length || path[++i] is not ('0' or '1')))
+            {
+                throw new ArgumentException("JSON Pointer escapes must be ~0 or ~1.", nameof(path));
+            }
+
+            if (char.IsSurrogate(path[i]) && (!char.IsHighSurrogate(path[i]) || i + 1 == path.Length || !char.IsLowSurrogate(path[++i])))
+            {
+                throw new ArgumentException("Path must contain valid Unicode.", nameof(path));
+            }
+        }
+    }
+
+    private static JsonElement CreateSearch(string pointer, string terms)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(terms);
+        if (terms.Contains('\0') || StrictUtf8.GetByteCount(terms) > 4096)
+        {
+            throw new ArgumentException("search terms must be at most 4096 UTF-8 bytes without NUL.", nameof(terms));
+        }
+
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteStartArray("search");
+            writer.WriteStringValue(pointer);
+            writer.WriteStringValue(terms);
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+
+        using var document = JsonDocument.Parse(stream.ToArray());
+        return document.RootElement.Clone();
+    }
+
+    internal static int SearchCount(JsonElement? filter)
+    {
+        if (filter is not { ValueKind: JsonValueKind.Object } node) return 0;
+        if (node.TryGetProperty("search", out _)) return 1;
+        if (node.TryGetProperty("not", out var child)) return SearchCount(child);
+        var count = 0;
+        foreach (var op in new[] { "and", "or" })
+        {
+            if (node.TryGetProperty(op, out var children) && children.ValueKind == JsonValueKind.Array)
+                count += children.EnumerateArray().Sum(static child => SearchCount(child));
+        }
+
+        return count;
     }
 }

@@ -24,6 +24,9 @@ public sealed record TerraBaseSqlResult(int Matched, bool Truncated, IReadOnlyLi
 /// <param name="State">active in the pinned producer.</param>
 public sealed record TerraBaseIndex(string Name, string Collection, IReadOnlyList<string> Fields, string State) : IJsonOnDeserialized
 {
+    /// <summary>Index kind (btree or text); null when an older producer omits it. Future kinds pass through.</summary>
+    public string? Kind { get; init; }
+
     void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(Fields);
 }
 
@@ -35,7 +38,7 @@ public sealed record TerraBaseIndexList(IReadOnlyList<TerraBaseIndex> Items) : I
 }
 
 internal sealed record TerraBaseSqlRequest(string Sql);
-internal sealed record TerraBaseCreateIndexRequest(string Collection, IReadOnlyList<string> Fields, string? Name);
+internal sealed record TerraBaseCreateIndexRequest(string Collection, IReadOnlyList<string> Fields, string? Name, string? Kind);
 
 public sealed partial class TerraBaseDatabase
 {
@@ -61,11 +64,19 @@ public sealed partial class TerraBaseDatabase
             Json.TerraBaseIndexList, null, cancellationToken).ConfigureAwait(false)).Value;
 
     /// <summary>Builds an index with 1–4 distinct dotted field paths; name is optional. Requires databases:write; sent once.</summary>
-    public async Task<TerraBaseIndex> CreateIndexAsync(string collection, IReadOnlyList<string> fields, string? name = null, CancellationToken cancellationToken = default)
+    public Task<TerraBaseIndex> CreateIndexAsync(string collection, IReadOnlyList<string> fields, string? name = null, CancellationToken cancellationToken = default) =>
+        CreateIndexCoreAsync(collection, fields, name, kind: null, cancellationToken);
+
+    /// <summary>Builds a btree or text index with 1–4 distinct dotted field paths. Null kind uses the producer's btree default. Requires databases:write; sent once.</summary>
+    public Task<TerraBaseIndex> CreateIndexAsync(string collection, string? kind, IReadOnlyList<string> fields, string? name = null, CancellationToken cancellationToken = default) =>
+        CreateIndexCoreAsync(collection, fields, name, kind, cancellationToken);
+
+    private async Task<TerraBaseIndex> CreateIndexCoreAsync(string collection, IReadOnlyList<string> fields, string? name, string? kind, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(collection);
         ArgumentNullException.ThrowIfNull(fields);
-        return (await connection.SendAsync(HttpMethod.Post, path + "/indexes", TerraBaseConnection.Json(new TerraBaseCreateIndexRequest(collection, fields, name), Json.TerraBaseCreateIndexRequest),
+        if (kind is not (null or "btree" or "text")) throw new ArgumentException("kind must be btree or text.", nameof(kind));
+        return (await connection.SendAsync(HttpMethod.Post, path + "/indexes", TerraBaseConnection.Json(new TerraBaseCreateIndexRequest(collection, fields, name, kind), Json.TerraBaseCreateIndexRequest),
             Json.TerraBaseIndex, null, cancellationToken).ConfigureAwait(false)).Value;
     }
 
