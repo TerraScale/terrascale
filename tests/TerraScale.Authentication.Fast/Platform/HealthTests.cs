@@ -155,9 +155,9 @@ public sealed class HealthTests
         async Task TimedOutPassAsync(int pass)
         {
             await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls == pass), TimeSpan.FromSeconds(15))).IsTrue();
-            var check = server.Services.GetRequiredService<ReadinessProbe>().OutstandingCheck!;
             clock.Advance(TimeSpan.FromSeconds(2));
             await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(logs.Entries.Length == pass), TimeSpan.FromSeconds(15))).IsTrue();
+            var check = server.Services.GetRequiredService<ReadinessProbe>().OutstandingCheck!;
             // The fake's finally precedes completion of Task.Run's unwrapped task, which the no-stacking guard checks.
             try
             {
