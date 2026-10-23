@@ -13,7 +13,7 @@ import { decryptSealedShapePage, readShapePage, readShapeKey } from "./shape-rea
 import { runSql, checkSql } from "./sql.js";
 import { streamChanges } from "./changes.js";
 import { exportDocuments } from "./export.js";
-import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema } from "./catalog.js";
+import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema, getCollectionTtl, putCollectionTtl, deleteCollectionTtl } from "./catalog.js";
 import { V1Transport } from "./transport.js";
 import { V1Health, V1Platform } from "./system.js";
 import { V1Imports } from "./imports.js";
@@ -59,12 +59,17 @@ import { V1SavedQueries } from "./saved-queries.js";
  * @typedef {{ readonly merge: JsonInputObject } | { readonly ops: readonly V1PatchOp[] }} V1Patch
  */
 
-/** @typedef {{ readonly path: V1Path; readonly order?: "asc" | "desc" | undefined }} V1SortKey */
+/** @typedef {{ readonly path: V1Path; readonly order?: "asc" | "desc" | undefined }} V1FieldSortKey */
+/**
+ * Vector similarity sort, nearest first. It must be the only sort key; limit is at most 100 and there is no cursor.
+ * @typedef {{ readonly near: { readonly path: V1Path; readonly vector: readonly number[]; readonly metric?: "cosine" | "l2" | undefined } }} V1NearSortKey
+ */
+/** @typedef {V1FieldSortKey | V1NearSortKey} V1SortKey */
 /**
  * A query-v1 request. Every member is optional.
  * @typedef {object} V1Query
  * @property {V1Filter | null | undefined} [filter]
- * @property {readonly V1SortKey[] | undefined} [sort] At most 4 keys; results are finally ordered by `$id`.
+ * @property {readonly V1SortKey[] | undefined} [sort] At most 4 keys, or one `near` key; results are finally ordered by `$id`.
  * @property {readonly string[] | undefined} [project] At most 64 paths.
  * @property {number | undefined} [limit] 1-1000 (server default 50).
  * @property {string | null | undefined} [cursor] A previous page's `nextCursor`.
@@ -176,6 +181,26 @@ function normalizePatch(patch) {
 }
 
 /**
+ * @param {V1NearSortKey} key
+ * @param {V1Query} query
+ * @returns {Record<string, unknown>}
+ */
+function nearSort(key, query) {
+  if (Object.keys(key).length !== 1 || query.sort?.length !== 1) throw new TypeError("near is the only sort key and has no path or order beside it.");
+  if (query.cursor != null) throw new TypeError("A near query has one page and takes no cursor.");
+  if (query.limit !== undefined && query.limit > 100) throw new TypeError("A near query limit is at most 100.");
+  const near = key.near;
+  if (near === null || typeof near !== "object") throw new TypeError("near is an object.");
+  for (const member of Object.keys(near)) if (!["path", "vector", "metric"].includes(member)) throw new TypeError(`Unknown near member ${member}.`);
+  if (near.metric !== undefined && near.metric !== "cosine" && near.metric !== "l2") throw new TypeError('near metric is "cosine" or "l2".');
+  const vector = near.vector;
+  if (!Array.isArray(vector) || vector.length < 1 || vector.length > 4096) throw new TypeError("A near vector has 1-4096 numbers.");
+  if (!vector.every(value => typeof value === "number" && Math.abs(value) <= 3.4028234663852886e38)) throw new TypeError("near vector values are finite float32 numbers.");
+  if (near.metric !== "l2" && vector.every(value => value === 0)) throw new TypeError("A cosine near vector is not all zeros.");
+  return { near: { path: requirePath(near.path), vector: [...vector], ...(near.metric === undefined ? {} : { metric: near.metric }) } };
+}
+
+/**
  * @param {V1Query} query
  * @returns {string}
  */
@@ -190,6 +215,7 @@ function encodeQuery(query) {
     if (!Array.isArray(query.sort) || query.sort.length > 4) throw new TypeError("sort has at most 4 keys.");
     body.sort = query.sort.map((key) => {
       if (key === null || typeof key !== "object") throw new TypeError("Sort keys are objects.");
+      if ("near" in key) return nearSort(key, query);
       for (const member of Object.keys(key)) if (member !== "path" && member !== "order") throw new TypeError(`Unknown sort member ${member}.`);
       if (key.order !== undefined && key.order !== "asc" && key.order !== "desc") throw new TypeError('Sort order is "asc" or "desc".');
       return { path: requirePath(key.path), ...(key.order === undefined ? {} : { order: key.order }) };
@@ -229,7 +255,13 @@ export function decodeQueryPage(value) {
     count = Object.freeze({ value: u64(rawCount.value, "count value"), exact: boolean(rawCount.exact, "count exact flag") });
   }
   return Object.freeze({
-    items: Object.freeze(array(raw.items, "query items").map(decodeDocument)),
+    items: Object.freeze(array(raw.items, "query items").map(item => {
+      const distance = object(item, "document").distance;
+      if (distance === undefined) return decodeDocument(item);
+      const value = distance instanceof ExactDecimal ? distance.toNumber() : distance;
+      if (typeof value !== "number" || !Number.isFinite(value)) malformed("near distance");
+      return Object.freeze({ ...decodeDocument(item), distance: value });
+    })),
     nextCursor: typeof next === "string" && next !== "" ? next : null,
     count,
   });
@@ -408,6 +440,15 @@ export class V1Collection {
   putSchema(schema, options = {}) { return putCollectionSchema(this.#transport, this.#params, schema, options); }
   /** @param {V1RequestOptions} [options] */
   deleteSchema(options = {}) { return deleteCollectionSchema(this.#transport, this.#params, options); }
+  /** @param {V1RequestOptions} [options] */
+  getTtl(options = {}) { return getCollectionTtl(this.#transport, this.#params, options); }
+  /**
+   * Documents whose member at `path` holds a past RFC 3339 UTC time are deleted by an hourly sweep (up to about an hour late).
+   * @param {string} path JSON Pointer such as `/expiresAt`. @param {V1RequestOptions} [options]
+   */
+  putTtl(path, options = {}) { return putCollectionTtl(this.#transport, this.#params, path, options); }
+  /** @param {V1RequestOptions} [options] */
+  deleteTtl(options = {}) { return deleteCollectionTtl(this.#transport, this.#params, options); }
 
   /**
    * Iterates over every page, following `nextCursor`. `count`

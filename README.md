@@ -108,6 +108,7 @@ OpenAPI and immutable release qualification remain open gates.
 | --- | --- |
 | Documents | `collection.get/put/create/patch/delete/list/query/pages/items` |
 | Collections and declared JSON Schema | `db.collections.create/get/list/drop`; `collection.getSchema/putSchema/deleteSchema` |
+| Collection TTL | `collection.putTtl/getTtl/deleteTtl` |
 | Databases | `client.databases.create/list/get/update/delete/branch` |
 | SQL | `db.sql/checkSql/explainSql` |
 | Changes | `db.changes` (SSE async iterator) |
@@ -136,6 +137,21 @@ Queries support typed filters, sorting, projection and bounded cursor pages.
 does not support `lower` paths or query-body `explain`; query number comparisons use its
 64-bit integer/double arithmetic, even when the SDK preserves exact JSON numbers.
 `ExactDecimal` and bigint serialization require Node.js 22+ or a current browser.
+
+A `near` sort orders by vector distance, nearest first, and adds `distance` to
+each item. It is the only sort key, `metric` is `cosine` (default) or `l2`,
+`limit` is at most 100 and there is one page (no cursor):
+
+```js
+await users.putTtl("/expiresAt"); // getTtl() -> { path: "/expiresAt" }; deleteTtl() clears
+const { items } = await docs.query({
+  sort: [{ near: { path: "/embedding", vector: [0.1, 0.2], metric: "cosine" } }], limit: 10,
+});
+```
+
+A collection TTL deletes documents whose member holds a past RFC 3339 UTC time.
+An hourly home-region sweep does the delete, up to about an hour late; until
+then expired documents stay readable.
 
 `db.transaction()` builds one bounded atomic group across collections in that
 database. It supports document operations, `assert`, `assertAbsent` and
