@@ -40,7 +40,7 @@ public static class ApiKeyEndpoints
             }
         }).WithGroupName("integration").WithName("createDashboardCredential").WithTags("Credentials")
             .WithSummary("Create a project key and reveal its secret once")
-            .WithDescription("Uses the original user session at ts-auth. Scopes are documents:read/write. Machine-client kind is unavailable. Secrets are never persisted by the dashboard.")
+            .WithDescription("Uses the original user session at ts-auth. Scopes are documents:read/write and databases:read/write (database:read/write are aliases of documents:read/write). Machine-client kind is unavailable. Secrets are never persisted by the dashboard.")
             .Accepts<CreateProjectCredentialRequest>("application/x-www-form-urlencoded")
             .Produces<ProjectApiKeySecret>(201).Produces(200, contentType: "text/html").Produces(401).ProducesProblem(403).ProducesProblem(422).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/{keyId}/revoke", async (HttpContext http, string keyId, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
@@ -54,7 +54,7 @@ public static class ApiKeyEndpoints
             return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys") : Results.NoContent();
         }).WithGroupName("integration").WithName("revokeDashboardCredentialById").WithTags("Credentials")
             .WithSummary("Revoke a project key")
-            .WithDescription("Revocation prevents new tokens. Already-issued offline JWTs remain valid until expiry.")
+            .WithDescription("Deletes the key at ts-auth: token requests then fail with invalid_client. Already-issued tokens are validated offline and stay valid until they expire (15 minutes). A failed revoke call is re-checked, so 204/303 means the key is gone.")
             .Accepts<RevokeProjectCredentialRequest>("application/x-www-form-urlencoded")
             .Produces(204).Produces(303).Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/revoke", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>

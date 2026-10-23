@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.DotNet;
@@ -39,7 +40,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         if (name.EnumerateRunes().Count() is 0 or > 128 || name.Any(char.IsControl)) throw new AccountAccessException("Enter a name of up to 128 characters and choose a database access level.", 422);
         if (kind is not ("key" or "api-key")) throw new AccountAccessException("Machine clients are not issued by this view.", 503);
         var database = databaseId.Length > 0 ? DatabaseService.Database(context, databaseId) : null;
-        var permissions = scopes.Select(scope => scope.Trim()).Select(scope => scope switch { "database:read" => "documents:read", "database:write" => "documents:write", _ => scope }).Distinct(StringComparer.Ordinal).ToArray();
+        var permissions = scopes.Select(scope => scope.Trim()).Select(MintedScope).Distinct(StringComparer.Ordinal).ToArray();
         if (permissions.Length == 0 || permissions.Any(scope => scope is not ("documents:read" or "documents:write" or "databases:read" or "databases:write"))) throw new AccountAccessException("Choose read and/or write permission.", 422);
         var scope = DatabaseService.Scope(context);
         var result = await Client().CreateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId,
@@ -57,8 +58,18 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         var client = Client();
         var key = await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken);
         if (Map(context, key).Id != keyId) throw new HttpRequestException("Credential lookup returned a different key.");
-        await client.RevokeProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken);
+        try { await client.RevokeProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken); }
+        catch (HttpRequestException)
+        {
+            // A failed answer may hide a committed delete: report the key's real state, not the transport error.
+            try { await client.GetProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId, keyId, cancellationToken); }
+            catch (HttpRequestException missing) when (missing.StatusCode == HttpStatusCode.NotFound) { return; }
+            throw;
+        }
     }
+
+    // The form's database:* choices are aliases of the documents:* scopes ts-auth mints.
+    public static string MintedScope(string scope) => scope switch { "database:read" => "documents:read", "database:write" => "documents:write", _ => scope };
 
     public static ProjectApiKeyMetadata Metadata(ProjectCredential key) => new(key.Id, key.ProjectId, key.Name, key.Id + "_", "", key.Scopes,
         key.DatabaseId ?? "", "", Format(key.CreatedAt), key.ExpiresAt is { } expires ? Format(expires) : "", "", "", key.IsActive)
