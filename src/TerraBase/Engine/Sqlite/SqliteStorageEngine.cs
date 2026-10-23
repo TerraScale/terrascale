@@ -814,7 +814,15 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     {
         // Unlocked fast check; OpenStoreAsync checks lifecycle state again under the lock.
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
-        var (key, path) = Locate(database);
+        var (key, path) = Place(database);
+        // An open store keeps its file handles, so only an opening checks the path for links (as the system database's):
+        // this runs several times per request, and the checks are seven readlink calls.
+        if (_stores.TryGetValue(key, out var open))
+        {
+            return File.Exists(path) ? open : null;
+        }
+
+        RejectDatabaseLinks(path);
         return File.Exists(path) ? await OpenStoreAsync(key, path, cancellationToken).ConfigureAwait(false) : null;
     }
 
@@ -1248,11 +1256,17 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     // name a parent, another tenant's directory or the system database.
     private ((string Organization, string Project, string Database) Key, string Path) Locate(TenantContext database)
     {
+        var located = Place(database);
+        RejectDatabaseLinks(located.Path);
+        return located;
+    }
+
+    // The database's key and file path, without checking the path for links.
+    private ((string Organization, string Project, string Database) Key, string Path) Place(TenantContext database)
+    {
         ArgumentNullException.ThrowIfNull(database);
         (string Organization, string Project, string Database) key = (Id(database.OrganizationId), Id(database.ProjectId), Id(database.DatabaseId));
-        var path = Path.Combine(_dataDirectory, key.Organization, key.Project, key.Database + FileExtension);
-        RejectDatabaseLinks(path);
-        return (key, path);
+        return (key, Path.Combine(_dataDirectory, key.Organization, key.Project, key.Database + FileExtension));
     }
 
     private string LocateSystem()
