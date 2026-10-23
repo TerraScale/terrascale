@@ -174,14 +174,16 @@ public sealed class BackupConfirmationJourneyTests(DashboardRootFixture fixture)
             var actual = observed.GetProperty("databases").EnumerateArray().Single(row => row.GetProperty("name").GetString() == restoredName);
             var orphanId = actual.GetProperty("id").GetString()!;
             await Assert.That(observed.GetProperty("backupRestores").GetInt32()).IsEqualTo(1);
-            await Assert.That((await ReadAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(1);
+            // The refused answer is never recorded, but TerraBase owns databases: the listing records the orphan it holds.
+            await Assert.That((await ReadAsync(replica, "/api/v1/dashboard/databases")).EnumerateArray().Select(row => row.GetProperty("id").GetString()!).Order(StringComparer.Ordinal).ToArray())
+                .IsEquivalentTo(new[] { sourceId, orphanId });
             if (interruptedMetadata)
                 await Assert.That(observed.GetProperty("failedDatabaseMetadataWrites").GetInt32()).IsEqualTo(1);
             using (var retry = await RestoreAsync(replica, replicaCsrf, sourceId, backupId, restoredName))
                 await Assert.That(retry.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because(await EvidenceAsync(retry, producer));
             await Assert.That((await ReadAsync(producer, "/__test/observations")).GetProperty("backupRestores").GetInt32()).IsEqualTo(1)
                 .Because("An existing name does not prove which backup was restored: the producer exposes only source-database provenance.");
-            await Assert.That((await ReadAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(1);
+            await Assert.That((await ReadAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(2);
             // Cleanup is an explicit authorized HTTP request to the exact
             // unprojected producer target, never an invented successful repair.
             using (var request = new HttpRequestMessage(HttpMethod.Delete, CanonicalDatabasePath(projectId, restoredName)))
@@ -191,6 +193,8 @@ public sealed class BackupConfirmationJourneyTests(DashboardRootFixture fixture)
                 using var removed = await producer.SendAsync(request);
                 await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await EvidenceAsync(removed, producer));
             }
+            // The next listing drops the record of the database TerraBase no longer has.
+            await Assert.That((await ReadAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(1);
             string recoveredId;
             using (var retry = await RestoreAsync(replica, replicaCsrf, sourceId, backupId, restoredName))
             {

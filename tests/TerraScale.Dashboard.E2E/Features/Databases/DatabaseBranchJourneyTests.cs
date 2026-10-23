@@ -93,7 +93,7 @@ public sealed class DatabaseBranchJourneyTests(DashboardRootFixture fixture)
         await Assert.That(observations.GetProperty("failedDatabaseMetadataWrites").GetInt32()).IsEqualTo(1);
         var recoveredId = observations.GetProperty("databases").EnumerateArray().Single(database => database.GetProperty("name").GetString() == retryName)
             .GetProperty("id").GetString()!;
-        await Assert.That((await ReadAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(1);
+        // No listing runs before the retries: a listing would record the branch TerraBase has, as the recovery below does.
 
         // A real provider placement change between the interrupted 201 and the retry must survive recovery. Another
         // client places it with the same exchanged databases:write project bearer, at the canonical route by name.
@@ -120,7 +120,6 @@ public sealed class DatabaseBranchJourneyTests(DashboardRootFixture fixture)
             Volatile.Write(ref mode, fault);
             using var refused = await BranchAsync(replica, replicaCsrf, sourceId, retryName);
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because(await EvidenceAsync(refused, producer));
-            await Assert.That((await ReadAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(1);
         }
         Volatile.Write(ref mode, "unsupported-conflict");
         var beforeUnsupported = Volatile.Read(ref lists);
@@ -203,26 +202,20 @@ public sealed class DatabaseBranchJourneyTests(DashboardRootFixture fixture)
                 await Assert.That((await ReadAsync(producer, "/__test/observations")).GetProperty("branchCreates").GetInt32()).IsEqualTo(1);
                 await ControlAsync(producer, new { command = "database-status", organizationId, projectId, databaseId = sourceId, value = status });
                 var rows = await ReadAsync(replica, "/api/v1/dashboard/databases");
-                await Assert.That(rows.GetArrayLength()).IsEqualTo(1);
-                await Assert.That(rows[0].GetProperty("status").GetString()).IsEqualTo(status);
+                await Assert.That(rows.EnumerateArray().Single(row => row.GetProperty("id").GetString() == sourceId).GetProperty("status").GetString()).IsEqualTo(status);
             }
             finally { Volatile.Write(ref paused, false); release.TrySetResult(); }
             using (var refused = await pending)
                 await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because(await EvidenceAsync(refused, producer));
+            // The request is refused, but TerraBase owns databases: the branch it made is listed with its own identity.
             foreach (var instance in new[] { client, replica })
-                await Assert.That((await ReadAsync(instance, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(1)
-                    .Because("A real producer snapshot does not authorize publishing a branch after the exact canonical source stopped being ready.");
-            await ControlAsync(producer, new { command = "database-status", organizationId, projectId, databaseId = sourceId, value = "ready" });
-            using (var retry = await BranchAsync(replica, replicaCsrf, sourceId, "commit-branch"))
-            {
-                await Assert.That(retry.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await EvidenceAsync(retry, producer));
-                await Assert.That((await BodyAsync(retry)).GetProperty("id").GetString()).IsEqualTo(actual.GetProperty("id").GetString());
-            }
+                await Assert.That((await ReadAsync(instance, "/api/v1/dashboard/databases")).EnumerateArray().Single(row => row.GetProperty("name").GetString() == "commit-branch")
+                    .GetProperty("id").GetString()).IsEqualTo(actual.GetProperty("id").GetString());
             await DeleteAsync(replica, replicaCsrf, actual.GetProperty("id").GetString()!, "commit-branch");
             await DeleteAsync(client, csrf, sourceId, "commit-source");
             var observed = await ReadAsync(producer, "/__test/observations");
             await Assert.That(observed.GetProperty("branchCreates").GetInt32()).IsEqualTo(1);
-            await Assert.That(observed.GetProperty("branchConflicts").GetInt32()).IsEqualTo(1);
+            await Assert.That(observed.GetProperty("branchConflicts").GetInt32()).IsEqualTo(0);
             await Assert.That(observed.GetProperty("databases").GetArrayLength()).IsEqualTo(0);
             await Assert.That(observed.GetProperty("failures").GetArrayLength()).IsEqualTo(0);
         }
@@ -278,23 +271,21 @@ public sealed class DatabaseBranchJourneyTests(DashboardRootFixture fixture)
             using (var refused = await BranchAsync(client, csrf, sourceId, "confirmation-branch"))
                 await Assert.That(refused.StatusCode).IsEqualTo(mismatch == "home" ? HttpStatusCode.Conflict : HttpStatusCode.ServiceUnavailable)
                     .Because(await EvidenceAsync(refused, producer));
-            var rows = await ReadAsync(client, "/api/v1/dashboard/databases");
-            await Assert.That(rows.GetArrayLength()).IsEqualTo(1);
-            await Assert.That(rows[0].GetProperty("id").GetString()).IsEqualTo(sourceId);
             Volatile.Write(ref corrupt, false);
-            string branchId;
-            using (var recovered = await BranchAsync(client, csrf, sourceId, "confirmation-branch"))
-            {
-                await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await EvidenceAsync(recovered, producer));
-                var row = await BodyAsync(recovered);
-                branchId = row.GetProperty("id").GetString()!;
-                await Assert.That(row.GetProperty("branchedFrom").GetString()).IsEqualTo(sourceId);
-            }
+            // The altered answer is never recorded; the listing records the branch as TerraBase lists it.
+            var rows = await ReadAsync(client, "/api/v1/dashboard/databases");
+            await Assert.That(rows.GetArrayLength()).IsEqualTo(2);
+            var branch = rows.EnumerateArray().Single(row => row.GetProperty("id").GetString() != sourceId);
+            await Assert.That(branch.GetProperty("name").GetString()).IsEqualTo("confirmation-branch");
+            await Assert.That(branch.GetProperty("projectId").GetString()).IsEqualTo(projectId);
+            await Assert.That(branch.GetProperty("region").GetString()).IsEqualTo("GRU");
+            await Assert.That(branch.GetProperty("branchedFrom").GetString()).IsEqualTo(sourceId);
+            var branchId = branch.GetProperty("id").GetString()!;
             await DeleteAsync(client, csrf, branchId, "confirmation-branch");
             await DeleteAsync(client, csrf, sourceId, "confirmation-source");
             var observed = await ReadAsync(producer, "/__test/observations");
             await Assert.That(observed.GetProperty("branchCreates").GetInt32()).IsEqualTo(1);
-            await Assert.That(observed.GetProperty("branchConflicts").GetInt32()).IsEqualTo(1);
+            await Assert.That(observed.GetProperty("branchConflicts").GetInt32()).IsEqualTo(0);
             await Assert.That(observed.GetProperty("failures").GetArrayLength()).IsEqualTo(0);
         }
     }

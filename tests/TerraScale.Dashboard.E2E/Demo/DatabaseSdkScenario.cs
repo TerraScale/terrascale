@@ -309,6 +309,9 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         private bool changesReplayBoundary;
         private int pausedCreates;
         private int creates;
+        // As production TerraBase's 503 catalog_anchor_unavailable: this many next placement and delete writes commit and still answer 503.
+        private int anchorPatchFailures;
+        private int anchorDeleteFailures;
         private int branchCreates;
         private int branchConflicts;
         private int documentsRequests;
@@ -452,6 +455,24 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 // Another TerraBase client placed a replica: the producer's placement is wider than the dashboard asked for.
                 case "api-region": ApiRegion = body.GetProperty("value").GetString()!; break;
                 case "catalog": Catalog = [.. body.GetProperty("value").EnumerateArray().Select(value => value.GetString()!)]; break;
+                case "anchor-unavailable":
+                    Volatile.Write(ref anchorPatchFailures, body.GetProperty("patch").GetInt32());
+                    Volatile.Write(ref anchorDeleteFailures, body.GetProperty("delete").GetInt32());
+                    break;
+                // Another TerraBase client (the CLI's ts db create, an SDK) created or deleted a database in a project.
+                case "external-create":
+                    lock (gate)
+                    {
+                        var external = new ManagedDatabase(ids.NewId(), body.GetProperty("projectId").GetString()!, body.GetProperty("value").GetString()!, DateTimeOffset.UtcNow,
+                            HomeRegion: "gru", ReplicaRegions: ["sfo"]);
+                        databases[external.Id] = external;
+                    }
+                    break;
+                case "external-delete":
+                    lock (gate)
+                        foreach (var removed in databases.Values.Where(value => value.ProjectId == body.GetProperty("projectId").GetString() && value.Name == body.GetProperty("value").GetString()).ToArray())
+                            databases.Remove(removed.Id);
+                    break;
                 case "add-replica":
                     var added = body.GetProperty("value").GetString()!;
                     lock (gate)
@@ -751,7 +772,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     var replicas = body.GetProperty("replicaRegions").EnumerateArray().Select(value => value.GetString()!).ToArray();
                     Require(replicas.All(value => value is "sfo" or "gru" || Catalog?.Contains(value) == true) && !replicas.Contains(current.HomeRegion, StringComparer.Ordinal) &&
                         replicas.Distinct(StringComparer.Ordinal).Count() == replicas.Length, "Placement preserves its home and unique discovered replicas");
-                    lock (gate) { var changed = current with { ReplicaRegions = replicas, AllRegions = false }; databases[current.Id] = changed; return Results.Json(Wire(changed, answering)); }
+                    lock (gate) { var changed = current with { ReplicaRegions = replicas, AllRegions = false }; databases[current.Id] = changed; return Interlocked.Decrement(ref anchorPatchFailures) >= 0 ? AnchorUnavailable() : Results.Json(Wire(changed, answering)); }
                 case (5, "DELETE", _):
                     if (!atHome) return WrongRegion(http, current);
                     if (current.ReplicaRegions is { Count: > 0 } || current.AllRegions) return Error(409, "database_replicated");
@@ -762,7 +783,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                         var prefix = project + "/" + current.Name + "/";
                         foreach (var collection in collections.Keys.Where(name => name.StartsWith(prefix, StringComparison.Ordinal)).ToArray()) collections.Remove(collection);
                     }
-                    return Results.NoContent();
+                    return Interlocked.Decrement(ref anchorDeleteFailures) >= 0 ? AnchorUnavailable() : Results.NoContent();
                 case (6, "POST", "branches"):
                     if (callerRole is not ("owner" or "admin")) return Error(403, "role_too_low");
                     if (!atHome) return WrongRegion(http, current);
@@ -1084,6 +1105,10 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         }
         private static IResult SqlError(int status, string code, string message, string sqliteCode) =>
             Results.Json(new { error = new { code, message, statement = 0, sqlite_code = sqliteCode } }, statusCode: status);
+        private static IResult AnchorUnavailable() => Results.Json(new
+        {
+            error = new { code = "catalog_anchor_unavailable", message = "the change is committed on this machine and replicates, but its restore anchor could not be written in time; retry" }
+        }, statusCode: 503);
         private static IResult Error(int status, string code) => Results.Json(new { error = new { code, message = "Protocol producer rejected the request" } }, statusCode: status);
         private static async Task<JsonElement> JsonAsync(HttpContext http) { using var json = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted); return json.RootElement.Clone(); }
         private static JsonNode? Merge(JsonNode? current, JsonNode? patch)

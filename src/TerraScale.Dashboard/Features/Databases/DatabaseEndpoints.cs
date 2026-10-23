@@ -33,10 +33,12 @@ public static class DatabaseEndpoints
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             return context is null ? AccountRequest.LoginRedirect(http) : await ListPageAsync(http, context, backend, databases);
         });
-        endpoints.MapGet("/api/v1/dashboard/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
+        endpoints.MapGet("/api/v1/dashboard/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            return context is null ? Results.Unauthorized() : Results.Json(context.Project?.Databases.Values.OrderBy(database => database.Name).ToArray() ?? []);
+            if (context is null) return Results.Unauthorized();
+            await databases.SyncAsync(context, http.RequestAborted);
+            return Results.Json(context.Project?.Databases.Values.OrderBy(database => database.Name).ToArray() ?? []);
         });
         foreach (var tab in new[] { "overview", "replication", "backups", "branches", "import", "danger" })
         {
@@ -109,6 +111,7 @@ public static class DatabaseEndpoints
     internal static async Task<IResult> ListPageAsync(HttpContext http, AccountContext context, IDatabaseBackend backend, DatabaseService databases,
         string error = "", bool openCreate = false, string name = "", IReadOnlyList<string>? regions = null, int status = 200)
     {
+        await databases.SyncAsync(context, http.RequestAborted);
         // Regions, each database's collection counts and the project metrics are independent reads; they run together.
         var range = HomePage.NormalizeRange(http.Request.Query["range"].ToString());
         var metricsRead = DatabaseListMetrics.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, range, http.RequestAborted);

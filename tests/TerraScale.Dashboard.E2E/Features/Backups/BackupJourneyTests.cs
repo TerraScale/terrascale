@@ -149,9 +149,12 @@ public sealed class BackupJourneyTests(DashboardRootFixture fixture)
         using (var restore = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups/restore", new()
         { ["_csrf"] = csrf, ["databaseId"] = id, ["backupId"] = backup.GetProperty("id").GetString()!, ["name"] = "guard-restored" }))
             Check(!restore.IsSuccessStatusCode, "A malformed/unconfirmed provider restore must never report success: " + failure);
-        var databases = (await CallAsync(client, secret, "list_databases", new { })).GetProperty("databases");
-        Check(databases.GetArrayLength() == 1 && databases[0].GetProperty("id").GetString() == id && databases[0].GetProperty("name").GetString() == "guard-source",
-            "Invalid restore metadata neither inserts nor replaces the original committed database: " + failure);
+        // The list follows TerraBase, so a database the provider really restored is listed under its own identity; the
+        // malformed answer itself is never recorded and never replaces the source.
+        var databases = (await CallAsync(client, secret, "list_databases", new { })).GetProperty("databases").EnumerateArray().ToArray();
+        Check(databases.Count(database => database.GetProperty("id").GetString() == id || database.GetProperty("name").GetString() == "guard-source") == 1 &&
+            databases.Single(database => database.GetProperty("id").GetString() == id).GetProperty("name").GetString() == "guard-source",
+            "Invalid restore metadata neither records the malformed answer nor replaces the original committed database: " + failure);
     }
 
     [Test]

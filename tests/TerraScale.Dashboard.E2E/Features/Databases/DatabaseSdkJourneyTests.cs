@@ -252,9 +252,11 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
         await ControlAsync(controls, new { command = "release-quota-commits" });
         var results = await Task.WhenAll(first, second);
         Check(results.Count(IsError) == 1, "The canonical free-plan quota admits only one of two concurrent producer creates");
+        var name = results.Single(result => !IsError(result)).GetProperty("result").GetProperty("structuredContent").GetProperty("name").GetString()!;
         var listed = (await journey.CallAsync(replica, "list_databases")).GetProperty("databases");
-        Check(listed.GetArrayLength() == 1, "Both replicas observe exactly one committed database after the CAS race");
-        var committed = listed[0]; var id = committed.GetProperty("id").GetString()!; var name = committed.GetProperty("name").GetString()!;
+        // TerraBase owns databases: the one it made before the quota commit refused it is listed (and counted) as well.
+        Check(listed.GetArrayLength() == 2, "Both replicas list every database TerraBase holds after the CAS race");
+        var id = listed.EnumerateArray().Single(database => database.GetProperty("name").GetString() == name).GetProperty("id").GetString()!;
         Check((await ObservationsAsync(controls)).GetProperty("creates").GetInt32() == 2,
             "The test exercises the post-producer quota commit check, including the known unclaimed producer resource gate");
         Check((await ObservationsAsync(controls)).GetProperty("quotaCasFailures").GetInt32() == 1,

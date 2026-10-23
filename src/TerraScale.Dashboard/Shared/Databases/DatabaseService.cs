@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.DotNet.TerraBase;
 
@@ -201,6 +202,49 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
             var project = org.Projects.GetValueOrDefault(scope.ProjectId) ?? throw new AccountAccessException("Project is unavailable.", 404);
             project.Databases.Remove(id);
         }, cancellationToken);
+    }
+
+    // TerraBase owns databases; the project's records follow its listings. A database created outside the dashboard (the
+    // CLI, an SDK) gets a record, so it is listed and counts toward the plan, and a record whose database its home region
+    // no longer lists is dropped. A region that does not answer leaves its records as they are; the list still renders.
+    public async Task SyncAsync(AccountContext context, CancellationToken cancellationToken)
+    {
+        if (context.Project is not { } project || PlatformDatabases.IsPlatform(context.Organization?.Id)) return;
+        try
+        {
+            var scope = Scope(context);
+            var catalog = await backend.RegionsAsync(cancellationToken);
+            var seen = project.Databases.Values.ToArray();
+            var homes = seen.Select(database => database.Region).Prepend(project.Region)
+                .Select(code => DatabaseRegion.Resolve(catalog, code)).OfType<DatabaseRegion>().DistinctBy(region => region.Id).ToArray();
+            var listings = await Task.WhenAll(homes.Select(async home =>
+            {
+                try { return (home, Listed: await backend.ListAsync(scope, home, cancellationToken)); }
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested && (error is HttpRequestException or JsonException || DatabaseResults.KnownFailure(error)))
+                { return (home, Listed: (IReadOnlyList<ManagedDatabase>?)null); }
+            }));
+            var remote = listings.SelectMany(listing => listing.Listed ?? []).Where(database => database.ProjectId == project.Id).DistinctBy(database => database.Id).ToArray();
+            var answered = listings.Where(listing => listing.Listed is not null).Select(listing => listing.home.Id).ToHashSet(StringComparer.Ordinal);
+            var gone = seen.Where(record => DatabaseRegion.Resolve(catalog, record.Region) is { } home && answered.Contains(home.Id) &&
+                remote.All(database => database.Id != record.Id)).Select(record => record.Id).ToHashSet(StringComparer.Ordinal);
+            var imported = new List<DatabaseRecord>();
+            foreach (var database in remote.Where(database => !project.Databases.ContainsKey(database.Id)))
+            {
+                try { imported.Add(Record(database, await RemotePlacementAsync(database, cancellationToken), "ready")); }
+                catch (HttpRequestException) { }
+            }
+            if (gone.Count == 0 && imported.Count == 0) return;
+            void Apply(ProjectRecord target)
+            {
+                // Only records this sync saw can be dropped: one recorded since was created after the listings were read.
+                foreach (var id in gone) target.Databases.Remove(id);
+                foreach (var record in imported.Where(record => !target.Databases.ContainsKey(record.Id) && target.Databases.Values.All(database => database.Name != record.Name)))
+                    target.Databases[record.Id] = record;
+            }
+            await accounts.UpdateOrganizationAsync(context, org => { if (org.Projects.GetValueOrDefault(project.Id) is { } stored) Apply(stored); }, cancellationToken);
+            Apply(project);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested && (error is HttpRequestException or JsonException || DatabaseResults.KnownFailure(error))) { }
     }
 
     public static string ValidName(string name)
