@@ -86,7 +86,7 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         var beforePrivateReads = (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32();
         await ReadyAsync(coldClient);
         Check((await MeAsync(coldReplica)).GetProperty("email").GetString() == account.Email &&
-            (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32() >= beforePrivateReads + 15,
+            (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32() >= beforePrivateReads + 16,
             "Readiness and encrypted account/session reads use the private listener without a durable API key or public data bearer.");
         using (var deleted = await HttpJourney.PostFormAsync(coldReplica, "/api/v1/dashboard/data/saved-queries/delete", new()
         { ["_csrf"] = localeCsrf, ["id"] = queryId }))
@@ -102,7 +102,7 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         await ControlAsync(controls, new { command = "mode", value = "interrupted" });
         Check(!await scenario.StartHostsAsync(), "A producer outage during creation prevents the actual app from admitting traffic.");
         var partial = await ObserveAsync(controls);
-        Check(partial.GetProperty("collections").GetArrayLength() is > 0 and < 15, "The interrupted cold start leaves real, partial producer metadata.");
+        Check(partial.GetProperty("collections").GetArrayLength() is > 0 and < 16, "The interrupted cold start leaves real, partial producer metadata.");
         await ControlAsync(controls, new { command = "mode", value = "" });
         Check(await scenario.StartHostsAsync(), "The next actual app startup resumes existing collections and establishes the remainder.");
         var recovered = await ObserveAsync(controls);
@@ -219,9 +219,9 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
     private static int Count(JsonElement observation, string name) => observation.GetProperty("collections").EnumerateArray().Single(collection => collection.GetProperty("name").GetString() == name).GetProperty("documents").GetInt32();
     private static void CheckSchema(JsonElement observation)
     {
-        var expected = new[] { "sessions", "auth_credentials", "session_indexes", "auth-flows", "dashboard_accounts", "dashboard_account_identities", "dashboard_organizations", "dashboard_access_tokens", "dashboard_access_token_hashes", "dashboard_saved_queries", "dashboard_billing", "dashboard_internal_billing", "dashboard_stripe_customers", "dashboard_billing_changes", "dashboard_stripe_checkouts" };
+        var expected = new[] { "sessions", "auth_credentials", "session_indexes", "auth-flows", "dashboard_accounts", "dashboard_account_identities", "dashboard_organizations", "dashboard_access_tokens", "dashboard_access_token_hashes", "dashboard_saved_queries", "dashboard_billing", "dashboard_internal_billing", "dashboard_stripe_customers", "dashboard_billing_changes", "dashboard_stripe_checkouts", "dashboard_allowance_alerts" };
         Check(observation.GetProperty("collections").EnumerateArray().Select(collection => collection.GetProperty("name").GetString()).Order(StringComparer.Ordinal)
-            .SequenceEqual(expected.Order(StringComparer.Ordinal)), "The external producer contains exactly all15 fixed production collections, including internal billing, account identity and checkout binding indexes.");
+            .SequenceEqual(expected.Order(StringComparer.Ordinal)), "The external producer contains exactly all16 fixed production collections, including allowance alerts, internal billing, account identity and checkout binding indexes.");
     }
     private static string Token(string html)
     { var token = Regex.Match(html, "name=\"_csrf\" value=\"([^\"]+)\"").Groups[1].Value; Check(token.Length > 0, "The native form publishes a CSRF token."); return WebUtility.HtmlDecode(token); }

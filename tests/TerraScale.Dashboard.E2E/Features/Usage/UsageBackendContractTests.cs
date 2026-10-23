@@ -21,7 +21,7 @@ public sealed class UsageBackendContractTests
         const string planId = "01JA0000000000000000000006";
         organization.PlanId = planId;
         organization.SpendCapCents = 2000;
-        organization.InternalBilling = new(organization.Id, planId, "business", "01JA0000000000000000000007",
+        organization.InternalBilling = new(organization.Id, planId, "pro", "01JA0000000000000000000007",
             PlanCatalog.For("pro") with { Id = planId, Key = "internal", Name = "TerraScale Internal" },
             PlanCatalog.Limits("pro"), PlanCatalog.ResourceLimits("pro"), 100, 20);
         var measured = await new UsageBackend(wire, new Clock(), new Tokens()).ReadAsync(selection, CancellationToken.None);

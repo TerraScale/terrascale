@@ -48,7 +48,7 @@ public sealed class UsageNavigationJourneyTests(DashboardRootFixture fixture)
         await Assert.That(rangeQuery["range"].ToString()).IsEqualTo("24h");
         await Assert.That(rangeQuery["project"].ToString()).IsEqualTo(projectId);
         await Assert.That(rangeQuery["database"].ToString()).IsEqualTo(databaseId);
-        var settings = Link(initial, "Spending controls");
+        var settings = Link(initial, "Spending");
         await Assert.That(QueryHelpers.ParseQuery(new Uri(client.BaseAddress!, settings).Query)["tab"].ToString()).IsEqualTo("settings");
         await AssertSelectionAsync(settings, projectId, databaseId);
         var overview = Link(await PageAsync(settings), "Overview");
@@ -70,7 +70,7 @@ public sealed class UsageNavigationJourneyTests(DashboardRootFixture fixture)
         await Assert.That(switched).Contains("value=\"30d\" selected=\"selected\"");
         await Assert.That(DatabaseFilter(switched)).Contains("<option value=\"\">All databases</option>");
         await Assert.That(DatabaseFilter(switched).Contains("selected=", StringComparison.Ordinal)).IsFalse();
-        await AssertSelectionAsync(Link(switched, "Spending controls"), otherProjectId, "");
+        await AssertSelectionAsync(Link(switched, "Spending"), otherProjectId, "");
 
         async Task<string> PageAsync(string path)
         {

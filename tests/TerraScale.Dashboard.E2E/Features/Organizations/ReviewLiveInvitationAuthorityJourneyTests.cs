@@ -167,7 +167,7 @@ public sealed class ReviewLiveInvitationAuthorityJourneyTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             request.RequestUri is { Host: "auth.terrascale.tech" } uri && uri.AbsolutePath.StartsWith("/v1/terrascale/", StringComparison.Ordinal)
                 ? producer.HandleAsync(request, cancellationToken)
-                : fallback.SendAsync(request, cancellationToken);
+                : HttpForwarding.SendAsync(fallback, request, cancellationToken);
         protected override void Dispose(bool disposing) { if (disposing) fallback.Dispose(); base.Dispose(disposing); }
     }
 

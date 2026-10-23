@@ -72,8 +72,7 @@ public sealed partial class StripeBilling
     }
 
     private static bool CheckoutReturnPath(BillingBinding binding) =>
-        binding.ReturnPath is "/onboarding" or "/billing" or "/organization?tab=billing" ||
-        binding.ReturnPath == "/organization?newOrganization=project&organizationID=" + Uri.EscapeDataString(binding.OrganizationId);
+        ValidCheckoutReturnPath(binding.OrganizationId, binding.CheckoutProjectId, binding.ReturnPath);
 
     private sealed record BoundCheckout(AccountContext Context, BillingBinding Binding);
 }

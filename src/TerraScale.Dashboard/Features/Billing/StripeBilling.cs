@@ -447,7 +447,10 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
             throw new IOException("Stripe checkout does not match its persisted binding.");
     }
 
-    internal static bool ValidCheckoutReturnPath(AccountContext context, string path)
+    internal static bool ValidCheckoutReturnPath(AccountContext context, string path) =>
+        ValidCheckoutReturnPath(context.Organization?.Id, context.Project?.Id, path);
+
+    private static bool ValidCheckoutReturnPath(string? organizationId, string? projectId, string path)
     {
         if (path.Contains('#') || path.Contains('\\') || path.Any(char.IsControl)) return false;
         var queryAt = path.IndexOf('?');
@@ -455,15 +458,15 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         if (basePath is not ("/onboarding" or "/billing" or "/organization")) return false;
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryAt < 0 ? "" : path[queryAt..]);
         if (query.Any(pair => pair.Value.Count != 1)) return false;
-        if (query.TryGetValue("organizationId", out var organizationId) && organizationId != context.Organization?.Id) return false;
-        if (query.TryGetValue("projectId", out var projectId) && (context.Project is null || projectId != context.Project.Id)) return false;
+        if (query.TryGetValue("organizationId", out var returnOrganizationId) && returnOrganizationId != organizationId) return false;
+        if (query.TryGetValue("projectId", out var returnProjectId) && (string.IsNullOrEmpty(projectId) || returnProjectId != projectId)) return false;
         // The legacy wizard ID differs only in case from organizationId; ParseQuery treats them as one key.
         if (basePath == "/organization")
         {
             if (query.TryGetValue("tab", out var tab) && tab != "billing") return false;
             if (query.TryGetValue("newOrganization", out var step))
             {
-                if (step != "project" || !query.TryGetValue("organizationId", out var wizardId) || wizardId != context.Organization?.Id) return false;
+                if (step != "project" || !query.TryGetValue("organizationId", out var wizardId) || wizardId != organizationId) return false;
             }
             else if (query.GetValueOrDefault("tab") != "billing") return false;
         }

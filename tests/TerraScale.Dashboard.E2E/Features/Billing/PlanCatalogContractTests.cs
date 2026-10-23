@@ -27,7 +27,7 @@ public sealed class PlanCatalogContractTests(DashboardE2EFixture fixture)
     [Arguments("free", "3BN8V1JQWTB3R3NSZ26SERTHWT", "")]
     [Arguments("starter", "443RCMMF70MNP6S1QMT230NF99", "annual")]
     [Arguments("pro", "7CNW2H87JE68ATZX224CV2G625", "monthly")]
-    [Arguments("team", "01K8A00000TEAM0000000000000", "monthly")]
+    [Arguments("team", "01K8A00000TEAM00000000000000", "monthly")]
     public async Task PublishedCatalogDrivesMcpBillingCardsAndRealizedAllowances(string key, string id, string interval)
     {
         using var client = fixture.CreateClient();
