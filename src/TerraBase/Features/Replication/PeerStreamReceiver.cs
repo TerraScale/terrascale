@@ -347,10 +347,10 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 }
 
                 var previous = last.GetValueOrDefault(database);
-                    var progress = new ApplyProgress();
-                    var joined = ApplyAsync(After(database), received, database, incarnation, previous, origin, batch, region, progress, stream.Token);
-                    applying[database] = (joined, progress, batch.Database, batch.LastChangeId);
-                    answers.Add((database, incarnation, joined, received));
+                var progress = new ApplyProgress();
+                var joined = ApplyAsync(After(database), received, database, incarnation, previous, origin, batch, region, progress, stream.Token);
+                applying[database] = (joined, progress, batch.Database, batch.LastChangeId);
+                answers.Add((database, incarnation, joined, received));
             }
         }
         catch (OperationCanceledException) when (stream.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested)
