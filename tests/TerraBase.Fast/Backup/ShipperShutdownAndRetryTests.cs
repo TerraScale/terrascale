@@ -17,6 +17,68 @@ public sealed class ShipperShutdownAndRetryTests
     private static readonly Faker Faker = new();
 
     [Test]
+    public async Task Shutdown_keeps_unshipped_writes_when_the_callers_deadline_cancels_an_upload(CancellationToken cancellationToken)
+    {
+        await using var host = await BackupShippingHost.StartAsync();
+        await host.PutAsync("people", "seed", Faker.Lorem.Sentence(8), cancellationToken);
+        await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        var generation = host.Status().Generation!;
+        var text = Faker.Lorem.Sentence(8);
+        await host.PutAsync("people", "last", text, cancellationToken);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var interrupted = false;
+        host.S3.BeforePut = async (key, token) =>
+        {
+            if (key.StartsWith($"{host.File}/wal/", StringComparison.Ordinal))
+            {
+                interrupted = true;
+                await deadline.CancelAsync();
+                token.ThrowIfCancellationRequested();
+            }
+        };
+
+        await ((IHostedService)host.Api.Server.Services.GetRequiredService<IContinuousBackup>()).StopAsync(deadline.Token);
+
+        await Assert.That(interrupted).IsTrue();
+        await Assert.That(host.Segments(generation).Count).IsEqualTo(0);
+        await Assert.That(await host.ReadAsync("main", "people", "last", cancellationToken)).IsEqualTo(text);
+    }
+
+    [Test]
+    public async Task Shutdown_bounds_a_blocked_writer_without_advancing_the_fixture_clock(CancellationToken cancellationToken)
+    {
+        await using var host = await BackupShippingHost.StartAsync();
+        await host.PutAsync("people", "seed", Faker.Lorem.Sentence(8), cancellationToken);
+        await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        var now = host.Time.GetUtcNow();
+        var engine = host.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holding = ((SqliteDatabaseStore)store).WithWritersHeldAsync(async () =>
+        {
+            entered.SetResult();
+            await release.Task.WaitAsync(cancellationToken);
+            return 0;
+        }, cancellationToken, "the shutdown regression");
+        try
+        {
+            await entered.Task.WaitAsync(cancellationToken);
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(TimeSpan.FromSeconds(8));
+            await ((IHostedService)host.Api.Server.Services.GetRequiredService<IContinuousBackup>()).StopAsync(deadline.Token);
+
+            await Assert.That(deadline.IsCancellationRequested).IsFalse();
+            await Assert.That(host.Time.GetUtcNow()).IsEqualTo(now);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await holding;
+        }
+    }
+
+    [Test]
     public async Task Shutdown_ships_the_last_writes_while_it_cancels_a_daily_snapshot_upload(CancellationToken cancellationToken)
     {
         await using var host = await BackupShippingHost.StartAsync();
