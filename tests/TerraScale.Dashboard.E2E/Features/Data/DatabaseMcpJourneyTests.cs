@@ -177,7 +177,13 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await ErrorAsync(replica, "set_collection_schema", new(docFields) { ["schema"] = new { name = "users" } });
             await ErrorAsync(replica, "list_index_recommendations", new() { ["databaseId"] = databaseId });
             await ErrorAsync(replica, "get_index_migration", new(docFields));
-            using (var authConsole = await replica.GetAsync("/auth/overview")) await Assert.That(authConsole.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            using (var authConsole = await replica.GetAsync("/auth/overview"))
+            {
+                await Assert.That(authConsole.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                var html = await authConsole.Content.ReadAsStringAsync();
+                await Assert.That(html).Contains($"id=\"auth-issuer\">https://auth.terrascale.tech/{projectId}</code>");
+                await Assert.That(html).Contains("Authentication management is unavailable for this project.");
+            }
             await ErrorAsync(replica, "delete_database", new() { ["databaseId"] = databaseId, ["confirmName"] = "wrong-name" });
             await CallAsync(replica, "revoke_api_key", new() { ["keyId"] = keyId });
             keyId = "";
