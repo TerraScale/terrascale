@@ -255,8 +255,9 @@ internal sealed partial class SqliteDatabaseStore(
     /// A write transaction of a rebuild's certified refill, salvage or completion barrier: the only writes a copy under
     /// rebuild accepts. The caller checks the file's incarnation inside it (<see cref="RebuildLedger"/>).
     /// </summary>
-    internal ValueTask<SqliteStorageTransaction> BeginRebuildTransactionAsync(CancellationToken cancellationToken) =>
-        BeginAsync(write: true, durable: true, cancellationToken, "a rebuild repair", rebuild: true);
+    /// <remarks>Only the intent journal's ordinary intents pass <paramref name="synced"/> false (decision 0013d).</remarks>
+    internal ValueTask<SqliteStorageTransaction> BeginRebuildTransactionAsync(CancellationToken cancellationToken, bool synced = true) =>
+        BeginAsync(write: true, durable: synced, cancellationToken, "a rebuild repair", rebuild: true);
 
     /// <summary>This node's copy faults and rebuilds; null for stores built outside an engine.</summary>
     internal RebuildLedger? Ledger { get; init; }
@@ -324,11 +325,18 @@ internal sealed partial class SqliteDatabaseStore(
         {
             Ledger?.FailClosed($"the system database faulted: {reason}");
         }
-        else
+        else if (Ledger is { } ledger)
         {
-            _ = Ledger?.FlagAsync(this);
+            Flagged = ledger.FlagAsync(this);
         }
     }
+
+    /// <summary>The latest <see cref="NoteCopyFault"/>'s durable <c>Faulting</c> mark; it never throws.</summary>
+    internal Task Flagged
+    {
+        get => Volatile.Read(ref field);
+        private set => Volatile.Write(ref field, value);
+    } = Task.CompletedTask;
 
     /// <summary>
     /// Records that a transaction may have left this file uncertain or damaged: a copy fault of a client database, the
@@ -374,7 +382,8 @@ internal sealed partial class SqliteDatabaseStore(
 
         // Every write transaction syncs the write-ahead log at its commit (synchronous = FULL): what a write answers, the
         // system database's catalog and keys (decision 0012) and a client database's documents (0013), survives a power loss.
-        durable |= write;
+        // A rebuild transaction states its own: an ordinary write intent need only survive a process crash (0013d).
+        durable |= write && !rebuild;
         var ownsAdmission = !io.HasAdmission;
         if (ownsAdmission)
         {
@@ -388,7 +397,7 @@ internal sealed partial class SqliteDatabaseStore(
         try
         {
             // Setup and BEGIN can also detect damage; record before opening a native session.
-            operation = await io.WithAdmissionAsync(() => BeginOperationAsync(cancellationToken)).ConfigureAwait(false);
+            operation = await io.WithAdmissionAsync(() => BeginOperationAsync(cancellationToken, intent: write)).ConfigureAwait(false);
             if (write)
             {
                 await AcquireWriterAsync(writer, cancellationToken).ConfigureAwait(false);
