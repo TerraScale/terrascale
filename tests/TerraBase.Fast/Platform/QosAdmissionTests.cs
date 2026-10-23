@@ -37,7 +37,7 @@ public sealed class QosAdmissionTests
         {
             for (var i = 0; i < QosPolicy.For(PlanTier.Hobby).Concurrency; i++)
             {
-                lanes.Add(admission.TryEnter(new TenantContext(tenant.OrganizationId, PlanTier.Hobby), out _)!);
+                lanes.Add(admission.TryEnter(new TenantContext(tenant.OrganizationId, PlanTier.Hobby), out _, read: true)!);
             }
 
             using var refused = await jwt.GetAsync(tenant.Database("app", "/collections"));
@@ -247,7 +247,7 @@ public sealed class QosAdmissionTests
         {
             for (var i = 0; i < QosPolicy.For(PlanTier.Hobby).Concurrency; i++)
             {
-                held.Add(admission.TryEnter(database, out _) ?? throw new InvalidOperationException("fixture admission failed"));
+                held.Add(admission.TryEnter(database, out _, read: true) ?? throw new InvalidOperationException("fixture admission failed"));
             }
 
             using var first = await hobby.Data.GetAsync(hobby.Database("app", "/collections"));
