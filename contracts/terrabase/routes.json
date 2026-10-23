@@ -218,6 +218,12 @@
       "path": "/admin/projects/{project}/closure"
     },
     {
+      "client": "documents",
+      "operation": "cancelClosure",
+      "method": "PUT",
+      "path": "/admin/projects/{project}/databases/{database}/closure-cancellations/{generation}"
+    },
+    {
       "client": "management",
       "operation": "requestHistoryErasure",
       "method": "PUT",

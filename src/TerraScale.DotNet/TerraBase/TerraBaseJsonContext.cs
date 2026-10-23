@@ -31,6 +31,8 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBasePage<TerraBaseOrganization>))]
 [JsonSerializable(typeof(TerraBaseProject))]
 [JsonSerializable(typeof(TerraBaseProjectClosure))]
+[JsonSerializable(typeof(ClosureCancellationBody))]
+[JsonSerializable(typeof(TerraBaseClosureCancellation))]
 [JsonSerializable(typeof(TerraBaseHistoryErasure))]
 [JsonSerializable(typeof(TerraBasePage<TerraBaseProject>))]
 [JsonSerializable(typeof(TerraBaseManagedDatabase))]
