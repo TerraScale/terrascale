@@ -59,7 +59,7 @@ See [indexes](/hi/guides/indexes) for index naming and deletion.
 
 Send `{"search":["/title","backup"]}` as the query's `filter`. The first entry identifies an indexed string field; the second is the search text.
 
-Search text must be nonempty, contain no NUL character, and fit within **4096 UTF-8 bytes**. The examples use plain words; advanced query syntax is not part of this guide's contract.
+Search text must be nonblank, contain no NUL character, fit within **4096 UTF-8 bytes**, and nest parentheses at most **64 levels**. Terms use native Tantivy syntax; malformed syntax returns **`400 invalid_query`**. The examples use plain words; this guide promises no additional advanced query features.
 
 ```bash
 api -H 'Content-Type: application/json' --data-binary @- "$DB/collections/articles/query" <<'JSON' | jq
