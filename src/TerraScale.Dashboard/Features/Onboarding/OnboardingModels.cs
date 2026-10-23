@@ -26,7 +26,8 @@ public static class OnboardingProgress
 
 public sealed record OnboardingPage(DocumentModel Document, string CsrfToken,
     string DisplayName = "", string Email = "", string Error = "",
-    bool PaymentCanceled = false, string Plan = "", string Step = "account-information", IReadOnlyList<BillingPlan>? Plans = null)
+    bool PaymentCanceled = false, string Plan = "", string Step = "account-information", IReadOnlyList<BillingPlan>? Plans = null,
+    IReadOnlyList<string>? Regions = null)
 {
     public IReadOnlyList<OnboardingStep> Steps => OnboardingProgress.Steps(Step);
     public int CurrentStep => Steps.Select((step, index) => (step, index)).FirstOrDefault(item => item.step.Current).index + 1;

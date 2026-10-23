@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Shared.Databases;
 using TerraScale.Dashboard.Shared.UI;
 using TerraScale.Dashboard.Shared.Validation;
 
@@ -14,7 +15,7 @@ public static class OnboardingEndpoints
         app.MapPost("/onboarding/step", SaveAsync);
     }
 
-    private static async Task<IResult> GetAsync(HttpContext context, DashboardSessions sessions, AccountService accounts, OnboardingService service)
+    private static async Task<IResult> GetAsync(HttpContext context, DashboardSessions sessions, AccountService accounts, OnboardingService service, IDatabaseBackend backend)
     {
         var plans = await service.PlansAsync(context.RequestAborted);
         var requested = context.Request.Query["plan"].ToString();
@@ -48,6 +49,12 @@ public static class OnboardingEndpoints
         };
         if (payment == "success" && page.Step == "payment-method")
             page = page with { Error = "Payment setup could not be confirmed. Finish checkout or continue without payment." };
+        // Offer exactly the regions the project step accepts: those TerraBase reports as serving.
+        if (page.Step == "project")
+        {
+            try { page = page with { Regions = (await backend.RegionsAsync(context.RequestAborted)).Where(region => region.Healthy).Select(region => region.Code).ToArray() }; }
+            catch (HttpRequestException) { page = page with { Regions = [] }; }
+        }
         return OnboardingView.Create(page);
     }
 

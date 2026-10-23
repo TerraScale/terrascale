@@ -29,7 +29,7 @@ public sealed class OnboardingMcpTools(IHttpContextAccessor http, AccountService
         [Description("payment-method: paid plan key to check out, such as starter or pro.")] string plan = "",
         [Description("payment-method: billing interval, monthly or annual.")] string interval = "",
         [Description("project: project name, up to 100 characters.")] string name = "",
-        [Description("project: region code GRU or SFO.")] string region = "")
+        [Description("project: a region code TerraBase serves, such as GRU.")] string region = "")
     {
         var session = Account().Session;
         var form = new FormCollection(new Dictionary<string, StringValues>
