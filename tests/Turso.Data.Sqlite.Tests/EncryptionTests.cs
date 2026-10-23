@@ -97,7 +97,9 @@ public sealed class EncryptionTests
             {
                 raw.Open();
                 using var write = raw.CreateCommand();
-                write.CommandText = "CREATE TABLE secret(value TEXT); INSERT INTO secret VALUES ('backup-payload');";
+                write.CommandText = "CREATE TABLE secret(value TEXT);";
+                write.ExecuteNonQuery();
+                write.CommandText = "INSERT INTO secret VALUES ('backup-payload');";
                 write.ExecuteNonQuery();
             }
             await Assert.That(ReadValue(builder.ConnectionString)).IsEqualTo("backup-payload");
