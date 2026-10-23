@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 
 namespace TerraBase.Testing;
@@ -104,6 +105,10 @@ public sealed class ManagementApi : IAsyncDisposable
             throw;
         }
     }
+
+    /// <summary>Verifies a fixture's catalog even when its frozen clock cannot schedule a retry after the startup deadline.</summary>
+    internal async Task VerifyCatalogAsync(CancellationToken cancellationToken) =>
+        await Assert.That(await ((CatalogGate)Server.Services.GetRequiredService<ICatalogGate>()).VerifyAsync(cancellationToken)).IsTrue();
 
     /// <summary>A client acting as <paramref name="user"/>, with <paramref name="email"/> as its verified email when set.</summary>
     public HttpClient As(string user, string? email = null) =>

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using TerraBase.Engine;
 using TerraBase.Features.Backup;
@@ -30,7 +29,6 @@ internal enum Ack
 internal sealed class SegmentAckGate : IAsyncDisposable
 {
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(1);
-    private readonly IWalTap _tap;
     private readonly IObjectStore _store;
     private readonly string _prefix;
     private readonly CancellationTokenSource _stop = new();
@@ -45,7 +43,7 @@ internal sealed class SegmentAckGate : IAsyncDisposable
 
     private SegmentAckGate(IWalTap tap, IObjectStore store, string prefix)
     {
-        (_tap, _store, _prefix) = (tap, store, prefix);
+        (Tap, _store, _prefix) = (tap, store, prefix);
     }
 
     /// <summary>Segments stored.</summary>
@@ -54,7 +52,7 @@ internal sealed class SegmentAckGate : IAsyncDisposable
     /// <summary>Waits released by stored segments (a write's wait counts once).</summary>
     public long Released => Interlocked.Read(ref _released);
 
-    /// <summary>Failed attempts to store a segment or the snapshot that the gate retried (after the client's own retries).</summary>
+    /// <summary>Failed reads or attempts to store a segment or snapshot that the gate retried (after the client's own retries).</summary>
     public long Retries => Interlocked.Read(ref _retries);
 
     /// <summary>Bytes of the generation's log stored as segments.</summary>
@@ -63,19 +61,21 @@ internal sealed class SegmentAckGate : IAsyncDisposable
     /// <summary>Size of the generation's snapshot.</summary>
     public long SnapshotBytes { get; private set; }
 
+    internal IWalTap Tap { get; }
+
     /// <summary>From the generation's start to its snapshot being stored: nothing can be acknowledged meanwhile.</summary>
     public TimeSpan SnapshotStall { get; private set; }
 
     /// <summary>Starts a generation of <paramref name="database"/>: a snapshot, stored before the gate returns.</summary>
     public static async Task<SegmentAckGate> StartAsync(
-        IWalBackup backup, TenantContext database, IObjectStore store, string prefix, string scratch, CancellationToken cancellationToken)
+        IWalBackup backup, TenantContext database, IObjectStore store, string prefix, string scratch, TimeProvider time, CancellationToken cancellationToken)
     {
         var tap = await backup.OpenTapAsync(database, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"no database {database.DatabaseId}");
         var gate = new SegmentAckGate(tap, store, prefix);
         try
         {
-            var clock = Stopwatch.StartNew();
+            var started = time.GetTimestamp();
             var path = Path.Combine(scratch, $"snapshot-{Guid.NewGuid():N}.db");
             // Changes committed before the pin are in the copy itself: the generation's log starts after it, at 0.
             _ = await tap.SnapshotAsync(Stream.Null, path, cancellationToken).ConfigureAwait(false);
@@ -86,7 +86,7 @@ internal sealed class SegmentAckGate : IAsyncDisposable
             }
 
             File.Delete(path);
-            gate.SnapshotStall = clock.Elapsed;
+            gate.SnapshotStall = time.GetElapsedTime(started);
             gate._flusher = Task.Run(gate.FlushAsync, CancellationToken.None);
             return gate;
         }
@@ -132,7 +132,7 @@ internal sealed class SegmentAckGate : IAsyncDisposable
         {
         }
 
-        await _tap.DisposeAsync().ConfigureAwait(false);
+        await Tap.DisposeAsync().ConfigureAwait(false);
         _stop.Dispose();
         _signal.Dispose();
     }
@@ -160,7 +160,24 @@ internal sealed class SegmentAckGate : IAsyncDisposable
             }
 
             using var segment = new MemoryStream();
-            var read = await _tap.ReadAsync(segment, stop).ConfigureAwait(false);
+            WalRead read;
+            while (true)
+            {
+                try
+                {
+                    read = await Tap.ReadAsync(segment, stop).ConfigureAwait(false);
+                    break;
+                }
+                catch (StorageBusyException) when (!stop.IsCancellationRequested)
+                {
+                    // A failed tap read does not move its cursor; discard its partial bytes before reading them again.
+                    segment.SetLength(0);
+                    segment.Position = 0;
+                    _ = Interlocked.Increment(ref _retries);
+                    await Task.Delay(TimeSpan.FromMilliseconds(50), stop).ConfigureAwait(false);
+                }
+            }
+
             if (!read.Continuous)
             {
                 // A hole ends the generation: the prototype stops rather than start a new one.

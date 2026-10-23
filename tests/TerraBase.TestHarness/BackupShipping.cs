@@ -39,6 +39,7 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
         }, time);
         try
         {
+            await api.VerifyCatalogAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var database = await api.CreateManagedDatabaseAsync("main");
             await api.SetPlanAsync(api.User, database.Organization, "enterprise");
             var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");

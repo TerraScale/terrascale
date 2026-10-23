@@ -1,4 +1,8 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Testing;
 
 namespace TerraBase.Slow.AckAfterSegment;
 
@@ -33,6 +37,41 @@ public sealed class AckAfterSegmentTests
     }
 
     [Test]
+    public async Task A_busy_tap_retries_without_acknowledging_partial_or_duplicate_history(CancellationToken cancellationToken)
+    {
+        await using var prototype = await AckPrototype.StartAsync(new ObjectStoreFaults(seed: 23), cancellationToken);
+        await using var gate = await prototype.GateAsync(cancellationToken);
+        var tap = (TursoChangeTap)gate.Tap;
+        var trims = 0;
+        var retrying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        tap.BeforeTrim = async token =>
+        {
+            if (Interlocked.Increment(ref trims) == 1)
+            {
+                throw new StorageBusyException();
+            }
+
+            _ = retrying.TrySetResult();
+            await release.Task.WaitAsync(token);
+        };
+
+        var writing = WriteAsync(prototype, gate, writers: 1, each: 1, Deadline, cancellationToken);
+        await retrying.Task.WaitAsync(Deadline, cancellationToken);
+        await Assert.That(writing.IsCompleted).IsFalse().Because("the successful retry has not finished reading the segment");
+        _ = release.TrySetResult();
+        var writes = await writing;
+
+        await Assert.That(gate.Retries).IsGreaterThanOrEqualTo(1);
+        await Assert.That(writes.Values.All(ack => ack == Ack.Durable)).IsTrue();
+        var (restored, position, segments) = await prototype.RestoreAsync(cancellationToken);
+        await Assert.That(writes.Keys.Where(id => !restored.Contains(id)).ToList()).IsEmpty();
+        await Assert.That(restored.Count).IsEqualTo(writes.Count);
+        await Assert.That(position).IsEqualTo(gate.Position);
+        await Assert.That((long)segments).IsEqualTo(gate.Segments);
+    }
+
+    [Test]
     public async Task During_an_outage_nothing_is_acknowledged_and_every_uncertain_write_is_restored_once_the_bucket_is_back(CancellationToken cancellationToken)
     {
         var faults = new ObjectStoreFaults(seed: 11);
@@ -61,8 +100,10 @@ public sealed class AckAfterSegmentTests
         await using var prototype = await AckPrototype.StartAsync(faults, cancellationToken);
         _ = await prototype.WriteAsync(cancellationToken);
 
-        var starting = prototype.GateAsync(cancellationToken);
-        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+        var time = new FakeTimeProvider();
+        var starting = prototype.GateAsync(cancellationToken, time);
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(faults.Refused > 0));
+        time.Advance(TimeSpan.FromSeconds(1));
         await Assert.That(starting.IsCompleted).IsFalse().Because("the snapshot cannot be stored during the outage");
 
         faults.Outage = false;
