@@ -11,7 +11,6 @@ workflow = (root / ".github/workflows/ci.yml").read_text()
 dockerfile = (root / "Dockerfile").read_text()
 writers = re.findall(r"^\s+cache-to: (.+)$", workflow, re.M)
 assert writers == [
-    "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope=turso-native-{0}', matrix.arch) || '' }}",
     "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', env.AREA) || '' }}",
 ], writers
 # setup-dotnet saves its NuGet cache after any successful job, pull requests included: no job may enable it.

@@ -11,6 +11,7 @@
   </ItemGroup>
   <Target Name="RequireTursoFtsNative" BeforeTargets="PrepareForBuild">
     <Error Condition="!Exists('$(_TursoNativeFile)')"
-           Text="Pinned Turso 0.8.2 FTS native asset missing for $(_TursoNativeRid). Run scripts/vendor/build-turso-native.sh for this platform, or download this CI run's turso-native artifacts into src/vendor/Turso.Data.Sqlite/native. No NuGet fallback is permitted." />
+           Text="Pinned Turso 0.8.2 FTS + contract1 native asset missing for $(_TursoNativeRid). Run scripts/vendor/download-turso-native.sh. No NuGet fallback is permitted." />
+    <Exec Command="bash &quot;$(MSBuildThisFileDirectory)../../../../scripts/vendor/verify-turso-native.sh&quot; &quot;$(MSBuildThisFileDirectory)&quot; &quot;$(_TursoNativeRid)&quot;" />
   </Target>
 </Project>

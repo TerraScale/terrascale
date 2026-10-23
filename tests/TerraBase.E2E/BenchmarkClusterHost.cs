@@ -6,7 +6,7 @@ namespace TerraBase.E2E;
 /// <summary>
 /// Hosts gru, sjc and fra (or the regions <c>TERRABASE_BENCH_REGIONS</c> names, for example <c>gru</c> while nothing
 /// replicates between R2a-1 and R4a) as local nodes for the replication benchmark (benchmark/cmd/repl-bench, run by
-/// <c>make benchmark-repl-local</c>). It writes the targets file named by <c>TERRABASE_BENCH_CLUSTER_FILE</c> once every
+/// <c>make benchmark-repl-local</c>). It writes the targets file named by <c>TERRABASE_BENCH_CLUSTER_PATH</c> once every
 /// region serves the database, and keeps the nodes up until the benchmark deletes that file. Without the variable it
 /// skips: it is a host, not a scenario.
 /// </summary>
@@ -18,7 +18,7 @@ public sealed class BenchmarkClusterHost
     [Timeout(6 * 3600 * 1000)]
     public async Task Hosts_three_local_regions_until_the_benchmark_deletes_its_targets_file(CancellationToken cancellationToken)
     {
-        var file = Environment.GetEnvironmentVariable("TERRABASE_BENCH_CLUSTER_FILE");
+        var file = Environment.GetEnvironmentVariable("TERRABASE_BENCH_CLUSTER_PATH");
         Skip.When(string.IsNullOrEmpty(file), "the replication benchmark's local cluster host: run it with make benchmark-repl-local");
         var chosen = Environment.GetEnvironmentVariable("TERRABASE_BENCH_REGIONS") is { Length: > 0 } list
             ? list.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)

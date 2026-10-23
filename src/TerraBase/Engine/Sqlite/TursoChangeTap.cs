@@ -404,7 +404,8 @@ internal sealed class TursoChangeTap : IWalTap
         if (type == 1 && image is not null && SqliteRecord.Decode(image) is [string kind, string name, _, _, var sql, ..])
         {
             schema[rowid] = (kind, name);
-            if (sql is string statement && !name.StartsWith("fts_dir__tb_fts_index_", StringComparison.Ordinal))
+            // Recreating the native index recreates its reserved backing objects too.
+            if (sql is string statement && !ChangeLog.EngineTable(name))
             {
                 ChangeLog.WriteCreate(buffer, statement);
             }
@@ -414,7 +415,7 @@ internal sealed class TursoChangeTap : IWalTap
 
         if (type == -1 && schema.Remove(rowid, out var dropped))
         {
-            if (!dropped.Name.StartsWith("fts_dir__tb_fts_index_", StringComparison.Ordinal))
+            if (!ChangeLog.EngineTable(dropped.Name))
             {
                 ChangeLog.WriteDrop(buffer, dropped.Type, dropped.Name);
             }

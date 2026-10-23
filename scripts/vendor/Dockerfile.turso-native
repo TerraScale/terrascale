@@ -1,28 +1,56 @@
 # syntax=docker/dockerfile:1
-# Native builds run on each target architecture, never through cross-linker defaults.
+# Maintenance only: the helper requires a real host of the target architecture.
 FROM rust:1.88.0-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 AS build
 ADD --checksum=sha256:7ea83d5e28577cf9d8655b77705902379e06b82fb29424f6ea328b5f26f17ecb https://codeload.github.com/tursodatabase/turso/tar.gz/5c168be5ef6a32ac966daf5983502a4f694b37ad /turso.tar.gz
 WORKDIR /turso
-RUN tar -xzf /turso.tar.gz --strip-components=1 && rm /turso.tar.gz
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+RUN tar -xzf /turso.tar.gz --strip-components=1
 # Upstream core/build.rs uses this instead of wall-clock/git metadata.
 ENV SOURCE_DATE_EPOCH=1791270348 CARGO_INCREMENTAL=0 \
     RUSTFLAGS="--cfg=tokio_unstable --remap-path-prefix=/turso=/usr/src/turso -C link-arg=-Wl,-z,nodelete"
-COPY scripts/vendor/turso-native-budget.patch /turso-native-budget.patch
-RUN git apply --check /turso-native-budget.patch && git apply /turso-native-budget.patch
-# Match upstream's .NET build: the sync library also exports the complete core C ABI.
+COPY scripts/vendor/turso-native-budget.patch /inputs/turso-native-budget.patch
+COPY src/vendor/Turso.Native/patches/0001-preserve-page-authentication-damage.patch /inputs/0001-preserve-page-authentication-damage.patch
+RUN echo 'eadb14ec88ac351c938908443bcb89da324411e4eb8f8d068b3cc755fc0808ae  /inputs/0001-preserve-page-authentication-damage.patch' | sha256sum --check \
+    && git apply --check /inputs/0001-preserve-page-authentication-damage.patch && git apply /inputs/0001-preserve-page-authentication-damage.patch \
+    && git apply --check /inputs/turso-native-budget.patch && git apply /inputs/turso-native-budget.patch
+# Keep upstream defaults (encryption + pure-rust-crypto) and add FTS. Sync exports the complete core C ABI.
 RUN cargo +1.88.0 build --locked --package turso_sync_sdk_kit --features turso_sdk_kit/fts --profile lib-release \
     && cp target/lib-release/libturso_sync_sdk_kit.so target/lib-release/libturso_sdk_kit.so
 ARG TARGETARCH
-COPY scripts/vendor/turso-native-smoke.c /smoke.c
+COPY scripts/vendor/turso-native-smoke.c scripts/vendor/turso-native-contract-smoke.c \
+     scripts/vendor/Dockerfile.turso-native scripts/vendor/build-turso-native.sh /inputs/
 RUN case "$TARGETARCH" in amd64) rid=linux-x64; machine=3e00 ;; arm64) rid=linux-arm64; machine=b700 ;; *) exit 1 ;; esac \
+    && test "$(od -An -tx1 -N6 target/lib-release/libturso_sdk_kit.so | tr -d ' \n')" = 7f454c460201 \
     && test "$(od -An -tx1 -j18 -N2 target/lib-release/libturso_sdk_kit.so | tr -d ' \n')" = "$machine" \
-    && cc -Wall -Wextra -Werror -I sdk-kit /smoke.c -L target/lib-release -lturso_sdk_kit -o /smoke \
-    && LD_LIBRARY_PATH=/turso/target/lib-release /smoke \
-    && { LD_LIBRARY_PATH=/turso/target/lib-release /smoke expression || echo 'Expression FTS probe rejected; derived text-column FTS is required and already passed'; } \
-    && mkdir -p "/out/runtimes/$rid/native" \
+    && mkdir -p "/out/runtimes/$rid/native" /out/release \
+    && readelf -d target/lib-release/libturso_sdk_kit.so > "/out/release/$rid-elf-dynamic.txt" \
+    && ! grep -E 'RPATH|RUNPATH|Shared library: \[/' "/out/release/$rid-elf-dynamic.txt" \
+    && readelf --version-info target/lib-release/libturso_sdk_kit.so > "/out/release/$rid-elf-versions.txt" \
+    && nm -D --defined-only target/lib-release/libturso_sdk_kit.so > "/out/release/$rid-exports.txt" \
+    && grep -qw turso_sync_database_new "/out/release/$rid-exports.txt" \
+    && grep -qw turso_terrascale_storage_error_contract "/out/release/$rid-exports.txt" \
+    && grep -qw turso_connection_set_fts_progress_handler "/out/release/$rid-exports.txt" \
+    && cc -Wall -Wextra -Werror -I sdk-kit /inputs/turso-native-smoke.c -L target/lib-release -lturso_sdk_kit -o /smoke \
+    && cc -Wall -Wextra -Werror -I sdk-kit /inputs/turso-native-contract-smoke.c -L target/lib-release -lturso_sdk_kit -o /contract-smoke \
+    && LD_LIBRARY_PATH=/turso/target/lib-release /smoke 2>&1 | tee "/out/release/$rid-fts-smoke.txt" \
+    && LD_LIBRARY_PATH=/turso/target/lib-release /smoke expression 2>&1 | tee "/out/release/$rid-expression-probe.txt" \
+    && LD_LIBRARY_PATH=/turso/target/lib-release /contract-smoke 2>&1 | tee "/out/release/$rid-contract1-smoke.txt" \
     && cp target/lib-release/libturso_sdk_kit.so "/out/runtimes/$rid/native/" \
+    && (cd /usr/local/cargo/registry/src \
+        && find . -type f \( -iname '*license*' -o -iname 'copying*' -o -iname 'notice*' -o -name Cargo.toml -o -name .cargo-checksum.json \) -print0 \
+        | sort -z | tar --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner --null -T - -czf "/out/release/$rid-dependency-licenses.tar.gz") \
+    && cp /inputs/* LICENSE.md NOTICE.md Cargo.lock /out/release/ \
+    && cp /turso.tar.gz /out/release/turso-5c168be5ef6a32ac966daf5983502a4f694b37ad.tar.gz \
+    && { printf 'source_commit=5c168be5ef6a32ac966daf5983502a4f694b37ad\nversion=0.8.2\nrid=%s\nhost=%s\n' "$rid" "$(uname -m)"; \
+         printf 'rust_image=rust:1.88.0-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0\n'; \
+         printf 'command=cargo +1.88.0 build --locked --package turso_sync_sdk_kit --features turso_sdk_kit/fts --profile lib-release\n'; \
+         printf 'default_features=preserved\nSOURCE_DATE_EPOCH=%s\nRUSTFLAGS=%s\n' "$SOURCE_DATE_EPOCH" "$RUSTFLAGS"; \
+         rustc +1.88.0 --version --verbose; \
+         cd /out/release; sha256sum Cargo.lock *.patch Dockerfile.turso-native build-turso-native.sh *.c *.tar.gz; \
+         cd /out; sha256sum "runtimes/$rid/native/libturso_sdk_kit.so"; \
+       } > "/out/release/$rid-build-receipt.txt" \
     && cd /out \
-    && sha256sum "runtimes/$rid/native/libturso_sdk_kit.so" > "SHA256SUMS-$rid"
+    && find runtimes release -type f -print0 | sort -z | xargs -0 sha256sum > "SHA256SUMS-$rid"
 
 FROM scratch AS native
 COPY --from=build /out/ /

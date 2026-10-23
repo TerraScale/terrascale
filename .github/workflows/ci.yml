@@ -17,6 +17,11 @@ on:
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
+    inputs:
+      native_artifacts:
+        description: 'Maintenance: prepare combined native release assets only (no Fast/images/publication)'
+        type: boolean
+        default: false
 
 # A new push cancels the older run of the same PR. Every other run has its own group: each main push publishes the
 # images of the areas it changed, so none may be cancelled.
@@ -105,16 +110,33 @@ jobs:
               - scripts/terrabase/**
       - id: areas
         env:
-          CHANGES: ${{ github.event_name == 'workflow_dispatch' && '["libs","auth","terrabase"]' || steps.filter.outputs.changes }}
+          CHANGES: ${{ github.event_name == 'workflow_dispatch' && (inputs.native_artifacts && '[]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
         run: |
           # The ts-auth image does not contain TerraBase: main publishes and Slow-tests auth only for its own changes.
           echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase")]' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
           [[ $GITHUB_EVENT_NAME == pull_request ]] || CHANGES=$(jq -c 'if index("auth-server") then . + ["auth"] else . end' <<< "$CHANGES")
           echo "fast=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")" >> "$GITHUB_OUTPUT"
 
+  # Normal runs verify prebuilt release bytes; Rust is confined to explicit maintenance dispatches.
   native:
     needs: changes
     if: needs.changes.outputs.fast != '[]' || needs.changes.outputs.main != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Download and verify the pinned FTS + contract1 release
+        run: scripts/vendor/download-turso-native.sh native-output
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: turso-native-verified
+          path: native-output/
+          if-no-files-found: error
+
+  native-build:
+    if: github.event_name == 'workflow_dispatch' && inputs.native_artifacts
     strategy:
       fail-fast: false
       matrix:
@@ -125,33 +147,44 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Build the pinned native core once
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: scripts/vendor/Dockerfile.turso-native
-          target: native
-          platforms: linux/${{ matrix.arch }}
-          outputs: type=local,dest=native-output
-          cache-from: type=gha,scope=turso-native-${{ matrix.arch }}
-          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope=turso-native-{0}', matrix.arch) || '' }}
-          push: false
-      - name: Publish this run's SHA-256 for independent-run comparison
+      - name: Build once on the real target architecture and run both native smokes
+        run: scripts/vendor/build-turso-native.sh '${{ matrix.arch }}' native-output
+      - name: Record this run's native SHA-256
         run: |
           cd native-output
           sha256sum --check SHA256SUMS-*
-          cat SHA256SUMS-* >> "$GITHUB_STEP_SUMMARY"
+          grep 'runtimes/.*libturso_sdk_kit.so$' SHA256SUMS-* >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: turso-native-${{ matrix.arch }}
+          name: turso-native-build-${{ matrix.arch }}
           path: native-output/
+          if-no-files-found: error
+
+  native-release:
+    needs: native-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: turso-native-build-*
+          path: native-builds
+      - name: Assemble publication assets and source/patch receipts
+        run: |
+          scripts/vendor/prepare-turso-native-release.sh native-builds/turso-native-build-amd64 native-builds/turso-native-build-arm64 native-release
+          cat native-release/NATIVE-SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: turso-native-release
+          path: native-release/
           if-no-files-found: error
 
   libs:
@@ -180,11 +213,10 @@ jobs:
           path: ts-dotnet
           persist-credentials: false
       - &native-artifacts
-        name: Download this run's verified native cores
+        name: Download this run's verified pinned release cores
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: turso-native-*
-          merge-multiple: true
+          name: turso-native-verified
           path: terrascale/src/vendor/Turso.Data.Sqlite/native
       - name: Check out the path-filter matcher for regression fixtures
         if: env.AREA == 'libs'
@@ -471,8 +503,9 @@ jobs:
     steps: *slow-steps
 
   test:
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}
     needs: [changes, native, libs, auth, terrabase]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -501,6 +534,7 @@ jobs:
         run: |
           python3 terrascale/scripts/ci/slow-report-test.py
           python3 terrascale/scripts/ci/cache-policy-test.py
+          python3 terrascale/scripts/vendor/turso-native-pipeline-test.py
           bash terrascale/scripts/terrabase/storage-format-check-test.sh
           bash terrascale/scripts/terrabase/e2e-summary-test.sh
       # Reads the labels live: after labelling, re-run this job (docs/terrabase/ci.md, storage train).

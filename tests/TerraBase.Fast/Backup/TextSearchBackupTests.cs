@@ -73,7 +73,9 @@ public sealed class TextSearchBackupTests
         await Assert.That(copied.StatusCode).IsEqualTo(HttpStatusCode.Created);
         using var restored = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{database.Path}/point-in-time/restore"),
             new { pointInTime = shipped, name = "main-restored" });
-        await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        var restoreBody = await restored.Content.ReadFromJsonAsync<JsonElement>(token);
+        await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created)
+            .Because(restoreBody.TryGetProperty("error", out var restoreError) ? restoreError.GetRawText() : "restore must create a database");
         foreach (var name in DatabaseNames)
         {
             var query = ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{name}/collections/people/query");
