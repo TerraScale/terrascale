@@ -34,6 +34,27 @@ public sealed class ChangeLogAgeTests
     private const string Items = "items";
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
 
+    // The catalog replicates like any database: the backup tap's trim keeps what a catalog peer has not acknowledged.
+    [Test]
+    public async Task The_backup_tap_keeps_catalog_rows_a_peer_has_not_acknowledged()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var groups = server.Services.GetRequiredService<TursoChangeGroupSource>();
+        var system = (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(CancellationToken.None);
+        await using var tap = (await engine.OpenTapAsync(null, CancellationToken.None))!;
+        var peer = ReplicaId.Of(2, 7, 0);
+        _ = await Run(system, $"INSERT INTO _tb_peers (node, applied, acked, stable, seen, incarnation) VALUES ({unchecked((long)peer.Value)}, 0, 0, 0, {DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}, '{system.Incarnation}');");
+        var acked = await groups.HeadAsync(ChangeGroups.System, system.Incarnation, CancellationToken.None) ?? throw new InvalidOperationException("the catalog refused its own incarnation");
+        _ = await Run(system, $"UPDATE _tb_peers SET acked = {acked} WHERE node = {unchecked((long)peer.Value)};");
+        _ = await Run(system, $"UPDATE _tb_peers SET stable = 1 WHERE node = {unchecked((long)peer.Value)};");
+
+        // The tap read past the writes, so it trims up to its new anchor.
+        await Assert.That((await tap.ReadAsync(Stream.Null, CancellationToken.None)).Bytes).IsGreaterThan(0);
+        await Assert.That(await groups.RetainsAsync(ChangeGroups.System, system.Incarnation, acked, CancellationToken.None)).IsTrue()
+            .Because("a trim past a heard-from catalog peer's ack would make it refill the catalog");
+    }
+
     // Inbound frontiers keep the peer live while its next batch stays in flight; a late ACK must not renew the age cap.
     [Test]
     public async Task A_peer_whose_ack_trickles_does_not_hold_rows_past_24_hours()
