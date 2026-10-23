@@ -23,8 +23,10 @@ namespace TerraBase.Engine.Sqlite;
 /// The open gap of section 1.3, a crash between a failed sync and its fault record, is closed by write intents: before an
 /// incarnation's first active storage operation starts, <c>_tb_write_intent</c> records it, with FULL, under this
 /// process's replica id in a separate node-local journal, independent of the catalog writer. A clean stop keeps the replica id; any other ending raises its epoch (<see cref="ReplicaIdentityFile"/>),
-/// so at the next start every remaining intent of another replica id becomes a fault. Successful cleanup retires the intent
-/// when no operation remains. An uncertified copy that faults (one under
+/// so at the next start every remaining intent of another replica id becomes a fault, except where the copy's own FULL log
+/// is proven to be all that remains: no record names the database, no fault of it was being recorded (that intent's
+/// replica is <see cref="Faulting"/>), and the kernel caches none of its pages (<see cref="PageCache"/>), so the failed sync
+/// the gap is about cannot be read back. Successful cleanup retires the intent when no operation remains. An uncertified copy that faults (one under
 /// rebuild) is never certified: its record goes back to pending, and the rebuild starts over from the side copy, keeping
 /// that uncertified copy unwritten at its own side path (at most one) for the salvage. Nothing is deleted or overwritten
 /// before a certified rebuild; a second uncertain copy refuses the rebuild and stays in place.
@@ -49,6 +51,9 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
     internal const string Published = "replication.rebuild.published";
     internal const string BarrierDisposed = "replication.rebuild.barrier_disposed";
     internal const string BarrierReadDisposed = "replication.rebuild.barrier_read_disposed";
+
+    // The replica of an intent whose fault is being recorded: no replica id has member 0, so the next start faults it.
+    private const long Faulting = 0;
 
     // Rows and intents per page and transaction: recovery and enumeration hold no more at once.
     private const int Page = 128;
@@ -178,10 +183,12 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
             }
 
             // Explicit fault reports may follow quiescent work: protect the fault-record crash window too.
-            await WriteIntentAsync(engine.IntentStore!, key, incarnation, CancellationToken.None).ConfigureAwait(false);
+            await WriteIntentAsync(engine.IntentStore!, key, incarnation, CancellationToken.None, Faulting).ConfigureAwait(false);
             engine.Checkpoint(Recording, database);
             await WriteAsync(system, [row], [], CancellationToken.None).ConfigureAwait(false);
             Committed(key, row);
+            // Recorded: the intent is an ordinary one again, which a clean stop retires.
+            await WriteIntentAsync(engine.IntentStore!, key, incarnation, CancellationToken.None).ConfigureAwait(false);
             engine.Checkpoint(Recorded, database);
         }
         catch (Exception error)
@@ -266,7 +273,35 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
         }
     }
 
-    private Task<int> WriteIntentAsync(SqliteDatabaseStore system, Key key, Ulid incarnation, CancellationToken cancellationToken) =>
+    /// <summary>
+    /// Marks <paramref name="store"/>'s intent <see cref="Faulting"/> as soon as a fault is noted in memory, so a crash before
+    /// its record still faults the copy. Never throws; a mark that cannot be written fails the node closed.
+    /// </summary>
+    internal async Task FlagAsync(SqliteDatabaseStore store)
+    {
+        try
+        {
+            await _gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                // A record already refuses the copy, and recovery never proves a copy its record names.
+                if (store.RebuildRow is null && !store.IsClosed && engine.IntentStore is { } journal)
+                {
+                    await WriteIntentAsync(journal, Key.Of(store.Tenant!), store.Incarnation, CancellationToken.None, Faulting).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+        catch (Exception error)
+        {
+            FailClosed($"a copy fault could not be marked: {error.GetType().Name}");
+        }
+    }
+
+    private Task<int> WriteIntentAsync(SqliteDatabaseStore system, Key key, Ulid incarnation, CancellationToken cancellationToken, long? replica = null) =>
         InSystemAsync(system, command =>
         {
             using var insert = command("""
@@ -277,7 +312,7 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
                 """);
             key.Bind(insert);
             insert.Parameters.AddWithValue("$incarnation", incarnation.ToString());
-            insert.Parameters.AddWithValue("$replica", unchecked((long)engine.ReplicaId.Value));
+            insert.Parameters.AddWithValue("$replica", replica ?? unchecked((long)engine.ReplicaId.Value));
             return insert.ExecuteNonQuery();
         }, cancellationToken);
 
@@ -371,14 +406,16 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
             using var reservation = Reserve(Page);
             var intents = await InSystemAsync(engine.IntentStore!, command =>
             {
-                List<(long Rowid, Key Key, Ulid Incarnation)> intents = [];
+                List<(long Rowid, Key Key, Ulid Incarnation, bool Faulting)> intents = [];
                 using (var select = command("""
                     SELECT rowid, organization, project, database, incarnation,
-                        length(organization) = 26 AND length(project) = 26 AND length(database) = 26 AND length(incarnation) = 26
+                        length(organization) = 26 AND length(project) = 26 AND length(database) = 26 AND length(incarnation) = 26,
+                        replica = $faulting
                     FROM _tb_write_intent ORDER BY rowid LIMIT $limit;
                     """))
                 {
                     select.Parameters.AddWithValue("$limit", (long)Page);
+                    select.Parameters.AddWithValue("$faulting", Faulting);
                     using var reader = select.ExecuteReader();
                     while (reader.Read())
                     {
@@ -388,7 +425,8 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
                             throw new InvalidDataException("a write intent is not one the ledger writes");
                         }
 
-                        intents.Add((reader.GetInt64(0), new Key(reader.GetString(1), reader.GetString(2), reader.GetString(3)), Stored(reader.GetString(4))));
+                        intents.Add((reader.GetInt64(0), new Key(reader.GetString(1), reader.GetString(2), reader.GetString(3)), Stored(reader.GetString(4)),
+                            reader.GetInt64(6) != 0));
                     }
                 }
 
@@ -399,11 +437,13 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
                 break;
             }
 
+            // Synced and dropped from the cache before the copy opens: its reads then come from its disk alone.
+            var evicted = intents.Where(intent => !intent.Faulting && engine.Evicted(intent.Key.Tenant)).Select(intent => intent.Rowid).ToHashSet();
             _ = await InSystemAsync(system, command =>
             {
-                foreach (var (_, key, incarnation) in intents)
+                foreach (var (rowid, key, incarnation, _) in intents)
                 {
-                    if (ReadRow(command, key) is var current && !(current is null && Deleted(key))
+                    if (ReadRow(command, key) is var current && !(current is null && (Deleted(key) || evicted.Contains(rowid)))
                         && Faulted(key, current, incarnation, "the process exited uncleanly while this copy was written") is { } row)
                     {
                         Upsert(command, row);
@@ -414,7 +454,7 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
             }, cancellationToken, rows: 0).ConfigureAwait(false);
             _ = await InSystemAsync(engine.IntentStore!, command =>
             {
-                foreach (var (rowid, _, _) in intents)
+                foreach (var (rowid, _, _, _) in intents)
                 {
                     using var delete = command("DELETE FROM _tb_write_intent WHERE rowid = $rowid;");
                     delete.Parameters.AddWithValue("$rowid", rowid);

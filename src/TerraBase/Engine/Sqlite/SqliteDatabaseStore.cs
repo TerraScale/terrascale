@@ -328,6 +328,10 @@ internal sealed partial class SqliteDatabaseStore(
         {
             Ledger?.FailClosed($"the system database faulted: {reason}");
         }
+        else
+        {
+            _ = Ledger?.FlagAsync(this);
+        }
     }
 
     /// <summary>
