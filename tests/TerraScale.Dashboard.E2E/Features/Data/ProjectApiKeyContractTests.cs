@@ -51,6 +51,20 @@ public sealed class ProjectApiKeyContractTests
     }
 
     [Test]
+    [Arguments("committed", true)]
+    [Arguments("refused", false)]
+    public async Task RevokeReportsTheKeysRealStateAfterAFailedAnswer(string failure, bool revoked)
+    {
+        using var wire = new Wire { Failure = failure };
+        HttpRequestException? rejected = null;
+        try { await new ApiKeyService(wire, TimeProvider.System).RevokeAsync(Context(), KeyId, CancellationToken.None); }
+        catch (HttpRequestException error) { rejected = error; }
+        await Assert.That(rejected is null).IsEqualTo(revoked);
+        await Assert.That(rejected?.StatusCode).IsEqualTo(revoked ? null : HttpStatusCode.ServiceUnavailable);
+        await Assert.That(wire.Methods).IsEquivalentTo(new[] { HttpMethod.Get, HttpMethod.Delete, HttpMethod.Get }, CollectionOrdering.Matching);
+    }
+
+    [Test]
     [Arguments("foreign")]
     [Arguments("repeated")]
     public async Task ListingRefusesForeignIdentityOrRepeatedPagination(string failure)
@@ -82,6 +96,9 @@ public sealed class ProjectApiKeyContractTests
         public string? Body { get; private set; }
         public string? Query { get; private set; }
         public List<HttpMethod> Methods { get; } = [];
+        private bool Deleted { get; set; }
+        private static HttpResponseMessage Error(HttpStatusCode status, string code) =>
+            new(status) { Content = new StringContent(JsonSerializer.Serialize(new { error = new { code, message = "Synthetic failure" } }), Encoding.UTF8, "application/json") };
         public HttpClient CreateClient(string name) => new(this, false);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -93,7 +110,13 @@ public sealed class ProjectApiKeyContractTests
             Methods.Add(request.Method);
             Query = request.RequestUri.Query;
             Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-            if (request.Method == HttpMethod.Delete) return new(HttpStatusCode.NoContent);
+            if (Deleted) return Error(HttpStatusCode.NotFound, "api_key_not_found");
+            if (request.Method == HttpMethod.Delete)
+            {
+                // "committed": the delete lands but its answer is lost; "refused": nothing changes.
+                Deleted = Failure != "refused";
+                return Failure is "committed" or "refused" ? Error(HttpStatusCode.ServiceUnavailable, "temporarily_unavailable") : new(HttpStatusCode.NoContent);
+            }
             var key = new
             {
                 id = KeyId,
