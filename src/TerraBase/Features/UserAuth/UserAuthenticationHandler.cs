@@ -24,7 +24,7 @@ internal sealed class UserAuthenticationHandler(
     TerraBaseOptions terraBase,
     IIssuerKeys issuerKeys,
     ValidatedTokens validated,
-    TimeProvider time) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    [FromKeyedServices(SchemeName)] TimeProvider? time = null) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     public const string SchemeName = UserAuthExtensions.TokenScheme;
 
@@ -192,7 +192,7 @@ internal sealed class UserAuthenticationHandler(
         ClockSkew = ClockSkew,
         LifetimeValidator = (notBefore, expires, _, _) =>
         {
-            var now = time.GetUtcNow().UtcDateTime;
+            var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
             return expires is { } end && now < end
                 && (notBefore is not { } start || start <= end && start <= now + ClockSkew);
         },

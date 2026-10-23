@@ -13,7 +13,7 @@ namespace TerraBase.Features.UserAuth;
 /// every entry checked with it, and only strictly before the token's expiration, as validation would.
 /// Configuration (issuer, audiences) is fixed for the process, so the rest of validation cannot change its answer.
 /// </summary>
-internal sealed class ValidatedTokens(TimeProvider time)
+internal sealed class ValidatedTokens([FromKeyedServices(UserAuthenticationHandler.SchemeName)] TimeProvider? time = null)
 {
     // About 1 KiB per entry: 4 MiB at most, then the whole cache starts over.
     private const int Capacity = 4096;
@@ -30,7 +30,7 @@ internal sealed class ValidatedTokens(TimeProvider time)
     public bool TryGet(string key, IReadOnlyList<SecurityKey> keys, out Accepted accepted)
     {
         if (_entries.TryGetValue(key, out var found) && ReferenceEquals(found.Keys, keys)
-            && time.GetUtcNow().UtcDateTime < found.ValidTo)
+            && (time ?? TimeProvider.System).GetUtcNow().UtcDateTime < found.ValidTo)
         {
             accepted = found;
             return true;

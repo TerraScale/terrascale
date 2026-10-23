@@ -60,7 +60,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// <summary>A client that never follows redirects and sends the peer credential. Owned by the server.</summary>
     public HttpClient Http { get; } = new(new PeerCredentialHandler(PeerSecret)
     {
-        InnerHandler = new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false },
+        InnerHandler = new BackendErrorDiagnostics { InnerHandler = new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false } },
     });
 
     /// <summary>A plain client for the public listener. It never carries the internal credential.</summary>
@@ -428,6 +428,25 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         }
 
         this.output.Enqueue(line);
+        if (this.node is not null && line.StartsWith('{'))
+        {
+            try
+            {
+                using var entry = JsonDocument.Parse(line);
+                var fields = entry.RootElement;
+                if (fields.TryGetProperty("level", out var level) && level.GetString() is "WARN" or "ERROR" or "CRITICAL"
+                    && fields.TryGetProperty("msg", out var message))
+                {
+                    // Templates only: retain backend readiness failures without payloads or credentials.
+                    Console.Error.WriteLine($"TerraBase {this.node.Region}: {level.GetString()} {message.GetString()}");
+                }
+            }
+            catch (JsonException)
+            {
+                // Diagnostics must not interrupt the child's output reader.
+            }
+        }
+
         if (Listening(line) is { } address)
         {
             listening.Enqueue(address);
@@ -462,6 +481,35 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         {
             return null;
         }
+    }
+}
+
+internal sealed class BackendErrorDiagnostics : DelegatingHandler
+{
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var response = await base.SendAsync(request, cancellationToken);
+        if ((int)response.StatusCode >= 500)
+        {
+            string? code = null;
+            try
+            {
+                using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                if (body.RootElement.ValueKind == JsonValueKind.Object && body.RootElement.TryGetProperty("error", out var error)
+                    && error.ValueKind == JsonValueKind.Object && error.TryGetProperty("code", out var value))
+                {
+                    code = value.GetString();
+                }
+            }
+            catch (JsonException)
+            {
+                // Non-JSON failures still retain their status; the SDK receives the original buffered content.
+            }
+
+            Console.Error.WriteLine($"TerraBase {request.Method}: {(int)response.StatusCode}, code={code ?? "unavailable"}, retry-after={response.Headers.RetryAfter}");
+        }
+
+        return response;
     }
 }
 

@@ -73,10 +73,14 @@ public sealed class UserAuthTests
     {
         var now = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         var clock = new FakeTimeProvider(now);
-        await using var api = await ManagementApi.StartAsync(time: clock);
+        await using var api = await ManagementApi.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(UserAuthenticationHandler.SchemeName, clock));
         var expires = now.AddMinutes(5);
-        string Mint() => api.Issuer.Mint(EntityIds.New().ToString(), token =>
-            (token.IssuedAt, token.NotBefore, token.Expires) = (now.UtcDateTime, now.UtcDateTime, expires.UtcDateTime));
+        string Mint()
+        {
+            return api.Issuer.Mint(EntityIds.New().ToString(), token =>
+                (token.IssuedAt, token.NotBefore, token.Expires) = (now.UtcDateTime, now.UtcDateTime, expires.UtcDateTime));
+        }
         using var warm = api.WithToken(Mint());
         using var cold = api.WithToken(Mint());
         var discoveryFetches = api.Issuer.DiscoveryFetches;
