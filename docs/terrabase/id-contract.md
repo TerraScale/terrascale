@@ -14,12 +14,14 @@ The document key is its entity ID. Stored entity payloads omit a redundant `id`;
 recover identity from the key. A document write removes a root `id` equal to its key, leaving unrelated data
 fields intact. API envelopes may return `id` beside `document` so clients can address the stored document.
 
-Caller-supplied document keys retain their bounds-only contract: 1–256 characters, valid UTF-8, no control
-characters. They need not be ULIDs. This applies equally to direct writes and transaction operations.
+Every document id is a canonical ULID: 26 uppercase Crockford base32 characters. Any other form, including
+lowercase or hyphenated text, answers `400 invalid_document_id`, so one document has exactly one id. This applies
+equally to direct writes, transaction operations and imports. SQL is free: queries match any field value, and a
+SQL table (`CREATE TABLE`) keys its rows by their primary key value, which the Documents API does not address.
 Names, counters, pagination sequences, secret hashes and query fingerprints are lookup values rather than
 entity IDs; they are not generated entity identities.
 
-Point reads and writes use `GET/PUT/PATCH/DELETE …/documents/by-key?id=<UTF-8 query-encoded key>`.
+Point reads and writes use `GET/PUT/PATCH/DELETE …/documents/by-key?id=<ULID>`.
 Dashboard document reads use `GET /v1/management/documents/{collection}/by-key?id=<encoded key>`.
 The `id` parameter is required exactly once and is the only accepted query parameter. Encode the raw key
 with a standard query encoder and decode it once on the server; do not predecode, normalize Unicode or

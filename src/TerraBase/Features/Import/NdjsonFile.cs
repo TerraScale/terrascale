@@ -8,8 +8,8 @@ namespace TerraBase.Features.Import;
 
 /// <summary>
 /// An NDJSON source (docs/terrabase/import-ndjson.md): one JSON object per line, either an export line
-/// <c>{"collection","id","document"}</c> or a document whose <c>collection</c> and <c>id</c> (else <c>_id</c>) members place
-/// it. Each collection is a table of schema <c>main</c>; a position is the byte offset of the next line.
+/// <c>{"collection","id","document"}</c> or a document whose <c>collection</c> member places it; any <c>id</c> or <c>_id</c>
+/// member stays a field and the document gets a generated ULID. Each collection is a table of schema <c>main</c>; a position is the byte offset of the next line.
 /// </summary>
 internal sealed class NdjsonFile : IImportSource
 {
@@ -130,17 +130,6 @@ internal sealed class NdjsonFile : IImportSource
                 throw Malformed(lines.LineStart, "names no collection; add a collection member or set options.collection");
             }
 
-            string? id = null;
-            foreach (var name in (ReadOnlySpan<string>)["id", "_id"])
-            {
-                if (root.TryGetProperty(name, out key))
-                {
-                    id = Id(key, lines.LineStart);
-                    drop.Add(name);
-                    break;
-                }
-            }
-
             var buffer = new ArrayBufferWriter<byte>(line.Length);
             using (var writer = ImportMapping.Writer(buffer))
             {
@@ -153,7 +142,7 @@ internal sealed class NdjsonFile : IImportSource
                 writer.WriteEndObject();
             }
 
-            return (collection, id, buffer.WrittenSpan.ToArray());
+            return (collection, null, buffer.WrittenSpan.ToArray());
         }
     }
 

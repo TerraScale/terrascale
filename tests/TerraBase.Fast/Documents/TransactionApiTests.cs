@@ -160,7 +160,6 @@ public sealed class TransactionApiTests
         ("""{"ops":[{"op":"upsert","collection":"items","id":"0000000000E008000000000001","document":{}}]}""", 0),
         ("""{"ops":[{"op":"create","collection":"items","document":{},"if_match":"tbv1-x"}]}""", 0),
         ("""{"ops":[{"op":"create","collection":"items","document":[]}]}""", 0),
-        ("""{"ops":[{"op":"put","collection":"items","document":{}}]}""", 0),
         ("""{"ops":[{"op":"put","collection":"items","id":"0000000000E008000000000001","document":{},"if_none_match":"tbv1-x"}]}""", 0),
         ("""{"ops":[{"op":"patch","collection":"items","id":"0000000000E008000000000001","merge":{},"ops":[{"op":"unset","path":"/a"}]}]}""", 0),
         ("""{"ops":[{"op":"assert","collection":"items","id":"0000000000E008000000000001"}]}""", 0),
@@ -318,13 +317,14 @@ public sealed class TransactionApiTests
             (Ops(create, "1"), HttpStatusCode.BadRequest, "invalid_request", "each operation is a JSON object", 1),
             (Ops(create, """{"op":"create","collection":"items","document":{},"if_match":null}"""), HttpStatusCode.BadRequest, "invalid_request", "operation members cannot be null", 1),
             (Ops("""{"op":"upsert","collection":"items","document":{}}"""), HttpStatusCode.BadRequest, "invalid_request", "the operation's kind or members are invalid", 0),
-            (Ops($$$$"""{"op":"put","collection":"items","id":"{{{existing}}}","document":{},"if_match":"*","if_none_match":"*"}"""),
+            (Ops($$$"""{"op":"put","collection":"items","id":"{{{existing}}}","document":{},"if_match":"*","if_none_match":"*"}"""),
                 HttpStatusCode.BadRequest, "invalid_request", "if_none_match is \"*\" and excludes if_match", 0),
             (Ops([.. Enumerable.Repeat("""{"op":"assert_count","collection":"items","lte":1}""", 17)]), HttpStatusCode.BadRequest, "invalid_request", "a transaction has at most 16 assert_count operations", 16),
             (Ops(Patch(existing, """{"op":"unset","path":"/n"}"""), Patch(existing, """{"op":"unset","path":"/a"}""")), HttpStatusCode.BadRequest, "invalid_request", "two operations target the same document", 1),
             (Ops(create, """{"op":"create","collection":"nope","document":{}}"""), HttpStatusCode.NotFound, "unknown_collection", "the collection does not exist", 1),
             (Ops(create, Patch(DocumentApi.NewId(), """{"op":"unset","path":"/n"}""")), HttpStatusCode.NotFound, "not_found", "the document does not exist", 1),
-            (Ops(create, """{"op":"create","collection":"items","id":"","document":{}}"""), HttpStatusCode.BadRequest, "invalid_request", "id must be 1 to 256 characters without control characters", 1),
+            (Ops(create, """{"op":"create","collection":"items","id":"","document":{}}"""), HttpStatusCode.BadRequest, "invalid_document_id", InvalidId, 1),
+            (Ops("""{"op":"put","collection":"items","document":{}}"""), HttpStatusCode.BadRequest, "invalid_document_id", InvalidId, 0),
             (Ops(create, $$$"""{"op":"create","collection":"items","id":"{{{existing}}}","document":{}}"""), HttpStatusCode.PreconditionFailed, "precondition_failed", "the document exists", 1),
             (Ops(create, $$$"""{"op":"put","collection":"items","id":"{{{existing}}}","document":{},"if_match":"tbv1-00000000000000000000000000000000"}"""), HttpStatusCode.PreconditionFailed, "precondition_failed", "the document version does not match", 1),
             (Ops(create, $$$"""{"op":"assert","collection":"items","id":"{{{existing}}}","filter":{"exists":"/missing"}}"""), HttpStatusCode.PreconditionFailed, "precondition_failed", "the document does not match", 1),
@@ -425,7 +425,7 @@ public sealed class TransactionApiTests
 
         await Assert.That((unknown.Status, unknown.Code, unknown.Op)).IsEqualTo((HttpStatusCode.NotFound, "unknown_collection", (int?)2));
         await Assert.That((invalid.Status, invalid.Message, invalid.Op))
-            .IsEqualTo((HttpStatusCode.BadRequest, "id must be 1 to 256 characters without control characters", (int?)2));
+            .IsEqualTo((HttpStatusCode.BadRequest, InvalidId, (int?)2));
         await Assert.That((exists.Status, exists.Code, exists.Op)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed", (int?)1));
         await Assert.That(unchanged.Version).IsEqualTo(original.Version);
         await Assert.That(unchanged.Json.GetProperty("document").GetRawText()).IsEqualTo("""{"n":1}""");
@@ -433,6 +433,8 @@ public sealed class TransactionApiTests
         // Nothing of the refused transactions committed.
         await Assert.That(Offset(next)).IsEqualTo(Offset(original) + 1);
     }
+
+    private const string InvalidId = "id must be a canonical ULID: 26 uppercase Crockford base32 characters";
 
     private static string Ops(params string[] ops) => $$"""{"ops":[{{string.Join(",", ops)}}]}""";
 

@@ -27,7 +27,7 @@ public sealed class PostgresWireTests
         var shown = await ReadAsync(connection, "SHOW application_name");
 
         await Assert.That(connection.PostgreSqlVersion).IsEqualTo(new Version(16, 0));
-        await Assert.That(rows.Select(row => row[0])).IsEquivalentTo(["p1", "p2", "p3"]);
+        await Assert.That(rows.Select(row => ManagementApi.DocumentName(row[0]))).IsEquivalentTo(["p1", "p2", "p3"]);
         await Assert.That(rows.Select(row => JsonElement.Parse(row[1]).GetProperty("name").GetString()!)).IsEquivalentTo(names);
         await Assert.That(version[0][0]).IsEqualTo("PostgreSQL 16.0 (TerraBase)");
         await Assert.That(shown[0][0]).IsEqualTo("wire test");
@@ -59,12 +59,12 @@ public sealed class PostgresWireTests
         var syntax = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, "SELECT * FROM"));
         var after = await ReadAsync(connection, "SELECT _id FROM people WHERE age = 40");
 
-        await Assert.That(matched).IsEquivalentTo(["p2"]);
+        await Assert.That(matched.Select(ManagementApi.DocumentName)).IsEquivalentTo(["p2"]);
         await Assert.That(insert!.SqlState).IsEqualTo("0A000");
         await Assert.That(insert.MessageText).Contains("not supported yet");
         await Assert.That(begin!.SqlState).IsEqualTo("0A000");
         await Assert.That(syntax!.SqlState).IsEqualTo("42601");
-        await Assert.That(after.Select(row => row[0])).IsEquivalentTo(["p3"]);
+        await Assert.That(after.Select(row => ManagementApi.DocumentName(row[0]))).IsEquivalentTo(["p3"]);
     }
 
     [Test]

@@ -222,7 +222,7 @@ public sealed class CatalogGateTests
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var host = await BackupShippingHost.StartAsync();
         host.S3.FailPut = key => key.StartsWith("catalog-anchor/", StringComparison.Ordinal);
-        await host.PutAsync("people", "bucket-independent", "tenant writes continue", token);
+        await host.PutAsync("people", "independent", "tenant writes continue", token);
         var request = new
         {
             id = EntityIds.New().ToString(),

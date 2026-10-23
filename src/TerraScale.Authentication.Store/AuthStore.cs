@@ -125,7 +125,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         }
     }
 
-    /// <summary>Stable UUIDv8 from a SHA-256 digest of unambiguously framed instance, kind and key.</summary>
+    /// <summary>Stable name-based ULID: the first 16 bytes of a SHA-256 digest of unambiguously framed instance, kind and key.</summary>
     public static string NaturalKeyId(string instanceId, string kind, string key)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
@@ -133,9 +133,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         var framed = string.Create(CultureInfo.InvariantCulture, $"{instanceId.Length}:{instanceId}{kind.Length}:{kind}{key.Length}:{key}");
         var hash = SHA256.HashData(StrictUtf8.GetBytes(framed));
-        hash[6] = (byte)((hash[6] & 0x0f) | 0x80);
-        hash[8] = (byte)((hash[8] & 0x3f) | 0x80);
-        return new Guid(hash.AsSpan(0, 16), bigEndian: true).ToString("D");
+        return new NUlid.Ulid(hash[..16]).ToString();
     }
 
     /// <summary>Canonical email key; email syntax validation belongs to the account boundary.</summary>

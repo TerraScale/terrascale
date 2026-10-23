@@ -17,7 +17,7 @@ public sealed class CreateImportEndpoint(IImportJobs jobs, ITenantDirectory tena
         Post(ImportRoute.Path);
         Name("createImport");
         Summary("Attaches an import to a new, empty database");
-        Description("Body {format: postgres_plain | sqlite | ndjson, sourceBytes (1 to 1073741824), sourceSha256 (64 lowercase hex), options?: {missingPrimaryKey: reject | generate, exclude: [\"schema.table\" | \"schema.table.column\"], collection?: ndjson collection for lines that name none}}. The database must have been created for this import with createDatabase and hold no collection (409 destination_not_empty). The job starts in awaiting_source; upload the file with uploadImportSource. An identical replay answers 200 with the same job; a different request answers 409 import_exists." + ImportRoute.Reference);
+        Description("Body {format: postgres_plain | sqlite | ndjson, sourceBytes (1 to 1073741824), sourceSha256 (64 lowercase hex), options?: {exclude: [\"schema.table\" | \"schema.table.column\"], collection?: ndjson collection for lines that name none}}. The database must have been created for this import with createDatabase and hold no collection (409 destination_not_empty). The job starts in awaiting_source; upload the file with uploadImportSource. An identical replay answers 200 with the same job; a different request answers 409 import_exists." + ImportRoute.Reference);
         Tags(ImportRoute.Tag);
         Produces<ImportJobBody>(StatusCodes.Status201Created);
         Produces<ImportJobBody>();

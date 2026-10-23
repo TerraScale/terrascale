@@ -22,6 +22,9 @@ namespace TerraBase.Fast.Shapes;
 public sealed class ShapeApiTests
 {
     private const string Handle = "h1-0123456789abcdef";
+
+    // Base64url of the document id 0000000000E008000000000001, as a snapshot page position.
+    private const string EncodedId = "MDAwMDAwMDAwMEUwMDgwMDAwMDAwMDAwMDE";
     private const string ShapeId = "0123456789abcdef0123456789abcdef";
     private const long Snapshot = 7;
     private static readonly string[] ExpectedParameters = ["project", "database", "collection", "where", "handle", "offset", "live", "cursor", "TB-Shape-Resume", "X-TerraScale-Region-Pin"];
@@ -159,7 +162,9 @@ public sealed class ShapeApiTests
         foreach (var offset in new[]
         {
             "01", "%2B1", "-2", "1.0", "9223372036854775808", "snap.01.0", "snap.1.",
-            "snap.1.not%2Bbase64url%21", "snap.2.Zg%3D%3D", "snap.2._w", "snap.2.Zg.0", "snap.2.Zh", "snap.2.AA",
+            "snap.1.not%2Bbase64url%21", "snap.2._w", "snap.2.AA",
+            // Padded, trailing and non-canonical (unused low bits set) encodings of the valid id 0000000000E008000000000001.
+            $"snap.2.{EncodedId}%3D", $"snap.2.{EncodedId}.0", $"snap.2.{EncodedId[..^1]}F",
         })
         {
             var reply = await GetShapeAsync(api.Client, Shape(api, $"?handle={Handle}&offset={offset}"));
@@ -303,7 +308,7 @@ public sealed class ShapeApiTests
         foreach (var query in new[]
         {
             $"?handle={Handle}&offset=0", $"?handle={Handle}&offset=9223372036854775807",
-            $"?handle={Handle}&offset=snap.0.0", $"?handle={Handle}&offset=snap.2.Zg",
+            $"?handle={Handle}&offset=snap.0.0", $"?handle={Handle}&offset=snap.2.{EncodedId}",
             $"?handle={Handle}&offset=0&live=true",
         })
         {

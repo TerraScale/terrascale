@@ -17,13 +17,13 @@ internal sealed record ImportAnalysis(ImportPreview? Preview, ImportError? Error
 /// <param name="Checksum">Hex checksum.</param>
 internal sealed record TableChecksum(long Rows, string Checksum);
 
-/// <summary>How one source table imports: its collection, id policy, column mappings and issues.</summary>
+/// <summary>How one source table imports: its collection, column mappings and issues.</summary>
 internal sealed class TablePlan
 {
     public const int MaxIssues = 50;
     public const int MaxColumns = 1600;
 
-    private readonly Dictionary<IReadOnlyList<SourceColumn>, (int[] Key, bool[] Write)> _layouts = [];
+    private readonly Dictionary<IReadOnlyList<SourceColumn>, bool[]> _layouts = [];
 
     public required SourceTable Source { get; init; }
 
@@ -31,9 +31,8 @@ internal sealed class TablePlan
 
     public required bool Excluded { get; init; }
 
-    public required bool IgnoreCase { get; init; }
-
-    public string IdPolicy { get; set; } = "primary_key";
+    /// <summary>NDJSON: every row is one whole document line.</summary>
+    public bool Documents { get; init; }
 
     public Dictionary<SourceColumn, ColumnMapping> Mappings { get; } = [];
 
@@ -68,20 +67,20 @@ internal sealed class TablePlan
     /// <summary>The document id and body of row number <paramref name="ordinal"/>, or throws <see cref="ImportValueException"/>.</summary>
     public (string Id, byte[] Json) Map(SourceRow row, long ordinal, string jobId, DateTimeOffset createdAt, ArrayBufferWriter<byte> buffer)
     {
-        if (IdPolicy == "document")
+        if (Documents)
         {
-            // NDJSON: the line's body as it is, under its own id or a generated ULID.
+            // NDJSON: the line's body as it is, under its own ULID or a generated one.
             var documentId = row.Values[1].Text ?? ImportMapping.GeneratedId(jobId, createdAt, Source.Display, ordinal);
-            if (!ImportNames.ValidId(documentId))
+            if (!EntityIds.IsValid(documentId))
             {
-                throw new ImportValueException("invalid_document_id", "the document id must be 1 to 256 characters without control characters", "id");
+                throw new ImportValueException("invalid_document_id", "the document id must be a canonical ULID: 26 uppercase Crockford base32 characters", "id");
             }
 
             ImportMapping.Check(row.Values[0].Blob!);
             return (documentId, row.Values[0].Blob!);
         }
 
-        var (key, write) = Layout(row.Columns);
+        var write = Layout(row.Columns);
         buffer.ResetWrittenCount();
         using (var writer = ImportMapping.Writer(buffer))
         {
@@ -112,41 +111,20 @@ internal sealed class TablePlan
             writer.WriteEndObject();
         }
 
-        var id = IdPolicy switch
-        {
-            "rowid" => row.RowId?.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                ?? throw new ImportValueException("invalid_document_id", "the row has no rowid", null),
-            "generated" => ImportMapping.GeneratedId(jobId, createdAt, Source.Display, ordinal),
-            _ when key.Length == 1 => ImportMapping.KeyText(row.Values[key[0]], Mappings[row.Columns[key[0]]], row.Columns[key[0]].Name),
-            _ => string.Join(':', key.Select(i => ImportNames.Component(ImportMapping.KeyText(row.Values[i], Mappings[row.Columns[i]], row.Columns[i].Name)))),
-        };
-        if (!ImportNames.ValidId(id))
-        {
-            throw new ImportValueException("invalid_document_id", "the document id must be 1 to 256 characters without control characters", null);
-        }
-
+        var id = ImportMapping.GeneratedId(jobId, createdAt, Source.Display, ordinal);
         var json = buffer.WrittenSpan.ToArray();
         ImportMapping.Check(json);
         return (id, json);
     }
 
-    private (int[] Key, bool[] Write) Layout(IReadOnlyList<SourceColumn> columns)
+    private bool[] Layout(IReadOnlyList<SourceColumn> columns)
     {
         if (_layouts.TryGetValue(columns, out var layout))
         {
             return layout;
         }
 
-        var comparison = IgnoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        var key = IdPolicy == "primary_key"
-            ? Source.PrimaryKey.Select(name => Enumerable.Range(0, columns.Count).FirstOrDefault(i => string.Equals(columns[i].Name, name, comparison), -1)).ToArray()
-            : [];
-        if (key.Contains(-1))
-        {
-            throw new ImportValueException("unsupported_primary_key", "the data does not hold every primary key column", null);
-        }
-
-        layout = (key, [.. columns.Select(column => !ExcludedColumns.Contains(column))]);
+        layout = [.. columns.Select(column => !ExcludedColumns.Contains(column))];
         _layouts[columns] = layout;
         return layout;
     }
@@ -186,7 +164,7 @@ internal static class ImportPlanner
                 // NDJSON names its collections; tables map to one.
                 Collection = format == ImportFormats.Ndjson ? table.Name : ImportNames.CollectionFor(table.Schema, table.Name),
                 Excluded = Excludes(table, null),
-                IgnoreCase = sqlite,
+                Documents = format == ImportFormats.Ndjson,
             };
             plans.Add(plan);
             foreach (var issue in table.Issues)
@@ -221,34 +199,6 @@ internal static class ImportPlanner
                 {
                     plan.Issue("blocking", "unsupported_type", column.Name, null, $"{column.Type} has no mapping; exclude the column");
                 }
-            }
-
-            if (format == ImportFormats.Ndjson)
-            {
-                plan.IdPolicy = "document";
-            }
-            else if (table.PrimaryKey.Count > 0)
-            {
-                var keyColumns = table.PrimaryKey.Select(name => table.Column(name, sqlite)).ToList();
-                if (keyColumns.Any(column => column is null || !ImportMapping.KeyAllowed(plan.Mappings[column])))
-                {
-                    plan.Issue("blocking", "unsupported_primary_key", null, null,
-                        "the primary key uses a column that cannot form a document id (float, json, bytea or unsupported); exclude the table");
-                }
-            }
-            else if (sqlite && !table.WithoutRowid)
-            {
-                plan.IdPolicy = "rowid";
-            }
-            else if (!sqlite && options.MissingPrimaryKey == "generate")
-            {
-                plan.IdPolicy = "generated";
-            }
-            else
-            {
-                plan.IdPolicy = "none";
-                plan.Issue("blocking", "missing_primary_key", null, null,
-                    "the table has no primary key; add one, exclude the table, or set missingPrimaryKey to generate");
             }
         }
 
@@ -358,7 +308,7 @@ internal static class ImportPlanner
         var text = new StringBuilder(format).Append('\n');
         foreach (var plan in plans)
         {
-            text.Append(plan.Source.Display).Append('\0').Append(plan.Collection).Append('\0').Append(plan.Excluded).Append('\0').Append(plan.IdPolicy).Append('\0')
+            text.Append(plan.Source.Display).Append('\0').Append(plan.Collection).Append('\0').Append(plan.Excluded).Append('\0')
                 .AppendJoin('\u0001', plan.Source.PrimaryKey).Append('\0');
             foreach (var column in plan.Source.Columns)
             {
@@ -390,7 +340,7 @@ internal static class ImportPlanner
             }
         }
 
-        return new ImportTable(plan.Source.Display, plan.Collection, plan.Excluded, plan.Rows, plan.IdPolicy, plan.Source.PrimaryKey,
+        return new ImportTable(plan.Source.Display, plan.Collection, plan.Excluded, plan.Rows, plan.Source.PrimaryKey,
             columns, plan.Source.Constraints, plan.Issues);
     }
 

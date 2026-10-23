@@ -58,20 +58,21 @@ public sealed class EntityIdStorageFormatTests
                 await command.ExecuteNonQueryAsync(token);
             }
 
+            var key = DocumentApi.NewId();
             var checksum = await backup.ChecksumAsync(snapshot, token);
             var imported = Path.Combine(directory, "import.db");
             File.Copy(snapshot, imported);
             var error = await Assert.ThrowsAsync<InvalidOperationException>(() => backup.ImportDatabaseAsync(target, imported, token).AsTask());
             await Assert.That(error!.Message).Contains("old database format");
             await Assert.That(File.Exists(targetPath)).IsFalse();
-            var missing = await api.SendAsync(HttpMethod.Get, $"{api.DatabasePath("imported")}/collections/items/documents/by-key?id=key");
+            var missing = await api.SendAsync(HttpMethod.Get, $"{api.DatabasePath("imported")}/collections/items/documents/by-key?id={key}");
             await Assert.That(missing.Status).IsEqualTo(HttpStatusCode.NotFound);
             await Assert.That(await backup.ChecksumAsync(snapshot, token)).IsEquivalentTo(checksum);
 
-            var written = await api.PutAsync("key", new { value = "fresh" });
+            var written = await api.PutAsync(key, new { value = "fresh" });
             await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
             await Assert.That(await engine.CopyDatabaseAsync(await api.TenantOfAsync(), target, token)).IsTrue();
-            var read = await api.SendAsync(HttpMethod.Get, $"{api.DatabasePath("imported")}/collections/items/documents/by-key?id=key");
+            var read = await api.SendAsync(HttpMethod.Get, $"{api.DatabasePath("imported")}/collections/items/documents/by-key?id={key}");
             await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(read.Json.GetProperty("document").GetProperty("value").GetString()).IsEqualTo("fresh");
             await using var current = new SqliteConnection(DocumentApi.ConnectionString(targetPath, readOnly: true));

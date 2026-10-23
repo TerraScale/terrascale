@@ -102,7 +102,7 @@ public sealed class QueryPlanTests
     public async Task Listing_seeks_live_rows_past_a_tombstone_prefix()
     {
         await using var api = await DocumentApi.StartAsync();
-        var ids = Enumerable.Range(0, 128).Select(i => $"00000000-0000-7000-8000-{i:x12}").ToList();
+        var ids = Enumerable.Range(0, 128).Select(i => $"{i:D26}").ToList();
         (await api.TransactAsync([.. ids.Select(id => new { op = "create", collection = "items", id, document = new { n = 1 } })]))
             .Status.ShouldBe(System.Net.HttpStatusCode.OK);
         (await api.TransactAsync([.. ids.Select(id => new { op = "delete", collection = "items", id })]))

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Bogus;
+using TerraBase.Features.Import;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Import;
@@ -67,14 +68,14 @@ public sealed class ImportHardeningTests
         _ = await client.StartAsync(import, ready.GetProperty("preview").GetProperty("id").GetString());
         var done = await client.WaitAsync(import, "completed", "failed");
         await Assert.That(done.GetProperty("state").GetString()).IsEqualTo("completed").Because(done.GetRawText());
-        await Assert.That((await client.DocumentAsync(import, "notes_tags", "1")).GetProperty("tag").GetString()).IsEqualTo("kept");
+        await Assert.That((await client.DocumentAsync(import, "notes_tags", ("id", "1"))).GetProperty("tag").GetString()).IsEqualTo("kept");
         // A row written before ALTER TABLE … ADD COLUMN reads the default with the column's affinity, as SQLite does.
-        var old = await client.DocumentAsync(import, "typed", "1");
+        var old = await client.DocumentAsync(import, "typed", ("id", "1"));
         await Assert.That(old.GetProperty("n").ValueKind).IsEqualTo(JsonValueKind.Number);
         await Assert.That(old.GetProperty("n").GetInt64()).IsEqualTo(5);
         await Assert.That(old.GetProperty("h").GetInt64()).IsEqualTo(16);
         await Assert.That(old.GetProperty("r").GetDouble()).IsEqualTo(2.0);
-        await Assert.That((await client.DocumentAsync(import, "typed", "2")).GetProperty("r").GetDouble()).IsEqualTo(9.5);
+        await Assert.That((await client.DocumentAsync(import, "typed", ("id", "2"))).GetProperty("r").GetDouble()).IsEqualTo(9.5);
     }
 
     [Test]
@@ -95,9 +96,9 @@ public sealed class ImportHardeningTests
         await Assert.That(ready.GetProperty("state").GetString()).IsEqualTo("ready").Because(ready.GetRawText());
         _ = await client.StartAsync(import, ready.GetProperty("preview").GetProperty("id").GetString());
         await Assert.That((await client.WaitAsync(import, "completed", "failed")).GetProperty("state").GetString()).IsEqualTo("completed");
-        var child = await client.DocumentAsync(import, "child", "2");
+        var child = await client.DocumentAsync(import, "child", ("id", "2"));
         await Assert.That((child.GetProperty("exclude").GetString(), child.GetProperty("extra").GetString())).IsEqualTo(("c", "x"));
-        await Assert.That((await client.DocumentAsync(import, "parent", "1")).GetProperty("exclude").GetString()).IsEqualTo("p");
+        await Assert.That((await client.DocumentAsync(import, "parent", ("id", "1"))).GetProperty("exclude").GetString()).IsEqualTo("p");
     }
 
     [Test]
@@ -121,7 +122,7 @@ public sealed class ImportHardeningTests
         var rejected = await client.WaitAsync(import, "ready", "rejected");
         await Assert.That(rejected.GetProperty("state").GetString()).IsEqualTo("rejected");
 
-        // Someone with documents:write rewrites the state record to "queued" under the rejected preview.
+        // A forged state record: "queued" under the rejected preview.
         var forged = JsonSerializer.Serialize(new
         {
             v = 1,
@@ -139,7 +140,7 @@ public sealed class ImportHardeningTests
             retainedUntil = (object?)null,
         });
         using (var put = await client.Client.PutAsJsonAsync(
-            new Uri($"{ImportClient.Data(import)}/collections/terrascale-import/documents/by-key?id=state", UriKind.Relative), new { v = 1, rev = "forged", record = forged }))
+            new Uri($"{ImportClient.Data(import)}/collections/terrascale-import/documents/by-key?id={ImportNames.StateId}", UriKind.Relative), new { v = 1, rev = "forged", record = forged }))
         {
             await Assert.That(put.IsSuccessStatusCode).IsTrue();
         }

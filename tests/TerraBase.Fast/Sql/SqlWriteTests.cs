@@ -1,6 +1,9 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
 using TerraBase.Fast.Documents;
+using TerraBase.Features.Documents;
 
 namespace TerraBase.Fast.Sql;
 
@@ -18,6 +21,24 @@ public sealed class SqlWriteTests
 
     private static async Task<string?> RefusedAsync(DocumentApi api, object statement) =>
         SqlApi.Error(await SqlApi.SendAsync(api, api.Client, statement)).Sqlite;
+
+    [Test]
+    public async Task Sql_tables_take_any_key_while_the_documents_api_takes_only_ulids()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api,
+            "CREATE TABLE codes (code TEXT PRIMARY KEY, v INTEGER)",
+            "CREATE TABLE nums (id INTEGER PRIMARY KEY, v INTEGER)",
+            "INSERT INTO codes VALUES ('abc', 1)",
+            "INSERT INTO nums VALUES (42, 2)");
+
+        await Assert.That(await RowsAsync(api, "SELECT code, v FROM codes WHERE code = 'abc'")).IsEqualTo("""[["abc",1]]""");
+        await Assert.That(await RowsAsync(api, "SELECT id, v FROM nums WHERE id = 42")).IsEqualTo("""[[42,2]]""");
+
+        using var rejected = await api.Client.GetAsync($"{api.Collections}/codes/documents/by-key?id=abc");
+        rejected.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        await Assert.That((await rejected.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("invalid_document_id");
+    }
 
     [Test]
     public async Task Inserts_take_keys_affinity_defaults_and_conflict_modes()
@@ -51,11 +72,19 @@ public sealed class SqlWriteTests
             .IsEqualTo("""[[1,"integer","ann2",7,null],[2,"integer","bob",7,3]]""");
         await Assert.That(await RowsAsync(api, $"SELECT name FROM ints WHERE id = {key}")).IsEqualTo("""[["gen"]]""");
         await Assert.That(await RowsAsync(api, "SELECT code, typeof(code) FROM codes")).IsEqualTo("""[["7","text"]]""");
-        // Keys are document ids: a single key's canonical value, a composite key's JSON array.
-        await Assert.That((await api.SendAsync(HttpMethod.Get, $"{api.Collections}/ints/documents/by-key?id=2")).Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await api.SendAsync(HttpMethod.Get, $"{api.Collections}/codes/documents/by-key?id=7")).Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await api.SendAsync(HttpMethod.Get, $"{api.Collections}/pairs/documents/by-key?id={Uri.EscapeDataString("[1,\"x\"]")}")).Status)
-            .IsEqualTo(HttpStatusCode.OK);
+        // Keys are document ids: a single key's canonical value, a composite key's JSON array; not ULIDs, so
+        // the documents API refuses them.
+        var documents = api.Server.Services.GetRequiredService<IDocumentService>();
+        var tenant = await api.TenantOfAsync();
+        foreach (var (table, id) in new[] { ("ints", "2"), ("codes", "7"), ("pairs", "[1,\"x\"]") })
+        {
+            await Assert.That(await documents.GetAsync(new DocumentKey(tenant, table, id), CancellationToken.None) is StoredDocument { Deleted: false })
+                .IsTrue().Because($"{table}/{id}");
+        }
+
+        var byKey = await api.SendAsync(HttpMethod.Get, $"{api.Collections}/ints/documents/by-key?id=2");
+        await Assert.That(byKey.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(byKey.Code).IsEqualTo("invalid_document_id");
 
         await Assert.That(await RefusedAsync(api, new { sql = "INSERT INTO ints (id, name) VALUES (1, 'dup')" })).IsEqualTo("SQLITE_CONSTRAINT_PRIMARYKEY");
         await Assert.That(await RefusedAsync(api, new { sql = "INSERT INTO ints (id) VALUES (9)" })).IsEqualTo("SQLITE_CONSTRAINT_NOTNULL");

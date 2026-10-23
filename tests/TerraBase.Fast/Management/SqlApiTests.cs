@@ -138,6 +138,25 @@ public sealed class SqlApiTests
     }
 
     [Test]
+    public async Task Sql_keys_take_any_value_while_document_ids_stay_ulids()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "things");
+        (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "things", "text")), new { key = "abc" })).EnsureSuccessStatusCode();
+        (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "things", "number")), new { key = 42 })).EnsureSuccessStatusCode();
+
+        await Assert.That(Ids(await RunAsync(api, database, "SELECT * FROM things WHERE key = 'abc'"))).IsEquivalentTo(["text"]);
+        await Assert.That(Ids(await RunAsync(api, database, "SELECT * FROM things WHERE key = 42"))).IsEquivalentTo(["number"]);
+        await Assert.That(Ids(await RunAsync(api, database, "SELECT * FROM things WHERE _id = 'abc'"))).IsEmpty();
+
+        using var rejected = await data.PutAsJsonAsync(Uri($"{database.Data}/collections/things/documents/by-key?id=abc"), new { key = "abc" });
+        await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await rejected.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("invalid_document_id");
+    }
+
+    [Test]
     public async Task Deleted_documents_are_not_selected_counted_or_indexed()
     {
         await using var api = await ManagementApi.StartAsync();

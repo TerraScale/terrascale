@@ -100,7 +100,6 @@ metered as document writes, and import calls, upload bytes included, as requests
   "sourceBytes": 104857600,            // required: exact source size, 1 … 1073741824 (1 GiB)
   "sourceSha256": "9f86d0…",           // required: 64 lowercase hex characters
   "options": {                         // optional; defaults shown
-    "missingPrimaryKey": "reject",     // "reject" | "generate"
     "exclude": []                      // at most 1000 of "schema.table" or "schema.table.column"; SQLite schema is "main"
   }
 }
@@ -147,7 +146,7 @@ at most 1 MiB (preview at most 512 KiB, validation at most 1000 tables).
   "region": "gru",                      // home region; route every import call here
   "state": "ready",                     // section 3
   "cancelRequested": false,
-  "options": { "missingPrimaryKey": "reject", "exclude": [] },
+  "options": { "exclude": [] },
   "source": {
     "format": "postgres_plain",
     "bytes": 104857600,
@@ -192,7 +191,6 @@ at most 1 MiB (preview at most 512 KiB, validation at most 1000 tables).
   "collection": "users",
   "excluded": false,
   "rows": 1000,                         // rows in the export
-  "idPolicy": "primary_key",            // "primary_key" | "rowid" | "generated" | "none"
   "primaryKey": ["id"],
   "columns": [ { "name": "id", "sourceType": "bigint", "mapping": "integer",
                  "nullable": false, "excluded": false } ],
@@ -295,8 +293,6 @@ a column mixed; two or more non-NULL classes are a `mixed_storage_classes` warni
 **The preview maps every row.** Analysis reads the whole source and applies the mapping, document ids and
 TerraBase's document limits to every row, so invalid values, invalid ids and documents over 1 MiB, 16 levels or 4096
 values are blocking issues in the preview, with their row numbers (first 50 per table), before anything is written.
-Not detectable in the preview: two rows whose distinct source keys map to one id (for example SQLite `1` and `'1'`
-in an untyped column); the copy then fails with `duplicate_document_id`.
 
 ## 6. Keys, ids and constraints
 
@@ -310,20 +306,15 @@ in an untyped column); the copy then fails with `duplicate_document_id`.
   lowercased, characters outside `[a-z0-9_-]` replaced by `_`, prefixed `t_` unless it starts with a letter, cut to
   63. Collisions, reserved names (`collections`, `commit_offset`, `sqlite_*`, `turso_*`) and the import's own
   collection `terrascale-import` are blocking (`collection_name_collision`).
-- **Document id:** from the primary key. One column: its canonical text (integer digits, uuid lowercase, string as
-  is). Several: each component with `%` → `%25` and `:` → `%3A`, joined by `:`. SQLite rowid tables without a
-  primary key use the rowid (`idPolicy` `rowid`). Ids must be 1 to 256 characters without control characters
-  (`invalid_document_id`). Primary keys over `float`, `json`, `base64` or nullable columns are blocking
-  (`unsupported_primary_key`).
-- **No primary key** (PostgreSQL): `missingPrimaryKey: "reject"` (default) blocks the table (`missing_primary_key`);
-  `"generate"` gives each row a deterministic ULID (time: the job's creation; randomness: SHA-256 of job id, table and
-  row number), identical on every resume.
+- **Document id:** every row gets a deterministic ULID (time: the job's creation; randomness: SHA-256 of job id, table
+  and row number), identical on every resume. Primary key columns, like every other column, stay fields of the body;
+  tables need no primary key.
 - **Body:** a JSON object with one member per non-excluded column, named exactly as the column.
 - **Constraints are recorded, never enforced** (`enforced: false`): primary, unique and foreign keys and NOT NULL.
-  Values are imported unchanged, so a foreign key to a primary key resolves to the referenced document's id. CHECK
+  Values are imported unchanged, so a foreign key holds the referenced row's primary key field, not its document id. CHECK
   constraints, defaults, sequences, indexes, triggers, views, functions, policies, extensions, ownership and grants are
   listed in `skipped`.
-- **The import's record** is kept in the destination's collection `terrascale-import` (documents `job` and `state`,
+- **The import's record** is kept in the destination's collection `terrascale-import` (documents `0000000000000000000000000J` (job) and `0000000000000000000000000S` (state),
   internal format `{"v":1,"rev":…,"record":"<JSON>"}`; read it through `getImport`, never directly). It stays after
   completion as the import's audit record; dropping that collection forgets the import. The runner re-checks the record
   before copying: a state changed outside the import (for example to `queued` under a blocked preview) fails the job
@@ -338,9 +329,7 @@ in an untyped column); the copy then fails with `duplicate_document_id`.
   TerraBase transaction holding the documents, each with `if-none-match: *`, and the job's checkpoint (table, row,
   source offset). A crash, restart or resume continues after the last committed batch. A document that already
   exists was not written by the import, so the job fails with `destination_modified` (not retryable) instead of
-  overwriting it. Do not write to the destination before it is `completed`. Two rows that map to one id are
-  `duplicate_document_id` within one batch; across batches the second write meets the first and is reported as
-  `destination_modified`, whose message names both causes.
+  overwriting it. Do not write to the destination before it is `completed`.
 - **Plan change:** if TerraBase's mapping changed between the confirmed preview and the copy (a deploy in between), the
   job returns to `analyzing` with `error.code` `preview_changed` and no confirmed preview; the user confirms the new one.
 - **Retries:** storage pressure and capacity refusals are retried with backoff (1 s doubling to 30 s, 8 attempts),
@@ -404,9 +393,9 @@ HTTP (`ErrorBody`):
 | 503 | `unavailable` | storage unavailable |
 
 Job `error.code` and issue codes: `unsupported_source_format`, `source_checksum_mismatch`, `unsupported_statement`,
-`unsupported_type`, `unsupported_primary_key`, `missing_primary_key`, `collection_name_collision`, `too_many_tables`,
-`too_many_columns`, `preview_too_large`, `malformed_source`, `invalid_value`, `invalid_document_id`,
-`document_too_large`, `duplicate_document_id`, `source_lost`, `destination_modified`, `quota_exceeded` (retryable
+`unsupported_type`, `collection_name_collision`, `too_many_tables`,
+`too_many_columns`, `preview_too_large`, `malformed_source`, `invalid_value`,
+`document_too_large`, `source_lost`, `destination_modified`, `quota_exceeded` (retryable
 after the plan allows more), `write_failed`, `validation_failed`, `wal_mode_source`; warnings `mixed_storage_classes`,
 `not_imported` (a skipped object that may hold data that is not imported, such as a materialized view or a virtual
 table).

@@ -43,7 +43,7 @@ public sealed class DocumentApiTests
             (await api.SendAsync(HttpMethod.Get, $"{api.Collections}/Not-Valid/documents/by-key?id={id}"),
                 HttpStatusCode.BadRequest, "invalid_request", "collection must be a lowercase name of at most 63 characters"),
             (await api.SendAsync(HttpMethod.Get, api.Document(new string('x', 257))),
-                HttpStatusCode.BadRequest, "invalid_request", "id must be 1 to 256 characters without control characters"),
+                HttpStatusCode.BadRequest, "invalid_document_id", "id must be a canonical ULID: 26 uppercase Crockford base32 characters"),
             (await api.SendAsync(HttpMethod.Get, api.Document(id) + "&x=1"), HttpStatusCode.BadRequest, "invalid_request", "query parameters are limited to: id, each once and non-empty"),
             (await api.SendAsync(HttpMethod.Get, api.Documents + "?x=1"),
                 HttpStatusCode.BadRequest, "invalid_request", "query parameters are limited to: limit, cursor, each once and non-empty"),
@@ -649,8 +649,9 @@ public sealed class DocumentApiTests
         await Assert.That((badName.Status, badName.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
         await Assert.That(deviceName.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(trailingNewline.Status).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(suppliedKey.Status).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(lowercaseKey.Status).IsEqualTo(HttpStatusCode.Created);
+        // Document ids are canonical ULIDs only: a caller-chosen key and a lowercase ULID are refused.
+        await Assert.That((suppliedKey.Status, suppliedKey.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_document_id"));
+        await Assert.That((lowercaseKey.Status, lowercaseKey.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_document_id"));
         await Assert.That(notObject.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(notJson.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(duplicate.Status).IsEqualTo(HttpStatusCode.BadRequest);
@@ -674,7 +675,7 @@ public sealed class DocumentApiTests
         await Assert.That(encoded.Status).IsEqualTo(HttpStatusCode.UnsupportedMediaType);
         await Assert.That(idempotent.Status).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(query.Status).IsEqualTo(HttpStatusCode.BadRequest);
-        // The valid document and the two valid supplied keys were stored.
+        // The valid document was stored.
         await Assert.That(absent.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(absent.Version).IsEqualTo(deepest.Version);
     }

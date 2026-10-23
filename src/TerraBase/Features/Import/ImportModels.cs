@@ -1,10 +1,9 @@
 namespace TerraBase.Features.Import;
 
 /// <summary>Import options (docs/terrabase/import.md section 2).</summary>
-/// <param name="MissingPrimaryKey"><c>reject</c> (default) or <c>generate</c>.</param>
 /// <param name="Exclude">Tables (<c>schema.table</c>) and columns (<c>schema.table.column</c>) left out.</param>
 /// <param name="Collection">NDJSON: the collection of every document line (export lines keep their own).</param>
-public sealed record ImportOptionsBody(string? MissingPrimaryKey, IReadOnlyList<string>? Exclude, string? Collection = null);
+public sealed record ImportOptionsBody(IReadOnlyList<string>? Exclude, string? Collection = null);
 
 /// <summary><c>POST …/import</c> body.</summary>
 /// <param name="Format"><c>postgres_plain</c>, <c>sqlite</c> or <c>ndjson</c>.</param>
@@ -59,13 +58,12 @@ public sealed record ImportIssue(string Severity, string Code, string? Column, l
 /// <param name="Collection">Target collection.</param>
 /// <param name="Excluded">Whether the options exclude it.</param>
 /// <param name="Rows">Rows in the export.</param>
-/// <param name="IdPolicy"><c>primary_key</c>, <c>rowid</c>, <c>generated</c>, <c>document</c> (NDJSON) or <c>none</c>.</param>
 /// <param name="PrimaryKey">Primary key columns.</param>
 /// <param name="Columns">Columns in source order.</param>
 /// <param name="Constraints">Recorded constraints.</param>
 /// <param name="Issues">Issues, at most 50.</param>
 public sealed record ImportTable(
-    string Source, string Collection, bool Excluded, long Rows, string IdPolicy, IReadOnlyList<string> PrimaryKey,
+    string Source, string Collection, bool Excluded, long Rows, IReadOnlyList<string> PrimaryKey,
     IReadOnlyList<ImportColumn> Columns, IReadOnlyList<ImportConstraint> Constraints, IReadOnlyList<ImportIssue> Issues);
 
 /// <summary>A source object that is not imported.</summary>

@@ -23,7 +23,7 @@ public sealed class TerraBaseStorageHealth(TerraBaseDatabase database) : IStorag
 {
     private static readonly JsonElement ProbeDocument = JsonSerializer.SerializeToElement(new Dictionary<string, bool> { ["probe"] = true });
     // Reuse one synthetic address so repeated probes do not accumulate tombstones.
-    private readonly string probeId = Guid.NewGuid().ToString("D");
+    private readonly string probeId = AuthStore.NewId();
 
     /// <inheritdoc />
     public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
