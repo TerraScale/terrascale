@@ -21,6 +21,7 @@ public static class DatabaseEndpoints
         .AddSingleton<IDatabaseBackend, DatabaseBackend>().AddSingleton<DatabaseService>()
         .AddSingleton<DocumentBackend>().AddSingleton<IDocumentBackend>(services => services.GetRequiredService<DocumentBackend>())
         .AddSingleton<DataService>().AddSingleton<SavedQueryService>().AddSingleton<DocumentChangesService>()
+        .AddSingleton<TerraScale.Dashboard.Features.Webhooks.WebhookService>()
         .AddSingleton<ApiKeyService>().AddSingleton<IWorkspacePlacement, WorkspacePlacement>()
         .AddSingleton<IOnboardingProjectProvisioner, OnboardingProjectProvisioner>()
         .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>().AddDatabaseLogs();

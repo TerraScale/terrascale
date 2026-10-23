@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 namespace TerraScale.Dashboard.E2E.Features.Imports;
 
 // Guided imports through the running dashboard, its official SDK import client and the test-only
-// TerraBase import producer for contract v1 revision 3 (54c0c4d9). They qualify the dashboard flow;
+// TerraBase import producer for the current generated-ULID contract. They qualify the dashboard flow;
 // TerraBase's engine and real exports are qualified by the core owner's integration tests.
 [ClassDataSource<DashboardRootFixture>]
 public sealed class ImportJourneyTests(DashboardRootFixture fixture)
@@ -49,6 +49,8 @@ public sealed class ImportJourneyTests(DashboardRootFixture fixture)
         await Assert.That(page).Contains("A partial upload is discarded after 1 day without progress (the upload then starts over); an unconfirmed preview is kept 7 days, and a failed or cancelled import's file 7 days.");
         await Assert.That(page.Contains("type=\"password\"", StringComparison.Ordinal)).IsFalse().Because("The dashboard never collects source credentials.");
         await Assert.That((await JsonAsync(await client.GetAsync("/api/v1/dashboard/imports"))).GetArrayLength()).IsEqualTo(0);
+        await Assert.That(page.Contains("missingPrimaryKey", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(page).Contains("Source primary keys stay document fields");
         var name = Minted(page);
         var csrf = await HttpJourney.CsrfAsync(client, "/imports");
         var replicaCsrf = await HttpJourney.CsrfAsync(replica, "/imports");
@@ -84,22 +86,24 @@ public sealed class ImportJourneyTests(DashboardRootFixture fixture)
         await Assert.That(analyzing).Contains("data-on-interval__duration.2s");
         var rejected = await NextAsync(client, name);
         await Assert.That(rejected.GetProperty("state").GetString()).IsEqualTo("rejected");
-        await Assert.That(rejected.GetProperty("preview").GetProperty("blocking").GetInt32()).IsEqualTo(2);
+        await Assert.That(rejected.GetProperty("preview").GetProperty("blocking").GetInt32()).IsEqualTo(1);
         var blocked = await HtmlAsync(client, "/imports/" + name);
-        await Assert.That(blocked).Contains("2 blocking issues");
+        await Assert.That(blocked).Contains("1 blocking issue");
         await Assert.That(blocked).Contains("text[] has no mapping; exclude the column");
         await Assert.That(blocked.Contains("/start\"", StringComparison.Ordinal)).IsFalse().Because("A blocked preview cannot be started.");
 
         using (var options = await HttpJourney.PostFormAsync(client, $"/api/v1/dashboard/imports/{name}/options", new()
-        { ["_csrf"] = csrf, ["missingPrimaryKey"] = "generate", ["exclude"] = "public.orders.tags" }))
+        { ["_csrf"] = csrf, ["exclude"] = "public.orders.tags" }))
             await Assert.That(options.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
         var ready = await NextAsync(replica, name);
         await Assert.That(ready.GetProperty("state").GetString()).IsEqualTo("ready");
+        await Assert.That(ready.GetProperty("options").TryGetProperty("missingPrimaryKey", out _)).IsFalse();
+        await Assert.That(ready.GetProperty("preview").GetProperty("tables")[0].TryGetProperty("idPolicy", out _)).IsFalse();
         var previewId = ready.GetProperty("preview").GetProperty("id").GetString()!;
         var confirm = await HtmlAsync(replica, "/imports/" + name);
         foreach (var disclosure in new[] { "Confirm this preview", previewId, "public.customers.balance: numeric(12,2) is stored as a string with the exact digits",
             "foreign key orders_customer_fk (customer_id → public.customers(id)) is recorded but not enforced", "public.orders.tags is not imported.",
-            "public.audit_log has no primary key; its documents get generated ids.", "public.touch()", "Do not write to " + name })
+            "public.audit_log: every row gets a deterministic generated ULID; source primary keys remain document fields.", "public.touch()", "Do not write to " + name })
             await Assert.That(confirm).Contains(disclosure);
 
         await Assert.That((await StartAsync(client, csrf, name, "01STALEPREVIEW", true)).Status).IsEqualTo(HttpStatusCode.Conflict);
@@ -170,7 +174,7 @@ public sealed class ImportJourneyTests(DashboardRootFixture fixture)
         await Assert.That(ready.GetProperty("state").GetString()).IsEqualTo("ready");
         var preview = await HtmlAsync(client, "/imports/" + name);
         foreach (var disclosure in new[] { "main.notes.score: NUMERIC is stored as a value whose JSON type differs between rows (integer, string)",
-            "main.events has no primary key; its documents take the SQLite rowid as id.", "ids from note_id, tag", "main.tags: foreign key (unnamed) (note_id → main.notes(id)) is recorded but not enforced.", "main.notes_fts" })
+            "main.events: every row gets a deterministic generated ULID; source primary keys remain document fields.", "source primary key fields: note_id, tag", "main.tags: foreign key (unnamed) (note_id → main.notes(id)) is recorded but not enforced.", "main.notes_fts" })
             await Assert.That(preview).Contains(disclosure);
         var previewId = ready.GetProperty("preview").GetProperty("id").GetString()!;
         await StartAsync(client, csrf, name, previewId, true);
@@ -272,7 +276,6 @@ public sealed class ImportJourneyTests(DashboardRootFixture fixture)
         ["_csrf"] = csrf,
         ["database"] = name,
         ["format"] = format,
-        ["missingPrimaryKey"] = "reject",
         ["sourceBytes"] = source.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
         ["sourceSha256"] = Convert.ToHexStringLower(SHA256.HashData(source))
     };

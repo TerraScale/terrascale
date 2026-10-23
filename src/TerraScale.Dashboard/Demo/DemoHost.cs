@@ -728,6 +728,7 @@ sealed partial class TestDocuments : IDocumentBackend
             {
                 foreach (var key in query.Sort ?? [])
                 {
+                    if (key.Path is null) throw new InvalidOperationException("The demo document query fixture does not implement vector sorting.");
                     var compared = key.Path == "$id" ? StringComparer.Ordinal.Compare(left.Id, right.Id) : CompareValue(QueryValue(left.Document, key.Path), QueryValue(right.Document, key.Path));
                     if (compared != 0) return key.Order == "desc" ? -compared : compared;
                 }
