@@ -16,8 +16,6 @@ internal static class Gaps
     {
         // LatticeE2ETests: SQL writes are R9 (no PR yet); the subset refuses an UPDATE before the scenario's checks.
         ["E11"] = new("SQL writes over peer streams (R9, no PR yet)", "only SELECT statements are supported"),
-        // GC is R7 (#120, R7-FIX): no tombstone of a deleted document is ever collected on main.
-        ["E14"] = new("garbage collection (R7, #120 / R7-FIX)", "GC collects the tombstones of deleted documents"),
 
         // CatalogE2ETests: live move is R11 (no PR yet), whose route does not exist.
         ["E13"] = new("home region and live move (R11, no PR yet)", "unknown_route"),
