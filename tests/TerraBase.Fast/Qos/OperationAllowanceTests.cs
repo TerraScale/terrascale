@@ -61,4 +61,27 @@ public sealed class OperationAllowanceTests
                 .Because("a not-found read and a refused write bill nothing");
         }
     }
+
+    [Test]
+    public async Task The_internal_listener_lists_each_organizations_billed_units_this_month()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        (await api.PutAsync(DocumentApi.NewId(), new { text = new string('x', 9 * 1024) })).Status.ShouldBe(HttpStatusCode.Created);
+
+        JsonElement? found = null;
+        string? after = null;
+        do
+        {
+            var page = await api.Server.Client.GetFromJsonAsync<JsonElement>(ManagementApi.Uri("/v1/usage/allowances" + (after is null ? "" : "?after=" + after)));
+            await Assert.That((page.GetProperty("operationsContract").GetString(), page.GetProperty("storageContract").GetString()))
+                .IsEqualTo(("operation-units-4kib-selected-regions-global-v1", "none"));
+            found ??= page.GetProperty("items").EnumerateArray().Cast<JsonElement?>().FirstOrDefault(item => item!.Value.GetProperty("organizationId").GetString() == api.Tenant.OrganizationId);
+            after = page.GetProperty("next").GetString();
+        }
+        while (after is not null);
+
+        await Assert.That(found?.GetProperty("operations").GetInt64()).IsEqualTo(3);
+        using var outside = await api.Client.GetAsync(ManagementApi.Uri("/v1/usage/allowances"));
+        await Assert.That(outside.StatusCode).IsEqualTo(HttpStatusCode.NotFound).Because("only the internal listener serves it");
+    }
 }
