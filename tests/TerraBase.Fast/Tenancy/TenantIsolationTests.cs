@@ -292,7 +292,8 @@ public sealed class TenantIsolationTests
                 .Replace("{query}", tooling.Query, StringComparison.Ordinal)
                 .Replace("{backup}", tooling.Backup, StringComparison.Ordinal)
                 .Replace("{index}", tooling.Index, StringComparison.Ordinal)
-                .Replace("{recommendation}", tooling.Recommendation, StringComparison.Ordinal);
+                .Replace("{recommendation}", tooling.Recommendation, StringComparison.Ordinal)
+                .Replace("{version}", "v3", StringComparison.Ordinal);
             // A new route parameter needs a value here.
             await Assert.That(path).DoesNotContain("{");
             if (pattern.EndsWith("/documents/by-key", StringComparison.Ordinal))
