@@ -12,8 +12,11 @@ public readonly union VerifyProjectBindingResult(Done, NotFound, Conflict, Unava
 /// <summary>Resolves ts-auth project ids to the compatible on-disk catalog namespace.</summary>
 public interface IProjectCatalog
 {
-    /// <summary>Finds a verified storage namespace, or registers one atomically for a signed project's first database.</summary>
-    ValueTask<ResolveProjectResult> ResolveProjectAsync(string projectId, string actor, bool create, CancellationToken cancellationToken);
+    /// <summary>
+    /// Finds a verified storage namespace, or registers a signed project's first database atomically under
+    /// <paramref name="createIn"/>, the ts-auth organization the token names; null only resolves.
+    /// </summary>
+    ValueTask<ResolveProjectResult> ResolveProjectAsync(string projectId, string actor, string? createIn, CancellationToken cancellationToken);
 
     /// <summary>The organization that registered <paramref name="projectId"/>, whether or not ts-auth bound it yet.</summary>
     ValueTask<ResolveProjectResult> ProjectOrganizationAsync(string projectId, CancellationToken cancellationToken);

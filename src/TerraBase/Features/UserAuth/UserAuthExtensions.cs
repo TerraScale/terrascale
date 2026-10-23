@@ -152,7 +152,7 @@ public static class UserAuthExtensions
 
             var actor = jwt.FindFirst(ClaimTypes.NameIdentifier)!.Value;
             var catalog = context.RequestServices.GetRequiredService<IProjectCatalog>();
-            var resolved = await catalog.ResolveProjectAsync(project, actor, create: false, context.RequestAborted).ConfigureAwait(false);
+            var resolved = await catalog.ResolveProjectAsync(project, actor, createIn: null, context.RequestAborted).ConfigureAwait(false);
             if (resolved is not string organization)
             {
                 await (resolved switch
