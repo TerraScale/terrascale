@@ -232,8 +232,10 @@ public sealed class PeerStreamTests
         // Two minutes on, the next acknowledged group drops everything below its commit: nothing is left to send.
         clock.Offset = TimeSpan.FromMinutes(2);
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", second, Json("""{"m":2}"""), CancellationToken.None));
+        var head = await gru.HeadAsync(cluster.Database);
         await Assert.That(await sjc.UntilAsync(second, """{"m":2}""")).IsTrue();
-        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, groups[0].ChangeId + 1)).IsTrue();
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, head)).IsTrue();
+        await gru.TrimAsync();
         await Assert.That(await gru.GroupsAsync(cluster.Database, 0)).IsEmpty();
     }
 
