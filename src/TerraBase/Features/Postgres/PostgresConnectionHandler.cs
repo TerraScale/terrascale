@@ -557,6 +557,8 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         return await GuardAsync(session, async (database, token) => statement.Kind switch
         {
+            PgKind.Catalog => PgCatalog.Answer(statement.Text, session.Database, session.User,
+                await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false)),
             PgKind.Begin or PgKind.Commit or PgKind.Rollback => await TransactionAsync(session, statement.Kind, token).ConfigureAwait(false),
             _ => await session.Sql.ExecuteAsync(new SqlCommand(statement.Sql, args, NoNamed), token).ConfigureAwait(false) switch
             {

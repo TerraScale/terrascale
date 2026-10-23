@@ -11,6 +11,50 @@ public sealed class PostgresWireTests
 {
     private const string People = "CREATE TABLE people (id SERIAL PRIMARY KEY, name TEXT NOT NULL, email VARCHAR(80) UNIQUE, team TEXT)";
 
+    // psql 17's \dt and \d people (src/bin/psql/describe.c) against a server reporting 16.0, as ECHO_HIDDEN prints them.
+    private const string ListTables = """
+        SELECT n.nspname as "Schema",
+          c.relname as "Name",
+          CASE c.relkind WHEN 'r' THEN 'table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view' WHEN 'i' THEN 'index' WHEN 'S' THEN 'sequence' WHEN 't' THEN 'TOAST table' WHEN 'f' THEN 'foreign table' WHEN 'p' THEN 'partitioned table' WHEN 'I' THEN 'partitioned index' END as "Type",
+          pg_catalog.pg_get_userbyid(c.relowner) as "Owner"
+        FROM pg_catalog.pg_class c
+             LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             LEFT JOIN pg_catalog.pg_am am ON am.oid = c.relam
+        WHERE c.relkind IN ('r','p','')
+              AND n.nspname <> 'pg_catalog'
+              AND n.nspname !~ '^pg_toast'
+              AND n.nspname <> 'information_schema'
+          AND pg_catalog.pg_table_is_visible(c.oid)
+        ORDER BY 1,2;
+        """;
+
+    private const string FindTable = """
+        SELECT c.oid,
+          n.nspname,
+          c.relname
+        FROM pg_catalog.pg_class c
+             LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relname OPERATOR(pg_catalog.~) '^(people)$' COLLATE pg_catalog.default
+          AND pg_catalog.pg_table_is_visible(c.oid)
+        ORDER BY 2, 3;
+        """;
+
+    private const string TableColumns = """
+        SELECT a.attname,
+          pg_catalog.format_type(a.atttypid, a.atttypmod),
+          (SELECT pg_catalog.pg_get_expr(d.adbin, d.adrelid, true)
+           FROM pg_catalog.pg_attrdef d
+           WHERE d.adrelid = a.attrelid AND d.adnum = a.attnum AND a.atthasdef),
+          a.attnotnull,
+          (SELECT c.collname FROM pg_catalog.pg_collation c, pg_catalog.pg_type t
+           WHERE c.oid = a.attcollation AND t.oid = a.atttypid AND a.attcollation <> t.typcollation) AS attcollation,
+          a.attidentity,
+          a.attgenerated
+        FROM pg_catalog.pg_attribute a
+        WHERE a.attrelid = 'OID' AND a.attnum > 0 AND NOT a.attisdropped
+        ORDER BY a.attnum;
+        """;
+
     private static readonly Faker Faker = new();
 
     [Test]
@@ -53,7 +97,7 @@ public sealed class PostgresWireTests
     }
 
     [Test]
-    public async Task Psql_runs_statements_in_order()
+    public async Task Psql_runs_statements_in_order_and_describes_tables()
     {
         await using var api = await ManagementApi.StartAsync();
         var (database, key) = await DatabaseAsync(api, "documents:read", "documents:write");
@@ -61,9 +105,16 @@ public sealed class PostgresWireTests
 
         var script = await psql.QueryAsync($"{People}; CREATE TABLE people (id INTEGER PRIMARY KEY); CREATE TABLE never (id INTEGER PRIMARY KEY)");
         var deallocated = await psql.QueryAsync("DEALLOCATE ALL");
+        var tables = await psql.QueryAsync(ListTables);
+        var found = await psql.QueryAsync(FindTable);
+        var oid = found.Single(message => message.Type == 'D').Fields[0]!;
+        var columns = await psql.QueryAsync(TableColumns.Replace("OID", oid, StringComparison.Ordinal));
 
         await Assert.That(script.Select(message => $"{message.Type}:{message.Fields[0]}")).IsEquivalentTo(["C:CREATE TABLE", "E:42P07", "Z:I"]);
         await Assert.That(deallocated.Select(message => message.Fields[0]!)).IsEquivalentTo(["DEALLOCATE ALL", "I"]);
+        await Assert.That(tables.Where(message => message.Type == 'D').Select(message => string.Join(',', message.Fields))).IsEquivalentTo(["public,people,table,wire"]);
+        await Assert.That(columns.Where(message => message.Type == 'D').Select(message => string.Join(',', message.Fields.Take(4)))).IsEquivalentTo(
+            ["id,bigint,,t", "name,text,,t", "email,character varying,,f", "team,text,,f"]);
     }
 
     // Needs SQ1-c (SELECT with joins) and SQ1-d (INSERT/UPDATE/DELETE).

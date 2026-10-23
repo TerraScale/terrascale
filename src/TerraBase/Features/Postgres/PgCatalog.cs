@@ -5,7 +5,9 @@ using TerraBase.Features.Sql;
 namespace TerraBase.Features.Postgres;
 
 /// <summary>
-/// Canned <c>pg_catalog</c> answers: Npgsql's type loading and the session functions.
+/// Canned <c>pg_catalog</c> answers: Npgsql's type loading, the session functions, and the queries psql 16 and 17 send
+/// for <c>\dt</c>, <c>\d</c>, <c>\d table</c>, <c>\l</c> and <c>\dn</c> (src/bin/psql/describe.c), answered from the
+/// SQL tables of the database. Every other catalog query is refused.
 /// </summary>
 internal static partial class PgCatalog
 {
@@ -16,6 +18,10 @@ internal static partial class PgCatalog
         (701, "float8"), (705, "unknown"), (1043, "varchar"), (1082, "date"), (1114, "timestamp"), (1184, "timestamptz"),
         (1700, "numeric"), (2950, "uuid"), (3802, "jsonb"),
     ];
+
+    // \d+ adds storage, compression, statistics target and description.
+    private static readonly string[] VerboseNames = ["attstorage", "attcompression", "attstattarget", "description"];
+    private static readonly string?[] VerboseValues = ["x", "", null, null];
 
     /// <summary>
     /// Whether a simple query is Npgsql's type-loading batch (PostgresDatabaseInfo.LoadBackendTypes, Npgsql 10): version,
@@ -35,8 +41,8 @@ internal static partial class PgCatalog
         new(Text("oid", "enumlabel"), [], "SELECT 0"),
     ];
 
-    /// <summary>Whether a statement only calls session functions.</summary>
-    public static bool IsCatalog(string sql) => FunctionsPattern().IsMatch(sql);
+    /// <summary>Whether a statement reads the catalog or only calls session functions.</summary>
+    public static bool IsCatalog(string sql) => CatalogPattern().IsMatch(sql) || FunctionsPattern().IsMatch(sql);
 
     /// <summary><c>SELECT current_database(), current_schema, current_user, version()</c> in any combination; null otherwise.</summary>
     public static PgResult? Functions(string sql, string database, string user)
@@ -58,11 +64,137 @@ internal static partial class PgCatalog
         })])], "SELECT 1");
     }
 
+    /// <summary>Answers a recognised psql query; table OIDs are <see cref="PostgresStatements.FirstTableOid"/> plus the table's position.</summary>
+    public static PgOutcome Answer(string sql, string database, string user, IReadOnlyList<SqlTableInfo> tables)
+    {
+        var q = Spaces().Replace(sql, " ");
+        var oid = OidPattern().Match(q) is { Success: true } match ? int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) - PostgresStatements.FirstTableOid : -1;
+        var table = oid >= 0 && oid < tables.Count ? tables[oid] : null;
+        var listed = tables.Select((entry, index) => (entry.Name, Oid: PostgresStatements.FirstTableOid + index))
+            .Where(entry => Visible(q, "relname", entry.Name) && Visible(q, "nspname", "public")).ToList();
+        if (q.StartsWith("SELECT c.relchecks, c.relkind,", StringComparison.Ordinal))
+        {
+            // psql's table header for server 12 and later: a plain heap table without indexes, rules, triggers or policies.
+            return One(new(Text("relchecks", "relkind", "relhasindex", "relhasrules", "relhastriggers", "relrowsecurity", "relforcerowsecurity", "relhasoids",
+                "relispartition", "reloptions", "reltablespace", "reloftype", "relpersistence", "relreplident", "amname"),
+                table is null ? [] : [Row("0", "r", "f", "f", "f", "f", "f", "f", "f", "", "0", "", "p", "d", "heap")], table is null ? "SELECT 0" : "SELECT 1"));
+        }
+
+        if (q.StartsWith("SELECT a.attname,", StringComparison.Ordinal) && q.Contains("FROM pg_catalog.pg_attribute a", StringComparison.Ordinal))
+        {
+            var verbose = q.Contains("a.attstorage", StringComparison.Ordinal);
+            var columns = table?.Columns.Select(column => Row([column.Name, TypeName(column.DeclType), null, column.NotNull ? "t" : "f", null, "", "",
+                .. verbose ? VerboseValues : []])).ToList() ?? [];
+            return One(new(Text(["attname", "format_type", "default", "attnotnull", "attcollation", "attidentity", "attgenerated",
+                .. verbose ? VerboseNames : []]), [.. columns], $"SELECT {columns.Count}"));
+        }
+
+        if (q.StartsWith("SELECT c.oid, n.nspname, c.relname FROM pg_catalog.pg_class c", StringComparison.Ordinal))
+        {
+            return One(new(Text("oid", "nspname", "relname"),
+                [.. listed.Select(entry => Row(entry.Oid.ToString(CultureInfo.InvariantCulture), "public", entry.Name))], $"SELECT {listed.Count}"));
+        }
+
+        if (q.Contains("FROM pg_catalog.pg_class c", StringComparison.Ordinal) && q.Contains("c.relkind IN ('r'", StringComparison.Ordinal))
+        {
+            return Aliased(q, listed.Select(entry => new Dictionary<string, string?>
+            {
+                ["Schema"] = "public",
+                ["Name"] = entry.Name,
+                ["Type"] = "table",
+                ["Owner"] = user,
+                ["Persistence"] = "permanent",
+                ["Access method"] = "heap",
+            }));
+        }
+
+        if (FooterPattern().IsMatch(q))
+        {
+            // \d table footers (indexes, constraints, policies, statistics, publications, inheritance): none exist.
+            return One(new([], [], "SELECT 0"));
+        }
+
+        if (q.Contains("FROM pg_catalog.pg_database d", StringComparison.Ordinal))
+        {
+            return Aliased(q, Visible(q, "datname", database)
+                ? [new() { ["Name"] = database, ["Owner"] = user, ["Encoding"] = "UTF8", ["Locale Provider"] = "libc", ["Collate"] = "C", ["Ctype"] = "C" }]
+                : []);
+        }
+
+        if (q.Contains("FROM pg_catalog.pg_namespace n", StringComparison.Ordinal))
+        {
+            return Aliased(q, Visible(q, "nspname", "public") ? [new() { ["Name"] = "public", ["Owner"] = user }] : []);
+        }
+
+        return new PgError("0A000", "pg_catalog query not supported: TerraBase answers psql's \\d, \\dt, \\l and \\dn");
+    }
+
+    private static PgResult[] One(PgResult result) => [result];
+
+    // A listing whose columns are `expr AS "Label"`: each label's value, null when unknown.
+    private static PgResult[] Aliased(string q, IEnumerable<Dictionary<string, string?>> rows)
+    {
+        var labels = AliasPattern().Matches(q[..Math.Max(0, q.IndexOf(" FROM ", StringComparison.Ordinal))]).Select(match => match.Groups[1].Value).ToArray();
+        IReadOnlyList<SqlValue>[] values = [.. rows.Select(row => Row([.. labels.Select(row.GetValueOrDefault)]))];
+        return [new(Text(labels), values, $"SELECT {values.Length}")];
+    }
+
+    // Whether every psql name pattern on `column` (`x.column OPERATOR(pg_catalog.~) '^(...)$'`) matches `value`.
+    private static bool Visible(string q, string column, string value) => NamePattern().Matches(q)
+        .Where(match => match.Groups[1].Value == column)
+        .All(match =>
+        {
+            try
+            {
+                return Regex.IsMatch(value, match.Groups[2].Value.Replace("''", "'", StringComparison.Ordinal), RegexOptions.NonBacktracking | RegexOptions.CultureInvariant);
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
+        });
+
+    // ListTablesAsync reports no DEFAULT, so psql's Default column stays empty.
+    private static string TypeName(string? declared) => PostgresStatements.Oid(declared) switch
+    {
+        20 => "bigint",
+        21 => "smallint",
+        23 => "integer",
+        701 => "double precision",
+        1700 => "numeric",
+        25 => "text",
+        1043 => "character varying",
+        16 => "boolean",
+        114 => "json",
+        3802 => "jsonb",
+        1082 => "date",
+        1114 => "timestamp without time zone",
+        1184 => "timestamp with time zone",
+        _ => string.IsNullOrEmpty(declared) ? "text" : declared.ToLowerInvariant(),
+    };
+
     private static IReadOnlyList<SqlValue> Row(params string?[] values) => [.. values.Select(value => value is null ? SqlValue.Null : SqlValue.Of(value))];
 
     private static PgColumn[] Text(params string[] names) => [.. names.Select(name => new PgColumn(name, PostgresStatements.TextOid))];
 
+    [GeneratedRegex(@"\b(?:pg_catalog|information_schema)\s*\.|\b(?:FROM|JOIN)\s+pg_\w+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex CatalogPattern();
+
     [GeneratedRegex(@"\ASELECT\s+((?:(?:pg_catalog\.)?(?:current_database\(\)|current_schema(?:\(\))?|current_user|session_user|version\(\))\s*(?:,\s*|\z))+)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex FunctionsPattern();
 
+    [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant)]
+    private static partial Regex Spaces();
+
+    [GeneratedRegex(@"\.(?:oid|attrelid) = '(\d{1,9})'", RegexOptions.CultureInvariant)]
+    private static partial Regex OidPattern();
+
+    [GeneratedRegex(@"\b\w+\.(relname|nspname|datname) OPERATOR\(pg_catalog\.~\) '((?:[^']|'')*)'", RegexOptions.CultureInvariant)]
+    private static partial Regex NamePattern();
+
+    [GeneratedRegex(@"\bas ""([^""]+)""", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex AliasPattern();
+
+    [GeneratedRegex(@"pg_catalog\.(?:pg_policy|pg_statistic_ext|pg_publication|pg_inherits|pg_trigger|pg_constraint|pg_index|pg_rewrite)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex FooterPattern();
 }
