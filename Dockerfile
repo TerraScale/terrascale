@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # CI runs the `test-libs`, `test-auth` and `test-terrabase` stages on pull requests and merge groups (.github/workflows/ci.yml);
-# `make docker-test` builds `test`, all three. The `terrabase` and `ts-auth` stages are the images CI deploys to Fly.
+# `make docker-test` builds `test`, all three. The `terrabase` and `ts-auth` stages publish to GHCR for ts-orch.
 # ts-auth builds ts-dotnet from source (named context `ts-dotnet`, a checkout); its tests start the TerraBase built from
 # this same tree (Makefile TERRABASE_BINARY).
 
@@ -10,7 +10,7 @@ FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.1-resolu
 
 FROM sdk AS base
 # Test hosts retain the eight-CPU .NET budget across runner types.
-# Publish/runtime stages have their own base and retain Fly's automatic CPU discovery.
+# Publish/runtime stages have their own base and retain automatic CPU discovery.
 ARG DOTNET_PROCESSOR_COUNT=8
 ARG DOTNET_GCHeapCount=8
 ENV DOTNET_PROCESSOR_COUNT=$DOTNET_PROCESSOR_COUNT DOTNET_GCHeapCount=$DOTNET_GCHeapCount
@@ -60,14 +60,15 @@ COPY . .
 # CI passes no-cache-filters for test-<area>, so tests always execute. build-auth also builds the TerraBase that
 # ts-auth's tests start (auth.slnf does not include it); publishing restores the SDK's linux-x64 assets.
 FROM source AS build-libs
-RUN make -o restore fmt-check libs-build CONFIGURATION=Release
+RUN make -o restore fmt-check libs-build SOLUTION=libs.slnf CONFIGURATION=Release
 
 FROM build-libs AS test-libs
 RUN make -o restore libs-check libs-test CONFIGURATION=Release && touch /passed
 
 FROM source AS build-auth
 ARG TS_AUTH_REVISION
-RUN make -o restore fmt-check auth-check auth-build CONFIGURATION=Release \
+# The advisory audit stays fresh in test-auth, outside this cacheable checked-build stage.
+RUN make -o restore -o auth-audit fmt-check auth-check auth-build SOLUTION=auth.slnf CONFIGURATION=Release \
     && dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo \
     && make auth-publish RUNTIME=linux-x64 PUBLISH_DIR=/out
 
@@ -78,12 +79,16 @@ RUN make -o restore auth-audit auth-test-fast CONFIGURATION=Release && touch /pa
 FROM source AS build-terrabase
 # The commit /healthz reports as revision (MSBuild reads it from the environment); the image has no .git.
 ARG TERRABASE_REVISION
-RUN make -o restore fmt-check terrabase-check CONFIGURATION=Release \
+RUN make -o restore fmt-check terrabase-check SOLUTION=terrabase.slnf CONFIGURATION=Release \
+    && dotnet format whitespace src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --verify-no-changes --no-restore \
     && dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --no-restore --output /out
 
 FROM build-terrabase AS test-terrabase
 ARG TERRABASE_REVISION
-RUN make -o restore terrabase-test-fast terrabase-replication-matrix terrabase-e2e-local CONFIGURATION=Release && touch /passed
+# Finish Fast's incremental builds before the independent E2E processes read those outputs.
+RUN make -o restore terrabase-test-fast CONFIGURATION=Release \
+    && make -j2 -o restore -o terrabase-build terrabase-replication-matrix terrabase-e2e-local CONFIGURATION=Release \
+    && touch /passed
 
 # All three areas (BuildKit runs them in parallel): `make docker-test`.
 FROM scratch AS test
@@ -94,14 +99,24 @@ COPY --from=test-terrabase /passed /terrabase
 # Slow exports each suite's log and exit code for CI to report; `test-slow` exports both area directories.
 # Plain text: TUnit colours its output here, and the report parses lines like "failed <test> (<duration>)".
 # Each area runs independently so an auth failure cannot prevent TerraBase Slow from executing.
-FROM build-auth AS slow-auth-run
+# Slow compiles its test graph without repeating Fast's whitespace, security, OpenAPI or packaging checks.
+FROM source AS slow-auth-build
+ARG TS_AUTH_REVISION
+RUN make -o restore auth-build CONFIGURATION=Release \
+    && dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo
+
+FROM slow-auth-build AS slow-auth-run
 ARG TS_AUTH_REVISION
 RUN mkdir /slow && { make -o restore auth-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi; echo $? > /slow/exit; } 2>&1 | tee /slow/log
 
 FROM scratch AS test-slow-auth
 COPY --from=slow-auth-run /slow /
 
-FROM build-terrabase AS slow-terrabase-run
+FROM source AS slow-terrabase-build
+ARG TERRABASE_REVISION
+RUN make -o restore terrabase-build CONFIGURATION=Release
+
+FROM slow-terrabase-build AS slow-terrabase-run
 ARG TERRABASE_REVISION
 # BuildKit secret mounts never enter a layer or build arg. No org-level provisioning credential reaches CI.
 RUN --mount=type=secret,id=tigris-ci,required=true \
@@ -115,20 +130,19 @@ FROM scratch AS test-slow
 COPY --from=slow-auth-run /slow /auth/
 COPY --from=slow-terrabase-run /slow /terrabase/
 
-# Fly images: the self-contained release executables (`make terrabase-publish` / `auth-publish` flags) on the chiseled
-# runtime-deps base (6 MB: no shell, no package manager). Every consumer reuses its area's compiled/published build layer.
-# CI deployment needs this same run's `test`. Run admin commands with `fly ssh console -C '/app/<binary> ...'`.
-# root: Fly mounts volumes root-owned.
-# A linux/arm64 target (ghcr images, CI `images` job) republishes for linux-arm64; amd64 keeps the build stage's /out.
-FROM build-terrabase AS publish-terrabase
-ARG TARGETARCH TERRABASE_REVISION
-RUN if [ "$TARGETARCH" = arm64 ]; then rm -rf /out && make terrabase-publish RUNTIME=linux-arm64 PUBLISH_DIR=/out; fi
+# Production publication compiles only its service graph, once per architecture. Checked builds above retain
+# pre-merge packaging validation; main does not repeat whitespace, analyzer-negative or OpenAPI checks.
+FROM source AS publish-terrabase
+ARG TARGETARCH=amd64 TERRABASE_REVISION
+RUN case "$TARGETARCH" in amd64) runtime=linux-x64 ;; arm64) runtime=linux-arm64 ;; *) exit 1 ;; esac \
+    && make terrabase-publish RUNTIME="$runtime" PUBLISH_DIR=/out
 
-FROM build-auth AS publish-ts-auth
-ARG TARGETARCH TS_AUTH_REVISION
-RUN if [ "$TARGETARCH" = arm64 ]; then rm -rf /out && make auth-publish RUNTIME=linux-arm64 PUBLISH_DIR=/out; fi
+FROM source AS publish-ts-auth
+ARG TARGETARCH=amd64 TS_AUTH_REVISION
+RUN case "$TARGETARCH" in amd64) runtime=linux-x64 ;; arm64) runtime=linux-arm64 ;; *) exit 1 ;; esac \
+    && make auth-publish RUNTIME="$runtime" PUBLISH_DIR=/out
 
-# Fly mounts TerraBase's volume at /data.
+# TerraBase stores its volume at /data.
 FROM mcr.microsoft.com/dotnet/runtime-deps:11.0-resolute-chiseled AS terrabase
 COPY --from=publish-terrabase /out /app
 USER 0
