@@ -69,6 +69,7 @@ public sealed class HranaPipelineTests
         var malformed = await PostAsync(api, """{"requests": 1}""");
         var large = await PostAsync(api, $$$"""{"requests":[{"type":"execute","stmt":{"sql":"SELECT '{{{new string('x', HranaRoute.MaxRequestBytes)}}}'"}}]}""");
         var unknownDatabase = await PostAsync(api, CreateT, database: "nope");
+        var tooMany = await PostAsync(api, $$$"""{"requests":[{"type":"batch","batch":{"steps":[{{{string.Join(',', Enumerable.Repeat("""{"stmt":{"sql":"SELECT 1"}}""", 257))}}}]}},{"type":"close"}]}""");
         var stillEmpty = await PostAsync(api, """{"requests":[{"type":"execute","stmt":{"sql":"SELECT x FROM t"}},{"type":"close"}]}""");
 
         var tenant = await api.TenantOfAsync();
@@ -97,6 +98,8 @@ public sealed class HranaPipelineTests
         await Assert.That((malformed.Status, Code(malformed))).IsEqualTo((HttpStatusCode.BadRequest, "PROTOCOL_ERROR"));
         await Assert.That(large.Status).IsEqualTo(HttpStatusCode.RequestEntityTooLarge);
         await Assert.That(unknownDatabase.Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That((tooMany.Status, Code(tooMany))).IsEqualTo((HttpStatusCode.BadRequest, "PROTOCOL_ERROR"));
+        await Assert.That(tooMany.Json.GetProperty("message").GetString()).Contains("256 statements");
         await Assert.That(Response(stillEmpty.Json, 0).GetProperty("result").GetProperty("rows").GetArrayLength()).IsEqualTo(0);
         await Assert.That(busy.Status).IsEqualTo(HttpStatusCode.TooManyRequests);
         await Assert.That(busy.Json.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("tenant_busy");

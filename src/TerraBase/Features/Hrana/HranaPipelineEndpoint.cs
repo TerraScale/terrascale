@@ -20,7 +20,7 @@ internal sealed class HranaPipelineEndpoint(ITenantDirectory tenants, IHranaStre
         Description("Hrana over HTTP, versions v2 and v3 (JSON). Point a libSQL client at …/databases/{database}/libsql/ with a project data API key as authToken. "
             + "Requests: execute, batch, sequence, describe, store_sql, close_sql, close, get_autocommit; SQL errors are error results inside a 200. "
             + "A response baton continues the stream (and its transaction) for 30 idle seconds. A lost baton whose stream held a transaction or stored SQL answers 400 STREAM_EXPIRED; one that held neither opens a fresh stream. "
-            + "Writes need documents:write. Body at most 1 MiB, 1000 statements; at most 64 open streams per database (503 DATABASE_STREAMS_EXHAUSTED).");
+            + "Writes need documents:write. Body at most 1 MiB, 256 statements (400 PROTOCOL_ERROR past it); at most 64 open streams per database (503 DATABASE_STREAMS_EXHAUSTED).");
         Tags("SQL");
         Metadata(new RequestBodyMetadata(typeof(HranaPipelineRequest), HranaRoute.JsonMediaType));
         Produces<HranaPipelineResponse>();
@@ -40,9 +40,9 @@ internal sealed class HranaPipelineEndpoint(ITenantDirectory tenants, IHranaStre
             return refusal;
         }
 
-        if (body!.Requests is null || HranaExecutor.Statements(body.Requests) > HranaExecutor.MaxStatements)
+        if (body!.Requests is null || body.Requests.Count > HranaRoute.MaxRequests || HranaExecutor.Statements(body.Requests) > HranaExecutor.MaxStatements)
         {
-            return HranaRoute.Refuse(StatusCodes.Status400BadRequest, "PROTOCOL_ERROR", $"a pipeline needs a requests list of at most {HranaExecutor.MaxStatements} statements");
+            return HranaRoute.Refuse(StatusCodes.Status400BadRequest, "PROTOCOL_ERROR", $"a pipeline needs a requests list of at most {HranaRoute.MaxRequests} requests and {HranaExecutor.MaxStatements} statements");
         }
 
         var (stream, refused) = HranaRoute.Acquire(HttpContext, streams, database!, body.Baton);

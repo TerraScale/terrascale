@@ -14,6 +14,9 @@ internal static class HranaRoute
     /// <summary>Base route; <c>{version}</c> is <c>v2</c> or <c>v3</c>.</summary>
     public const string Base = DocumentRoute.DatabaseRoute + "/libsql/{version}";
 
+    /// <summary>Requests per pipeline, statement-free ones included.</summary>
+    public const int MaxRequests = 1000;
+
     /// <summary>Largest request body.</summary>
     public const int MaxRequestBytes = 1024 * 1024;
 

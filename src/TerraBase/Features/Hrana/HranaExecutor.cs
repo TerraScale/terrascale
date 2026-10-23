@@ -11,8 +11,11 @@ internal readonly union HranaCommand(SqlCommand, HranaError);
 /// <summary>Runs one HTTP request's stream requests against its stream, bounding the response it builds.</summary>
 internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory)
 {
-    /// <summary>Statements (requests and batch steps) per HTTP request; the core bounds a sequence's statements.</summary>
-    public const int MaxStatements = 1000;
+    /// <summary>
+    /// SQL statements (execute requests and batch steps) per HTTP request, the core's per-request limit; the core bounds a
+    /// sequence's statements itself.
+    /// </summary>
+    public const int MaxStatements = 256;
 
     /// <summary>Estimated bytes of results per HTTP request.</summary>
     public const long MaxResponseBytes = 16 * 1024 * 1024;
@@ -67,9 +70,9 @@ internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory)
         }
     }
 
-    /// <summary>Statements one request runs: each request counts once, each batch step and sequence once more.</summary>
+    /// <summary>SQL statements a pipeline runs: one per execute, one per batch step; other requests run none.</summary>
     public static int Statements(IReadOnlyList<HranaRequest> requests) =>
-        requests.Sum(request => 1 + (request?.Batch?.Steps?.Count ?? 0));
+        requests.Sum(request => request?.Type == "execute" ? 1 : request?.Batch?.Steps?.Count ?? 0);
 
     /// <summary>Runs a batch; null when its steps or conditions are malformed (nothing ran).</summary>
     public async ValueTask<HranaBatchResult?> BatchAsync(HranaBatch batch, CancellationToken cancellationToken)
