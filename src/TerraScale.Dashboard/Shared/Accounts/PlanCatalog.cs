@@ -43,7 +43,7 @@ public static class PlanCatalog
                 "free" => OrganizationRecord.FreePlanId,
                 "starter" => OrganizationRecord.StarterPlanId,
                 "pro" => "7CNW2H87JE68ATZX224CV2G625",
-                "team" => "01K8A00000TEAM00000000000000",
+                "team" => "01K8A00000TEAM000000000000",
                 _ => throw new IOException("The published plan has no persisted identity.")
             };
             var limits = plan.GetProperty("limits");
