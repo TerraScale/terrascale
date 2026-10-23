@@ -73,6 +73,9 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>API keys, addressed by instance and key id.</summary>
     public const string ApiKeyCollection = "api_keys";
 
+    /// <summary>When each API key was last used, addressed by instance and key id.</summary>
+    public const string ApiKeyUsageCollection = "api_key_usage";
+
     /// <summary>Invitations to an organization or project, addressed by instance and id.</summary>
     public const string InvitationCollection = "invitations";
 
@@ -92,7 +95,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
         UniqueCollection, ChallengeCollection, HealthCollection, UserCollection, SessionCollection, PasscodeCollection,
         SigningKeyCollection, OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection,
         "rate_limits", "email_configs", "email_config_versions", "email_allowance_deliveries",
-        OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection,
+        OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection, ApiKeyUsageCollection,
         InvitationCollection, AuditEventCollection, MfaCollection,
     ];
 

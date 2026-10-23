@@ -30,6 +30,7 @@ public sealed record RotateApiKeyRequest([property: JsonPropertyName("previous_s
 /// <param name="CreatedAt">Creation time.</param>
 /// <param name="ExpiresAt">Its expiry, or null.</param>
 /// <param name="PreviousSecretExpiresAt">Until when the key string before the last rotation still works, or null.</param>
+/// <param name="LastUsedAt">Its last successful token exchange (up to 5 minutes stale), or null when it was never used.</param>
 public sealed record ApiKeyBody(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("name")] string Name,
@@ -40,7 +41,8 @@ public sealed record ApiKeyBody(
     [property: JsonPropertyName("created_by")] string CreatedBy,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
     [property: JsonPropertyName("expires_at")] DateTimeOffset? ExpiresAt,
-    [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt);
+    [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt,
+    [property: JsonPropertyName("last_used_at")] DateTimeOffset? LastUsedAt);
 
 /// <summary>An API key with its key string, shown once.</summary>
 /// <param name="ApiKey">The key.</param>
@@ -221,7 +223,7 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
         }
 
         var (key, secret) = await keys.CreateAsync(caller, this.RouteId("organization"), this.ProjectId(), name, scopes, body.Database, body.ExpiresAt, cancellationToken);
-        return Results.Json(new ApiKeySecretBody(this.Map(key), secret), PlatformApiJson.Default.ApiKeySecretBody, statusCode: StatusCodes.Status201Created);
+        return Results.Json(new ApiKeySecretBody(this.Map(key, null), secret), PlatformApiJson.Default.ApiKeySecretBody, statusCode: StatusCodes.Status201Created);
     }
 
     /// <summary>Lists the keys, oldest first.</summary>
@@ -230,7 +232,8 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
         ArgumentNullException.ThrowIfNull(caller);
         var (limit, after) = this.Paging();
         var page = await keys.ListAsync(caller.Id, this.RouteId("organization"), this.ProjectId(), limit, after, cancellationToken);
-        return Results.Json(new ApiKeyPageBody([.. page.Items.Select(this.Map)], page.Next), PlatformApiJson.Default.ApiKeyPageBody);
+        var used = await keys.LastUsedAsync(page.Items, cancellationToken);
+        return Results.Json(new ApiKeyPageBody([.. page.Items.Select(key => this.Map(key, used.TryGetValue(key.Id, out var at) ? at : null))], page.Next), PlatformApiJson.Default.ApiKeyPageBody);
     }
 
     /// <summary>Reads one key.</summary>
@@ -238,7 +241,8 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
     {
         ArgumentNullException.ThrowIfNull(caller);
         var key = await keys.GetAsync(caller.Id, this.RouteId("organization"), this.ProjectId(), this.KeyId(), cancellationToken);
-        return Results.Json(this.Map(key), PlatformApiJson.Default.ApiKeyBody);
+        var used = await keys.LastUsedAsync([key], cancellationToken);
+        return Results.Json(this.Map(key, used.TryGetValue(key.Id, out var at) ? at : null), PlatformApiJson.Default.ApiKeyBody);
     }
 
     /// <summary>Revokes one key.</summary>
@@ -265,13 +269,14 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
         }
 
         var (key, secret) = await keys.RotateAsync(caller, this.RouteId("organization"), this.ProjectId(), this.KeyId(), ttl, cancellationToken);
-        return Results.Json(new ApiKeySecretBody(this.Map(key), secret), PlatformApiJson.Default.ApiKeySecretBody);
+        var used = await keys.LastUsedAsync([key], cancellationToken);
+        return Results.Json(new ApiKeySecretBody(this.Map(key, used.TryGetValue(key.Id, out var at) ? at : null), secret), PlatformApiJson.Default.ApiKeySecretBody);
     }
 
     // The previous key string's expiry is shown only while it still works.
-    private ApiKeyBody Map(ApiKeyRecord key) =>
+    private ApiKeyBody Map(ApiKeyRecord key, DateTimeOffset? lastUsedAt) =>
         new(key.Id, key.Name, key.OrganizationId, key.ProjectId, key.Database, key.Scopes, key.CreatedBy, key.CreatedAt, key.ExpiresAt,
-            key.PreviousSecretExpiresAt > clock.GetUtcNow() ? key.PreviousSecretExpiresAt : null);
+            key.PreviousSecretExpiresAt > clock.GetUtcNow() ? key.PreviousSecretExpiresAt : null, lastUsedAt);
 
     private string? ProjectId() => project ? this.RouteId("project") : null;
 

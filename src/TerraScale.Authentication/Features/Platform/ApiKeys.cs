@@ -38,13 +38,17 @@ public static class TerraBaseScopes
 
 /// <summary>
 /// API keys (TS-598): OAuth client credentials owned by an organization or a project, exchanged at the token endpoint
-/// for 5-minute tokens. A key string is a canonical ULID (its client id), <c>_</c> and 52 base32
+/// for 60-second tokens. A key works until it is revoked or expires: it does not depend on the sign-in that created it,
+/// so signing out, a password reset or a lost regional sign-in race never disables it. A key string is a canonical ULID (its client id), <c>_</c> and 52 base32
 /// characters (260 random bits); only SHA-256 digests are stored and compared in constant time.
 /// </summary>
 public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory, TimeProvider clock)
 {
     /// <summary>The longest grace a rotation gives the previous key string.</summary>
     public static readonly TimeSpan MaxPreviousSecretTtl = TimeSpan.FromDays(1);
+
+    /// <summary>How stale a key's last-used time may be: a key records at most one use per this interval.</summary>
+    public static readonly TimeSpan UsageGranularity = TimeSpan.FromMinutes(5);
 
     private const string Alphabet = "0123456789abcdefghjkmnpqrstvwxyz";
     private const string Instance = PlatformDirectory.Instance;
@@ -70,10 +74,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             }
 
             var (id, secret) = Generate();
-            var key = new ApiKeyRecord(id, Instance, organizationId, projectId, database, name, scopes, Tokens.Sha256Hex(secret), null, null, caller.Id, clock.GetUtcNow(), expiresAt)
-            {
-                SecretBindings = caller.AuthenticationBindings,
-            };
+            var key = new ApiKeyRecord(id, Instance, organizationId, projectId, database, name, scopes, Tokens.Sha256Hex(secret), null, null, caller.Id, clock.GetUtcNow(), expiresAt);
             List<StoreOperation> operations = [authority.Assertion, AuthStore.Create(AuthStore.ApiKeyCollection, Instance, id, Serialize(key))];
             if (projectId is not null)
             {
@@ -132,9 +133,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             var rotated = key.Value with
             {
                 SecretHash = Tokens.Sha256Hex(secret),
-                SecretBindings = caller.AuthenticationBindings,
                 PreviousSecretHash = previousTtl > TimeSpan.Zero ? key.Value.SecretHash : null,
-                PreviousSecretBindings = previousTtl > TimeSpan.Zero ? key.Value.SecretBindings : [],
                 PreviousSecretExpiresAt = previousTtl > TimeSpan.Zero ? now + previousTtl : null,
             };
             return new PlatformDirectory.Plan<(ApiKeyRecord, string)>(
@@ -157,24 +156,53 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
     }
 
     /// <summary>The digests a presented key string may match now: the current one, and the previous one in its grace.</summary>
-    public async Task<IReadOnlyList<string>> DigestsAsync(ApiKeyRecord key, CancellationToken cancellationToken)
+    public IReadOnlyList<string> Digests(ApiKeyRecord key)
     {
         ArgumentNullException.ThrowIfNull(key);
-        List<string> digests = [];
-        if (key.SecretBindings is { } currentBindings
-            && await store.AreCredentialsCurrentAsync(Instance, currentBindings, cancellationToken).ConfigureAwait(false))
-        {
-            digests.Add(key.SecretHash);
-        }
+        return key.PreviousSecretHash is { } previous && key.PreviousSecretExpiresAt > clock.GetUtcNow() ? [key.SecretHash, previous] : [key.SecretHash];
+    }
 
-        if (key.PreviousSecretHash is { } previous && key.PreviousSecretExpiresAt > clock.GetUtcNow()
-            && key.PreviousSecretBindings is { } previousBindings
-            && await store.AreCredentialsCurrentAsync(Instance, previousBindings, cancellationToken).ConfigureAwait(false))
+    /// <summary>
+    /// Records that <paramref name="key"/> just exchanged a token, unless it already did within <see cref="UsageGranularity"/>.
+    /// Best effort: a concurrent write in another region wins, and a storage failure never fails the exchange.
+    /// </summary>
+    public async Task RecordUseAsync(ApiKeyRecord key, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        var now = clock.GetUtcNow();
+        try
         {
-            digests.Add(previous);
-        }
+            var document = await store.GetAsync(AuthStore.ApiKeyUsageCollection, Instance, key.Id, cancellationToken).ConfigureAwait(false);
+            if (document?.Document.Deserialize(PlatformJson.Default.ApiKeyUsageRecord) is { } usage && usage.LastUsedAt > now - UsageGranularity)
+            {
+                return;
+            }
 
-        return digests;
+            var record = JsonSerializer.SerializeToElement(new ApiKeyUsageRecord(key.Id, Instance, key.OrganizationId, key.ProjectId, now), PlatformJson.Default.ApiKeyUsageRecord);
+            if (document is null)
+            {
+                await store.CreateAsync(AuthStore.ApiKeyUsageCollection, Instance, key.Id, record, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await store.ReplaceAsync(AuthStore.ApiKeyUsageCollection, Instance, key.Id, record, document.Version, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception error) when (error is HttpRequestException or TimeoutException)
+        {
+            // Another exchange recorded the use first, or storage is unavailable; the token is issued either way.
+        }
+    }
+
+    /// <summary>When each of <paramref name="keys"/> was last used; a key absent from the answer was never used.</summary>
+    public async Task<IReadOnlyDictionary<string, DateTimeOffset>> LastUsedAsync(IReadOnlyList<ApiKeyRecord> keys, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        var uses = await Task.WhenAll(keys.Select(async key =>
+            (await store.GetAsync(AuthStore.ApiKeyUsageCollection, Instance, key.Id, cancellationToken).ConfigureAwait(false))?.Document
+                .Deserialize(PlatformJson.Default.ApiKeyUsageRecord) is { } usage && usage.InstanceId == Instance && usage.KeyId == key.Id
+                ? usage : null)).ConfigureAwait(false);
+        return uses.OfType<ApiKeyUsageRecord>().ToDictionary(usage => usage.KeyId, usage => usage.LastUsedAt);
     }
 
     private static (string Id, string Secret) Generate()

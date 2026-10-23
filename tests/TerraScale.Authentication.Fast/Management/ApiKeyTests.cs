@@ -100,13 +100,14 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         var listed = await oidc.OkAsync(HttpMethod.Get, keys, token);
         await Assert.That(listed.GetProperty("items").GetArrayLength()).IsEqualTo(1);
         await Assert.That(listed.ToString()).DoesNotContain(key[27..]);
+        await Assert.That(listed.GetProperty("items")[0].GetProperty("last_used_at").ValueKind).IsEqualTo(JsonValueKind.Null);
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{keys}/{id}", token)).GetProperty("database").GetString()).IsEqualTo("app");
 
         using var exchanged = await oidc.ApiKeyTokenAsync(key);
         await Assert.That(exchanged.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(exchanged.Headers.CacheControl!.NoStore).IsTrue();
         var body = await OidcHarness.JsonAsync(exchanged);
-        await Assert.That(body.GetProperty("expires_in").GetInt32()).IsBetween(290, 300);
+        await Assert.That(body.GetProperty("expires_in").GetInt32()).IsBetween(50, 60);
         await Assert.That(body.TryGetProperty("refresh_token", out _)).IsFalse();
         await Assert.That(body.TryGetProperty("id_token", out _)).IsFalse();
         var access = await oidc.ValidateAsync(body.GetProperty("access_token").GetString()!, Audience);
@@ -119,7 +120,12 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         await Assert.That(access.GetClaim("database").Value).IsEqualTo("app");
         await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["documents:read", "documents:write"]);
         await Assert.That(access.TryGetClaim("email", out _)).IsFalse();
-        await Assert.That((access.ValidTo - access.IssuedAt).TotalSeconds).IsEqualTo(300);
+        await Assert.That((access.ValidTo - access.IssuedAt).TotalSeconds).IsEqualTo(60);
+
+        // The exchange is recorded as the key's last use, in its body and in the list.
+        var used = (await oidc.OkAsync(HttpMethod.Get, $"{keys}/{id}", token)).GetProperty("last_used_at").GetDateTimeOffset();
+        await Assert.That(used).IsLessThanOrEqualTo(DateTimeOffset.UtcNow.AddSeconds(5));
+        await Assert.That((await oidc.OkAsync(HttpMethod.Get, keys, token)).GetProperty("items")[0].GetProperty("last_used_at").GetDateTimeOffset()).IsEqualTo(used);
 
         // The key string authenticates with client_secret_post too; scopes narrow but never widen.
         using (var posted = await oidc.PostTokenAsync(new() { ["grant_type"] = "client_credentials", ["client_id"] = id, ["client_secret"] = key, ["scope"] = "documents:read" }, null, null))
@@ -479,7 +485,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
             await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(first);
             await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "databases:write", "documents:read", "documents:write"]);
             await Assert.That(access.Audiences.ToArray()).IsEquivalentTo([Audience]);
-            await Assert.That((access.ValidTo - access.IssuedAt).TotalSeconds).IsLessThanOrEqualTo(300);
+            await Assert.That((access.ValidTo - access.IssuedAt).TotalSeconds).IsLessThanOrEqualTo(60);
 
             // Organization and project tokens never open the management API.
             await Assert.That(await oidc.FailAsync(HttpMethod.Get, Organizations, body.GetProperty("access_token").GetString()!)).IsEqualTo((401, "unauthorized"));

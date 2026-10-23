@@ -343,7 +343,7 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Activating_a_users_factor_revokes_their_delegated_keys_but_preserves_service_and_other_users_keys()
+    public async Task Activating_a_users_factor_keeps_their_api_keys_and_service_and_other_users_keys()
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         await using var oidc = await StartAsync(clock);
@@ -378,9 +378,9 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
             await Assert.That(serviceTokens.TryGetProperty("id_token", out _)).IsFalse();
             await Assert.That(serviceTokens.TryGetProperty("refresh_token", out _)).IsFalse();
 
-            using var revoked = await oidc.ApiKeyTokenAsync(key);
-            await RefusedAsync(revoked, HttpStatusCode.Unauthorized);
-            await Assert.That(await OidcHarness.ErrorAsync(revoked)).IsEqualTo("invalid_client");
+            // An API key is the organization's credential, not its creator's sign-in: MFA activation leaves it working.
+            using var kept = await oidc.ApiKeyTokenAsync(key);
+            await Assert.That(kept.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
             using var apiKey = await oidc.ApiKeyTokenAsync(otherCreated.GetProperty("key").GetString()!);
             await Assert.That(apiKey.StatusCode).IsEqualTo(HttpStatusCode.OK);

@@ -216,7 +216,11 @@ project. It is not a bearer token: code exchanges it at the token endpoint
 - **Expiry.** `expires_at` is optional; an expired key is refused like a
   revoked one.
 - **Revocation.** `DELETE` revokes at once: no new token is issued. Tokens
-  already issued stay valid until they expire (at most 15 minutes).
+  already issued stay valid until they expire (at most 60 seconds). Nothing
+  else disables a key: it does not depend on the sign-in that created it, so
+  signing out, signing out everywhere or a password reset leaves it working.
+- **Last use.** `last_used_at` is the key's last successful token exchange,
+  recorded at most once per 5 minutes; null until the first exchange.
 - **Rotation.** `POST …/rotate` issues a new secret for the same `id`. The
   previous secret keeps working for `previous_secret_ttl` seconds (0 to 86400,
   default 0), then only the new one does. While that grace is active, another
@@ -280,8 +284,8 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 | `project` | Optional; omit it for an organization token |
 | `scope` | Optional subset of what the user's role allows; default all of it |
 
-Answer: `{"access_token":"…","issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","expires_in":900,"scope":"…"}`.
-The token expires after 15 minutes or with the subject token, whichever is
+Answer: `{"access_token":"…","issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","expires_in":60,"scope":"…"}`.
+The token expires after 60 seconds or with the subject token, whichever is
 first. Membership and roles are read at the exchange, so a role change applies
 to the next exchange. TS-707 refuses primary-only subject tokens for active
 MFA accounts with `invalid_grant`; corrupt or unavailable factor state
@@ -300,7 +304,7 @@ answer `invalid_grant`. Submitted values cannot repair or override it.
 | `sub` | user id | user id | key ULID |
 | `client_id` | the client | the exchanging client | key id |
 | `aud` | issuer, `https://api.terrascale.tech` and every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value | `https://api.terrascale.tech` and every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value | `https://api.terrascale.tech` and every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value |
-| `exp`, `iat`, `jti` | 1 hour | at most 15 minutes | 15 minutes |
+| `exp`, `iat`, `jti` | 5 minutes | at most 60 seconds | 60 seconds |
 | `scope` | OpenID scopes (`openid email profile offline_access`) | section 3 scopes | section 3 scopes |
 | `email`, `email_verified` | yes | yes | no |
 | `auth_time` | server-issued Unix seconds at authentication | unchanged from the sign-in token | no |
@@ -365,10 +369,10 @@ tokens expire:
 
 | Change | ts-auth | TerraBase |
 | --- | --- | --- |
-| API key revoked, expired or rotated past its grace | at once | within 15 minutes |
-| Member removed, role lowered, project or organization deleted | at once (the management API and every exchange read it) | within 15 minutes |
-| Sign-in revoked (RFC 7009, refresh-token reuse), user deleted | at once | within 15 minutes of the last exchange |
-| Signed out everywhere, password reset | at once (refresh, the management API and the exchange) | within 15 minutes of the last exchange |
+| API key revoked, expired or rotated past its grace | at once | within 60 seconds |
+| Member removed, role lowered, project or organization deleted | at once (the management API and every exchange read it) | within 60 seconds |
+| Sign-in revoked (RFC 7009, refresh-token reuse), user deleted | at once | within 5 minutes of the last exchange |
+| Signed out everywhere, password reset | at once (refresh, the management API and the exchange) | within 5 minutes of the last exchange |
 
 ### 6.7 Limits
 
@@ -436,7 +440,7 @@ without a signed-in user.
   organization keys asking for it) and the token exchange for it answer
   `invalid_target`. Organization tokens and the management API keep working, so
   the organization can still pay and manage the project. Tokens already issued
-  lapse within 15 minutes.
+  lapse within 60 seconds.
 - Suspensions are audited (`project.suspended`, `project.unsuspended`) with the
   client id as the actor.
 

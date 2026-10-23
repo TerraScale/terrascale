@@ -652,7 +652,7 @@ paths:
       operationId: revoke_organization_api_key
       tags: [API keys]
       summary: Revoke an organization API key
-      description: Needs admin. No token is issued for it afterwards; tokens already issued expire within 15 minutes.
+      description: Needs admin. No token is issued for it afterwards; tokens already issued expire within 60 seconds.
       responses:
         '204': { description: 'Revoked.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -754,7 +754,7 @@ paths:
       operationId: revoke_project_api_key
       tags: [API keys]
       summary: Revoke a project API key
-      description: Needs the project's member role. No token is issued for it afterwards; tokens already issued expire within 15 minutes.
+      description: Needs the project's member role. No token is issued for it afterwards; tokens already issued expire within 60 seconds.
       responses:
         '204': { description: 'Revoked.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -1376,7 +1376,7 @@ components:
           description: Seconds the previous secret keeps working.
     ApiKey:
       type: object
-      required: [id, name, organization_id, project_id, database, scopes, created_by, created_at, expires_at, previous_secret_expires_at]
+      required: [id, name, organization_id, project_id, database, scopes, created_by, created_at, expires_at, previous_secret_expires_at, last_used_at]
       properties:
         id: { $ref: '#/components/schemas/ApiKeyId' }
         name: { type: string }
@@ -1398,6 +1398,11 @@ components:
             - type: 'null'
         previous_secret_expires_at:
           description: Until when the secret before the last rotation still works; null when it no longer does.
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        last_used_at:
+          description: The key's last successful token exchange, up to 5 minutes stale; null when it was never used.
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
             - type: 'null'
