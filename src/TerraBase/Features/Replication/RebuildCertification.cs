@@ -109,7 +109,7 @@ internal sealed class RebuildCertification(
                 observed.AsSpan(bucket * 16, 16).Clear();
             }
 
-            (int Bucket, string Collection, string Id)? previous = null;
+            BucketCursor? previous = null;
             using (var call = client.ReadBucket(request, deadline: TimeProvider.System.GetUtcNow().UtcDateTime + RefillTimeout, cancellationToken: cancellationToken))
             {
                 while (true)
@@ -158,7 +158,7 @@ internal sealed class RebuildCertification(
                             BinaryPrimitives.ReadUInt64LittleEndian(observed.AsSpan(offset)) ^ (ulong)(digest >> 64));
                         BinaryPrimitives.WriteUInt64LittleEndian(observed.AsSpan(offset + 8),
                             BinaryPrimitives.ReadUInt64LittleEndian(observed.AsSpan(offset + 8)) ^ (ulong)digest);
-                        previous = (bucket, state.Collection, state.Id);
+                        previous = new BucketCursor(bucket, state.Collection, state.Id);
                     }
 
                     if (await repair.RefillRebuildAsync(database, receiver, buckets, after, page, collectedBefore, cancellationToken).ConfigureAwait(false) is null)
