@@ -123,6 +123,22 @@ public sealed class SqlWriteTests
     }
 
     [Test]
+    public async Task Increments_are_counters_only_on_integer_not_null_columns_and_requests_hold_256_statements()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api,
+            "CREATE TABLE c (id INTEGER PRIMARY KEY, counter INTEGER NOT NULL, loose INTEGER, r REAL)",
+            "INSERT INTO c (id, counter, r) VALUES (1, 1, 0.5)");
+
+        await OneAsync(api, new { sql = "UPDATE c SET counter = counter + 2, loose = loose + 1, r = r + 1 WHERE id = 1" });
+        var tooMany = await SqlApi.ExecuteAsync(api, [.. Enumerable.Repeat("SELECT 1", 257)]);
+
+        // NULL + 1 stays NULL, as in SQLite; a REAL column takes the computed value.
+        await Assert.That(await RowsAsync(api, "SELECT counter, loose, r FROM c")).IsEqualTo("[[3,null,1.5]]");
+        await Assert.That((tooMany.Status, tooMany.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+    }
+
+    [Test]
     public async Task A_statement_writing_more_than_1024_rows_is_too_big_and_writes_nothing()
     {
         await using var api = await DocumentApi.StartAsync();

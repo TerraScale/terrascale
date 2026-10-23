@@ -32,7 +32,7 @@ tree, so the engine never sees text the validator did not see.
 | `INSERT INTO t [(cols)] VALUES … \| SELECT …` | evaluate the rows with one engine read, then a create-only `put` per row (`Precondition.Absent`) |
 | `INSERT OR REPLACE`, `REPLACE` | unconditional `put` |
 | `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING` | create-only `put`, existing rows skipped |
-| `UPDATE t SET … WHERE …` | engine read `SELECT <key>, <new values> FROM t WHERE …`, then a `patch` per row: `c = NULL` → `unset`; `c = c ± <integer literal>` → `inc` (counters add across regions); anything else → `set` (per-field last-writer-wins) |
+| `UPDATE t SET … WHERE …` | engine read `SELECT <key>, <new values> FROM t WHERE …`, then a `patch` per row: `c = NULL` → `unset`; `c = c ± <integer literal>` on an `INTEGER NOT NULL` column → `inc` (counters add across regions), on any other column the computed value (NULL stays NULL); anything else → `set` (per-field last-writer-wins) |
 | `DELETE FROM t WHERE …` | engine read of the keys, then a `delete` per row |
 | `CREATE TABLE [IF NOT EXISTS]` | create the collection and write its definition |
 | `DROP TABLE [IF EXISTS]` | drop the collection |
@@ -158,7 +158,7 @@ for @libsql/client, which resolves `v2/pipeline` relative to it). `authToken` is
 
 Reads need `documents:read`; any write or DDL needs `documents:write`, checked per statement after parsing. Every route
 is under the existing QoS request budget (429 `tenant_busy`), like the existing SQL route. Bodies are at most 1 MiB,
-SQL text 16 KiB per statement, 1000 statements per request.
+SQL text 16 KiB per statement, 256 statements per request (the transaction log limit, SQ1-e7).
 
 ## 7. Slices
 

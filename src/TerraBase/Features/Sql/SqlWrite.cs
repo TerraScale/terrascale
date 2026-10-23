@@ -32,7 +32,7 @@ internal sealed record InsertSql(string Table, IReadOnlyList<string>? Columns, R
 
 /// <summary><c>UPDATE</c> or <c>DELETE</c>: an engine read of the row ids and new values, then one patch or delete per row.</summary>
 /// <param name="Table">Target table.</param>
-/// <param name="Rows">The read: column 0 is <c>_id</c>, then one column per <see cref="Assignments"/> entry that needs a value.</param>
+/// <param name="Rows">The read: column 0 is <c>_id</c>, then one column per <c>set</c> or <c>inc</c> entry of <see cref="Assignments"/>.</param>
 /// <param name="Assignments">Per assigned column: <c>set</c> (value from the read), <c>unset</c>, or <c>inc</c> by a literal; empty for a delete.</param>
 internal sealed record ChangeSql(string Table, ReadSql Rows, IReadOnlyList<(string Column, string Op, long By)> Assignments) : ParsedSql
 {
@@ -93,8 +93,10 @@ internal static class SqlWrite
                 case Expression.BinaryOp { Left: Expression.Identifier { Ident: var same }, Op: var op and (BinaryOperator.Plus or BinaryOperator.Minus), Right: Expression.LiteralValue { Value: Value.Number { Value: var text } } }
                     when same.Value.Equals(column, StringComparison.OrdinalIgnoreCase)
                         && long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var by) && by != 0:
-                    // A counter: concurrent increments add across regions.
+                    // A counter where the column is an INTEGER NOT NULL (decided with the definition): concurrent increments
+                    // add across regions. The computed value is read too, for any other column.
                     assignments.Add((column, "inc", op == BinaryOperator.Plus ? by : -by));
+                    values.Add("(" + assignment.Value.ToSql() + ")");
                     break;
                 case var value:
                     assignments.Add((column, "set", 0));

@@ -13,7 +13,8 @@ namespace TerraBase.Features.Sql;
 internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService authorization, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
 {
     private const int MaxBodyBytes = 1024 * 1024;
-    private const int MaxStatements = 1000;
+    // The transaction log limit: every request is one transaction.
+    private const int MaxStatements = 256;
 
     /// <inheritdoc />
     public override void Configure()
@@ -22,7 +23,7 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
         Name("executeSql");
         Summary("Runs relational SQL statements");
         Description("""
-            {"statements":[{"sql":…,"args":[…],"named":{…}}]} with 1 to 1000 statements of at most 16 KiB each, in a body of at most 1 MiB. Tables are collections created with CREATE TABLE; rows are their documents. Arguments are null, numbers, booleans (1 or 0) or strings. Results: one per statement, {"columns","rows","rows_affected","last_insert_rowid"}. All statements run as one transaction: all or nothing; transaction statements (BEGIN, COMMIT, ROLLBACK) are refused. A refused statement rolls everything back and answers {"error":{"code","message","statement","sqlite_code"}}: 400 sql_error, 403 forbidden_scope (SQLITE_AUTH: writes and DDL need documents:write), 409 sql_conflict (SQLITE_BUSY) or 413 sql_too_large (SQLITE_TOOBIG).
+            {"statements":[{"sql":…,"args":[…],"named":{…}}]} with 1 to 256 statements of at most 16 KiB each, in a body of at most 1 MiB. Tables are collections created with CREATE TABLE; rows are their documents. Arguments are null, numbers, booleans (1 or 0) or strings. Results: one per statement, {"columns","rows","rows_affected","last_insert_rowid"}. All statements run as one transaction: all or nothing; transaction statements (BEGIN, COMMIT, ROLLBACK) are refused. A refused statement rolls everything back and answers {"error":{"code","message","statement","sqlite_code"}}: 400 sql_error, 403 forbidden_scope (SQLITE_AUTH: writes and DDL need documents:write), 409 sql_conflict (SQLITE_BUSY) or 413 sql_too_large (SQLITE_TOOBIG).
             """);
         Tags("Queries");
         Metadata(new RequestBodyMetadata(typeof(SqlExecuteRequest), DocumentRoute.JsonMediaType));
@@ -56,7 +57,7 @@ internal sealed class SqlExecuteEndpoint(ISqlService sql, IAuthorizationService 
                     {
                         Validation error => ErrorResponse.From(error),
                         SqlExecuteRequest { Statements: { Count: > 0 and <= MaxStatements } statements } => await ExecuteAsync(database, statements, cancellationToken),
-                        SqlExecuteRequest => ErrorResponse.From(new Validation("statements holds 1 to 1000 statements")),
+                        SqlExecuteRequest => ErrorResponse.From(new Validation("statements holds 1 to 256 statements")),
                     },
                 },
             },

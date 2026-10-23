@@ -345,8 +345,9 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
                 {
                     var (_, op, by) = change.Assignments[i];
                     var path = "/" + columns[i].Name;
-                    var set = op == "set" ? SqlWrite.Apply(columns[i].Affinity, row[value++]) : SqlValue.Null;
-                    if (op == "inc")
+                    var set = op is "set" or "inc" ? SqlWrite.Apply(columns[i].Affinity, row[value++]) : SqlValue.Null;
+                    // Only an INTEGER NOT NULL column is a counter; elsewhere c = c + 1 is the computed value (NULL stays NULL).
+                    if (op == "inc" && columns[i] is { Affinity: SqlAffinity.Integer, NotNull: true })
                     {
                         ops.Add(new PatchOpRequest("inc", path, default, SqlWrite.Json(SqlValue.Of(by))));
                     }

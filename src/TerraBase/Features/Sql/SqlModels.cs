@@ -5,7 +5,7 @@ using TerraBase.Errors;
 namespace TerraBase.Features.Sql;
 
 /// <summary>Statements to run as one transaction.</summary>
-/// <param name="Statements">1 to 1000 statements.</param>
+/// <param name="Statements">1 to 256 statements.</param>
 internal sealed record SqlExecuteRequest(IReadOnlyList<SqlExecuteStatement>? Statements);
 
 /// <summary>One statement and its arguments.</summary>
