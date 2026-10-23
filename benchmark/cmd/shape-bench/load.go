@@ -67,6 +67,8 @@ func load(args []string) error {
 	shard, shards := fs.Int("shard", 0, "this shard"), fs.Int("shards", 1, "load processes")
 	steps := fs.String("steps", "1,100,1000,10000", "readers per step, all shards")
 	out := fs.String("out", "", "shard record (JSON)")
+	originURL := fs.String("origin", "", "a running node's client URL instead of -app (an OCI test cell); its key is TS_BENCH_API_KEY")
+	metrics := fs.String("metrics", "", "comma-separated /metrics URLs of the nodes, with -origin")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -81,7 +83,12 @@ func load(args []string) error {
 	ctx := context.Background()
 	reg, token, nodes := cmp.Or(os.Getenv("FLY_REGION"), region), os.Getenv("TS_BENCH_API_KEY"), []string(nil)
 	var origin string
-	if *app == "" {
+	if *originURL != "" {
+		origin = *originURL
+		if *shard == 0 {
+			nodes = strings.Split(*metrics, ",")
+		}
+	} else if *app == "" {
 		work, err := os.MkdirTemp("", "shape-bench-")
 		if err != nil {
 			return err
@@ -133,7 +140,7 @@ func load(args []string) error {
 		rec = append(rec, runLoadStep(ctx, b, at, n, *shard, *shards, nodes))
 		fmt.Fprintf(os.Stderr, "step N=%d: admitted %d delivered %d %s\n", n, rec[i].Admitted, rec[i].Delivered, rec[i].Error)
 	}
-	if *app == "" {
+	if *app == "" && *originURL == "" {
 		return mergeReport(*out, [][]shardStep{rec})
 	}
 	return replbench.WriteJSON(*out, rec)
