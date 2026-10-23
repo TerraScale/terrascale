@@ -28,15 +28,36 @@ internal static class ETags
     /// </summary>
     public static string Version(Guid scope, string collection, string id, long version, ReadOnlyMemory<byte> json, bool deleted = false)
     {
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        using var input = ZString.CreateUtf8StringBuilder();
-        input.AppendFormat("{0:N}\0{1}\0{2}\0{3}\0{4}\0", scope, collection, id, version, deleted ? 1 : 0);
-        hash.AppendData(input.AsSpan());
-        hash.AppendData(json.Span);
+        // Every read answers a version: one hash per thread, reset by each use, instead of a new native context per call.
+        var hash = _hash ??= IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
-        hash.GetHashAndReset(digest);
-        return "tbv1-" + Convert.ToHexStringLower(digest[..16]);
+        try
+        {
+            using var input = ZString.CreateUtf8StringBuilder();
+            input.AppendFormat("{0:N}\0{1}\0{2}\0{3}\0{4}\0", scope, collection, id, version, deleted ? 1 : 0);
+            hash.AppendData(input.AsSpan());
+            hash.AppendData(json.Span);
+            hash.GetHashAndReset(digest);
+        }
+        catch
+        {
+            // A hash left part-way through must not carry its input into the next version.
+            _hash = null;
+            hash.Dispose();
+            throw;
+        }
+
+        return string.Create(Prefix.Length + 32, (ReadOnlySpan<byte>)digest[..16], static (chars, bytes) =>
+        {
+            Prefix.CopyTo(chars);
+            _ = Convert.TryToHexStringLower(bytes, chars[Prefix.Length..], out _);
+        });
     }
+
+    private const string Prefix = "tbv1-";
+
+    [ThreadStatic]
+    private static IncrementalHash? _hash;
 
     /// <summary>Sends <paramref name="version"/> as the strong <c>ETag</c>.</summary>
     public static void Set(HttpContext context, string version) => context.Response.Headers.ETag = $"\"{version}\"";
