@@ -2202,7 +2202,7 @@ public sealed class PeerStreamTests
         // Missing deletion evidence keeps the returning copy's refill pending; healthy collected copies stay absent.
         await sjc.StartAsync();
         // Discovery lists the restarted fixture after startup; verify its catalog before driving repairs.
-        await Assert.That(await ((CatalogGate)sjc.Api.Server.Services.GetRequiredService<ICatalogGate>()).VerifyAsync(TestContext.Current!.Execution.CancellationToken)).IsTrue();
+        await sjc.Api.VerifyCatalogAsync(TestContext.Current!.Execution.CancellationToken);
         await Assert.That(await sjc.AntiEntropy.RefillAsync(cluster.Database, gru.Name,
             await states.HorizonAsync(cluster.Database, CancellationToken.None), await gru.IncarnationAsync(), CancellationToken.None)).IsNull();
         await Assert.That(await sjc.ReadAsync(deleted)).IsEqualTo("""{"n":1}""");
