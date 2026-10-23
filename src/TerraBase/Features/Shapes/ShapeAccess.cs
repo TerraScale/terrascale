@@ -65,3 +65,10 @@ internal sealed record ShapeAccess(CollectionAccessRules Rules, ProjectAccess Id
 }
 
 internal readonly union ShapeAccessResult(ShapeScope, Forbidden, NotFound, Unavailable);
+
+/// <summary>Rechecks retained payloads in one current document/rules read snapshot.</summary>
+internal interface IShapeOwnerAuthorization
+{
+    ValueTask<bool> AuthorizeShapeBodyAsync(string collection, DocumentOwnerProof owner, ReadOnlyMemory<byte> body,
+        CancellationToken cancellationToken);
+}

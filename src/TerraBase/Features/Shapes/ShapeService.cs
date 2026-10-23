@@ -464,6 +464,18 @@ internal sealed class ShapeService(
                 }
                 return changed;
             }
+            if (read is ShapeBody retained && scope.Filter.Access?.Owner is { } owner)
+            {
+                await using var transaction = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false);
+                var authorization = transaction as IShapeOwnerAuthorization
+                    ?? throw new NotSupportedException("the storage transaction does not support shape ownership checks");
+                if (!await authorization.AuthorizeShapeBodyAsync(scope.Collection.Name, owner, retained.Json, cancellationToken).ConfigureAwait(false))
+                {
+                    retained.Lease?.Dispose();
+                    // No retained payload, continuation id or handle may accompany a revoked owner response.
+                    return ShapeAccess.Denied;
+                }
+            }
             return read;
         }
         catch

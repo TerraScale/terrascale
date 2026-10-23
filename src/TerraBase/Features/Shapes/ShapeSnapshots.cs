@@ -108,7 +108,7 @@ internal sealed class ShapeSnapshots(
         using (var admission = memory.TryReserve(MemoryLane.Bulk, 4096, store.Tenant) ?? throw new StorageBusyException())
         await using (var probe = await transactions.BeginAsync(store, write: false, cancellationToken).ConfigureAwait(false))
         {
-            if (!await Storage(probe).ShapeSnapshotDueAsync(shape.Handle, time.GetUtcNow().ToUnixTimeMilliseconds(), cancellationToken).ConfigureAwait(false))
+            if (!await DueAsync(probe, shape, time.GetUtcNow().ToUnixTimeMilliseconds(), cancellationToken).ConfigureAwait(false))
             {
                 return await PublishedSnapshotAsync(probe, shape.Handle, cancellationToken).ConfigureAwait(false);
             }
@@ -138,7 +138,7 @@ internal sealed class ShapeSnapshots(
             var storage = Storage(reader);
             var started = Stopwatch.GetTimestamp();
             var now = time.GetUtcNow();
-            if (!await storage.ShapeSnapshotDueAsync(shape.Handle, now.ToUnixTimeMilliseconds(), cancellationToken).ConfigureAwait(false))
+            if (!await DueAsync(reader, shape, now.ToUnixTimeMilliseconds(), cancellationToken).ConfigureAwait(false))
             {
                 return await PublishedSnapshotAsync(reader, shape.Handle, cancellationToken).ConfigureAwait(false);
             }
@@ -221,6 +221,19 @@ internal sealed class ShapeSnapshots(
         return offset <= await FrontierAsync(transaction, cancellationToken).ConfigureAwait(false)
             ? await Storage(transaction).ReadShapeSnapshotPageAsync(handle, offset, afterId, memory, cancellationToken).ConfigureAwait(false)
             : null;
+    }
+
+    private static async ValueTask<bool> DueAsync(IStorageTransaction transaction, ShapeSnapshotDefinition shape, long now,
+        CancellationToken cancellationToken)
+    {
+        // An owner bootstrap must recover immediately after retained data loses authorization, without rotating sync handles.
+        if (shape.OwnerFilter is not null && transaction is IShapeFreshStorage fresh
+            && await Storage(transaction).NewestShapeSnapshotAsync(shape.Handle, cancellationToken).ConfigureAwait(false) is { } newest
+            && newest.Offset != await fresh.ReadShapeHeadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return true;
+        }
+        return await Storage(transaction).ShapeSnapshotDueAsync(shape.Handle, now, cancellationToken).ConfigureAwait(false);
     }
 
     // Snapshots seal at or below it; this keeps every read below it too.
