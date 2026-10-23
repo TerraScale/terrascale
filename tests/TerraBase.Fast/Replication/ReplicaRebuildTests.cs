@@ -526,6 +526,11 @@ public sealed class ReplicaRebuildTests
             {
                 await RegisterAsync();
             }
+            else
+            {
+                // The restarted fixture is listed only after startup; refill requires its real catalog verification.
+                await Assert.That(await ((CatalogGate)Api.Server.Services.GetRequiredService<ICatalogGate>()).VerifyAsync(TestContext.Current!.Execution.CancellationToken)).IsTrue();
+            }
         }
 
         public async Task StopAsync()

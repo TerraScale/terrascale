@@ -5,13 +5,15 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using static TerraBase.Features.Management.SystemCatalog;
 
 namespace TerraBase.Features.Management.Backups;
 
 internal sealed class ProjectBackupDestinations(
-    SystemCatalog catalog, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IHostApplicationLifetime lifetime, IMasterKey? master = null) : IProjectBackupDestinations
+    SystemCatalog catalog, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IHostApplicationLifetime lifetime, Lazy<ICatalogGate> gate,
+    IMasterKey? master = null) : IProjectBackupDestinations
 {
     internal static string Collection(string projectId) => ProjectState(projectId) + "backup_destination";
     private const string Current = "current";
@@ -85,8 +87,10 @@ internal sealed class ProjectBackupDestinations(
     }
 
     private async Task<SaveBackupDestinationResult> SaveCoreAsync(
-        string userId, string organizationId, string projectId, ProjectBackupDestinationRecord record, CancellationToken cancellationToken) =>
-        await catalog.WriteDurableAsync<SaveBackupDestinationResult>(async transaction =>
+        string userId, string organizationId, string projectId, ProjectBackupDestinationRecord record, CancellationToken cancellationToken)
+    {
+        var replaced = false;
+        var saved = await catalog.WriteDurableAsync<SaveBackupDestinationResult>(async transaction =>
         {
             var access = await WritableAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             if (access is not Project)
@@ -100,10 +104,16 @@ internal sealed class ProjectBackupDestinations(
                 };
             }
 
+            // Decide inside the write: another region may have supplied a destination while the bucket was probed.
+            replaced = await transaction.GetAsync(Collection(projectId), Current, cancellationToken).ConfigureAwait(false) is not null;
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, Collection(projectId), Current, record, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
             return record.Destination;
         }, static error => error, cancellationToken).ConfigureAwait(false);
+
+        return saved is ProjectBackupDestination && replaced && !await gate.Value.TryAnchorAsync(cancellationToken).ConfigureAwait(false)
+            ? CatalogGate.AnchorUnavailable : saved;
+    }
 
     public async Task<DeleteBackupDestinationResult> DeleteAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
         await catalog.WriteDurableAsync<DeleteBackupDestinationResult>(async transaction =>

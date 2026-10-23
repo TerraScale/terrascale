@@ -163,7 +163,7 @@ internal sealed class AntiEntropy : BackgroundService
     /// </summary>
     internal async ValueTask<HashSet<string>> CatalogHeldWithinAsync(TimeSpan window, CancellationToken cancellationToken)
     {
-        var held = new HashSet<string>(StringComparer.Ordinal);
+        var held = new Dictionary<string, long>(StringComparer.Ordinal);
         var inPlace = new Dictionary<Ulid, bool>();
         foreach (var (peer, proof) in _catalogHeld)
         {
@@ -179,11 +179,12 @@ internal sealed class AntiEntropy : BackgroundService
 
             if (current)
             {
-                _ = held.Add(peer);
+                held[peer] = proof.At;
             }
         }
 
-        return held;
+        // A later incarnation read can outlive a proof already checked above.
+        return held.Where(proof => _time.GetElapsedTime(proof.Value) < window).Select(proof => proof.Key).ToHashSet(StringComparer.Ordinal);
     }
 
     // Monotonic within one local copy: a slow comparison that began earlier never moves a peer's proof back.
@@ -237,7 +238,7 @@ internal sealed class AntiEntropy : BackgroundService
             return null;
         }
 
-        var theirs = ApplicationEnvelope.Decode(reply.Buckets.Span, ReplicationProtocol.MaxApplicationBytes);
+        var theirs = ApplicationEnvelope.Decode(reply.Buckets.Span, DigestBytes);
         if (theirs.Length != DigestBytes)
         {
             throw new InvalidDataException("a peer's digests are not 4096 buckets of 16 bytes");
@@ -274,11 +275,11 @@ internal sealed class AntiEntropy : BackgroundService
         request.Buckets.AddRange(repair.Order().Select(bucket => (uint)bucket));
         using var call = client.ReadBucket(request, deadline: TimeProvider.System.GetUtcNow().UtcDateTime + ReadTimeout, cancellationToken: cancellationToken);
         var changed = 0;
-        var theirKeys = new HashSet<(string Collection, string Id)>();
+        var theirKeys = horizon is not null ? new HashSet<(string Collection, string Id)>() : null;
         while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
         {
             var states = Decode(database, call.ResponseStream.Current, source);
-            theirKeys.UnionWith(states.Select(state => (state.Collection, state.Id)));
+            theirKeys?.UnionWith(states.Select(state => (state.Collection, state.Id)));
             if (await _sink.RepairAsync(database, states, cancellationToken).ConfigureAwait(false) is not { } repaired)
             {
                 return null;
@@ -302,7 +303,7 @@ internal sealed class AntiEntropy : BackgroundService
                 }
 
                 after = next;
-                lacking.AddRange(page.Where(state => !theirKeys.Contains((state.Collection, state.Id)) && state.State.MaxStamp.Value < collected.Value)
+                lacking.AddRange(page.Where(state => !theirKeys!.Contains((state.Collection, state.Id)) && state.State.MaxStamp.Value < collected.Value)
                     .Select(state => (state.Collection, state.Id)));
             }
             while (after is not null);
@@ -361,7 +362,23 @@ internal sealed class AntiEntropy : BackgroundService
         StateList list;
         try
         {
-            list = StateList.Parser.ParseFrom(ApplicationEnvelope.Decode(page.States.Span, ReplicationProtocol.MaxApplicationBytes));
+            var bytes = ApplicationEnvelope.Decode(page.States.Span, ReplicationProtocol.MaxApplicationBytes);
+            // Bound object materialization even when a peer fills the envelope with tiny entries.
+            using var payload = new MemoryStream(bytes, writable: false);
+            // SkipLastField counts group depth one earlier than the parser's default limit of 100.
+            using var input = CodedInputStream.CreateWithLimits(payload, bytes.Length, recursionLimit: 101);
+            var count = 0;
+            while (input.ReadTag() is var tag && tag != 0)
+            {
+                if (tag == 10 && ++count > MaxPageStates)
+                {
+                    throw new InvalidDataException("a peer's page holds at most 1024 states");
+                }
+
+                input.SkipLastField();
+            }
+
+            list = StateList.Parser.ParseFrom(bytes);
         }
         catch (InvalidProtocolBufferException error)
         {

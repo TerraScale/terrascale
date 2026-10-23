@@ -4,6 +4,7 @@ using System.Text.Json;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Errors;
@@ -23,7 +24,6 @@ public sealed class CatalogGateTests
     private static readonly string[] ReadScopes = ["documents:read"];
 
     [Test]
-    [Skip("Quarantine: owner R5; deadline 2026-10-23 20:00Z; root-cause fix and removal in #364 (Q-MAIN-GREEN).")]
     [Arguments(StatusCode.Cancelled)]
     [Arguments(StatusCode.Internal)]
     public async Task Catalog_gate_shutdown_normalizes_only_genuine_RPC_cancellation(StatusCode status)
@@ -35,6 +35,8 @@ public sealed class CatalogGateTests
         {
             services.AddSingleton<TimeProvider>(clock);
             services.AddSingleton<IMemberDirectory>(directory);
+            // Only the catalog gate may signal that its discovery call is waiting for shutdown.
+            services.AddSingleton<IMembership>(provider => new StaticMembership(provider.GetRequiredService<TerraBaseOptions>()));
         });
         var gate = (CatalogGate)server.Services.GetRequiredService<ICatalogGate>();
         try
@@ -194,6 +196,12 @@ public sealed class CatalogGateTests
                 }
             });
             var gate = reopened.Services.GetRequiredService<ICatalogGate>();
+            if (directoryBacked)
+            {
+                // The harness lists a machine only after its listeners start; the gate needs that discovery proof.
+                _ = await ((CatalogGate)gate).VerifyAsync(token);
+            }
+
             await Assert.That(gate.IsOpen).IsTrue();
             await Assert.That(gate.Trusted).IsTrue();
             using var ready = await reopened.Client.GetAsync(ManagementApi.Uri("/readyz"), token);

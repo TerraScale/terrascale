@@ -555,6 +555,12 @@ public sealed class BackupKeyRotationTests
                 ActivatorUtilities.CreateInstance<BackupScheduler>(provider, new FakeTimeProvider(time.GetUtcNow())));
         }, time);
 
+        if (members is not null)
+        {
+            // The test directory publishes self after startup; a frozen clock cannot trigger the gate's retry.
+            _ = await ((CatalogGate)api.Server.Services.GetRequiredService<ICatalogGate>()).VerifyAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        }
+
         return api;
     }
 

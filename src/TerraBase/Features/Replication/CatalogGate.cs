@@ -647,7 +647,8 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
             }
         }
 
-        if (members.Length > MaxMembers)
+        // An existing file's anchor proves no rollback, not that discovery which omitted this machine is complete.
+        if (members.Length > MaxMembers || (!_fresh && !members.Any(member => member.Name == _membership.Self.Name)))
         {
             return null;
         }
