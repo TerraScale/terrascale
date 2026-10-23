@@ -183,7 +183,9 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
 
         async Task ShotAsync(string state) => await page.ScreenshotAsync(new()
         {
-            Path = Path.Combine(output, state + ".png"), FullPage = true, Animations = ScreenshotAnimations.Disabled,
+            Path = Path.Combine(output, state + ".png"),
+            FullPage = true,
+            Animations = ScreenshotAnimations.Disabled,
             Mask = [page.Locator("#webhook-secret"), page.Locator(".ts-account-email"), page.Locator(".ts-account-name")]
         });
     }
