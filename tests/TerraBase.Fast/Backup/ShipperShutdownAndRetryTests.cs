@@ -23,11 +23,11 @@ public sealed class ShipperShutdownAndRetryTests
         await host.PutAsync("people", "seed", Faker.Lorem.Sentence(8), cancellationToken);
         await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
         var now = host.Time.GetUtcNow();
-        var engine = host.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var engine = host.Api.Server.Services.GetRequiredService<TursoStorageEngine>();
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var holding = ((SqliteDatabaseStore)store).WithWritersHeldAsync(async () =>
+        var holding = ((TursoDatabaseStore)store).WithWritersHeldAsync(async () =>
         {
             entered.SetResult();
             await release.Task.WaitAsync(cancellationToken);
