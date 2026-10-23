@@ -502,13 +502,17 @@ rss_max() {
 
 # window_nudges NODE_DIR DB CUT: the restored DB's window nudges of CUT (written after CUT, never in the oracle): a
 # restore at the final segment's time holds them exactly when that segment was read.
-window_nudges() {
-	local n
-	n=$(curl -s --http2-prior-knowledge -X POST -H 'Content-Type: application/json' \
+window_nudges() (
+	local n peer_header
+	peer_header=$(mktemp)
+	trap 'rm -f -- "$peer_header"' EXIT
+	chmod 600 "$peer_header"
+	jq -er '.peer_secret | strings | select(length == 64 and test("^[0-9a-fA-F]{64}$")) | "X-TerraBase-Peer-Credential: " + .' "$1/node.json" > "$peer_header" || return 1
+	n=$(curl -q -s --max-redirs 0 -H "@$peer_header" --http2-prior-knowledge -X POST -H 'Content-Type: application/json' \
 		"http://127.0.0.1:$(jq .internal_port "$1/node.json")/v1/projects/$(runjson .project)/databases/$2/collections/nudges/query" \
 		-d "{\"filter\":{\"and\":[{\"eq\":[\"/cut\",\"$3\"]},{\"eq\":[\"/why\",\"window\"]}]},\"limit\":1000}" | jq '.items | length' 2>/dev/null) || true
 	log "window nudges of $3 in $2: ${n:-query failed}"
-}
+)
 
 cmd_path_b() {
 	local root=$1 label=$2 cuts=${3:-$(jq -r .name "$RUN/cuts.jsonl" | tr '\n' ' ')} tdir=$BASE/targets/$2 env=$BASE/secrets/t-$2.env c name

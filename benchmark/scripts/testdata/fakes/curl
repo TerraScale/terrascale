@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 # Fake curl for gru's internal listener: logs "METHOD path" (never bodies) and answers like TerraBase.
-method=GET url="" data=""
+printf 'curl argv:' >> "$FAKE_LOG"
+printf ' %s' "$@" >> "$FAKE_LOG"
+printf '\n' >> "$FAKE_LOG"
+[[ $1 == -q && " $* " == *" --max-redirs 0 "* && " $* " != *" -L "* ]] || { echo "curl must disable config and redirects" >&2; exit 22; }
+method=GET url="" data="" peer_header=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -X) method=$2; shift ;;
     -d) data=$2; shift ;;
-    -H|-o) shift ;;
+    -H) [[ $2 == @* ]] && peer_header=${2#@}; shift ;;
+    -o) shift ;;
     http*) url=$1 ;;
   esac
   shift
 done
+[[ -f "$peer_header" && $(stat -c %a "$peer_header") == 600 && $(cat "$peer_header") == "X-TerraBase-Peer-Credential: $TERRABASE_PEER_SECRET" ]] || { echo "unauthenticated internal request" >&2; exit 22; }
 path=${url#http://127.0.0.1:*/}
 path=/${path}
 echo "curl $method $path" >> "$FAKE_LOG"

@@ -12,6 +12,8 @@ namespace TerraBase.Fast.Import;
 /// </summary>
 public sealed class ImportHardeningTests
 {
+    private const int ImportCancellationDeadlineMilliseconds = 540_000;
+
     private static readonly string Fixtures = Path.Combine(AppContext.BaseDirectory, "Import", "Fixtures");
     private static readonly string[] ReplicaRegions = ["sjc"];
 
@@ -148,10 +150,14 @@ public sealed class ImportHardeningTests
         await Assert.That(await client.IdsAsync(import, "readings")).IsEmpty();
     }
 
+    // Five imports sharing one CPU measured 484s, plus one 500-row batch of headroom.
     [Test]
-    public async Task Cancelling_a_running_copy_stops_it_and_resume_continues_to_a_validated_import()
+    [Timeout(ImportCancellationDeadlineMilliseconds)]
+    public async Task Cancelling_a_running_copy_stops_it_and_resume_continues_to_a_validated_import(CancellationToken _1)
     {
         await using var client = await ImportClient.StartAsync();
+        client.Client.DefaultRequestHeaders.Authorization = new("Bearer", ImportClient.Token(
+            client.Api, client.Project, ImportClient.AllScopes, DateTime.UtcNow.AddMilliseconds(ImportCancellationDeadlineMilliseconds)));
         var import = await client.CreateDestinationAsync();
         var faker = new Faker { Random = new Randomizer(1012) };
         var dump = new StringBuilder("CREATE TABLE public.people (id integer NOT NULL, name text, email text, score double precision);\nCOPY public.people (id, name, email, score) FROM stdin;\n");
@@ -168,8 +174,8 @@ public sealed class ImportHardeningTests
         var ready = await client.WaitAsync(import, "ready", "rejected");
         _ = await client.StartAsync(import, ready.GetProperty("preview").GetProperty("id").GetString());
 
-        await TerraBaseTestServer.EventuallyAsync(async _ =>
-            (await client.GetAsync(import)).GetProperty("progress") is { ValueKind: JsonValueKind.Object } progress && progress.GetProperty("rowsWritten").GetInt64() > 0);
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await client.GetAsync(import, token)).GetProperty("progress") is { ValueKind: JsonValueKind.Object } progress && progress.GetProperty("rowsWritten").GetInt64() > 0);
         var (cancel, _) = await client.CancelAsync(import);
         await Assert.That(cancel).IsEqualTo(HttpStatusCode.Accepted);
         var cancelled = await client.WaitAsync(import, "cancelled", "completed");
@@ -179,7 +185,12 @@ public sealed class ImportHardeningTests
         await Assert.That((await client.IdsAsync(import, "people")).Count).IsEqualTo((int)partial);
 
         _ = await client.ResumeAsync(import);
-        var done = await client.WaitAsync(import, "completed", "failed");
+        JsonElement done = default;
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            done = await client.GetAsync(import, token);
+            return done.GetProperty("state").GetString() is "completed" or "failed";
+        });
         await Assert.That(done.GetProperty("state").GetString()).IsEqualTo("completed").Because(done.GetProperty("error").GetRawText());
         await Assert.That(done.GetProperty("validation").GetProperty("passed").GetBoolean()).IsTrue();
         await Assert.That((await client.IdsAsync(import, "people")).Count).IsEqualTo(Rows);

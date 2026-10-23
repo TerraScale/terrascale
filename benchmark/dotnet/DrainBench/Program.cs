@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -20,16 +21,18 @@ var writers = int.Parse(options.GetValueOrDefault("writers", "16"), CultureInfo.
 var readers = int.Parse(options.GetValueOrDefault("readers", "4"), CultureInfo.InvariantCulture);
 var mode = options.GetValueOrDefault("mode", "drain");
 
+var peerSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 var data = Directory.CreateTempSubdirectory("drain-bench-").FullName;
 var (port, internalPort, metricsPort) = (FreePort(), FreePort(), FreePort());
-using var http = new HttpClient(new SocketsHttpHandler { UseCookies = false, MaxConnectionsPerServer = 64 })
+using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false, MaxConnectionsPerServer = 64 })
 {
     BaseAddress = new Uri($"http://127.0.0.1:{internalPort}/"),
     DefaultRequestVersion = HttpVersion.Version20,
     DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
     Timeout = TimeSpan.FromSeconds(60),
 };
-using var scrape = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{metricsPort}/") };
+http.DefaultRequestHeaders.Add("X-TerraBase-Peer-Credential", peerSecret);
+using var scrape = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { BaseAddress = new Uri($"http://127.0.0.1:{metricsPort}/") };
 
 // Set once the server serves the database; the local functions below read them.
 var (database, pid, allowed) = ("", 0, 0.0);
@@ -398,6 +401,7 @@ async Task<Process> StartAsync()
         start.Environment.Remove(name);
     }
 
+    start.Environment["TERRABASE_PEER_SECRET"] = peerSecret;
     start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
     start.Environment["DOTNET_ENVIRONMENT"] = "Development";
     var process = Process.Start(start)!;

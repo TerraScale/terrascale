@@ -271,7 +271,7 @@ public sealed class ImportApiTests
         var damaged = (byte[])dump.Clone();
         damaged[^10] ^= 0x20;
         _ = await client.UploadAsync(import, damaged, part: 1000, offset: 1000);
-        await TerraBaseTestServer.EventuallyAsync(async _ => (await client.GetAsync(import)).GetProperty("error").ValueKind == JsonValueKind.Object);
+        await TerraBaseTestServer.EventuallyAsync(async token => (await client.GetAsync(import, token)).GetProperty("error").ValueKind == JsonValueKind.Object);
         var waiting = await client.GetAsync(import);
         await Assert.That(waiting.GetProperty("state").GetString()).IsEqualTo("awaiting_source");
         await Assert.That(waiting.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("source_checksum_mismatch");
