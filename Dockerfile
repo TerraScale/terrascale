@@ -133,14 +133,16 @@ COPY --from=slow-terrabase-run /slow /terrabase/
 # Production publication compiles only its service graph, once per architecture. Checked builds above retain
 # pre-merge packaging validation; main does not repeat whitespace, analyzer-negative or OpenAPI checks.
 FROM source AS publish-terrabase
-ARG TARGETARCH=amd64 TERRABASE_REVISION
-RUN case "$TARGETARCH" in amd64) runtime=linux-x64 ;; arm64) runtime=linux-arm64 ;; *) exit 1 ;; esac \
-    && make terrabase-publish RUNTIME="$runtime" PUBLISH_DIR=/out
+ARG TARGETARCH TERRABASE_REVISION
+RUN case "$TARGETARCH" in amd64) runtime=linux-x64; machine=3e00 ;; arm64) runtime=linux-arm64; machine=b700 ;; *) exit 1 ;; esac \
+    && make terrabase-publish RUNTIME="$runtime" PUBLISH_DIR=/out \
+    && test "$(od -An -tx1 -j18 -N2 /out/terrabase | tr -d ' \n')" = "$machine"
 
 FROM source AS publish-ts-auth
-ARG TARGETARCH=amd64 TS_AUTH_REVISION
-RUN case "$TARGETARCH" in amd64) runtime=linux-x64 ;; arm64) runtime=linux-arm64 ;; *) exit 1 ;; esac \
-    && make auth-publish RUNTIME="$runtime" PUBLISH_DIR=/out
+ARG TARGETARCH TS_AUTH_REVISION
+RUN case "$TARGETARCH" in amd64) runtime=linux-x64; machine=3e00 ;; arm64) runtime=linux-arm64; machine=b700 ;; *) exit 1 ;; esac \
+    && make auth-publish RUNTIME="$runtime" PUBLISH_DIR=/out \
+    && test "$(od -An -tx1 -j18 -N2 /out/ts-auth | tr -d ' \n')" = "$machine"
 
 # TerraBase stores its volume at /data.
 FROM mcr.microsoft.com/dotnet/runtime-deps:11.0-resolute-chiseled AS terrabase
