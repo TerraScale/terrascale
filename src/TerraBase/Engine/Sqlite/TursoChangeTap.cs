@@ -450,22 +450,13 @@ internal sealed class TursoChangeTap : IWalTap
     private bool Truncate(SqliteSession writer)
     {
         using var command = writer.Connection.CreateCommand();
-        if (_store.IsSystem)
-        {
-            command.CommandText = "DELETE FROM turso_cdc WHERE change_id < $anchor;";
-            command.Parameters.AddWithValue("$anchor", _anchor);
-        }
-        else
-        {
-            var now = _time.GetUtcNow().ToUnixTimeSeconds();
-            // Nor the rows the shape frontier has not walked yet, for a bounded time (FR-25).
-            var hold = _store.RequiresRemoteProof ? SqliteStorageTransaction.ShapeFrontierHold(writer.Connection, null, now) : null;
-            command.CommandText = SqliteStorageTransaction.Retention;
-            command.Parameters.AddWithValue("$below", Math.Min(_anchor, hold ?? long.MaxValue));
-            command.Parameters.AddWithValue("$now", now);
-            command.Parameters.AddWithValue("$gone", _store.Member is { } member ? member.GoneBefore(_time.GetUtcNow().ToUnixTimeMilliseconds()) : long.MinValue);
-        }
-
+        var now = _time.GetUtcNow().ToUnixTimeSeconds();
+        // Nor the rows the shape frontier has not walked yet, for a bounded time (FR-25); the catalog has no shapes.
+        var hold = _store.RequiresRemoteProof && !_store.IsSystem ? SqliteStorageTransaction.ShapeFrontierHold(writer.Connection, null, now) : null;
+        command.CommandText = SqliteStorageTransaction.Retention;
+        command.Parameters.AddWithValue("$below", Math.Min(_anchor, hold ?? long.MaxValue));
+        command.Parameters.AddWithValue("$now", now);
+        command.Parameters.AddWithValue("$gone", _store.Member is { } member ? member.GoneBefore(_time.GetUtcNow().ToUnixTimeMilliseconds()) : long.MinValue);
         command.ExecuteNonQuery();
         return true;
     }

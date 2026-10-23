@@ -135,12 +135,25 @@ internal sealed partial class SqliteStorageTransaction
                     PutRow(collection, id, null);
                 }
 
+                // The documents it shared a unique key with are reprojected once it is gone: a hidden loser may now win.
+                if (IsClient)
+                {
+                    BeginUniqueAffected();
+                    Command("DELETE FROM _tb_unique_affected;").ExecuteNonQuery();
+                    QueueUniqueContenders(collection, id);
+                }
+
                 RemoveMerkleState(collection, id);
                 foreach (var sql in ForgetStatements)
                 {
                     var delete = Command(sql, collection);
                     delete.Parameters.AddWithValue("$id", id);
                     delete.ExecuteNonQuery();
+                }
+
+                if (IsClient)
+                {
+                    ReconcileUnique(collection, UniqueProjectionIds(cancellationToken), cancellationToken);
                 }
 
                 forgotten++;

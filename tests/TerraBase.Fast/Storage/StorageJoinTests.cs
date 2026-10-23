@@ -3,6 +3,8 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -95,6 +97,34 @@ public sealed class StorageJoinTests
         await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         await Assert.That((await read.GetAsync("items", first, CancellationToken.None))!.UniqueConflict).IsFalse();
         await Assert.That((await read.GetAsync("items", second, CancellationToken.None))!.UniqueConflict).IsTrue();
+    }
+
+    [Test]
+    public async Task A_refill_forgetting_a_unique_winner_shows_the_hidden_loser()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var database = await DatabaseAsync(server);
+        var store = await OpenAsync(server, database);
+        await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            await transaction.SetUniqueConstraintsAsync("items", [new UniqueConstraint("email", ["email"])], CancellationToken.None);
+            _ = await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        var (first, second) = ("01AAAAAAAAAAAAAAAAAAAAAAAA", "01BBBBBBBBBBBBBBBBBBBBBBBB");
+        _ = await JoinAsync(server, database, ("items", second, Now, Sjc, Put(Sjc, Now, """{"email":"a@b.c"}""")));
+        _ = await JoinAsync(server, database, ("items", first, Now + 1, Gru, Put(Gru, Now + 1, """{"email":"a@b.c"}""")));
+
+        // The peer a refill copies from collected the winner; forgetting it here leaves the loser the only holder of the key.
+        var held = (SqliteDatabaseStore)(await server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
+        var states = server.Services.GetRequiredService<IReplicaStates>();
+        await Assert.That(await states.ForgetAsync(database, held.Incarnation, [("items", first)], new Hlc(Now + 2), CancellationToken.None)).IsEqualTo(1);
+
+        await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        await Assert.That(await read.GetAsync("items", first, CancellationToken.None)).IsNull();
+        await Assert.That((await read.GetAsync("items", second, CancellationToken.None))!.UniqueConflict).IsFalse();
+        await Assert.That(await ReadAsync(server, database, second)).IsEqualTo("""{"email":"a@b.c"}""");
     }
 
     private static DocumentState Put(ReplicaId node, ulong stamp, string json)
