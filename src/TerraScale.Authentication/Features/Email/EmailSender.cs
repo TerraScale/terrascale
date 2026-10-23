@@ -32,6 +32,26 @@ public interface IEmailSender
 {
     /// <summary>Sends <paramref name="message"/> to <paramref name="recipient"/>.</summary>
     Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken);
+
+    /// <summary>Reports provider acceptance for durable product deliveries; legacy senders cannot confirm acceptance.</summary>
+    async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
+    {
+        await this.SendAsync(recipient, message, cancellationToken).ConfigureAwait(false);
+        return EmailDeliveryOutcome.Unknown;
+    }
+}
+
+/// <summary>The provider outcome; Unknown must never be automatically retried without provider idempotency.</summary>
+public enum EmailDeliveryOutcome
+{
+    /// <summary>Cloudflare accepted the message, which does not prove inbox delivery.</summary>
+    Accepted,
+    /// <summary>No send occurred, or a rate limit explicitly refused it; a later attempt is safe.</summary>
+    Retryable,
+    /// <summary>The provider permanently refused this message.</summary>
+    Rejected,
+    /// <summary>Acceptance is ambiguous, so automatic retry could send a duplicate.</summary>
+    Unknown,
 }
 
 /// <summary>
@@ -40,6 +60,13 @@ public interface IEmailSender
 /// </summary>
 public sealed class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEmailSender
 {
+    /// <inheritdoc />
+    public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
+    {
+        await this.SendAsync(recipient, message, cancellationToken).ConfigureAwait(false);
+        return EmailDeliveryOutcome.Retryable;
+    }
+
     /// <inheritdoc />
     public Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
@@ -75,7 +102,11 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
     private const string SenderAddress = "no-reply@terrascale.tech";
 
     /// <inheritdoc />
-    public async Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
+    public async Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) =>
+        _ = await this.DeliverAsync(recipient, message, cancellationToken).ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
         try
         {
@@ -92,20 +123,27 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
                 AuthMetrics.Email("failed");
                 // The response body can quote the recipient, so only the status is logged.
                 logger.ZLogError($"Email delivery failed: Cloudflare answered {(int)response.StatusCode:@Status}");
-                return;
+                return response.StatusCode == System.Net.HttpStatusCode.TooManyRequests ? EmailDeliveryOutcome.Retryable
+                    : (int)response.StatusCode < 500 ? EmailDeliveryOutcome.Rejected : EmailDeliveryOutcome.Unknown;
             }
 
             // A 2xx still lists a suppressed or invalid recipient under permanent_bounces; it never arrives.
             using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
+            if (body.RootElement.TryGetProperty("success", out var success) && success.ValueKind == JsonValueKind.False)
+            {
+                AuthMetrics.Email("failed");
+                return EmailDeliveryOutcome.Rejected;
+            }
             if (body.RootElement.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.Object
                 && result.TryGetProperty("permanent_bounces", out var bounces) && bounces.ValueKind == JsonValueKind.Array && bounces.GetArrayLength() > 0)
             {
                 AuthMetrics.Email("bounced");
                 logger.ZLogError($"Email delivery failed: Cloudflare reported a permanent bounce");
-                return;
+                return EmailDeliveryOutcome.Rejected;
             }
 
             AuthMetrics.Email("sent");
+            return EmailDeliveryOutcome.Accepted;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
@@ -124,6 +162,7 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
             {
                 _ = logFailure;
             }
+            return EmailDeliveryOutcome.Unknown;
         }
     }
 }

@@ -37,6 +37,7 @@ public sealed class ExplainSqlBoundaryTests
         await using var api = await StartAsync();
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
+        await RequestLogMemoryFixture.DrainAsync(api.Server);
         var reserved = ReservedBytes(api);
         var sql = Sql.PadRight(16 * 1024);
         var escaped = "{\"sql\":\"" + string.Concat(sql.Select(character => $"\\u{(int)character:x4}")) + "\"}";
@@ -62,6 +63,7 @@ public sealed class ExplainSqlBoundaryTests
         await using var api = await StartAsync();
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
+        await RequestLogMemoryFixture.DrainAsync(api.Server);
         var reserved = ReservedBytes(api);
         var body = new string(' ', MaxBodyBytes + 1 - Json.Length) + Json;
         using var content = chunked
@@ -88,6 +90,7 @@ public sealed class ExplainSqlBoundaryTests
         await using var api = await StartAsync();
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
+        await RequestLogMemoryFixture.DrainAsync(api.Server);
         var reserved = ReservedBytes(api);
         using var content = new StringContent(body, Encoding.UTF8, mediaType);
         if (encoded)
@@ -112,6 +115,7 @@ public sealed class ExplainSqlBoundaryTests
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, wrongScope ? database.Project : EntityIds.New().ToString(),
             wrongScope ? "documents:read" : "databases:read");
+        await RequestLogMemoryFixture.DrainAsync(api.Server);
         var reserved = ReservedBytes(api);
         var headers = await SendHeadersOnlyAsync(api, client, database);
         await Assert.That(headers[0]).StartsWith($"HTTP/1.1 {(int)expected} ");
@@ -125,6 +129,7 @@ public sealed class ExplainSqlBoundaryTests
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
         var budget = api.Server.Services.GetRequiredService<IMemoryBudget>();
+        await RequestLogMemoryFixture.DrainAsync(api.Server);
         var reserved = ReservedBytes(api);
         using (var held = budget.TryReserve(MemoryLane.Foreground, Budget - reserved - 1024 * 1024 + 1))
         {
@@ -143,7 +148,7 @@ public sealed class ExplainSqlBoundaryTests
     public async Task DIAG_memory_exhaustion()
     {
         TrackingBudget? tracker = null;
-        await using var api = await ManagementApi.StartAsync(settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), services =>
+        await using var api = await RequestLogMemoryFixture.StartAsync(settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), services =>
         {
             var registration = services.Single(service => service.ServiceType == typeof(IMemoryBudget));
             services.Remove(registration);
@@ -152,6 +157,7 @@ public sealed class ExplainSqlBoundaryTests
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
         var budget = api.Server.Services.GetRequiredService<IMemoryBudget>();
+        await RequestLogMemoryFixture.DrainAsync(api.Server);
         var reserved = ReservedBytes(api);
         var mark = tracker!.Mark();
         using (var held = budget.TryReserve(MemoryLane.Foreground, Budget - reserved - 1024 * 1024 + 1))
@@ -160,6 +166,7 @@ public sealed class ExplainSqlBoundaryTests
             await Assert.That(headers[0]).StartsWith("HTTP/1.1 503 ");
         }
 
+        await RequestLogMemoryFixture.DrainAsync(api.Server);
         var afterRefusal = ReservedBytes(api);
         var refusalLive = tracker.LiveSince(mark);
         string framing;
@@ -169,6 +176,7 @@ public sealed class ExplainSqlBoundaryTests
             await response.Content.ReadAsByteArrayAsync();
         }
 
+        await RequestLogMemoryFixture.DrainAsync(api.Server);
         var after = ReservedBytes(api);
         var live = tracker.LiveSince(mark);
         if (Environment.GetEnvironmentVariable("DIAG_ALL") == "1" || after != reserved || afterRefusal != reserved)
@@ -230,7 +238,7 @@ public sealed class ExplainSqlBoundaryTests
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var time = new FakeTimeProvider();
         var hook = new UsageCommitHook();
-        await using var api = await ManagementApi.StartAsync(
+        await using var api = await RequestLogMemoryFixture.StartAsync(
             settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), services =>
             {
                 hook.Install(services);
@@ -243,6 +251,10 @@ public sealed class ExplainSqlBoundaryTests
             }, time: time);
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
+        await RequestLogMemoryFixture.DrainAsync(api.Server);
+        // Draining commits the catalog; rewarm placement's commit-tagged lookup so only the endpoint's own lookups are counted.
+        _ = await api.Server.Services.GetRequiredService<IManagementService>()
+            .FindDatabaseRecordAsync(database.Organization, database.Project, database.Name, token);
         var reserved = ReservedBytes(api);
         var admission = catalogLookup == 0 ? api.Server.Services.GetRequiredService<MemoryProbe>().Observe() : null;
         ObservedReservation? reservation = null;
@@ -325,12 +337,13 @@ public sealed class ExplainSqlBoundaryTests
         deadline.CancelAfter(TimeSpan.FromSeconds(60));
         var time = new FakeTimeProvider();
         var started = time.GetUtcNow();
-        await using var api = await ManagementApi.StartAsync(
+        await using var api = await RequestLogMemoryFixture.StartAsync(
             settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture),
             services => services.Configure<KestrelServerOptions>(options =>
                 options.Limits.MinRequestBodyDataRate = new MinDataRate(1024, TimeSpan.FromSeconds(2))), time);
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
+        await RequestLogMemoryFixture.DrainAsync(api.Server);
         var reserved = ReservedBytes(api);
         var address = api.Server.ClientAddress!;
         using var socket = new TcpClient();
@@ -593,6 +606,7 @@ public sealed class ExplainSqlBoundaryTests
             }
 
             var replacement = reassignName ? database with { Id = EntityIds.New().ToString() } : database;
+            await RequestLogMemoryFixture.DrainAsync(api.Server);
             var reserved = ReservedBytes(api);
             hook.BeforeBegin = async (tenant, cancellationToken) =>
             {
@@ -627,7 +641,7 @@ public sealed class ExplainSqlBoundaryTests
         var credentials = System.IO.Path.Combine(directory, "user.creds");
         await File.WriteAllTextAsync(credentials, "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n");
         // These boundary checks retain deliberately staged catalog state until the request has revalidated it.
-        return await ManagementApi.StartAsync(settings =>
+        return await RequestLogMemoryFixture.StartAsync(settings =>
         {
             settings["region"] = "gru-1";
             settings["node-name"] = "gru-member";
@@ -642,7 +656,7 @@ public sealed class ExplainSqlBoundaryTests
     }
 
     private static Task<ManagementApi> StartAsync() =>
-        ManagementApi.StartAsync(settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
+        RequestLogMemoryFixture.StartAsync(settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
 
     private static async Task<ManagedDatabaseRef> CreateDatabaseAsync(ManagementApi api)
     {
@@ -675,8 +689,11 @@ public sealed class ExplainSqlBoundaryTests
         await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("ok").GetBoolean()).IsTrue();
     }
 
-    private static async Task AssertMemoryReleasedAsync(ManagementApi api, long baseline) =>
+    private static async Task AssertMemoryReleasedAsync(ManagementApi api, long baseline)
+    {
+        await RequestLogMemoryFixture.DrainAsync(api.Server);
         await Assert.That(ReservedBytes(api)).IsEqualTo(baseline);
+    }
 
     // Everything the server sent before it closed the connection; Kestrel resets one whose request body it never read.
     private static async Task<string> ReadUntilClosedAsync(Stream stream, CancellationToken cancellationToken)

@@ -94,7 +94,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
     [
         UniqueCollection, ChallengeCollection, HealthCollection, UserCollection, SessionCollection, PasscodeCollection,
         SigningKeyCollection, OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection,
-        "rate_limits", "email_configs", "email_config_versions",
+        "rate_limits", "email_configs", "email_config_versions", "email_allowance_deliveries",
         OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection,
         InvitationCollection, AuditEventCollection, MfaCollection,
     ];

@@ -5,9 +5,9 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Fast.Management;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Memory;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
 
@@ -22,7 +22,7 @@ public sealed class ChunkedMemoryAdmissionTests
         const long TenantBytes = 262_144;
         const int BodyBytes = 4096;
         const long BodyAdmissionBytes = 16 * 1024 + BodyBytes * 3;
-        await using var api = await ManagementApi.StartAsync(settings => settings["memory-budget"] = "4194304");
+        await using var api = await RequestLogMemoryFixture.StartAsync(settings => settings["memory-budget"] = "4194304");
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         var database = await tenant.ContextAsync(api.Server, "app", deadline.Token);
         await StorageFixture.CreateCollectionAsync(tenant, "app", "items", deadline.Token);
@@ -41,6 +41,7 @@ public sealed class ChunkedMemoryAdmissionTests
         var padding = new Faker().Random.String2(BodyBytes - "{\"padding\":\"\"}".Length, "abcdef");
         var json = Encoding.UTF8.GetBytes($"{{\"padding\":\"{padding}\"}}");
         await Assert.That(json.Length).IsEqualTo(BodyBytes);
+        await RequestLogMemoryFixture.DrainAsync(api.Server, deadline.Token);
         var budget = api.Server.Services.GetRequiredService<IMemoryBudget>();
         using (var held = budget.TryReserve(MemoryLane.Bulk, TenantBytes - operationBytes, database))
         {
@@ -48,6 +49,7 @@ public sealed class ChunkedMemoryAdmissionTests
             using var content = new FragmentedContent(json, fragmentBytes);
             using var written = await tenant.Data.PutAsync(uri, content, deadline.Token);
             written.EnsureSuccessStatusCode();
+            await RequestLogMemoryFixture.DrainAsync(api.Server, deadline.Token);
             // Reuse the complete request and metadata allowance; every operation lease must have returned.
             using var returned = budget.TryReserve(MemoryLane.Foreground, operationBytes, database);
             await Assert.That(returned).IsNotNull();
