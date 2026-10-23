@@ -21,8 +21,19 @@ Base: the `Push` stream of [8. Transport](08-transport.md), as built in `PeerStr
 Why: with one batch in flight, a commit that lands while its database's batch waits for the remote ack waits a whole
 round trip plus the remote apply before it even ships. On gru ↔ fra (RTT ~188 ms) that alone breaks a 200 ms p99.
 
-Sender (`PeerStreams`): every batch names in `Batch.after` the ack it follows; one batch per database is in flight
-(a chain of one is valid protocol 2).
+Sender (`PeerStreams`):
+
+- Each cursor keeps its batches in flight oldest first (`Flight`). The next batch follows the newest one in flight
+  (`Batch.after` = its last change id), or the peer's ack when none is in flight.
+- Every answer is the oldest flight's: the peer answers a database's batches in arrival order, and an applied ack
+  names its batch's change id.
+- An applied ack must answer the oldest batch in flight and moves the cursor's ack to it: acks stay cumulative and
+  a client write is confirmed only once the peer holds it durably, as before.
+- A refusal dooms the batches after it (the receiver refuses them too); an applied ack for a doomed batch ends the
+  stream. The database sends nothing more until every batch in flight answered, then resends from the ack.
+- Frontiers and refills go only with nothing in flight: a frontier claims every group below it held.
+- A refused batch retries after 100 ms, doubling to 10 s, each wait jittered to 50-100 %; a reconnect waits the same,
+  doubling to 30 s. The loop wakes for the earliest retry instead of the 1 s idle tick.
 
 Receiver (`PeerStreamReceiver`), for a sender whose Hello names protocol 2, per database on the stream (`Chain`):
 

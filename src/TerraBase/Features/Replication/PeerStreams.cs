@@ -1,6 +1,7 @@
 using System.Collections.Frozen;
 using System.Diagnostics.Metrics;
 using System.Runtime.ExceptionServices;
+using System.Security.Cryptography;
 using System.Threading.Channels;
 using Grpc.Core;
 using TerraBase.Configuration;
@@ -18,13 +19,15 @@ namespace TerraBase.Features.Replication;
 /// <summary>
 /// The sending side of the peer streams (docs/terrabase/multi-region-replication.md section 8): one <c>Push</c> stream to
 /// every other machine of the membership, following it every heartbeat. Each stream carries this machine's own change
-/// groups of every database the peer's region holds, at most one batch per database in flight, resumes from the peer's
-/// last ack after a reconnect, and heartbeats while idle. Its cursors and lags are the outbound replication status.
+/// groups of every database the peer's region holds, up to <see cref="ReplicationProtocol.Window"/> batches per database in
+/// flight (one with a protocol 1 peer), resumes from the peer's last ack after a reconnect, and heartbeats while idle. Its cursors and lags are the outbound replication status.
 /// </summary>
 internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemoteDurability
 {
     private static readonly TimeSpan Idle = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan Retry = TimeSpan.FromSeconds(5);
+    // A refused batch retries after FirstRetry, doubling up to MaxRetry, each wait jittered.
+    private static readonly TimeSpan FirstRetry = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan MaxRetry = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RefillTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan FrontierEvery = TimeSpan.FromSeconds(5);
@@ -76,7 +79,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         _remoteAckDelay = meter.CreateHistogram<double>("terrabase.replication.remote_ack_delay", "s",
             "From a change group's stamp on this machine to the peer region's durable ack of it, by the peer region.",
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = ReplicationTimings.Buckets });
-        meter.CreateObservableGauge("terrabase.replication.ack_lag", () => Lags(cursor => cursor.InFlight is null ? null : cursor.SentAt), "s",
+        meter.CreateObservableGauge("terrabase.replication.ack_lag", () => Lags(cursor => cursor.Flights.Count == 0 ? null : cursor.Flights[0].SentAt), "s",
             "Age of the oldest batch sent to the peer region's machines but not acknowledged.");
     }
 
@@ -175,7 +178,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     }
 
                     detail.Add(new(detail.Count, database.OrganizationId, database.ProjectId!, database.DatabaseId!, cursor.Incarnation ?? Ulid.Empty, cursor.Head, cursor.Acked ?? 0,
-                        cursor.InFlightGroups, Diverged: false, Age(cursor.BehindSince), cursor.Convergence));
+                        cursor.Flights.Sum(flight => flight.Groups), Diverged: false, Age(cursor.BehindSince), cursor.Convergence));
                 }
 
                 peers.Add(new(index, detail.Sum(database => database.DurableLag), detail, link.Peer.Region));
@@ -308,8 +311,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             (link.Connected, link.Origin, link.Protocol) = (true, peer, ReplicationProtocol.Negotiate(call.ResponseStream.Current.Welcome.Protocol));
             foreach (var cursor in link.Cursors.Values)
             {
-                (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.RequiresRefill, cursor.Refilling, cursor.Live, cursor.Stamps) =
-                    (null, null, null, 0, false, false, null, null);
+                (cursor.Incarnation, cursor.Acked, cursor.RequiresRefill, cursor.Live, cursor.Rewinding) = (null, null, false, null, false);
+                cursor.Flights.Clear();
             }
         }
 
@@ -346,7 +349,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
                 using (var idle = CancellationTokenSource.CreateLinkedTokenSource(activity.Token))
                 {
-                    _ = await Task.WhenAny(reading, changed, positionReady.Task, Task.Delay(Idle, _time, idle.Token)).ConfigureAwait(false);
+                    _ = await Task.WhenAny(reading, changed, positionReady.Task, Task.Delay(Wake(link), _time, idle.Token)).ConfigureAwait(false);
                     await idle.CancelAsync().ConfigureAwait(false);
                 }
 
@@ -427,8 +430,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         {
             lock (link.Gate)
             {
-                if (link.Cursors.Values.Any(cursor => cursor.InFlight is not null && !cursor.ResponseReceived
-                    && _time.GetElapsedTime(cursor.SentAt) >= (cursor.Refilling ? RefillTimeout : ReplicationProtocol.ProgressTimeout)))
+                if (link.Cursors.Values.Any(cursor => cursor.Flights.Any(flight => !flight.ResponseReceived
+                    && _time.GetElapsedTime(flight.SentAt) >= (flight.Refill ? RefillTimeout : ReplicationProtocol.ProgressTimeout))))
                 {
                     throw new TimeoutException("the peer did not acknowledge a batch in time");
                 }
@@ -459,11 +462,10 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                             lock (link.Gate)
                             {
                                 var cursor = link.Cursors.GetValueOrDefault(database);
-                                if (cursor?.InFlight is { } inFlight && cursor.Incarnation is { } pinned
-                                    && ChangeGroups.RequiredIncarnation(ack.Database) == pinned && (ack.Refused || ack.ChangeId == (ulong)inFlight))
+                                if (cursor?.Incarnation is { } pinned && ChangeGroups.RequiredIncarnation(ack.Database) == pinned && cursor.Answered(ack) is { } flight)
                                 {
                                     // Receipt satisfies the peer's deadline. It never advances the durable cursor.
-                                    cursor.ResponseReceived = true;
+                                    flight.ResponseReceived = true;
                                 }
                             }
                         }
@@ -665,7 +667,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
 
             Ulid incarnation;
-            long after = 0;
+            long from;
+            bool flying;
             SourceGroups read;
             bool retained;
             long head = 0;
@@ -708,7 +711,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     continue;
                 }
 
-                (incarnation, after) = (found, acked);
+                incarnation = found;
                 if (cursor.Incarnation is { } previous && previous != incarnation)
                 {
                     Reset(link, cursor);
@@ -718,14 +721,24 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     (cursor.Incarnation, cursor.Acked, cursor.RequiresRefill) = (incarnation, acked, position.Value.RequiresRefill);
                 }
 
-                if (cursor.InFlight is not null || _time.GetTimestamp() < cursor.RetryAt)
+                // Past the window, a refill or refused batches still answering, or a retry wait, the database waits. Otherwise
+                // the next batch follows the newest one in flight, or the ack.
+                lock (link.Gate)
                 {
-                    continue;
+                    cursor.Rewinding &= cursor.Flights.Count > 0;
+                    if (cursor.Flights.Count >= (link.Protocol >= 2 ? ReplicationProtocol.Window : 1) || cursor.Rewinding
+                        || cursor.Flights.Any(flight => flight.Refill) || _time.GetTimestamp() < cursor.RetryAt)
+                    {
+                        continue;
+                    }
+
+                    flying = cursor.Flights.Count > 0;
+                    from = flying ? cursor.Flights[^1].Last : acked;
                 }
 
                 // Read before retention: a cut between them must never ship a batch past a hole.
                 var readAt = _timings.Now;
-                var page = await _source.ReadAsync(database, incarnation, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
+                var page = await _source.ReadAsync(database, incarnation, from, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
                 if (page is not null && page.Incarnation != incarnation)
                 {
                     Reset(link, cursor);
@@ -733,7 +746,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 }
 
                 var retains = page is null ? null
-                    : await _source.RetainsAsync(database, incarnation, acked, cancellationToken).ConfigureAwait(false);
+                    : await _source.RetainsAsync(database, incarnation, from, cancellationToken).ConfigureAwait(false);
                 if (page is null || retains is null)
                 {
                     await HoldOrResetAsync(link, database, cursor, cancellationToken).ConfigureAwait(false);
@@ -745,6 +758,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 if (page.Groups.Count > 0)
                 {
                     _ = _timings.Record(ReplicationTimings.SendRead, readAt);
+                }
+
+                if ((!retained || cursor.RequiresRefill) && flying)
+                {
+                    // A refill starts only from the ack, once the batches in flight answered.
+                    continue;
                 }
 
                 if (!retained || cursor.RequiresRefill)
@@ -789,9 +808,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     }
 
                     cursor.BehindSince ??= _time.GetTimestamp();
-                    (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling, cursor.Stamps) =
-                        (refillResume, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true, null);
-                    cursor.ResponseReceived = false;
+                    cursor.Head = Math.Max(cursor.Head, head);
+                    cursor.Flights.Add(new Flight(refillResume, from, 0, _time.GetTimestamp(), null, Refill: true));
                 }
                 await stream.WriteAsync(new PushFrame
                 {
@@ -804,6 +822,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
             if (groups.Count == 0)
             {
+                // A frontier claims every group below it held: only once nothing is in flight.
+                if (flying)
+                {
+                    continue;
+                }
+
                 if (_time.GetElapsedTime(cursor.FrontierAt) >= FrontierEvery || cursor.FrontierAt == 0)
                 {
                     await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database, incarnation), Hlc = frontier.Value } }, cancellationToken)
@@ -831,19 +855,17 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 }
 
                 cursor.BehindSince ??= _time.GetTimestamp();
-                (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (last, groups.Count, _time.GetTimestamp(), Math.Max(cursor.Head, last), false);
-                cursor.ResponseReceived = false;
-                cursor.Stamps = Stamps(groups);
+                cursor.Head = Math.Max(cursor.Head, last);
+                cursor.Flights.Add(new Flight(last, from, groups.Count, _time.GetTimestamp(), Stamps(groups), Refill: false));
             }
             await stream.WriteAsync(new PushFrame
             {
-                // One batch per database in flight: it follows the ack (protocol 2's chain of one).
                 Batch = new Batch
                 {
                     Database = ChangeGroups.Wire(database, incarnation),
                     LastChangeId = checked((ulong)last),
                     Groups = ChangeGroups.Encode(groups),
-                    After = checked((ulong)after),
+                    After = checked((ulong)from),
                 },
             }, cancellationToken).ConfigureAwait(false);
 
@@ -855,7 +877,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             // Keep outstanding batches scoped until their ACK arrives, even after their database disappears.
             foreach (var (database, cursor) in link.Cursors)
             {
-                if (!link.Seen.Contains(database) && cursor.InFlight is null)
+                if (!link.Seen.Contains(database) && cursor.Flights.Count == 0)
                 {
                     link.Cursors.Remove(database);
                 }
@@ -892,29 +914,33 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         lock (link.Gate)
         {
             var cursor = link.Cursors.GetValueOrDefault(database);
-            if (cursor?.InFlight is not { } inFlight || cursor.Incarnation is not { } pinned
-                || ChangeGroups.RequiredIncarnation(ack!.Database) != pinned
-                || (!ack.Refused && ack.ChangeId != (ulong)inFlight))
+            // An ack covers every batch before it: it answers the oldest one in flight, never one a refusal before it doomed.
+            if (cursor?.Incarnation is not { } pinned || ChangeGroups.RequiredIncarnation(ack!.Database) != pinned
+                || cursor.Answered(ack) is not { } flight || (!ack.Refused && flight.Doomed))
             {
                 throw new InvalidDataException("the peer acknowledged a batch that is not in flight");
             }
 
             incarnation = pinned;
             // Capture the original batch kind before clearing it: stored positions and uncertified refills never confirm.
-            live = !cursor.Refilling && link.Peer.Region != _options.Region && link.Placements.GetValueOrDefault(database).Placed;
-            from = cursor.Live is { } run && run.Incarnation == incarnation ? run.From : cursor.Acked ?? inFlight;
-            stamps = cursor.Stamps;
-            (cursor.InFlight, cursor.InFlightGroups, cursor.Refilling, cursor.Stamps) = (null, 0, false, null);
+            live = !flight.Refill && link.Peer.Region != _options.Region && link.Placements.GetValueOrDefault(database).Placed;
+            from = cursor.Live is { } run && run.Incarnation == incarnation ? run.From : cursor.Acked ?? flight.Last;
+            stamps = flight.Stamps;
+            cursor.Flights.RemoveAt(0);
             if (ack.Refused)
             {
-                // Catalog lag only retries; missing coverage requests a pinned refill even without a stored peer scope.
+                // Catalog lag only retries; missing coverage requests a pinned refill even without a stored peer scope. The
+                // peer refuses every batch after this one too: the database goes on from its ack once they all answered.
                 cursor.RequiresRefill |= ack.RefillRequired;
-                cursor.RetryAt = _time.GetTimestamp() + (long)(Retry.TotalSeconds * _time.TimestampFrequency);
+                cursor.Flights.ForEach(later => later.Doomed = true);
+                cursor.Rewinding = true;
+                cursor.Backoff = TimeSpan.FromTicks(Math.Clamp(cursor.Backoff.Ticks * 2, FirstRetry.Ticks, MaxRetry.Ticks));
+                cursor.RetryAt = _time.GetTimestamp() + (long)(Jittered(cursor.Backoff).TotalSeconds * _time.TimestampFrequency);
                 return;
             }
 
             // The stream goes on from the peer's ack in memory; the ledger persists it behind the stream.
-            (cursor.Acked, cursor.Live, cursor.RequiresRefill) = (inFlight, live ? (incarnation, from) : null, false);
+            (cursor.Acked, cursor.Live, cursor.RequiresRefill, cursor.Backoff) = (flight.Last, live ? (incarnation, from) : null, false, TimeSpan.Zero);
         }
 
         // The peer holds the range durably whatever this machine's bookkeeping does: a client wait needs only placement and
@@ -1027,7 +1053,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         lock (link.Gate)
         {
             // A late optional stable report cannot erase the scope needed to validate an outstanding batch's ACK.
-            if (cursor.InFlight is not null || (expected is not null && cursor.Incarnation != expected))
+            if (cursor.Flights.Count > 0 || (expected is not null && cursor.Incarnation != expected))
             {
                 return;
             }
@@ -1055,6 +1081,20 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             && record.Placement.Includes(link.Peer.Region);
         link.Placements[database] = (placed, _time.GetTimestamp());
         return placed;
+    }
+
+    // Half to all of the delay, so retries of many databases or links spread out.
+    private static TimeSpan Jittered(TimeSpan delay) => delay * (RandomNumberGenerator.GetInt32(500, 1001) / 1000.0);
+
+    // The loop's idle wait: at most Idle, less when a database's retry is due sooner.
+    private TimeSpan Wake(Link link)
+    {
+        lock (link.Gate)
+        {
+            var now = _time.GetTimestamp();
+            var due = link.Cursors.Values.Select(cursor => cursor.RetryAt).Where(at => at > now).DefaultIfEmpty(long.MaxValue).Min();
+            return due == long.MaxValue ? Idle : TimeSpan.FromTicks(Math.Min(Idle.Ticks, _time.GetElapsedTime(now, due).Ticks));
+        }
     }
 
     // Each group's newest stamp, in Unix milliseconds: when it was written on this machine.
@@ -1238,6 +1278,16 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         public HashSet<TenantContext> Seen { get; } = [];
     }
 
+    // One batch or refill in flight: the change id it ends at and the one it follows, its groups, when it went, its groups'
+    // stamps (for the remote ack delay; null for a refill), whether the peer answered, and whether a refusal of an earlier
+    // batch doomed it (the peer refuses it too).
+    private sealed record Flight(long Last, long After, int Groups, long SentAt, long[]? Stamps, bool Refill)
+    {
+        public bool ResponseReceived { get; set; }
+
+        public bool Doomed { get; set; }
+    }
+
     private sealed class Cursor
     {
         // The incarnation of this machine's copy the cursor belongs to and the peer's last ack in it (null until read from the
@@ -1248,26 +1298,24 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
         public long? Acked { get; set; }
 
-        public long? InFlight { get; set; }
+        // The batches (or the one refill) sent and not answered yet, oldest first.
+        public List<Flight> Flights { get; } = [];
 
-        // The peer answered, but the single consumer may still be waiting on local durable ACK processing.
-        public bool ResponseReceived { get; set; }
+        // A batch was refused: the database waits until every batch in flight answered, then resends from the ack.
+        public bool Rewinding { get; set; }
 
-        // Whether the batch in flight is a refill.
-        public bool Refilling { get; set; }
+        // The retry delay after the last refusal (zero after an applied ack).
+        public TimeSpan Backoff { get; set; }
+
+        // The flight an answer is for: the oldest, as the peer answers a database's batches in order; an applied ack names it.
+        public Flight? Answered(Ack ack) =>
+            Flights.FirstOrDefault() is { } oldest && (ack.Refused || (ulong)oldest.Last == ack.ChangeId) ? oldest : null;
 
         // One contiguous run of live batches; a reconnect, refill or other unconfirming ACK ends it.
         public (Ulid Incarnation, long From)? Live { get; set; }
 
         // When the last frontier went (a TimeProvider timestamp; 0 before the first).
         public long FrontierAt { get; set; }
-
-        public int InFlightGroups { get; set; }
-
-        // The stamps of the live batch in flight (Stamps), for the remote ack delay; null for a refill.
-        public long[]? Stamps { get; set; }
-
-        public long SentAt { get; set; }
 
         public long RetryAt { get; set; }
 
