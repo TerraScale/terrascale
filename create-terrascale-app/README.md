@@ -59,8 +59,7 @@ it writes posts through the published typed `client.documents.put` API. There is
 ## What it scaffolds (`template/`)
 
 - Next.js app with `app/page.tsx`: a schema-backed SQL builder and live
-  `TerraScaleSyncV1Client.subscribe` query over CDN-backed HTTP by default
-  (WebSocket opt-in), scoped by `databaseId`.
+  `TerraScaleSyncV1Client.subscribe` query over CDN-backed HTTP, scoped by `databaseId`.
 - `auth.ts` — in-memory OAuth refresh rotation and scoped database delegation.
 - `schema.ts`: the typed `defineSchema` source used by the SQL builder.
 - `terrascale.schema.json`: the contract `terrascale push` applies and

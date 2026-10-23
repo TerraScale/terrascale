@@ -25,6 +25,7 @@ const storage = (gb) => (gb < 1 ? `${number(Math.round(gb * 1000))} MB` : `${num
 const limit = (value, format = number) => (value === null ? "Custom" : format(value));
 const row = (label, cell) => `| ${label} | ${plans.map((p) => cell(p)).join(" | ")} |`;
 const table = (label) => `| ${label} | ${planNames.join(" | ")} |\n| --- | ${planNames.map(() => "---").join(" | ")} |`;
+const pitr = (id) => (policy.pitrRetentionDays[id] === undefined ? "Not published" : `${policy.pitrRetentionDays[id]} day${policy.pitrRetentionDays[id] === 1 ? "" : "s"}`);
 const regionList = regions.map((r) => `${r.id.toUpperCase()} (${r.name})`).join(", ");
 
 const pricingMd = `${header}
@@ -53,7 +54,7 @@ ${row("Members", (p) => limit(p.limits.members))}
 ${row("Storage across regions", (p) => limit(p.limits.storageGb, storage))}
 ${row("Operation units / month", (p) => limit(p.limits.operationUnitsPerMonth))}
 ${row("Regions per database", () => `up to ${policy.maxRegions}`)}
-${row("PITR retention", (p) => `${policy.pitrRetentionDays[p.id]} day${policy.pitrRetentionDays[p.id] === 1 ? "" : "s"}`)}
+${row("PITR retention", (p) => pitr(p.id))}
 
 Launch regions: ${regionList}.
 
@@ -65,52 +66,38 @@ ${plans.filter((p) => p.trialDays).map((p) => p.name).join(" and ")} include one
 
 **Enterprise.** ${plans.find((p) => p.id === "enterprise").billing} ${policy.enterpriseNotes}
 
-**Idle Hobby databases.** ${policy.reaper}
-
 ${Object.entries(policy.billingPolicies).map(([title, body]) => `## ${title}\n\n${body}`).join("\n\n")}
 
 See also: [Limits](./limits.md).
 `;
 
-const g = policy.abuseGuards;
-const guardRow = (label, values) => row(label, (p) => (typeof values[p.id] === "number" ? number(values[p.id]) : values[p.id]));
+const e = policy.engineLimits;
 
 const limitsMd = `${header}
 # Limits
 
 ## Documents API
 
-The current project-scoped contract has a 4 MiB request-body limit, a query
-page limit of 1–1000 items (default 50), at most 4 sort keys and 64 projection
-paths. A query page also stops at 8 MiB of document JSON or its scan budget,
-so an empty page can still have a continuation cursor. Follow cursors until
-exhaustion; see [queries and pagination](/guides/queries).
+The current project-scoped contract has a 4 MiB request-body limit, a 1 MiB
+document limit, a query page limit of 1–1000 items (default 50), at most 4 sort
+keys and 64 projection paths. A query page also stops at 8 MiB of document JSON
+or its scan budget, so an empty page can still have a continuation cursor.
+Follow cursors until exhaustion; see [queries and pagination](/guides/queries).
+The [change stream](/guides/realtime) keeps events for 7 days.
 
-## Plan policies (pre-launch)
+## Per-organization limits
 
-The figures below come from the public pricing catalog and documentation
-policy. They do not establish deployed enforcement, live-update availability
-or qualified retention, recovery and deletion behavior. Confirm the serving
-release before depending on them.
+${e._note}
 
-PITR retention (days): ${plans.map((p) => `${p.name} ${policy.pitrRetentionDays[p.id]}`).join(" / ")}.
+| Limit (per organization) | ${e.tiers.join(" | ")} |
+| --- | ${e.tiers.map(() => "---").join(" | ")} |
+${e.rows.map((r) => `| ${r.join(" | ")} |`).join("\n")}
+
+## Plan policies
+
+PITR retention (days): ${Object.entries(policy.pitrRetentionDays).map(([id, days]) => `${plans.find((p) => p.id === id).name} ${days}`).join(" / ")}.
 
 Databases per org: ${plans.map((p) => `${p.name} ${limit(p.limits.databases)}`).join(" / ")}.
-
-- **Max document:** ${policy.maxDocument}.
-- **History retention:** ${policy.historyRetention}
-- **Idle Hobby databases:** ${policy.reaper}
-
-## Abuse guards (unbilled safety limits)
-
-${g._note}
-
-${table("Guard (per database)")}
-${guardRow("Read + query requests/s", g.readQueryRequestsPerSec)}
-${guardRow("Direct member read bandwidth/month", g.directMemberReadBandwidthPerMonth)}
-${guardRow("Distinct active shared views", g.distinctActiveSharedViews)}
-${guardRow("Optional WebSocket connections", g.optionalWebSocketConnections)}
-${guardRow("Webhook endpoints", g.webhookEndpoints)}
 
 Plan allowances and operation-unit metering are on the [pricing page](./pricing.md).
 `;

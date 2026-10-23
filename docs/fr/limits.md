@@ -10,38 +10,30 @@
 
 ## Documents API
 
-The current project-scoped contract has a 4 MiB request-body limit, a query
-page limit of 1–1000 items (default 50), at most 4 sort keys and 64 projection
-paths. A query page also stops at 8 MiB of document JSON or its scan budget,
-so an empty page can still have a continuation cursor. Follow cursors until
-exhaustion; see [queries and pagination](/fr/guides/queries).
+The current project-scoped contract has a 4 MiB request-body limit, a 1 MiB
+document limit, a query page limit of 1–1000 items (default 50), at most 4 sort
+keys and 64 projection paths. A query page also stops at 8 MiB of document JSON
+or its scan budget, so an empty page can still have a continuation cursor.
+Follow cursors until exhaustion; see [queries and pagination](/fr/guides/queries).
+The [change stream](/fr/guides/realtime) keeps events for 7 days.
 
-## Plan policies (pre-launch)
+## Per-organization limits
 
-The figures below come from the public pricing catalog and documentation
-policy. They do not establish deployed enforcement, live-update availability
-or qualified retention, recovery and deletion behavior. Confirm the serving
-release before depending on them.
+TerraBase enforces these per organization, shared by all of its projects, databases and API keys. Rate, concurrency and memory refusals return HTTP 429 with Retry-After. Enterprise has no plan ceiling but still observes document, page, batch and process safety bounds. TerraBase has no Starter tier yet.
 
-PITR retention (days): Hobby 1 / Starter 7 / Pro 30 / Enterprise 35.
+| Limit (per organization) | Hobby | Pro | Enterprise |
+| --- | --- | --- | --- |
+| Requests/s (burst) | 50 (100) | 500 (1,000) | No plan ceiling |
+| Concurrent HTTP requests | 4 | 16 | No plan ceiling |
+| Query execution time | 1 s | 5 s | No plan ceiling |
+| Candidate rows / JSON scanned per query | 10,000 / 16 MiB | 100,000 / 128 MiB | No plan ceiling |
+| Live document JSON storage | 1 GiB | 100 GiB | No plan ceiling |
+
+## Plan policies
+
+PITR retention (days): Hobby 1 / Pro 7 / Enterprise 30.
 
 Databases per org: Hobby 1 / Starter 5 / Pro 25 / Enterprise Custom.
-
-- **Max document:** 1 MiB.
-- **History retention:** Default 7 days, configurable per collection 1-30 days (plan-capped at the PITR figure), counted as storage.
-- **Idle Hobby databases:** Hobby databases pause after 30 idle days; a request resumes them. They may be deleted after 90 idle days with advance notices unless deletion protection is enabled. Paid databases are never idle-reaped. The final notice schedule requires owner approval.
-
-## Abuse guards (unbilled safety limits)
-
-Guards are safety limits enforced alongside plan allowances, with no upsell UI. Exceeding one returns a typed error with the fix and is never billed. CDN-delivered reactive data has no bandwidth guard. Subscribers per view are unlimited on every plan.
-
-| Guard (per database) | Hobby | Starter | Pro | Enterprise |
-| --- | --- | --- | --- | --- |
-| Read + query requests/s | 100 | 1,000 | 5,000 | custom |
-| Direct member read bandwidth/month | 50 GB | 500 GB | 2 TB | custom |
-| Distinct active shared views | 1,000 | 10,000 | 100,000 | custom |
-| Optional WebSocket connections | 100 | 1,000 | 10,000 | custom |
-| Webhook endpoints | 3 | 10 | 50 | custom |
 
 Plan allowances and operation-unit metering are on the [pricing page](./pricing.md).
 

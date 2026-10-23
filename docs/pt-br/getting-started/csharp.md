@@ -12,7 +12,7 @@ title: C# quickstart
 Run the console example through `TerraScale.DotNet.TerraBase.TerraBaseDocumentsClient`. It creates, reads, updates, queries and deletes one synthetic document, verifies stale-version rejection and uses only the SDK for database requests.
 
 ::: warning Candidate package required
-The public NuGet package endpoint returns 404 as of October 12, 2026 (UTC). Version `0.0.2` remains an in-progress candidate, not a verified public release. Obtain an exact verified candidate package containing `TerraBaseDocumentsClient`. Source version numbers do not establish public installation or production JWT authorization. See [SDK reference](/pt-br/guides/sdks).
+The public NuGet package endpoint returns 404 as of October 23, 2026 (UTC). Version `0.0.3` remains an in-progress candidate, not a verified public release. Obtain an exact verified candidate package containing `TerraBaseDocumentsClient`. Source version numbers do not establish public installation or production JWT authorization. See [SDK reference](/pt-br/guides/sdks).
 :::
 
 ## 1. Obtain the example and package
