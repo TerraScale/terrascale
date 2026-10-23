@@ -14,7 +14,7 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
     /// What <see cref="AllowanceUsage.Operations"/> counts: 4 KiB operation units, each read and write once in the region
     /// that served it (replication is not billed), summed over every region and node.
     /// </summary>
-    internal const string OperationsContract = "operation-units-4kib-selected-regions-global-v1";
+    internal const string OperationsContract = "operation-units-4kib-global-v1";
 
     private const int AllowancePageSize = 25;
 
