@@ -99,6 +99,8 @@ internal sealed class RebuildCertification(
         var requested = Enumerable.Repeat(true, 4096).ToArray();
         var collectedBefore = new Hlc(initial.CollectedBefore);
         var head = initial.HeadChangeId;
+        // The head of the first round that matched a bucket: every later source write reaches the copy by its stream.
+        ulong? accepted = null;
         for (var round = 0; round < MaxRounds; round++)
         {
             var buckets = Enumerable.Range(0, 4096).Where(bucket => requested[bucket]).ToArray();
@@ -181,18 +183,32 @@ internal sealed class RebuildCertification(
                 return false;
             }
 
+            // A bucket stays matched once it matched a pinned snapshot: comparing every bucket against the newest digest
+            // would reopen any a busy source writes to between rounds, and the refill would never finish. Only buckets whose
+            // streamed coverage differs from this snapshot are retried, under the same pin.
             var expected = Digests(final);
-            if (final.CollectedBefore == collectedBefore.Value && observed.AsSpan().SequenceEqual(expected))
+            // A newer absence frontier requires coverage of all receiver keys again, including already matched buckets.
+            if (final.CollectedBefore != collectedBefore.Value)
             {
-                return await repair.RecordRefillAsync(database, receiver, peer.Name, source, checked((long)final.HeadChangeId), new Hlc(final.CollectedBefore), cancellationToken)
-                    .ConfigureAwait(false);
+                Array.Fill(requested, true);
+                accepted = null;
             }
-
-            // A newer absence frontier requires coverage of all receiver keys, including already matching buckets.
-            for (var bucket = 0; bucket < requested.Length; bucket++)
+            else
             {
-                requested[bucket] = final.CollectedBefore != collectedBefore.Value
-                    || !observed.AsSpan(bucket * 16, 16).SequenceEqual(expected.AsSpan(bucket * 16, 16));
+                for (var bucket = 0; bucket < requested.Length; bucket++)
+                {
+                    if (requested[bucket] && observed.AsSpan(bucket * 16, 16).SequenceEqual(expected.AsSpan(bucket * 16, 16)))
+                    {
+                        requested[bucket] = false;
+                        accepted ??= final.HeadChangeId;
+                    }
+                }
+
+                if (!requested.Contains(true))
+                {
+                    return await repair.RecordRefillAsync(database, receiver, peer.Name, source, checked((long)accepted!.Value), new Hlc(final.CollectedBefore), cancellationToken)
+                        .ConfigureAwait(false);
+                }
             }
 
             collectedBefore = new Hlc(final.CollectedBefore);

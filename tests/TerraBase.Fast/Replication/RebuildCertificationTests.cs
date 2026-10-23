@@ -79,7 +79,7 @@ public sealed class RebuildCertificationTests
     /// <summary>How the source misbehaves while a refill reads it.</summary>
     public enum SourceFault
     {
-        /// <summary>A write lands after every refill page, including refreshes: coverage never catches up.</summary>
+        /// <summary>A write lands after every refill page, including refreshes: the newest digest never equals every bucket.</summary>
         Writes,
 
         /// <summary>The pinned incarnation is no longer the source's copy: its pinned read is refused.</summary>
@@ -254,7 +254,7 @@ public sealed class RebuildCertificationTests
     [Arguments("h1", "large-blob", true)]
     [Arguments("h2", "large-blob", true)]
     [Arguments("h1", "healthy", false)]
-    public async Task Retained_hash_types_refuse_salvage_under_real_pressure_keep_both_copies_and_release_leases(
+    public async Task Retained_hash_types_skip_their_state_under_real_pressure_complete_the_rebuild_and_release_leases(
         string column, string damage, bool additional)
     {
         const long headroom = 8L * 1024 * 1024 + 64 * 1024;
@@ -326,39 +326,17 @@ public sealed class RebuildCertificationTests
             await Assert.That(pair.Sjc.Admission.SalvagePageRequests).IsGreaterThan(0);
             await Assert.That(pair.Sjc.Admission.SalvageDeniedRequests).IsEqualTo(0).Because("the small measured page is admitted despite the oversized hash");
             await Assert.That(pair.Sjc.Admission.SalvagePeak).IsGreaterThan(8L * 1024 * 1024).And.IsLessThanOrEqualTo(headroom);
+            // The probe counts every Bulk lease from the salvage on: the completed rebuild's later ledger pages drain too.
+            await pair.WaitAsync(_ => Task.FromResult(Volatile.Read(ref pair.Sjc.Admission.SalvageReserved) == 0));
             await Assert.That(Volatile.Read(ref pair.Sjc.Admission.SalvageReserved)).IsEqualTo(0).Because("both salvage leases release while pressure remains held");
             (pressure ?? throw new InvalidOperationException("salvage pressure was not reached")).Dispose();
             pressure = null;
-            if (damage == "healthy")
-            {
-                await Assert.That(outcome is RebuildOutcome.Completed).IsTrue().Because(outcome.ToString());
-                await Assert.That(await pair.Sjc.ReadAsync(only)).IsEqualTo("{\"n\":2}");
-                await pair.Sjc.CertifiedAsync(original, ((RebuildOutcome.Completed)outcome).NewIncarnation, pair.Gru);
-            }
-            else
-            {
-                await Assert.That(outcome).IsEqualTo(new RebuildOutcome.Refused("a state of the side copy does not verify against its digest"));
-                var row = await pair.Sjc.Service<IRebuildLedger>().GetAsync(pair.Database, pair.Token);
-                await Assert.That(row?.Phase).IsEqualTo(RebuildPhase.Swapped);
-                await Assert.That(row!.OldIncarnation).IsEqualTo(original);
-                await Assert.That(row.AdditionalIncarnation).IsEqualTo(additional ? damagedIncarnation : (Ulid?)null);
-                var rebuilt = row.NewIncarnation!.Value;
-                await Assert.That(await pair.Sjc.IncarnationAsync()).IsEqualTo(rebuilt);
-                await Assert.That(await pair.Sjc.RefillSourceAsync()).IsEqualTo(pair.Gru.Name);
-                await Assert.That(await pair.Sjc.CertificateAsync()).IsEmpty();
-                await Assert.That(await pair.Sjc.Service<IReplicaCopyFaults>().RefusedAsync(pair.Database, rebuilt, pair.Token)).IsTrue();
-                _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(pair.Sjc.DurableWriteAsync);
-                await Assert.That(await pair.Sjc.Service<IChangeGroupSource>().AckAsync(pair.Database, rebuilt,
-                    ReplicaId.Of(99, 1, 0), 0, default, pair.Token)).IsFalse();
-                await pair.Sjc.AssertSideBytesAsync(original, pair.SideBeforeRefill!);
-                if (additional)
-                {
-                    await pair.Sjc.AssertSideBytesAsync(damagedIncarnation, additionalBytes!);
-                }
-                await Assert.That(await pair.Gru.Service<IReplicaCopyFaults>().RefusedAsync(pair.Database,
-                    await pair.Gru.IncarnationAsync(), pair.Token)).IsFalse();
-                await Assert.That(pair.Sjc.Service<SqliteStorageEngine>().Ledger.FailedClosed).IsNull();
-            }
+            // A state whose retained hash does not verify is skipped (it is not trusted); every other one joins.
+            await Assert.That(outcome is RebuildOutcome.Completed).IsTrue().Because(outcome.ToString());
+            await Assert.That(await pair.Sjc.ReadAsync(damagedId)).IsEqualTo(damage == "healthy" ? "{\"n\":2}" : null);
+            await Assert.That(await pair.Sjc.ReadAsync(only)).IsEqualTo(damage != "healthy" && !additional ? null : "{\"n\":2}");
+            await Assert.That(await pair.Sjc.ReadAsync(kept)).IsEqualTo("{\"n\":1}");
+            await pair.Sjc.CertifiedAsync(original, ((RebuildOutcome.Completed)outcome).NewIncarnation, pair.Gru);
             await pair.Sjc.AssertNoSalvageFilesAsync(original);
             if (additional)
             {
@@ -456,8 +434,37 @@ public sealed class RebuildCertificationTests
         await pair.AdmissionsReleasedAsync();
     }
 
+    // Liveness (RT2 review 2.1-5): a matched bucket stays matched, so a source written after every page, refreshes included,
+    // still certifies; writes after a bucket's match reach the rebuilt copy by the stream, and it takes writes at once.
     [Test]
-    [Arguments(SourceFault.Writes)]
+    public async Task A_source_written_after_every_refill_page_certifies_and_streams_each_write_into_the_rebuilt_copy()
+    {
+        await using var pair = await Pair.StartAsync();
+        var (kept, only) = await pair.SeedAsync();
+        var faulted = await pair.Sjc.IncarnationAsync();
+        var written = new ConcurrentQueue<string>();
+        pair.Gru.Source.Arm(SourceFault.Writes, async () =>
+        {
+            var id = EntityIds.New().ToString();
+            await pair.Gru.PutAsync(id, """{"n":9}""");
+            written.Enqueue(id);
+        });
+
+        var outcome = await pair.Sjc.FaultAsync(faulted);
+
+        await Assert.That(outcome is RebuildOutcome.Completed).IsTrue().Because(outcome.ToString());
+        await Assert.That(pair.Gru.Source.HookCalls).IsGreaterThanOrEqualTo(2).Because("the source was written during the first pass and its refresh");
+        pair.Gru.Source.Disarm();
+        await Assert.That(await pair.Sjc.ReadAsync(kept)).IsEqualTo("""{"n":1}""");
+        await Assert.That(await pair.Sjc.ReadAsync(only)).IsEqualTo("""{"n":2}""");
+        await pair.Sjc.CertifiedAsync(faulted, ((RebuildOutcome.Completed)outcome).NewIncarnation, pair.Gru);
+        foreach (var id in written)
+        {
+            await Assert.That(await pair.Sjc.UntilAsync(id, """{"n":9}""")).IsTrue().Because($"{id} was written during the refill");
+        }
+    }
+
+    [Test]
     [Arguments(SourceFault.Replaced)]
     [Arguments(SourceFault.OmitsState)]
     [Arguments(SourceFault.DigestDiffers)]
@@ -466,13 +473,13 @@ public sealed class RebuildCertificationTests
         await using var pair = await Pair.StartAsync();
         var (kept, only) = await pair.SeedAsync();
         var faulted = await pair.Sjc.IncarnationAsync();
-        pair.Gru.Source.Arm(fault, fault == SourceFault.Writes ? () => pair.Gru.PutAsync(EntityIds.New().ToString(), """{"n":9}""") : null, omittedId: kept);
+        pair.Gru.Source.Arm(fault, afterPage: null, omittedId: kept);
 
         var refused = await pair.Sjc.FaultAsync(faulted);
 
         await Assert.That(refused).IsEqualTo(new RebuildOutcome.Refused(NoRefill));
         await Assert.That(pair.Gru.Source.Fired).IsTrue().Because("the refusal came from the injected source fault");
-        if (fault is SourceFault.Writes or SourceFault.OmitsState or SourceFault.DigestDiffers)
+        if (fault is SourceFault.OmitsState or SourceFault.DigestDiffers)
         {
             var requests = pair.Gru.Source.RefillRequests[0];
             await Assert.That(requests.Length).IsEqualTo(8).Because("persistent mismatches exhaust the bounded refresh rounds");
