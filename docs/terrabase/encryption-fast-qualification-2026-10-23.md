@@ -65,7 +65,7 @@ stable reset, refill certification, and remembered quiet-range retention. This
 does not establish five-repeat stability or repair their earlier full-suite
 timeouts.
 
-## Auth remains unresolved
+## Auth bootstrap prerequisite
 
 Before the bootstrap setup correction, collection-loss readiness repeats at
 `44ab258f` returned 8/14 and 0/14 passes. An accidentally started third repetition
@@ -77,8 +77,28 @@ The test now awaits `SigningKeyRotation.Bootstrapped` before its unchanged
 10-second readiness assertion. This matches an existing startup fixture and
 establishes a real prerequisite. The 15-second post-drop assertion, missing
 collection check, production two-second probe deadline and five-second interval
-are unchanged. This correction is not yet a proven explanation or fix for all
-recorded timeouts; complete five-repeat validation remains pending.
+are unchanged.
+
+At `42fa34f54f1d140c894a898c33e83f0524abad50`, all 14 collection-loss variants
+passed five complete repetitions: 70 passed, zero failures/skips. Each command
+returned exit 0. Runner durations were 92.468, 48.475, 63.643, 52.038 and
+49.441 seconds. This validates the setup correction for this focused filter;
+it does not isolate every earlier timeout stage or establish a complete Fast gate.
+
+## Latest CI failure and pending correction
+
+At `d8b9a9d8ab052849240f0f80bbd365637b8dc8a8`, CI run `39973624411` reported
+2,480 TerraBase passes, one failure and one existing skip (2,482 total).
+The aggregate `test` job inherited the TerraBase failure; libs and auth passed.
+The sole failure was the retained-native-damage certification case at the
+rebuild-publishing checkpoint: its native read returned without corruption.
+
+The fixture overwrote an encrypted byte with `0xFF`, which can already be the
+ciphertext value. Commit `0c98fec1ece51918e88ba6ff60384e8e30925769` instead reads
+the existing byte, rejects EOF, flips bit `0x80`, and flushes the write. All
+native damage and refusal assertions remain unchanged. Independent static
+review found no introduced defect; five-repeat runtime proof remains pending.
+Guaranteed mutation alone does not establish that this explains the CI failure.
 
 ## Retained evidence
 
@@ -92,6 +112,8 @@ Raw logs are outside Git under
 - `repair-proof-cdc-d8b9-20261023T150211Z/`: corrected CDC proof;
   `report.md` SHA-256
   `ce2acb1d9fd33d903c64bf8dff73f4d7bfc3b9f20357b83c41d719360c857693`.
+- `repair-proof-auth-42fa-20261023T150928Z/`: auth prerequisite proof;
+  per-repeat results and exit codes are retained in `results.json`.
 
 Reports retain exact commands, commits, SDK/native identity, loads, timings,
 per-command exits, and actual runner totals. Encryption cost measurements remain
