@@ -52,14 +52,20 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
                 return true;
             }
 
+            var pages = Command("SELECT count(*) FROM _tb_shape_snapshot WHERE handle = $handle AND offset = $offset;");
+            pages.Parameters.AddWithValue("$handle", handle);
+            pages.Parameters.AddWithValue("$offset", latest.Offset);
+            CountRead("shape");
+            var threshold = Math.Min(ShapeSnapshots.ResealChunks, ShapeSnapshots.ResealChunksPerPage * (long)pages.ExecuteScalar()!);
             var command = Command("""
                 SELECT count(*) FROM (SELECT 1 FROM _tb_shape_chunk
-                    WHERE handle = $handle AND end_offset > $offset LIMIT 4096);
+                    WHERE handle = $handle AND end_offset > $offset LIMIT $limit);
                 """);
             command.Parameters.AddWithValue("$handle", handle);
             command.Parameters.AddWithValue("$offset", latest.Offset);
+            command.Parameters.AddWithValue("$limit", threshold);
             CountRead("shape");
-            return (long)command.ExecuteScalar()! >= ShapeSnapshots.ResealChunks;
+            return (long)command.ExecuteScalar()! >= threshold;
         }, cancellationToken);
 
     public ValueTask<(long Offset, string Cursor)> ShapeSnapshotHeadAsync(
