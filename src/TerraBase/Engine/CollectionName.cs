@@ -13,5 +13,6 @@ public static class CollectionName
     /// <summary>Whether <paramref name="name"/> is reserved.</summary>
     public static bool IsReserved(string name) =>
         name.StartsWith("sqlite_", StringComparison.Ordinal) || name.StartsWith("turso_", StringComparison.Ordinal)
-        || name.StartsWith("fts_dir_tb_text_", StringComparison.Ordinal) || Tables.Contains(name);
+        || name.StartsWith("_tb_fts_index_", StringComparison.Ordinal)
+        || name.StartsWith("fts_dir__tb_fts_index_", StringComparison.Ordinal) || Tables.Contains(name);
 }

@@ -7,6 +7,8 @@ RUN tar -xzf /turso.tar.gz --strip-components=1 && rm /turso.tar.gz
 # Upstream core/build.rs uses this instead of wall-clock/git metadata.
 ENV SOURCE_DATE_EPOCH=1791270348 CARGO_INCREMENTAL=0 \
     RUSTFLAGS="--cfg=tokio_unstable --remap-path-prefix=/turso=/usr/src/turso -C link-arg=-Wl,-z,nodelete"
+COPY scripts/vendor/turso-native-budget.patch /turso-native-budget.patch
+RUN git apply --check /turso-native-budget.patch && git apply /turso-native-budget.patch
 # Match upstream's .NET build: the sync library also exports the complete core C ABI.
 RUN cargo +1.88.0 build --locked --package turso_sync_sdk_kit --features turso_sdk_kit/fts --profile lib-release \
     && cp target/lib-release/libturso_sync_sdk_kit.so target/lib-release/libturso_sdk_kit.so

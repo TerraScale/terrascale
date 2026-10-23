@@ -10,6 +10,7 @@ public class TursoDatabaseHandle() : SafeHandle(IntPtr.Zero, true)
     private readonly Lock _statementsGate = new();
     private readonly HashSet<WeakReference<TursoStatementHandle>> _statements = [];
     private bool _deinitializeOnly;
+    internal TursoInterop.FtsProgressCallback? FtsProgressHandler;
 
     /// <summary>The owning copy's current refusal, read immediately before releasing its native connection.</summary>
     public Func<string?>? CloseRefusal { get; set; }
@@ -74,6 +75,8 @@ public class TursoDatabaseHandle() : SafeHandle(IntPtr.Zero, true)
                 }
 
                 TursoInterop.ConnectionDeinit(handle);
+                GC.KeepAlive(FtsProgressHandler);
+                FtsProgressHandler = null;
             }
         }
 

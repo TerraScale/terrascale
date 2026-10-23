@@ -39,6 +39,10 @@ public sealed class TextSearchTests
         await Assert.That(negated.Ids).IsEmpty();
         var either = await api.QueryAsync(new { filter = new { or = new object[] { Search("/title", "absent"), search } } });
         await Assert.That(either.Ids).IsEquivalentTo([first, second]);
+        var mixed = await api.QueryAsync(new { filter = new { or = new object[] { Search("/title", "absent"), new { eq = new object[] { "/category", "guide" } } } }, count = true });
+        await Assert.That(mixed.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(mixed.Ids).IsEquivalentTo([first]);
+        await Assert.That(mixed.Json.GetProperty("count").GetProperty("value").GetString()).IsEqualTo("1");
     }
 
     [Test]
@@ -56,7 +60,7 @@ public sealed class TextSearchTests
         var sort = new[] { new { path = "$score", order = "desc" } };
         var page = await api.QueryAsync(new { filter, sort, limit = 1 });
         var seen = new List<string>();
-        while (true)
+        for (var remaining = ids.Length; remaining > 0; remaining--)
         {
             await Assert.That(page.Status).IsEqualTo(HttpStatusCode.OK);
             seen.AddRange(page.Ids);
@@ -75,6 +79,137 @@ public sealed class TextSearchTests
         }
 
         await Assert.That(seen.SequenceEqual(ids, StringComparer.Ordinal)).IsTrue();
+    }
+
+    [Test]
+    public async Task Ranked_pages_preserve_unequal_scores_and_equal_score_id_ties()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var ids = new[] { DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId() }.Order(StringComparer.Ordinal).ToArray();
+        (await api.PutAsync(ids[0], new { body = "native" })).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.PutAsync(ids[1], new { body = "native" })).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.PutAsync(ids[2], new { body = "native " + string.Join(' ', Enumerable.Repeat("unrelated", 100)) })).Status.ShouldBe(HttpStatusCode.Created);
+        await CreateAsync(api, "body");
+        var filter = Search("/body", "native");
+        var sort = new[] { new { path = "$score", order = "desc" } };
+        var all = await api.QueryAsync(new { filter, sort });
+        await Assert.That(all.Status).IsEqualTo(HttpStatusCode.OK);
+        var expected = all.Json.GetProperty("items").EnumerateArray()
+            .Select(item => (Id: item.GetProperty("id").GetString()!, Score: item.GetProperty("score").GetDouble())).ToArray();
+        await Assert.That(expected[0].Score).IsGreaterThan(expected[^1].Score);
+        await Assert.That(expected[0].Score).IsEqualTo(expected[1].Score);
+        await Assert.That(expected.Select(item => item.Id).SequenceEqual(ids, StringComparer.Ordinal)).IsTrue();
+        string? cursor = null;
+        for (var i = 0; i < expected.Length; i++)
+        {
+            var page = await api.QueryAsync(new { filter, sort, limit = 1, cursor });
+            await Assert.That(page.Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(page.Ids).IsEquivalentTo([expected[i].Id]);
+            await Assert.That(page.Json.GetProperty("items")[0].GetProperty("score").GetDouble()).IsEqualTo(expected[i].Score);
+            cursor = page.Json.GetProperty("next_cursor").GetString();
+            await Assert.That(cursor is null).IsEqualTo(i == expected.Length - 1);
+        }
+    }
+
+    [Test]
+    public async Task Indexed_candidates_bound_search_count_and_score_sort_in_a_large_collection()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var tenant = await api.TenantOfAsync();
+        var database = new ManagedDatabaseRef(tenant.OrganizationId!, tenant.ProjectId!, tenant.DatabaseId!, DocumentApi.Database);
+        // More than 10,000 documents and 8 MiB: a selective indexed query must seek its one candidate.
+        await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
+            WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 10001)
+            INSERT INTO items (id, doc) SELECT printf('%026d', n),
+                json_object('body', CASE WHEN n = 10001 THEN 'commonterm rareterm' ELSE 'commonterm' END,
+                    'padding', $padding) FROM rows;
+            INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2)
+                SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM items;
+            """, ("$padding", new string('x', 1000)));
+        await CreateAsync(api, "body");
+        var filter = Search("/body", "rareterm");
+        foreach (var sort in new[] { Array.Empty<object>(), new object[] { new { path = "$score", order = "desc" } }, new object[] { new { path = "/body", order = "asc" } } })
+        {
+            var page = await api.QueryAsync(new { filter, sort, count = true });
+            await Assert.That(page.Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(page.Ids).IsEquivalentTo(["00000000000000000000010001"]);
+            await Assert.That(page.Json.GetProperty("count").GetProperty("value").GetString()).IsEqualTo("1");
+        }
+
+        var counted = await api.TransactAsync(new { op = "assert_count", collection = "items", filter, gte = 1, lte = 1 });
+        await Assert.That(counted.Status).IsEqualTo(HttpStatusCode.OK);
+        var broad = await api.QueryAsync(new { filter = Search("/body", "commonterm"), limit = 1 });
+        await Assert.That(broad.Status).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await api.QueryAsync(new { filter })).Ids).IsEquivalentTo(["00000000000000000000010001"]);
+    }
+
+    [Test]
+    public async Task Text_and_btree_default_names_do_not_collide()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        using var owner = api.Management.As(api.Tenant.User);
+        var path = Uri(await IndexPathAsync(api));
+        using var btree = await owner.PostAsJsonAsync(path, new { collection = "items", fields = new[] { "body", "text" } });
+        using var text = await owner.PostAsJsonAsync(path, new { collection = "items", kind = "text", fields = new[] { "body" } });
+        await Assert.That(btree.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(text.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        var indexes = (await owner.GetFromJsonAsync<JsonElement>(path)).GetProperty("items").EnumerateArray().ToArray();
+        await Assert.That(indexes.Length).IsEqualTo(2);
+        await Assert.That(indexes.Select(index => index.GetProperty("name").GetString()).Distinct().Count()).IsEqualTo(2);
+        await Assert.That(indexes.Select(index => index.GetProperty("kind").GetString())).IsEquivalentTo(["btree", "text"]);
+    }
+
+    [Test]
+    public async Task Hashed_default_names_distinguish_kind_from_collection_and_field_boundaries()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        foreach (var name in new[] { "items_extra", "text" })
+        {
+            (await api.SendAsync(HttpMethod.Post, api.Collections, new { name })).Status.ShouldBe(HttpStatusCode.Created);
+        }
+
+        using var owner = api.Management.As(api.Tenant.User);
+        var path = Uri(await IndexPathAsync(api));
+        using var text = await owner.PostAsJsonAsync(path, new { collection = "items_extra", kind = "text", fields = new[] { "body" } });
+        using var btree = await owner.PostAsJsonAsync(path, new { collection = "text", fields = new[] { "items_extra", "body" } });
+        await Assert.That(text.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(btree.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        var names = (await owner.GetFromJsonAsync<JsonElement>(path)).GetProperty("items").EnumerateArray()
+            .Select(index => index.GetProperty("name").GetString()!).ToArray();
+        await Assert.That(names.Length).IsEqualTo(2);
+        await Assert.That(names[0][..^9]).IsEqualTo(names[1][..^9]);
+        await Assert.That(names.Distinct(StringComparer.Ordinal).Count()).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task Native_text_index_names_do_not_claim_customer_collection_names(bool collectionFirst)
+    {
+        await using var api = await DocumentApi.StartAsync();
+        const string Collection = "tb_text_text_docs__0";
+        if (collectionFirst)
+        {
+            (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = Collection })).Status.ShouldBe(HttpStatusCode.Created);
+        }
+
+        await CreateAsync(api, "body");
+        if (!collectionFirst)
+        {
+            (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = Collection })).Status.ShouldBe(HttpStatusCode.Created);
+        }
+
+        var id = DocumentApi.NewId();
+        var document = $"{api.Collections}/{Collection}/documents/by-key?id={id}";
+        (await api.SendAsync(HttpMethod.Put, document, new { body = "customer" })).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.PutAsync(id, new { body = "native" })).Status.ShouldBe(HttpStatusCode.Created);
+        await Assert.That((await api.QueryAsync(new { filter = Search("/body", "native") })).Ids).IsEquivalentTo([id]);
+        await Assert.That((await api.QueryAsync(new { filter = Search("/body", "customer") })).Ids).IsEmpty();
+        var customer = await api.SendAsync(HttpMethod.Get, document);
+        await Assert.That(customer.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(customer.Json.GetProperty("document").GetProperty("body").GetString()).IsEqualTo("customer");
+        var reserved = await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "fts_dir__tb_fts_index_text_docs__0" });
+        await Assert.That((reserved.Status, reserved.Code)).IsEqualTo((HttpStatusCode.BadRequest, "reserved_name"));
     }
 
     [Test]
@@ -114,6 +249,7 @@ public sealed class TextSearchTests
         var missing = await api.QueryAsync(new { filter = Search("/body", "native") });
         await Assert.That((missing.Status, missing.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query"));
         await CreateAsync(api, "body");
+        (await api.PutAsync(DocumentApi.NewId(), new { body = "native" })).Status.ShouldBe(HttpStatusCode.Created);
         var where = System.Uri.EscapeDataString("""{"not":{"search":["/body","native"]}}""");
         var shape = await api.SendAsync(HttpMethod.Get, $"{api.Collections}/items/shape?offset=-1&where={where}");
         await Assert.That((shape.Status, shape.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query"));
@@ -132,6 +268,34 @@ public sealed class TextSearchTests
             var result = await api.QueryAsync(request);
             await Assert.That((result.Status, result.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query"));
         }
+
+        const string Malformed = "no_such_field:private_search_term";
+        var invalid = await api.QueryAsync(new { filter = Search("/body", Malformed), count = true });
+        await Assert.That((invalid.Status, invalid.Code, invalid.Message)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query", "invalid search terms"));
+        var invalidCount = await api.TransactAsync(new { op = "assert_count", collection = "items", filter = Search("/body", Malformed), gte = 0 });
+        await Assert.That((invalidCount.Status, invalidCount.Code, invalidCount.Message)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query", "invalid search terms"));
+    }
+
+    [Test]
+    public async Task Dropping_the_last_covering_index_invalidates_cached_searches()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+        (await api.PutAsync(id, new { body = "native" })).Status.ShouldBe(HttpStatusCode.Created);
+        await CreateAsync(api, "body");
+        using var owner = api.Management.As(api.Tenant.User);
+        var indexes = await IndexPathAsync(api);
+        using var second = await owner.PostAsJsonAsync(Uri(indexes), new { name = "second_text", collection = "items", kind = "text", fields = new[] { "body", "title" } });
+        second.EnsureSuccessStatusCode();
+        var request = new { filter = Search("/body", "native"), count = true };
+        await Assert.That((await api.QueryAsync(request)).Ids).IsEquivalentTo([id]);
+        using var firstDrop = await owner.DeleteAsync(Uri($"{indexes}/text_docs"));
+        firstDrop.EnsureSuccessStatusCode();
+        await Assert.That((await api.QueryAsync(request)).Ids).IsEquivalentTo([id]);
+        using var lastDrop = await owner.DeleteAsync(Uri($"{indexes}/second_text"));
+        lastDrop.EnsureSuccessStatusCode();
+        var missing = await api.QueryAsync(request);
+        await Assert.That((missing.Status, missing.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query"));
     }
 
     private static object Search(string path, string terms) => new { search = new[] { path, terms } };

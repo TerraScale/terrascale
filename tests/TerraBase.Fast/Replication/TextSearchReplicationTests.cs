@@ -19,6 +19,7 @@ public sealed class TextSearchReplicationTests
         _ = DocumentField.TryParse("title", out var title);
         await gru.WriteAsync(async transaction =>
         {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("tb_text_text_docs__0", 1), CancellationToken.None);
             _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
             _ = await transaction.PutAsync("items", id, Encoding.UTF8.GetBytes("""{"body":"original","title":"heading"}"""), CancellationToken.None);
         });
@@ -27,6 +28,9 @@ public sealed class TextSearchReplicationTests
         await Assert.That(await sjc.UntilIndexesAsync(["text_docs"])).IsTrue();
         using var client = sjc.Api.DataClient(await sjc.Api.Server.IssueAsync(cluster.Database.OrganizationId, "documents:read"));
         var query = new Uri($"/v1/projects/{cluster.Database.ProjectId}/databases/main/collections/items/query", UriKind.Relative);
+        using var customerCollection = await client.PostAsJsonAsync(
+            new Uri($"/v1/projects/{cluster.Database.ProjectId}/databases/main/collections/tb_text_text_docs__0/query", UriKind.Relative), new { limit = 1 });
+        await Assert.That(customerCollection.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await MatchesAsync(client, query, "/body", "original", id);
 
         await gru.WriteAsync(async transaction => _ = await transaction.PutAsync("items", id, Encoding.UTF8.GetBytes("""{"body":"replacement","title":"heading"}"""), CancellationToken.None));
@@ -46,6 +50,10 @@ public sealed class TextSearchReplicationTests
         await MatchesAsync(reopened, query, "/title", "heading");
         await gru.WriteAsync(async transaction => _ = await transaction.DropIndexAsync("text_docs", CancellationToken.None));
         await Assert.That(await sjc.UntilIndexesAsync([])).IsTrue();
+        using var missingIndex = await reopened.PostAsJsonAsync(query, new { filter = new { search = new[] { "/title", "heading" } }, sort = new[] { new { path = "$score", order = "desc" } } });
+        await Assert.That(missingIndex.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        var error = await missingIndex.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(error.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("invalid_query");
     }
 
     private static async Task MatchesAsync(HttpClient client, Uri query, string path, string terms, params string[] expected)

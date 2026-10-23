@@ -1,0 +1,876 @@
+diff --git a/core/connection.rs b/core/connection.rs
+index 2aaa947..3bfb72b 100644
+--- a/core/connection.rs
++++ b/core/connection.rs
+@@ -511,6 +511,8 @@ pub struct Connection {
+     pub(super) busy_handler: RwLock<BusyHandler>,
+     /// Step-based progress callback for SQLite-compatible cancellation hooks.
+     pub(super) progress_handler: ProgressHandler,
++    /// FTS work/byte charges also run inside a single VM instruction.
++    pub(super) fts_progress_handler: RwLock<Option<Box<dyn Fn(u64, u64) -> bool + Send + Sync>>>,
+     /// Maximum execution time for a single statement on this connection.
+     /// `Duration::ZERO` means disabled.
+     pub(super) query_timeout_ms: AtomicU64,
+@@ -4852,6 +4854,26 @@ impl Connection {
+         self.progress_handler.ops()
+     }
+ 
++    pub fn set_fts_progress_handler(
++        &self,
++        handler: Option<Box<dyn Fn(u64, u64) -> bool + Send + Sync>>,
++    ) {
++        *self.fts_progress_handler.write() = handler;
++    }
++
++    pub fn check_fts_work(&self, work: u64, bytes: u64) -> crate::Result<()> {
++        if self.is_interrupted()
++            || self
++                .fts_progress_handler
++                .read()
++                .as_ref()
++                .is_some_and(|handler| handler(work, bytes))
++        {
++            return Err(LimboError::Interrupt);
++        }
++        Ok(())
++    }
++
+     /// Returns true when the step-based progress handler requests interruption
+     /// for the VM steps executed in `(prev_steps, vm_steps]`.
+     pub fn should_interrupt_for_progress(&self, prev_steps: u64, vm_steps: u64) -> bool {
+diff --git a/core/database.rs b/core/database.rs
+index 173d75b..3c4ff4f 100644
+--- a/core/database.rs
++++ b/core/database.rs
+@@ -2593,6 +2593,7 @@ impl Database {
+             data_sync_retry: AtomicBool::new(false),
+             busy_handler: RwLock::new(BusyHandler::None),
+             progress_handler: ProgressHandler::new(),
++            fts_progress_handler: RwLock::new(None),
+             query_timeout_ms: AtomicU64::new(0),
+             interrupt_requested: AtomicBool::new(false),
+             is_mvcc_bootstrap_connection: AtomicBool::new(is_mvcc_bootstrap_connection),
+diff --git a/core/index_method/fts/format.rs b/core/index_method/fts/format.rs
+index 0591fff..e011085 100644
+--- a/core/index_method/fts/format.rs
++++ b/core/index_method/fts/format.rs
+@@ -332,7 +332,8 @@ impl SegmentIdentities {
+     }
+ 
+     pub fn resident_bytes(&self) -> usize {
+-        self.by_position.len() * (size_of::<DocumentIdentity>() + size_of::<u32>())
++        self.by_position.capacity() * size_of::<DocumentIdentity>()
++            + self.positions_by_identity.capacity() * size_of::<u32>()
+     }
+ 
+     pub fn identity_of(&self, position: u32) -> Option<DocumentIdentity> {
+diff --git a/core/index_method/fts/mod.rs b/core/index_method/fts/mod.rs
+index bf97450..9b220c8 100644
+--- a/core/index_method/fts/mod.rs
++++ b/core/index_method/fts/mod.rs
+@@ -37,7 +37,8 @@ use crate::{
+ };
+ use parking_lot::Mutex;
+ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+-use std::collections::BTreeSet;
++use std::cmp::Reverse;
++use std::collections::{BTreeSet, BinaryHeap};
+ use std::path::PathBuf;
+ use std::{
+     cell::RefCell,
+@@ -146,11 +147,6 @@ const FTS_MAX_QUERY_BYTES: usize = 16 * 1024;
+ /// recursive parser against stack overflow.
+ const FTS_MAX_QUERY_NESTING: usize = 64;
+ 
+-/// Maximum assembled searchers retained per FTS attachment. Entries are
+-/// keyed by the visible segment set (plus per-segment tombstone state), so
+-/// any snapshot seeing the same set shares one entry.
+-const FTS_MAX_CACHED_SEARCHERS: usize = 4;
+-
+ /// Aggregate resident byte budget for the shared per-segment cache.
+ ///
+ /// This bounds only what is *retained for reuse* after a statement
+@@ -456,14 +452,8 @@ impl SegmentByteCache {
+         Some(data)
+     }
+ 
+-    fn put(&mut self, id: SegmentId, data: Arc<SegmentData>, budget: usize) {
+-        self.entries.retain(|(entry, _)| *entry != id);
+-        self.entries.push((id, data));
+-        // Always keep the newest entry; evict older ones to fit the budget.
+-        while self.entries.len() > 1 && self.total_bytes() > budget {
+-            self.entries.remove(0);
+-        }
+-    }
++    // Request admission ends at statement cleanup; retained payloads would need cache-owned admission.
++    fn put(&mut self, _id: SegmentId, _data: Arc<SegmentData>, _budget: usize) {}
+ 
+     fn remove(&mut self, id: &SegmentId) {
+         self.entries.retain(|(entry, _)| entry != id);
+@@ -512,13 +502,7 @@ impl SearcherCache {
+         self.entries.last()
+     }
+ 
+-    fn put(&mut self, entry: SearcherCacheEntry) {
+-        self.entries.retain(|existing| existing.key != entry.key);
+-        self.entries.push(entry);
+-        while self.entries.len() > FTS_MAX_CACHED_SEARCHERS {
+-            self.entries.remove(0);
+-        }
+-    }
++    fn put(&mut self, _entry: SearcherCacheEntry) {}
+ 
+     fn purge_segments(&mut self, ids: &[SegmentId]) {
+         self.entries
+@@ -533,9 +517,6 @@ struct FtsShared {
+     searchers: Mutex<SearcherCache>,
+     /// The one cursor currently allowed to flush this index per connection.
+     writer_slot: Mutex<Option<FtsWriterSlot>>,
+-    /// Throwaway index used only to mint `SegmentMeta` values for
+-    /// synthesized `meta.json` content.
+-    scratch: Mutex<Option<Index>>,
+     /// Heuristic count of visible segments: bumped by segment-appending
+     /// publishes, reset by merges, reconciled by every full registry scan.
+     /// Only used to decide whether the write-path auto-merge should pay for
+@@ -558,20 +539,14 @@ impl FtsShared {
+     /// (`Index::new_segment_meta`), and the read path needs one per visible
+     /// segment to synthesize the `meta.json` a `SnapshotDirectory` serves.
+     /// It is an empty in-RAM index with this attachment's schema: nothing is
+-    /// ever written to or read from it, and one instance is shared by every
+-    /// cursor of the attachment.
++    /// ever written to or read from it. It is not retained beyond this cursor's work.
+     fn scratch_index(&self, schema: &Schema) -> Result<Index> {
+-        let mut scratch = self.scratch.lock();
+-        if let Some(index) = scratch.as_ref() {
+-            return Ok(index.clone());
+-        }
+         let index = Index::create(
+             RamDirectory::create(),
+             schema.clone(),
+             IndexSettings::default(),
+         )
+         .map_err(|e| LimboError::InternalError(format!("FTS scratch index: {e}")))?;
+-        *scratch = Some(index.clone());
+         Ok(index)
+     }
+ }
+@@ -947,6 +922,36 @@ enum StatementCommitState {
+     Finish,
+ }
+ 
++// A callback is connection-owned; cached searchers must never retain another request's callback.
++fn check_fts_work(connection: Option<&Connection>, work: u64, bytes: u64) -> Result<()> {
++    if let Some(connection) = connection {
++        connection.check_fts_work(work, bytes)?;
++    }
++    Ok(())
++}
++
++#[derive(Debug)]
++struct FtsOrderedHit(f32, DocAddress, i64);
++
++impl PartialEq for FtsOrderedHit {
++    fn eq(&self, other: &Self) -> bool {
++        self.cmp(other).is_eq()
++    }
++}
++impl Eq for FtsOrderedHit {}
++impl PartialOrd for FtsOrderedHit {
++    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
++        Some(self.cmp(other))
++    }
++}
++impl Ord for FtsOrderedHit {
++    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
++        self.0.total_cmp(&other.0).then_with(|| {
++            (other.1.segment_ord, other.1.doc_id).cmp(&(self.1.segment_ord, self.1.doc_id))
++        })
++    }
++}
++
+ /// Streaming query support: one segment's scorer plus its rowid column.
+ struct FtsStreamingSegment {
+     scorer: Box<dyn Scorer>,
+@@ -955,6 +960,7 @@ struct FtsStreamingSegment {
+ }
+ 
+ struct FtsHitStream {
++    connection: Option<Weak<Connection>>,
+     segments: Vec<FtsStreamingSegment>,
+     segment_pos: usize,
+     remaining: usize,
+@@ -969,7 +975,9 @@ impl FtsHitStream {
+             return Ok(false);
+         }
+ 
++        let connection = self.connection.as_ref().and_then(Weak::upgrade);
+         while let Some(segment) = self.segments.get_mut(self.segment_pos) {
++            check_fts_work(connection.as_deref(), 1, 0)?;
+             let doc_id = segment.scorer.doc();
+             if doc_id == TERMINATED {
+                 self.segment_pos += 1;
+@@ -1263,6 +1271,8 @@ impl FtsCursor {
+     /// cursor's in-memory segment set, consulting the shared searcher cache
+     /// first. Pure CPU work — every byte is already resident.
+     fn build_snapshot_view(&mut self, publish_to_cache: bool) -> Result<()> {
++        let connection = self.connection.as_ref().and_then(Weak::upgrade);
++        check_fts_work(connection.as_deref(), 1, 0)?;
+         let key = searcher_key(&self.segments);
+         self.shared
+             .stats
+@@ -1287,7 +1297,9 @@ impl FtsCursor {
+ 
+         let mut files: HashMap<PathBuf, Arc<[u8]>> = HashMap::default();
+         for segment in &self.segments {
++            check_fts_work(connection.as_deref(), 1, 0)?;
+             for (name, data) in &segment.data.files {
++                check_fts_work(connection.as_deref(), 1, 0)?;
+                 files.insert(PathBuf::from(name), Arc::clone(data));
+             }
+             if !segment.deleted.is_empty() {
+@@ -1324,6 +1336,7 @@ impl FtsCursor {
+             .segment_readers()
+             .iter()
+             .map(|segment| {
++                check_fts_work(connection.as_deref(), 1, 0)?;
+                 segment
+                     .fast_fields()
+                     .i64(ROWID_FIELD)
+@@ -1396,6 +1409,7 @@ impl FtsCursor {
+             LimboError::InternalError("FTS database id is not initialized".to_string())
+         })?;
+         loop {
++            conn.check_fts_work(1, 0)?;
+             match &mut self.state {
+                 FtsState::Init => {
+                     self.open_cursor(&conn, database_id)?;
+@@ -1441,7 +1455,12 @@ impl FtsCursor {
+                     let record = return_if_io!(cursor.record()).ok_or_else(|| {
+                         LimboError::Corrupt("FTS cursor has no record payload".into())
+                     })?;
+-                    let (path, _, bytes) = row_fields(record)?;
++                    let (path, _, bytes) = {
++                        if let Some(crate::types::ValueRef::Blob(bytes)) = record.get_value_opt(2) {
++                            conn.check_fts_work(1, bytes.len() as u64)?;
++                        }
++                        row_fields(record)?
++                    };
+                     if path != FTS2_CONTROL_PATH {
+                         self.state = FtsState::ProbeFormat { rewound: false };
+                         continue;
+@@ -1496,7 +1515,12 @@ impl FtsCursor {
+                     let record = return_if_io!(cursor.record()).ok_or_else(|| {
+                         LimboError::Corrupt("FTS cursor has no record payload".into())
+                     })?;
+-                    let (path, _, _) = row_fields(record)?;
++                    let (path, _, _) = {
++                        if let Some(crate::types::ValueRef::Blob(bytes)) = record.get_value_opt(2) {
++                            conn.check_fts_work(1, bytes.len() as u64)?;
++                        }
++                        row_fields(record)?
++                    };
+                     if path.starts_with(FTS2_PATH_PREFIX) {
+                         // v2 rows must be accompanied by the control row,
+                         // which sorts inside the same scan range and was not
+@@ -1562,7 +1586,12 @@ impl FtsCursor {
+                     let record = return_if_io!(cursor.record()).ok_or_else(|| {
+                         LimboError::Corrupt("FTS cursor has no record payload".into())
+                     })?;
+-                    let (path, _, bytes) = row_fields(record)?;
++                    let (path, _, bytes) = {
++                        if let Some(crate::types::ValueRef::Blob(bytes)) = record.get_value_opt(2) {
++                            conn.check_fts_work(1, bytes.len() as u64)?;
++                        }
++                        row_fields(record)?
++                    };
+                     let Some(uuid) = path.strip_prefix(FTS2_SEGMENT_PREFIX) else {
+                         // Rows sit in key order and nothing sorts between
+                         // the segment and tombstone ranges, so the only
+@@ -1583,7 +1612,14 @@ impl FtsCursor {
+                         continue;
+                     };
+                     let segment_id = parse_segment_id(uuid)?;
++                    conn.check_fts_work(1, (bytes.len() as u64).saturating_mul(4))?;
+                     let descriptor = SegmentDescriptor::decode(segment_id, &bytes)?;
++                    // Charge resident files even on cache hits, before loading or scorer construction.
++                    let resident = descriptor.files.iter().try_fold(
++                        u64::from(descriptor.max_doc) * 40 + bytes.len() as u64,
++                        |total, file| total.checked_add(file.size).ok_or(LimboError::Interrupt),
++                    )?;
++                    conn.check_fts_work(1, resident)?;
+                     // Duplicate segment ids in one searcher trip a
+                     // SearcherGeneration assert inside Tantivy; dedupe the
+                     // registry scan defensively.
+@@ -1644,7 +1680,12 @@ impl FtsCursor {
+                     let record = return_if_io!(cursor.record()).ok_or_else(|| {
+                         LimboError::Corrupt("FTS cursor has no record payload".into())
+                     })?;
+-                    let (path, _, _) = row_fields(record)?;
++                    let (path, _, _) = {
++                        if let Some(crate::types::ValueRef::Blob(bytes)) = record.get_value_opt(2) {
++                            conn.check_fts_work(1, bytes.len() as u64)?;
++                        }
++                        row_fields(record)?
++                    };
+                     let Some(identity) = path.strip_prefix(FTS2_TOMB_PREFIX) else {
+                         // Tombstones are the last v2 range; no row
+                         // legitimately follows them. A mismatch mid-scan is
+@@ -1655,6 +1696,7 @@ impl FtsCursor {
+                         ))
+                         .into());
+                     };
++                    conn.check_fts_work(1, 64)?;
+                     self.scan_tombs.insert(parse_document_identity(identity)?);
+                     *advance_pending = true;
+                 }
+@@ -1694,9 +1736,17 @@ impl FtsCursor {
+                         let record = return_if_io!(cursor.record()).ok_or_else(|| {
+                             LimboError::Corrupt("FTS cursor has no record payload".into())
+                         })?;
+-                        let (path, chunk_no, bytes) = row_fields(record)?;
++                        let (path, chunk_no, bytes) = {
++                            if let Some(crate::types::ValueRef::Blob(bytes)) =
++                                record.get_value_opt(2)
++                            {
++                                conn.check_fts_work(1, bytes.len() as u64)?;
++                            }
++                            row_fields(record)?
++                        };
+                         match path.strip_prefix(prefix.as_str()) {
+                             Some(file_ord) => {
++                                // Cold loading temporarily holds chunks and assembled files together.
+                                 let file_ord: u32 = file_ord.parse().map_err(|_| {
+                                     LimboError::Corrupt(format!(
+                                         "FTS chunk row has malformed file ordinal: {path}"
+@@ -1720,13 +1770,18 @@ impl FtsCursor {
+                     }
+                     if segment_done {
+                         let descriptor = &self.scan_descriptors[descriptor_idx];
+-                        let files = assemble_segment_files(descriptor, std::mem::take(chunks))?;
++                        let files = assemble_segment_files(
++                            descriptor,
++                            std::mem::take(chunks),
++                            Some(&conn),
++                        )?;
+                         let data = Arc::new(segment_data_from_files(
+                             &self.shared,
+                             &self.schema,
+                             descriptor.segment_id,
+                             descriptor.max_doc,
+                             files,
++                            Some(&conn),
+                         )?);
+                         self.shared
+                             .stats
+@@ -1753,6 +1808,7 @@ impl FtsCursor {
+                         self.segments = descriptors
+                             .into_iter()
+                             .map(|descriptor| {
++                                conn.check_fts_work(1, 0)?;
+                                 let id = descriptor.segment_id;
+                                 let data = data_by_id.remove(&id).ok_or_else(|| {
+                                     LimboError::Corrupt(format!(
+@@ -1764,7 +1820,30 @@ impl FtsCursor {
+                                 // segment. Find the position of each visible
+                                 // tombstone in this segment. A merge can
+                                 // move the document after the delete.
+-                                let deleted = data.identities.tombstoned_positions(&tombs);
++                                let mut deleted = BTreeSet::new();
++                                if tombs.len() < descriptor.max_doc as usize {
++                                    for identity in &tombs {
++                                        conn.check_fts_work(1, 0)?;
++                                        if let Some(position) =
++                                            data.identities.position_of(*identity)
++                                        {
++                                            conn.check_fts_work(0, 64)?;
++                                            deleted.insert(position);
++                                        }
++                                    }
++                                } else {
++                                    for position in 0..descriptor.max_doc {
++                                        conn.check_fts_work(1, 0)?;
++                                        if data
++                                            .identities
++                                            .identity_of(position)
++                                            .is_some_and(|id| tombs.contains(&id))
++                                        {
++                                            conn.check_fts_work(0, 64)?;
++                                            deleted.insert(position);
++                                        }
++                                    }
++                                }
+                                 applied_tombstones += deleted.len();
+                                 Ok(LoadedSegment::new(descriptor, data, deleted))
+                             })
+@@ -2189,6 +2268,7 @@ impl FtsCursor {
+                 segment_id,
+                 merged_meta.max_doc(),
+                 captured.clone(),
++                self.connection.as_ref().and_then(Weak::upgrade).as_deref(),
+             )?;
+             let (segment, rows) =
+                 segment_rows_from_files(segment_id, merged_meta.max_doc(), captured, identities)?;
+@@ -2329,6 +2409,9 @@ impl FtsCursor {
+         if self.segments.is_empty() {
+             return Ok(Vec::new());
+         }
++        for segment in &self.segments {
++            check_fts_work(connection.as_deref(), 1, segment.data.total_bytes as u64)?;
++        }
+         self.ensure_searcher()?;
+         let searcher = self
+             .searcher
+@@ -2424,7 +2507,7 @@ impl FtsCursor {
+         self.invalidate_snapshot_view();
+         self.fts_dir_cursor = None;
+         self.backing = None;
+-        self.current_hits.clear();
++        self.current_hits = Vec::new();
+         self.streaming_hits = None;
+         self.hit_pos = 0;
+         self.probe_only = false;
+@@ -2441,6 +2524,7 @@ fn segment_data_from_files(
+     segment_id: SegmentId,
+     max_doc: u32,
+     files: HashMap<String, Arc<[u8]>>,
++    connection: Option<&Connection>,
+ ) -> Result<SegmentData> {
+     let by_path = files
+         .iter()
+@@ -2452,6 +2536,7 @@ fn segment_data_from_files(
+         segment_id,
+         max_doc,
+         by_path,
++        connection,
+     )?;
+     Ok(SegmentData::new(files, identities))
+ }
+@@ -2466,7 +2551,9 @@ fn read_segment_identities(
+     segment_id: SegmentId,
+     max_doc: u32,
+     files: HashMap<PathBuf, Arc<[u8]>>,
++    connection: Option<&Connection>,
+ ) -> Result<SegmentIdentities> {
++    check_fts_work(connection, 1, 0)?;
+     let spec = SegmentMetaSpec::new(segment_id, max_doc, 0);
+     let meta_json = synthesize_meta_json(scratch, schema, &[spec])?;
+     let index = Index::open(SnapshotDirectory::new(files, meta_json))
+@@ -2493,6 +2580,7 @@ fn read_segment_identities(
+     })?;
+     let by_position = (0..max_doc)
+         .map(|position| {
++            check_fts_work(connection, 1, 0)?;
+             hi.first(position)
+                 .zip(lo.first(position))
+                 .map(|(hi, lo)| DocumentIdentity::new((u128::from(hi) << 64) | u128::from(lo)))
+@@ -2504,7 +2592,10 @@ fn read_segment_identities(
+                 })
+         })
+         .collect::<Result<Vec<_>>>()?;
+-    Ok(SegmentIdentities::new(by_position))
++    check_fts_work(connection, u64::from(max_doc), 0)?;
++    let identities = SegmentIdentities::new(by_position);
++    check_fts_work(connection, 1, 0)?;
++    Ok(identities)
+ }
+ 
+ /// Assemble one segment's files from its scanned chunk rows, validating
+@@ -2512,9 +2603,11 @@ fn read_segment_identities(
+ fn assemble_segment_files(
+     descriptor: &SegmentDescriptor,
+     mut chunks: HashMap<u32, HashMap<i64, Vec<u8>>>,
++    connection: Option<&Connection>,
+ ) -> Result<HashMap<String, Arc<[u8]>>> {
+     let mut files: HashMap<String, Arc<[u8]>> = HashMap::default();
+     for (file_ord, entry) in descriptor.files.iter().enumerate() {
++        check_fts_work(connection, 1, 0)?;
+         let file_ord = file_ord as u32;
+         let chunk_map = chunks.remove(&file_ord).ok_or_else(|| {
+             LimboError::Corrupt(format!(
+@@ -2531,7 +2624,8 @@ fn assemble_segment_files(
+                 entry.num_chunks
+             )));
+         }
+-        let assembled = assemble_chunks(std::path::Path::new(&entry.name), chunk_map)?;
++        let assembled =
++            assemble_chunks_with_budget(std::path::Path::new(&entry.name), chunk_map, connection)?;
+         if assembled.len() as u64 != entry.size {
+             return Err(LimboError::Corrupt(format!(
+                 "FTS segment file {} has {} bytes but the descriptor records {}",
+@@ -2557,7 +2651,17 @@ fn assemble_segment_files(
+ /// `Vec` first and converting it with `Arc::from` would copy every byte a
+ /// second time and hold both copies at once. Each chunk is dropped as soon
+ /// as it has been copied, so peak memory is the file plus one chunk.
+-fn assemble_chunks(path: &std::path::Path, mut chunks: HashMap<i64, Vec<u8>>) -> Result<Arc<[u8]>> {
++#[cfg(test)]
++fn assemble_chunks(path: &std::path::Path, chunks: HashMap<i64, Vec<u8>>) -> Result<Arc<[u8]>> {
++    assemble_chunks_with_budget(path, chunks, None)
++}
++
++fn assemble_chunks_with_budget(
++    path: &std::path::Path,
++    mut chunks: HashMap<i64, Vec<u8>>,
++    connection: Option<&Connection>,
++) -> Result<Arc<[u8]>> {
++    check_fts_work(connection, 1, 0)?;
+     let max_chunk =
+         chunks.keys().max().copied().ok_or_else(|| {
+             LimboError::Corrupt(format!("FTS file {} has no chunks", path.display()))
+@@ -2573,6 +2677,7 @@ fn assemble_chunks(path: &std::path::Path, mut chunks: HashMap<i64, Vec<u8>>) ->
+     let buffer = Arc::get_mut(&mut assembled).expect("a freshly allocated Arc is unique");
+     let mut offset = 0;
+     for chunk_no in 0..=max_chunk {
++        check_fts_work(connection, 1, 0)?;
+         let data = chunks.remove(&chunk_no).ok_or_else(|| {
+             LimboError::Corrupt(format!(
+                 "FTS file {} is missing chunk {}",
+@@ -3004,6 +3109,8 @@ impl IndexMethodCursor for FtsCursor {
+     /// Starts an FTS query. Parses the query string and executes the search.
+     /// Returns true if there are results, false otherwise.
+     fn query_start(&mut self, values: &[Register]) -> IOResultOr<bool> {
++        let connection = self.connection.as_ref().and_then(Weak::upgrade);
++        check_fts_work(connection.as_deref(), 1, 0)?;
+         self.ensure_searcher()?;
+         let searcher = self
+             .searcher
+@@ -3070,7 +3177,7 @@ impl IndexMethodCursor for FtsCursor {
+             }
+         };
+ 
+-        self.current_hits.clear();
++        self.current_hits = Vec::new();
+         self.streaming_hits = None;
+         self.hit_pos = 0;
+         let query_str = match values[1].get_value() {
+@@ -3111,12 +3218,14 @@ impl IndexMethodCursor for FtsCursor {
+                 _ => {}
+             }
+         }
++        check_fts_work(connection.as_deref(), query_str.len() as u64, 0)?;
+         let (query, parse_errors) = parser.parse_query_lenient(&query_str);
++        check_fts_work(connection.as_deref(), 1, 0)?;
+         if let Some(error) = parse_errors.first() {
+             return Err(LimboError::InternalError(format!("FTS parse error: {error:?}")).into());
+         }
+ 
+-        // TopDocs keeps a heap proportional to its limit. Cap that heap at the
++        // Keep the ranking heap proportional to its limit. Cap that heap at the
+         // number of live documents: this preserves unlimited-query semantics
+         // and prevents a huge SQL LIMIT from allocating beyond the largest
+         // possible result set.
+@@ -3127,12 +3236,22 @@ impl IndexMethodCursor for FtsCursor {
+ 
+         // Unordered patterns can walk Tantivy's per-segment scorers directly.
+         // This keeps memory constant for the common MATCH path. Global score
+-        // ordering still uses TopDocs because it inherently needs a top-k heap.
++        // ordering needs a checked top-k heap.
+         let streaming_scores = match pattern_idx {
+             FTS_PATTERN_MATCH | FTS_PATTERN_MATCH_LIMIT => Some(false),
+             FTS_PATTERN_COMBINED | FTS_PATTERN_COMBINED_LIMIT => Some(true),
+             _ => None,
+         };
++        // shortcut: Tantivy scorer calls are opaque; bound their inputs and poll between calls.
++        // Add internal Tantivy cancellation if a single bounded scorer call exceeds the request deadline.
++        let mut term_work = 0u64;
++        query.query_terms(&mut |_, _| term_work = term_work.saturating_add(1));
++        let term_work = term_work.max(1);
++        for segment in searcher.segment_readers() {
++            let work = u64::from(segment.max_doc()).saturating_mul(term_work);
++            check_fts_work(connection.as_deref(), work, work.saturating_mul(4))?;
++        }
++        check_fts_work(connection.as_deref(), 1, 0)?;
+         if let Some(scores_enabled) = streaming_scores {
+             let scoring = if scores_enabled {
+                 EnableScoring::enabled_from_searcher(searcher)
+@@ -3142,11 +3261,18 @@ impl IndexMethodCursor for FtsCursor {
+             let weight = query
+                 .weight(scoring)
+                 .map_err(|e| LimboError::InternalError(format!("FTS query weight error: {e}")))?;
++            check_fts_work(
++                connection.as_deref(),
++                1,
++                (searcher.segment_readers().len() * size_of::<FtsStreamingSegment>()) as u64,
++            )?;
+             let mut segments = Vec::with_capacity(searcher.segment_readers().len());
+             for (segment_ord, segment_reader) in searcher.segment_readers().iter().enumerate() {
++                check_fts_work(connection.as_deref(), 1, 0)?;
+                 let scorer = weight
+                     .scorer(segment_reader, 1.0)
+                     .map_err(|e| LimboError::InternalError(format!("FTS scorer error: {e}")))?;
++                check_fts_work(connection.as_deref(), 1, 0)?;
+                 segments.push(FtsStreamingSegment {
+                     scorer,
+                     rowids: self.rowid_readers[segment_ord].clone(),
+@@ -3154,6 +3280,7 @@ impl IndexMethodCursor for FtsCursor {
+                 });
+             }
+             let mut stream = FtsHitStream {
++                connection: self.connection.clone(),
+                 segments,
+                 segment_pos: 0,
+                 remaining: limit,
+@@ -3165,78 +3292,52 @@ impl IndexMethodCursor for FtsCursor {
+             return Ok(IOResult::Done(has_result));
+         }
+ 
+-        // A global score ordering with no effective LIMIT: TopDocs would
+-        // eagerly allocate per-segment heaps sized to the whole corpus before
+-        // scoring a single document. Walk the scorers and sort what actually
+-        // matched instead, so memory is proportional to the matches.
+-        if limit >= searcher.num_docs() as usize {
+-            let weight = query
+-                .weight(EnableScoring::enabled_from_searcher(searcher))
+-                .map_err(|e| LimboError::InternalError(format!("FTS query weight error: {e}")))?;
+-            for (segment_ord, segment_reader) in searcher.segment_readers().iter().enumerate() {
+-                let mut scorer = weight
+-                    .scorer(segment_reader, 1.0)
+-                    .map_err(|e| LimboError::InternalError(format!("FTS scorer error: {e}")))?;
+-                let rowids = &self.rowid_readers[segment_ord];
+-                let alive = segment_reader.alive_bitset();
+-                loop {
+-                    let doc_id = scorer.doc();
+-                    if doc_id == TERMINATED {
+-                        break;
+-                    }
+-                    let score = scorer.score();
+-                    scorer.advance();
+-                    if alive.is_some_and(|alive| alive.is_deleted(doc_id)) {
+-                        continue;
+-                    }
+-                    let rowid = rowids.first(doc_id).ok_or_else(|| {
+-                        LimboError::InternalError("FTS: rowid fast field missing value".into())
+-                    })?;
+-                    self.current_hits.push((
+-                        score,
+-                        DocAddress::new(segment_ord as u32, doc_id),
+-                        rowid,
+-                    ));
++        // Walk the scorer ourselves: opaque TopDocs search cannot poll the request's budget.
++        // Keep only the best LIMIT hits; charge both heap and output before growing either.
++        let weight = query
++            .weight(EnableScoring::enabled_from_searcher(searcher))
++            .map_err(|e| LimboError::InternalError(format!("FTS query weight error: {e}")))?;
++        let mut hits: BinaryHeap<Reverse<FtsOrderedHit>> = BinaryHeap::new();
++        for (segment_ord, segment_reader) in searcher.segment_readers().iter().enumerate() {
++            check_fts_work(connection.as_deref(), 1, 0)?;
++            let mut scorer = weight
++                .scorer(segment_reader, 1.0)
++                .map_err(|e| LimboError::InternalError(format!("FTS scorer error: {e}")))?;
++            check_fts_work(connection.as_deref(), 1, 0)?;
++            let rowids = &self.rowid_readers[segment_ord];
++            let alive = segment_reader.alive_bitset();
++            loop {
++                check_fts_work(connection.as_deref(), 1, 0)?;
++                let doc_id = scorer.doc();
++                if doc_id == TERMINATED {
++                    break;
+                 }
+-            }
+-            self.current_hits
+-                .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+-            return Ok(IOResult::Done(!self.current_hits.is_empty()));
+-        }
+-
+-        let top_docs = searcher
+-            .search(
+-                &query,
+-                &tantivy::collector::TopDocs::with_limit(limit).order_by_score(),
+-            )
+-            .map_err(|e| LimboError::InternalError(format!("FTS search error: {e}")))?;
+-
+-        // Group results by segment for efficient fast field access.
+-        // This avoids creating a new fast field reader for each document.
+-        let mut by_segment: HashMap<u32, Vec<(f32, tantivy::DocAddress)>> = HashMap::default();
+-        for (score, doc_addr) in top_docs {
+-            by_segment
+-                .entry(doc_addr.segment_ord)
+-                .or_default()
+-                .push((score, doc_addr));
+-        }
+-
+-        // Process each segment's results with a single fast field reader.
+-        // Fast fields provide columnar O(1) access to rowids without loading full documents.
+-        for (segment_ord, hits) in by_segment {
+-            let rowid_reader = &self.rowid_readers[segment_ord as usize];
+-
+-            for (score, doc_addr) in hits {
+-                let rowid = rowid_reader.first(doc_addr.doc_id).ok_or_else(|| {
++                let score = scorer.score();
++                scorer.advance();
++                if alive.is_some_and(|alive| alive.is_deleted(doc_id)) {
++                    continue;
++                }
++                let rowid = rowids.first(doc_id).ok_or_else(|| {
+                     LimboError::InternalError("FTS: rowid fast field missing value".into())
+                 })?;
+-                self.current_hits.push((score, doc_addr, rowid));
++                let hit = FtsOrderedHit(score, DocAddress::new(segment_ord as u32, doc_id), rowid);
++                if hits.len() < limit {
++                    check_fts_work(
++                        connection.as_deref(),
++                        0,
++                        (8 * size_of::<FtsOrderedHit>()) as u64,
++                    )?;
++                    hits.push(Reverse(hit));
++                } else if hits.peek().is_some_and(|worst| hit > worst.0) {
++                    *hits.peek_mut().expect("nonempty heap") = Reverse(hit);
++                }
+             }
+         }
+-
+-        // Re-sort by score since we grouped by segment (preserves original ranking order)
+-        self.current_hits
+-            .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
++        while let Some(Reverse(hit)) = hits.pop() {
++            check_fts_work(connection.as_deref(), 1, 0)?;
++            self.current_hits.push((hit.0, hit.1, hit.2));
++        }
++        self.current_hits.reverse();
+ 
+         Ok(IOResult::Done(!self.current_hits.is_empty()))
+     }
+diff --git a/core/index_method/fts/tests.rs b/core/index_method/fts/tests.rs
+index 05ec657..d18e54b 100644
+--- a/core/index_method/fts/tests.rs
++++ b/core/index_method/fts/tests.rs
+@@ -401,6 +401,7 @@ fn segment_load_reads_the_identities_the_build_wrote() {
+         segment.id(),
+         segment.descriptor.max_doc,
+         files,
++        None,
+     )
+     .unwrap();
+     assert_eq!(read_back, segment.data.identities);
+@@ -461,6 +462,7 @@ fn segment_load_rejects_the_old_identity_field() {
+         id,
+         1,
+         directory.captured_files(),
++        None,
+     )
+     .unwrap_err();
+     assert!(matches!(&error, LimboError::Corrupt(_)));
+@@ -570,29 +572,18 @@ fn snapshots_with_different_segment_sets_do_not_share_searchers() {
+ }
+ 
+ #[test]
+-fn segment_byte_cache_keeps_newest_and_respects_budget() {
++fn segment_byte_cache_retains_no_unadmitted_payloads() {
+     let mut cache = SegmentByteCache::default();
+-    let make_data = |bytes: usize| {
+-        let mut files = HashMap::default();
+-        files.insert("f".to_string(), Arc::<[u8]>::from(vec![0u8; bytes]));
+-        Arc::new(SegmentData::new(files, SegmentIdentities::new(Vec::new())))
+-    };
+-    let a = SegmentId::generate_random();
+-    let b = SegmentId::generate_random();
+-    let c = SegmentId::generate_random();
+-    cache.put(a, make_data(100), 250);
+-    cache.put(b, make_data(100), 250);
+-    cache.put(c, make_data(100), 250);
+-    assert!(cache.get(&a).is_none(), "oldest entry evicted over budget");
+-    assert!(cache.get(&b).is_some());
+-    assert!(cache.get(&c).is_some());
+-
+-    // An entry larger than the whole budget is still kept (it is the
+-    // newest); older entries are evicted to make room.
+-    cache.put(a, make_data(1000), 250);
+-    assert!(cache.get(&a).is_some());
+-    assert!(cache.get(&b).is_none());
+-    assert!(cache.get(&c).is_none());
++    let id = SegmentId::generate_random();
++    let data = Arc::new(SegmentData::new(
++        HashMap::default(),
++        SegmentIdentities::new(vec![]),
++    ));
++    let weak = Arc::downgrade(&data);
++    cache.put(id, data, usize::MAX);
++    assert!(cache.get(&id).is_none());
++    assert!(weak.upgrade().is_none());
++    assert_eq!(cache.total_bytes(), 0);
+ }
+ 
+ #[test]
+@@ -611,7 +602,9 @@ fn query_rowid_readers_follow_cached_searcher_order_and_snapshot() {
+     let mut cached = FtsCursor::new(&attachment);
+     cached.segments = vec![second, first];
+     cached.ensure_searcher().unwrap();
+-    assert!(Arc::ptr_eq(&original.rowid_readers, &cached.rowid_readers));
++    assert!(!Arc::ptr_eq(&original.rowid_readers, &cached.rowid_readers));
++    assert!(attachment.shared.searchers.lock().entries.is_empty());
++    assert!(attachment.shared.segment_bytes.lock().entries.is_empty());
+ 
+     for cursor in [&mut original, &mut cached] {
+         for pattern in [FTS_PATTERN_MATCH, FTS_PATTERN_COMBINED] {
+diff --git a/sdk-kit/src/capi.rs b/sdk-kit/src/capi.rs
+index 2610822..f3944f8 100644
+--- a/sdk-kit/src/capi.rs
++++ b/sdk-kit/src/capi.rs
+@@ -21,6 +21,25 @@ pub mod c {
+ 
+ pub static PKG_VERSION_C: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
+ 
++/// TerraScale's internal ABI: configure only while this connection is idle.
++/// The callback must remain alive until cleared and must not reenter Turso.
++#[no_mangle]
++pub extern "C" fn turso_connection_set_fts_progress_handler(
++    connection: *const c::turso_connection_t,
++    callback: Option<unsafe extern "C" fn(u64, u64) -> i32>,
++    error_opt_out: *mut *const std::ffi::c_char,
++) -> c::turso_status_code_t {
++    let connection = match unsafe { TursoConnection::ref_from_capi(connection) } {
++        Ok(connection) => connection,
++        Err(err) => return unsafe { err.to_capi(error_opt_out) },
++    };
++    connection.set_fts_progress_handler(callback.map(|callback| {
++        Box::new(move |work, bytes| unsafe { callback(work, bytes) != 0 })
++            as Box<dyn Fn(u64, u64) -> bool + Send + Sync>
++    }));
++    c::turso_status_code_t::TURSO_OK
++}
++
+ type CScalarFunction = unsafe extern "C" fn(
+     usize,
+     i32,
+diff --git a/sdk-kit/src/rsapi.rs b/sdk-kit/src/rsapi.rs
+index b6bc73f..1989c24 100644
+--- a/sdk-kit/src/rsapi.rs
++++ b/sdk-kit/src/rsapi.rs
+@@ -734,6 +734,7 @@ impl From<Box<LimboError>> for TursoError {
+ impl From<LimboError> for TursoError {
+     fn from(value: LimboError) -> Self {
+         match value {
++            LimboError::Interrupt => TursoError::Interrupt("interrupted".to_string()),
+             LimboError::ForeignKeyConstraint(e) | LimboError::Constraint(e) => {
+                 TursoError::Constraint(e)
+             }
+@@ -1174,6 +1175,12 @@ impl TursoConnection {
+     pub fn set_busy_timeout(&self, duration: Duration) {
+         self.connection.set_busy_timeout(duration);
+     }
++    pub fn set_fts_progress_handler(
++        &self,
++        handler: Option<Box<dyn Fn(u64, u64) -> bool + Send + Sync>>,
++    ) {
++        self.connection.set_fts_progress_handler(handler);
++    }
+     /// Request interruption of the statement currently running on this connection.
+     /// Mirrors `sqlite3_interrupt`: the in-flight `step`/`execute` aborts with an
+     /// `Interrupt` error. Safe to call from another thread. If no statement is
+diff --git a/sdk-kit/turso.h b/sdk-kit/turso.h
+index b6e423e..9003ea9 100644
+--- a/sdk-kit/turso.h
++++ b/sdk-kit/turso.h
+@@ -317,6 +317,13 @@ turso_status_code_t turso_database_connect(
+ /** Set busy timeout for the connection */
+ void turso_connection_set_busy_timeout_ms(const turso_connection_t *self, int64_t timeout_ms);
+ 
++/* TerraScale internal ABI. Additive work and byte charges, nonzero callback result aborts.
++ * Configure while idle; callback must remain alive until cleared and must not reenter Turso. */
++turso_status_code_t turso_connection_set_fts_progress_handler(
++    const turso_connection_t *self,
++    int32_t (*callback)(uint64_t work, uint64_t bytes),
++    const char **error_opt_out);
++
+ /** Get autocommit state of the connection */
+ bool turso_connection_get_autocommit(const turso_connection_t *self);
+ 

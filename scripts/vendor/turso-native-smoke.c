@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 static const char *error;
 
@@ -36,6 +37,119 @@ static void search(turso_connection_t *connection, const char *sql, const char *
     }
     expect(turso_statement_step(statement, &error), TURSO_DONE, sql);
     turso_statement_deinit(statement);
+}
+
+static uint64_t callback_calls, charged_work, charged_bytes, work_limit;
+static int stop_requested, stop_on_bytes;
+
+static int32_t fts_budget(uint64_t work, uint64_t bytes) {
+    callback_calls++;
+    charged_work += work;
+    charged_bytes += bytes;
+    return stop_requested || (stop_on_bytes && bytes != 0) || charged_work > work_limit;
+}
+
+static void reset_budget(turso_connection_t *connection) {
+    callback_calls = charged_work = charged_bytes = 0;
+    work_limit = UINT64_MAX;
+    stop_requested = stop_on_bytes = 0;
+    expect(turso_connection_set_fts_progress_handler(connection, fts_budget, &error), TURSO_OK, "set FTS callback");
+}
+
+static void interrupted(turso_connection_t *connection, const char *sql) {
+    turso_statement_t *statement = prepare(connection, sql);
+    expect(turso_statement_step(statement, &error), TURSO_INTERRUPT, sql);
+    assert(callback_calls != 0);
+    expect(turso_statement_reset(statement, &error), TURSO_OK, "reset interrupted FTS");
+    turso_statement_deinit(statement);
+    expect(turso_connection_set_fts_progress_handler(connection, NULL, &error), TURSO_OK, "clear FTS callback");
+}
+
+static uint64_t measure_work(turso_connection_t *connection, const char *sql) {
+    reset_budget(connection);
+    turso_statement_t *statement = prepare(connection, sql);
+    turso_status_code_t status;
+    while ((status = turso_statement_step(statement, &error)) == TURSO_ROW) { }
+    expect(status, TURSO_DONE, sql);
+    turso_statement_deinit(statement);
+    assert(charged_work > 64);
+    return charged_work;
+}
+
+static void budget_smoke(turso_connection_t *connection) {
+    execute(connection, "CREATE TABLE budget_docs(id INTEGER PRIMARY KEY, title TEXT)");
+    execute(connection, "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<256) INSERT INTO budget_docs SELECT x, 'native search' FROM n");
+    execute(connection, "CREATE INDEX budget_fts ON budget_docs USING fts(title)");
+    const char *stream = "SELECT id, fts_score(title, 'native') FROM budget_docs WHERE fts_match(title, 'native') LIMIT 10001";
+    const char *count = "SELECT count(*) FROM budget_docs WHERE fts_match(title, 'native')";
+    const char *ordered = "SELECT id, fts_score(title, 'native') AS score FROM budget_docs WHERE fts_match(title, 'native') ORDER BY score DESC LIMIT 10";
+    reset_budget(connection);
+    turso_statement_t *statement = prepare(connection, stream);
+    expect(turso_statement_step(statement, &error), TURSO_ROW, stream);
+    assert(charged_work > 0 && charged_bytes > 0);
+    /* Arm only after the first row: the native reader must poll while advancing postings. */
+    uint64_t previous_calls = callback_calls;
+    stop_requested = 1;
+    expect(turso_statement_step(statement, &error), TURSO_INTERRUPT, "cancel streaming native reader");
+    assert(callback_calls > previous_calls);
+    expect(turso_statement_reset(statement, &error), TURSO_OK, "reset streaming cancellation");
+    turso_statement_deinit(statement);
+    reset_budget(connection);
+    stop_on_bytes = 1;
+    interrupted(connection, stream);
+    uint64_t count_work = measure_work(connection, count);
+    reset_budget(connection);
+    work_limit = count_work - 64;
+    interrupted(connection, count);
+    uint64_t ordered_work = measure_work(connection, ordered);
+    reset_budget(connection);
+    work_limit = ordered_work - 64;
+    interrupted(connection, ordered);
+    reset_budget(connection);
+    /* An already-expired request deadline uses the same callback, before any SQL row function. */
+    stop_requested = 1;
+    interrupted(connection, stream);
+    statement = prepare(connection, count);
+    expect(turso_statement_step(statement, &error), TURSO_ROW, count);
+    assert(turso_statement_row_value_int(statement, 0) == 256);
+    expect(turso_statement_step(statement, &error), TURSO_DONE, count);
+    turso_statement_deinit(statement);
+    puts("native smoke: loading bytes, count, ordered scoring, streaming cancellation and recovery passed");
+}
+
+static void candidate_seek_smoke(turso_connection_t *connection) {
+    execute(connection, "CREATE TABLE collection(id TEXT NOT NULL UNIQUE, doc TEXT)");
+    execute(connection, "INSERT INTO collection VALUES ('one', '{\"body\":\"native\"}'), ('two', '{}')");
+    const char *from = " FROM (SELECT value AS hit_id FROM json_each(?1)) AS hits CROSS JOIN collection ON collection.id = hits.hit_id";
+    char sql[1024];
+    snprintf(sql, sizeof(sql), "EXPLAIN QUERY PLAN SELECT collection.id, collection.doc%s", from);
+    turso_statement_t *statement = prepare(connection, sql);
+    expect(turso_statement_bind_positional_text(statement, 1, "[\"one\"]", 7), TURSO_OK, "bind candidate ids");
+    int seeks = 0;
+    turso_status_code_t status;
+    while ((status = turso_statement_step(statement, &error)) == TURSO_ROW) {
+        int64_t length = turso_statement_row_value_bytes_count(statement, 3);
+        const char *text = turso_statement_row_value_bytes_ptr(statement, 3);
+        char detail[1024];
+        assert(length >= 0 && (size_t)length < sizeof(detail));
+        memcpy(detail, text, (size_t)length);
+        detail[length] = '\0';
+        printf("candidate plan: %s\n", detail);
+        assert(strstr(detail, "SCAN collection") == NULL);
+        seeks += strstr(detail, "SEARCH collection USING") != NULL;
+    }
+    expect(status, TURSO_DONE, sql);
+    assert(seeks == 1);
+    turso_statement_deinit(statement);
+    snprintf(sql, sizeof(sql), "SELECT collection.id%s", from);
+    statement = prepare(connection, sql);
+    expect(turso_statement_bind_positional_text(statement, 1, "[\"one\"]", 7), TURSO_OK, "bind candidate ids");
+    expect(turso_statement_step(statement, &error), TURSO_ROW, sql);
+    assert(turso_statement_row_value_bytes_count(statement, 0) == 3);
+    assert(memcmp(turso_statement_row_value_bytes_ptr(statement, 0), "one", 3) == 0);
+    expect(turso_statement_step(statement, &error), TURSO_DONE, sql);
+    turso_statement_deinit(statement);
+    puts("native smoke: json_each candidate lookup uses indexed id seek");
 }
 
 static int expression_execute(turso_connection_t *connection, const char *sql) {
@@ -88,6 +202,8 @@ int main(int argc, char **argv) {
         execute(connection, "ROLLBACK");
         search(connection, query, "rolledback", 0);
         puts("native smoke: column FTS match/score, commit, update, delete and rollback passed");
+        budget_smoke(connection);
+        candidate_seek_smoke(connection);
     } else {
         /* Expression support is diagnostic: the engine uses ordinary derived text columns. */
         execute(connection, "CREATE TABLE json_docs(id INTEGER PRIMARY KEY, doc TEXT)");

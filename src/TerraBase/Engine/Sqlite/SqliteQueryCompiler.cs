@@ -21,7 +21,7 @@ namespace TerraBase.Engine.Sqlite;
 /// (docs/terrabase/turso-spike.md). Sorts order by JSON type first, so an index serves filters, not sorts.
 /// </remarks>
 internal sealed class SqliteQueryCompiler(
-    SqliteParameterCollection parameters, RowSource rows, IReadOnlyDictionary<SearchFilter, string>? searches = null)
+    SqliteParameterCollection parameters, RowSource rows, IReadOnlyDictionary<SearchFilter, int>? searches = null, string? candidates = null)
 {
     // Sort rank by JSON type: missing < null < false < true < numbers < strings < arrays/objects.
     private const string RankCases =
@@ -29,7 +29,14 @@ internal sealed class SqliteQueryCompiler(
         "WHEN 'text' THEN 5 WHEN 'array' THEN 6 WHEN 'object' THEN 6 ELSE 0 END";
 
     private readonly Dictionary<string, string> _paths = [];
-    private readonly Dictionary<SearchFilter, string> _terms = [];
+    private string? _candidateParameter;
+
+    private string? CandidateParameter => candidates is null ? null : _candidateParameter ??= Parameter(candidates);
+
+    // The bounded hit list drives primary-key seeks instead of scanning the collection. The subquery hides json_each.id.
+    private string From => CandidateParameter is { } ids
+        ? $"(SELECT value AS hit_id FROM json_each({ids})) AS hits CROSS JOIN {rows.From} ON {rows.From}.id = hits.hit_id"
+        : rows.From;
 
     /// <summary>
     /// Columns: id, version, JSON byte length, then per sort key its type rank and scalar value.
@@ -66,7 +73,7 @@ internal sealed class SqliteQueryCompiler(
             SELECT id, {4} AS version, octet_length({5}) AS size{0}
             FROM {6} WHERE {1}{7} AND {2} AND {3}
             ORDER BY
-            """, columns.ToString(), observe ? "tb_query_scan(id) AND " : "", ScanGuardedFilter(query.Filter), after, rows.Version, rows.Json, rows.From, rows.Live);
+            """, columns.ToString(), observe ? "tb_query_scan(id) AND " : "", ScanGuardedFilter(query.Filter), after, rows.Version, rows.Json, From, rows.Live);
         if (leadingId)
         {
             // Ids are unique within a collection: later sort keys cannot break a tie. Ordering by the
@@ -94,7 +101,16 @@ internal sealed class SqliteQueryCompiler(
     /// tombstone test. A separate bounded index scan detects an overflow row without loading its body or
     /// evaluating its filter: only the first <paramref name="maxExamined"/> rows contribute matches.
     /// </summary>
-    public string CompileCount(DocumentFilter? filter, long maxExamined, bool observe = false) => rows == RowSource.System || rows == RowSource.Empty
+    public string CompileCount(DocumentFilter? filter, long maxExamined, bool observe = false) => CandidateParameter is not null
+        ? $"""
+        SELECT count(*) + EXISTS (
+            SELECT 1 FROM {From} ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
+        ), coalesce(sum(matched), 0) FROM (
+            SELECT {BudgetedFilter(filter)} AS matched FROM {From}
+            {(observe ? "WHERE tb_query_scan(id)" : "")} ORDER BY id LIMIT {Parameter(maxExamined)}
+        );
+        """
+        : rows == RowSource.System || rows == RowSource.Empty
         ? $"""
         SELECT count(*) + EXISTS (
             SELECT 1 FROM {Counted} {(observe ? "AND tb_query_scan(id)" : "")} ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
@@ -147,30 +163,9 @@ internal sealed class SqliteQueryCompiler(
         _ => throw new ArgumentOutOfRangeException(nameof(filter), filter.GetType().Name, "unknown filter"),
     };
 
-    private string Search(SearchFilter search)
-    {
-        var table = searches![search];
-        var terms = Terms(search);
-        return $"id IN (SELECT id FROM {table} WHERE fts_match(text, {terms}) AND tb_qos_scan(octet_length(text)))";
-    }
+    private string Search(SearchFilter search) => $"tb_search_match({searches![search].ToString(CultureInfo.InvariantCulture)}, id)";
 
-    private string Score()
-    {
-        var search = searches!.Single();
-        var terms = Terms(search.Key);
-        return $"coalesce((SELECT fts_score(text, {terms}) FROM {search.Value} WHERE fts_match(text, {terms}) AND {search.Value}.id = {rows.From}.id AND tb_qos_scan(octet_length(text))), 0.0)";
-    }
-
-    private string Terms(SearchFilter search)
-    {
-        if (!_terms.TryGetValue(search, out var parameter))
-        {
-            parameter = Parameter(search.Terms);
-            _terms[search] = parameter;
-        }
-
-        return parameter;
-    }
+    private static string Score() => "tb_search_score(id)";
 
     private string Compare(CompareFilter compare)
     {

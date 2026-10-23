@@ -433,15 +433,8 @@ internal sealed partial class SqliteStorageTransaction(
     public async ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken, QueryObservation? observation = null)
     {
         ArgumentNullException.ThrowIfNull(query);
-        return await RunAsync(() => WithQueryBudget(() =>
-        {
-            if ((query.Sort.Count > 0 && (!query.Sort[0].Path.IsId || query.Sort[0].Score)) || Searches(query.Filter).Any())
-            {
-                CheckSortBudget(query.Collection, query.MaxBytes, cancellationToken, observation);
-            }
-
-            return ReadQuery(query, observation, cancellationToken);
-        }, cancellationToken, observation), cancellationToken).ConfigureAwait(false);
+        return await RunAsync(() => WithQueryBudget(() => ReadQuery(query, observation, cancellationToken),
+            cancellationToken, observation), cancellationToken).ConfigureAwait(false);
     }
 
     // Runs only inside a pool item: the native progress callback and its removal own this connection.
@@ -478,8 +471,12 @@ internal sealed partial class SqliteStorageTransaction(
     private QueryBudget StartQueryBudget(CancellationToken cancellationToken)
     {
         var budget = new QueryBudget(store.Time, store.QueryBudget,
-            !store.IsSystem && QosContext.Current is { } tenant ? QosPolicy.For(tenant.Plan) : null);
-        // Turso has no progress handler: the per-row functions stop the statement (SqliteSession.StopWhen).
+            !store.IsSystem && QosContext.Current is { } tenant ? QosPolicy.For(tenant.Plan) : null,
+            store.SchemaMemory is { } memory ? new QosContext.ResultMemory(memory) : null);
+        _queryBudget = budget;
+        session.Connection.SetFtsProgressHandler((work, bytes) =>
+            cancellationToken.IsCancellationRequested || budget.Native(work, bytes));
+        // SQL row functions and native FTS share this request's work and deadline.
         // The clock is read every 32nd row, about as often as SQLite's handler ran (every 1000 instructions).
         var rows = 0;
         session.StopWhen(() => cancellationToken.IsCancellationRequested || (++rows % 32 == 0 && budget.Exceeded));
@@ -513,6 +510,8 @@ internal sealed partial class SqliteStorageTransaction(
 
     private void StopQueryBudget()
     {
+        session.Connection.SetFtsProgressHandler(null);
+        _queryBudget?.Dispose();
         _queryBudget = null;
         session.StopWhen(null);
         if (_qosScanRegistered)
@@ -532,7 +531,7 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     // A stream accumulates SQLite execution time, excluding worker queueing and consumer time between rows.
-    private sealed class QueryBudget(TimeProvider time, TimeSpan defaultDeadline, QosPolicy? policy)
+    private sealed class QueryBudget(TimeProvider time, TimeSpan defaultDeadline, QosPolicy? policy, QosContext.ResultMemory? memory) : IDisposable
     {
         private bool _running = true;
         private long _started = time.GetTimestamp();
@@ -547,6 +546,8 @@ internal sealed partial class SqliteStorageTransaction(
         private long _rows;
         private long _bytes;
         private long _work;
+        private long _nativeBytes;
+        private long _nativeReserved;
         private bool ScanExceeded { get; set; }
 
         private int _jsonReads;
@@ -583,6 +584,40 @@ internal sealed partial class SqliteStorageTransaction(
             return false;
         }
 
+        // Native residency, temporary chunks and scorer buffers are charged before allocation, including cache hits.
+        public bool Native(ulong work, ulong bytes)
+        {
+            var byteLimit = Math.Min(policy?.ScanBytes ?? 128 * 1024 * 1024, 128 * 1024 * 1024);
+            if (Exceeded || work > (ulong)Math.Max(0, _workLimit - _work)
+                || bytes > (ulong)Math.Max(0, byteLimit - _nativeBytes))
+            {
+                ScanExceeded = true;
+                return true;
+            }
+
+            _work += (long)work;
+            _nativeBytes += (long)bytes;
+            if (memory is not null && _nativeBytes > _nativeReserved)
+            {
+                var reserve = Math.Min(64 * 1024, byteLimit - _nativeReserved);
+                reserve = Math.Max(reserve, _nativeBytes - _nativeReserved);
+                try
+                {
+                    memory.Reserve(reserve, QosContext.Current);
+                    _nativeReserved += reserve;
+                }
+                catch (QosMemoryException)
+                {
+                    ScanExceeded = true;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public void Dispose() => memory?.Dispose();
+
         public TimeSpan Spent => _running ? _paused + time.GetElapsedTime(_started) : _paused;
 
         public void Resume()
@@ -605,12 +640,19 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     // Bound both candidate count and JSON bytes before SQLite retains bodies in its temporary sorter.
-    private void CheckSortBudget(string collection, long maxBytes, CancellationToken cancellationToken, QueryObservation? observation = null)
+    private void CheckSortBudget(string collection, long maxBytes, CancellationToken cancellationToken, QueryObservation? observation = null, string? candidates = null)
     {
         var source = Rows(collection);
         using var command = Uncached(collection);
+        var from = source.From;
+        if (candidates is not null)
+        {
+            command.Parameters.AddWithValue("$hits", candidates);
+            from = $"(SELECT value AS hit_id FROM json_each($hits)) AS hits CROSS JOIN {source.From} ON {source.From}.id = hits.hit_id";
+        }
+
         command.CommandText = $"""
-            SELECT octet_length({source.Json}) FROM {source.From}
+            SELECT octet_length({source.Json}) FROM {from}
             WHERE {(observation is not null ? "tb_query_scan(id) AND " : "")}{source.Live} ORDER BY id LIMIT 10001;
             """;
         CountRead("query");
@@ -635,9 +677,15 @@ internal sealed partial class SqliteStorageTransaction(
 
     private QueryPage ReadQuery(DocumentQuery query, QueryObservation? observation, CancellationToken cancellationToken)
     {
+        using var searches = PrepareSearch(query.Collection, query.Filter, cancellationToken);
+        if (query.Sort.Count > 0 && (!query.Sort[0].Path.IsId || query.Sort[0].Score))
+        {
+            CheckSortBudget(query.Collection, query.MaxBytes, cancellationToken, observation, searches.Candidates);
+        }
+
         // Compiled per request so every new filter shape does not grow the session's command cache.
         using var command = Uncached(query.Collection);
-        command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(query.Collection), SearchTables(query.Collection, query.Filter, cancellationToken)).Compile(query, observation is not null);
+        command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(query.Collection), searches.Ordinals, searches.Candidates).Compile(query, observation is not null);
         _queryBudget!.Charge(command.CommandText);
         if (query.Near is not { } near)
         {
@@ -708,8 +756,9 @@ internal sealed partial class SqliteStorageTransaction(
         {
             // A client count examines the collection's state rows: this transaction's writes need theirs.
             FlushStates();
+            using var searches = PrepareSearch(collection, filter, cancellationToken);
             using var command = Uncached(collection);
-            command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(collection), SearchTables(collection, filter, cancellationToken)).CompileCount(filter, maxExamined, observation is not null);
+            command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(collection), searches.Ordinals, searches.Candidates).CompileCount(filter, maxExamined, observation is not null);
             _queryBudget!.Charge(command.CommandText);
             CountRead("query");
             using var reader = command.ExecuteReader();

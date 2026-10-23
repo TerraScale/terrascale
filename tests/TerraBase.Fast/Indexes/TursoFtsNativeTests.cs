@@ -6,6 +6,32 @@ namespace TerraBase.Fast.Indexes;
 public sealed class TursoFtsNativeTests
 {
     [Test]
+    public async Task Native_fts_interrupts_use_the_sqlite_interrupt_code_and_release_the_callback()
+    {
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "CREATE TABLE t(id INTEGER PRIMARY KEY, title TEXT); CREATE INDEX t_fts ON t USING fts(title); INSERT INTO t VALUES (1, 'native search'), (2, 'native search');";
+        command.ExecuteNonQuery();
+        var calls = 0;
+        connection.SetFtsProgressHandler((_, _) => ++calls > 0);
+        try
+        {
+            command.CommandText = "SELECT count(*) FROM t WHERE fts_match(title, 'native');";
+            var error = Assert.Throws<SqliteException>(() => command.ExecuteScalar());
+            await Assert.That(error.SqliteErrorCode).IsEqualTo(9);
+            await Assert.That(calls).IsGreaterThan(0);
+        }
+        finally
+        {
+            connection.SetFtsProgressHandler(null);
+        }
+
+        command.CommandText = "SELECT count(*) FROM t WHERE fts_match(title, 'native');";
+        await Assert.That((long)command.ExecuteScalar()!).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task Native_fts_indexes_match_rank_and_reopen()
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-native-fts-");

@@ -110,20 +110,20 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
     /// and digits, so <c>_</c> can only mark a boundary. Otherwise every part is escaped (<c>_</c> → <c>_u</c>,
     /// <c>.</c> → <c>_d</c>, <c>-</c> → <c>_h</c>, an upper-case letter → <c>_c</c> and the letter), the parts are joined by
     /// <c>__</c>, which no escaped part contains (so no plain name either), and a hash of the exact definition is appended:
-    /// <c>people_ua__email_…</c> and <c>people__a_uemail_…</c>. Distinct definitions get distinct names; only a name cut to
-    /// 63 characters (the cut keeps room for the fields) relies on the hash alone.
+    /// <c>people_ua__email_…</c> and <c>people__a_uemail_…</c>. The hash includes the kind, distinguishing text and B-tree
+    /// definitions with identical readable names, and names cut to 63 characters (the cut keeps room for the fields).
     /// </summary>
     internal static string DefaultName(string collection, IEnumerable<DocumentField> fields, string kind = "btree")
     {
-        string[] parts = [collection, .. fields.Select(field => field.Path), .. kind == "text" ? new[] { "text" } : Array.Empty<string>()];
+        string[] parts = [collection, .. fields.Select(field => field.Path)];
         var joined = string.Join('_', parts);
-        if (!parts.Any(NotNameCharacter().IsMatch) && IsValidName(joined))
+        if (kind == "btree" && !parts.Any(NotNameCharacter().IsMatch) && IsValidName(joined))
         {
             return joined;
         }
 
-        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\0', parts))))[..HashLength];
-        var name = string.Join("__", parts.Select(Escape));
+        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(kind + "\0" + string.Join('\0', parts))))[..HashLength];
+        var name = (kind == "text" ? "text__" : "") + string.Join("__", parts.Select(Escape));
         var readableLength = MaxNameLength - HashLength - 1;
         if (name.Length > readableLength)
         {

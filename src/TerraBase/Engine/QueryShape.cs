@@ -96,7 +96,7 @@ public static class QueryShape
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var key in keys)
         {
-            var path = key.Score ? new JsonArray("$score") : Path(key.Path);
+            JsonArray? path = key.Score ? ["$score"] : Path(key.Path);
             if (seen.Add(JsonSerializer.Serialize(path, TerraBaseJsonContext.Default.JsonNode)))
             {
                 sort.Add(new JsonArray(path, key.Descending));

@@ -51,8 +51,7 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
 
     /// <summary>
     /// Sets what the per-row functions (<c>tb_query_scan</c>, <c>tb_qos_scan</c>) check: once it returns true they fail
-    /// the running statement. Turso has no <c>sqlite3_interrupt</c> or progress handler, so this is the only way to stop a
-    /// statement before it finishes (docs/terrabase/turso-spike.md).
+    /// the running statement. Native FTS also checks the shared request budget inside loading and posting traversal.
     /// </summary>
     public void StopWhen(Func<bool>? stop) => _stop = stop;
 
@@ -66,7 +65,8 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     }
 
     /// <summary>Whether <paramref name="error"/> is a statement <see cref="ThrowIfStopped"/> failed.</summary>
-    public static bool Stopped(SqliteException error) => error.Message.Contains(StoppedMessage, StringComparison.Ordinal);
+    public static bool Stopped(SqliteException error) => error.SqliteErrorCode == 9
+        || error.Message.Contains(StoppedMessage, StringComparison.Ordinal);
 
     /// <summary>Whether <paramref name="error"/> is lock contention; Turso reports every local error with code 1.</summary>
     public static bool Busy(SqliteException error) => error.Message.Contains("database is locked", StringComparison.Ordinal);

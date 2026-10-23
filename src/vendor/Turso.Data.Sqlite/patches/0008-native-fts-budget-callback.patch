@@ -1,0 +1,101 @@
+From: TerraScale
+Subject: [PATCH] Account and interrupt native FTS work per request
+
+diff --git a/src/Turso.Data.Sqlite/SqliteCommand.cs b/src/Turso.Data.Sqlite/SqliteCommand.cs
+index f8afb1e4f..4023c8593 100644
+--- a/src/Turso.Data.Sqlite/SqliteCommand.cs
++++ b/src/Turso.Data.Sqlite/SqliteCommand.cs
+@@ -983,11 +983,12 @@ public class SqliteCommand : DbCommand
+     }
+ 
+     // TerraScale: damage keeps its SQLite code (SQLITE_IOERR 10, SQLITE_CORRUPT 11, SQLITE_NOTADB 26); every other local
+-    // status stays SQLITE_ERROR, as upstream reports it.
++    // status stays SQLITE_ERROR, as upstream reports it, except native interruption (SQLITE_INTERRUPT 9).
+     internal static int GetNativeSqliteErrorCode(TursoException ex)
+         => ex is TursoNativeException native
+             ? native.StatusCode switch
+             {
++                5 => 9,
+                 132 => 26,
+                 133 => 11,
+                 134 => 10,
+diff --git a/src/Turso.Data.Sqlite/SqliteConnection.cs b/src/Turso.Data.Sqlite/SqliteConnection.cs
+index 89595abbb..99ae83bb7 100644
+--- a/src/Turso.Data.Sqlite/SqliteConnection.cs
++++ b/src/Turso.Data.Sqlite/SqliteConnection.cs
+@@ -700,6 +700,10 @@ public partial class SqliteConnection : DbConnection
+     private TursoStatementHandle PrepareProbe(string sql)
+         => ProbeStatements?.Invoke(sql) ?? TursoBindings.PrepareStatement(DatabaseHandle, sql);
+ 
++    /// <summary>Sets native FTS work/byte accounting on an idle local connection. True interrupts the statement.</summary>
++    public void SetFtsProgressHandler(Func<ulong, ulong, bool>? callback)
++        => TursoBindings.SetFtsProgressHandler(DatabaseHandle, callback);
++
+     internal TursoDatabaseHandle DatabaseHandle
+     {
+         get
+diff --git a/src/Turso.Raw/Public/Handles/TursoDatabaseHandle.cs b/src/Turso.Raw/Public/Handles/TursoDatabaseHandle.cs
+index 456f84eeb..a7bb79fd1 100644
+--- a/src/Turso.Raw/Public/Handles/TursoDatabaseHandle.cs
++++ b/src/Turso.Raw/Public/Handles/TursoDatabaseHandle.cs
+@@ -10,6 +10,7 @@ public class TursoDatabaseHandle() : SafeHandle(IntPtr.Zero, true)
+     private readonly Lock _statementsGate = new();
+     private readonly HashSet<WeakReference<TursoStatementHandle>> _statements = [];
+     private bool _deinitializeOnly;
++    internal TursoInterop.FtsProgressCallback? FtsProgressHandler;
+ 
+     /// <summary>The owning copy's current refusal, read immediately before releasing its native connection.</summary>
+     public Func<string?>? CloseRefusal { get; set; }
+@@ -74,6 +75,8 @@ public class TursoDatabaseHandle() : SafeHandle(IntPtr.Zero, true)
+                 }
+ 
+                 TursoInterop.ConnectionDeinit(handle);
++                GC.KeepAlive(FtsProgressHandler);
++                FtsProgressHandler = null;
+             }
+         }
+ 
+diff --git a/src/Turso.Raw/Public/TursoBindings.cs b/src/Turso.Raw/Public/TursoBindings.cs
+index 262a12764..988ba0d8b 100644
+--- a/src/Turso.Raw/Public/TursoBindings.cs
++++ b/src/Turso.Raw/Public/TursoBindings.cs
+@@ -71,6 +71,21 @@ public static class TursoBindings
+         }
+     }
+ 
++    /// <summary>Sets additive native FTS work/byte accounting while idle. True aborts; callbacks must not reenter Turso.</summary>
++    public static void SetFtsProgressHandler(TursoDatabaseHandle db, Func<ulong, ulong, bool>? callback)
++    {
++        ArgumentNullException.ThrowIfNull(db);
++        db.ThrowIfInvalid();
++        TursoInterop.FtsProgressCallback? native = callback is null ? null : (work, bytes) =>
++        {
++            try { return callback(work, bytes) ? 1 : 0; }
++            catch { return 1; } // Exceptions must never cross the unmanaged callback boundary.
++        };
++        var status = TursoInterop.SetFtsProgressHandler(db, native, out var errorPtr);
++        ThrowIfError(status, errorPtr);
++        db.FtsProgressHandler = native;
++    }
++
+     public static TursoStatementHandle PrepareStatement(TursoDatabaseHandle db, string sql)
+     {
+         db.ThrowIfInvalid();
+diff --git a/src/Turso.Raw/TursoInterop.cs b/src/Turso.Raw/TursoInterop.cs
+index 80e7bcb15..6e442b530 100644
+--- a/src/Turso.Raw/TursoInterop.cs
++++ b/src/Turso.Raw/TursoInterop.cs
+@@ -79,6 +79,13 @@ internal static class TursoInterop
+     [DllImport(DllName, EntryPoint = "turso_connection_deinit", CallingConvention = CallingConvention.Cdecl)]
+     public static extern void ConnectionDeinit(IntPtr connection);
+ 
++    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
++    internal delegate int FtsProgressCallback(ulong work, ulong bytes);
++
++    [DllImport(DllName, EntryPoint = "turso_connection_set_fts_progress_handler", CallingConvention = CallingConvention.Cdecl)]
++    internal static extern TursoStatusCode SetFtsProgressHandler(
++        TursoDatabaseHandle connection, FtsProgressCallback? callback, out IntPtr errorPtr);
++
+     [DllImport(DllName, EntryPoint = "turso_connection_register_scalar_function", CallingConvention = CallingConvention.Cdecl)]
+     public static extern TursoStatusCode RegisterScalarFunction(
+         TursoDatabaseHandle connection,
