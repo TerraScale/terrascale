@@ -14,6 +14,7 @@ Use the [quickstart](/pt-br/getting-started/) to establish one working applicati
 - [SDK reference](/pt-br/guides/sdks): public installation, language support and API compatibility.
 - [Authentication](/pt-br/guides/authentication): credential scope and server/browser boundaries.
 - [Queries and pagination](/pt-br/guides/queries): filters, projection, cursors and version preconditions.
+- [Connect with psql and Postgres drivers](/pt-br/guides/postgres-clients): SQL over the PostgreSQL wire protocol from psql and standard drivers (pending).
 - [Errors and safe retries](/pt-br/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/pt-br/guides/indexes): secondary indexes, recommendations and automatic indexing.
 - [Schema validation](/pt-br/guides/schema-validation): JSON Schema checks and unique keys per collection.

@@ -14,6 +14,7 @@ Use the [quickstart](/fr/getting-started/) to establish one working application 
 - [SDK reference](/fr/guides/sdks): public installation, language support and API compatibility.
 - [Authentication](/fr/guides/authentication): credential scope and server/browser boundaries.
 - [Queries and pagination](/fr/guides/queries): filters, projection, cursors and version preconditions.
+- [Connect with psql and Postgres drivers](/fr/guides/postgres-clients): SQL over the PostgreSQL wire protocol from psql and standard drivers (pending).
 - [Errors and safe retries](/fr/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/fr/guides/indexes): secondary indexes, recommendations and automatic indexing.
 - [Schema validation](/fr/guides/schema-validation): JSON Schema checks and unique keys per collection.
