@@ -48,8 +48,8 @@ internal interface IShapeStorageTransaction
     /// <summary>
     /// Seals one whole-commit prefix, returning its end, this transaction's committed head and the bytes of the chunk this call
     /// inserted with its admission (null when reused or nothing was sealed). The caller disposes it after commit or failure.
-    /// With <paramref name="remote"/> nothing is sealed while
-    /// the remote durable frontier is below the head (values_at): the end is then <paramref name="offset"/>.
+    /// With <paramref name="remote"/> the chunk ends at or below the remote durable frontier F, at values_at = F, before the
+    /// first commit with a document written above F: the end is <paramref name="offset"/> when that is the first commit.
     /// </summary>
     ValueTask<(long Offset, long Head, ShapeSealedChunk? Chunk)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through, bool remote,
         IMemoryBudget memory, CancellationToken cancellationToken);
@@ -77,8 +77,8 @@ public interface IShapeSealer
 {
     /// <summary>
     /// Seals every chunk through the committed head observed on entry; returns the sealed boundary. In a cell a chunk seals
-    /// only once the head it materializes at is remote durable (FR-25): until then this waits for commits and frontier moves,
-    /// for at most 20 s.
+    /// only values that are remote durable (FR-25): a commit waits for commits and frontier moves until F covers it and no
+    /// write above F touches its documents, for at most 20 s.
     /// </summary>
     /// <exception cref="ShapeUndurableException">The frontier stayed below the head past the wait.</exception>
     ValueTask<long> SealUpToHeadAsync(IDatabaseStore store, ShapeSealDefinition shape, long offset,

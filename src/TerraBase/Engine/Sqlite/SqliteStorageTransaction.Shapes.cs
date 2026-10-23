@@ -67,13 +67,16 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             return (offset, head, null);
         }
 
-        if (remote && offset < head && ShapeFrontierOrHead(remote: true) < head)
+        // In a cell, values read at the head are durable for a document with no feed row above F, so a chunk covers commits
+        // through F whose documents have none, at values_at = F. Under steady writes the head never equals F.
+        var frontier = remote ? ShapeFrontierOrHead(remote: true) : head;
+        if (frontier < head && (frontier <= offset || head - frontier > ShapeRows))
         {
-            // Nothing sealed: the head holds a write no other region is known to hold yet.
+            // Nothing sealed: no commit past offset is held by another region yet, or too many are unheld to check.
             return (offset, head, null);
         }
 
-        var end = Math.Min(through ?? head, head);
+        var end = Math.Min(through ?? head, frontier);
         if (offset > end || !ShapeBoundary(offset))
         {
             throw new ShapeSealOffsetException();
@@ -82,13 +85,19 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         ValidateShapeCapture(memory, cancellationToken);
         using var admission = new ShapeMemory(memory, store.Tenant);
         admission.Reserve(256 * 1024);
+        var unsettled = frontier < head ? ShapeUnsettled(shape.Collection, frontier, admission) : null;
+        if (unsettled is { Count: > 0 } && ReadUniqueConstraints(shape.Collection).Count > 0)
+        {
+            // A uniqueness write can hide or show another document of its collection without that document's own feed row.
+            return (offset, head, null);
+        }
         var changes = new ArrayBufferWriter<byte>();
         var covered = offset;
         var count = 0;
         var emitted = 0;
         // Account for the largest v1 resume envelope without rehashing retained history for every candidate commit.
         var resumeSize = new string('0', Base64Url.GetEncodedLength(17 + ChangeCursor.MaxBytes));
-        var envelopeBytes = ShapeEnvelope(shape, offset, head, head, resumeSize, []).Length;
+        var envelopeBytes = ShapeEnvelope(shape, offset, head, frontier, resumeSize, []).Length;
         while (covered < end)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -98,15 +107,20 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
                 break;
             }
             using var candidate = new ShapeMemory(memory, store.Tenant);
-            byte[] change;
+            byte[]? change;
             try
             {
                 candidate.Reserve(ShapeChangeBytes(shape, covered, next.End));
-                change = ShapeChange(shape, covered, next.End, cancellationToken);
+                change = ShapeChange(shape, covered, next.End, unsettled, cancellationToken);
             }
             catch (Exception error) when (count > 0 && error is ShapeTooLargeException or QosMemoryException)
             {
                 // Publish the fitting prefix first; the next seal refuses at the oversized commit itself.
+                break;
+            }
+            if (change is null)
+            {
+                // A document of this commit has a write above F: publish the prefix, and the rest waits for F.
                 break;
             }
             // Include envelope and cursor overhead in the limit, not only document bytes.
@@ -118,7 +132,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             if (count == 0 && size > ShapeCommitBytes)
             {
                 // The singleton bound is exact: a smaller real cursor must not turn a fitting commit into a refusal.
-                var exact = ShapeEnvelope(shape, offset, next.End, head, ShapeResume(shape.ResumeScope.Span, next.End, cancellationToken),
+                var exact = ShapeEnvelope(shape, offset, next.End, frontier, ShapeResume(shape.ResumeScope.Span, next.End, cancellationToken),
                     change);
                 if (exact.Length > ShapeCommitBytes)
                 {
@@ -143,7 +157,12 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             }
         }
 
-        var body = ShapeEnvelope(shape, offset, covered, head, ShapeResume(shape.ResumeScope.Span, covered, cancellationToken),
+        if (covered == offset)
+        {
+            return (offset, head, null);
+        }
+
+        var body = ShapeEnvelope(shape, offset, covered, frontier, ShapeResume(shape.ResumeScope.Span, covered, cancellationToken),
             changes.WrittenSpan);
         var insert = Command("INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) VALUES ($handle, $offset, $end, $body, $at);");
         insert.Parameters.AddWithValue("$handle", shape.Handle);
@@ -157,7 +176,31 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         // The caller keeps the inserted bytes and their admission through commit, so publication never rereads the body.
         var retained = new ShapeMemory(memory, store.Tenant);
         admission.TransferTo(retained);
-        return (covered, head, new ShapeSealedChunk(offset, covered, head, body, retained, sealedAt));
+        return (covered, head, new ShapeSealedChunk(offset, covered, frontier, body, retained, sealedAt));
+    }
+
+    // The ids of this collection with a feed row above the frontier: their values at the head are not held elsewhere yet.
+    private HashSet<string> ShapeUnsettled(string collection, long frontier, ShapeMemory admission)
+    {
+        var size = Command("SELECT coalesce(sum(octet_length(id)), 0), count(*) FROM _tb_feed WHERE seq > $frontier AND collection = $collection;", collection);
+        size.Parameters.AddWithValue("$frontier", frontier);
+        CountRead("shape");
+        using (var reader = size.ExecuteReader())
+        {
+            reader.Read();
+            admission.Reserve(checked(reader.GetInt64(0) * ShapeIdMemoryPerByte + reader.GetInt64(1) * 64));
+        }
+
+        var command = Command("SELECT id FROM _tb_feed WHERE seq > $frontier AND collection = $collection;", collection);
+        command.Parameters.AddWithValue("$frontier", frontier);
+        HashSet<string> ids = [with(StringComparer.Ordinal)];
+        CountRead("shape");
+        using var rows = command.ExecuteReader();
+        while (rows.Read())
+        {
+            ids.Add(rows.GetString(0));
+        }
+        return ids;
     }
 
     private bool ShapeBoundary(long offset)
@@ -233,7 +276,8 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         return count > 0 ? (commit, end, count) : throw new ShapeSealOffsetException();
     }
 
-    private byte[] ShapeChange(ShapeSealDefinition shape, long start, long end, CancellationToken cancellationToken)
+    // Null when a document of the range is in `unsettled`.
+    private byte[]? ShapeChange(ShapeSealDefinition shape, long start, long end, HashSet<string>? unsettled, CancellationToken cancellationToken)
     {
         var command = Command("""
             SELECT id FROM _tb_feed WHERE seq IN
@@ -254,6 +298,10 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         if (rows.Count == 0)
         {
             return [];
+        }
+        if (unsettled is not null && rows.Exists(unsettled.Contains))
+        {
+            return null;
         }
 
         rows.Sort(StringComparer.Ordinal);
