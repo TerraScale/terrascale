@@ -44,7 +44,13 @@ internal sealed class SqlService(
                     if (await SqlTable.ReadAsync(transaction, collection.Name, cancellationToken).ConfigureAwait(false) is { } table)
                     {
                         tables.Add(new SqlTableInfo(collection.Name, [.. table.Columns.Select(column => new SqlTableColumn(
-                            column.Name, column.Type.Length == 0 ? null : column.Type, column.NotNull, table.PrimaryKey.Contains(column.Name)))]));
+                            column.Name, column.Type.Length == 0 ? null : column.Type, column.NotNull, table.PrimaryKey.Contains(column.Name),
+                            column.Default switch
+                            {
+                                { ValueKind: JsonValueKind.String } text => "'" + text.GetString()!.Replace("'", "''", StringComparison.Ordinal) + "'",
+                                { } number => number.GetRawText(),
+                                null => null,
+                            }))]));
                     }
                 }
 

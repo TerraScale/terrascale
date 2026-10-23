@@ -112,6 +112,32 @@ public sealed class SqlReadTests
         await Assert.That(syntax is SqlError { Kind: "syntax" }).IsTrue();
     }
 
+    // As in SQLite, a comparison with a column applies the column's affinity to the constant side.
+    [Test]
+    public async Task Comparisons_apply_column_affinity_to_literals_and_parameters_and_tables_report_defaults()
+    {
+        await using var api = await SeedAsync();
+        await SqlApi.OkAsync(api, "CREATE TABLE d (k TEXT PRIMARY KEY, n INTEGER DEFAULT -1, label TEXT DEFAULT 'it''s')", "INSERT INTO d (k) VALUES (7)");
+
+        (object Statement, string Rows)[] cases =
+        [
+            (new { sql = "SELECT name FROM people WHERE id = '2'" }, """[["bob"]]"""),
+            (new { sql = "SELECT name FROM people WHERE '3' = id" }, """[["cy"]]"""),
+            (new { sql = "SELECT name FROM people WHERE id IN ('1', '2') ORDER BY id" }, """[["ann"],["bob"]]"""),
+            (new { sql = "SELECT name FROM people WHERE id = ?", args = new object[] { "1" } }, """[["ann"]]"""),
+            (new { sql = "SELECT k FROM d WHERE k = 7" }, """[["7"]]"""),
+            (new { sql = "SELECT name FROM people WHERE score > '2'" }, """[["bob"]]"""),
+        ];
+
+        foreach (var (statement, rows) in cases)
+        {
+            await Assert.That(await RowsAsync(api, statement)).IsEqualTo(rows).Because(JsonSerializer.Serialize(statement));
+        }
+
+        var table = (await api.Server.Services.GetRequiredService<ISqlService>().ListTablesAsync(await api.TenantOfAsync(), CancellationToken.None)).Single(item => item.Name == "d");
+        await Assert.That(table.Columns.Select(column => column.Default)).IsEquivalentTo([null, "-1", "'it''s'"]);
+    }
+
     [Test]
     public async Task Reads_outside_sql_tables_functions_and_bounds_are_refused()
     {

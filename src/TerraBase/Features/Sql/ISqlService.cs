@@ -139,7 +139,8 @@ internal interface ISqlSession : IAsyncDisposable
 /// <param name="DeclType">Declared type, or <see langword="null"/> when none was declared.</param>
 /// <param name="NotNull">Whether the column is <c>NOT NULL</c> (primary key columns always are).</param>
 /// <param name="PrimaryKey">Whether the column is part of the primary key.</param>
-internal sealed record SqlTableColumn(string Name, string? DeclType, bool NotNull, bool PrimaryKey);
+/// <param name="Default">The literal <c>DEFAULT</c> as SQL (<c>'x'</c>, <c>-1.5</c>), or <see langword="null"/> (added by SQ1-e10).</param>
+internal sealed record SqlTableColumn(string Name, string? DeclType, bool NotNull, bool PrimaryKey, string? Default = null);
 
 /// <summary>A SQL table of a database.</summary>
 /// <param name="Name">Table name.</param>

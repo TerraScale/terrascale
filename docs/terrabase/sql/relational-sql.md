@@ -54,6 +54,11 @@ program whose text holds more than one statement (Turso runs every statement of 
 past it; SQ1-e8); `concat` and `concat_ws` are refused. `group_concat` stays: its growth is bounded by stored data and
 the row budget.
 
+Reads apply affinity like SQLite (DECISION, SQ1-e10): a table column reads through its CTE as an expression without
+affinity, and `CAST` in the CTE would corrupt non-numeric text, so the constant side of a comparison (`=`, `<>`, `<`,
+`<=`, `>`, `>=`, `IN (…)`) with a known column takes the column's affinity: literals are rewritten, parameters converted
+when bound. Columns are resolved by name across the statement's tables.
+
 Column types follow SQLite affinity on write (`INTEGER`, `REAL`, `TEXT`, `NUMERIC`, none). `NOT NULL`, literal
 `DEFAULT`, `PRIMARY KEY` and `UNIQUE` (through the unique-constraint service) are enforced; `CHECK` and `FOREIGN KEY`
 are refused.

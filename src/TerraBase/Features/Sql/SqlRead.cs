@@ -142,6 +142,8 @@ internal static class SqlRead
         ReadSql read, IReadOnlyDictionary<string, SqlTableDefinition> tables, IReadOnlyList<object?> parameters, bool describe, string? keyed = null)
     {
         SqlGuard.Apply(read.Query, tables);
+        var affinities = SqlGuard.Affinity(read.Query, tables);
+        parameters = [.. parameters.Select((value, i) => affinities.TryGetValue(i + 1, out var affinity) ? Bound(affinity, value) : value)];
         // Defense in depth: the text the engine runs must parse back to the same statement.
         var full = read.Query.ToSql();
         try
@@ -162,6 +164,25 @@ internal static class SqlRead
             read.Query.With is { } with ? string.Join(", ", with.CteTables.Select(cte => cte.ToSql())) : null,
             describe ? $"SELECT * FROM ({statement}) LIMIT 0" : statement,
             parameters, MaxRows, MaxBytes);
+    }
+
+    // A bound parameter converted by the affinity of the column it is compared with.
+    private static object? Bound(SqlAffinity affinity, object? value)
+    {
+        var converted = SqlWrite.Apply(affinity, value switch
+        {
+            long integer => SqlValue.Of(integer),
+            double real => SqlValue.Of(real),
+            string text => SqlValue.Of(text),
+            _ => SqlValue.Null,
+        });
+        return converted.Kind switch
+        {
+            SqlValueKind.Integer => converted.Integer,
+            SqlValueKind.Real => converted.Real,
+            SqlValueKind.Text => converted.Text,
+            _ => null,
+        };
     }
 
     /// <summary>
