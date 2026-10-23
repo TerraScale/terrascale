@@ -41,6 +41,12 @@ const usage = `usage: ts [-project <name or id>] <command>
 
   db list | create <db> | delete <db>     manage the project's databases
   db branch <source> <db>                 copy a database into a new one
+  db info <db>                            print a database's metadata as JSON
+  db regions <db> <region>... | none      set the replica regions (gru, sjc,
+                                          fra) besides the home region, or
+                                          remove every replica
+  backup list | create <db>               list or take a database's backups
+  backup restore <db> <backup id> <new db> restore a backup into a new database
   collection list <db>                    list a database's collections
   collection create | drop <db> <name>    create or drop a collection
   doc list <db> <collection>              print every document as JSON lines
@@ -83,6 +89,11 @@ var commands = map[string][]int{
 	"db create":         {1},
 	"db delete":         {1},
 	"db branch":         {2},
+	"db info":           {1},
+	"db regions":        {2, 3, 4},
+	"backup list":       {1},
+	"backup create":     {1},
+	"backup restore":    {3},
 	"collection list":   {1},
 	"collection create": {2},
 	"collection drop":   {2},
@@ -384,7 +395,7 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		return nil
 	case "db list":
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tID\tHOME REGION")
+		fmt.Fprintln(w, "NAME\tID\tHOME REGION\tREPLICAS")
 		for db, err := range pages(func(after string) (*v1.Page[v1.ManagedDatabase], error) {
 			return s.tb.Databases(ctx, s.project, v1.PageOptions{Limit: 100, After: after})
 		}) {
@@ -399,7 +410,11 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			if db.HomeRegion != nil {
 				home = *db.HomeRegion
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\n", db.Name, db.ID, home)
+			replicas := strings.Join(db.ReplicaRegions, ",")
+			if db.AllRegions {
+				replicas = "all"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", db.Name, db.ID, home, replicas)
 		}
 		return w.Flush()
 	case "db create":
@@ -425,6 +440,49 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			return err
 		}
 		fmt.Fprintf(out, "Branched %s into %s (%s)\n", args[0], m.Name, m.ID)
+		return nil
+	case "db info":
+		m, err := db.Info(ctx)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(m)
+	case "db regions":
+		regions := args[1:]
+		if slices.Equal(regions, []string{"none"}) {
+			regions = nil
+		}
+		m, err := db.SetRegions(ctx, regions)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "%s replicates to [%s]\n", args[0], strings.Join(m.ReplicaRegions, " "))
+		return nil
+	case "backup list":
+		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "ID\tSTATUS\tTRIGGER\tBYTES\tCREATED")
+		for b, err := range pages(func(after string) (*v1.Page[v1.DatabaseBackup], error) {
+			return db.Backups(ctx, v1.PageOptions{Limit: 100, After: after})
+		}) {
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", b.ID, b.Status, b.Trigger, b.SizeBytes, b.CreatedAt.Format(time.RFC3339))
+		}
+		return w.Flush()
+	case "backup create":
+		b, err := db.CreateBackup(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Backup %s %s\n", b.ID, b.Status)
+		return nil
+	case "backup restore":
+		m, err := db.RestoreBackup(ctx, args[1], args[2])
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Restored %s into %s (%s)\n", args[1], m.Name, m.ID)
 		return nil
 	case "collection list":
 		for cursor := ""; ; {

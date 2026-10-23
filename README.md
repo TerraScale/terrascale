@@ -514,7 +514,7 @@ project, err := tsauth.NewExchangeSource(tsauth.ExchangeConfig{ClientID: "ts-das
 
 `ts` signs in with `tsauth.Device` (the device grant of ts-auth's ts-cli
 client) and acts as that user: projects, databases, collections, documents,
-read-only SQL and project API keys. It keeps the sign-in in
+read-only SQL, replica regions, backups and project API keys. It keeps the sign-in in
 `terrascale/cli.json` under `os.UserConfigDir()` (mode 0600) and refreshes it.
 
 ```sh
@@ -525,6 +525,8 @@ ts db create app && ts sql app 'SELECT * FROM users LIMIT 10'
 ts doc put app users '{"email":"ana@example.com"}'
 ts doc list app users > users.jsonl && ts doc import app-copy users < users.jsonl
 ts keys create backend app         # printed once on stdout
+ts db regions app sjc fra && ts db info app
+ts backup create app && ts backup list app
 ts db branch app app-preview
 ts db list
 ts db delete app-preview
