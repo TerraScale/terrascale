@@ -239,7 +239,7 @@ public sealed class BenchmarkReadinessTests
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var source = api.Server.Services.GetRequiredService<IChangeGroupSource>();
         var self = api.Server.Services.GetRequiredService<LocalReplica>().Id;
-        var peers = Enumerable.Range(1, 3).Select(id => new ReplicaId((ulong)id)).Where(peer => peer != self).Take(2).ToArray();
+        var peers = Enumerable.Range(1, 3).Select(id => ReplicaId.Of((ushort)id, 1, 1)).Where(peer => peer.Region != self.Region).Take(2).ToArray();
         var extra = EntityIds.New().ToString();
         var root = Directory.CreateTempSubdirectory("benchmark-bootstrap-").FullName;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
