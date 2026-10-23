@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -8,13 +9,7 @@ using static OpenIddict.Abstractions.OpenIddictConstants;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>
-/// The e2e suite's credential without a stored secret: the OIDC token GitHub Actions gives the e2e job of
-/// TerraScale/terrascale's <c>ci.yml</c> on a push to <c>main</c>, exchanged at the platform issuer's token endpoint for a
-/// 15-minute project token of the isolated e2e project (<see cref="PlatformGrants.GitHubActionsAsync"/>). It is inert until
-/// an operator binds it (<see cref="GitHubActionsBinding"/>): the binding is the public client <see cref="ClientId"/>,
-/// whose properties name the e2e organization and project. Unbinding deletes that client. docs/auth/github-actions-oidc.md.
-/// </summary>
+/// <summary>The exact, expiring read-only ts-orchestrator E2E workload trust. Inert until explicitly bound.</summary>
 public static class GitHubActionsGrant
 {
     /// <summary>The grant type. A custom grant, not RFC 8693: OpenIddict validates token-exchange subject tokens as its own.</summary>
@@ -30,33 +25,67 @@ public static class GitHubActionsGrant
     public const string HttpClientName = "github-actions-oidc";
 
     // The trust policy. Numeric ids, so a renamed or re-created repository or owner never matches.
-    /// <summary>TerraScale/terrascale's repository id.</summary>
-    public const string RepositoryId = "1414527764";
+    /// <summary>TerraScale/ts-orchestrator's repository id.</summary>
+    public const string RepositoryId = "1422428095";
 
     /// <summary>The TerraScale organization's id on GitHub.</summary>
     public const string RepositoryOwnerId = "206395477";
 
     /// <summary>The repository's name, checked as well as its id.</summary>
-    public const string Repository = "TerraScale/terrascale";
+    public const string Repository = "TerraScale/ts-orchestrator";
 
     /// <summary>Only runs of <c>main</c>.</summary>
     public const string Ref = "refs/heads/main";
 
-    /// <summary>The exact GitHub subject of a main-branch job without an environment.</summary>
-    public const string Subject = "repo:TerraScale/terrascale:ref:refs/heads/main";
+    /// <summary>The exact GitHub subject of a production environment job.</summary>
+    public const string Subject = "repo:TerraScale/ts-orchestrator:environment:production";
 
-    /// <summary>Only pushes: a pull request never runs as <c>main</c>.</summary>
-    public const string EventName = "push";
+    /// <summary>Only explicit workflow dispatches.</summary>
+    public const string EventName = "workflow_dispatch";
 
-    /// <summary>
-    /// The workflow (<c>workflow_ref</c>), and the job's workflow when the token names one (<c>job_workflow_ref</c>, which GitHub
-    /// documents for jobs of a reusable workflow): no reusable workflow matches.
-    /// </summary>
-    public const string WorkflowRef = "TerraScale/terrascale/.github/workflows/ci.yml@refs/heads/main";
+    /// <summary>The exact workflow; reusable workflows are refused even when their path matches.</summary>
+    public const string WorkflowRef = "TerraScale/ts-orchestrator/.github/workflows/e2e.yml@refs/heads/main";
 
-    /// <summary>The most a token carries: databases and documents of the e2e project only.</summary>
-    public static IReadOnlyList<string> Scopes { get; } =
-        [TerraBaseScopes.DatabasesRead, TerraBaseScopes.DatabasesWrite, TerraBaseScopes.DocumentsRead, TerraBaseScopes.DocumentsWrite];
+    /// <summary>The only scope this read-only workload may carry.</summary>
+    public static IReadOnlyList<string> Scopes { get; } = [TerraBaseScopes.DocumentsRead];
+
+    /// <summary>The exact audience GitHub must attest.</summary>
+    public const string Audience = "https://auth.terrascale.tech/terrascale";
+
+    /// <summary>The exact receiving TerraBase API audience.</summary>
+    public const string ApiAudience = "https://api.terrascale.tech";
+
+    /// <summary>The required GitHub environment.</summary>
+    public const string Environment = "production";
+
+    /// <summary>The database name restriction understood by TerraBase's verifier.</summary>
+    public const string DatabaseProperty = "ts_database";
+
+    /// <summary>The binding's activation time.</summary>
+    public const string ActivatedProperty = "ts_activated_at";
+
+    /// <summary>The binding's absolute UTC deadline.</summary>
+    public const string ExpiresProperty = "ts_expires_at";
+
+    /// <summary>Explicit UTC timestamps, at JWT second precision.</summary>
+    public const string TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'";
+
+    internal static bool HasExactPermissions(IEnumerable<string>? permissions) => permissions is not null && permissions.ToHashSet(StringComparer.Ordinal).SetEquals(
+        [Permissions.Endpoints.Token, Permissions.Prefixes.GrantType + GrantType, Permissions.Prefixes.Scope + TerraBaseScopes.DocumentsRead]);
+
+    internal static bool TryReadBinding(IReadOnlyDictionary<string, JsonElement>? properties, DateTimeOffset now,
+        out string organization, out string project, out string database, out DateTimeOffset expires)
+    {
+        string Text(string name) => properties is not null && properties.TryGetValue(name, out var value)
+            && value.ValueKind == JsonValueKind.String ? value.GetString()! : string.Empty;
+        organization = Text(OrganizationProperty);
+        project = Text(ProjectProperty);
+        database = Text(DatabaseProperty);
+        return DateTimeOffset.TryParseExact(Text(ExpiresProperty), TimestampFormat, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out expires)
+            && DateTimeOffset.TryParseExact(Text(ActivatedProperty), TimestampFormat, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var activated)
+            && PlatformDirectory.IsId(organization) && PlatformDirectory.IsId(project) && ApiKeys.IsDatabaseName(database)
+            && activated <= now && expires > now && expires > activated && expires - activated <= TimeSpan.FromHours(24);
+    }
 
     /// <summary>The binding client's property naming the e2e organization.</summary>
     public const string OrganizationProperty = "ts_organization";
@@ -78,12 +107,7 @@ public sealed class GitHubActionsKeys(IHttpClientFactory clients)
         new HttpDocumentRetriever(clients.CreateClient(GitHubActionsGrant.HttpClientName)) { RequireHttps = true });
 }
 
-/// <summary>
-/// The operator commands <c>ts-auth bind-github-actions-e2e</c> and <c>ts-auth unbind-github-actions-e2e</c>, run in the
-/// ts-orch workload like <c>provision-signing-key</c>. Binding is the activation: it creates the public client
-/// with a fresh e2e organization and project id (or reports the existing ones, changing nothing). Unbinding deletes it;
-/// tokens already issued expire within 15 minutes. Both log an audit line.
-/// </summary>
+/// <summary>Explicit operator activation/revocation; never creates organizations, projects or databases.</summary>
 public static class GitHubActionsBinding
 {
     /// <summary>The verb that binds.</summary>
@@ -92,33 +116,59 @@ public static class GitHubActionsBinding
     /// <summary>The verb that unbinds.</summary>
     public const string UnbindCommand = "unbind-github-actions-e2e";
 
-    /// <summary>Creates the binding unless it exists. Returns its organization and project and whether it was created.</summary>
-    public static async Task<(string Organization, string Project, bool Created)> BindAsync(IServiceProvider services, CancellationToken cancellationToken)
+    /// <summary>Binds an existing organization/project and an explicitly approved database name until a UTC deadline.</summary>
+    public static async Task<(string Organization, string Project, bool Created)> BindAsync(IServiceProvider services,
+        string organization, string project, string database, DateTimeOffset deadline, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(services);
-        await services.GetRequiredService<AuthStore>().ProvisionAsync(cancellationToken).ConfigureAwait(false);
+        var now = services.GetRequiredService<TimeProvider>().GetUtcNow();
+        if (!PlatformDirectory.IsId(organization) || !PlatformDirectory.IsId(project) || !ApiKeys.IsDatabaseName(database)
+            || deadline.Offset != TimeSpan.Zero || deadline.Ticks % TimeSpan.TicksPerSecond != 0
+            || deadline <= now || deadline - now > TimeSpan.FromHours(24))
+        {
+            throw new ArgumentException("Explicit canonical organization/project ULIDs, database name and a UTC deadline within 24 hours are required.");
+        }
+
+        var directory = services.GetRequiredService<PlatformDirectory>();
+        if (await directory.OrganizationAsync(organization, cancellationToken).ConfigureAwait(false) is null
+            || await directory.ProjectAsync(project, cancellationToken).ConfigureAwait(false) is not { } found
+            || found.Value.OrganizationId != organization)
+        {
+            throw new InvalidOperationException("The approved project must already exist in the approved organization.");
+        }
+
         await using var scope = services.CreateAsyncScope();
         var applications = scope.ServiceProvider.GetRequiredService<IOpenIddictApplicationManager>();
         if (await applications.FindByClientIdAsync(GitHubActionsGrant.ClientId, cancellationToken).ConfigureAwait(false) is { } existing)
         {
             var properties = await applications.GetPropertiesAsync(existing, cancellationToken).ConfigureAwait(false);
-            return (properties[GitHubActionsGrant.OrganizationProperty].GetString()!, properties[GitHubActionsGrant.ProjectProperty].GetString()!, false);
+            var permissions = await applications.GetPermissionsAsync(existing, cancellationToken).ConfigureAwait(false);
+            var clientType = await applications.GetClientTypeAsync(existing, cancellationToken).ConfigureAwait(false);
+            if (!GitHubActionsGrant.TryReadBinding(properties, now, out var boundOrganization, out var boundProject, out var boundDatabase, out var expires)
+                || boundOrganization != organization || boundProject != project || boundDatabase != database || expires != deadline
+                || clientType != ClientTypes.Public || !GitHubActionsGrant.HasExactPermissions(permissions))
+            {
+                throw new InvalidOperationException("An existing binding differs or is invalid; explicitly unbind it before a separately approved activation.");
+            }
+
+            return (organization, project, false);
         }
 
-        var organization = AuthStore.NewId();
-        var project = AuthStore.NewId();
         var descriptor = new OpenIddictApplicationDescriptor
         {
             ClientId = GitHubActionsGrant.ClientId,
             ClientType = ClientTypes.Public,
             ApplicationType = ApplicationTypes.Web,
             ConsentType = ConsentTypes.Implicit,
-            DisplayName = "GitHub Actions e2e (TerraScale/terrascale ci.yml, push to main)",
+            DisplayName = "GitHub Actions E2E (ts-orchestrator e2e.yml, production read-only)",
             Permissions = { Permissions.Endpoints.Token, Permissions.Prefixes.GrantType + GitHubActionsGrant.GrantType },
             Properties =
             {
                 [GitHubActionsGrant.OrganizationProperty] = JsonSerializer.SerializeToElement(organization),
                 [GitHubActionsGrant.ProjectProperty] = JsonSerializer.SerializeToElement(project),
+                [GitHubActionsGrant.DatabaseProperty] = JsonSerializer.SerializeToElement(database),
+                [GitHubActionsGrant.ActivatedProperty] = JsonSerializer.SerializeToElement(now.ToString(GitHubActionsGrant.TimestampFormat, CultureInfo.InvariantCulture)),
+                [GitHubActionsGrant.ExpiresProperty] = JsonSerializer.SerializeToElement(deadline.ToString(GitHubActionsGrant.TimestampFormat, CultureInfo.InvariantCulture)),
             },
         };
         descriptor.Permissions.UnionWith(GitHubActionsGrant.Scopes.Select(scope => Permissions.Prefixes.Scope + scope));
@@ -141,22 +191,26 @@ public static class GitHubActionsBinding
         return true;
     }
 
-    /// <summary>Runs <paramref name="command"/>: exit code 0 when it finished, 1 when it failed (nothing half-done is left bound).</summary>
-    public static async Task<int> RunAsync(string command, IServiceProvider services, CancellationToken cancellationToken)
+    /// <summary>Runs the explicit operator arguments: exit code 0 when it finished, 1 when it failed (nothing half-done is left bound).</summary>
+    public static async Task<int> RunAsync(string[] arguments, IServiceProvider services, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(services);
+        var command = arguments.FirstOrDefault() ?? string.Empty;
         var logger = services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(GitHubActionsBinding));
         try
         {
             string outcome;
-            if (command == BindCommand)
+            if (arguments is [BindCommand, var organization, var project, var database, var expiry]
+                && DateTimeOffset.TryParseExact(expiry, GitHubActionsGrant.TimestampFormat, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var deadline))
             {
-                var (organization, project, created) = await BindAsync(services, cancellationToken).ConfigureAwait(false);
-                outcome = $"{(created ? "bound" : "already bound; nothing changed")}: client {GitHubActionsGrant.ClientId}, organization {organization}, project {project}";
+                var (_, _, created) = await BindAsync(services, organization, project, database, deadline, cancellationToken).ConfigureAwait(false);
+                outcome = $"{(created ? "bound" : "already bound; nothing changed")}: client {GitHubActionsGrant.ClientId}, organization {organization}, project {project}, database {database}, expires {expiry}";
             }
             else
             {
-                outcome = await UnbindAsync(services, cancellationToken).ConfigureAwait(false) ? "unbound: client deleted" : "not bound; nothing changed";
+                outcome = arguments is [UnbindCommand]
+                    ? await UnbindAsync(services, cancellationToken).ConfigureAwait(false) ? "unbound: client deleted" : "not bound; nothing changed"
+                    : throw new ArgumentException("Usage: bind-github-actions-e2e <organization ULID> <project ULID> <database name> <yyyy-MM-ddTHH:mm:ssZ> | unbind-github-actions-e2e");
             }
 
             logger.ZLogWarning($"Audit: operator command {command}: {outcome}");

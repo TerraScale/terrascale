@@ -46,7 +46,7 @@ public sealed class FakeGitHubActions : IDisposable
     public SigningCredentials Signing(string algorithm) => new(this.key, algorithm);
 
     /// <summary>
-    /// A GitHub OIDC token for the e2e job on a push to main, for <paramref name="audience"/> (none when null).
+    /// A GitHub OIDC token for the e2e job dispatched on main in production, for <paramref name="audience"/> (none when null).
     /// <paramref name="claims"/> replaces or (with a null value) removes claims; <paramref name="signing"/> signs instead
     /// of the published key; <paramref name="issuer"/> replaces GitHub's issuer; <paramref name="notBeforeIn"/> moves
     /// <c>nbf</c>; without <paramref name="expires"/> the token has no <c>exp</c>; <paramref name="json"/> replaces claims
@@ -66,11 +66,28 @@ public sealed class FakeGitHubActions : IDisposable
             ["ref"] = GitHubActionsGrant.Ref,
             ["event_name"] = GitHubActionsGrant.EventName,
             ["workflow_ref"] = GitHubActionsGrant.WorkflowRef,
-            ["job_workflow_ref"] = GitHubActionsGrant.WorkflowRef,
+            ["environment"] = GitHubActionsGrant.Environment,
             ["run_id"] = "18000000001",
             ["run_attempt"] = "1",
             ["sha"] = "0123456789abcdef0123456789abcdef01234567",
         };
+        payload["iat"] = now.ToUnixTimeSeconds();
+        payload["nbf"] = (now + (notBeforeIn ?? TimeSpan.Zero)).ToUnixTimeSeconds();
+        if (issuer is not null)
+        {
+            payload["iss"] = issuer;
+        }
+
+        if (audience is not null)
+        {
+            payload["aud"] = audience;
+        }
+
+        if (expires)
+        {
+            payload["exp"] = (now + (expiresIn ?? TimeSpan.FromMinutes(5))).ToUnixTimeSeconds();
+        }
+
         foreach (var (name, value) in claims ?? new Dictionary<string, string?>())
         {
             if (value is null)
@@ -88,16 +105,7 @@ public sealed class FakeGitHubActions : IDisposable
             payload[name] = value;
         }
 
-        return Tokens.CreateToken(new SecurityTokenDescriptor
-        {
-            Issuer = issuer,
-            Audience = audience,
-            IssuedAt = now.UtcDateTime,
-            NotBefore = (now + (notBeforeIn ?? TimeSpan.Zero)).UtcDateTime,
-            Expires = expires ? (now + (expiresIn ?? TimeSpan.FromMinutes(5))).UtcDateTime : null,
-            Claims = payload,
-            SigningCredentials = signing ?? new SigningCredentials(this.key, SecurityAlgorithms.RsaSha256),
-        });
+        return Tokens.CreateToken(JsonSerializer.Serialize(payload), signing ?? new SigningCredentials(this.key, SecurityAlgorithms.RsaSha256));
     }
 
     /// <inheritdoc />

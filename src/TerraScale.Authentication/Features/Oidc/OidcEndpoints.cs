@@ -227,7 +227,7 @@ public sealed class TokenEndpoint(Users users, TotpCredentials mfa, PlatformGran
         {
             // OpenIddict has authenticated the public client and checked its permission for this grant.
             var binding = await applications.FindByClientIdAsync(request.ClientId!, cancellationToken);
-            return await platform.GitHubActionsAsync(request, binding?.Properties, cancellationToken);
+            return await platform.GitHubActionsAsync(request, binding, cancellationToken);
         }
 
         if (request.IsTokenExchangeGrantType())

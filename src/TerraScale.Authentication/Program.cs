@@ -46,7 +46,7 @@ catch (AuthConfigurationException error)
 if (args is [GitHubActionsBinding.BindCommand or GitHubActionsBinding.UnbindCommand, ..])
 {
     // Operator commands: bind (activate) or unbind the GitHub Actions e2e workload, then exit without serving.
-    return await GitHubActionsBinding.RunAsync(args[0], app.Services, CancellationToken.None);
+    return await GitHubActionsBinding.RunAsync(args, app.Services, CancellationToken.None);
 }
 
 if (args is [SigningKeyProvisioning.Command, ..])
