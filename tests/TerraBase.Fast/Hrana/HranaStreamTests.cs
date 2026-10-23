@@ -124,5 +124,27 @@ public sealed class HranaStreamTests
         await Assert.That(Response(real.Json, 0).GetProperty("result").GetProperty("rows").GetRawText()).IsEqualTo("""[[{"type":"integer","value":"1"}]]""");
     }
 
+    [Test]
+    public async Task Stored_statements_hold_one_memory_reservation_per_stream()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var store = $$$"""{"requests":[{{{string.Join(',', Enumerable.Range(0, HranaStream.MaxStoredSql).Select(id => $$"""{"type":"store_sql","sql_id":{{id}},"sql":"SELECT {{id}}"}"""))}}}]}""";
+        // A Hobby organization holds 4,096 reservations: one per statement would exhaust it in the 17th stream.
+        var streams = new List<ApiResult>();
+        for (var i = 0; i < 17; i++)
+        {
+            streams.Add(await PostAsync(api, store));
+        }
+
+        var write = await api.PutAsync(DocumentApi.NewId(), new { still = "admitted" });
+
+        foreach (var stream in streams)
+        {
+            await Assert.That(stream.Json.GetProperty("results").EnumerateArray().All(result => result.GetProperty("type").GetString() == "ok")).IsTrue();
+        }
+
+        await Assert.That(write.Status).IsEqualTo(HttpStatusCode.Created);
+    }
+
     private static string UseStored(string baton) => $$$"""{"baton":"{{{baton}}}","requests":[{"type":"execute","stmt":{"sql_id":1}},{"type":"close"}]}""";
 }
