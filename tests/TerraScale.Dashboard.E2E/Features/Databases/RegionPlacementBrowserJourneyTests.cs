@@ -34,7 +34,7 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
         var projectName = "Map placement " + width + " " + Guid.NewGuid().ToString("N")[..8];
 
         await BrowserAudit.SignInAsync(page, scenario.Origin, email: persona.Email, password: persona.Password);
-        await page.WaitForURLAsync(scenario.Origin.ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
         await NavigateAsync("/organization?tab=projects");
 
         await page.GetByRole(AriaRole.Button, new() { Name = "Create project", Exact = true }).ClickAsync();
@@ -80,7 +80,7 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
             () => submit.ClickAsync(),
             response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == "/api/v1/dashboard/organization/projects");
         await Assert.That(created.Status).IsEqualTo(303);
-        await page.WaitForURLAsync(url => new Uri(url).PathAndQuery == "/organization?tab=projects");
+        await page.WaitForURLAsync(url => new Uri(BrowserAudit.WithoutWorkspace(url)).PathAndQuery == "/organization?tab=projects");
         await NavigateAsync("/organization?tab=projects");
 
         var row = page.Locator("#projects tbody tr").Filter(new() { HasText = projectName });
@@ -164,7 +164,7 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
         var projectName = "Keyboard map placement " + width + " " + Guid.NewGuid().ToString("N")[..8];
 
         await BrowserAudit.SignInAsync(page, scenario.Origin, email: persona.Email, password: persona.Password);
-        await page.WaitForURLAsync(scenario.Origin.ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
         await NavigateAsync("/organization?tab=projects");
 
         await page.GetByRole(AriaRole.Button, new() { Name = "Create project", Exact = true }).ClickAsync();
@@ -182,7 +182,7 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
             () => submit.ClickAsync(),
             response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == "/api/v1/dashboard/organization/projects");
         await Assert.That(created.Status).IsEqualTo(303);
-        await page.WaitForURLAsync(url => new Uri(url).PathAndQuery == "/organization?tab=projects");
+        await page.WaitForURLAsync(url => new Uri(BrowserAudit.WithoutWorkspace(url)).PathAndQuery == "/organization?tab=projects");
         await NavigateAsync("/organization?tab=projects");
 
         var row = page.Locator("#projects tbody tr").Filter(new() { HasText = projectName });

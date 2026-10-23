@@ -1,0 +1,125 @@
+{
+  "$comment": "Canonical TerraScale plan catalog. Subscription prices, allowances and overage rates approved 2026-10-23.",
+  "version": 1,
+  "currency": "USD",
+  "metering": {
+    "operationUnit": {
+      "name": "Operation unit",
+      "bytes": 4096,
+      "definition": "One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written.",
+      "rules": [
+        "Lists, queries, and batches count each item independently.",
+        "Writes count once per selected region; reads count only in the serving region.",
+        "Failed, denied, invalid, throttled, and not-found requests are not billed."
+      ]
+    },
+    "storage": {
+      "name": "Storage across regions",
+      "definition": "Stored bytes count once in every selected region."
+    },
+    "allowances": {
+      "paidOverages": true,
+      "definition": "Free includes small allowances without a card and has no automatic overages. Paid plans include monthly allowances, then pay-as-you-go usage. Usage charges are not yet collected."
+    },
+    "egress": {
+      "name": "Client egress",
+      "definition": "Outbound application response bytes to clients, excluding replication traffic; decimal GB."
+    },
+    "overageRates": {
+      "operationUnitsPerMillionUsd": 5,
+      "storageGbRegionMonthUsd": 0.5,
+      "clientEgressGbUsd": 0.1,
+      "status": "approved"
+    }
+  },
+  "plans": [
+    {
+      "id": "free",
+      "name": "Free",
+      "available": true,
+      "priceMonthlyUsd": 0,
+      "priceAnnualUsd": 0,
+      "billingInterval": "free",
+      "trialDays": null,
+      "limits": {
+        "projects": 1,
+        "databases": 1,
+        "members": 1,
+        "storageGb": 0.1,
+        "operationUnitsPerMonth": 50000,
+        "egressGbPerMonth": 1
+      }
+    },
+    {
+      "id": "starter",
+      "name": "Starter",
+      "available": true,
+      "priceMonthlyUsd": 2.5,
+      "priceAnnualUsd": 30,
+      "billingInterval": "year",
+      "trialDays": null,
+      "limits": {
+        "projects": 5,
+        "databases": 5,
+        "members": 5,
+        "storageGb": 1,
+        "operationUnitsPerMonth": 250000,
+        "egressGbPerMonth": 5
+      },
+      "billing": "Billed yearly at $30; $2.50 per month equivalent."
+    },
+    {
+      "id": "pro",
+      "name": "Pro",
+      "available": true,
+      "priceMonthlyUsd": 20,
+      "priceAnnualUsd": null,
+      "billingInterval": "month",
+      "trialDays": null,
+      "limits": {
+        "projects": 25,
+        "databases": 25,
+        "members": 25,
+        "storageGb": 10,
+        "operationUnitsPerMonth": 2000000,
+        "egressGbPerMonth": 50
+      }
+    },
+    {
+      "id": "team",
+      "name": "Team",
+      "available": true,
+      "priceMonthlyUsd": 50,
+      "priceAnnualUsd": null,
+      "billingInterval": "month",
+      "trialDays": null,
+      "limits": {
+        "projects": 100,
+        "databases": 100,
+        "members": 100,
+        "storageGb": 25,
+        "operationUnitsPerMonth": 5000000,
+        "egressGbPerMonth": 100
+      }
+    },
+    {
+      "id": "enterprise",
+      "name": "Enterprise",
+      "available": false,
+      "priceMonthlyUsd": 999,
+      "priceAnnualUsd": null,
+      "billingInterval": "contact",
+      "trialDays": null,
+      "limits": {
+        "projects": null,
+        "databases": null,
+        "members": null,
+        "storageGb": 100,
+        "operationUnitsPerMonth": 10000000,
+        "egressGbPerMonth": 250
+      },
+      "billing": "$999 per month support plus usage; contact sales."
+    }
+  ],
+  "reviewStatus": "approved"
+}

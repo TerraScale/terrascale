@@ -19,15 +19,15 @@ public sealed class BillingMcpTools(IHttpContextAccessor http, StripeBilling bil
 
     [McpServerTool(Name = "preview_plan_change", Title = "Preview plan change", ReadOnly = true, Idempotent = true, OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Estimate the charge and effective date of changing a subscribed organization's plan, without changing it. Owner only.")]
     public Task<BillingPlanPreview> PreviewPlanChange(
-        [Description("Plan key from list_plans, such as starter, pro, or business. change_plan and preview_plan_change also accept free for Personal workspaces.")] string plan,
-        [Description("Billing interval: monthly or annual. Omit for free.")] string interval = "",
+        [Description("Plan key from list_plans, such as starter or pro. change_plan and preview_plan_change also accept free for Personal workspaces.")] string plan,
+        [Description("Billing interval: annual for Starter; monthly for Pro and Team. Omit for free.")] string interval = "",
         string? organizationId = null, string? projectId = null) =>
         Invoke(() => billing.PreviewPlanChangeAsync(Scope(organizationId, projectId), plan, interval, Cancellation));
 
     [McpServerTool(Name = "change_plan", Title = "Change plan", OpenWorld = true, Idempotent = true, Destructive = false, UseStructuredContent = true), Description("Change a subscribed organization's plan. Upgrades apply now (charging a prorated amount); downgrades and switching a Personal workspace to free are scheduled for renewal and can be undone with undo_plan_change. Owner only.")]
     public Task<PlanChanged> ChangePlan(
-        [Description("Plan key from list_plans, such as starter, pro, or business. change_plan and preview_plan_change also accept free for Personal workspaces.")] string plan,
-        [Description("Billing interval: monthly or annual. Omit for free.")] string interval = "",
+        [Description("Plan key from list_plans, such as starter or pro. change_plan and preview_plan_change also accept free for Personal workspaces.")] string plan,
+        [Description("Billing interval: annual for Starter; monthly for Pro and Team. Omit for free.")] string interval = "",
         string? organizationId = null, string? projectId = null) => Invoke(async () =>
         new PlanChanged(await billing.ChangePlanAsync(Scope(organizationId, projectId), plan, interval, Cancellation)));
 
@@ -50,8 +50,8 @@ public sealed class BillingMcpTools(IHttpContextAccessor http, StripeBilling bil
 
     [McpServerTool(Name = "create_checkout", Title = "Start plan checkout", OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Start a checkout that subscribes an organization without a subscription to a paid plan. Returns the URL the owner must open in a browser to pay; this tool never completes a payment. Owner only.")]
     public async Task<CheckoutStarted> Checkout(
-        [Description("Plan key from list_plans, such as starter, pro, or business. change_plan and preview_plan_change also accept free for Personal workspaces.")] string plan,
-        [Description("Billing interval: monthly or annual. Omit for free.")] string interval = "", string? organizationId = null, string? projectId = null)
+        [Description("Plan key from list_plans, such as starter or pro. change_plan and preview_plan_change also accept free for Personal workspaces.")] string plan,
+        [Description("Billing interval: annual for Starter; monthly for Pro and Team. Omit for free.")] string interval = "", string? organizationId = null, string? projectId = null)
     {
         if (PlanCatalog.For(plan).PriceCents <= 0)
             throw new AccountAccessException("Choose an available paid plan and a monthly or annual interval.", 400);

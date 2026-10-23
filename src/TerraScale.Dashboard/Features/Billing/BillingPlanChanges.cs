@@ -370,11 +370,12 @@ public sealed partial class StripeBilling
     {
         key = key.Trim().ToLowerInvariant(); interval = interval.Trim().ToLowerInvariant();
         var plan = PlanCatalog.For(key);
-        if (plan.Key == "free") { if (context.Organization?.Kind != "personal") throw new AccountAccessException("Free is available only for Personal workspaces.", 400); return (key, ""); }
-        if (interval is not ("monthly" or "annual")) throw new AccountAccessException("Choose monthly or annual billing.", 400);
+        if (plan.Key == "free") { if (context.Organization?.Kind != "personal") throw new AccountAccessException(plan.Name + " is available only for Personal workspaces.", 400); return (key, ""); }
+        if (interval.Length == 0) interval = plan.CheckoutInterval;
+        if (!plan.SupportsInterval(interval)) throw new AccountAccessException("Choose the published billing interval for this plan.", 400);
         return (key, interval);
     }
-    private static int Rank(string key) => key switch { "free" => 1, "starter" => 2, "pro" => 3, "business" => 4, _ => 0 };
+    private static long Rank(string key) => PlanCatalog.For(key).PriceCents;
     private static AccountAccessException Conflict(string message) => new(message, 409);
     private sealed record PlanSnapshot(StripeClient Client, BillingBinding Binding, Subscription Subscription, SubscriptionItem Item, BillingPlanState State);
 }

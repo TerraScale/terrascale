@@ -77,7 +77,7 @@ public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixt
                 await release.Task.WaitAsync(TimeSpan.FromSeconds(20));
                 await route.ContinueAsync();
             });
-            var submitted = page.WaitForResponseAsync(response => response.Request.Method == "POST" && response.Url == origin + "/api/v1/dashboard/organization/projects");
+            var submitted = page.WaitForResponseAsync(response => response.Request.Method == "POST" && BrowserAudit.WithoutWorkspace(response.Url) == origin + "/api/v1/dashboard/organization/projects");
             var submitting = await page.EvaluateAsync<JsonElement>("""
                 () => { const form = document.querySelector('#create-project form');
                   const button = form.querySelector('[type=submit]'); const valid = form.checkValidity();
@@ -107,7 +107,7 @@ public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixt
             await ShotAsync("sidebar-link-create-dialog");
             await page.GoBackAsync();
             await page.GoForwardAsync();
-            await Assert.That(new Uri(page.Url).Query).IsEqualTo("?newProject=1");
+            await Assert.That(new Uri(BrowserAudit.WithoutWorkspace(page.Url)).Query).IsEqualTo("?newProject=1");
             await page.GotoAsync(origin + "/organization?tab=projects");
             await open.ClickAsync();
             await dialog.Locator("input[name=name]").FillAsync("Browser audit " + size);
@@ -139,7 +139,7 @@ public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixt
             { RunOnly = new RunOnlyOptions { Type = "tag", Values = ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] } });
             await page.GetByLabel("Project name", new() { Exact = true }).FillAsync("Browser onboarding " + size);
             await page.GetByRole(AriaRole.Button, new() { Name = "Create project and open Dashboard" }).ClickAsync();
-            await page.WaitForURLAsync(origin + "/");
+            await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == origin + "/");
             await page.GotoAsync(origin + "/databases");
             await Assert.That(await page.Locator(".ts-empty-title").InnerTextAsync()).Contains("No databases");
             await ShotAsync("initial-empty-databases");

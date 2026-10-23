@@ -20,7 +20,7 @@ public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
         page.PageError += (_, error) => errors.Enqueue(error);
         var persona = scenario.Personas.Seeded;
         await BrowserAudit.SignInAsync(page, scenario.Origin, email: persona.Email, password: persona.Password);
-        await page.WaitForURLAsync(scenario.Origin.ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
         await page.Locator("#ts-nav-toggle").ClickAsync();
         await page.WaitForFunctionAsync("() => document.activeElement?.id === 'ts-nav-close'");
         var account = page.Locator("details.ts-account summary");
@@ -61,7 +61,7 @@ public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
         await page.Keyboard.PressAsync("Escape");
         await page.WaitForFunctionAsync("() => document.querySelector('#ts-nav-toggle')?.getAttribute('aria-expanded') === 'false' && document.activeElement?.id === 'ts-nav-toggle'");
         await Assert.That(await page.Locator(".ts-inset").GetAttributeAsync("inert")).IsNull();
-        await Assert.That(page.Url).IsEqualTo(scenario.Origin.ToString());
+        await Assert.That(BrowserAudit.WithoutWorkspace(page.Url)).IsEqualTo(scenario.Origin.ToString());
         await Assert.That(errors.ToArray()).IsEmpty();
     }
 
@@ -79,7 +79,7 @@ public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
 
         var persona = scenario.Personas.Seeded;
         await BrowserAudit.SignInAsync(page, scenario.Origin, email: persona.Email, password: persona.Password);
-        await page.WaitForURLAsync(scenario.Origin.ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
 
         var toggle = page.Locator("#ts-nav-toggle");
         var close = page.Locator("#ts-nav-close");
@@ -145,7 +145,7 @@ public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
         await Assert.That(await page.Locator("#ts-notifications-menu").EvaluateAsync<bool>("el => document.activeElement === el"))
             .IsTrue();
         await page.Keyboard.PressAsync("Tab");
-        var signOut = page.Locator("details.ts-account form[action='/api/v1/auth/logout'] button");
+        var signOut = page.Locator("details.ts-account form:is([action='/api/v1/auth/logout'],[action^='/api/v1/auth/logout?']) button");
         await Assert.That(await signOut.EvaluateAsync<bool>("el => document.activeElement === el")).IsTrue();
         await page.Keyboard.PressAsync("Tab");
         await Assert.That(await close.EvaluateAsync<bool>("el => document.activeElement === el"))
@@ -182,8 +182,8 @@ public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
 
         await toggle.ClickAsync();
         await WaitForDrawerAsync(true);
-        await page.Locator("#ts-navigation a[href='/databases']").ClickAsync();
-        await page.WaitForURLAsync(new Uri(scenario.Origin, "/databases").ToString());
+        await page.Locator("#ts-navigation a:is([href='/databases'],[href^='/databases?'])").ClickAsync();
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == new Uri(scenario.Origin, "/databases").ToString());
         await Assert.That(await page.Locator("main").CountAsync()).IsEqualTo(1);
 
         await toggle.ClickAsync();

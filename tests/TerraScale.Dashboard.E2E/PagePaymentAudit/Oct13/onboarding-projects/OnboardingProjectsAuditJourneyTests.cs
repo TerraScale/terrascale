@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.Dashboard.E2E.Features.Databases;
+using Microsoft.AspNetCore.WebUtilities;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.OnboardingProjects;
 
@@ -117,13 +118,18 @@ public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixt
         using var destination = await client.GetAsync(switched.Headers.Location);
         await Assert.That(destination.StatusCode).IsEqualTo(HttpStatusCode.OK)
             .Because($"The switch must leave the prior project's database route; Location={switched.Headers.Location}");
-        await Assert.That(switched.Headers.Location?.OriginalString).IsEqualTo("/databases");
+        var switchedUri = new Uri(client.BaseAddress!, switched.Headers.Location!);
+        await Assert.That(switchedUri.AbsolutePath).IsEqualTo("/databases");
+        await Assert.That(QueryHelpers.ParseQuery(switchedUri.Query)["projectId"].ToString()).IsEqualTo(newId);
         await Assert.That((await JsonAsync(client, "/api/v1/dashboard/context")).GetProperty("selection").GetProperty("projectId").GetString()).IsEqualTo(newId);
         await Assert.That(await destination.Content.ReadAsStringAsync()).Contains("No databases");
         using var compatible = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-project", new()
         { ["_csrf"] = csrf, ["projectId"] = initialProjectId, ["returnUrl"] = oldPath });
         await Assert.That(compatible.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        await Assert.That(compatible.Headers.Location?.OriginalString).IsEqualTo(oldPath);
+        var compatibleUri = new Uri(client.BaseAddress!, compatible.Headers.Location!);
+        await Assert.That(compatibleUri.AbsolutePath).IsEqualTo(oldPath.Split('?')[0]);
+        await Assert.That(QueryHelpers.ParseQuery(compatibleUri.Query)["created"].ToString()).IsEqualTo("1");
+        await Assert.That(QueryHelpers.ParseQuery(compatibleUri.Query)["projectId"].ToString()).IsEqualTo(initialProjectId);
         using var preservedDetail = await client.GetAsync(compatible.Headers.Location);
         await Assert.That(preservedDetail.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await ProtocolAcceptedAsync(producer);
@@ -177,7 +183,12 @@ public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixt
             using var response = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/switch-project", new()
             { ["_csrf"] = csrf, ["projectId"] = projectId, ["returnUrl"] = returnUrl });
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            await Assert.That(response.Headers.Location?.OriginalString).IsEqualTo(returnUrl.StartsWith("/organization", StringComparison.Ordinal) ? returnUrl : "/");
+            var target = new Uri(owner.BaseAddress!, response.Headers.Location!);
+            await Assert.That(target.AbsolutePath).IsEqualTo(returnUrl.StartsWith("/organization", StringComparison.Ordinal) ? "/organization" : "/");
+            var query = QueryHelpers.ParseQuery(target.Query);
+            await Assert.That(query["projectId"].ToString()).IsEqualTo(projectId);
+            await Assert.That(query["organizationId"].ToString()).IsEqualTo(before.GetProperty("selection").GetProperty("organizationId").GetString());
+            if (target.AbsolutePath == "/organization") await Assert.That(query["tab"].ToString()).IsEqualTo("projects");
         }
         var after = await JsonAsync(owner, "/api/v1/dashboard/context");
         await Assert.That(after.GetProperty("selection").GetRawText()).IsEqualTo(before.GetProperty("selection").GetRawText());

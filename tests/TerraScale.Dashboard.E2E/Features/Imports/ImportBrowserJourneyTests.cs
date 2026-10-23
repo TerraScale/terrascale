@@ -25,10 +25,10 @@ public sealed class ImportBrowserJourneyTests(DashboardRootFixture fixture)
         var output = BrowserAudit.Output(fixture.Root, "imports");
 
         await BrowserAudit.SignInAsync(page, scenario.Origin);
-        await page.WaitForURLAsync(scenario.Origin.ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == scenario.Origin.ToString());
         await page.GotoAsync(new Uri(scenario.Origin, "/databases").ToString());
         await page.GetByRole(AriaRole.Link, new() { Name = "Import", Exact = true }).ClickAsync();
-        await page.WaitForURLAsync(new Regex("/imports$"));
+        await page.WaitForURLAsync(url => Regex.IsMatch(BrowserAudit.WithoutWorkspace(url), "/imports$"));
         await BrowserAudit.AssertAccessibleAsync(page, "The import start page meets WCAG 2.2 AA.");
         await page.ScreenshotAsync(new() { Path = Path.Combine(output, "1-start.png"), FullPage = true });
 
@@ -38,10 +38,10 @@ public sealed class ImportBrowserJourneyTests(DashboardRootFixture fixture)
         Random.Shared.NextBytes(dump.AsSpan(64));
         await page.Locator("#import-file").SetInputFilesAsync(new FilePayload { Name = "dump.sql", MimeType = "application/sql", Buffer = dump });
         await page.GetByRole(AriaRole.Button, new() { Name = "Upload and preview" }).ClickAsync();
-        await page.WaitForURLAsync(new Regex("/imports/import-[0-9a-z]{26}$"));
+        await page.WaitForURLAsync(url => Regex.IsMatch(BrowserAudit.WithoutWorkspace(url), "/imports/import-[0-9a-z]{26}$"));
         await page.GetByText("2 blocking issues").WaitForAsync();
         await Assert.That(await page.Locator("main").InnerTextAsync()).Contains("text[] has no mapping; exclude the column");
-        await Assert.That(await page.Locator("form[action$='/start']").CountAsync()).IsEqualTo(0);
+        await Assert.That(await page.Locator("form:is([action$='/start'],[action*='/start?'])").CountAsync()).IsEqualTo(0);
         await BrowserAudit.AssertAccessibleAsync(page, "A blocked preview meets WCAG 2.2 AA.");
         await page.ScreenshotAsync(new() { Path = Path.Combine(output, "2-blocked-preview.png"), FullPage = true });
 

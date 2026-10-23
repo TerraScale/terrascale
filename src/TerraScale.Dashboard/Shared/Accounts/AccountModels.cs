@@ -153,7 +153,8 @@ public sealed class NotificationRecord
     public DateTimeOffset CreatedAt { get; set; }
     public bool Unread => Status.Equals("unread", StringComparison.OrdinalIgnoreCase);
     public bool VisibleTo(AccountContext context) => (OrganizationId == "" || OrganizationId == context.Organization?.Id) &&
-        (ProjectId == "" || ProjectId == context.Project?.Id);
+        (ProjectId == "" || ProjectId == context.Project?.Id) &&
+        (!Type.StartsWith("allowance-", StringComparison.Ordinal) || context.Organization?.RoleFor(context.UserId) == "owner");
 }
 
 public sealed record AuditRecord(string Id, string Actor, string Action, string Target, string TargetType, DateTimeOffset OccurredAt, string Source = "dashboard", string? Risk = null)
@@ -174,7 +175,7 @@ public static class DashboardAuditSeverity
         ["project.renamed"] = "info",
         ["member.left"] = "info",
         ["ownership.canceled"] = "info",
-        ["usage.spending_controls_updated"] = "warning",
+        ["billing.internal_report_cap_updated"] = "warning",
         ["member.role_changed"] = "warning",
         ["member.removed"] = "warning",
         ["ownership.requested"] = "warning",

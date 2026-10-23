@@ -147,7 +147,7 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             // supported amount. Publish them only after every total is valid.
             initial = initial with { PeriodStart = from, PeriodEnd = to, Reads = reads, Writes = writes, LogicalBytes = bytes };
             coherent = true;
-            var writeCharge = Charge(BigInteger.Max(0, (BigInteger)writes - policy.Allowances.MonthlyWrites), policy.WriteCentsPerMillion, 1_000_000);
+            var writeCharge = Charge(BigInteger.Max(0, (BigInteger)writes - policy.Allowances.MonthlyOperations), policy.WriteCentsPerMillion, 1_000_000);
             var storageCharge = Charge(BigInteger.Max(0, (BigInteger)bytes - policy.Allowances.StorageBytes), policy.StorageCentsPerGiBMonth, 1L << 30);
             var total = checked(policy.Plan.PriceCents + checked(writeCharge + storageCharge));
             var reached = organization.SpendCapCents > 0 && total >= organization.SpendCapCents;

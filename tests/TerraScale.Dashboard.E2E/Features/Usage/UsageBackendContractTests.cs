@@ -20,10 +20,10 @@ public sealed class UsageBackendContractTests
         var organization = selection.Context.Organization!;
         const string planId = "01JA0000000000000000000006";
         organization.PlanId = planId;
-        organization.SpendCapCents = 9900;
-        organization.InternalBilling = new(organization.Id, planId, "business", "01JA0000000000000000000007",
-            PlanCatalog.For("business") with { Id = planId, Key = "internal", Name = "TerraScale Internal" },
-            PlanCatalog.Limits("business"), PlanCatalog.ResourceLimits("business"), 100, 20);
+        organization.SpendCapCents = 2000;
+        organization.InternalBilling = new(organization.Id, planId, "pro", "01JA0000000000000000000007",
+            PlanCatalog.For("pro") with { Id = planId, Key = "internal", Name = "TerraScale Internal" },
+            PlanCatalog.Limits("pro"), PlanCatalog.ResourceLimits("pro"), 100, 20);
         var measured = await new UsageBackend(wire, new Clock(), new Tokens()).ReadAsync(selection, CancellationToken.None);
         var monthly = measured.Monthly[selection.Context.Project!.Id];
         await Assert.That(monthly.State).IsEqualTo(UsageSourceState.Measured);
@@ -36,7 +36,7 @@ public sealed class UsageBackendContractTests
         await Assert.That(bill.Reads).IsEqualTo(12);
         await Assert.That(bill.Writes).IsEqualTo(3);
         await Assert.That(bill.LogicalBytes).IsEqualTo(1024);
-        await Assert.That(bill.TotalCents).IsEqualTo(9900);
+        await Assert.That(bill.TotalCents).IsEqualTo(2000);
         await Assert.That(bill.CapReached).IsTrue();
         await Assert.That(bill.Alert).IsNotNull();
 

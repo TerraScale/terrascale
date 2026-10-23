@@ -42,7 +42,7 @@ public sealed class InvoiceFactsJourneyTests
         foreach (var hostile in new[] { "https://attacker.invalid/", "//attacker.invalid/", "https://dash.terrascale.tech@attacker.invalid/" })
         {
             using var refused = await HttpJourney.PostFormAsync(client, "/billing/checkout", new()
-            { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "monthly", ["return"] = hostile });
+            { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "annual", ["return"] = hostile });
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
         }
         await Assert.That(wire.StripeCalls).IsEqualTo(vendorCalls);

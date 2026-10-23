@@ -1,5 +1,0 @@
-@inherits RazorSlice<TerraScale.Dashboard.Features.Usage.SpendingFields>
-@using TerraScale.Dashboard.Features.Usage
-@using System.Globalization
-@using TerraScale.Dashboard.Features.Billing
-<div class="ts-spending-limit-grid">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.SpendingFieldView, SpendingField>(new(Model.Kind + "-spend-cap-" + Model.Id, Model.Prefix + "Cap_" + Model.Id, "Price limit (USD)", "USD per month", SpendingService.Dollars(Model.CapCents))))@foreach (var field in new[] { (Key: "Read", Label: "Read Limit", Hint: "Reads per month", Value: Model.Operations.ReadLimit), (Key: "Write", Label: "Write Limit", Hint: "Writes per month", Value: Model.Operations.WriteLimit), (Key: "Replication", Label: "Replication Limit", Hint: "Replications per month", Value: Model.Operations.ReplicationLimit) }) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Usage.SpendingFieldView, SpendingField>(new(Model.Kind + "-" + field.Key.ToLowerInvariant() + "-limit-" + Model.Id, Model.Prefix + field.Key + "_" + Model.Id, field.Label, field.Hint, field.Value > 0 ? field.Value.ToString(CultureInfo.InvariantCulture) : "", "numeric", @"\d+"))) }</div>

@@ -41,11 +41,17 @@ public sealed class BillingPlanMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(tools["get_billing"].GetProperty("outputSchema").GetProperty("properties").TryGetProperty(field, out _)).IsTrue();
         var listedPlans = await ToolAsync("list_plans", new { organizationId = personalId, projectId = personalProject });
         await Assert.That(listedPlans.GetProperty("currentPlanKey").GetString()).IsEqualTo("starter");
-        await Assert.That(listedPlans.GetProperty("currentInterval").GetString()).IsEqualTo("monthly");
+        await Assert.That(listedPlans.GetProperty("currentInterval").GetString()).IsEqualTo("annual");
         await Assert.That(listedPlans.GetProperty("plans").GetArrayLength()).IsEqualTo(3);
         var starter = listedPlans.GetProperty("plans").EnumerateArray().Single(plan => plan.GetProperty("key").GetString() == "starter");
         await Assert.That(starter.GetProperty("current").GetBoolean()).IsTrue();
+        await Assert.That(starter.GetProperty("billingInterval").GetString()).IsEqualTo("year");
+        await Assert.That(starter.GetProperty("monthlyEgressBytes").GetInt64()).IsEqualTo(5_000_000_000);
         await Assert.That(starter.GetProperty("maxMembers").GetInt32()).IsEqualTo(5);
+        await Assert.That(starter.GetProperty("operationUnitsPerMonth").GetInt64()).IsEqualTo(250_000);
+        await Assert.That(starter.GetProperty("operationUnitBytes").GetInt32()).IsEqualTo(4096);
+        await Assert.That(starter.TryGetProperty("readsPerMonth", out _)).IsFalse();
+        await Assert.That(starter.TryGetProperty("writesPerMonth", out _)).IsFalse();
         var currentBilling = await ToolAsync("get_billing", new { organizationId = personalId });
         await Assert.That(currentBilling.GetProperty("hasSubscription").GetBoolean()).IsTrue();
         await Assert.That(currentBilling.GetProperty("planKey").GetString()).IsEqualTo("starter");
@@ -73,18 +79,25 @@ public sealed class BillingPlanMcpJourneyTests(DashboardE2EFixture fixture)
                 await Task.Delay(25);
             }
             await Assert.That(waiting).IsTrue();
-            await ErrorAsync(owner, secret, "change_plan", new { organizationId = personalId, plan = "business", interval = "monthly" });
+            var competing = await McpAsync(owner, secret, "tools/call", new
+            { name = "change_plan", arguments = new { organizationId = personalId, plan = "team", interval = "monthly" } });
+            await Assert.That(competing.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();
+            await Assert.That(competing.ToString()).Contains("Another billing change is in progress.");
             using var release = await HttpJourney.PostFormAsync(owner, "/__test/billing/plans/scenario", new() { ["_csrf"] = csrf, ["scenario"] = "release-source-race" });
             await Assert.That(release.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
             released = true;
-            await Assert.That((await held).GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();
-            var changed = await ToolAsync("change_plan", new { organizationId = personalId, plan = "business", interval = "monthly" }, useReplica: true);
+            var refused = await held;
+            await Assert.That(refused.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();
+            await Assert.That(refused.ToString()).Contains("The subscription changed in Stripe.");
+            using var beforeRetry = JsonDocument.Parse(await owner.GetStringAsync("/__test/billing/plans/probe"));
+            await Assert.That(beforeRetry.RootElement.GetProperty("mutations").EnumerateArray().Count(item => item.GetString()!.StartsWith("/v1/subscriptions/", StringComparison.Ordinal))).IsEqualTo(0);
+            var changed = await ToolAsync("change_plan", new { organizationId = personalId, plan = "pro", interval = "monthly" }, useReplica: true);
             await Assert.That(changed.GetProperty("outcome").GetString()).IsEqualTo("pending");
             using var realized = JsonDocument.Parse(await owner.GetStringAsync("/api/v1/dashboard/context"));
             await Assert.That(realized.RootElement.GetProperty("organizations").EnumerateArray()
                 .Single(org => org.GetProperty("id").GetString() == personalId).GetProperty("planId").GetString())
-                .IsEqualTo("09XCWRH05BWWBADSBPTPDMFA7D");
-            var replay = await ToolAsync("change_plan", new { organizationId = personalId, plan = "business", interval = "monthly" });
+                .IsEqualTo("7CNW2H87JE68ATZX224CV2G625");
+            var replay = await ToolAsync("change_plan", new { organizationId = personalId, plan = "pro", interval = "monthly" });
             await Assert.That(replay.GetProperty("outcome").GetString()).IsEqualTo("current");
         }
         finally
@@ -100,10 +113,10 @@ public sealed class BillingPlanMcpJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(creation.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         using var business = JsonDocument.Parse(await owner.GetStringAsync("/api/v1/auth/me"));
         var businessId = business.RootElement.GetProperty("organizationId").GetString()!;
-        var downgrade = await ToolAsync("preview_plan_change", new { organizationId = personalId, plan = "starter", interval = "monthly" });
+        var downgrade = await ToolAsync("preview_plan_change", new { organizationId = personalId, plan = "starter", interval = "annual" });
         await Assert.That(downgrade.GetProperty("immediate").GetBoolean()).IsFalse();
         await Assert.That(downgrade.GetProperty("amountDueCents").GetInt64()).IsEqualTo(0L);
-        var scheduled = await ToolAsync("change_plan", new { organizationId = personalId, plan = "starter", interval = "monthly" }, useReplica: true);
+        var scheduled = await ToolAsync("change_plan", new { organizationId = personalId, plan = "starter", interval = "annual" }, useReplica: true);
         await Assert.That(scheduled.GetProperty("outcome").GetString()).IsEqualTo("scheduled");
         var scheduledBilling = await ToolAsync("get_billing", new { organizationId = personalId });
         await Assert.That(scheduledBilling.GetProperty("scheduledChange").GetProperty("planKey").GetString()).IsEqualTo("starter");
@@ -115,7 +128,7 @@ public sealed class BillingPlanMcpJourneyTests(DashboardE2EFixture fixture)
         { ["_csrf"] = csrf, ["organizationId"] = personalId, ["returnUrl"] = "/organization?tab=billing" });
         await Assert.That(selectPersonal.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await ErrorAsync(owner, secret, "create_checkout", new { organizationId = businessId, plan = "free", interval = "monthly" });
-        var checkout = await ToolAsync("create_checkout", new { organizationId = businessId, plan = "starter", interval = "monthly" });
+        var checkout = await ToolAsync("create_checkout", new { organizationId = businessId, plan = "starter", interval = "annual" });
         var firstCheckout = checkout.GetProperty("checkoutUrl").GetString()!;
         var canceled = await ToolAsync("cancel_checkout", new { organizationId = businessId }, useReplica: true);
         await Assert.That(canceled.GetProperty("canceled").GetBoolean()).IsTrue();
@@ -129,17 +142,17 @@ public sealed class BillingPlanMcpJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(completed.StatusCode).IsEqualTo(HttpStatusCode.Found);
         using var callback = await replica.GetAsync(completed.Headers.Location);
         await Assert.That(callback.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        await Assert.That(callback.Headers.Location!.OriginalString).IsEqualTo("/organization?tab=billing&payment=success");
+        await Assert.That(BrowserAudit.WithoutWorkspace(new Uri(fixture.Origin, callback.Headers.Location!.OriginalString).ToString())).IsEqualTo(new Uri(fixture.Origin, "/organization?tab=billing&payment=success").ToString());
         using var afterPayment = JsonDocument.Parse(await owner.GetStringAsync("/api/v1/dashboard/context"));
         await Assert.That(afterPayment.RootElement.GetProperty("selection").GetProperty("organizationId").GetString()).IsEqualTo(businessId);
         var organizations = afterPayment.RootElement.GetProperty("organizations").EnumerateArray().ToArray();
         await Assert.That(organizations.Single(org => org.GetProperty("id").GetString() == businessId).GetProperty("planId").GetString()).IsEqualTo("7CNW2H87JE68ATZX224CV2G625");
-        await Assert.That(organizations.Single(org => org.GetProperty("id").GetString() == personalId).GetProperty("planId").GetString()).IsEqualTo("09XCWRH05BWWBADSBPTPDMFA7D");
+        await Assert.That(organizations.Single(org => org.GetProperty("id").GetString() == personalId).GetProperty("planId").GetString()).IsEqualTo("7CNW2H87JE68ATZX224CV2G625");
 
         var memberEmail = "billing-mcp-member-" + suffix + "@example.test";
         await BillingPlanJourneyTests.SignUpPaidAsync(member, memberEmail, password, "member-" + suffix);
         var memberSecret = await HttpJourney.CreatePatAsync(member, "TUnit member billing MCP " + suffix, password);
-        await ErrorAsync(member, memberSecret, "preview_plan_change", new { organizationId = businessId, plan = "business", interval = "monthly" });
+        await ErrorAsync(member, memberSecret, "preview_plan_change", new { organizationId = businessId, plan = "pro", interval = "monthly" });
         using var invitation = await HttpJourney.PostFormAsync(owner, "/api/v1/access/invitations", new()
         { ["_csrf"] = csrf, ["email"] = memberEmail, ["role"] = "member" });
         await Assert.That(invitation.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -155,7 +168,7 @@ public sealed class BillingPlanMcpJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(memberBilling.TryGetProperty("paymentMethod", out _)).IsFalse();
         await ErrorAsync(member, memberSecret, "get_billing_portal_url", new { organizationId = businessId });
         foreach (var name in new[] { "preview_plan_change", "change_plan", "undo_plan_change", "cancel_checkout", "create_checkout" })
-            await ErrorAsync(member, memberSecret, name, new { organizationId = businessId, plan = "business", interval = "monthly" });
+            await ErrorAsync(member, memberSecret, name, new { organizationId = businessId, plan = "pro", interval = "monthly" });
         var deniedCallback = await member.GetAsync(completed.Headers.Location);
         using (deniedCallback) await Assert.That(deniedCallback.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
 

@@ -40,10 +40,11 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         var plan = PlanCatalog.For(planKey);
         var org = context.Organization!;
         if (plan.PriceCents == 0)
-            throw new OnboardingValidationException("The Free plan does not require Stripe checkout.");
-        var wizardReturn = "/organization?newOrganization=project&organizationID=" + Uri.EscapeDataString(org.Id);
-        if (interval is not ("monthly" or "annual") || returnPath is not ("/onboarding" or "/billing" or "/organization?tab=billing") && returnPath != wizardReturn)
-            throw new OnboardingValidationException("Choose a valid billing interval.");
+            throw new OnboardingValidationException(plan.Name + " does not require Stripe checkout.");
+        if (!plan.SupportsInterval(interval))
+            throw new OnboardingValidationException("Choose the published billing interval for this plan.");
+        if (!ValidCheckoutReturnPath(context, returnPath))
+            throw new OnboardingValidationException("Choose a valid checkout return path.");
         var client = await ClientAsync(cancellationToken);
         var existing = await ReadAsync(org.Id, cancellationToken);
         if (existing is not null) RequireStripe(existing);
@@ -446,6 +447,34 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
             throw new IOException("Stripe checkout does not match its persisted binding.");
     }
 
+    internal static bool ValidCheckoutReturnPath(AccountContext context, string path) =>
+        ValidCheckoutReturnPath(context.Organization?.Id, context.Project?.Id, path);
+
+    private static bool ValidCheckoutReturnPath(string? organizationId, string? projectId, string path)
+    {
+        if (path.Contains('#') || path.Contains('\\') || path.Any(char.IsControl)) return false;
+        var queryAt = path.IndexOf('?');
+        var basePath = queryAt < 0 ? path : path[..queryAt];
+        if (basePath is not ("/onboarding" or "/billing" or "/organization")) return false;
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(queryAt < 0 ? "" : path[queryAt..]);
+        if (query.Any(pair => pair.Value.Count != 1)) return false;
+        if (query.TryGetValue("organizationId", out var returnOrganizationId) && returnOrganizationId != organizationId) return false;
+        if (query.TryGetValue("projectId", out var returnProjectId) && (string.IsNullOrEmpty(projectId) || returnProjectId != projectId)) return false;
+        // The legacy wizard ID differs only in case from organizationId; ParseQuery treats them as one key.
+        if (basePath == "/organization")
+        {
+            if (query.TryGetValue("tab", out var tab) && tab != "billing") return false;
+            if (query.TryGetValue("newOrganization", out var step))
+            {
+                if (step != "project" || !query.TryGetValue("organizationId", out var wizardId) || wizardId != organizationId) return false;
+            }
+            else if (query.GetValueOrDefault("tab") != "billing") return false;
+        }
+        return query.Keys.All(key => key.Equals("organizationId", StringComparison.OrdinalIgnoreCase) ||
+            key.Equals("projectId", StringComparison.OrdinalIgnoreCase) || basePath == "/organization" &&
+            (key.Equals("tab", StringComparison.OrdinalIgnoreCase) || key.Equals("newOrganization", StringComparison.OrdinalIgnoreCase)));
+    }
+
     private static async Task<Price> PriceAsync(StripeClient client, BillingPlan plan, string interval, CancellationToken cancellationToken)
     {
         Price? result = null;
@@ -459,7 +488,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
     }
 
     internal static bool MatchesPrice(Price price, BillingPlan plan, string interval, bool requirePublished = false) =>
-        (!requirePublished || price.Active) && price.Currency == "usd" && price.UnitAmount == (interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents) &&
+        plan.SupportsInterval(interval) && price.Recurring?.UsageType != "metered" && (!requirePublished || price.Active) && price.Currency == "usd" && price.UnitAmount == (interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents) &&
         price.Recurring?.Interval == (interval == "annual" ? "year" : "month") && price.Recurring.IntervalCount == 1 &&
         price.Product is { } product && (!requirePublished || product.Active) && (product.Metadata.GetValueOrDefault("plan") == plan.Key ||
             product.Name == plan.Name || product.Name == "TerraScale " + plan.Name);
@@ -469,7 +498,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         if (price is null) return null;
         var matches = (from plan in PlanCatalog.Plans
                        where plan.PriceCents > 0
-                       from interval in new[] { "monthly", "annual" }
+                       from interval in new[] { plan.CheckoutInterval }
                        where MatchesPrice(price, plan, interval)
                        select (plan, interval)).ToArray();
         return matches.Length == 1 ? matches[0] : null;

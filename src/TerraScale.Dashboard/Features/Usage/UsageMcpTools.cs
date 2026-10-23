@@ -6,20 +6,18 @@ using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.Usage;
 
-public sealed record SpendingCapChange(string Id, long? CapCents = null, long? ReadLimit = null, long? WriteLimit = null, long? ReplicationLimit = null);
 public sealed record UsageToolAllowance(string Name, string Allowance, long Limit,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Used, bool Measured,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? Percent);
-public sealed record UsageToolProject(OperationLimits OperationLimits, string Id, string Name, string Region, int DatabaseCount,
-    long SpendCapCents, long EffectiveCapCents,
+public sealed record UsageToolProject(string Id, string Name, string Region, int DatabaseCount,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? LogicalBytes, bool Unavailable,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? SharePercent, bool Selected);
-public sealed record UsageToolDatabase(OperationLimits OperationLimits, string Id, string Name, string Region, string Status,
+public sealed record UsageToolDatabase(string Id, string Name, string Region, string Status,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Documents,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? LogicalBytes, bool Unavailable,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? SharePercent, bool Metered,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Reads,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Writes, long SpendCapCents, long EffectiveCapCents);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Writes);
 public sealed record UsageToolTotals(bool Available, string Source, string Error, string Range,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Reads,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Writes,
@@ -27,7 +25,6 @@ public sealed record UsageToolTotals(bool Available, string Source, string Error
     IReadOnlyList<ActivityPoint> Series);
 public sealed record UsageToolReport(string OrganizationId, string ProjectId, string DatabaseId,
     string PlanName, IReadOnlyList<UsageToolAllowance> Allowances, string AllowanceError, string PlanUsageNote,
-    long SpendCapCents, bool PaidExcessEnabled, long ProjectEffectiveCapCents,
     IReadOnlyList<UsageToolProject> Projects, IReadOnlyList<UsageToolDatabase> Databases, UsageToolTotals Totals,
     int ActiveDatabases, int RegionCount, bool CanManage)
 {
@@ -38,21 +35,8 @@ public sealed record UsageToolReport(string OrganizationId, string ProjectId, st
 [McpServerToolType]
 public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService accounts, SpendingService spending, IUsageMeasurements measurements, IUsageStorage documentStorage, TimeProvider time)
 {
-    [McpServerTool(Name = "get_usage", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read organization plan allowances, persisted spending controls and producer measurements for an authorized project/database. Missing measurements remain unavailable.")]
+    [McpServerTool(Name = "get_usage", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read organization plan allowances and producer measurements for an authorized project/database. Missing measurements remain unavailable.")]
     public Task<UsageToolReport> Read(string databaseId = "", string range = "7d", string? organizationId = null, string? projectId = null) => ReportAsync(Scope(organizationId, projectId), databaseId, range);
-
-    [McpServerTool(Name = "set_spending_controls", UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Set monthly spending caps in US cents and read/write/replication limits. Zero removes a limit; omitted fields remain unchanged. Requires an owner or admin role.")]
-    public async Task<UsageToolReport> Set(long? organizationCapCents = null, bool? paidExcess = null,
-        SpendingCapChange[]? projectCaps = null, SpendingCapChange[]? databaseCaps = null,
-        string? organizationId = null, string? projectId = null)
-    {
-        var context = Scope(organizationId, projectId);
-        var projects = Changes(projectCaps, "project");
-        var databases = Changes(databaseCaps, "database");
-        await spending.SetAsync(context, new(organizationCapCents, paidExcess,
-            Caps(projects), Caps(databases), Operations(projects), Operations(databases)), Cancellation);
-        return await ReportAsync(context, "", "7d");
-    }
 
     private async Task<UsageToolReport> ReportAsync(AccountContext context, string databaseId, string range)
     {
@@ -95,8 +79,8 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
             var reading = measured.Monthly.GetValueOrDefault(project.Id) is { State: UsageSourceState.Measured } observation ? observation.Reading : null;
             if (reading is not null && (reading.ProjectId != project.Id || reading.DatabaseId.Length > 0)) throw new IOException("Project usage scope is invalid.");
             var bytes = reading?.LogicalBytes ?? stored.Projects.GetValueOrDefault(project.Id)?.Total?.LogicalBytes;
-            return new UsageToolProject(project.Operations, project.Id, project.Name, project.Region.Length > 0 ? project.Region : "Not configured",
-                project.Databases.Count, project.CapCents, project.EffectiveCapCents, bytes, bytes is null,
+            return new UsageToolProject(project.Id, project.Name, project.Region.Length > 0 ? project.Region : "Not configured",
+                project.Databases.Count, bytes, bytes is null,
                 Share(bytes, storage), project.Id == context.Project?.Id);
         }).ToArray();
         var listed = selected?.Databases.Where(database => databaseId.Length == 0 || database.Id == databaseId).ToArray() ?? [];
@@ -110,10 +94,9 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
             var reading = databaseReadings[database.Id];
             var fact = stored.Projects.GetValueOrDefault(context.Project!.Id)?.Databases.GetValueOrDefault(database.Id);
             var bytes = databaseBytes[database.Id];
-            return new UsageToolDatabase(database.Operations, database.Id, database.Name, database.Region,
+            return new UsageToolDatabase(database.Id, database.Name, database.Region,
                 context.Project!.Databases[database.Id].Status, reading?.Documents ?? fact?.Documents, bytes, bytes is null,
-                Share(bytes, databaseTotal), reading is not null, reading?.Period.Reads, reading?.Period.Writes,
-                database.CapCents, database.EffectiveCapCents);
+                Share(bytes, databaseTotal), reading is not null, reading?.Period.Reads, reading?.Period.Writes);
         }).ToArray();
         var error = measured.Scope.State switch
         {
@@ -137,12 +120,11 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
                 ? "This month's reads and writes could not be loaded from TerraBase. Try again shortly." : "";
         var scopeBytes = scope?.LogicalBytes ?? stored.Scope(selection)?.LogicalBytes;
         return new(context.Organization!.Id, context.Project?.Id ?? "", databaseId, plan?.Name ?? "No billing plan",
-            [Allowance("Reads this month", plan?.ReadsAllowance, limits.MonthlyReads, reads),
-             Allowance("Writes this month", plan?.WritesAllowance, limits.MonthlyWrites, writes),
-             Allowance("Storage", plan?.StorageAllowance, limits.StorageBytes, storage)], allowanceError,
-            reads is null ? "This month's reads and writes aren't metered here, so their utilization is unavailable."
-                : "UTC month-to-date best-effort counts. Estimates are not settled charges; a crash can lose counts since the last save.",
-            controls.OrganizationCapCents, controls.PaidExcess, selected?.EffectiveCapCents ?? controls.OrganizationCapCents, projects, databases,
+            [Allowance("Operation units this month", plan?.OperationsAllowance, limits.MonthlyOperations, null),
+             Allowance("Storage across regions", plan?.StorageAllowance, limits.StorageBytes, null),
+             Allowance("Client egress this month", plan?.EgressAllowance, limits.MonthlyEgressBytes, null)], allowanceError,
+            "Published allowances count 4 KiB operation units and storage across selected regions, and client egress. These document counters do not measure allowance utilization.",
+            projects, databases,
             new(scope is not null, source, error, range, scope?.Period.Reads, scope?.Period.Writes, scopeBytes, scopeBytes is not null, scope?.Series ?? []),
             context.Project?.Databases.Count ?? 0,
             context.Project?.Databases.Values.Select(database => database.Region).Where(region => region.Length > 0).Distinct(StringComparer.Ordinal).Count() ?? 0,
@@ -157,17 +139,6 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
         used is not null && limit > 0 ? (int)Math.Min(int.MaxValue, Math.Round(used.Value / (double)limit * 100, MidpointRounding.AwayFromZero)) : null);
     private static int? Share(long? part, long? total) => part is null || total is null ? null : part <= 0 || total <= 0 ? 0
         : Math.Max(1, (int)Math.Round(part.Value / (double)total.Value * 100, MidpointRounding.AwayFromZero));
-    private static IReadOnlyList<SpendingCapChange> Changes(SpendingCapChange[]? values, string kind)
-    {
-        values ??= [];
-        if (values.Any(value => string.IsNullOrWhiteSpace(value.Id)) || values.Select(value => value.Id).Distinct(StringComparer.Ordinal).Count() != values.Length)
-            throw new AccountAccessException("Supply distinct " + kind + " IDs.", 400);
-        return values;
-    }
-    private static Dictionary<string, long> Caps(IReadOnlyList<SpendingCapChange> changes) => changes.Where(value => value.CapCents.HasValue).ToDictionary(value => value.Id, value => value.CapCents!.Value, StringComparer.Ordinal);
-    private static Dictionary<string, OperationLimitChange> Operations(IReadOnlyList<SpendingCapChange> changes) => changes
-        .Where(value => value.ReadLimit is not null || value.WriteLimit is not null || value.ReplicationLimit is not null)
-        .ToDictionary(value => value.Id, value => new OperationLimitChange(value.ReadLimit, value.WriteLimit, value.ReplicationLimit), StringComparer.Ordinal);
     private AccountContext Scope(string? organizationId, string? projectId) => DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
     private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 }

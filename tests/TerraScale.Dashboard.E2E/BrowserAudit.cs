@@ -7,6 +7,14 @@ namespace TerraScale.Dashboard.E2E;
 // Shared helpers for the C# browser journeys.
 public static class BrowserAudit
 {
+    public static string WithoutWorkspace(string url)
+    {
+        var uri = new Uri(url);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        query.Remove("organizationId"); query.Remove("projectId");
+        return uri.GetLeftPart(UriPartial.Path) + Microsoft.AspNetCore.Http.QueryString.Create(query) + uri.Fragment;
+    }
+
     // Signs in as a browser does: /login redirects to ts-auth's hosted sign-in. On demo test hosts the
     // hosted page is the test-only /__test/oidc stand-in, told which account to sign in as.
     // Playwright routes never see redirected requests, so the account goes on the landed page's URL.

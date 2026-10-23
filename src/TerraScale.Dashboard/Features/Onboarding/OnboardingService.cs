@@ -7,7 +7,7 @@ public sealed class OnboardingService(AccountService accounts, StripeBilling pay
 {
     public async Task<IReadOnlyList<BillingPlan>> PlansAsync(CancellationToken cancellationToken) =>
         (await payments.PlansAsync(cancellationToken)).Where(plan => plan.PriceCents > 0)
-            .OrderBy(plan => plan.Key switch { "starter" => 0, "pro" => 1, "business" => 2, _ => 3 })
+            .OrderBy(plan => plan.PriceCents)
             .ThenBy(plan => plan.Key, StringComparer.Ordinal).ToArray();
 
     public async Task ConfirmPaymentAsync(SessionRecord session, CancellationToken cancellationToken)
@@ -50,7 +50,8 @@ public sealed class OnboardingService(AccountService accounts, StripeBilling pay
                 if (context.Organization?.Kind != "personal") throw new OnboardingValidationException("Return to your Personal workspace to finish account setup.");
                 var plan = form["plan"].ToString();
                 var interval = form["interval"].ToString();
-                if (interval is not ("monthly" or "annual") || !(await PlansAsync(cancellationToken)).Any(candidate => candidate.Key == plan))
+                if (interval.Length == 0) interval = (await PlansAsync(cancellationToken)).FirstOrDefault(candidate => candidate.Key == plan)?.CheckoutInterval ?? "";
+                if (interval is not ("monthly" or "annual") || !(await PlansAsync(cancellationToken)).Any(candidate => candidate.Key == plan && candidate.SupportsInterval(interval)))
                     throw new OnboardingValidationException("Choose an available plan and billing interval.");
                 return await payments.StartCheckoutAsync(context, plan, interval, "/onboarding", cancellationToken);
             case "project":

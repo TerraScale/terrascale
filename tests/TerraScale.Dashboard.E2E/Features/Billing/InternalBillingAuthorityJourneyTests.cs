@@ -28,7 +28,7 @@ public sealed class InternalBillingAuthorityJourneyTests(DashboardRootFixture fi
             });
 
         await Assert.That(result.ExitCode).IsEqualTo(1);
-        await Assert.That(result.Error).IsEqualTo("configure-internal-billing: Organization is unavailable.\n");
+        await Assert.That(result.Error).IsEqualTo("configure-internal-billing: Workspace is unavailable.\n");
         // Browser sign-in and the device grant; membership fails before the privileged rotation.
         await Assert.That(result.Observed.GetProperty("issuedAdminRoleGrants").GetInt32()).IsEqualTo(2);
         var billing = result.Observed.GetProperty("billing");

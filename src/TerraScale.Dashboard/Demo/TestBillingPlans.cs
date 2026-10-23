@@ -65,7 +65,7 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
                     if (!barriers.TryGetValue(binding.CustomerId, out var barrier) || !barrier.Waiting.Task.IsCompleted) return Results.BadRequest();
                     var subscription = await SubscriptionAsync(binding.SubscriptionId, http.RequestAborted);
                     var currentId = subscription["items"]!["data"]![0]!["price"]!["id"]!.GetValue<string>();
-                    var nextId = currentId.EndsWith("_monthly", StringComparison.Ordinal) ? currentId[..^8] + "_annual" : currentId[..^7] + "_monthly";
+                    var nextId = currentId + "_replacement";
                     subscription["items"]!["data"]![0]!["price"] = Price(nextId);
                     barrier.Resume.TrySetResult();
                 }
@@ -282,8 +282,8 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
     private JsonObject Price(string id)
     {
         var canonicalId = id.EndsWith("_replacement", StringComparison.Ordinal) ? id[..^12] : id;
-        var plan = PlanCatalog.Plans.FirstOrDefault(plan => canonicalId.StartsWith("price_" + plan.Key + "_", StringComparison.Ordinal)) ?? throw new HttpRequestException("Unknown published price.");
-        var interval = canonicalId[("price_" + plan.Key + "_").Length..]; if (interval is not ("monthly" or "annual")) throw new HttpRequestException("Unknown published interval.");
+        var plan = PlanCatalog.Plans.FirstOrDefault(plan => plan.PriceCents > 0 && canonicalId.StartsWith("price_" + plan.Key + "_", StringComparison.Ordinal)) ?? throw new HttpRequestException("Unknown published price.");
+        var interval = canonicalId[("price_" + plan.Key + "_").Length..]; if (!plan.SupportsInterval(interval)) throw new HttpRequestException("Unknown published interval.");
         return new()
         {
             ["id"] = id,

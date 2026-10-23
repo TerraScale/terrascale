@@ -26,15 +26,16 @@ public static class UsageEndpoints
             catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
             catch (IOException) { return Results.Text("Could not load usage.", statusCode: 503); }
         });
-        endpoints.MapPost("/api/v1/dashboard/usage/spending-controls", async (HttpContext http, DashboardSessions sessions, AccountService accounts, SpendingService spending) =>
+        endpoints.MapPost("/api/v1/dashboard/usage/internal-spending-cap", async (HttpContext http, DashboardSessions sessions, AccountService accounts, SpendingService spending) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
+            if (context.Organization?.InternalBilling is null) return Results.NotFound();
             if (!context.CanManage) return Results.Text("Organization management is required.", statusCode: 403);
-            if (!SpendingForm.TryParse(form, out var change)) return HttpRedirects.SeeOther("/usage?tab=settings&saved=invalid");
-            try { await spending.SetAsync(context, change, http.RequestAborted); }
+            if (!SpendingForm.TryParse(form, out var capCents)) return HttpRedirects.SeeOther("/usage?tab=settings&saved=invalid");
+            try { await spending.SetInternalCapAsync(context, capCents, http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
             return HttpRedirects.SeeOther("/usage?tab=settings&saved=ok");
         });

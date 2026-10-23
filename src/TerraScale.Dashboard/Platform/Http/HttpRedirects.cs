@@ -9,7 +9,7 @@ public static class HttpRedirects
         public Task ExecuteAsync(HttpContext context)
         {
             context.Response.StatusCode = StatusCodes.Status303SeeOther;
-            context.Response.Headers.Location = Location;
+            context.Response.Headers.Location = WorkspaceUrl.PreserveRequest(context, Location);
             return Task.CompletedTask;
         }
     }

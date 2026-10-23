@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E.Features.Organizations;
 
@@ -62,6 +63,7 @@ public sealed class ReviewLiveInvitationAuthorityJourneyTests
         using (var switched = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-organization", new()
         { ["_csrf"] = csrf, ["organizationId"] = business, ["returnUrl"] = "/organization" }))
             await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await platform.PlanAsync(business);
         csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=invitations");
         using var resent = await HttpJourney.PostFormAsync(client, "/api/v1/access/invitations/" + invitation + "/resend?tab=invitations", new()
         { ["_csrf"] = csrf });
@@ -125,6 +127,16 @@ public sealed class ReviewLiveInvitationAuthorityJourneyTests
             return principal;
         });
 
+        public async Task PlanAsync(string organizationId)
+        {
+            var current = await environment.State.GetAsync(AccountService.OrganizationsCollection, organizationId, default)
+                ?? throw new InvalidOperationException("The fixture plan targets an existing organization.");
+            var organization = current.Document.Deserialize<OrganizationRecord>()!;
+            organization.PlanId = OrganizationRecord.StarterPlanId;
+            await environment.State.PutAsync(AccountService.OrganizationsCollection, organizationId, JsonSerializer.SerializeToElement(organization),
+                TerraBasePrecondition.Matches(current.Version), default);
+        }
+
         public HttpClient Client(bool replica = false) => new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = replica ? this.replica : origin, Timeout = TimeSpan.FromSeconds(30) };
 
@@ -155,7 +167,7 @@ public sealed class ReviewLiveInvitationAuthorityJourneyTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             request.RequestUri is { Host: "auth.terrascale.tech" } uri && uri.AbsolutePath.StartsWith("/v1/terrascale/", StringComparison.Ordinal)
                 ? producer.HandleAsync(request, cancellationToken)
-                : fallback.SendAsync(request, cancellationToken);
+                : HttpForwarding.SendAsync(fallback, request, cancellationToken);
         protected override void Dispose(bool disposing) { if (disposing) fallback.Dispose(); base.Dispose(disposing); }
     }
 

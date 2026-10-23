@@ -106,6 +106,7 @@ public sealed class DemoEnvironment
             builder.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend>(databases));
             builder.Services.Replace(ServiceDescriptor.Singleton<IDocumentBackend>(documents));
             builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new TestMeasurements()));
+            builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Notifications.IAllowanceNotificationBackend, TestAllowanceNotifications>());
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(imports)));
             builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
             builder.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(TimeProvider.System));
@@ -845,7 +846,7 @@ sealed class TestStripeTransport : HttpMessageHandler
             value = new { id = customerId, @object = "customer", metadata = new { organization_id = organizationId }, invoice_settings = new { default_payment_method = (object?)null } };
         }
         else if (request.Method == HttpMethod.Get && path == "/v1/prices")
-            value = new { @object = "list", has_more = false, data = PlanCatalog.Plans.Where(item => item.PriceCents > 0).SelectMany(item => new[] { "monthly", "annual" }.Select(interval => Price(item, interval))).ToArray() };
+            value = new { @object = "list", has_more = false, data = PlanCatalog.Plans.Where(item => item.PriceCents > 0).Select(item => Price(item, item.CheckoutInterval)).ToArray() };
         else if (request.Method == HttpMethod.Get && path == "/v1/invoices")
         {
             var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
@@ -921,10 +922,10 @@ sealed class TestStripeTransport : HttpMessageHandler
                 id = checkout.SubscriptionId,
                 @object = "subscription",
                 customer = checkout.CustomerId,
-                status = "trialing",
+                status = plan.TrialDays > 0 ? "trialing" : "active",
                 metadata = checkout.Metadata,
                 default_payment_method = "pm_demo",
-                items = new { @object = "list", data = new[] { new { id = "si_demo", @object = "subscription_item", quantity = 1, current_period_end = DateTimeOffset.UtcNow.AddDays(plan.TrialDays).ToUnixTimeSeconds(), price = Price(plan, checkout.Metadata["interval"]) } } }
+                items = new { @object = "list", data = new[] { new { id = "si_demo", @object = "subscription_item", quantity = 1, current_period_end = (plan.TrialDays > 0 ? DateTimeOffset.UtcNow.AddDays(plan.TrialDays) : plan.BillingInterval == "year" ? DateTimeOffset.UtcNow.AddYears(1) : DateTimeOffset.UtcNow.AddMonths(1)).ToUnixTimeSeconds(), price = Price(plan, checkout.Metadata["interval"]) } } }
             };
             invoices.TryAdd(checkout.CustomerId, Enumerable.Range(0, 24).Select(index => new Invoice("in_" + checkout.CustomerId + "_" + index,
                 "INV-" + index.ToString("D2"), index % 2 == 0 ? "open" : "paid", 500 + index,

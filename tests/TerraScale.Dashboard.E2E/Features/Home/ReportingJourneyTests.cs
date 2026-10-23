@@ -115,23 +115,17 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             flow.Checks.Add("project-scoped analytics contract, tenant/scope/oversize failures and null-vs-zero observations through running routes");
 
             await flow.GotoAsync(ownerPage, "/usage?tab=settings");
-            await ownerPage.Locator("#organization-spend-cap").FillAsync("50.25");
-            await ownerPage.Locator("[id=\"project-spend-cap-" + projectId + "\"]").FillAsync("20.00");
-            await ownerPage.Locator("[id=\"database-spend-cap-" + orders + "\"]").FillAsync("10.00");
-            await ownerPage.Locator("[id=\"database-read-limit-" + orders + "\"]").FillAsync("12345");
-            await ownerPage.Locator("#paid-excess").CheckAsync();
-            await Assert.That((await flow.SubmitAsync(ownerPage, "#spending-controls", "Save spending controls")).Status).IsEqualTo(303);
-            await ownerPage.GetByRole(AriaRole.Alert).Filter(new() { HasText = "Changes saved" }).WaitForAsync();
+            await ownerPage.GetByRole(AriaRole.Heading, new() { Name = "Paid overages are unavailable", Exact = true }).WaitForAsync();
+            await Assert.That(await ownerPage.Locator("#spending-controls, #organization-spend-cap, #paid-excess").CountAsync()).IsEqualTo(0);
+            await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/usage/spending-controls", new() { ["spendCap"] = "50.25" }, 404);
+            await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/usage/internal-spending-cap", new() { ["spendCap"] = "50.25" }, 404);
             var persisted = (await (await ownerContext.APIRequest.GetAsync(flow.Origin + "/api/v1/dashboard/context")).JsonAsync())!.Value;
             var org = persisted.GetProperty("organizations").EnumerateArray().First(item => item.GetProperty("id").GetString() == original.GetProperty("organizationId").GetString());
             var project = org.GetProperty("projects").GetProperty(projectId);
-            await Assert.That(org.GetProperty("spendCapCents").GetInt64()).IsEqualTo(5025);
-            await Assert.That(project.GetProperty("spendCapCents").GetInt64()).IsEqualTo(2000);
-            await Assert.That(project.GetProperty("databases").GetProperty(orders).GetProperty("spendCapCents").GetInt64()).IsEqualTo(1000);
-            await Assert.That(project.GetProperty("databases").GetProperty(orders).GetProperty("operationLimits").GetProperty("readLimit").GetInt64()).IsEqualTo(12345);
+            await Assert.That(org.TryGetProperty("spendCapCents", out _)).IsFalse();
+            await Assert.That(project.TryGetProperty("spendCapCents", out _)).IsFalse();
+            await Assert.That(project.GetProperty("databases").GetProperty(orders).TryGetProperty("spendCapCents", out _)).IsFalse();
             await flow.ShotAsync(ownerPage, "spending-desktop");
-            var budget = await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/usage/spending-controls", new() { ["spendCap"] = "-1" });
-            await Assert.That(budget.Headers["location"]).IsEqualTo("/usage?tab=settings&saved=invalid");
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/settings/audit-retention", new() { ["retentionDays"] = "0" }, 400);
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/settings/audit-retention", new() { ["retentionDays"] = "30" });
             var provider = (await (await ownerContext.APIRequest.GetAsync(flow.Origin + "/__test/reporting/probe")).JsonAsync())!.Value;
@@ -140,7 +134,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/settings/backup-now", new() { ["databaseId"] = orders }, 503);
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/settings/restore", new() { ["databaseId"] = orders, ["backupId"] = "demo-backup" }, 400);
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/settings/delete-project", new() { ["projectId"] = projectId, ["confirmName"] = "Measured project" }, 409);
-            flow.Checks.Add("native persistent spending caps/operation limits, effective minimum budgets, invalid input and real SDK audit-retention with honest backup/protected-delete gaps");
+            flow.Checks.Add("customer spending setters absent, internal-only cap protected and real SDK audit-retention with honest backup/protected-delete gaps");
 
             await flow.GotoAsync(ownerPage, "/organization?tab=members");
             await ownerPage.Locator("#invite-email").FillAsync(guestUser.Email);
@@ -151,8 +145,8 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             await flow.SubmitAsync(guestPage, "form[action$=\"/respond\"]", "Accept invitation");
             await flow.GotoAsync(guestPage, "/usage?tab=settings");
             await Assert.That(await guestPage.GetByRole(AriaRole.Button, new() { Name = "Save spending controls", Exact = true }).CountAsync()).IsEqualTo(0);
-            await Assert.That(await guestPage.Locator("#organization-spend-cap").IsDisabledAsync()).IsTrue();
-            await flow.PostAsync(guestContext, guestPage, "/api/v1/dashboard/usage/spending-controls", new() { ["spendCap"] = "1.00" }, 403);
+            await Assert.That(await guestPage.Locator("#organization-spend-cap, #paid-excess").CountAsync()).IsEqualTo(0);
+            await flow.PostAsync(guestContext, guestPage, "/api/v1/dashboard/usage/spending-controls", new() { ["spendCap"] = "1.00" }, 404);
             await flow.PostAsync(guestContext, guestPage, "/api/v1/dashboard/settings/audit-retention", new() { ["retentionDays"] = "30" }, 403);
             await flow.ShotAsync(guestPage, "spending-member-mobile");
             await ownerPage.SetViewportSizeAsync(390, 844);
@@ -161,7 +155,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
                 await flow.GotoAsync(ownerPage, path);
                 await flow.ShotAsync(ownerPage, name);
             }
-            flow.Checks.Add("fresh member permissions and desktop/mobile WCAG 2.2 accessibility for measured reporting and native spending controls");
+            flow.Checks.Add("fresh member permissions and desktop/mobile WCAG 2.2 accessibility for measured reporting and honest spending availability");
             await Assert.That(flow.Errors).IsEmpty().Because("no browser or Datastar errors");
             flow.Gaps.Add("Producer replication contract has no historical bandwidth samples; the UI shows that state explicitly.");
 
@@ -171,7 +165,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             async Task ApplyAnalyticsAsync()
             {
                 var navigation = BrowserFlow.NavigationAsync(ownerPage);
-                await ownerPage.Locator("form[action=\"/analytics\"]").GetByRole(AriaRole.Button, new() { Name = "Apply", Exact = true }).ClickAsync();
+                await ownerPage.Locator("form:is([action=\"/analytics\"],[action^=\"/analytics?\"])").GetByRole(AriaRole.Button, new() { Name = "Apply", Exact = true }).ClickAsync();
                 await navigation;
             }
             async Task<string> DatabaseAsync(string name, string[] placement)
@@ -212,7 +206,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
         using var legacyBilling = await client.GetAsync("/usage?tab=billing&status=paid");
         await Assert.That(legacyBilling.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await Assert.That(legacyBilling.Headers.Location!.OriginalString).IsEqualTo("/organization?tab=billing&status=paid");
-        using var noCsrf = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/usage/spending-controls", new() { ["spendCap"] = "100.00" });
+        using var noCsrf = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/usage/internal-spending-cap", new() { ["spendCap"] = "100.00" });
         await Assert.That(noCsrf.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         using var after = JsonDocument.Parse(await client.GetStringAsync("/__test/reporting/probe"));
         await Assert.That(after.RootElement.GetProperty("requests").GetArrayLength()).IsEqualTo(requestsBefore);
@@ -247,17 +241,17 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await flow.GotoAsync(ownerPage, "/profile");
             await ownerPage.Locator("#displayName").FillAsync(ownerUser.Name + " Updated");
             await ownerPage.Locator("input[name=phoneNumber]").FillAsync("+55 11 99999-0000");
-            await flow.SubmitAsync(ownerPage, "form[action=\"/api/v1/dashboard/profile\"]", "Save profile");
+            await flow.SubmitAsync(ownerPage, "form:is([action=\"/api/v1/dashboard/profile\"],[action^=\"/api/v1/dashboard/profile?\"])", "Save profile");
             var saved = await flow.MeAsync(ownerContext);
             await Assert.That(Text(saved, "name")).IsEqualTo(ownerUser.Name + " Updated");
             await Assert.That(Text(saved, "phoneNumber")).IsEqualTo("+55 11 99999-0000");
-            var locale = ownerPage.Locator("form[action=\"/api/v1/dashboard/profile/language\"] select[name=locale]");
+            var locale = ownerPage.Locator("form:is([action=\"/api/v1/dashboard/profile/language\"],[action^=\"/api/v1/dashboard/profile/language?\"]) select[name=locale]");
             await locale.SelectOptionAsync("pt-BR");
-            await flow.SubmitAsync(ownerPage, "form[action=\"/api/v1/dashboard/profile/language\"]", "Save language");
+            await flow.SubmitAsync(ownerPage, "form:is([action=\"/api/v1/dashboard/profile/language\"],[action^=\"/api/v1/dashboard/profile/language?\"])", "Save language");
             await Assert.That(Text(await flow.MeAsync(ownerContext), "locale")).IsEqualTo("pt-BR");
             await Assert.That(await ownerPage.Locator("html").GetAttributeAsync("lang")).IsEqualTo("pt-BR");
             await locale.SelectOptionAsync("en");
-            await flow.SubmitAsync(ownerPage, "form[action=\"/api/v1/dashboard/profile/language\"]", "Save language");
+            await flow.SubmitAsync(ownerPage, "form:is([action=\"/api/v1/dashboard/profile/language\"],[action^=\"/api/v1/dashboard/profile/language?\"])", "Save language");
             await flow.ShotAsync(ownerPage, "profile-desktop");
             await Assert.That((await ownerPage.TitleAsync()).StartsWith("Profile", StringComparison.Ordinal)).IsTrue().Because("profile metadata preserves the original page title");
             await flow.GotoAsync(ownerPage, "/profile?tab=sessions");
@@ -290,7 +284,8 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             flow.Checks.Add("empty notification filtering/paging, native mutation authorization and live Datastar modal patch");
             flow.Checks.Add("Empty new-account inbox checked here; NotificationBrowserJourneyTests separately covers seeded native per-item and Datastar read-all updates on desktop/mobile.");
 
-            await fixture.PlanAsync(Text(original, "organizationId")!, OrganizationRecord.StarterPlanId); // Free allows only the onboarding project
+            await flow.GotoAsync(ownerPage, "/organization?tab=billing");
+            await flow.SubmitAsync(ownerPage, "[aria-labelledby=\"plan-starter\"] form", "Upgrade to Starter");
             await flow.GotoAsync(ownerPage, "/organization?tab=projects&newProject=1");
             await ownerPage.Locator("#create-project[open]").WaitForAsync();
             await ownerPage.Locator("#project-name").FillAsync("Disposable " + slug);
@@ -303,7 +298,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await row.GetByRole(AriaRole.Button, new() { Name = "Rename", Exact = true }).ClickAsync();
             await ownerPage.Locator("#rename-project-" + projectId + " input[name=name]").FillAsync("Renamed " + slug);
             await flow.SubmitAsync(ownerPage, "#rename-project-" + projectId + " form", "Save project");
-            await flow.SubmitAsync(ownerPage, "#projects tbody tr:has-text(\"Renamed " + slug + "\") form[action=\"/api/v1/dashboard/switch-project\"]", "Select");
+            await flow.SubmitAsync(ownerPage, "#projects tbody tr:has-text(\"Renamed " + slug + "\") form:is([action=\"/api/v1/dashboard/switch-project\"],[action^=\"/api/v1/dashboard/switch-project?\"])", "Select");
             await Assert.That(Text(await flow.MeAsync(ownerContext), "projectId")).IsEqualTo(projectId);
             await flow.ShotAsync(ownerPage, "projects-desktop");
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/settings/delete-project", new() { ["projectId"] = projectId, ["confirmName"] = "Wrong" }, 400);
@@ -323,6 +318,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             var businessId = Text(business, "organizationId");
             await Assert.That(businessId).IsNotEqualTo(Text(original, "organizationId"));
             await Assert.That(business.GetProperty("projectId").ValueKind).IsEqualTo(JsonValueKind.Null);
+            await flow.SubmitAsync(ownerPage, "#create-organization form", "Continue to checkout");
             await flow.GotoAsync(ownerPage, "/organization");
             var declined = await InviteAsync();
             await flow.GotoAsync(guestPage, declined);
@@ -493,7 +489,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             async Task SigninAsync(IPage page, FlowUser user, string invitationPath)
             {
                 await BrowserAudit.SignInAsync(page, new Uri(flow.Origin), invitationPath, user.Email, user.Password);
-                await page.WaitForURLAsync(flow.Origin + invitationPath, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
+                await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == flow.Origin + invitationPath, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
             }
             async Task RequestTransferAsync(IPage page, string recipient)
             {
@@ -595,12 +591,12 @@ file sealed class BrowserFlow(IBrowser browser, Uri origin, string output, float
         await Assert.That((await BrowserAudit.SignInAsync(page, new Uri(Origin), "/onboarding", user.Email, user.Password, signUp: true))!.Status).IsEqualTo(200);
         await page.GetByRole(AriaRole.Heading, new() { Name = "Review your account information", Exact = true }).WaitForAsync();
         await page.Locator("#displayName").FillAsync(user.Name);
-        await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Save and continue");
-        await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Continue on Free");
+        await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Save and continue");
+        await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Continue on Free");
         await page.Locator("#projectName").FillAsync(user.Name + " Project");
         await page.Locator("#region").SelectOptionAsync("GRU");
-        await SubmitAsync(page, "form[action=\"/onboarding/step\"]", "Create project and open Dashboard");
-        await page.WaitForURLAsync(Origin + "/");
+        await SubmitAsync(page, "form:is([action=\"/onboarding/step\"],[action^=\"/onboarding/step?\"])", "Create project and open Dashboard");
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == Origin + "/");
     }
 
     // Writes report.json, and on failure the active page's screenshot, HTML and optional provider probe.

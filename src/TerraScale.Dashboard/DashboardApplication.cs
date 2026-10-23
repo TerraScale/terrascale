@@ -48,6 +48,7 @@ public static class DashboardApplication
         builder.Services.AddSingleton<DependencyReadiness>();
         builder.Services.AddSingleton<DashboardSessions>();
         builder.Services.AddAccountFeatures();
+        builder.Services.AddAllowanceNotifications();
         builder.Services.AddAuth();
         builder.Services.AddDatabaseFeatures();
         builder.Services.AddImportFeatures();
@@ -95,6 +96,8 @@ public static class DashboardApplication
             {
                 // Error handling can clear headers; preserve endpoint policies and restore the baseline before writing.
                 var headers = context.Response.Headers;
+                if (headers.Location is { Count: 1 } && headers.Location[0] is { } location)
+                    headers.Location = WorkspaceUrl.PreserveRequest(context, location);
                 headers.XContentTypeOptions = "nosniff";
                 headers.XFrameOptions = "DENY";
                 headers.TryAdd("Referrer-Policy", "same-origin");

@@ -131,7 +131,7 @@ public sealed class InboxAuditUsageJourneyTests(DashboardRootFixture fixture)
         var html = WebUtility.HtmlDecode(await client.GetStringAsync("/usage?range=30d&database=" + id));
         await Assert.That(html).Contains("value=\"30d\" selected=\"selected\"");
         await Assert.That(html).Contains("value=\"" + id + "\" selected=\"selected\"");
-        var settings = Regex.Match(html, "<a class=\"ts-tab\" href=\"([^\"]+)\"[^>]*>(?:<svg\\b[^>]*>(?:(?!</svg>).)*</svg>)?<span>Spending controls</span>", RegexOptions.Singleline).Groups[1].Value;
+        var settings = Regex.Match(html, "<a class=\"ts-tab\" href=\"([^\"]+)\"[^>]*>(?:<svg\\b[^>]*>(?:(?!</svg>).)*</svg>)?<span>Spending</span>", RegexOptions.Singleline).Groups[1].Value;
         await Assert.That(settings.Length).IsGreaterThan(0);
         var query = QueryHelpers.ParseQuery(new Uri(client.BaseAddress!, settings).Query);
         await Assert.That(query["tab"].ToString()).IsEqualTo("settings");

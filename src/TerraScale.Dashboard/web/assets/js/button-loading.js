@@ -1,3 +1,5 @@
+import './workspace.js';
+
 // Shared feedback for native form submissions and Datastar requests. Keep
 // submit controls enabled so their name/value still reaches the server.
 const pending = new Map();

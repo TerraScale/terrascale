@@ -11,10 +11,10 @@ public sealed record InternalBillingPolicy(string OrganizationId, string PlanId,
     public void Validate(OrganizationRecord organization)
     {
         if (OrganizationId != organization.Id || PlanId != organization.PlanId || !TerraScaleIds.IsValid(PlanId) ||
-            string.IsNullOrEmpty(ConfigurationId) || BasePlanKey is not ("starter" or "pro" or "business") ||
+            string.IsNullOrEmpty(ConfigurationId) || !PlanCatalog.Plans.Any(plan => plan.Key == BasePlanKey && plan.PriceCents > 0) ||
             Plan is null || Plan.Id != PlanId || Plan.Key != "internal" || Plan.Name != "TerraScale Internal" ||
             Plan.PriceCents <= 0 || Plan.AnnualPriceCents < 0 || Plan.TrialDays < 0 || Allowances is null || Resources is null ||
-            Allowances.MonthlyReads < 0 || Allowances.MonthlyWrites < 0 || Allowances.StorageBytes < 0 ||
+            Allowances.MonthlyOperations < 0 || Allowances.StorageBytes < 0 || Allowances.MonthlyEgressBytes < 0 ||
             Resources.Databases < 0 || Resources.Members < 0 || Resources.Projects < 0 || WriteCentsPerMillion < 0 || StorageCentsPerGiBMonth < 0)
             throw new IOException("Internal billing policy identity or pricing is invalid.");
     }

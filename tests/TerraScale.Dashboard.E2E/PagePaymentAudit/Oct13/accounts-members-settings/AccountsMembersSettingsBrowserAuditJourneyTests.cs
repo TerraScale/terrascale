@@ -21,7 +21,7 @@ public sealed class AccountsMembersSettingsBrowserAuditJourneyTests(AccountsAudi
         await phone.FillAsync(new string('9', 65));
         await ShotAsync(page, "profile-draft-" + width);
         var response = await page.RunAndWaitForResponseAsync(() => page.GetByRole(AriaRole.Button, new() { Name = "Save profile", Exact = true }).ClickAsync(),
-            response => response.Request.Method == "POST" && response.Url.EndsWith("/api/v1/dashboard/profile", StringComparison.Ordinal));
+            response => response.Request.Method == "POST" && BrowserAudit.WithoutWorkspace(response.Url).EndsWith("/api/v1/dashboard/profile", StringComparison.Ordinal));
         await Assert.That(response.Status).IsEqualTo(422);
         await page.GetByRole(AriaRole.Alert).WaitForAsync();
         await ShotAsync(page, "profile-error-" + width);
@@ -97,7 +97,7 @@ public sealed class AccountsMembersSettingsBrowserAuditJourneyTests(AccountsAudi
     private async Task LoginAsync(IPage page, string path)
     {
         await BrowserAudit.SignInAsync(page, scenario.Origin, path, "owner@accounts-audit.example.test", AccountsAuditScenario.Password);
-        await page.WaitForURLAsync(new Uri(scenario.Origin, path).ToString());
+        await page.WaitForURLAsync(url => BrowserAudit.WithoutWorkspace(url) == new Uri(scenario.Origin, path).ToString());
     }
 
     private Task<byte[]> ShotAsync(IPage page, string name)

@@ -1,4 +1,3 @@
-
 namespace TerraScale.Dashboard.Features.QuerySubscriptions;
 
 public sealed record QuerySubscriptionView(string Id, string DatabaseId, string DatabaseName,
@@ -7,8 +6,6 @@ public sealed record QuerySubscriptionList(IReadOnlyList<QuerySubscriptionView> 
 
 public sealed class QuerySubscriptionService(AccountService accounts)
 {
-    public const string Unavailable = "Live shared-result configuration is unavailable.";
-
     public async Task<QuerySubscriptionList> ListAsync(AccountContext context, CancellationToken cancellationToken)
     {
         var project = (await FreshAsync(context, cancellationToken)).Project!;
@@ -25,23 +22,6 @@ public sealed class QuerySubscriptionService(AccountService accounts)
         return new(subscriptions);
     }
 
-    public async Task RefuseMutationAsync(AccountContext context, CancellationToken cancellationToken)
-    {
-        var fresh = await FreshAsync(context, cancellationToken);
-        if (!fresh.CanWrite) throw new AccountAccessException("Your role can view shared results but not change them.");
-        // The published producer/SDK contract offers no query-subscription
-        // delivery or management API. A saved local record cannot provision it.
-        throw new AccountAccessException(Unavailable, StatusCodes.Status503ServiceUnavailable);
-    }
-
-    private async Task<AccountContext> FreshAsync(AccountContext context, CancellationToken cancellationToken)
-    {
-        var fresh = await accounts.GetContextAsync(context.Session, cancellationToken);
-        var organization = fresh.Organizations.SingleOrDefault(item => item.Id == context.Organization?.Id)
-            ?? throw new AccountAccessException("Organization is unavailable.", 404);
-        var project = organization.Projects.GetValueOrDefault(context.Project?.Id ?? "");
-        if (project is null || project.OrganizationId != organization.Id)
-            throw new AccountAccessException("Project is unavailable.", 404);
-        return new(fresh.Session, fresh.Account, fresh.Organizations, organization, project);
-    }
+    private Task<AccountContext> FreshAsync(AccountContext context, CancellationToken cancellationToken) =>
+        AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
 }

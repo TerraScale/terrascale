@@ -114,7 +114,7 @@ public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(organization.GetProperty("planId").GetString()).IsEqualTo("443RCMMF70MNP6S1QMT230NF99")
             .Because("Duplicate and out-of-order stale snapshots cannot downgrade current provider state.");
         await Assert.That(organization.GetProperty("billingStatus").GetString()).IsEqualTo("active")
-            .Because("A validated paid-plan trial keeps the organization's existing active billing entitlement.");
+            .Because("A validated paid subscription keeps the organization's existing active billing entitlement.");
     }
 
     [Test]
