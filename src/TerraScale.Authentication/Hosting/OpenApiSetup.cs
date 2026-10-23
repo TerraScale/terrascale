@@ -30,6 +30,9 @@ public static class SecuritySchemes
     /// <summary>A platform user's own sign-in access token, for the platform management API (TS-598).</summary>
     public const string PlatformUser = "platformUser";
 
+    /// <summary>A whole project API key, restricted to server-to-server end-user token minting.</summary>
+    public const string ProjectApiKey = "projectApiKey";
+
     /// <summary>Session cookie name used by every hosted UI route.</summary>
     public const string SessionCookieName = "tsauth_session";
 }
@@ -118,6 +121,12 @@ public static partial class OpenApiSetup
         [SecuritySchemes.OperatorBearer] = () => new() { Type = SecuritySchemeType.Http, Scheme = "bearer", Description = "Operator bootstrap key." },
         [SecuritySchemes.ClientBasic] = () => new() { Type = SecuritySchemeType.Http, Scheme = "basic" },
         [SecuritySchemes.BearerAuth] = () => new() { Type = SecuritySchemeType.Http, Scheme = "bearer" },
+        [SecuritySchemes.ProjectApiKey] = () => new()
+        {
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            Description = "Whole project API key, with no database restriction and both documents:read and documents:write. Backend use only; never expose this key to a browser. Organization keys and JWTs are refused.",
+        },
         [SecuritySchemes.PlatformUser] = () => new()
         {
             Type = SecuritySchemeType.Http,
@@ -178,7 +187,7 @@ public static partial class OpenApiSetup
                 }
 
                 operation.Responses ??= [];
-                if (path is "/{slug}/oauth/token" or "/ui/{slug}/sign-in" or "/ui/{slug}/sign-in/verify"
+                if (path is "/{slug}/oauth/token" or "/ui/{slug}/sign-in" or "/ui/{slug}/sign-in/verify" or "/v1/terrascale/projects/{project}/end-user-tokens"
                     && operation.Responses.TryGetValue("429", out var limited) && limited is OpenApiResponse response)
                 {
                     (response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal))["Retry-After"] = new OpenApiHeader

@@ -14,8 +14,7 @@ namespace TerraScale.Authentication.Contracts;
 /// in TerraBase; <see langword="null"/> otherwise. No API sets it: an operator writes it to the user's document through
 /// TerraBase's internal listener. The platform owner is an admin without it (ts-auth's PlatformBootstrap.OwnerEmail).
 /// </param>
-/// <param name="Roles">Trusted end-user roles, maintained by ts-auth; never platform administrator scopes.</param>
-public sealed record UserRecord(string Id, string InstanceId, string Email, long AuthEpoch, DateTimeOffset CreatedAt, string? PasswordHash = null, string? PlatformRole = null, IReadOnlyList<string>? Roles = null)
+public sealed record UserRecord(string Id, string InstanceId, string Email, long AuthEpoch, DateTimeOffset CreatedAt, string? PasswordHash = null, string? PlatformRole = null)
 {
     /// <summary>Identity of the last authentication-state change; equal numeric epochs can race across regions.</summary>
     public string? AuthStamp { get; init; }
@@ -24,7 +23,6 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     [JsonIgnore]
     public IReadOnlyList<CredentialBinding> AuthenticationBindings { get; init; } = [];
 }
-
 
 /// <summary>A browser session (collection <c>sessions</c>). Only the SHA-256 of its bearer token is stored.</summary>
 /// <param name="InstanceId">The owning instance.</param>

@@ -205,6 +205,25 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
         return uses.OfType<ApiKeyUsageRecord>().ToDictionary(usage => usage.KeyId, usage => usage.LastUsedAt);
     }
 
+    /// <summary>Authenticates a whole key string against a fresh authority read, including rotation grace and expiry.</summary>
+    public async Task<ApiKeyRecord?> AuthenticateAsync(string? secret, CancellationToken cancellationToken)
+    {
+        if (secret is not { Length: 79 } || secret[26] != '_'
+            || await this.FindAsync(secret[..26], cancellationToken).ConfigureAwait(false) is not { } key)
+        {
+            return null;
+        }
+
+        var digest = Tokens.Sha256Hex(secret);
+        var matched = false;
+        foreach (var candidate in this.Digests(key))
+        {
+            matched |= Tokens.FixedTimeEquals(digest, candidate);
+        }
+
+        return matched ? key : null;
+    }
+
     private static (string Id, string Secret) Generate()
     {
         var id = AuthStore.NewId();
