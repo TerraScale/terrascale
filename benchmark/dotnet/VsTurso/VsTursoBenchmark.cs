@@ -40,7 +40,7 @@ namespace TerraBase.E2E
             Skip.When(string.IsNullOrEmpty(output), "the vs-Turso benchmark: run it with benchmark/dotnet/VsTurso/run.sh");
             var seconds = int.Parse(Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_SECONDS") ?? "5", CultureInfo.InvariantCulture);
             var repeats = int.Parse(Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_REPEATS") ?? "3", CultureInfo.InvariantCulture);
-            var lanes = (Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_LANES") ?? "turso,turso-cdc,engine,api,engine-3,api-3").Split(',');
+            var lanes = (Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_LANES") ?? "turso,turso-cdc,engine,api,floor,engine-3,api-3").Split(',');
             var workloads = (Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_WORKLOADS") ?? string.Join(',', Workloads)).Split(',');
             var duration = TimeSpan.FromSeconds(seconds);
             var cells = new List<Cell>();
@@ -57,7 +57,7 @@ namespace TerraBase.E2E
                 }
 
                 // One node outside a cell: change capture, change groups and the feed run, nothing ships and no write waits for a remote ack.
-                await using (var node = lanes.Any(lane => lane is "engine" or "api") ? await ManagementApi.StartAsync() : null)
+                await using (var node = lanes.Any(lane => lane is "engine" or "api" or "floor") ? await ManagementApi.StartAsync() : null)
                 {
                     if (node is not null)
                     {
@@ -123,6 +123,12 @@ namespace TerraBase.E2E
             if (lanes.Contains("api" + suffix))
             {
                 targets.Add(("api" + suffix, new ApiTarget(address, token, path, engine)));
+            }
+
+            // The HTTP floor: the same client and listener answering GET /healthz, so no auth, catalog or storage.
+            if (lanes.Contains("floor" + suffix))
+            {
+                targets.Add(("floor" + suffix, new ApiTarget(address, token, "/healthz?", engine, floor: true)));
             }
 
             return targets;
@@ -496,9 +502,12 @@ namespace TerraBase.E2E
             private readonly ITarget _preload;
 
             // The engine target of the same node preloads: the API would only add its own cost to a phase nobody measures.
-            public ApiTarget(Uri address, string token, string path, ITarget preload)
+            private readonly bool _floor;
+
+            public ApiTarget(Uri address, string token, string path, ITarget preload, bool floor = false)
             {
                 _preload = preload;
+                _floor = floor;
                 _client = new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = Timeout.InfiniteTimeSpan, UseCookies = false })
                 {
                     BaseAddress = address,
@@ -509,6 +518,12 @@ namespace TerraBase.E2E
 
             public async Task PutAsync(string id, byte[] json)
             {
+                if (_floor)
+                {
+                    await GetAsync(id);
+                    return;
+                }
+
                 using var content = new ByteArrayContent(json);
                 content.Headers.ContentType = Json;
                 using var response = await _client.PutAsync(new Uri(_path + id, UriKind.Relative), content);
@@ -521,7 +536,7 @@ namespace TerraBase.E2E
 
             public Task PreloadAsync(IReadOnlyList<(string Id, byte[] Json)> documents)
             {
-                return _preload.PreloadAsync(documents);
+                return _floor ? Task.CompletedTask : _preload.PreloadAsync(documents);
             }
 
             public async Task GetAsync(string id)
