@@ -24,7 +24,7 @@
     "base_revision": "2d639336d1df5799bd2d62bd6cfded1498774dde",
     "sources_sha256": {
       "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "a7436836b58919b0804661cdacfd30760f568d3d41a969823514cfceb54f04fd",
-      "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "d1db8171aa8488378851b1f0affc4392d7d677951b758f7385683db0ec3fcbb3",
+      "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "0a91cf170ae2854c27888257d92b71a3d733e1ebfa457f8c2b48b79505f75b13",
       "src/TerraScale.Authentication/Features/Platform/Closures.cs": "1170f473b4d87bbdadc5a9165335da1724e6e20b975226deab0b58d3b8a2fd36",
       "src/TerraScale.Authentication/Features/Platform/AccountDeletion.cs": "c36d64d3372e75d16b97b0296e5ff42a6fb306fcf07734df58115859bec3febd",
       "docs/auth/platform-api.openapi.yaml": "e11da164426128960ea7726dad0805571b43cb54ff3e55e62a6cd8e392033516"
@@ -33,6 +33,7 @@
       "closure_conflict",
       "binding_conflict"
     ],
-    "statuses": "delete_account and delete_project answer 202 while a TerraBase project closure is pending"
+    "statuses": "delete_account and delete_project answer 202 while a TerraBase project closure is pending",
+    "patch": "ts873-auth-r4-on-ba76166.patch sha256 f268ab4f65f61a349b48cd64f51a2d932479613d1a88c5b4847a8ac213057783 (applies to ba761660b and 2d639336d)"
   }
 }
