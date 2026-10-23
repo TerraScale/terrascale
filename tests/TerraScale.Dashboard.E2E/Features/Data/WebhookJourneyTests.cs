@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Playwright;
 using TerraScale.Dashboard.E2E.Features.Databases;
 
@@ -57,6 +59,55 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
     }
 
     [Test]
+    [Arguments("timeout")]
+    [Arguments("malformed")]
+    [Arguments("io")]
+    public async Task PersistedCreateWithLostResponseRequiresReconciliationBeforeRetry(string fault)
+    {
+        await using var flow = await Flow.StartAsync(fixture.Root);
+        flow.CreateFault = fault;
+        using var response = await HttpJourney.PostFormAsync(flow.Client, "/api/v1/dashboard/webhooks", flow.Form());
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(response.Headers.CacheControl?.NoStore).IsTrue();
+        var body = await response.Content.ReadAsStringAsync();
+        await Assert.That(body).Contains("The result is unknown. Check the endpoint list before retrying; delete and recreate it if its signing secret was lost.");
+        await Assert.That(body).Contains("href=\"" + flow.Path.Replace("&", "&amp;", StringComparison.Ordinal) + "\"");
+        await Assert.That(body).DoesNotContain("Try again shortly");
+        await Assert.That(body).DoesNotContain(Flow.Secret);
+        await Assert.That(flow.Created).IsTrue();
+        await Assert.That(flow.Calls).IsEqualTo(1).Because("A failed acknowledgment must never replay creation.");
+        var listed = await flow.Client.GetStringAsync(flow.Path);
+        await Assert.That(listed).Contains("https://receiver.example/events");
+        await Assert.That(listed).DoesNotContain(Flow.Secret);
+    }
+
+    [Test]
+    public async Task CallerCancellationIsNotConvertedToAnUnknownCreateResponse()
+    {
+        await using var flow = await Flow.StartAsync(fixture.Root);
+        flow.CreateFault = "cancel";
+        using var cancellation = new CancellationTokenSource();
+        var request = flow.Client.PostAsync("/api/v1/dashboard/webhooks", new FormUrlEncodedContent(flow.Form()), cancellation.Token);
+        await flow.CreatePersisted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        cancellation.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await request);
+        await Assert.That(flow.Created).IsTrue();
+        await Assert.That(flow.Calls).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ProducerValidationRefusalKeepsItsKnownOutcome()
+    {
+        await using var flow = await Flow.StartAsync(fixture.Root);
+        flow.CreateFault = "refused";
+        using var response = await HttpJourney.PostFormAsync(flow.Client, "/api/v1/dashboard/webhooks", flow.Form());
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(await response.Content.ReadAsStringAsync()).DoesNotContain("The result is unknown");
+        await Assert.That(flow.Created).IsFalse();
+        await Assert.That(flow.Calls).IsEqualTo(1);
+    }
+
+    [Test]
     [Category("Slow")]
     [Arguments(1440, 900)]
     [Arguments(390, 844)]
@@ -65,20 +116,53 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
         await using var flow = await Flow.StartAsync(fixture.Root);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+        var output = BrowserAudit.Output(fixture.Root, "webhooks-" + width + "x" + height);
+        await using var context = await browser.NewContextAsync(new()
+        {
+            ViewportSize = new() { Width = width, Height = height },
+            RecordVideoDir = Path.Combine(output, "video"),
+            RecordVideoSize = new() { Width = width, Height = height }
+        });
+        // Mask capture text through the allowed stylesheet; do not bypass the application's CSP.
+        await context.RouteAsync("**/css/terrascale.css*", async route =>
+        {
+            var response = await route.FetchAsync();
+            await route.FulfillAsync(new()
+            {
+                Response = response,
+                Body = await response.TextAsync() + "\n.ts-account-name,.ts-account-email {visibility:hidden!important} #webhook-secret {color:transparent!important;position:relative} #webhook-secret::before {content:'[signing secret masked]';color:#fff;position:absolute}"
+            });
+        });
         var page = await context.NewPageAsync();
         await BrowserAudit.SignInAsync(page, flow.Scenario.Origin, email: flow.Account.Email, password: flow.Account.Password);
         await page.GotoAsync(new Uri(flow.Scenario.Origin, "/databases/" + flow.DatabaseId + "/documents/items").ToString());
         await page.GetByRole(AriaRole.Link, new() { Name = "Webhooks", Exact = true }).ClickAsync();
         await Assert.That(await page.Locator("#webhook-collection").InputValueAsync()).IsEqualTo("items");
         await Assert.That(await page.GetByText("No webhooks yet.", new() { Exact = true }).IsVisibleAsync()).IsTrue();
+        await ShotAsync("1-empty");
+        flow.CreateFault = "malformed";
+        await page.GetByLabel("HTTPS endpoint", new() { Exact = true }).FillAsync("https://receiver.example/events");
+        var unknown = await page.RunAndWaitForResponseAsync(() => page.GetByRole(AriaRole.Button, new() { Name = "Create webhook", Exact = true }).ClickAsync(),
+            response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == "/api/v1/dashboard/webhooks");
+        await Assert.That(unknown.Status).IsEqualTo(503);
+        await page.GetByText("The result is unknown. Check the endpoint list before retrying; delete and recreate it if its signing secret was lost.", new() { Exact = true }).WaitForAsync();
+        await ShotAsync("2-unknown-create");
+        await page.GetByRole(AriaRole.Link, new() { Name = "Reload webhooks", Exact = true }).ClickAsync();
+        await page.Locator("#webhooks").WaitForAsync();
+        await page.GetByText("Delete webhook", new() { Exact = true }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Confirm delete webhook", Exact = true }).ClickAsync();
+        await page.GetByText("No webhooks yet.", new() { Exact = true }).WaitForAsync();
+        flow.CreateFault = "";
         await page.GetByLabel("HTTPS endpoint", new() { Exact = true }).FillAsync("https://receiver.example/events");
         var created = await page.RunAndWaitForResponseAsync(() => page.GetByRole(AriaRole.Button, new() { Name = "Create webhook", Exact = true }).ClickAsync(),
             response => response.Request.Method == "POST" && new Uri(response.Url).AbsolutePath == "/api/v1/dashboard/webhooks");
         await Assert.That(created.Status).IsEqualTo(201);
         await page.Locator("#webhook-secret").WaitForAsync();
+        await Assert.That(await page.Locator("#webhook-secret").EvaluateAsync<string>("el => getComputedStyle(el).color")).IsEqualTo("rgba(0, 0, 0, 0)");
+        await Assert.That(await page.Locator(".ts-account-email").First.EvaluateAsync<string>("el => getComputedStyle(el).visibility")).IsEqualTo("hidden");
         await Assert.That(await page.Locator("#webhook-secret").InnerTextAsync()).IsEqualTo(Flow.Secret);
         await Assert.That(await page.EvaluateAsync<bool>("secret => !JSON.stringify([localStorage, sessionStorage]).includes(secret)", Flow.Secret)).IsTrue();
+        await ShotAsync("3-created-secret-masked");
         await page.GetByRole(AriaRole.Link, new() { Name = "Continue to webhooks", Exact = true }).ClickAsync();
         await page.Locator("#webhooks").WaitForAsync();
         await Assert.That((await page.ContentAsync()).Contains(Flow.Secret, StringComparison.Ordinal)).IsFalse();
@@ -86,11 +170,22 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
         await page.GetByRole(AriaRole.Link, new() { Name = "Delivery log", Exact = true }).ClickAsync();
         await page.Locator("#webhook-deliveries").WaitForAsync();
         await Assert.That(await page.Locator("#webhook-deliveries tbody").InnerTextAsync()).Contains("delivered");
+        await page.WaitForLoadStateAsync(LoadState.Load);
         await BrowserAudit.AssertAccessibleAsync(page, "Webhook controls and delivery records remain accessible.");
+        await ShotAsync("4-delivery");
         await page.GetByText("Delete webhook", new() { Exact = true }).ClickAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Confirm delete webhook", Exact = true }).ClickAsync();
         await page.GetByText("No webhooks yet.", new() { Exact = true }).WaitForAsync();
         await Assert.That(flow.Created).IsFalse();
+        await ShotAsync("5-deleted");
+        await context.CloseAsync();
+        await page.Video!.SaveAsAsync(Path.Combine(output, "synthetic-webhook-flow.webm"));
+
+        async Task ShotAsync(string state) => await page.ScreenshotAsync(new()
+        {
+            Path = Path.Combine(output, state + ".png"), FullPage = true, Animations = ScreenshotAnimations.Disabled,
+            Mask = [page.Locator("#webhook-secret"), page.Locator(".ts-account-email"), page.Locator(".ts-account-name")]
+        });
     }
 
     // External HTTP contract fixture: no TerraBase process or receiver is claimed here.
@@ -106,6 +201,8 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
         public bool Created { get; private set; }
         public bool FeedGap { get; set; }
         public int Calls { get; private set; }
+        public string CreateFault { get; set; } = "";
+        public TaskCompletionSource CreatePersisted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private string csrf = "", organization = "", project = "";
         private TestAuth auth = null!;
         private bool delivered;
@@ -113,7 +210,12 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
         public static async Task<Flow> StartAsync(string root)
         {
             var flow = new Flow();
-            flow.Scenario = await DatabaseSdkScenario.StartAsync(root, DatabaseSdkJourneyTests.CaptureAuth(value => flow.auth = value), flow.DispatchAsync);
+            flow.Scenario = await DatabaseSdkScenario.StartAsync(root, builder =>
+            {
+                DatabaseSdkJourneyTests.CaptureAuth(value => flow.auth = value)(builder);
+                var inner = (IHttpClientFactory)builder.Services.Last(item => item.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
+                builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TimeoutFactory(inner, flow)));
+            }, flow.DispatchAsync);
             flow.Client = flow.Scenario.CreateClient();
             flow.Account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(flow.Client);
             using var identity = JsonDocument.Parse(await flow.Client.GetStringAsync("/api/v1/auth/me"));
@@ -160,7 +262,20 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
             {
                 using var body = await JsonDocument.ParseAsync(http.Request.Body);
                 if (body.RootElement.GetProperty("url").GetString() != "https://receiver.example/events") throw new InvalidOperationException("Unexpected endpoint.");
+                if (CreateFault == "refused") return Results.Json(new { error = new { code = "invalid_request", message = "Invalid endpoint." } }, statusCode: 400);
                 Created = true;
+                CreatePersisted.TrySetResult();
+                if (CreateFault is "timeout" or "cancel") await Task.Delay(Timeout.InfiniteTimeSpan, http.RequestAborted);
+                if (CreateFault == "malformed") return Results.Content("{", "application/json", statusCode: 201);
+                if (CreateFault == "io")
+                {
+                    http.Response.StatusCode = 201;
+                    http.Response.ContentLength = 1000;
+                    await http.Response.WriteAsync("{", http.RequestAborted);
+                    await http.Response.Body.FlushAsync(http.RequestAborted);
+                    http.Abort();
+                    return Results.Empty;
+                }
                 return Results.Json(new { id = HookId, url = "https://receiver.example/events", createdAt = DateTimeOffset.UtcNow, status = "active", secret = Secret }, statusCode: 201);
             }
             if (http.Request.Method == "DELETE") { Created = false; return Results.NoContent(); }
@@ -171,5 +286,15 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
         }
 
         public async ValueTask DisposeAsync() { Client.Dispose(); await Scenario.DisposeAsync(); }
+
+        private sealed class TimeoutFactory(IHttpClientFactory inner, Flow flow) : IHttpClientFactory
+        {
+            public HttpClient CreateClient(string name)
+            {
+                var client = inner.CreateClient(name);
+                if (flow.CreateFault == "timeout") client.Timeout = TimeSpan.FromSeconds(3);
+                return client;
+            }
+        }
     }
 }

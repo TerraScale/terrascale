@@ -64,7 +64,7 @@ public static class WebhookEndpoints
         http.Response.Headers["Referrer-Policy"] = "same-origin";
     }
 
-    private static bool KnownFailure(Exception error) => DatabaseResults.KnownFailure(error) || error is HttpRequestException or ArgumentException;
+    private static bool KnownFailure(Exception error) => DatabaseResults.KnownFailure(error) || error is HttpRequestException or ArgumentException or TimeoutException or IOException;
 
     private static IResult Failure(HttpContext http, AccountContext context, string id, string collection, Exception error, bool creation = false)
     {
@@ -73,7 +73,10 @@ public static class WebhookEndpoints
         {
             return View(http, context, DatabaseService.Database(context, id), collection, [], [], "",
                 error: error is ArgumentException ? "Enter an HTTPS URL on port 443 without credentials or a fragment (up to 2048 characters)." :
-                    creation && error is HttpRequestException request && (request.StatusCode is null || (int)request.StatusCode >= 500) ? "The result is unknown. Check the endpoint list before retrying; delete and recreate it if its signing secret was lost." : DatabaseResults.Message(error),
+                    creation && (error is TimeoutException or IOException ||
+                        error is TerraBaseException { ErrorCode: "invalid_response" } invalid && (int?)invalid.StatusCode is >= 200 and <= 299 ||
+                        error is HttpRequestException request && (request.StatusCode is null || (int)request.StatusCode >= 500))
+                        ? "The result is unknown. Check the endpoint list before retrying; delete and recreate it if its signing secret was lost." : DatabaseResults.Message(error),
                 status: error is ArgumentException ? 422 : DatabaseResults.Status(error));
         }
         catch (AccountAccessException access) { return DatabaseResults.PageFailure(http, context, access); }
