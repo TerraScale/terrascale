@@ -195,6 +195,52 @@ public sealed class UsageApiTests
     }
 
     [Test]
+    public async Task Usage_of_a_database_past_the_query_scan_budget_reads_maintained_counts()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var api = await ManagementApi.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        // More rows than a Hobby query may scan (10,000), so a counting scan would be refused as too expensive.
+        const int Count = 12_000;
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        var found = await api.Server.Services.GetRequiredService<IManagementService>()
+            .GetDatabaseTenantAsync(api.User, database.Organization, database.Project, database.Id, token);
+        var tenant = found is TenantContext context ? context : throw new InvalidOperationException("the database has no tenant");
+        var sizes = new int[Count];
+        for (var batch = 0; batch < Count / 1_000; batch++)
+        {
+            await using var write = (await engine.BeginTransactionAsync(tenant, write: true, token))!;
+            for (var i = batch * 1_000; i < (batch + 1) * 1_000; i++)
+            {
+                var json = Encoding.UTF8.GetBytes($$"""{"n":"{{Faker.Random.AlphaNumeric(Faker.Random.Int(1, 40))}}"}""");
+                sizes[i] = json.Length;
+                await write.PutAsync("people", ManagementApi.DocumentId($"d{i}"), json, token);
+            }
+
+            await write.CommitAsync(token);
+        }
+
+        // A delete and a replacement through the API move the counts by exactly their rows.
+        (await data.DeleteAsync(Uri(Document(database, "people", "d0")), token)).EnsureSuccessStatusCode();
+        (await data.PutAsJsonAsync(Uri(Document(database, "people", "d1")), new { n = new string('x', 500) }, token)).EnsureSuccessStatusCode();
+        sizes[0] = 0;
+        sizes[1] = Encoding.UTF8.GetByteCount($$"""{"n":"{{new string('x', 500)}}"}""");
+        var bytes = sizes.Sum(size => (long)size);
+
+        using var usage = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(database.Path + "/usage"), token));
+        using var project = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(database.ProjectPath + "/usage"), token));
+
+        await Assert.That(usage.RootElement.GetProperty("collections").GetInt64()).IsEqualTo(1);
+        await Assert.That(usage.RootElement.GetProperty("documents").GetInt64()).IsEqualTo(Count - 1);
+        await Assert.That(usage.RootElement.GetProperty("logicalBytes").GetInt64()).IsEqualTo(bytes);
+        await Assert.That(project.RootElement.GetProperty("documents").GetInt64()).IsEqualTo(Count - 1);
+        await Assert.That(project.RootElement.GetProperty("logicalBytes").GetInt64()).IsEqualTo(bytes);
+    }
+
+    [Test]
     public async Task Reads_and_writes_are_counted_apart_per_hour_and_day_and_summed_by_project()
     {
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 6, 10, 30, 0, TimeSpan.Zero));

@@ -105,7 +105,8 @@ internal sealed partial class TursoDatabaseStore(
     // and indexes never decode a state. _tb_state keeps each document's replicated DocumentState in its
     // stored form (base64url), with its anti-entropy bucket and digest; the other _tb_ tables belong to the change feed,
     // the peer streams and anti-entropy, which later slices fill; _tb_refill holds the certificate of a rebuild's refill
-    // (decision 0013a section 1). Every new table is a rowid table.
+    // (decision 0013a section 1). _tb_collection_stats keeps each client collection's live document count and bytes, written
+    // with its rows, so usage and storage reads never scan a collection. Every new table is a rowid table.
     private const string ClientSchemaSql = """
         CREATE TABLE "_collections" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
         CREATE TABLE "_indexes" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
@@ -147,6 +148,7 @@ internal sealed partial class TursoDatabaseStore(
             name TEXT PRIMARY KEY, created_at INTEGER NOT NULL,
             entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
         );
+        CREATE TABLE _tb_collection_stats (collection TEXT PRIMARY KEY, documents INTEGER NOT NULL, bytes INTEGER NOT NULL);
         CREATE TABLE commit_offset (
             id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
         );

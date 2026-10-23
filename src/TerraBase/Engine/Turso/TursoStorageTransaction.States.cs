@@ -154,14 +154,49 @@ internal sealed partial class TursoStorageTransaction
     }
 
     // Worker-only: a document's row in its collection's table, or none when `body` is null. Plain UPDATE, INSERT and
-    // DELETE: the change feed reads after-images only.
+    // DELETE: the change feed reads after-images only. A client collection's _tb_collection_stats row moves with it, in the
+    // same statement group, so a rolled-back write leaves its counts too.
     private void PutRow(string collection, string id, string? body)
     {
-        if (!store.IsSystem && !IsMetadata(collection))
+        if (store.IsSystem || IsMetadata(collection))
         {
-            PutTextRows(collection, id, body);
+            PutUncountedRow(collection, id, body);
+            return;
         }
 
+        PutTextRows(collection, id, body);
+        var before = TableCommand(TursoStatements.RowBytes, collection, id).ExecuteScalar() as long?;
+        (long Documents, long Bytes) delta;
+        if (body is null)
+        {
+            if (before is not { } removed)
+            {
+                return;
+            }
+
+            TableCommand(TursoStatements.DeleteRow, collection, id).ExecuteNonQuery();
+            delta = (-1, -removed);
+        }
+        else
+        {
+            var command = TableCommand(before is null ? TursoStatements.InsertRow : TursoStatements.UpdateRow, collection, id);
+            command.Parameters.AddWithValue("$body", body);
+            command.ExecuteNonQuery();
+            var bytes = StrictUtf8.GetByteCount(body);
+            delta = before is { } replaced ? (0, bytes - replaced) : (1, bytes);
+        }
+
+        if (delta != default)
+        {
+            var add = Command(TursoStatements.AddCollectionStats, collection);
+            add.Parameters.AddWithValue("$documents", delta.Documents);
+            add.Parameters.AddWithValue("$bytes", delta.Bytes);
+            add.ExecuteNonQuery();
+        }
+    }
+
+    private void PutUncountedRow(string collection, string id, string? body)
+    {
         if (body is null)
         {
             TableCommand(store.IsSystem ? TursoStatements.SystemDeleteRow : TursoStatements.DeleteRow, collection, id).ExecuteNonQuery();
