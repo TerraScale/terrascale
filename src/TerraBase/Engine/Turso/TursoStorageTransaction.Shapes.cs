@@ -302,7 +302,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         {
             return [];
         }
-        if (unsettled is not null && rows.Exists(unsettled.Contains))
+        if (unsettled is not null && rows.Keys.Any(unsettled.Contains))
         {
             return null;
         }
