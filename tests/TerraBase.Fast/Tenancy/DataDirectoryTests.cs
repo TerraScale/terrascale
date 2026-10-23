@@ -8,11 +8,13 @@ using System.Text;
 using Bogus;
 using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -224,7 +226,10 @@ public sealed class DataDirectoryTests
         // Background work cannot rent these stores; only front-eviction can remove their idle sessions.
         await Assert.That(stores.Take(8).All(store => engine.Pool.IdleCountOf(store) == 0)).IsTrue();
 
-        await engine.DisposeAsync();
+        // Production stops workers before their engine; disposing it beneath catalog convergence races its next read.
+        var completion = server.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
+        server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
+        await completion.WaitAsync(TestContext.Current!.Execution.CancellationToken);
         await engine.CleanupCompletion;
 
         // Every eviction was counted until its connection closed, so shutdown completed: nothing is open, no database
