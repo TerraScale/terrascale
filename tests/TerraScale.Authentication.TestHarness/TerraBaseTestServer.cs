@@ -206,7 +206,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         running.Dispose();
     }
 
-    /// <summary>Hashes a stopped tenant copy without opening SQLite or exposing its encrypted documents.</summary>
+    /// <summary>Hashes a stopped tenant copy without opening Turso or exposing its encrypted documents.</summary>
     public async Task<IReadOnlyDictionary<string, string>> SnapshotDatabaseFilesAsync(string organization, string project, string database)
     {
         if (this.process is not null)

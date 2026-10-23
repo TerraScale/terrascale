@@ -17,7 +17,7 @@ public sealed class RunSqlEndpoint(IManagementService management, IQueryService 
         Name("runSql");
         Summary("Runs a read-only SQL statement on a database");
         Description(QueriesExtensions.SqlDescription + " Rows stop at the limit or at 8 MiB of JSON; truncated reports either. "
-            + "A statement that needs more than the engine's work budget (5 million SQLite instructions or 5 seconds) answers 400 query too expensive. "
+            + "A statement that needs more than the engine's work budget (5 million engine work units or 5 seconds) answers 400 query too expensive. "
             + ProjectApiRoute.IdentityDescription);
         Tags("Queries");
         Produces<SqlResultBody>();
