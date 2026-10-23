@@ -34,6 +34,24 @@ public sealed class HostedSignInJourneyTests(DashboardRootFixture fixture)
     }
 
     [Test]
+    public async Task RegisterOpensHostedSignUpThatReturnsThroughAuthorize()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var browser = scenario.CreateClient();
+        using var register = await browser.GetAsync("/register?plan=starter");
+        await Assert.That(register.Headers.Location!.OriginalString).IsEqualTo("/onboarding?plan=starter");
+        using var onboarding = await browser.GetAsync("/onboarding?plan=starter");
+        await Assert.That(onboarding.Headers.Location!.OriginalString).IsEqualTo("/login?signup=1&returnTo=%2Fonboarding%3Fplan%3Dstarter");
+        using var start = await browser.GetAsync(onboarding.Headers.Location!.OriginalString);
+        await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+        var location = start.Headers.Location!;
+        await Assert.That(location.GetLeftPart(UriPartial.Path)).IsEqualTo("https://auth.terrascale.tech/ui/terrascale/sign-up");
+        var next = new Uri(new Uri("https://auth.terrascale.tech"), QueryHelpers.ParseQuery(location.Query)["next"].ToString());
+        await Assert.That(next.GetLeftPart(UriPartial.Path)).IsEqualTo("https://auth.terrascale.tech/terrascale/oauth/authorize");
+        await Assert.That(QueryHelpers.ParseQuery(next.Query)["state"].ToString().Length).IsEqualTo(64);
+    }
+
+    [Test]
     public async Task HeadLoginAlsoRedirectsToHostedAuthorize()
     {
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
