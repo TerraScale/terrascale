@@ -201,6 +201,16 @@ public sealed class CorruptChangeLogTests
         await gru.WriteAsync(first, async transaction => _ = await transaction.CreateCollectionAsync(new CollectionInfo("unrelated", 1), CancellationToken.None));
         await gru.WriteAsync(first, async transaction => _ = await transaction.PutAsync(Items, "held", Json("""{"n":1}"""), CancellationToken.None));
         await gru.DamageAsync(first, before, "held", Damage.Load("unknown-change-type-on-state-row"));
+        // Read past the healthy unrelated group: background probes stop at the first local group.
+        try
+        {
+            _ = await gru.Groups.ReadAsync(first, await gru.IncarnationAsync(first), before,
+                ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+        }
+        catch (InvalidDataException)
+        {
+            // A racing reader may already have recorded refusal; the durable checks below prove either path.
+        }
         // Establish the fault while unlisted, so the new sender link has never learned this copy's cursor.
         await gru.UntilFaultRecordedAsync(first);
         cluster.List(sjc);
