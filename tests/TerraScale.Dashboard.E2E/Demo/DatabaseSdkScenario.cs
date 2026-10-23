@@ -1025,6 +1025,11 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 lock (gate) { if (!collections.TryAdd(prefix + name, [])) return Error(409, "name_taken"); }
                 return Results.Json(new { name, created_at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(), id = ids.NewId() }, statusCode: 201);
             }
+            if (parts.Length == 7 && http.Request.Method == "DELETE")
+            {
+                lock (gate) { if (!collections.Remove(prefix + parts[6])) return Error(404, "not_found"); }
+                return Results.Json(new { name = parts[6], created_at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(), id = ids.NewId() });
+            }
             Require(parts.Length >= 8 && parts[7] is "documents" or "query", "Official document route");
             var collectionKey = prefix + parts[6];
             Dictionary<string, TerraBaseDocument> rows;

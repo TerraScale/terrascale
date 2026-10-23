@@ -101,7 +101,7 @@ public static class DataEndpoints
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }
         });
-        foreach (var operation in new[] { "documents", "collections", "sql", "sql/check", "saved-queries", "saved-queries/delete", "indexes", "indexes/delete" })
+        foreach (var operation in new[] { "documents", "collections", "collections/delete", "sql", "sql/check", "saved-queries", "saved-queries/delete", "indexes", "indexes/delete" })
         {
             var action = operation;
             var route = operation.StartsWith("indexes", StringComparison.Ordinal) ? "/api/v1/dashboard/" + operation : "/api/v1/dashboard/data/" + operation;
@@ -128,6 +128,11 @@ public static class DataEndpoints
                         var collectionName = form["name"].ToString().Trim();
                         await data.CreateCollectionAsync(context, id, collectionName, http.RequestAborted);
                         return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DocumentsPath(id, collectionName, form)) : Results.Json(new { collection = collectionName, status = "created" }, statusCode: 201);
+                    }
+                    if (action == "collections/delete")
+                    {
+                        await data.DropCollectionAsync(context, id, collection, form["confirmName"].ToString(), http.RequestAborted);
+                        return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "documents")) : Results.NoContent();
                     }
                     if (action == "sql/check")
                     {
@@ -157,7 +162,7 @@ public static class DataEndpoints
                 {
                     if (!DatabaseResults.WantsHtml(http) || DatabaseResults.Status(error) == 404) return DatabaseResults.PageFailure(http, context, error);
                     var section = action.StartsWith("indexes", StringComparison.Ordinal) ? "indexes" : action.Contains("sql", StringComparison.Ordinal) || action.StartsWith("saved-queries", StringComparison.Ordinal) ? "sql" : "documents";
-                    var dialog = action == "collections" ? "new-collection" : action == "saved-queries" ? "save-query" : action == "documents" ? form["operation"] == "create" ? "add-document" : form["operation"] == "delete" ? "delete-document" : "edit-document" : "";
+                    var dialog = action == "collections" ? "new-collection" : action == "collections/delete" ? "delete-collection" : action == "saved-queries" ? "save-query" : action == "documents" ? form["operation"] == "create" ? "add-document" : form["operation"] == "delete" ? "delete-document" : "edit-document" : "";
                     var submittedId = error is DocumentWriteOutcomeUnknownException unknown ? unknown.DocumentId : form["id"].ToString();
                     return await PageAsync(http, context, id, section, data, saved, collection, DatabaseEndpoints.Message(error), dialog, submittedId, form["document"].ToString(), form["version"].ToString(), form["operation"].ToString(), form["sql"].ToString(), queryName: form["name"].ToString(), status: DatabaseEndpoints.Status(error));
                 }
@@ -198,8 +203,9 @@ public static class DataEndpoints
         try
         {
             collections = await data.CollectionsAsync(context, id, http.RequestAborted);
-            if (collection.Length == 0) collection = section is "documents" or "schema" && !collections.Any(item => item.Name == "users") ? collections.FirstOrDefault()?.Name ?? "users" : "users";
-            DataService.ValidCollection(collection);
+            // Default to a collection that exists; a database without collections has none selected.
+            if (collection.Length == 0) collection = collections.FirstOrDefault()?.Name ?? "";
+            if (collection.Length > 0) DataService.ValidCollection(collection);
             if (section == "documents" && collections.Count > 0)
             {
                 // Counts are an optional producer measurement. Omit unavailable
@@ -221,7 +227,7 @@ public static class DataEndpoints
             else if (section == "sql")
             {
                 queries = await saved.ListAsync(context, id, http.RequestAborted);
-                if (sql.Length == 0 && submittedForm is null) sql = queries.FirstOrDefault(query => query.Id == http.Request.Query["savedQueryId"])?.Sql ?? "SELECT * FROM " + collection + " LIMIT 20";
+                if (sql.Length == 0 && submittedForm is null) sql = queries.FirstOrDefault(query => query.Id == http.Request.Query["savedQueryId"])?.Sql ?? (collection.Length == 0 ? "" : "SELECT * FROM " + collection + " LIMIT 20");
                 catalog = await data.CatalogAsync(context, id, collections, http.RequestAborted);
             }
             // A collection exists once it holds a document; until then there is no schema to infer.

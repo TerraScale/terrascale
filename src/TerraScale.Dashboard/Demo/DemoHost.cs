@@ -717,6 +717,11 @@ sealed partial class TestDocuments : IDocumentBackend
     }
     public Task CreateCollectionAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken)
     { lock (collections) collections.TryAdd(Key(scope, databaseName, collection), []); return Task.CompletedTask; }
+    public Task DropCollectionAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken)
+    {
+        lock (collections) if (!collections.Remove(Key(scope, databaseName, collection))) throw new DatabaseProviderException(HttpStatusCode.NotFound);
+        return Task.CompletedTask;
+    }
     public Task<TerraBaseDocumentPage> DocumentsAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, TerraBaseQuery query, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
