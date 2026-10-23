@@ -11,7 +11,7 @@ namespace TerraScale.Dashboard.Shared.Accounts;
 
 // ts-auth decides which organizations and projects exist and the caller's role
 // in them. The dashboard stores only its own state for those IDs.
-public sealed class AccountService(IDashboardState state, TimeProvider time, ITsAuthPlatform platform, IPlatformRoleGateway roles, IHttpClientFactory http)
+public sealed class AccountService(IDashboardState state, TimeProvider time, ITsAuthPlatform platform, IPlatformRoleGateway roles, IHttpClientFactory http, TerraBasePlanSync plans)
 {
     public const string AccountsCollection = "dashboard_accounts";
     public const string IdentitiesCollection = "dashboard_account_identities";
@@ -141,6 +141,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             if (platformOrg && await roles.PlatformRoleAsync(session, cancellationToken) != "admin") continue;
             var org = await OrganizationStateAsync(live, cancellationToken);
             Hydrate(org, live, await platform.ListProjectsAsync(session, live.Id, cancellationToken), session);
+            await plans.PublishAsync(org, cancellationToken);
             if (platformOrg)
             {
                 try { await PlatformDatabases.HydrateAsync(org, http.CreateClient("platform"), session, cancellationToken); }

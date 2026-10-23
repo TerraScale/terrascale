@@ -11,7 +11,7 @@ namespace TerraScale.Dashboard.Features.Billing;
 // Every entitlement is derived from a bound checkout and Stripe's current
 // subscription. Browser return parameters and webhook snapshots grant nothing.
 public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboardState state, AccountService accounts,
-    IHttpClientFactory http, TimeProvider time)
+    IHttpClientFactory http, TimeProvider time, TerraBasePlanSync plans)
 {
     public const string Collection = "dashboard_billing";
     public const string CustomersCollection = "dashboard_stripe_customers";
@@ -312,7 +312,12 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
                 // reconciliation advanced billing while we projected it,
                 // reconcile again before reporting success.
                 var current = await ReadAsync(orgId, cancellationToken);
-                if (current?.RequestId == binding.RequestId && current.Revision == binding.Revision) return paymentValid;
+                if (current?.RequestId == binding.RequestId && current.Revision == binding.Revision)
+                {
+                    // Webhooks change plans without a dashboard view; publish the stored projects' plan now.
+                    await plans.PublishAsync(org, cancellationToken);
+                    return paymentValid;
+                }
             }
             catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
         }
