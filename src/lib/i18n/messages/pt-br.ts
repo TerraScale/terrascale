@@ -59,11 +59,14 @@ export const ptBr: Messages = {
           docs: 'Docs',
           apiReference: 'Referência da API',
           status: 'Status',
+          community: 'Comunidade',
         },
       },
     },
     social: {
       github: 'GitHub',
+      discord: 'Discord',
+      x: 'X',
       linkedin: 'LinkedIn',
       email: 'E-mail',
     },
@@ -314,6 +317,7 @@ export const ptBr: Messages = {
     channelsTitle: 'Fale conosco',
     channels: [
       { value: 'support@terrascale.tech' },
+      { value: 'Entre na nossa comunidade' },
       { value: 'Abrir issues e PRs' },
     ],
   },
