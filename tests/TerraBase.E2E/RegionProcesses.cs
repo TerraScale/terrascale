@@ -82,13 +82,9 @@ internal sealed class RegionProcesses : IAsyncDisposable
                 await cluster.LaunchAsync(node);
             }
 
-            // Registered once in the first region; every other node registers the same ids too, which a replicated catalog
-            // (R10a) answers with 409 id_taken or name_taken. Then every node serves the database.
+            // Bootstrap once at home; the other regions wait for its replicated catalog instead of racing duplicate commits.
             var owner = EntityIds.New().ToString();
-            foreach (var node in cluster._regions.Values)
-            {
-                await cluster.RegisterAsync(node, owner, [.. regions.Where(other => other != node.Name)], alreadyHeld: node.Name != regions[0]);
-            }
+            await cluster.RegisterAsync(cluster._regions[regions[0]], owner, [.. regions.Skip(1)]);
 
             foreach (var node in cluster._regions.Values)
             {
@@ -293,7 +289,7 @@ internal sealed class RegionProcesses : IAsyncDisposable
         };
     }
 
-    private async Task RegisterAsync(Region node, string owner, string[] replicas, bool alreadyHeld)
+    private async Task RegisterAsync(Region node, string owner, string[] replicas)
     {
         var commit = JsonSerializer.Serialize(new
         {
@@ -314,10 +310,7 @@ internal sealed class RegionProcesses : IAsyncDisposable
         };
         request.Headers.Add("X-TerraBase-User-Id", owner);
         using var response = await this[node.Name].SendAsync(request);
-        if (!alreadyHeld || !await Cluster.TakenAsync(response))
-        {
-            await Docs.EnsureSuccessAsync(response);
-        }
+        await Docs.EnsureSuccessAsync(response);
     }
 
     private sealed class Region(string name, string machineId, string dataDirectory)
