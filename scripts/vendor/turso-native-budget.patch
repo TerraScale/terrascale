@@ -1229,15 +1229,16 @@ diff --git a/sdk-kit/src/rsapi.rs b/sdk-kit/src/rsapi.rs
 index b6bc73f..1989c24 100644
 --- a/sdk-kit/src/rsapi.rs
 +++ b/sdk-kit/src/rsapi.rs
-@@ -734,6 +734,7 @@ impl From<Box<LimboError>> for TursoError {
+@@ -734,6 +734,8 @@ impl From<Box<LimboError>> for TursoError {
  impl From<LimboError> for TursoError {
      fn from(value: LimboError) -> Self {
          match value {
 +            LimboError::Interrupt => TursoError::Interrupt("interrupted".to_string()),
++            LimboError::Raise(_, message) => TursoError::Constraint(message),
              LimboError::ForeignKeyConstraint(e) | LimboError::Constraint(e) => {
                  TursoError::Constraint(e)
              }
-@@ -1174,6 +1175,12 @@ impl TursoConnection {
+@@ -1174,6 +1176,12 @@ impl TursoConnection {
      pub fn set_busy_timeout(&self, duration: Duration) {
          self.connection.set_busy_timeout(duration);
      }
