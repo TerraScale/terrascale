@@ -2,11 +2,12 @@
 
 ## Shutdown regression: matched baseline and one-Stop profile
 
-**Performance qualification remains open.** The original 48-document (~43 MB)
-shutdown workload must pass all 18 executions with median `StopAsync` at most
-1.5 times matched main. The existing baseline median is 1,060.487 ms, giving a
-1,590.731 ms ceiling. The split multi-read durability and deadline tests remain
-separate coverage; passing those tests does not satisfy this performance gate.
+**The original-workload performance gate passed with the combined correction**
+reported below. The original 48-document (~43 MB) workload requires all 18
+executions to pass with median `StopAsync` at most 1.5 times matched main.
+The prior baseline median is 1,060.487 ms, giving a separate historical
+1,590.731 ms comparison ceiling. Split multi-read durability and deadline
+coverage remains a separate gate; its clean build initially failed analyzers.
 
 Three alternating matched pairs used the same six-case fixture and native
 library. Main `7b80cacbe` carried only the diagnostic fixture patch; encryption
@@ -104,6 +105,60 @@ Partial evidence:
 The Abort correction is retained. A full combined correction plus the corrected
 runtime-dispatched native comparison remains pending; it must meet the original
 18/18 and median Stop at most 1.5 times matched-main acceptance bar.
+
+## Combined Abort and runtime-dispatched AEGIS: performance gate passed
+
+Exactly three alternating pairs measured literal managed correction
+`89311f5d2f629a9a091a8334cf446b969d1d95bc` against fixture-patched main
+`7b80cacbeb683a3501a2c5f0d40a7c618f453c6f`. Both arms used the original
+physical-backlog fixture from `12bb92320`, SHA-256
+`af5611a4a7ef757ac18f16ca9203b8142dda7b514415afec9dd71306ab3783fe`.
+The split fixture was not used for these measurements. The original workload,
+four-second deadline, assertions and parallelism 16 were unchanged.
+
+| Arm | Stop samples ms, chronological within arm | Median ms | Passed / failed / skipped |
+| --- | --- | ---: | --- |
+| Fixture-patched main | 1843.863 / 1855.891 / 912.903 | 1843.863 | 18 / 0 / 0 |
+| Abort correction + runtime AEGIS | 3291.651 / 1296.128 / 546.144 | 1296.128 | 18 / 0 / 0 |
+
+All six runner exits were zero, with no retries or discarded samples. Median
+Stop was **0.702942 times matched main** and **1.222201 times prior main**,
+passing both 1.5-times comparisons. Matched main itself was 1.738695 times its
+prior median. Shared-host load and the broad sample ranges limit throughput
+claims; the result demonstrates the specified acceptance bar, not an encryption
+speedup. The earlier encryption median was 5,041.421 ms with two failures;
+the combined correction measured 1,296.128 ms with all 18 passing.
+
+Every actual loaded native mapping in all six runs matched linux-x64 SHA-256
+`7464a29f3fc9bce603a1e0881720b309a276455a778937d6a9ffc2ed680bd76d`
+from `turso-native-v0.8.2-fts-contract1-runtime-aegis-20261023`. The candidate
+was staged into each disposable arm's root and RID native outputs after its
+one Release build; this measurement is separate from ordinary-target pin
+consumption. SDK and sibling matched the earlier comparison.
+
+The software-AES native was a material contributor to the encryption regression.
+K03 separately measured the unchanged `12bb92320` managed code with only the
+corrected runtime-dispatched native: main/encryption medians were
+1,371.589 / 1,416.028 ms, ratio 1.0324, with 18/18 passing per arm on
+`mariogk-dev`. Those owner-reported results and identity receipts accompany
+[the published release](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-runtime-aegis-20261023).
+The combined run does not isolate the additional benefit of Abort; the earlier
+phase profile independently identified its redundant-finalization target.
+
+Performance evidence:
+`~/.t3/test-artifacts/database-encryption/combined89311-aegis-acceptance-20261023T205356Z/`.
+`report.md` SHA-256:
+`93032b8ef0b432099edca025fa603f29820f8fe7d7581426bd273930be336c8a`.
+All six fresh original JSON/HTML reports, commands, counts, Stop events,
+assembly identities, loaded mappings and host loads were retained and the
+87-entry manifest independently rehashed and fsynced.
+
+The same harness's subsequent clean split-fixture build failed CA2016,
+IDE0305 (two locations) and CA1001. Its aggregate and wrapper exits were 1;
+no split/vendor tests ran from that build. Fixture-only analyzer corrections
+are recorded separately at `6627ea72d`; five split repeats and the vendor
+regression proof remain pending. The successful performance gate is not a
+claim that the entire harness passed.
 
 ## Shared FTS/encryption native measurement — pushed commit 1c3b609f6
 
