@@ -95,6 +95,8 @@ public sealed class BackupBacklogRecoveryTests
         var engine = (WatchedBackup)host.Api.Server.Services.GetRequiredService<IWalBackup>();
         engine.Watch(host.Database.Id);
         await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        // Finish initial retention before the backlog, so shutdown's budget measures draining it.
+        await host.ShipAsync(TimeSpan.Zero, cancellationToken);
         var generation = host.Status().Generation!;
         await WriteBacklogAsync(host, cancellationToken);
 
