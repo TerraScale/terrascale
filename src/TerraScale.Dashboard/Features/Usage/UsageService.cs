@@ -74,8 +74,9 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
                     ? "This month's organization usage is incomplete because TerraBase doesn't report every project's monthly usage."
                     : "This month's reads and writes could not be loaded from TerraBase. Try again shortly.";
         var organizationStorage = complete ? logical : stored?.OrganizationBytes;
+        var units = complete ? result.OperationUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null;
         var allowances = new[] {
-            Allowance("Operation units this month", plan?.OperationsAllowance ?? "Limit not published", limits.MonthlyOperations, 0, false, false),
+            Allowance("Operation units this month", plan?.OperationsAllowance ?? "Limit not published", limits.MonthlyOperations, units ?? 0, false, units is not null),
             Allowance("Storage across regions", plan?.StorageAllowance ?? "Limit not published", limits.StorageBytes, 0, true, false),
             Allowance("Client egress this month", plan?.EgressAllowance ?? "Limit not published", limits.MonthlyEgressBytes, 0, true, false)
         };
