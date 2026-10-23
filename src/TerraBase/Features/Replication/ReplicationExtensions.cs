@@ -13,6 +13,7 @@ public static class ReplicationExtensions
     public static WebApplicationBuilder AddTerraBaseReplication(this WebApplicationBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
+        builder.Services.AddSingleton<ReplicationTimings>();
         builder.Services.AddSingleton<IChangeGroupSink, StorageChangeGroupSink>();
         builder.Services.AddSingleton<IRebuildCertification, RebuildCertification>();
         builder.Services.AddSingleton<IReplicaRebuild, ReplicaRebuild>();

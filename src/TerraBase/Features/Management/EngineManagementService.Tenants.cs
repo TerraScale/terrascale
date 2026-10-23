@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -62,11 +63,21 @@ internal sealed partial class EngineManagementService
     private readonly Lock _missGate = new();
     private readonly Dictionary<(string Kind, string Organization, string Project, string Database), (long Sequence, Task Read)> _misses = [];
 
+    private readonly Counter<long> _cacheLookups = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.catalog.cache_lookups", "{lookup}",
+        "Catalog cache lookups, by cache (tenants, records, plans, placements, registrations) and result (hit, miss).");
+
+    // Whether the lookup hit, recorded under the cache's bounded name.
+    private bool Looked(string cache, bool hit)
+    {
+        _cacheLookups.Add(1, new KeyValuePair<string, object?>("cache", cache), new KeyValuePair<string, object?>("result", hit ? "hit" : "miss"));
+        return hit;
+    }
+
     public async ValueTask<FindDatabaseResult> FindDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
         var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
         var key = (organizationId, projectId, database);
-        if (_tenants.TryGetValue(key, out var cached) && cached.Sequence == sequence)
+        if (Looked("tenants", _tenants.TryGetValue(key, out var cached) && cached.Sequence == sequence))
         {
             return cached.Tenant;
         }
@@ -149,14 +160,14 @@ internal sealed partial class EngineManagementService
 
     // A catalog read of database's identity, reused while the catalog has not committed since the read began.
     private async ValueTask<T> ReadCachedAsync<T>(
-        ConcurrentDictionary<(string, string, string), (long Sequence, T Value)> cache, TenantContext database,
+        string name, ConcurrentDictionary<(string, string, string), (long Sequence, T Value)> cache, TenantContext database,
         Func<IStorageTransaction, ValueTask<T>> read, Func<Unavailable, T> unavailable, Func<T, bool> admit, CancellationToken cancellationToken)
     {
         RequireNoCommit();
         // Taken before the read: a commit racing it leaves the entry stale-tagged, never an older snapshot under a newer tag.
         var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
         var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
-        if (cache.TryGetValue(key, out var cached) && cached.Sequence == sequence)
+        if (Looked(name, cache.TryGetValue(key, out var cached) && cached.Sequence == sequence))
         {
             cancellationToken.ThrowIfCancellationRequested();
             return cached.Value;
@@ -271,7 +282,7 @@ internal sealed partial class EngineManagementService
         ArgumentNullException.ThrowIfNull(database);
         return database.ProjectId is null || database.DatabaseId is null
             ? ValueTask.FromResult<DatabaseRecordResult>(ManagementErrors.NotFound)
-            : ReadCachedAsync<DatabaseRecordResult>(_placements, database, async transaction =>
+            : ReadCachedAsync<DatabaseRecordResult>("placements", _placements, database, async transaction =>
                 !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                     ? UnreadableCatalog
                     : await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
@@ -535,7 +546,7 @@ internal sealed partial class EngineManagementService
     {
         var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
         var key = (organizationId, projectId, name);
-        if (_records.TryGetValue(key, out var cached) && cached.Sequence == sequence)
+        if (Looked("records", _records.TryGetValue(key, out var cached) && cached.Sequence == sequence))
         {
             return cached.Record is { } known ? known : ManagementErrors.NotFound;
         }
@@ -567,7 +578,7 @@ internal sealed partial class EngineManagementService
         var sequence = store.CommitSequence;
         lock (_planGate)
         {
-            if (_plans.TryGetValue(organizationId, out var cached) && cached.Incarnation == incarnation && cached.Sequence == sequence)
+            if (Looked("plans", _plans.TryGetValue(organizationId, out var cached) && cached.Incarnation == incarnation && cached.Sequence == sequence))
             {
                 return cached.Plan;
             }
@@ -605,7 +616,7 @@ internal sealed partial class EngineManagementService
         ArgumentNullException.ThrowIfNull(database);
         return database.ProjectId is null || database.DatabaseId is null
             ? ValueTask.FromResult<RegisteredDatabaseResult>(false)
-            : ReadCachedAsync<RegisteredDatabaseResult>(_registrations, database, async transaction =>
+            : ReadCachedAsync<RegisteredDatabaseResult>("registrations", _registrations, database, async transaction =>
                 !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                     ? UnreadableCatalog
                     : await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false)

@@ -12,15 +12,18 @@ namespace TerraBase.Features.Replication;
 /// whole groups per transaction, at most one transaction's worth of documents each, every transaction synced to disk
 /// before the next, so an ack means the groups survive a power loss here.
 /// </summary>
-internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirectory tenants, DatabaseLifecycleCheckpoint checkpoint) : IChangeGroupSink
+internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirectory tenants, DatabaseLifecycleCheckpoint checkpoint, ReplicationTimings timings) : IChangeGroupSink
 {
     public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(groups);
+        var step = timings.Now;
         if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return null;
         }
+
+        step = timings.Record(ReplicationTimings.ReceiveOpen, step);
 
         var applied = default(Hlc);
         var next = 0;
@@ -35,6 +38,7 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
 
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
             await transaction.RequireAppliedAsync(origin, expected, cancellationToken).ConfigureAwait(false);
+            step = timings.Record(ReplicationTimings.ReceiveBegin, step);
             for (; next < end; next++)
             {
                 foreach (var delta in groups[next].Deltas)
@@ -45,7 +49,9 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             }
 
             await transaction.RecordAppliedAsync(origin, applied, cancellationToken).ConfigureAwait(false);
+            step = timings.Record(ReplicationTimings.ReceiveJoin, step);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            step = timings.Record(ReplicationTimings.ReceiveCommit, step);
             expected = new Hlc(Math.Max(expected.Value, applied.Value));
             checkpoint("replication.apply.committed", database);
         }
