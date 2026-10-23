@@ -22,6 +22,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
     [Arguments("change_member_role")]
     [Arguments("remove_member")]
     [Arguments("leave_organization")]
+    [Arguments("delete_account")]
     [Arguments("create_project")]
     [Arguments("list_projects")]
     [Arguments("get_project")]
@@ -85,6 +86,7 @@ public sealed class TerraScaleAuthIntegrationContractTests
             "change_member_role" => client.Platform.ChangeMemberRoleAsync("fixture-sign-in", organizationId, userId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformRole)!, cancellationToken: cancellationToken),
             "remove_member" => client.Platform.RemoveMemberAsync("fixture-sign-in", organizationId, userId, cancellationToken: cancellationToken),
             "leave_organization" => client.Platform.LeaveOrganizationAsync("fixture-sign-in", organizationId, cancellationToken: cancellationToken),
+            "delete_account" => client.Platform.DeleteAccountAsync("fixture-sign-in", cancellationToken: cancellationToken),
             "create_project" => client.Platform.CreateProjectAsync("fixture-sign-in", organizationId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName)!, cancellationToken: cancellationToken),
             "list_projects" => client.Platform.ListProjectsAsync("fixture-sign-in", organizationId, limit: 2, after: "opaque+/cursor=", cancellationToken: cancellationToken),
             "get_project" => client.Platform.GetProjectAsync("fixture-sign-in", organizationId, projectId, cancellationToken: cancellationToken),
@@ -147,6 +149,17 @@ public sealed class TerraScaleAuthIntegrationContractTests
             await Assert.That(JsonNode.DeepEquals(JsonNode.Parse(handler.Body!), JsonNode.Parse(requestJson))).IsTrue();
         }
         else await Assert.That(handler.Body).IsNull();
+    }
+
+    [Test]
+    public async Task DeleteAccountSurfacesLastOwnerConflictOnce()
+    {
+        using var handler = new CaptureHandler(HttpStatusCode.Conflict, """{"error":{"code":"last_owner","message":"transfer ownership first"}}""");
+        using var http = new HttpClient(handler);
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Platform.DeleteAccountAsync("fixture-sign-in"));
+        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(exception.ErrorCode).IsEqualTo("last_owner");
+        await Assert.That(handler.Calls).IsEqualTo(1);
     }
 
     [Test]

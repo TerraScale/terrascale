@@ -103,6 +103,15 @@ public sealed class TerraScaleAuthPlatformClient(TerraScaleAuthClient client)
             null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
 
+    /// <summary>delete_account: DELETE /v1/terrascale/account. Deletes the signed-in user's own account; 409
+    /// <c>last_owner</c> while the user is the last owner of an organization with other members.</summary>
+    public Task DeleteAccountAsync(
+        string accessToken,
+        CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, "/v1/terrascale/account",
+            null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
+
     /// <summary>create_project: POST /v1/terrascale/organizations/{organization}/projects.</summary>
     public Task<TerraScaleAuthPlatformProject> CreateProjectAsync(
         string accessToken,

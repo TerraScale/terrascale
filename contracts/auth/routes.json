@@ -191,6 +191,25 @@
       "sdk_method": "Platform.LeaveOrganizationAsync"
     },
     {
+      "operation_id": "delete_account",
+      "method": "DELETE",
+      "path": "/v1/terrascale/account",
+      "request_dto": null,
+      "response_dto": null,
+      "success_status": 204,
+      "errors": [
+        401,
+        409,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.DeleteAccountAsync"
+    },
+    {
       "operation_id": "create_project",
       "method": "POST",
       "path": "/v1/terrascale/organizations/{organization}/projects",

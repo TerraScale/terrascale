@@ -85,6 +85,10 @@
     "request": null,
     "response": null
   },
+  "delete_account": {
+    "request": null,
+    "response": null
+  },
   "create_project": {
     "request": {
       "name": "Synthetic project"
