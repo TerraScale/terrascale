@@ -45,6 +45,9 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         await Assert.That(refusedCreates).IsEqualTo(1);
         await Assert.That((await JsonAsync(producer, "/__test/observations")).GetProperty("creates").GetInt32()).IsEqualTo(0);
         await Assert.That((await JsonAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
+        // A region the catalog does not list cannot be chosen as a new home.
+        using (var wrongHome = await PostAsync(replica, "/api/v1/dashboard/databases", replicaCsrf, new() { ["name"] = name }, ["SFO"]))
+            await Assert.That(wrongHome.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity).Because(await EvidenceAsync(wrongHome, producer));
         Volatile.Write(ref rejectCreate, false);
         await ControlAsync(producer, new { command = "fail-database-metadata", organizationId, projectId, name });
         await ControlAsync(producer, new { command = "pause-database-creates" });
@@ -63,11 +66,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         await Assert.That(observed.GetProperty("failedDatabaseMetadataWrites").GetInt32()).IsEqualTo(1);
         var actualId = observed.GetProperty("databases")[0].GetProperty("id").GetString()!;
         await ControlAsync(producer, new { command = "add-replica", value = "sfo" });
-        await Assert.That((await JsonAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
-        // A region the catalog does not list cannot be chosen as a new home.
-        using (var wrongHome = await PostAsync(replica, "/api/v1/dashboard/databases", replicaCsrf, new() { ["name"] = name }, ["SFO"]))
-            await Assert.That(wrongHome.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity).Because(await EvidenceAsync(wrongHome, producer));
-        await Assert.That((await JsonAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
+        // No listing runs before the retry: it would record the database TerraBase has, as the retry does.
         // The retry omits SFO. Recovery must retain the producer's actual SFO
         // replica rather than claim this new request changed placement.
         using (var recovered = await PostAsync(replica, "/api/v1/dashboard/databases", replicaCsrf, new() { ["name"] = name }, ["GRU"]))
