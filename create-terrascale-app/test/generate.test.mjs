@@ -36,11 +36,7 @@ test("scaffold is deterministic, cloud-only, and complete", async () => {
         "package.json",
         "tsconfig.json",
         "next-env.d.ts",
-        "schema.ts",
-        "auth.ts",
-        "connection.ts",
-        "terrascale.schema.json",
-        "seed.ts",
+        "terrascale.ts",
         "app/page.tsx",
         "app/layout.tsx",
         "AGENTS.md",
@@ -50,24 +46,18 @@ test("scaffold is deterministic, cloud-only, and complete", async () => {
         const secondText = await readFile(join(secondRoot, "second", file), "utf8");
         assert.equal(firstText, secondText, `${file} should be deterministic`);
       }
+      const pkg = JSON.parse(await readFile(join(root, "first", "package.json"), "utf8"));
+      assert.match(pkg.dependencies["@terrascale/sdk"], /^\d+\.\d+\.\d+$/);
+      const client = await readFile(join(root, "first", "terrascale.ts"), "utf8");
+      assert.match(client, /createTerraBaseV1Client/);
+      assert.match(client, /grant_type: "client_credentials"/);
       const page = await readFile(join(root, "first", "app/page.tsx"), "utf8");
-      assert.match(page, /TerraScaleSyncV1Client/);
-      assert.match(page, /select\(posts\)/);
-      assert.match(page, /parameters: queryParameters/);
-      assert.match(page, /client\.documents\.put/);
-      assert.doesNotMatch(page, /NEXT_PUBLIC_TERRASCALE_API_KEY|client\.from|new TerraScale\(/iu);
-      assert.doesNotMatch(page, /production binding|local engine|emulator/iu);
-      assert.doesNotMatch(page, /BroadcastChannel|localStorage|sqlite|node:sqlite/iu);
-      const readme = await readFile(join(root, "first", "README.md"), "utf8");
-      assert.match(readme, /no customer-run emulator/i);
-      assert.match(readme, /local database\s+process/i);
-      assert.doesNotMatch(readme, /local TerraBase|TerraBase emulator/i);
-      assert.match(readme, /cloud branch/i);
-      assert.match(readme, /typed Database API contract/i);
-      assert.match(readme, /terrascale push --database/);
-      assert.match(readme, /PKCE/);
-      assert.match(await readFile(join(root, "first", "terrascale.schema.json"), "utf8"), /"historyRetentionDays": 7/);
-      assert.match(await readFile(join(root, "first", "seed.ts"), "utf8"), /documents\.put/);
+      assert.match(page, /\.query\(/);
+      assert.match(page, /\.create\(/);
+      for (const file of files) {
+        const text = await readFile(join(root, "first", file), "utf8");
+        assert.doesNotMatch(text, /NEXT_PUBLIC_TERRASCALE_API_KEY|createTerraScaleClient|npx create-terrascale-app/u, file);
+      }
     } finally {
       await rm(secondRoot, { recursive: true, force: true });
     }

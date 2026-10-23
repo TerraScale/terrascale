@@ -9,7 +9,7 @@
     "start": "next start"
   },
   "dependencies": {
-    "@terrascale/sdk": "0.3.0",
+    "@terrascale/sdk": "0.0.4",
     "next": "15",
     "react": "19",
     "react-dom": "19"

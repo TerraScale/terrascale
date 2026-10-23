@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // create-terrascale-app scaffolder.
-// Usage: npx create-terrascale-app@latest my-app
+// Usage: node bin/create-terrascale-app.mjs my-app
 // Copies template/ into ./my-app and prints cloud setup instructions.
 // No network calls, no credentials needed to scaffold.
 import { cpSync, existsSync, mkdirSync } from "node:fs";
@@ -12,8 +12,8 @@ const templateDir = join(root, "template");
 
 const targetArg = process.argv[2];
 if (!targetArg || targetArg === "--help" || targetArg === "-h") {
-  console.log("Usage: npx create-terrascale-app@latest my-app");
-  console.log("Scaffolds a Next.js + @terrascale/sdk starter with a first live query.");
+  console.log("Usage: node bin/create-terrascale-app.mjs my-app");
+  console.log("Scaffolds a Next.js + @terrascale/sdk starter.");
   process.exit(targetArg ? 0 : 1);
 }
 
@@ -32,16 +32,10 @@ cpSync(templateDir, target, { recursive: true });
 
 console.log(`Created ${targetArg} from create-terrascale-app.`);
 console.log("");
-console.log("Next steps (the five-minute real-cloud journey remains unqualified):");
+console.log("Next steps:");
 console.log(`  cd ${targetArg}`);
 console.log("  npm install");
-console.log("  cp .env.example .env.local");
-console.log("  # sign in when prompted (card required at signup for fraud screening;");
-console.log("  # free plan needs no subscription; eligible onboarding promotion waives subscription only; authorized excess is billed)");
-console.log("  # from a ts-cli checkout: dotnet publish src/TerraScale.Cli/TerraScale.Cli.csproj -c Release, then put terrascale on PATH");
-console.log("  terrascale dev <database> --watch=false --no-log-tail");
-console.log("  # copy the branch database id/API settings into .env.local");
-console.log("  terrascale push --database <branch-database>");
-console.log("  npm run dev   # sign in with TerraScale in each tab, then add a post");
+console.log("  cp .env.example .env.local   # set the API key, project ID and database name");
+console.log("  npm run dev");
 console.log("");
 console.log("Docs: https://docs.terrascale.tech/getting-started/");
