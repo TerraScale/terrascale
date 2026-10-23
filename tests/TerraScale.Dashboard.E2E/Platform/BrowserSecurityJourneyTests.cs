@@ -38,10 +38,12 @@ public sealed class BrowserSecurityJourneyTests(DashboardE2EFixture fixture)
             }
             if (path == "/login")
             {
-                var csrf = response.Headers.GetValues("Set-Cookie").Single(value => value.StartsWith("ts-dashboard-csrf=", StringComparison.Ordinal));
-                await Assert.That(csrf.ToLowerInvariant()).Contains("secure");
-                await Assert.That(csrf.ToLowerInvariant()).Contains("httponly");
-                await Assert.That(csrf.ToLowerInvariant()).Contains("samesite=strict");
+                // /login only starts ts-auth's hosted sign-in; its flow cookie must survive the top-level return to /login/callback, so it is Lax.
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Found);
+                var flow = response.Headers.GetValues("Set-Cookie").Single(value => value.StartsWith("ts-dashboard-oidc=", StringComparison.Ordinal));
+                await Assert.That(flow.ToLowerInvariant()).Contains("secure");
+                await Assert.That(flow.ToLowerInvariant()).Contains("httponly");
+                await Assert.That(flow.ToLowerInvariant()).Contains("samesite=lax");
             }
         }
     }
