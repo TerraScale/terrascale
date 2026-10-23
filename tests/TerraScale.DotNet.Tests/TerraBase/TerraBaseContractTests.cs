@@ -121,6 +121,7 @@ public sealed class TerraBaseContractTests
         yield return ("project", "getProjectUsage", client => ProjectClient(client).GetUsageAsync());
         yield return ("documents", "getDatabaseUsage", client => Db(client).GetUsageAsync());
         yield return ("documents", "streamDatabaseChanges", client => ReadFirstAsync(Db(client).StreamChangesAsync()));
+        yield return ("documents", "exportDatabase", client => ReadFirstAsync(Db(client).ExportAsync()));
         yield return ("documents", "getDeclaredCollectionSchema", client => Db(client).GetDeclaredSchemaAsync("users"));
         yield return ("documents", "putDeclaredCollectionSchema", client => Db(client).PutDeclaredSchemaAsync("users", json));
         yield return ("documents", "deleteDeclaredCollectionSchema", client => Db(client).DeleteDeclaredSchemaAsync("users"));
@@ -225,7 +226,7 @@ public sealed class TerraBaseContractTests
         return (sent.Method, uri.AbsolutePath, uri.Query);
     }
 
-    private static async Task ReadFirstAsync(IAsyncEnumerable<TerraBaseChangesEvent> events)
+    private static async Task ReadFirstAsync<T>(IAsyncEnumerable<T> events)
     {
         await using var enumerator = events.GetAsyncEnumerator();
         await enumerator.MoveNextAsync();

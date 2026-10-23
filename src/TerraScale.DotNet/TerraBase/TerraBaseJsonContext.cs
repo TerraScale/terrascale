@@ -53,6 +53,7 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBaseChange))]
 [JsonSerializable(typeof(TerraBaseChangeCursor))]
 [JsonSerializable(typeof(TerraBaseStreamError))]
+[JsonSerializable(typeof(TerraBaseExportLine))]
 [JsonSerializable(typeof(TerraBaseImportJob))]
 [JsonSerializable(typeof(TerraBaseSqlCheck))]
 [JsonSerializable(typeof(TerraBaseQueryShapeList))]
