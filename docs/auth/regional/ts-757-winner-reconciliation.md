@@ -206,9 +206,50 @@ does not revoke an existing offline JWT.
 
 ## Evidence boundary
 
-The production auth project has been built locally during implementation.
-The test owner supplies the real two-region TerraBase/session/OAuth/API-key
-convergence results separately. No multi-region production result is claimed:
-production currently serves gru, and sjc/fra regional auth DNS and live proof
-remain absent. Readiness/global DNS alone do not establish regional serving
-or conflict convergence.
+The R6b targeted run completed successfully on delta on 2026-10-23. Both
+auth and TerraBase consumer builds reported zero warnings and errors. It used
+real gru/sjc TerraBase nodes and ts-dotnet, with held replication links for
+concurrency schedules; no production service or data was changed.
+
+| R6b proof | Passed executions | Result |
+| --- | ---: | --- |
+| Offline consumer and unrelated application clocks | 22 | UserAuth 17, StatsMetrics 1, BucketPage 4; warm and cold requests reject exactly at `exp`. |
+| Genuine concurrent OAuth code and refresh redemption | 2 | Both initial requests return 200; after convergence exactly one branch works in both regions. Losing refresh fails warm and after restart with regional recovery guidance. Competing access JWTs live at most 300 seconds. |
+| Delegated API-key lineage | 1 | Both regions reject losing created/rotated keys, preserve each grace secret's lineage, fail closed on absent historical bindings, and enforce sign-out-all. Error responses include regional/latest-credential guidance. |
+| Device approval and warm revocation | 4 | Mirrored approval schedules retain the payload's matching subject authorization; independent root/child revocations reject access and latest refresh in both warm auth replicas. |
+| Existing device flow, production configuration, local storage outage | 3 | The previously failing targeted cases pass. |
+| Independent signing-key request gate | 5 repeats | Security reads finish while the unrelated JWKS request remains held; the test no longer counts multiplexed HTTP/2 transport frames. |
+
+The API-key case stages competing ancestry through real local transactions,
+then exercises genuine management/token HTTP requests and real replication.
+It does not claim sequential multistep issuance can complete while held
+`remote_durable` acknowledgements block HTTP responses. The OAuth cases use
+genuine competing redemptions. Offline signature validation deliberately
+continues accepting the losing JWT before `exp` after convergence; combined
+with the cold/cache boundary tests, this proves the accepted expiry policy
+rather than immediate offline revocation.
+
+R6b artifacts are retained under `artifacts/ts757/` in the development worktree
+and on delta at
+`/home/mariogk/remote-builds/terrascale/main-6ff39bddbc32cd7865493c35c7bfca77c8cd461f297e43b647cae3a04e6d7161/artifacts/ts757/`.
+The executable snapshot is `snapshot-r6b.sh`, SHA-256
+`385659602fe89bee6e468186ec93672cbf7f1d843e14c9882f7794a854397703`;
+its actual overlay manifest is `r6b-actual-overlay-manifest.txt`, SHA-256
+`79ab4ab2a0c2bc7727a71d4262f7512e22d5b941df72719c9f5e374e4cafa447`.
+It overlays the recorded sources onto base `49e32e99c`; this is not a claim
+that final-head CI has passed. Individual `r6b-*.log` files retain each result.
+Earlier failed snapshots remain retained; a later lower-load pass does not
+establish the cause of the earlier pre-partition 503 responses.
+
+Separate earlier snapshots proved real two-region backend conditional
+create/replace convergence (both successful local writes with
+`remote_durable` acknowledgements and an identical winner/ETag), duplicate
+email ownership, session rotation, distinct passcode issuance, atomic reset,
+resend/pruning, recovery and lineage caps. The regional limiter's separate
+2/2 run proved exact replicated sum ten from five attempts per region across
+initialization and rollover. These are distinct runs, not a combined suite.
+
+No multi-region production result is claimed: initial live inspection found
+gru serving, while sjc/fra regional auth DNS and live proof were absent.
+Readiness/global DNS alone do not establish regional serving or convergence.
+The coordinated schema rollout and post-deployment live proof remain open.
