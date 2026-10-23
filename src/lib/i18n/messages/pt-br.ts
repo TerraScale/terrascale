@@ -48,6 +48,9 @@ export const ptBr: Messages = {
           about: 'Sobre',
           blog: 'Blog',
           contact: 'Contato',
+          terms: 'Termos',
+          privacy: 'Privacidade',
+          dpa: 'DPA',
         },
       },
       resources: {
