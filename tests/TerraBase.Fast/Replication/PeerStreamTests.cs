@@ -1235,7 +1235,13 @@ public sealed class PeerStreamTests
             }
 
             var id = EntityIds.New().ToString();
-            await second.BatchAsync(healthy, 1, id);
+            var stamp = new Hlc(Stamp());
+            // The real sender may reannounce its identity while these streams use synthetic origins.
+            var self = sjc.Api.Server.Services.GetRequiredService<LocalReplica>();
+            self.Presence.Heard(peer, cluster["gru"].Node, self.Clock.Tick().Milliseconds);
+            await Assert.That(await sjc.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RecordFrontierAsync(
+                healthy, cluster["gru"].Node, stamp, default, null, TestContext.Current!.Execution.CancellationToken)).IsNotNull();
+            await second.BatchAsync(healthy, 1, id, stamp.Value);
             foreach (var database in databases.Skip(4).Append(cluster.Database))
             {
                 await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = await second.WireAsync(database), Refused = true })
@@ -3352,9 +3358,9 @@ public sealed class PeerStreamTests
             await _call.RequestStream.WriteAsync(new PushFrame { Refill = new Refill { Database = await WireAsync(database), ChangeId = changeId } });
 
         // One group putting {"n":1} under `id`.
-        public async Task BatchAsync(TenantContext database, ulong changeId, string id)
+        public async Task BatchAsync(TenantContext database, ulong changeId, string id, ulong? stamp = null)
         {
-            LastStamp = Stamp();
+            LastStamp = stamp ?? Stamp();
             await _call.RequestStream.WriteAsync(new PushFrame
             {
                 Batch = new Batch
