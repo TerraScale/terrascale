@@ -97,8 +97,11 @@ public static class PlatformCalls
         return oidc.PostTokenAsync(form, "01M4EQ2FRJ8S8B29E8TQVWNW4J", OidcHarness.ClientSecret, client);
     }
 
-    /// <summary>Validates a token as TerraBase does (ES256, the issuer's JWKS, exact issuer and audience, at+jwt).</summary>
-    public static async Task<JsonWebToken> ValidateAsync(this OidcHarness oidc, string token, string audience)
+    /// <summary>
+    /// Validates a token as TerraBase does (ES256, the issuer's JWKS, exact issuer and audience, at+jwt), expiry against
+    /// <paramref name="clock"/> when a test runs ts-auth on its own clock.
+    /// </summary>
+    public static async Task<JsonWebToken> ValidateAsync(this OidcHarness oidc, string token, string audience, TimeProvider? clock = null)
     {
         var keys = new JsonWebKeySet(await oidc.Client.GetStringAsync("/terrascale/.well-known/jwks.json"));
         var result = await new JsonWebTokenHandler().ValidateTokenAsync(token, new TokenValidationParameters
@@ -110,6 +113,7 @@ public static class PlatformCalls
             ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256],
             IssuerSigningKeys = keys.GetSigningKeys(),
             ClockSkew = TimeSpan.Zero,
+            LifetimeValidator = clock is null ? null : (_, expires, _, _) => expires is { } end && clock.GetUtcNow().UtcDateTime < end,
         });
         return result.IsValid ? (JsonWebToken)result.SecurityToken : throw new InvalidOperationException($"Token rejected: {result.Exception?.GetType().Name}");
     }

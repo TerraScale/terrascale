@@ -137,7 +137,7 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
             if (accepted)
             {
                 await Assert.That(exchange.StatusCode).IsEqualTo(HttpStatusCode.OK);
-                await AssertExchangedAuthenticationTimeAsync(oidc, await OidcHarness.JsonAsync(exchange), user.Id, organization, project, authenticatedAt);
+                await AssertExchangedAuthenticationTimeAsync(oidc, clock, await OidcHarness.JsonAsync(exchange), user.Id, organization, project, authenticatedAt);
             }
             else
             {
@@ -181,7 +181,7 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
 
         using var exchange = await oidc.ExchangeAsync(refreshed.GetProperty("access_token").GetString()!, target, replica.Client);
         await Assert.That(exchange.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await AssertExchangedAuthenticationTimeAsync(oidc, await OidcHarness.JsonAsync(exchange), user.Id, organization, project, authenticatedAt);
+        await AssertExchangedAuthenticationTimeAsync(oidc, clock, await OidcHarness.JsonAsync(exchange), user.Id, organization, project, authenticatedAt);
     }
 
     [Test]
@@ -271,7 +271,7 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
             if (authenticationTime is "original" or "zero")
             {
                 await Assert.That(exchange.StatusCode).IsEqualTo(HttpStatusCode.OK);
-                await AssertExchangedAuthenticationTimeAsync(oidc, await OidcHarness.JsonAsync(exchange), user.Id, organization, project, authenticationTime == "zero" ? 0 : authenticatedAt);
+                await AssertExchangedAuthenticationTimeAsync(oidc, clock, await OidcHarness.JsonAsync(exchange), user.Id, organization, project, authenticationTime == "zero" ? 0 : authenticatedAt);
             }
             else
             {
@@ -295,7 +295,7 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
 
         using (var service = await oidc.PostTokenAsync(new(parameters) { ["grant_type"] = "client_credentials" }, ServiceId, ServiceSecret))
         {
-            await AssertMachineAuthenticationTimeAbsentAsync(oidc, service, ServiceId);
+            await AssertMachineAuthenticationTimeAbsentAsync(oidc, clock, service, ServiceId);
         }
 
         var (_, token) = await oidc.SignInUserAsync(Email);
@@ -306,7 +306,7 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
             var created = await oidc.OkAsync(HttpMethod.Post, path, token, new { name = "backend", scopes = ReadScopes }, HttpStatusCode.Created);
             var key = created.GetProperty("key").GetString()!;
             using var exchanged = await oidc.ApiKeyTokenAsync(key, parameters);
-            await AssertMachineAuthenticationTimeAbsentAsync(oidc, exchanged, created.GetProperty("api_key").GetProperty("id").GetString()!);
+            await AssertMachineAuthenticationTimeAbsentAsync(oidc, clock, exchanged, created.GetProperty("api_key").GetProperty("id").GetString()!);
         }
     }
 
@@ -344,10 +344,10 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
         await Assert.That(time.GetInt64()).IsEqualTo(expected);
     }
 
-    private static async Task AssertExchangedAuthenticationTimeAsync(OidcHarness oidc, JsonElement tokens, string userId, string organization, string? project, long authenticatedAt)
+    private static async Task AssertExchangedAuthenticationTimeAsync(OidcHarness oidc, TimeProvider clock, JsonElement tokens, string userId, string organization, string? project, long authenticatedAt)
     {
         var access = tokens.GetProperty("access_token").GetString()!;
-        var validated = await oidc.ValidateAsync(access, Audience);
+        var validated = await oidc.ValidateAsync(access, Audience, clock);
         await Assert.That(validated.Subject).IsEqualTo(userId);
         await Assert.That(validated.GetClaim("org_id").Value).IsEqualTo(organization);
         await Assert.That(validated.TryGetClaim("project_id", out _)).IsEqualTo(project is not null);
@@ -372,12 +372,12 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
         await Assert.That(tokens.TryGetProperty("refresh_token", out _)).IsFalse();
     }
 
-    private static async Task AssertMachineAuthenticationTimeAbsentAsync(OidcHarness oidc, HttpResponseMessage response, string subject)
+    private static async Task AssertMachineAuthenticationTimeAbsentAsync(OidcHarness oidc, TimeProvider clock, HttpResponseMessage response, string subject)
     {
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var tokens = await OidcHarness.JsonAsync(response);
         var token = tokens.GetProperty("access_token").GetString()!;
-        var access = await oidc.ValidateAsync(token, Audience);
+        var access = await oidc.ValidateAsync(token, Audience, clock);
         await Assert.That(access.Subject).IsEqualTo(subject);
         var payload = JsonSerializer.Deserialize<JsonElement>(Base64UrlEncoder.Decode(token.Split('.')[1]));
         await Assert.That(payload.TryGetProperty("auth_time", out _)).IsFalse();
