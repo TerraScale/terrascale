@@ -42,7 +42,7 @@ public sealed class CollectionAccessChangesTests
             changes.Add(item);
         }
         await Assert.That(item.Name).IsEqualTo("cursor");
-        await Assert.That(changes.Select(change => change.Data.GetProperty("id").GetString()).ToArray()).IsEquivalentTo(new[] { reused, current });
+        await Assert.That(changes.Select(change => change.Data.GetProperty("id").GetString()!).ToArray()).IsEquivalentTo([reused, current]);
         foreach (var change in changes)
         {
             await Assert.That(change.Data.GetProperty("collection").GetString()).IsEqualTo("items");

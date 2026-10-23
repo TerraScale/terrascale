@@ -266,7 +266,8 @@ public sealed class CollectionAccessRulesTests
 
         await api.ReservedBytesAsync();
         using var user = Reader(api, DocumentApi.NewId());
-        foreach (var ids in new[] { hidden, Enumerable.Range(0, hidden.Length).Select(_ => DocumentApi.NewId()).ToArray() })
+        string[][] batches = [hidden, [.. Enumerable.Range(0, hidden.Length).Select(_ => DocumentApi.NewId())]];
+        foreach (var ids in batches)
         {
             var absent = await SendAsync(user, HttpMethod.Post, api.Transactions,
                 new { ops = ids.Select(id => new { op = "assert", collection = "items", id, absent = true }).ToArray() });

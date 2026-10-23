@@ -112,11 +112,14 @@ public sealed class CollectionAuthorizationAdmissionTests
         await Assert.That(list.Ids).IsEquivalentTo(ownId is null ? Array.Empty<string>() : [ownId]);
         var count = ownId is null ? 0 : 1;
         var asserted = await CollectionAccessRulesTests.SendAsync(reader, HttpMethod.Post, api.Transactions,
-            new { ops = new object[]
+            new
             {
+                ops = new object[]
+                {
                 new { op = "assert_count", collection = "items", gte = count, lte = count },
                 new { op = "assert_count", collection = "items", filter = new { exists = "/missing" }, gte = 0, lte = 0 },
-            } });
+                },
+            });
         await Assert.That(asserted.Status).IsEqualTo(HttpStatusCode.OK);
     }
 
@@ -151,7 +154,7 @@ public sealed class CollectionAuthorizationAdmissionTests
         await write.CommitAsync(CancellationToken.None);
     }
 
-    private static Task SeedAsync(SqliteDatabaseStore store, string owner, int count, int payloadBytes) =>
+    private static Task<int> SeedAsync(SqliteDatabaseStore store, string owner, int count, int payloadBytes) =>
         store.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
