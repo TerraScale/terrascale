@@ -1,4 +1,5 @@
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -7,7 +8,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Hrana;
 
 /// <summary><c>POST …/databases/{database}/libsql/{v2|v3}/pipeline</c>: Hrana over HTTP for libSQL clients.</summary>
-internal sealed class HranaPipelineEndpoint(ITenantDirectory tenants, ISqlService sql) : EndpointWithoutRequest<IResult>
+internal sealed class HranaPipelineEndpoint(ITenantDirectory tenants, ISqlService sql, IMemoryBudget memory) : EndpointWithoutRequest<IResult>
 {
     private static readonly string[] Versions = ["v2", "v3"];
 
@@ -51,7 +52,7 @@ internal sealed class HranaPipelineEndpoint(ITenantDirectory tenants, ISqlServic
         // shortcut: every stream closes with its request, so transactions cannot span requests; the stream store replaces this.
         var canWrite = HttpContext.User.HasClaim(ApiKeyAuthenticationHandler.ScopeClaim, ApiKeyScopes.DocumentsWrite);
         var stream = new HranaStream(sql.Open(database!, canWrite), string.Empty, database!);
-        var executor = new HranaExecutor(stream);
+        var executor = new HranaExecutor(stream, memory);
         var results = new List<HranaResult>(body.Requests.Count);
         var closed = false;
         try

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.Hrana;
@@ -8,7 +9,7 @@ namespace TerraBase.Features.Hrana;
 internal readonly union HranaCommand(SqlCommand, HranaError);
 
 /// <summary>Runs one HTTP request's stream requests against its stream, bounding the response it builds.</summary>
-internal sealed class HranaExecutor(HranaStream stream)
+internal sealed class HranaExecutor(HranaStream stream, IMemoryBudget memory)
 {
     /// <summary>Statements (requests, batch steps and sequence statements) per HTTP request.</summary>
     public const int MaxStatements = 1000;
@@ -31,6 +32,11 @@ internal sealed class HranaExecutor(HranaStream stream)
                     HranaStmtResult result => HranaResult.Ok(new HranaResponse("execute", result)),
                     HranaError error => HranaResult.Failed(error),
                 };
+            case "store_sql" when request is { SqlId: { } id, Sql: { } sql }:
+                return stream.Store(id, sql, memory) is { } refused ? HranaResult.Failed(refused) : HranaResult.Ok(new HranaResponse("store_sql"));
+            case "close_sql" when request.SqlId is { } id:
+                stream.Forget(id);
+                return HranaResult.Ok(new HranaResponse("close_sql"));
             case "close":
                 return HranaResult.Ok(new HranaResponse("close"));
             case "get_autocommit":
@@ -63,11 +69,19 @@ internal sealed class HranaExecutor(HranaStream stream)
             : HranaStmtResult.From(result, wantRows);
     }
 
-    private static HranaCommand Command(HranaStmt stmt)
+    private static readonly HranaError UnknownSql = new("sql_id does not name a stored statement", "SQL_NOT_FOUND");
+
+    private HranaCommand Command(HranaStmt stmt)
     {
-        if (stmt is not { Sql: { } sql, SqlId: null })
+        var sql = stmt switch
         {
-            return Protocol;
+            { Sql: { } text, SqlId: null } => text,
+            { Sql: null, SqlId: { } id } => stream.Sql(id),
+            _ => null,
+        };
+        if (sql is null)
+        {
+            return stmt.SqlId is null || stmt.Sql is not null ? Protocol : UnknownSql;
         }
 
         var args = new SqlValue[stmt.Args?.Count ?? 0];
