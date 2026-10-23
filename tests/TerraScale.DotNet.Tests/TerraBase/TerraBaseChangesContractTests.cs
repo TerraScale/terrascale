@@ -166,7 +166,7 @@ public sealed class TerraBaseChangesContractTests
     [Test]
     public async Task The_producers_maximum_checkpoint_round_trips_without_decoding()
     {
-        var checkpoint = new string('A', 19223);
+        var checkpoint = new string('A', 19246);
         var calls = 0;
         using var handler = new TerraBaseTestHandler(async (request, _) =>
         {
@@ -187,7 +187,7 @@ public sealed class TerraBaseChangesContractTests
     [Arguments(true)]
     public async Task A_checkpoint_over_the_producers_bound_is_rejected_in_either_direction(bool fromServer)
     {
-        var checkpoint = new string('A', 19224);
+        var checkpoint = new string('A', 19247);
         var calls = 0;
         using var handler = new TerraBaseTestHandler((_, _) =>
         {

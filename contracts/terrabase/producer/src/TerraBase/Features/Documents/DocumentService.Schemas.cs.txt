@@ -24,7 +24,11 @@ internal sealed partial class DocumentService
     private readonly Counter<long> _schemaAdmissions = meters.Create(Telemetry.MeterName).CreateCounter<long>(
         "terrabase.schema.admission_keyword_evaluations", description: "Draft 2020-12 keyword evaluations started by schema attachment preflight.");
 
-    public async ValueTask<CollectionSchemaResult> GetCollectionSchemaAsync(TenantContext database, string name, CancellationToken cancellationToken)
+    public ValueTask<CollectionSchemaResult> GetCollectionSchemaAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+        ReadCertifiedAsync<CollectionSchemaResult>(database, _ => ReadCollectionSchemaAsync(database, name, cancellationToken),
+            static () => DocumentRoute.UnknownDatabase, cancellationToken);
+
+    private async ValueTask<CollectionSchemaResult> ReadCollectionSchemaAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
         if (await BeginAsync(database, write: false, cancellationToken).ConfigureAwait(false) is not { } transaction)
         {

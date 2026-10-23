@@ -27,14 +27,14 @@ internal sealed record TerraBaseStreamErrorDetail(string Code, string? Message);
 
 public sealed partial class TerraBaseDatabase
 {
-    // Producer ChangeCursor: base64url of 18 + 63 + (56 * 256) bytes.
-    private const int MaxChangesCursorLength = 19223;
+    // Producer ChangeCursor: base64url of 17 + 18 + 63 + (56 * 256) bytes, including scope.
+    private const int MaxChangesCursorLength = 19246;
 
     /// <summary>
     /// Streams change and cursor events with documents:read. No cursor replays retained history; now starts at the head.
     /// LastEventId overrides cursor. Resume with the SAME collections filter and checkpoints from BOTH event kinds.
     /// A clean end (30 minutes or token expiry) requires reconnecting; errors never reset or reconnect automatically.
-    /// 400 invalid_cursor rejects multiple Last-Event-ID values; 410 cursor_expired includes malformed or old cursors.
+    /// 400 invalid_cursor rejects multiple Last-Event-ID values; 410 cursor_expired includes malformed, old or differently scoped cursors.
     /// For 410, explicitly re-read and restart with now; the SDK never resets the checkpoint itself.
     /// Includes document mutations only, not collection/index metadata or documents removed by a collection drop.
     /// Dispose the enumerator to close the response. RequestTimeout covers acquisition; stalled reads stop after 45 seconds.
