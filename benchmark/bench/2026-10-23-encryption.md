@@ -42,10 +42,16 @@ Each encrypted file gets a fresh process-memory random key. Keys are never print
 
 ## Vendor regression result
 
-The same admitted command built the vendor regression project successfully with zero warnings/errors, then ran six focused encryption cases: five passed, one failed, zero skipped; runner exit code 2, duration 655 ms.
+Final focused rerun on `delta`, SDK `11.0.100-rc.1.26425.128`, commit `f6a967d39b2620d4b2cb5dc8d0647280404e6043`: **6 passed, 0 failed, 0 skipped**, duration 316 ms, runner exit code 0. Vendor regression build succeeded with zero warnings/errors (1.87 seconds).
 
-Passed: builder option preservation; all three malformed/incomplete option cases; encrypted database and live-WAL copies requiring the original key (including raw-reader interoperability and missing/wrong-key rejection).
+Exact final command:
 
-Failed: `RawConnectionCanCreateEncryptedBackup`, `EncryptionTests.cs:103`, expected `backup-payload` but got an empty result. The raw command executes one statement; its combined `CREATE TABLE; INSERT` setup created the table without inserting the row. The owned test now issues those statements separately. That test-only fix awaits parent push and a focused rerun; this report does not claim it passes yet.
+```sh
+TS_HEAVY_HOST=delta /home/mariogk/.local/bin/ts-heavy-any nice -n 19 bash -c 'set -euo pipefail; hostname; dotnet --version; git rev-parse HEAD; dotnet build tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj --configuration Release; dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration Release --no-build -- --treenode-filter "/*/*/EncryptionTests/*" --minimum-expected-tests 6 --output detailed --no-ansi' --repo terrascale --branch feat/database-encryption
+```
+
+All cases passed: builder option preservation; all three malformed/incomplete option cases; raw encrypted backup creation with facade readback; encrypted database and live-WAL copies requiring the original key (including raw-reader interoperability and missing/wrong-key rejection).
+
+The original measured run passed five cases and failed `RawConnectionCanCreateEncryptedBackup`: its combined raw `CREATE TABLE; INSERT` setup executed only the first statement. The test now issues those statements separately, preserving its payload assertion; the final focused rerun above verifies the fix. Benchmark measurements were retained because this change affects test setup only. A preceding rerun attempt on `mariogk-dev` failed Git fetch with `Could not resolve hostname github.com` (exit 128), before any build/test; the successful retry used `delta` through the same admission wrapper.
 
 Earlier attempts produced no measurements: commit `02c3dbb5f521c5d56efdc9e23daef3fc8807a6d4` failed vendor CS8604; `3f862dd02940830899e5639661e01784966d6618` failed benchmark IDE0011/IDE0300. Parent pushed the vendor guard; benchmark/test braces and collection syntax were fixed before the measured run. No production engine suite or CI result is claimed here.
