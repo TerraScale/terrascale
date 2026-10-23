@@ -4,7 +4,11 @@ namespace TerraBase.Engine;
 /// <param name="Name">Collection name (validated like a database name).</param>
 /// <param name="Columns">Column names, each a top-level field (a letter, then letters, digits or <c>_</c>).</param>
 /// <param name="WithId">Whether the table also exposes each row's document id as column <c>_id</c>, for a write to address it.</param>
-public sealed record SqlProgramTable(string Name, IReadOnlyList<string> Columns, bool WithId = false);
+/// <param name="KeyColumn">
+/// The column whose value is the document id itself (a single TEXT primary key). It is read from the id: a document write
+/// drops a root <c>id</c> field equal to its key (docs/terrabase/id-contract.md).
+/// </param>
+public sealed record SqlProgramTable(string Name, IReadOnlyList<string> Columns, bool WithId = false, string? KeyColumn = null);
 
 /// <summary>
 /// One validated relational statement. The engine exposes each of <paramref name="Tables"/> under its name, with one

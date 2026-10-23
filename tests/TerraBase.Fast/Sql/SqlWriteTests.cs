@@ -29,11 +29,15 @@ public sealed class SqlWriteTests
         await SqlApi.OkAsync(api,
             "CREATE TABLE codes (code TEXT PRIMARY KEY, v INTEGER)",
             "CREATE TABLE nums (id INTEGER PRIMARY KEY, v INTEGER)",
+            "CREATE TABLE people (id TEXT PRIMARY KEY, age INTEGER)",
             "INSERT INTO codes VALUES ('abc', 1)",
-            "INSERT INTO nums VALUES (42, 2)");
+            "INSERT INTO nums VALUES (42, 2)",
+            "INSERT INTO people (id, age) VALUES ('p-1', 20)");
 
         await Assert.That(await RowsAsync(api, "SELECT code, v FROM codes WHERE code = 'abc'")).IsEqualTo("""[["abc",1]]""");
         await Assert.That(await RowsAsync(api, "SELECT id, v FROM nums WHERE id = 42")).IsEqualTo("""[[42,2]]""");
+        // A document write drops a root id equal to its key; a TEXT key named id still reads back.
+        await Assert.That(await RowsAsync(api, "SELECT id, age FROM people WHERE id = 'p-1'")).IsEqualTo("""[["p-1",20]]""");
 
         using var rejected = await api.Client.GetAsync($"{api.Collections}/codes/documents/by-key?id=abc");
         rejected.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
