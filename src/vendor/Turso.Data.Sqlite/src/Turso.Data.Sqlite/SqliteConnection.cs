@@ -198,7 +198,7 @@ public partial class SqliteConnection : DbConnection
         }
         catch (TursoException ex)
         {
-            if (SqliteCommand.GetNativeSqliteErrorCode(ex) is 10 or 11 or 26)
+            if (ex is TursoNativeException { StatusCode: 132 or 133 or 134 })
                 _database?.Deinitialize();
             CleanupFailedOpen(sharedMemoryPath);
             throw ToSqliteException(ex);

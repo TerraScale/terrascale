@@ -23,9 +23,6 @@ public sealed class TursoNativeException : TursoException
     }
 
     public uint StatusCode { get; }
-
-    // Native 0.8.2 reports authenticated-page failures as generic status 127.
-    public bool IsPageAuthenticationFailure { get; internal init; }
 }
 
 public sealed class TursoSyncNativeException : TursoException

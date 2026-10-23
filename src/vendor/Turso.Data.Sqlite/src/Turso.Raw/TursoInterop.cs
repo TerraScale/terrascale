@@ -55,6 +55,9 @@ internal static class TursoInterop
         TursoNativeLibraryResolver.EnsureInitialized();
     }
 
+    [DllImport(DllName, EntryPoint = "turso_terrascale_storage_error_contract", CallingConvention = CallingConvention.Cdecl)]
+    public static extern uint StorageErrorContract();
+
     [DllImport(DllName, EntryPoint = "turso_database_new", CallingConvention = CallingConvention.Cdecl)]
     public static extern TursoStatusCode DatabaseNew(
         ref TursoDatabaseConfig config,

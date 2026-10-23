@@ -1079,7 +1079,9 @@ public class SqliteCommand : DbCommand
         {
             var codeEnd = message.IndexOf(':', sqliteErrorPrefix.Length);
             if (codeEnd > sqliteErrorPrefix.Length
-                && int.TryParse(message[sqliteErrorPrefix.Length..codeEnd], NumberStyles.Integer, CultureInfo.InvariantCulture, out var errorCode))
+                && int.TryParse(message[sqliteErrorPrefix.Length..codeEnd], NumberStyles.Integer, CultureInfo.InvariantCulture, out var errorCode)
+                // SQL and callbacks can forge this prefix; only native status can report physical damage.
+                && (errorCode & 0xff) is not (10 or 11 or 26))
             {
                 var sqliteMessage = message[(codeEnd + 1)..];
                 return new SqliteException(Properties.Resources.SqliteNativeError(errorCode, sqliteMessage), errorCode);
@@ -1093,13 +1095,13 @@ public class SqliteCommand : DbCommand
         return new SqliteException(Properties.Resources.SqliteNativeError(code, message), code);
     }
 
-    // TerraScale: preserve native damage/authentication and interruption codes; other local errors stay SQLITE_ERROR.
+    // TerraScale: damage keeps its SQLite code (SQLITE_IOERR 10, SQLITE_CORRUPT 11, SQLITE_NOTADB 26); every other local
+    // status stays SQLITE_ERROR, as upstream reports it, except native interruption (SQLITE_INTERRUPT 9).
     internal static int GetNativeSqliteErrorCode(TursoException ex)
         => ex is TursoNativeException native
             ? native.StatusCode switch
             {
                 5 => 9,
-                127 when native.IsPageAuthenticationFailure => 11,
                 132 => 26,
                 133 => 11,
                 134 => 10,

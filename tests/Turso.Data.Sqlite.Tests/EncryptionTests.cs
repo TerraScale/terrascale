@@ -113,7 +113,9 @@ public sealed class EncryptionTests
 
     /// <summary>Authenticated-page tamper remains native damage through both driver surfaces.</summary>
     [Test]
-    public async Task EncryptedPageTamperPreservesDamageClassification()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EncryptedPageTamperPreservesDamageClassification(bool unrelatedCheckFunction)
     {
         var directory = Directory.CreateTempSubdirectory("turso-encrypted-tamper-").FullName;
         try
@@ -136,6 +138,12 @@ public sealed class EncryptionTests
                 var pageSize = Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
                 command.CommandText = "SELECT rootpage FROM sqlite_schema WHERE name='secret';";
                 offset = (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) - 1) * pageSize;
+                if (unrelatedCheckFunction)
+                {
+                    connection.CreateFunction<long, long>("f", value => value, isDeterministic: true);
+                    command.CommandText = "CREATE TABLE unrelated(x INTEGER CHECK(f(x)>0));";
+                    command.ExecuteNonQuery();
+                }
                 command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
                 command.ExecuteNonQuery();
             }
@@ -159,8 +167,7 @@ public sealed class EncryptionTests
                     read.CommandText = "SELECT value FROM secret;";
                     read.ExecuteScalar();
                 });
-                await Assert.That(nativeError!.StatusCode).IsEqualTo(127U);
-                await Assert.That(nativeError.IsPageAuthenticationFailure).IsTrue();
+                await Assert.That(nativeError!.StatusCode).IsEqualTo(133U);
             }
             var facadeError = Assert.Throws<SqliteException>(() => ReadValue(builder.ConnectionString));
             await Assert.That(facadeError!.SqliteErrorCode).IsEqualTo(11);
@@ -173,7 +180,14 @@ public sealed class EncryptionTests
 
     /// <summary>SQL rejection text cannot impersonate a damaged encrypted page.</summary>
     [Test]
-    public async Task SqlRaiseCannotImpersonatePageAuthenticationFailure()
+    [Arguments("Decryption failed for page=2")]
+    [Arguments("__turso_sqlite_error__:10:spoof")]
+    [Arguments("__turso_sqlite_error__:11:spoof")]
+    [Arguments("__turso_sqlite_error__:26:spoof")]
+    [Arguments("__turso_sqlite_error__:266:spoof")]
+    [Arguments("__turso_sqlite_error__:267:spoof")]
+    [Arguments("__turso_sqlite_error__:282:spoof")]
+    public async Task SqlRaiseCannotImpersonatePageAuthenticationFailure(string errorMessage)
     {
         var directory = Directory.CreateTempSubdirectory("turso-encrypted-raise-").FullName;
         try
@@ -194,12 +208,11 @@ public sealed class EncryptionTests
                 command.CommandText = "INSERT INTO secret VALUES ('healthy');";
                 command.ExecuteNonQuery();
                 // Raw prepare retains the complete trigger body, including its internal semicolon.
-                command.CommandText = "CREATE TRIGGER reject_insert BEFORE INSERT ON secret BEGIN SELECT RAISE(ABORT, 'Decryption failed for page=2'); END;";
+                command.CommandText = $"CREATE TRIGGER reject_insert BEFORE INSERT ON secret BEGIN SELECT RAISE(ABORT, '{errorMessage}'); END;";
                 command.ExecuteNonQuery();
                 command.CommandText = "INSERT INTO secret VALUES ('rejected');";
                 var nativeError = Assert.Throws<TursoNativeException>(() => command.ExecuteNonQuery());
                 await Assert.That(nativeError!.StatusCode).IsEqualTo(127U);
-                await Assert.That(nativeError.IsPageAuthenticationFailure).IsFalse();
             }
             using (var connection = new SqliteConnection(builder.ConnectionString))
             {
@@ -210,6 +223,53 @@ public sealed class EncryptionTests
                 await Assert.That(sqlError!.SqliteErrorCode).IsEqualTo(1);
             }
             await Assert.That(ReadValue(builder.ConnectionString)).IsEqualTo("healthy");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>CHECK expressions cannot make healthy physical storage report corruption.</summary>
+    [Test]
+    public async Task SqlCheckCannotImpersonatePageAuthenticationFailure()
+    {
+        var directory = Directory.CreateTempSubdirectory("turso-encrypted-check-").FullName;
+        try
+        {
+            var builder = new SqliteConnectionStringBuilder
+            {
+                DataSource = Path.Combine(directory, "healthy.db"),
+                EncryptionCipher = "aegis256",
+                EncryptionKey = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),
+                Pooling = false,
+            };
+            using (var raw = new Turso.TursoConnection(builder.ConnectionString))
+            {
+                raw.Open();
+                using var command = raw.CreateCommand();
+                foreach (var sql in (string[])[
+                    "CREATE TABLE t(x INTEGER CHECK(RAISE(ABORT, 'Decryption failed for page=2')));",
+                    "PRAGMA ignore_check_constraints=ON;",
+                    "INSERT INTO t VALUES(1);",
+                    "PRAGMA ignore_check_constraints=OFF;",
+                ])
+                {
+                    command.CommandText = sql;
+                    command.ExecuteNonQuery();
+                }
+                command.CommandText = "SELECT RAISE(ABORT, 'Decryption failed for page=2');";
+                var nativeError = Assert.Throws<TursoNativeException>(() => command.ExecuteScalar());
+                await Assert.That(nativeError!.StatusCode).IsEqualTo(127U);
+            }
+            using var connection = new SqliteConnection(builder.ConnectionString);
+            connection.Open();
+            using var rejected = connection.CreateCommand();
+            rejected.CommandText = "SELECT RAISE(ABORT, 'Decryption failed for page=2');";
+            var sqlError = Assert.Throws<SqliteException>(() => rejected.ExecuteScalar());
+            await Assert.That(sqlError!.SqliteErrorCode).IsEqualTo(1);
+            rejected.CommandText = "SELECT x FROM t;";
+            await Assert.That(rejected.ExecuteScalar()).IsEqualTo(1L);
         }
         finally
         {

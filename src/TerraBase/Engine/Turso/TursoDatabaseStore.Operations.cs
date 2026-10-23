@@ -97,7 +97,7 @@ internal sealed partial class TursoDatabaseStore
 
     internal async Task RecordOperationDamageAsync(Exception error)
     {
-        if (TursoStorageTransaction.Damaged(error) || error is TursoNativeException { StatusCode: 132 or 133 or 134 } or TursoNativeException { IsPageAuthenticationFailure: true })
+        if (TursoStorageTransaction.Damaged(error) || error is TursoNativeException { StatusCode: 132 or 133 or 134 })
         {
             NoteCopyFault("a storage operation reported I/O failure or corruption");
             await RecordCopyFaultAsync(CopyFault!).ConfigureAwait(false);
