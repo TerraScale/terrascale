@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using TerraBase.Features.Shapes;
+using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Turso;
 
@@ -49,7 +50,7 @@ internal sealed partial class TursoStorageTransaction : IShapeOwnerAuthorization
         }
 
         // Stream the already admitted body: no document trees, ID sets or unbounded current-document reads.
-        var reader = new Utf8JsonReader(body);
+        var reader = new Utf8JsonReader(body, new JsonReaderOptions { MaxDepth = DocumentJson.MaxStoredDepth + 5 });
         string? operation = null;
         string? operationId = null;
         while (reader.Read())

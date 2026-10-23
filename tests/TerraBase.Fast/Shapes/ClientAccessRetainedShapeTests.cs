@@ -8,11 +8,66 @@ using TerraBase.Engine;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
+using TerraBase.Primitives;
+using TerraBase.Testing;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Fast.Shapes;
 
 public sealed class ClientAccessRetainedShapeTests
 {
+    [Test]
+    public async Task Owner_authorization_accepts_deep_retained_documents_in_snapshot_pages_and_closed_chunks()
+    {
+        await using var api = await CollectionAccessRulesTests.StartAsync();
+        var rules = CollectionAccessRulesTests.OwnerRules();
+        await CollectionAccessRulesTests.DeclareAsync(api, rules);
+        var actor = DocumentApi.NewId();
+        var id = DocumentApi.NewId();
+        (await api.PutAsync(id, new { owner = actor })).Status.ShouldBe(HttpStatusCode.Created);
+        var deep = "{\"owner\":\"" + actor + "\",\"deep\":"
+            + string.Concat(Enumerable.Repeat("{\"a\":", 80)) + "1" + new string('}', 80) + "}";
+        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync())))
+        {
+            await connection.OpenAsync();
+            // Restored states support deeper trees than the HTTP write contract permits.
+            await StoredStates.WriteAsync(connection, DocumentApi.Collection, id, deep);
+        }
+        using var reader = CollectionAccessRulesTests.Reader(api, actor);
+        var shape = Shape(api);
+        using var bootstrap = await reader.GetAsync(Relative(shape + "?offset=-1"));
+        bootstrap.StatusCode.ShouldBe(HttpStatusCode.TemporaryRedirect);
+        using var page = await reader.GetAsync(bootstrap.Headers.Location);
+        page.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var pageBody = JsonDocument.Parse(await page.Content.ReadAsByteArrayAsync(),
+            new JsonDocumentOptions { MaxDepth = DocumentJson.MaxStoredDepth + 5 });
+        await AssertDeepAsync(pageBody.RootElement, id, actor);
+
+        var handle = pageBody.RootElement.GetProperty("handle").GetString()!;
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+        await using (var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            var collection = (await transaction.GetCollectionAsync(DocumentApi.Collection, CancellationToken.None))!;
+            var definition = new ShapeSealDefinition(pageBody.RootElement.GetProperty("shape_id").GetString()!, handle,
+                collection.Name, collection.Id, RandomNumberGenerator.GetBytes(16),
+                OwnerAuthorization: new DocumentOwnerProof(collection.Id, rules.Owner!, actor, rules.Fingerprint()));
+            _ = await api.Server.Services.GetRequiredService<IShapeSealer>().SealUpToHeadAsync(store, definition, 0, CancellationToken.None);
+        }
+        using (var retained = await api.Server.Services.GetRequiredService<IShapeSealer>().ReadChunkAsync(store, handle, 0, CancellationToken.None))
+        {
+            await Assert.That(retained).IsNotNull();
+            using var retainedBody = JsonDocument.Parse(retained!.Body,
+                new JsonDocumentOptions { MaxDepth = DocumentJson.MaxStoredDepth + 5 });
+            await AssertDeepAsync(retainedBody.RootElement, id, actor);
+        }
+        using var chunk = await reader.GetAsync(Relative($"{shape}?handle={handle}&offset=0"));
+        chunk.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var chunkBody = JsonDocument.Parse(await chunk.Content.ReadAsByteArrayAsync(),
+            new JsonDocumentOptions { MaxDepth = DocumentJson.MaxStoredDepth + 5 });
+        await Assert.That(chunkBody.RootElement.GetProperty("up_to_date").GetBoolean()).IsFalse();
+        await AssertDeepAsync(chunkBody.RootElement, id, actor);
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -236,6 +291,22 @@ public sealed class ClientAccessRetainedShapeTests
             }
             return result;
         }
+    }
+
+    private static async Task AssertDeepAsync(JsonElement body, string id, string actor)
+    {
+        var operation = body.GetProperty("changes").EnumerateArray()
+            .SelectMany(change => change.GetProperty("ops").EnumerateArray()).Single();
+        await Assert.That(operation.GetProperty("op").GetString()).IsEqualTo("upsert");
+        await Assert.That(operation.GetProperty("id").GetString()).IsEqualTo(id);
+        var document = operation.GetProperty("document");
+        await Assert.That(document.GetProperty("owner").GetString()).IsEqualTo(actor);
+        var nested = document.GetProperty("deep");
+        for (var level = 0; level < 80; level++)
+        {
+            nested = nested.GetProperty("a");
+        }
+        await Assert.That(nested.GetInt32()).IsEqualTo(1);
     }
 
     private static async Task OpaqueAsync(HttpResponseMessage response, params string[] sensitive)
