@@ -20,12 +20,12 @@ public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment 
     private readonly Uri origin = TerraBaseDashboardState.Origin(environment);
     private readonly ConcurrentDictionary<string, (string Plan, DateTimeOffset At)> published = new(StringComparer.Ordinal);
 
-    // TerraBase plans by monthly operations (https://terrascale.tech/pricing.json): hobby 100K, starter 1M, pro 100M.
+    // Legacy TerraBase document-count tiers; these do not enforce the published global 4 KiB allowances.
     // An unpaid organization (billing_required) keeps Hobby, so no allowance is granted before payment.
     public static string PlanFor(OrganizationRecord organization)
     {
         if (organization.BillingStatus != "active") return "hobby";
-        return PlanCatalog.Limits(organization).MonthlyWrites switch
+        return PlanCatalog.Limits(organization).MonthlyOperations switch
         {
             <= 100_000 => "hobby",
             <= 1_000_000 => "starter",

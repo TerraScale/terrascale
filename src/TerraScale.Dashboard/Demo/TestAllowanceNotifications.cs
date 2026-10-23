@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using TerraScale.Dashboard.Features.Notifications;
 
 namespace TerraScale.Dashboard.Demo;
@@ -5,13 +6,53 @@ namespace TerraScale.Dashboard.Demo;
 // Test hosts never reach the production allowance feed or send product mail.
 sealed class TestAllowanceNotifications(TimeProvider clock) : IAllowanceNotificationBackend
 {
-    public Task<AllowanceUsagePage> ReadAsync(string? after, CancellationToken cancellationToken)
+    private readonly object gate = new();
+    private readonly SemaphoreSlim reads = new(0);
+    private AllowanceUsageObservation? observation;
+    private string operationsContract = AllowanceNotifications.OperationsContract;
+    private string storageContract = AllowanceNotifications.StorageContract;
+    private string outcome = "accepted";
+    private bool deliveryConfigured;
+    public ConcurrentQueue<AllowanceAlert> Attempts { get; } = new();
+    public ConcurrentDictionary<string, AllowanceAlert> Sent { get; } = new();
+
+    internal void Observe(AllowanceUsageObservation? value, string delivery = "accepted", bool supported = true)
     {
-        var now = clock.GetUtcNow();
-        return Task.FromResult(new AllowanceUsagePage(new(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), now, [], null,
-            AllowanceNotifications.OperationsContract, AllowanceNotifications.StorageContract));
+        lock (gate)
+        {
+            observation = value;
+            deliveryConfigured = value is not null;
+            outcome = delivery;
+            operationsContract = supported ? AllowanceNotifications.OperationsContract : "document-operations-node-v1";
+            storageContract = supported ? AllowanceNotifications.StorageContract : "logical-bytes-node-v1";
+        }
     }
 
-    public Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken) =>
-        throw new InvalidOperationException("The empty test allowance feed cannot send email.");
+    internal void ClearObservation() { lock (gate) observation = null; }
+
+    internal Task WaitForReadAsync(CancellationToken cancellationToken) => reads.WaitAsync(cancellationToken);
+
+    public Task<AllowanceUsagePage> ReadAsync(string? after, CancellationToken cancellationToken)
+    {
+        AllowanceUsagePage page;
+        lock (gate)
+        {
+            var now = clock.GetUtcNow();
+            page = new(new(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), now,
+                observation is { } value ? [value] : [], null, operationsContract, storageContract);
+        }
+        reads.Release();
+        return Task.FromResult(page);
+    }
+
+    public Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken)
+    {
+        lock (gate)
+        {
+            if (!deliveryConfigured) throw new InvalidOperationException("The empty test allowance feed cannot send email.");
+            Attempts.Enqueue(alert);
+            if (outcome == "accepted") Sent.TryAdd(alert.Id, alert);
+            return Task.FromResult(outcome);
+        }
+    }
 }
