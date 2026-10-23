@@ -18,7 +18,7 @@ Availability checked **October 12, 2026 (UTC)** against the public registries an
 | Language | Package / entrypoint | Runtime | Current evidence |
 | --- | --- | --- | --- |
 | JavaScript / TypeScript | `@terrascale/sdk@0.0.3`, `createTerraBaseV1Client` | Node 22 or 24; npm ≥11; bundled TypeScript declarations | Published npm artifact; [quickstart](/ja/getting-started/javascript) |
-| C# | `TerraScale.DotNet`, `TerraBaseDocumentsClient` | .NET 10; source also targets .NET 11 with that toolchain | Public NuGet package endpoint returns 404; `0.0.2` remains an in-progress candidate |
+| C# | `TerraScale.DotNet`, `TerraBaseDocumentsClient` | .NET 10; source also targets .NET 11 with that toolchain | Public NuGet package endpoint returns 404; `0.0.3` remains an in-progress candidate |
 | Go | `terrascale.tech/sdk/v1`, `New(Config)` | Go ≥1.25 | Source candidate; public immutable module availability and customer journey not established here |
 
 The npm package declares the latest major Chrome, Firefox, Safari and Edge. Its React, Svelte and TanStack entrypoints have their own package requirements; they do not establish live-service parity with the Documents examples. No public Python, Java or Rust SDK release is verified for this contract.
@@ -33,7 +33,7 @@ Import from `@terrascale/sdk`. The root exposes `createTerraBaseV1Client`, `v1Fi
 
 ### C#
 
-Obtain a verified immutable package/feed containing `TerraBaseDocumentsClient` and its exact version. The [C# quickstart](/ja/getting-started/csharp) shows the package-only build command. The `0.0.2` candidate is not a verified public NuGet release; source version numbers do not establish public availability.
+Obtain a verified immutable package/feed containing `TerraBaseDocumentsClient` and its exact version. The [C# quickstart](/ja/getting-started/csharp) shows the package-only build command. The `0.0.3` candidate is not a verified public NuGet release; source version numbers do not establish public availability.
 
 `Database(projectId, databaseName)` returns a handle with `CreateDocumentAsync`, `GetDocumentAsync`, `PutDocumentAsync`, `PatchDocumentAsync`, `DeleteDocumentAsync`, `QueryAsync` and `TransactAsync`. A caller-owned `HttpClient` must disable redirects and cookies; use `TerraBaseHttp.CreateHandler()` and dispose the transport yourself.
 

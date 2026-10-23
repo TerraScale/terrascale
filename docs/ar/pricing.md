@@ -32,7 +32,7 @@
 | Storage across regions | 100 MB | 5 GB | 25 GB | Custom |
 | Operation units / month | 100,000 | 1,000,000 | 100,000,000 | Custom |
 | Regions per database | up to 3 | up to 3 | up to 3 | up to 3 |
-| PITR retention | 1 day | 7 days | 30 days | 35 days |
+| PITR retention | 1 day | Not published | 7 days | 30 days |
 
 Launch regions: GRU (São Paulo), SJC (San Jose), FRA (Frankfurt).
 
@@ -43,8 +43,6 @@ Starter and Pro include one eligible 30-day trial per verified payment method an
 **Hobby.** Hobby has no time limit with a valid verified card and automated fraud checks after public launch. Each verified billing customer has one Hobby entitlement across all organizations: creating or joining another organization does not grant another Hobby plan. The first paid month promotion is likewise limited to one entitlement across organizations; only audited owner exceptions may expand eligibility.
 
 **Enterprise.** Monthly support base plus metered usage. Enterprise is a paid support and compliance offering and is unavailable during Public Alpha. Available benefits require confirmation before enrollment; priority response, SOC 2, and contractual SLA benefits are not available launch promises.
-
-**Idle Hobby databases.** Hobby databases pause after 30 idle days; a request resumes them. They may be deleted after 90 idle days with advance notices unless deletion protection is enabled. Paid databases are never idle-reaped. The final notice schedule requires owner approval.
 
 ## Billing cycle and promotion
 
