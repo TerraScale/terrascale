@@ -28,8 +28,8 @@ internal static class SqlRead
     private static readonly HashSet<string> Functions =
     [
         with(StringComparer.Ordinal),
-        "abs", "char", "coalesce", "concat", "concat_ws", "format", "glob", "hex", "ifnull", "iif", "instr", "length", "like",
-        "likelihood", "likely", "lower", "ltrim", "max", "min", "nullif", "octet_length", "printf", "quote", "random", "replace",
+        "abs", "char", "coalesce", "concat", "concat_ws", "glob", "hex", "ifnull", "iif", "instr", "length", "like",
+        "likelihood", "likely", "lower", "ltrim", "max", "min", "nullif", "octet_length", "quote", "random",
         "round", "rtrim", "sign", "soundex", "substr", "substring", "trim", "typeof", "unicode", "unlikely", "upper",
         "avg", "count", "group_concat", "string_agg", "sum", "total",
         "row_number", "rank", "dense_rank", "percent_rank", "cume_dist", "ntile", "lag", "lead", "first_value", "last_value", "nth_value",
@@ -71,6 +71,13 @@ internal static class SqlRead
                     name = (tokens[i] is Colon ? ":" : "@") + word.Value;
                     i++;
                     break;
+                // SqlParserCS renders these back without escaping ([a]]b] as [a]b], N'a''b' as N'a'b'), so SQLite would
+                // read other text than the validator saw: only plain and "…" names, and only '…' strings, pass.
+                case Word { QuoteStyle: not (null or '"') }:
+                    throw new FormatException("names are plain or \"quoted\"; [ ] and ` quotes are not supported");
+                case StringToken literal when literal is not SingleQuotedString
+                    && (literal.GetType().Name.Contains("String", StringComparison.Ordinal) || literal.GetType().Name.Contains("Literal", StringComparison.Ordinal)):
+                    throw new FormatException("strings are '…' literals; other string and blob literals are not supported");
                 default:
                     text.Append(tokens[i]);
                     continue;
@@ -135,6 +142,20 @@ internal static class SqlRead
         ReadSql read, IReadOnlyDictionary<string, SqlTableDefinition> tables, IReadOnlyList<object?> parameters, bool describe, string? keyed = null)
     {
         SqlGuard.Apply(read.Query, tables);
+        // Defense in depth: the text the engine runs must parse back to the same statement.
+        var full = read.Query.ToSql();
+        try
+        {
+            if (new Parser().ParseSql(full, new SQLiteDialect()) is not [Statement.Select { Query: var again }] || again.ToSql() != full)
+            {
+                throw new FormatException("the statement does not render back to itself");
+            }
+        }
+        catch (Exception error) when (error is ParserException or TokenizeException)
+        {
+            throw new FormatException("the statement does not render back to itself");
+        }
+
         var statement = (read.Query with { With = null }).ToSql();
         return new SqlProgram(
             [.. read.Tables.Select(name => new SqlProgramTable(name, [.. tables[name].Columns.Select(column => column.Name)], name == keyed))],
@@ -245,8 +266,10 @@ internal static class SqlRead
                     throw new FormatException("WITH is supported only at the start of a statement");
                 case Expression.CompoundIdentifier { Idents.Count: > 2 }:
                     throw new FormatException("columns are named c or t.c");
-                case Expression.LiteralValue { Value: Value.HexStringLiteral }:
-                    throw new FormatException("blob values are not supported");
+                case Expression.LiteralValue { Value: Value.Number or Value.SingleQuotedString or Value.Null or Value.Boolean or Value.Placeholder }:
+                    break;
+                case Expression.LiteralValue:
+                    throw new FormatException("this literal is not supported");
             }
 
             return ControlFlow.Continue;

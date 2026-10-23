@@ -30,6 +30,53 @@ internal sealed partial class SqliteStorageTransaction
         return RunAsync(() => WithQueryBudget(() => RunProgram(program, cancellationToken), cancellationToken), cancellationToken);
     }
 
+    // Whether `sql` has no statement separator outside SQLite's quotes ('…', "…", [ ], `…`) and comments.
+    private static bool IsOneStatement(string sql)
+    {
+        for (var i = 0; i < sql.Length; i++)
+        {
+            switch (sql[i])
+            {
+                case ';':
+                    return false;
+                case '\'' or '"' or '`' or '[':
+                    var close = sql[i] == '[' ? ']' : sql[i];
+                    // A doubled quote stays inside the literal.
+                    do
+                    {
+                        i = sql.IndexOf(close, i + 1);
+                    }
+                    while (i >= 0 && close != ']' && i + 1 < sql.Length && sql[i + 1] == close && ++i > 0);
+
+                    if (i < 0)
+                    {
+                        return false;
+                    }
+
+                    break;
+                case '-' when i + 1 < sql.Length && sql[i + 1] == '-':
+                    i = sql.IndexOf('\n', i);
+                    if (i < 0)
+                    {
+                        return true;
+                    }
+
+                    break;
+                case '/' when i + 1 < sql.Length && sql[i + 1] == '*':
+                    i = sql.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                    if (i < 0)
+                    {
+                        return false;
+                    }
+
+                    i++;
+                    break;
+            }
+        }
+
+        return true;
+    }
+
     // Worker-only.
     private SqlProgramResult RunProgram(SqlProgram program, CancellationToken cancellationToken)
     {
@@ -46,9 +93,16 @@ internal sealed partial class SqliteStorageTransaction
             sql.Append("WITH ").AppendJoin(", ", ctes).Append(' ');
         }
 
+        var commandText = sql.Append(program.Statement).ToString();
+        // Defense in depth: Turso runs every statement of a command text, so a program must be exactly one.
+        if (!IsOneStatement(commandText))
+        {
+            throw new SqlProgramException("a program runs exactly one statement");
+        }
+
         using var command = session.Connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = sql.Append(program.Statement).ToString();
+        command.CommandText = commandText;
         for (var i = 0; i < program.Parameters.Count; i++)
         {
             command.Parameters.AddWithValue("$p" + (i + 1).ToString(CultureInfo.InvariantCulture), program.Parameters[i] ?? DBNull.Value);

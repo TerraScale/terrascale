@@ -45,6 +45,12 @@ of the database or a CTE of the statement, and every function outside the allow-
 date/time and JSON functions of SQLite; no table-valued functions). Blob values are refused: a JSON document cannot
 hold bytes.
 
+Only plain and `"…"` names and only `'…'` string literals are accepted (SQ1-e4): SqlParserCS renders `[a]]b]` and
+`N'a''b'` back without escaping, which made SQLite read other text than the validator saw. Literals in expressions are
+numbers, strings, NULL, booleans and parameters. The rendered text must parse back to itself, and the engine refuses a
+program whose text holds more than one statement (Turso runs every statement of a command). `printf`, `format` and
+`replace` are not in the allow-list: nested calls build unbounded strings.
+
 Column types follow SQLite affinity on write (`INTEGER`, `REAL`, `TEXT`, `NUMERIC`, none). `NOT NULL`, literal
 `DEFAULT`, `PRIMARY KEY` and `UNIQUE` (through the unique-constraint service) are enforced; `CHECK` and `FOREIGN KEY`
 are refused.
