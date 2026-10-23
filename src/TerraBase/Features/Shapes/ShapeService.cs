@@ -182,7 +182,7 @@ internal sealed class ShapeService(
             return UnknownDatabase;
         }
 
-        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, ShapeSnapshots.PageOffset(snapshot, afterId), false, null);
+        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, ShapeSnapshots.PageOffset(snapshot, afterId), false);
         return Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
 
         async ValueTask<ShapeRead> Read(IDatabaseStore current, CancellationToken token)
@@ -262,7 +262,7 @@ internal sealed class ShapeService(
             return UnknownDatabase;
         }
 
-        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, DocumentRoute.Decimal(offset), false, null);
+        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, DocumentRoute.Decimal(offset), false);
         return Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
 
         async ValueTask<ShapeRead> Read(IDatabaseStore current, CancellationToken token)
@@ -278,20 +278,20 @@ internal sealed class ShapeService(
     /// flight answers fresh: a request behind F gets the closed chunk.
     /// The read revalidates the lineage after the wake, so a re-created collection refetches.
     /// </remarks>
-    public async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, long? cursor, CancellationToken cancellationToken)
+    public async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken)
     {
         if (await engine.OpenDatabaseAsync(scope.Database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return UnknownDatabase;
         }
 
-        var key = new GateKey(scope.Database.OrganizationId, scope.Database.ProjectId, scope.Database.DatabaseId, lineage.Handle, offset, cursor);
+        var key = new GateKey(scope.Database.OrganizationId, scope.Database.ProjectId, scope.Database.DatabaseId, lineage.Handle, offset);
         var group = gate.Enter(key);
         var parked = false;
         var admitted = false;
         try
         {
-            var request = new ShapeFlightRequest(scope.Database, lineage.Handle, DocumentRoute.Decimal(offset), true, cursor, () =>
+            var request = new ShapeFlightRequest(scope.Database, lineage.Handle, DocumentRoute.Decimal(offset), true, () =>
             {
                 admitted = true;
                 gate.Admit(group);

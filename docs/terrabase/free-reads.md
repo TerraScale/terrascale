@@ -251,8 +251,8 @@ A background sealer per database runs on the write lane.
 - `live=true` at the head waits up to 20 s for a commit. The response cursor is the live bucket,
   `max(floor(unix_s / 20), input cursor + 1)`. The decimal `cursor` query parameter is the live bucket when `live=true`
   (3.7 covers resume).
-- One flight per `(handle, offset, live, cursor)`. At most 32 flights and 256 joined requests. These are TS-474's
-  limits and code.
+- One flight per `(handle, offset, live)`: every cursor gets the same answer, so readers whose cursors advanced
+  independently still share one read. At most 32 flights and 4096 joined requests (8 and 1024 per organization).
 - **Seal-on-wake.** When a flight wakes, it asks the sealer for a seal up to the head before it answers. One seal is
   shared by every waiter of every shape on that database. The tail includes seal latency and, after FR-25, remote-ack
   latency. There is no special FULL barrier.
@@ -396,7 +396,7 @@ Exact bytes are in [`shape-reads.md` §12](shape-reads.md#12-tbs1-sealed-bytes).
 | --- | --- |
 | Chunk | 4096 rows or 1 MiB. A single commit travels alone, up to 8 MiB. Above 8 MiB: `503 shape_too_large` |
 | Snapshot page | 1000 documents or 1 MiB |
-| Flights | 32 running, 256 joined |
+| Flights | 32 running, 4096 joined |
 | Filtered shapes | 64 per database; eviction answers `409` |
 | Manifest | 8 objects per response |
 | Epoch | 10 minutes |

@@ -66,15 +66,12 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
     private async ValueTask<CollectionResult> ReadCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
-        if (await BeginAsync(database, write: false, cancellationToken).ConfigureAwait(false) is not { } transaction)
+        if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return DocumentRoute.UnknownDatabase;
         }
 
-        await using (transaction.ConfigureAwait(false))
-        {
-            return await transaction.GetCollectionAsync(name, cancellationToken).ConfigureAwait(false) is { } collection ? collection : UnknownCollection;
-        }
+        return await store.FindCollectionAsync(name, cancellationToken).ConfigureAwait(false) is { } collection ? collection : UnknownCollection;
     }
 
     public ValueTask<Found<CollectionPage>> ListCollectionsAsync(

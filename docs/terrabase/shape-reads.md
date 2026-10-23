@@ -182,7 +182,8 @@ A live request behind the sealed head returns the closed chunk at once **(TS-474
 - On timeout the body is `200`, with no changes, `next_offset = O` and `up_to_date: true`.
 - `TB-Shape-Cursor` = `max(floor(unix_seconds / 20), input cursor + 1)`, or the current bucket without an input. An
   input of `9223372036854775807` is `400 invalid_request` **(TS-474)**.
-- One flight per `(handle, offset, live, cursor)`. At most 32 running flights and 256 joined requests per machine. A new flight
+- One flight per `(handle, offset, live)`; the cursor never splits a flight, since every cursor gets the same answer. At most
+  32 running flights and 4096 joined requests per machine (8 and 1024 per organization). A new flight
   beyond 32 answers `429 shape_busy` with `no-store`. There is no queue. An abandoned flight keeps its slot until its
   work ends. A disconnecting client cancels only its own wait. The last requester to leave cancels the flight.
   Application stop cancels every flight **(TS-474)**.

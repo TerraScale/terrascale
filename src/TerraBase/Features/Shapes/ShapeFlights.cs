@@ -20,14 +20,18 @@ internal interface IShapeFlightSealer
 /// <summary>A seal up to the head, or why the sealed head cannot advance.</summary>
 internal readonly union ShapeFlightSealResult(Done, Unavailable);
 
-/// <summary>One shape request: the spec's collapsing key (handle, offset, live, cursor) in its database.</summary>
+/// <summary>One shape request: the collapsing key (handle, offset, live) in its database.</summary>
 /// <param name="Database">The database, with the caller's plan.</param>
 /// <param name="Handle">The shape handle.</param>
 /// <param name="Offset">The offset exactly as requested.</param>
 /// <param name="Live">Whether the request may wait at the sealed head.</param>
-/// <param name="Cursor">The input live bucket; null without one. Ignored without <paramref name="Live"/>.</param>
 /// <param name="OnAdmitted">Called after the request joins a bounded flight.</param>
-internal sealed record ShapeFlightRequest(TenantContext Database, string Handle, string Offset, bool Live, long? Cursor, Action? OnAdmitted = null);
+/// <remarks>
+/// The live cursor is not part of the key: it only keeps shared caches from replaying a live answer, and the answer at an
+/// offset is the same for every cursor. Each client's cursor advances on its own, so keying on it would split every reader
+/// of one shape into its own flight and storage read.
+/// </remarks>
+internal sealed record ShapeFlightRequest(TenantContext Database, string Handle, string Offset, bool Live, Action? OnAdmitted = null);
 
 /// <summary>Whether the request's offset is the sealed head, from sealed state only and without reading a payload.</summary>
 internal delegate ValueTask<bool> ShapeHeadProbe(IDatabaseStore store, CancellationToken cancellationToken);
@@ -62,8 +66,8 @@ internal interface IShapeFlights<T>
 }
 
 /// <summary>
-/// Live tail and request collapsing (free-reads.md 3.6, shape-reads.md 4): one flight per (handle, offset, live,
-/// cursor), at most <see cref="MaxFlights"/> running and <see cref="MaxRequesters"/> joined, without a queue.
+/// Live tail and request collapsing (free-reads.md 3.6, shape-reads.md 4): one flight per (handle, offset, live),
+/// at most <see cref="MaxFlights"/> running and <see cref="MaxRequesters"/> joined, without a queue.
 /// </summary>
 /// <remarks>
 /// Each organization holds at most <see cref="MaxFlightsPerOrganization"/> running flights and
@@ -81,9 +85,10 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
 
     internal const long LiveBucketSeconds = 20;
     internal const int MaxFlights = 32;
-    internal const int MaxRequesters = 256;
+    // A joined requester holds only RequesterBytes and shares its flight's one read, so a thousand readers of one shape fit.
+    internal const int MaxRequesters = 4096;
     internal const int MaxFlightsPerOrganization = 8;
-    internal const int MaxRequestersPerOrganization = 64;
+    internal const int MaxRequestersPerOrganization = 1024;
 
     // Admission for a flight's bookkeeping and for each requester's hold; result bytes are reserved by the reader.
     internal const long FlightBytes = 4 * 1024;
@@ -130,7 +135,7 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
         // never joins a flight admitted under the old plan.
         var tenant = request.Database with { Plan = QosContext.Current?.Plan ?? request.Database.Plan };
         var database = new DatabaseKey(tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId);
-        var key = new FlightKey(database, tenant.Plan, request.Handle, request.Offset, request.Live, request.Live ? request.Cursor : null);
+        var key = new FlightKey(database, tenant.Plan, request.Handle, request.Offset, request.Live);
         Flight? flight;
         var start = false;
         var hold = new QosContext.ResultMemory(_budget);
@@ -488,7 +493,7 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
 
     private readonly record struct DatabaseKey(string OrganizationId, string? ProjectId, string? DatabaseId);
 
-    private readonly record struct FlightKey(DatabaseKey Database, PlanTier Plan, string Handle, string Offset, bool Live, long? Cursor);
+    private readonly record struct FlightKey(DatabaseKey Database, PlanTier Plan, string Handle, string Offset, bool Live);
 
     // The reader's answer, or the database is missing, or its seal is stuck.
     private sealed record Answer(T? Result, NotFound? Missing = null, Unavailable? Stuck = null);

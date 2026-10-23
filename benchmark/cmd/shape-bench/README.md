@@ -36,9 +36,9 @@ the targets file at the end stops the host.
 - Requested N, admitted and rejected followers, with each rejection's code. changes.fanout: `changes_busy`; the server
   admits 32 streams per database and 1024 per machine, and above 32 only admitted followers are measured, so
   deliveries/s and bytes do not grow with requested N. shape.fanout: `shape_busy` (32 running flights per machine and 8 per
-  organization, no queue) and `shape_too_large`; concurrent identical live polls join one flight. Live requesters are capped at 256 per
-  machine and 64 per organization across all flights, so a live poll beyond that is `shape_busy` and retried. At N above 256 only the parked
-  requesters receive writes; `server_at_ready` reports how many were parked when the step became ready.
+  organization, no queue) and `shape_too_large`; concurrent identical live polls join one flight. Live requesters are capped at 4096 per
+  machine and 1024 per organization across all flights, so a live poll beyond that is `shape_busy` and retried. Live polls also spend
+  the organization's QoS request tokens, so a QoS 429 is retried too; `server_at_ready` reports how many were parked when the step became ready.
 - Delivery lag (p50 … max): the write's send time, stored in the document, to the follower reading its change event.
 - Missed deliveries of in-window writes to admitted followers, and response body bytes read by admitted followers: SSE
   stream bytes for changes.fanout, JSON response bodies for shape.fanout.
