@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
@@ -18,6 +19,9 @@ public static class EngineExtensions
     /// also fake, must not move a running query's deadline.
     /// </summary>
     internal const string QueryDeadlineClock = "query-deadline";
+
+    // Database page keys and backup envelope keys share production custody, with separate test-fake boundaries.
+    internal const string DatabaseMasterKey = "database-master-key";
 
     /// <summary>
     /// Registers the SQLite engine over <see cref="TerraBaseOptions.DataDirectory"/> as <see cref="IStorageEngine"/>, with the
@@ -39,7 +43,7 @@ public static class EngineExtensions
             return new SqliteStorageEngine(
                 configured.DataDirectory, configured.StorageThreads, configured.StorageQueue, configured.MemoryBudget,
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), configured.ShutdownGrace, readinessCacheTtl: configured.ReadinessCacheTtl,
+                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), provider.GetRequiredKeyedService<IMasterKey>(DatabaseMasterKey), configured.ShutdownGrace, readinessCacheTtl: configured.ReadinessCacheTtl,
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), queryBudget: configured.QueryBudget,
                 backupTime: provider.GetService<TimeProvider>(),

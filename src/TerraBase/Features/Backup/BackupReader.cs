@@ -64,9 +64,12 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         var restored = Path.Combine(_scratch, EntityIds.New().ToString() + ".db");
         try
         {
-            await using (var copy = new FileStream(restored, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16, FileOptions.Asynchronous))
+            await using (var bundle = new FileStream(restored + ".snapshot", FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16,
+                FileOptions.Asynchronous | FileOptions.DeleteOnClose))
             {
-                await DownloadAsync(snapshot.Key, scope, copy, cancellationToken).ConfigureAwait(false);
+                await DownloadAsync(snapshot.Key, scope, bundle, cancellationToken).ConfigureAwait(false);
+                bundle.Position = 0;
+                await SnapshotBundle.ReadAsync(bundle, restored, cancellationToken).ConfigureAwait(false);
             }
 
             var reached = new StrongBox<long>(snapshot.Position);
@@ -151,7 +154,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
     /// <summary>Deletes a file <see cref="BuildAsync(string, string, SnapshotKey, DateTimeOffset, long?, SnapshotKey?, CancellationToken)"/> returned, with whatever SQLite left next to it.</summary>
     public static void Delete(string path)
     {
-        foreach (var leftover in new[] { "", "-journal", "-wal", "-shm" })
+        foreach (var leftover in new[] { "", "-journal", "-wal", "-shm", ".key" })
         {
             File.Delete(path + leftover);
         }

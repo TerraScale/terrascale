@@ -303,7 +303,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 RedirectStandardError = true,
                 UseShellExecute = false,
             };
-            // Development: no Tigris backup to attach in a test. The test process's own ts-orch, Tigris and TerraBase variables never reach it.
+            // The test process's own ts-orch, Tigris and TerraBase variables never reach this child.
             foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TS_", StringComparison.Ordinal) || name.StartsWith("AWS_", StringComparison.Ordinal)
                 || name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name is "BUCKET_NAME" or "PRIMARY_REGION").ToList())
             {
@@ -313,24 +313,26 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             // This fixture credential is never inherited from the invoking environment.
             start.Environment[PeerSecretVariable] = PeerSecret;
 
-            if (this.production)
+            // The external test binary needs a stable test master for encrypted files in either environment.
+            // Port 1 refuses uploads; this fixture never contacts a production bucket.
+            start.Environment["AWS_ENDPOINT_URL_S3"] = "https://127.0.0.1:1";
+            start.Environment["AWS_REGION"] = "auto";
+            start.Environment["BUCKET_NAME"] = "terrabase-test";
+            start.Environment["AWS_ACCESS_KEY_ID"] = "test";
+            start.Environment["AWS_SECRET_ACCESS_KEY"] = "test";
+            // Secrets arrive as files with a trailing newline, as OCI Vault mounts them; each file wins over a malformed
+            // variable, which would stop the start if it were read.
+            var secrets = Directory.CreateDirectory(Path.Combine(this.directory, "secrets")).FullName;
+            var masterKeyFile = Path.Combine(secrets, "master-key");
+            if (!File.Exists(masterKeyFile))
             {
-                // Outside Development TerraBase needs its Tigris bucket and master key; port 1 refuses every upload.
-                start.Environment["AWS_ENDPOINT_URL_S3"] = "https://127.0.0.1:1";
-                start.Environment["AWS_REGION"] = "auto";
-                start.Environment["BUCKET_NAME"] = "terrabase-test";
-                start.Environment["AWS_ACCESS_KEY_ID"] = "test";
-                start.Environment["AWS_SECRET_ACCESS_KEY"] = "test";
-                // Secrets arrive as files with a trailing newline, as OCI Vault mounts them; each file wins over a malformed
-                // variable, which would stop the start if it were read.
-                var secrets = Directory.CreateDirectory(Path.Combine(this.directory, "secrets")).FullName;
-                File.WriteAllText(Path.Combine(secrets, "master-key"), Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)) + "\n");
-                File.WriteAllText(Path.Combine(secrets, "peer-secret"), PeerSecret + "\n");
-                start.Environment["TERRABASE_MASTER_KEY_FILE"] = Path.Combine(secrets, "master-key");
-                start.Environment[PeerSecretVariable] = "not-a-peer-secret";
-                start.Environment["TERRABASE_MASTER_KEY"] = "not-a-key";
-                start.Environment[PeerSecretVariable + "_FILE"] = Path.Combine(secrets, "peer-secret");
+                File.WriteAllText(masterKeyFile, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)) + "\n");
             }
+            File.WriteAllText(Path.Combine(secrets, "peer-secret"), PeerSecret + "\n");
+            start.Environment["TERRABASE_MASTER_KEY_FILE"] = Path.Combine(secrets, "master-key");
+            start.Environment[PeerSecretVariable] = "not-a-peer-secret";
+            start.Environment["TERRABASE_MASTER_KEY"] = "not-a-key";
+            start.Environment[PeerSecretVariable + "_FILE"] = Path.Combine(secrets, "peer-secret");
 
             // All three backend ports are freshly owned by this child, including metrics on every restart.
             start.ArgumentList.Add(this.production ? "--environment=Production" : "--environment=Development");

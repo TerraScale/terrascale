@@ -28,7 +28,7 @@ internal static class TursoCopy
 
     /// <summary>
     /// Writes the database <paramref name="source"/> reads, as of its open read transaction, to a new file at
-    /// <paramref name="target"/>, with its log checkpointed into it.
+    /// <paramref name="target"/> (its encrypted connection string), with its log checkpointed into it.
     /// </summary>
     public static void Write(TursoConnection source, string target, CancellationToken cancellationToken) =>
         Write(source, target, ChunkRows, ChunkBytes, cancellationToken);
@@ -51,7 +51,7 @@ internal static class TursoCopy
         }
 
         var version = Scalar(source, "PRAGMA user_version;");
-        using var copy = new TursoConnection($"Data Source={target}");
+        using var copy = new TursoConnection(target);
         copy.Open();
         // Tables and their rows first, then indexes, which build faster over the loaded rows.
         foreach (var (_, name, _, sql) in objects.Where(item => item.Type == "table"))

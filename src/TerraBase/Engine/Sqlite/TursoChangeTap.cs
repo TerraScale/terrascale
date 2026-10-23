@@ -81,7 +81,7 @@ internal sealed class TursoChangeTap : IWalTap
     public static async Task<TursoChangeTap> OpenAsync(SqliteDatabaseStore store, SqliteIoPool io, TimeProvider time, CancellationToken cancellationToken)
     {
         await using var operation = await store.BeginOperationAsync(cancellationToken).ConfigureAwait(false);
-        var reader = new TursoConnection($"Data Source={store.FilePath}") { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
+        var reader = new TursoConnection(await store.ConnectionStringAsync(io, cancellationToken).ConfigureAwait(false)) { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
         try
         {
             await io.RunAsync(() => SqliteSession.OpenExisting(reader, store.FilePath), cancellationToken).ConfigureAwait(false);
@@ -182,7 +182,8 @@ internal sealed class TursoChangeTap : IWalTap
                     await pinned(cancellationToken).ConfigureAwait(false);
                 }
 
-                await _io.RunAsync(() => TursoCopy.Write(_reader, snapshotPath, cancellationToken), cancellationToken).ConfigureAwait(false);
+                var targetConnection = await _store.Encryption.CreateAsync(snapshotPath, _io, cancellationToken).ConfigureAwait(false);
+                await _io.RunAsync(() => TursoCopy.Write(_reader, targetConnection, cancellationToken), cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -218,12 +219,13 @@ internal sealed class TursoChangeTap : IWalTap
     private async Task ReplaceReaderAsync()
     {
         var stale = _reader;
-        _reader = new TursoConnection($"Data Source={_store.FilePath}") { CloseRefusal = () => _store.CloseRefusal ?? "terminal backup reader close" };
-        await _io.RunAsync(() =>
+        // End the old snapshot even when reading or unwrapping the replacement's key fails.
+        await _io.RunAsync(stale.Dispose, CancellationToken.None).ConfigureAwait(false);
+        _reader = new TursoConnection(await _store.ConnectionStringAsync(_io, CancellationToken.None).ConfigureAwait(false))
         {
-            stale.Dispose();
-            SqliteSession.OpenExisting(_reader, _store.FilePath);
-        }, CancellationToken.None).ConfigureAwait(false);
+            CloseRefusal = () => _store.CloseRefusal ?? "terminal backup reader close",
+        };
+        await _io.RunAsync(() => SqliteSession.OpenExisting(_reader, _store.FilePath), CancellationToken.None).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -558,12 +560,12 @@ internal static class ChangeLog
     /// Replays <paramref name="segments"/> on <paramref name="file"/>, a snapshot, one transaction per commit record. Returns
     /// <see langword="false"/> for a malformed log, one that ends inside a transaction, or a change the file refuses.
     /// </summary>
-    public static async Task<bool> ApplyAsync(string file, IAsyncEnumerable<Stream> segments, SqliteRunner io, CancellationToken cancellationToken)
+    public static async Task<bool> ApplyAsync(string file, IAsyncEnumerable<Stream> segments, SqliteRunner io, string connectionString, CancellationToken cancellationToken)
     {
-        var connection = new TursoConnection($"Data Source={file}");
+        var connection = new TursoConnection(connectionString);
         try
         {
-            await io.RunAsync(connection.Open, cancellationToken).ConfigureAwait(false);
+            await io.RunAsync(() => SqliteSession.OpenExisting(connection, file), cancellationToken).ConfigureAwait(false);
             var replay = new Replay(connection);
             await foreach (var segment in segments.WithCancellation(cancellationToken).ConfigureAwait(false))
             {

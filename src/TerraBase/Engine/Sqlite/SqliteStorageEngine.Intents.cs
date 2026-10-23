@@ -30,7 +30,7 @@ internal sealed partial class SqliteStorageEngine
         var openingToken = created ? CancellationToken.None : cancellationToken;
         // System semantics suppress recursive intent recording and fail the node closed on native journal damage.
         var store = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
-            RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
+            RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads, Encryption)
         {
             QueryBudget = QueryBudget,
             Member = Member,

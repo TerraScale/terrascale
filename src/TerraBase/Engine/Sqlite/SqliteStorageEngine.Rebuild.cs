@@ -72,7 +72,7 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
                 return null;
             }
 
-            await PublishAsync(key.Database, path, temporary => SqliteDatabaseStore.InitializeAsync(key.Database, temporary, Io, _pragmas, cancellationToken))
+            await PublishAsync(key.Database, path, temporary => SqliteDatabaseStore.InitializeAsync(key.Database, temporary, Io, _pragmas, Encryption, cancellationToken))
                 .ConfigureAwait(false);
         }
         finally
@@ -188,7 +188,8 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
         Io.Admit();
         try
         {
-            return await Io.RunAsync(() => MeasureSide(workingPath, afterCollection, afterId, maxRows, maxBytes, cancellationToken), cancellationToken)
+            var connectionString = await Encryption.ExistingAsync(workingPath, Io, cancellationToken).ConfigureAwait(false);
+            return await Io.RunAsync(() => MeasureSide(workingPath, connectionString, afterCollection, afterId, maxRows, maxBytes, cancellationToken), cancellationToken)
                 .ConfigureAwait(false);
         }
         finally
@@ -202,7 +203,8 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
         Io.Admit();
         try
         {
-            return await Io.RunAsync(() => ReadSide(workingPath, rows, cancellationToken), cancellationToken).ConfigureAwait(false);
+            var connectionString = await Encryption.ExistingAsync(workingPath, Io, cancellationToken).ConfigureAwait(false);
+            return await Io.RunAsync(() => ReadSide(workingPath, connectionString, rows, cancellationToken), cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -317,9 +319,9 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
 
     // Worker-only: the next rows of a private working copy with the bytes of their stored states and documents, read
     // without reading either.
-    private static List<SideRow> MeasureSide(string workingPath, string afterCollection, string afterId, int maxRows, long maxBytes, CancellationToken cancellationToken)
+    private static List<SideRow> MeasureSide(string workingPath, string connectionString, string afterCollection, string afterId, int maxRows, long maxBytes, CancellationToken cancellationToken)
     {
-        using var connection = Working(workingPath);
+        using var connection = Working(workingPath, connectionString);
         if (afterCollection.Length == 0 && afterId.Length == 0)
         {
             VerifySideCoverage(connection, cancellationToken);
@@ -438,9 +440,9 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
     }
 
     // Worker-only: the measured rows' states, each checked against its stored digest.
-    private static List<RepairState> ReadSide(string workingPath, IReadOnlyList<SideRow> rows, CancellationToken cancellationToken)
+    private static List<RepairState> ReadSide(string workingPath, string connectionString, IReadOnlyList<SideRow> rows, CancellationToken cancellationToken)
     {
-        using var connection = Working(workingPath);
+        using var connection = Working(workingPath, connectionString);
         using var snapshot = connection.BeginTransaction(deferred: true);
         List<RepairState> states = [];
         var documents = DocumentBytes(connection, rows.Select(row => (row.Collection, row.Id)), cancellationToken);
@@ -505,12 +507,12 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
     }
 
     // An unpooled connection on a private working copy (never on the retained side copy).
-    private static SqliteConnection Working(string workingPath)
+    private static SqliteConnection Working(string workingPath, string connectionString)
     {
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = workingPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString());
+        var connection = new SqliteConnection(connectionString);
         try
         {
-            connection.Open();
+            SqliteSession.OpenExisting(connection, workingPath);
             return connection;
         }
         catch

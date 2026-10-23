@@ -26,18 +26,21 @@ namespace TerraBase.Engine.Sqlite;
 /// <param name="logger">Receives the warning about a long wait for this database's writer.</param>
 /// <param name="schemaMemory">Shared process admission for schema evaluation, when hosted.</param>
 /// <param name="schemaEvaluations">Host-owned counter of collection schema keyword evaluations.</param>
+/// <param name="encryption">Wraps and unwraps this database's data key.</param>
 /// <param name="storageReads">Host-owned counter of physical document and feed SELECTs, tagged by path (point, query, feed, shape).</param>
 internal sealed partial class SqliteDatabaseStore(
     string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TenantContext? tenant, TimeProvider? time,
     Action? committed, ILogger? logger = null, IMemoryBudget? schemaMemory = null, Counter<long>? schemaEvaluations = null,
-    Counter<long>? storageReads = null) : IDatabaseStore, IDisposable
+    Counter<long>? storageReads = null, DatabaseKeys? encryption = null) : IDatabaseStore, IDisposable
 {
+    internal DatabaseKeys Encryption { get; } = encryption ?? throw new ArgumentNullException(nameof(encryption));
+
     internal IMemoryBudget? SchemaMemory { get; } = schemaMemory;
     internal Counter<long>? SchemaEvaluations { get; } = schemaEvaluations;
     internal Counter<long>? StorageReads { get; } = storageReads;
 
-    internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TimeProvider? time = null, Action? committed = null)
-        : this(name, path, pool, io, pragmas, null, time, committed) { }
+    internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, DatabaseKeys encryption, TimeProvider? time = null, Action? committed = null)
+        : this(name, path, pool, io, pragmas, null, time, committed, encryption: encryption) { }
 
     /// <summary>
     /// On-disk schema version of client and system databases alike, stored in <c>PRAGMA user_version</c>. It never
@@ -150,16 +153,9 @@ internal sealed partial class SqliteDatabaseStore(
         INSERT INTO commit_offset (id, value, incarnation) VALUES (1, 0, '');
         """;
 
-    private readonly string _connectionString = new SqliteConnectionStringBuilder
-    {
-        DataSource = path,
-        // Never recreate a deleted database: only InitializeAsync creates files.
-        Mode = SqliteOpenMode.ReadWrite,
-        // This store pools sessions itself, so prepared statements survive between transactions.
-        Pooling = false,
-        // Seconds a statement waits on a locked database before failing.
-        DefaultTimeout = 30,
-    }.ToString();
+    // Keys are unwrapped per native open; no extra process-wide cache of plaintext database keys.
+    internal Task<string> ConnectionStringAsync(SqliteRunner runner, CancellationToken cancellationToken) =>
+        Encryption.ExistingAsync(FilePath, runner, cancellationToken);
 
     // Signals every write commit, collection-only ones included, to WaitForCommitAsync.
     private readonly Lock _commits = new();
@@ -607,7 +603,8 @@ internal sealed partial class SqliteDatabaseStore(
         try
         {
             var statistics = Volatile.Read(ref _statistics);
-            session = await SqliteSession.OpenAsync(WriteLane, _connectionString, pragmas, cancellationToken, this).ConfigureAwait(false);
+            var connectionString = await ConnectionStringAsync(WriteLane, cancellationToken).ConfigureAwait(false);
+            session = await SqliteSession.OpenAsync(WriteLane, connectionString, pragmas, cancellationToken, this).ConfigureAwait(false);
             session.Statistics = statistics;
         }
         catch (Exception error)
@@ -678,9 +675,11 @@ internal sealed partial class SqliteDatabaseStore(
         {
             // Row by row in one read transaction (TursoCopy): writes go on meanwhile. Only source operations mark damage;
             // the interleaved target writes and its initialization must not fault a healthy source.
+            var sourceConnection = await ConnectionStringAsync(io, cancellationToken).ConfigureAwait(false);
+            var targetConnection = await Encryption.CreateAsync(path, io, cancellationToken).ConfigureAwait(false);
             await io.RunAsync(() =>
             {
-                using var source = new FaultAwareCopySource($"Data Source={FilePath}", error =>
+                using var source = new FaultAwareCopySource(sourceConnection, error =>
                 {
                     NoteCopyFault(reason);
                     sourceError ??= ExceptionDispatchInfo.Capture(error);
@@ -696,7 +695,7 @@ internal sealed partial class SqliteDatabaseStore(
                 using var begin = source.CreateCommand();
                 begin.CommandText = "BEGIN;";
                 begin.ExecuteNonQuery();
-                TursoCopy.Write(source, path, cancellationToken);
+                TursoCopy.Write(source, targetConnection, cancellationToken);
             }, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception) when (sourceError is not null)
@@ -717,7 +716,7 @@ internal sealed partial class SqliteDatabaseStore(
         {
             Checkpoint?.Invoke("copy.target.initializing", targetSource);
         }
-        return await InitializeAsync(name, path, io, pragmas, cancellationToken).ConfigureAwait(false);
+        return await InitializeAsync(name, path, io, pragmas, Encryption, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>The database file.</summary>
@@ -1201,7 +1200,8 @@ internal sealed partial class SqliteDatabaseStore(
         try
         {
             var statistics = Volatile.Read(ref _statistics);
-            session = await SqliteSession.OpenAsync(runner, _connectionString, pragmas, cancellationToken, this).ConfigureAwait(false);
+            var connectionString = await ConnectionStringAsync(runner, cancellationToken).ConfigureAwait(false);
+            session = await SqliteSession.OpenAsync(runner, connectionString, pragmas, cancellationToken, this).ConfigureAwait(false);
             session.Statistics = statistics;
         }
         catch (Exception error)
@@ -1231,16 +1231,14 @@ internal sealed partial class SqliteDatabaseStore(
     /// closing checkpoint. Creation holds the engine's creation lock, so on a slow disk those syncs queued every other
     /// creation behind them (TS-647).
     /// </remarks>
-    internal static Task<Ulid> InitializeAsync(
-        string name, string path, SqliteIoPool io, string pragmas, CancellationToken cancellationToken) =>
-        io.RunAsync(() =>
+    internal static async Task<Ulid> InitializeAsync(
+        string name, string path, SqliteIoPool io, string pragmas, DatabaseKeys encryption, CancellationToken cancellationToken)
+    {
+        var connectionString = File.Exists(path)
+            ? await encryption.ExistingAsync(path, io, cancellationToken).ConfigureAwait(false)
+            : await encryption.CreateAsync(path, io, cancellationToken).ConfigureAwait(false);
+        return await io.RunAsync(() =>
         {
-            var connectionString = new SqliteConnectionStringBuilder
-            {
-                DataSource = path,
-                Mode = SqliteOpenMode.ReadWriteCreate,
-                Pooling = false,
-            }.ToString();
             Ulid incarnation;
             using (var connection = new SqliteConnection(connectionString))
             {
@@ -1263,7 +1261,8 @@ internal sealed partial class SqliteDatabaseStore(
             using var file = File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite);
             RandomAccess.FlushToDisk(file);
             return incarnation;
-        }, cancellationToken);
+        }, cancellationToken).ConfigureAwait(false);
+    }
 
     // The caller holds an admission.
     internal async Task BootstrapAsync(CancellationToken cancellationToken)
