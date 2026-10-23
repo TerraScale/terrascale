@@ -208,9 +208,9 @@ public sealed class UsageBackendContractTests
             var databaseId = Foreign ? "01JA0000000000000000000005" : "01JA0000000000000000000004";
             var row = new { databaseId, storageBytes = 2048, logicalBytes = 1024, collections = 1, documents = 2, reads = 22, writes = 5, period, series };
             var child = new { databaseId, storageBytes = 2048, logicalBytes = 1024, collections = 1, documents = 2, reads = 22, writes = 5, period, series = Array.Empty<object>() };
+            var month = Month is null ? null : new { month = Month, readUnits = 6, writeUnits = 3, units = 9, organizationUnits = 9 };
             var value = database ? JsonSerializer.Serialize(row) : JsonSerializer.Serialize(new
-            { projectId = "01JA0000000000000000000001", databases = 1, storageBytes = 2048, logicalBytes = 1024, documents = 2, reads = 22, writes = 5, period, series, items = new[] { child },
-              month = Month is null ? null : new { month = Month, readUnits = 6, writeUnits = 3, units = 9, organizationUnits = 9 } });
+            { projectId = "01JA0000000000000000000001", databases = 1, storageBytes = 2048, logicalBytes = 1024, documents = 2, reads = 22, writes = 5, period, series, items = new[] { child }, month });
             return Task.FromResult(Response(HttpStatusCode.OK, value));
         }
         private static HttpResponseMessage Response(HttpStatusCode status, string body) => new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
