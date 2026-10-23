@@ -52,4 +52,4 @@ can acquire this token. The exchange must enforce configured Origin/CSRF checks,
 live tenant session validation and `Cache-Control: no-store`; this helper alone
 is not a public HTTP authentication boundary. No credential provisioning,
 production permission expansion or deployment is included. Browser production
-proof remains blocked on that producer and the scoped-model confirmation.
+proof remains blocked on that producer and the coordinated access-rule rollout.
