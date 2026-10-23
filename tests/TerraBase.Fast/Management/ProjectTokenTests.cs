@@ -103,7 +103,7 @@ public sealed class ProjectTokenTests
         var admission = api.Server.Services.GetRequiredService<IQosAdmission>();
         var hobby = new TenantContext(organization, PlanTier.Hobby);
         List<IDisposable> held = [.. Enumerable.Range(0, QosPolicy.For(PlanTier.Hobby).Concurrency)
-            .Select(_ => admission.TryEnter(hobby, out _) ?? throw new InvalidOperationException("fixture admission failed"))];
+            .Select(_ => admission.TryEnter(hobby, out _, read: true) ?? throw new InvalidOperationException("fixture admission failed"))];
         try
         {
             var collections = Uri($"/v1/projects/{project}/databases/main/collections");

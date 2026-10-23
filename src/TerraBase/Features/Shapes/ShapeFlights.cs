@@ -43,10 +43,13 @@ internal delegate ValueTask<bool> ShapeHeadProbe(IDatabaseStore store, Cancellat
 internal delegate ValueTask<T> ShapeTailReader<T>(IDatabaseStore store, CancellationToken cancellationToken);
 
 /// <summary>A flight's answer and this requester's hold on the flight's reserved memory; dispose after the response is written.</summary>
-internal sealed class ShapeFlight<T>(T value, IDisposable memory) : IDisposable
+internal sealed class ShapeFlight<T>(T value, IDisposable memory, bool joined) : IDisposable
 {
     /// <summary>The answer every requester of the flight shares.</summary>
     public T Value { get; } = value;
+
+    /// <summary>This requester joined a flight another request started, so it caused no read of its own.</summary>
+    public bool Joined { get; } = joined;
 
     public void Dispose() => memory.Dispose();
 }
@@ -202,7 +205,7 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
                 return stuck;
             }
 
-            return new ShapeFlight<T>(answer.Result!, hold);
+            return new ShapeFlight<T>(answer.Result!, hold, joined: !start);
         }
         catch
         {

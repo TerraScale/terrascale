@@ -23,8 +23,9 @@ internal sealed record ShapeLineage(string ShapeId, string Handle);
 /// <summary>
 /// A servable response: its exact body bytes, which the <c>ETag</c> hashes. <see cref="Lease"/> holds the admission of
 /// those bytes until the response is sent (or the request ends), and is null for bytes the caller already owns.
+/// <see cref="Shared"/>: the answer cost this request no storage read (it joined a running flight or hit the closed-chunk cache).
 /// </summary>
-internal sealed record ShapeBody(ReadOnlyMemory<byte> Json, string NextOffset, bool UpToDate, IDisposable? Lease = null);
+internal sealed record ShapeBody(ReadOnlyMemory<byte> Json, string NextOffset, bool UpToDate, IDisposable? Lease = null, bool Shared = false);
 
 /// <summary>The client's state cannot continue on this lineage: <c>409 must_refetch</c> (section 8).</summary>
 internal sealed record MustRefetch(string Message, ShapeLineage? Lineage = null);
