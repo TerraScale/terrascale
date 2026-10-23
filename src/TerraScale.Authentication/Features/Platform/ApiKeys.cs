@@ -38,7 +38,7 @@ public static class TerraBaseScopes
 
 /// <summary>
 /// API keys (TS-598): OAuth client credentials owned by an organization or a project, exchanged at the token endpoint
-/// for 15-minute tokens. A key string is a canonical ULID (its client id), <c>_</c> and 52 base32
+/// for 5-minute tokens. A key string is a canonical ULID (its client id), <c>_</c> and 52 base32
 /// characters (260 random bits); only SHA-256 digests are stored and compared in constant time.
 /// </summary>
 public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory, TimeProvider clock)

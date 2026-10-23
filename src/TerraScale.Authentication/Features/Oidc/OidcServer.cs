@@ -477,7 +477,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
 /// <summary>
 /// Makes revocation (RFC 7009) end the whole sign-in, as §2.1 recommends: revoking a refresh or access token revokes
 /// its authorization, so every refresh token of that sign-in is refused and ts-auth stops accepting its access tokens.
-/// Access tokens validated offline, as TerraBase does, stay valid until they expire (at most 1 hour).
+/// Access tokens validated offline, as TerraBase does, stay valid until they expire (at most 5 minutes).
 /// </summary>
 public sealed class RevokeTheSignIn(IOpenIddictTokenManager tokens) : IOpenIddictServerHandler<HandleRevocationRequestContext>
 {

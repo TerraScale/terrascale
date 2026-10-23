@@ -313,7 +313,7 @@ public sealed class RevocationEndpoint : EndpointWithoutRequest<IResult>
         Post("/{slug}/oauth/revoke");
         Name("oauth_revoke");
         Summary("Revocation endpoint");
-        Description("RFC 7009, application/x-www-form-urlencoded token (and optionally token_type_hint); the client authenticates as at the token endpoint and may revoke only its own tokens. Revoking a refresh or access token ends its whole sign-in: every refresh token of it is refused and ts-auth stops accepting its access tokens, while access tokens validated offline (TerraBase) stay valid until they expire, at most 1 hour. An unknown, expired or already revoked token also answers 200.");
+        Description("RFC 7009, application/x-www-form-urlencoded token (and optionally token_type_hint); the client authenticates as at the token endpoint and may revoke only its own tokens. Revoking a refresh or access token ends its whole sign-in: every refresh token of it is refused and ts-auth stops accepting its access tokens, while access tokens validated offline (TerraBase) stay valid until they expire, at most 5 minutes. An unknown, expired or already revoked token also answers 200.");
         Tags("OAuth");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
