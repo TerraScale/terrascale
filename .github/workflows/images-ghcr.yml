@@ -87,7 +87,9 @@ jobs:
           tags: |
             ghcr.io/terrascale/ts-dashboard:${{ github.sha }}
             ${{ github.ref == 'refs/heads/main' && 'ghcr.io/terrascale/ts-dashboard:main' || '' }}
-          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
           # Only main writes shared dependency and runtime layer caches.
           cache-from: type=gha,scope=dashboard-runtime
           cache-to: type=gha,mode=max,scope=dashboard-runtime
@@ -108,6 +110,9 @@ jobs:
           arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
             jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
           test -n "$arm64"
+          docker buildx imagetools inspect "${image}@${arm64}" --format '{{json .Image}}' |
+            jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
+          echo "Verified linux/arm64 (aarch64) child ${arm64}, revision ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"
           tag=$(gh release list --repo TerraScale/ts-orchestrator --limit 30 --json tagName,createdAt \
             --jq '[.[] | select(.tagName | startswith("ci-"))] | sort_by(.createdAt) | last | .tagName // ""')
           test -n "$tag"

@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.E2E.Features.Databases;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
 
@@ -12,9 +13,15 @@ public sealed class FreeBillingJourneyTests
     {
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
-        using var vendor = new RejectVendorCalls();
+        RejectVendorCalls vendor = null!;
+        TestTerraBasePlans plans = null!;
         await using var app = environment.CreateTestHost(new DashboardE2EFixture().Root, 0, "http://127.0.0.1", builder =>
-            builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(vendor)));
+        {
+            plans = (TestTerraBasePlans)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
+            vendor = new(plans);
+            builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(vendor));
+        });
+        using var vendorLifetime = vendor;
         await app.StartAsync();
         using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
         {
@@ -34,14 +41,18 @@ public sealed class FreeBillingJourneyTests
         });
         await Assert.That(checkout.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
         await Assert.That(vendor.Calls).IsEqualTo(0);
+        await Assert.That(plans.Requests).IsNotEmpty();
+        await Assert.That(plans.Requests.All(request => request.Plan == "hobby" && request.Status == HttpStatusCode.NotFound)).IsTrue();
         await app.StopAsync();
     }
 
-    private sealed class RejectVendorCalls : HttpMessageHandler, IHttpClientFactory
+    private sealed class RejectVendorCalls(IHttpClientFactory fallback) : HttpMessageHandler, IHttpClientFactory
     {
         private int calls;
         public int Calls => Volatile.Read(ref calls);
-        public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
+        public HttpClient CreateClient(string name) => name == TerraBaseDashboardState.ClientName
+            ? fallback.CreateClient(name)
+            : new(this, disposeHandler: false);
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref calls);

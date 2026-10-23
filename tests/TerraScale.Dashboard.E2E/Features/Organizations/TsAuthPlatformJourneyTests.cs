@@ -415,7 +415,9 @@ public sealed class TsAuthPlatformJourneyTests
 
     private sealed class Factory(PlatformProducer producer, IHttpClientFactory fallback) : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => new(new Router(producer, fallback.CreateClient(name)), disposeHandler: true);
+        public HttpClient CreateClient(string name) => name == TerraBaseDashboardState.ClientName
+            ? fallback.CreateClient(name)
+            : new(new Router(producer, fallback.CreateClient(name)), disposeHandler: true);
     }
 
     private sealed class Router(PlatformProducer producer, HttpClient fallback) : HttpMessageHandler

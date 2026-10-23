@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.E2E.Features.Organizations;
@@ -144,7 +145,9 @@ public sealed class ReviewLiveInvitationAuthorityJourneyTests
 
     private sealed class Factory(PlatformProducer producer, IHttpClientFactory fallback) : IHttpClientFactory
     {
-        public HttpClient CreateClient(string name) => new(new Router(producer, fallback.CreateClient(name)), disposeHandler: true);
+        public HttpClient CreateClient(string name) => name == TerraBaseDashboardState.ClientName
+            ? fallback.CreateClient(name)
+            : new(new Router(producer, fallback.CreateClient(name)), disposeHandler: true);
     }
 
     private sealed class Router(PlatformProducer producer, HttpClient fallback) : HttpMessageHandler
