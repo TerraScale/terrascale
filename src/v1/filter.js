@@ -25,7 +25,8 @@ import { ExactDecimal } from "./json.js";
  *   | { readonly exists: V1Path }
  *   | { readonly prefix: readonly [V1Path, string] }
  *   | { readonly contains: readonly [V1Path, V1Scalar] }
- *   | { readonly within: readonly [string, V1GeoCircle | V1GeoBox] }} V1Filter
+ *   | { readonly within: readonly [string, V1GeoCircle | V1GeoBox] }
+ *   | { readonly search: readonly [V1Path, string] }} V1Filter
  */
 /**
  * Points within `meters` (more than 0, at most 20000000) of a WGS 84 point, by haversine distance.
@@ -61,6 +62,28 @@ export function isJsonPointer(pointer) {
 export function requirePath(path) {
   if (path === "$id" || isPointer(path)) return path;
   throw new TypeError('A TerraBase path is an RFC 6901 JSON Pointer of 1-16 segments, "$id".');
+}
+
+/** @param {V1Path} path @returns {V1Path} */
+function requireSearchPath(path) {
+  if (isJsonPointer(path)) return path;
+  throw new TypeError("search requires a JSON Pointer of 1-16 segments, excluding $id.");
+}
+
+/** @param {unknown} terms @returns {string} */
+function requireSearchTerms(terms) {
+  if (typeof terms !== "string" || terms.length === 0 || terms.includes("\0") || /[\uD800-\uDFFF]/u.test(terms) || new TextEncoder().encode(terms).byteLength > 4096)
+    throw new TypeError("search takes nonempty string terms of at most 4096 UTF-8 bytes without NUL.");
+  return terms;
+}
+
+/** @param {V1Filter | null | undefined} filter @returns {number} */
+export function searchCount(filter) {
+  if (!filter) return 0;
+  if ("search" in filter) return 1;
+  if ("and" in filter) return filter.and.reduce((count, child) => count + searchCount(child), 0);
+  if ("or" in filter) return filter.or.reduce((count, child) => count + searchCount(child), 0);
+  return "not" in filter ? searchCount(filter.not) : 0;
 }
 
 /**
@@ -172,7 +195,11 @@ export function requireFilter(filter) {
       if (!Array.isArray(args) || args.length !== 2) throw new TypeError("within takes [path, area].");
       within(args[0], args[1]);
     }
-    else if (binaryOperators.has(op) || op === "prefix" || op === "in" || op === "nin") {
+    else if (op === "search") {
+      if (!Array.isArray(args) || args.length !== 2) throw new TypeError("search takes [path, terms].");
+      requireSearchPath(args[0]);
+      requireSearchTerms(args[1]);
+    } else if (binaryOperators.has(op) || op === "prefix" || op === "in" || op === "nin") {
       if (!Array.isArray(args) || args.length !== 2) throw new TypeError(`${op} takes [path, value].`);
       requirePath(args[0]);
       if (op === "in" || op === "nin") scalars(op, args[1]);
@@ -273,6 +300,13 @@ export const v1Filter = Object.freeze({
     if (typeof prefix !== "string") throw new TypeError("prefix takes a string.");
     return Object.freeze({ prefix: Object.freeze(/** @type {const} */ ([requirePath(path), prefix])) });
   },
+  /**
+   * Full-text search on a document member.
+   * @param {V1Path} path
+   * @param {string} terms
+   * @returns {V1Filter}
+   */
+  search: (path, terms) => Object.freeze({ search: Object.freeze(/** @type {const} */ ([requireSearchPath(path), requireSearchTerms(terms)])) }),
   /**
    * The value is an array containing the scalar.
    * @param {V1Path} path

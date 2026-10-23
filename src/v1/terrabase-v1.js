@@ -4,7 +4,7 @@ import {
   array, boolean, decodeDocument, decodeWrite, documentObject, durability, malformed, object, u64,
 } from "./decode.js";
 import { requireId } from "../ids.js";
-import { isJsonPointer, requireFilter, requireGeoPoint, requirePath } from "./filter.js";
+import { searchCount, isJsonPointer, requireFilter, requireGeoPoint, requirePath } from "./filter.js";
 import { requireDocumentId, requireName, requireVersion } from "./ids.js";
 import { assertJsonObject, assertJsonValue, ExactDecimal, stringifyExactJson } from "./json.js";
 import { readShapeManifest } from "./shape-manifest.js";
@@ -71,7 +71,8 @@ import { V1ChangeWebhooks } from "./change-webhooks.js";
  * returned as `distance`. Like the vector `near`, it is the only sort key, limit is at most 100 and there is no cursor.
  * @typedef {{ readonly near: { readonly path: string; readonly lat: number; readonly lon: number } }} V1GeoNearSortKey
  */
-/** @typedef {V1FieldSortKey | V1NearSortKey | V1GeoNearSortKey} V1SortKey */
+/** Relevance order, only sort key with exactly one search predicate. @typedef {{ readonly path: "$score"; readonly order: "desc" }} V1ScoreSortKey */
+/** @typedef {V1FieldSortKey | V1NearSortKey | V1GeoNearSortKey | V1ScoreSortKey} V1SortKey */
 /**
  * Groups matches instead of returning documents. Summaries consider numbers only; at most 16 summary paths in total.
  * @typedef {object} V1Aggregate
@@ -245,6 +246,7 @@ function encodeAggregate(aggregate, query) {
  */
 function nearSort(key, query) {
   if (Object.keys(key).length !== 1 || query.sort?.length !== 1) throw new TypeError("near is the only sort key and has no path or order beside it.");
+  if (searchCount(query.filter) !== 0) throw new TypeError("near cannot combine with search.");
   if (query.cursor != null) throw new TypeError("A near query has one page and takes no cursor.");
   if (query.limit !== undefined && query.limit > 100) throw new TypeError("A near query limit is at most 100.");
   const near = key.near;
@@ -283,6 +285,10 @@ function encodeQuery(query) {
       if ("near" in key) return nearSort(key, query);
       for (const member of Object.keys(key)) if (member !== "path" && member !== "order") throw new TypeError(`Unknown sort member ${member}.`);
       if (key.order !== undefined && key.order !== "asc" && key.order !== "desc") throw new TypeError('Sort order is "asc" or "desc".');
+      if (key.path === "$score") {
+        if (key.order !== "desc" || query.sort?.length !== 1 || searchCount(query.filter) !== 1) throw new TypeError("$score requires descending order as the only sort key and exactly one search predicate.");
+        return { path: "$score", order: "desc" };
+      }
       return { path: requirePath(key.path), ...(key.order === undefined ? {} : { order: key.order }) };
     });
   }
@@ -341,11 +347,15 @@ export function decodeQueryPage(value) {
   }
   return Object.freeze({
     items: Object.freeze(array(raw.items, "query items").map(item => {
-      const distance = object(item, "document").distance;
-      if (distance === undefined) return decodeDocument(item);
-      const value = distance instanceof ExactDecimal ? distance.toNumber() : distance;
-      if (typeof value !== "number" || !Number.isFinite(value)) malformed("near distance");
-      return Object.freeze({ ...decodeDocument(item), distance: value });
+      const raw = object(item, "document");
+      const document = { ...decodeDocument(item) };
+      for (const field of /** @type {const} */ (["distance", "score"])) {
+        if (raw[field] === undefined) continue;
+        const value = raw[field] instanceof ExactDecimal ? raw[field].toNumber() : raw[field];
+        if (typeof value !== "number" || !Number.isFinite(value)) malformed(field);
+        document[field] = value;
+      }
+      return Object.freeze(document);
     })),
     nextCursor: typeof next === "string" && next !== "" ? next : null,
     count,

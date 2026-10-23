@@ -14,6 +14,7 @@ import { isJsonObject } from "./json.js";
  * @property {JsonObject} document
  * @property {readonly JsonValue[]} [siblings] Live versions and tombstones on a causal conflict.
  * @property {number} [distance] Distance to the query vector, or meters to a geo `near` point; present only on `near` query results.
+ * @property {number} [score] Full-text relevance score on results sorted by `$score`.
  */
 
 /**

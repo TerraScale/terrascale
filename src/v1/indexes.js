@@ -1,10 +1,10 @@
 import { requireName } from "./ids.js";
-import { flag, list, numeric, record, text } from "./management-decode.js";
+import { flag, list, numeric, optional, record, text } from "./management-decode.js";
 import { members, mutationOptions } from "./management-validation.js";
 import { stringifyExactJson } from "./json.js";
 /** @import { V1Transport } from "./transport.js" */
 /** @import { V1RequestOptions } from "./terrabase-v1.js" */
-const index = record({ name: text, collection: text, fields: list(text), state: text });
+const index = record({ name: text, collection: text, fields: list(text), state: text, kind: optional(text) });
 const indexes = record({ items: list(index) });
 const policy = record({ collection: text, enabled: flag });
 const recommendations = record({ items: list(record({ id: text, collection: text, fields: list(text), reason: text, queries: numeric })) });
@@ -14,7 +14,8 @@ const applied = record({ status: text, index });
 /** @typedef {ReturnType<typeof policy>} V1AutoIndexPolicy */
 /** @typedef {ReturnType<typeof recommendations>} V1IndexRecommendations */
 /** @typedef {ReturnType<typeof applied>} V1AppliedIndexRecommendation */
-/** @typedef {{ readonly collection: string; readonly fields: readonly string[]; readonly name?: string | null }} V1CreateIndexRequest */
+/** @typedef {"btree" | "text"} V1IndexKind */
+/** @typedef {{ readonly collection: string; readonly fields: readonly string[]; readonly name?: string | null; readonly kind?: V1IndexKind }} V1CreateIndexRequest */
 /** @param {unknown} value @returns {string} */
 function indexName(value) {
   if (typeof value !== "string" || !/^[a-z][a-z0-9_]{0,62}$/u.test(value)) throw new TypeError("Invalid index name.");
@@ -31,7 +32,8 @@ export class V1Indexes {
   constructor(transport, database) { this.#transport = transport; this.#params = { database: requireName("database", database) }; Object.freeze(this); }
   /** @param {V1CreateIndexRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1Index>} */
   async create(request, options = {}) {
-    members(request, ["collection", "fields", "name"]);
+    members(request, ["collection", "fields", "name", "kind"]);
+    if (request.kind !== undefined && request.kind !== "btree" && request.kind !== "text") throw new TypeError("kind must be btree or text.");
     requireName("collection", request.collection);
     if (!Array.isArray(request.fields) || request.fields.length < 1 || request.fields.length > 4 ||
         new Set(request.fields).size !== request.fields.length || request.fields.some(f => typeof f !== "string" || f === "_id" || f === "_rev" || !/^[A-Za-z_][A-Za-z0-9_]{0,63}(?:\.[A-Za-z_][A-Za-z0-9_]{0,63}){0,7}$/u.test(f)))
