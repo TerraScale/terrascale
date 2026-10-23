@@ -166,8 +166,9 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
                 answer = next;
             }
         }
-        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        catch (OperationCanceledException) when (stop.IsCancellationRequested || lifetime.ApplicationStopping.IsCancellationRequested)
         {
+            // A shared producer can observe host cancellation before this stream's linked-token callback runs.
             // The client left, the lifetime or token ended, or the host stops: the client resumes with Last-Event-ID.
         }
         catch (QosMemoryException) when (!stop.IsCancellationRequested)
