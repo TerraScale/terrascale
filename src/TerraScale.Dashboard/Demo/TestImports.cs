@@ -12,8 +12,7 @@ using TerraScale.Dashboard.Features.Databases;
 
 namespace TerraScale.Dashboard.Demo;
 
-// Test-only TerraBase import producer for contract v1 revision 3 (terrascale PR 167,
-// 54c0c4d9) on the region's client listener. Wire shapes are written here from the
+// Test-only producer for the current generated-ULID import contract on the region's client listener. Wire shapes are written here from the
 // contract, independently of the dashboard's records. It parses no SQL or SQLite:
 // a fixture marker selects a synthetic preview, so journeys exercise the dashboard.
 sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databases, TestDocuments documents,
@@ -28,7 +27,7 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
     {
         public required string Id, Project, Database, Format, Sha256;
         public required long Bytes;
-        public string State = "awaiting_source", MissingPrimaryKey = "reject";
+        public string State = "awaiting_source";
         public List<string> Exclude = [];
         public MemoryStream Received = new();
         public bool Staged, CancelRequested, Corrupt, Manual;
@@ -139,11 +138,11 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
         if (JsonNode.Parse(body) is not JsonObject request || request["format"]?.GetValue<string>() is not ("postgres_plain" or "sqlite") ||
             request["sourceBytes"]?.GetValue<long>() is not (>= 1 and <= 1L << 30) || request["sourceSha256"]?.GetValue<string>() is not { Length: 64 } sha ||
             !sha.All(char.IsAsciiHexDigitLower) || request["options"] is not JsonObject options ||
-            options["missingPrimaryKey"]?.GetValue<string>() is not ("reject" or "generate") || options["exclude"] is not JsonArray exclude)
+            options.Any(field => field.Key is not ("exclude" or "collection")) || options["exclude"] is not JsonArray exclude)
             return Error(HttpStatusCode.BadRequest, "invalid_request");
         if (existing is not null)
             return existing.Format == request["format"]!.GetValue<string>() && existing.Bytes == request["sourceBytes"]!.GetValue<long>() &&
-                existing.Sha256 == sha && existing.MissingPrimaryKey == options["missingPrimaryKey"]!.GetValue<string>() && existing.Exclude.SequenceEqual(exclude.Select(item => item!.GetValue<string>()))
+                existing.Sha256 == sha && existing.Exclude.SequenceEqual(exclude.Select(item => item!.GetValue<string>()))
                 ? Reply(HttpStatusCode.OK, existing) : Error(HttpStatusCode.Conflict, "import_exists");
         if (documents.Statistics(scope, database).Count > 0) return Error(HttpStatusCode.Conflict, "destination_not_empty");
         var job = new Job
@@ -156,7 +155,6 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
             Format = request["format"]!.GetValue<string>(),
             Bytes = request["sourceBytes"]!.GetValue<long>(),
             Sha256 = sha,
-            MissingPrimaryKey = options["missingPrimaryKey"]!.GetValue<string>(),
             Exclude = exclude.Select(item => item!.GetValue<string>()).ToList()
         };
         jobs[project + "/" + database] = job;
@@ -191,9 +189,8 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
     private HttpResponseMessage Update(Job job, byte[] body)
     {
         if (job.State is not ("ready" or "rejected")) return Error(HttpStatusCode.Conflict, "invalid_state");
-        if (JsonNode.Parse(body)?["options"] is not JsonObject options || options["missingPrimaryKey"]?.GetValue<string>() is not ("reject" or "generate") ||
+        if (JsonNode.Parse(body)?["options"] is not JsonObject options || options.Any(field => field.Key is not ("exclude" or "collection")) ||
             options["exclude"] is not JsonArray exclude) return Error(HttpStatusCode.BadRequest, "invalid_request");
-        job.MissingPrimaryKey = options["missingPrimaryKey"]!.GetValue<string>();
         job.Exclude = exclude.Select(item => item!.GetValue<string>()).ToList();
         job.State = "analyzing";
         job.PreviewId = null;
@@ -270,7 +267,7 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
             {
                 var (table, index) = Locate(job, row);
                 await documents.CreateCollectionAsync(scope, home, job.Database, table.Collection, ct);
-                await documents.WriteAsync(scope, home, job.Database, table.Collection, "create", (index + 1).ToString(CultureInfo.InvariantCulture),
+                await documents.WriteAsync(scope, home, job.Database, table.Collection, "create", "01K78D0C00000000" + row.ToString("D10", CultureInfo.InvariantCulture),
                     JsonSerializer.SerializeToElement(new { row = index + 1 }), "", ct);
             }
             job.Written += batch;
@@ -311,7 +308,7 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
         new() { ["code"] = code, ["message"] = message, ["retryable"] = retryable, ["table"] = table, ["row"] = row, ["column"] = null };
 
     private sealed record Column(string Name, string SourceType, string Mapping, bool Nullable = true);
-    private sealed record Table(string Source, string Collection, long Rows, string[] PrimaryKey, Column[] Columns, JsonObject[] Constraints, string NoKey = "none");
+    private sealed record Table(string Source, string Collection, long Rows, string[] PrimaryKey, Column[] Columns, JsonObject[] Constraints);
 
     private static readonly Table[] Shop =
     [
@@ -328,7 +325,7 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
         new("main.notes", "notes", 4, ["id"], [new("id", "INTEGER", "integer", false), new("body", "TEXT", "string"), new("attachment", "BLOB", "base64"), new("score", "NUMERIC", "integer+string")], []),
         new("main.tags", "tags", 3, ["note_id", "tag"], [new("note_id", "INTEGER", "integer", false), new("tag", "TEXT", "string", false)],
             [Constraint("primary_key", null, ["note_id", "tag"], null), Constraint("foreign_key", null, ["note_id"], "main.notes(id)")]),
-        new("main.events", "events", 2, [], [new("kind", "TEXT", "string")], [], "rowid")
+        new("main.events", "events", 2, [], [new("kind", "TEXT", "string")], [])
     ];
 
     private static JsonObject Constraint(string kind, string? name, string[] columns, string? references) =>
@@ -358,8 +355,6 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
                 if (column.Mapping == "unsupported") issues.Add(Issue("blocking", "unsupported_type", column.Name, column.SourceType + " has no mapping; exclude the column"));
                 if (column.Mapping.Contains('+')) issues.Add(Issue("warning", "mixed_storage_classes", column.Name, "Values use more than one storage class."));
             }
-            var idPolicy = table.PrimaryKey.Length > 0 ? "primary_key" : table.NoKey == "rowid" ? "rowid" : job.MissingPrimaryKey == "generate" ? "generated" : "none";
-            if (!excluded && idPolicy == "none") issues.Add(Issue("blocking", "missing_primary_key", null, "The table has no primary key."));
             blocking += issues.Count(issue => issue!["severity"]!.GetValue<string>() == "blocking");
             warnings += issues.Count(issue => issue!["severity"]!.GetValue<string>() == "warning");
             tables.Add(new JsonObject
@@ -368,7 +363,6 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
                 ["collection"] = table.Collection,
                 ["excluded"] = excluded,
                 ["rows"] = table.Rows,
-                ["idPolicy"] = idPolicy,
                 ["primaryKey"] = new JsonArray(table.PrimaryKey.Select(item => (JsonNode?)item).ToArray()),
                 ["columns"] = columns,
                 ["constraints"] = new JsonArray(table.Constraints.Select(item => (JsonNode?)item.DeepClone()).ToArray()),
@@ -403,7 +397,7 @@ sealed partial class TestImports(HttpMessageHandler inner, TestDatabases databas
             ["region"] = "gru",
             ["state"] = job.State,
             ["cancelRequested"] = job.CancelRequested,
-            ["options"] = new JsonObject { ["missingPrimaryKey"] = job.MissingPrimaryKey, ["exclude"] = new JsonArray(job.Exclude.Select(item => (JsonNode?)item).ToArray()) },
+            ["options"] = new JsonObject { ["exclude"] = new JsonArray(job.Exclude.Select(item => (JsonNode?)item).ToArray()) },
             ["source"] = new JsonObject
             {
                 ["format"] = job.Format,

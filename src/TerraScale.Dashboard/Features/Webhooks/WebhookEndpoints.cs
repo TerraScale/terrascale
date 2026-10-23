@@ -61,7 +61,7 @@ public static class WebhookEndpoints
     {
         http.Response.Headers.CacheControl = "no-store";
         http.Response.Headers.Pragma = "no-cache";
-        http.Response.Headers["Referrer-Policy"] = "no-referrer";
+        http.Response.Headers["Referrer-Policy"] = "same-origin";
     }
 
     private static bool KnownFailure(Exception error) => DatabaseResults.KnownFailure(error) || error is HttpRequestException or ArgumentException;
@@ -83,6 +83,7 @@ public static class WebhookEndpoints
         IReadOnlyList<TerraBaseChangeWebhook> hooks, IReadOnlyList<TerraBaseChangeWebhookDelivery> deliveries, string selected,
         TerraBaseCreatedChangeWebhook? created = null, string error = "", int status = 200)
     {
+        if (created is not null) http.Response.Headers["Referrer-Policy"] = "no-referrer";
         var view = WebhooksView.Create(new WebhooksPage(ShellModel.For(http, context, database.Name + " · Webhooks"), database, collection, hooks, deliveries, selected, created, error));
         view.StatusCode = status;
         return view;

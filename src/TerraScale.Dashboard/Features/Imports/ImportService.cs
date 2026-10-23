@@ -6,8 +6,7 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Imports;
 
-// TerraBase import contract v1 revision 3 (terrascale docs/terrabase/import.md on the engine branch,
-// 567bfd33) through the official SDK's import client: the destination's home-region client listener,
+// Current TerraBase generated-ULID import contract through the official SDK's import client: the destination's home-region client listener,
 // pinned to that region, as a ts-auth project access token. The destination itself comes from the
 // dashboard's createDatabase path, which also owns the plan's database-count limit.
 public sealed partial class ImportService(DatabaseService databases, IHttpClientFactory http, IProjectAccessTokens projectTokens)
@@ -69,7 +68,7 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
     // The guided flow: a fresh import-<ULID> destination from the existing createDatabase (home region
     // only, plan limits included), then createImport. A resubmitted form carries the same name, so it
     // reuses that destination and TerraBase answers the identical createImport with the same job.
-    public async Task<TerraBaseImportJob> CreateAsync(AccountContext context, string database, string format, long bytes, string sha256, string missingPrimaryKey, CancellationToken ct)
+    public async Task<TerraBaseImportJob> CreateAsync(AccountContext context, string database, string format, long bytes, string sha256, CancellationToken ct)
     {
         context = await databases.CurrentAsync(context, ct);
         DatabaseService.DemandProvision(context.Organization!, context.UserId);
@@ -78,7 +77,7 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
         if (sha256 is not { Length: 64 } || !sha256.All(char.IsAsciiHexDigitLower))
             throw new AccountAccessException("Choose the export file again so the browser can fingerprint it. This step needs JavaScript.", 422);
         if (bytes is < 1 or > MaxSourceBytes) throw new AccountAccessException("Exports must be between 1 byte and 1 GiB.", 422);
-        var options = new TerraBaseImportOptions(MissingPrimaryKey(missingPrimaryKey), []);
+        var options = new TerraBaseImportOptions([]);
         var destination = context.Project!.Databases.Values.FirstOrDefault(item => item.Name == database)
             ?? await databases.CreateAsync(context, database, [context.Project.Region], false, ct);
         var scope = DatabaseService.Scope(context);
@@ -103,10 +102,10 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
         return Validate(scope, await Import(context, home, database, Write, TimeSpan.FromMinutes(2), token).UploadImportSourceAsync(offset, part, ct), database);
     }
 
-    public async Task<TerraBaseImportJob> UpdateAsync(AccountContext context, string database, string missingPrimaryKey, IReadOnlyList<string> exclude, CancellationToken ct)
+    public async Task<TerraBaseImportJob> UpdateAsync(AccountContext context, string database, IReadOnlyList<string> exclude, CancellationToken ct)
     {
         database = Name(database);
-        var options = new TerraBaseImportOptions(MissingPrimaryKey(missingPrimaryKey), exclude);
+        var options = new TerraBaseImportOptions(exclude);
         if (exclude.Count > 1000 || exclude.Any(item => item.Length is 0 or > 512)) throw new AccountAccessException("Exclude at most 1000 tables and columns.", 422);
         context = await Manage(context, ct);
         var (scope, home) = await RouteAsync(context, database, ct);
@@ -141,9 +140,7 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
                 $"{table.Source}: {Kind(constraint.Kind)} {constraint.Name ?? "(unnamed)"} ({string.Join(", ", constraint.Columns)}{(constraint.References is null ? "" : " → " + constraint.References)}) is recorded but not enforced.")).ToArray(),
             (job.Preview?.Tables.Where(table => table.Excluded).Select(table => table.Source + " is not imported.") ?? [])
                 .Concat(tables.SelectMany(table => table.Columns.Where(column => column.Excluded).Select(column => $"{table.Source}.{column.Name} is not imported."))).ToArray(),
-            tables.Where(table => table.IdPolicy is "generated" or "rowid").Select(table => table.IdPolicy == "rowid"
-                ? $"{table.Source} has no primary key; its documents take the SQLite rowid as id."
-                : $"{table.Source} has no primary key; its documents get generated ids.").ToArray(),
+            tables.Select(table => $"{table.Source}: every row gets a deterministic generated ULID; source primary keys remain document fields.").ToArray(),
             tables.SelectMany(table => table.Issues.Where(issue => issue.Severity != "blocking").Select(Issue(table))).ToArray());
     }
 
@@ -202,13 +199,6 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
     // An import lives in its destination's home region.
     private async Task<(DatabaseScope, DatabaseRegion)> RouteAsync(AccountContext context, string database, CancellationToken ct) =>
         (DatabaseService.Scope(context), await databases.HomeAsync(context, context.Project!.Databases.Values.FirstOrDefault(item => item.Name == database), ct));
-
-    private static TerraBaseImportMissingPrimaryKey MissingPrimaryKey(string value) => value switch
-    {
-        "reject" => TerraBaseImportMissingPrimaryKey.Reject,
-        "generate" => TerraBaseImportMissingPrimaryKey.Generate,
-        _ => throw new AccountAccessException("Choose how to handle tables without a primary key.", 422)
-    };
 
     [System.Text.RegularExpressions.GeneratedRegex("^import-[0-9a-hjkmnp-tv-z]{26}$")]
     private static partial System.Text.RegularExpressions.Regex FreshName();

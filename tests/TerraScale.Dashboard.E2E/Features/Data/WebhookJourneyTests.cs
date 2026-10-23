@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Playwright;
@@ -38,7 +39,9 @@ public sealed class WebhookJourneyTests(DashboardRootFixture fixture)
         }
         // Creation has no follow-up API calls that could discard the one-time response.
         await Assert.That(flow.Calls).IsEqualTo(1);
-        var listed = await flow.Client.GetStringAsync(flow.Path);
+        using var listResponse = await flow.Client.GetAsync(flow.Path);
+        await Assert.That(listResponse.Headers.GetValues("Referrer-Policy").Single()).IsEqualTo("same-origin");
+        var listed = await listResponse.Content.ReadAsStringAsync();
         await Assert.That(listed.Contains(Flow.Secret, StringComparison.Ordinal)).IsFalse();
         await Assert.That(listed).Contains("https://receiver.example/events");
         await flow.WriteAsync();

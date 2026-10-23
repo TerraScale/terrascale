@@ -39,18 +39,17 @@ public sealed class ImportBrowserJourneyTests(DashboardRootFixture fixture)
         await page.Locator("#import-file").SetInputFilesAsync(new FilePayload { Name = "dump.sql", MimeType = "application/sql", Buffer = dump });
         await page.GetByRole(AriaRole.Button, new() { Name = "Upload and preview" }).ClickAsync();
         await page.WaitForURLAsync(url => Regex.IsMatch(BrowserAudit.WithoutWorkspace(url), "/imports/import-[0-9a-z]{26}$"));
-        await page.GetByText("2 blocking issues").WaitForAsync();
+        await page.GetByText("1 blocking issue", new() { Exact = true }).WaitForAsync();
         await Assert.That(await page.Locator("main").InnerTextAsync()).Contains("text[] has no mapping; exclude the column");
         await Assert.That(await page.Locator("form:is([action$='/start'],[action*='/start?'])").CountAsync()).IsEqualTo(0);
         await BrowserAudit.AssertAccessibleAsync(page, "A blocked preview meets WCAG 2.2 AA.");
         await page.ScreenshotAsync(new() { Path = Path.Combine(output, "2-blocked-preview.png"), FullPage = true });
 
         await page.GetByLabel("Exclude public.orders.tags").CheckAsync(new() { Force = true });
-        await page.GetByLabel("Give their rows generated document ids").CheckAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Update preview" }).ClickAsync();
         await page.GetByRole(AriaRole.Heading, new() { Name = "Confirm this preview" }).WaitForAsync();
         var main = await page.Locator("main").InnerTextAsync();
-        foreach (var disclosure in new[] { "Stored as a different type", "Constraints not enforced", "public.orders.tags is not imported.", "generated ids", "Do not write to" })
+        foreach (var disclosure in new[] { "Stored as a different type", "Constraints not enforced", "public.orders.tags is not imported.", "generated ULID", "Do not write to" })
             await Assert.That(main).Contains(disclosure);
         await BrowserAudit.AssertAccessibleAsync(page, "The confirmation step meets WCAG 2.2 AA.");
         await page.ScreenshotAsync(new() { Path = Path.Combine(output, "3-confirm-preview.png"), FullPage = true });
