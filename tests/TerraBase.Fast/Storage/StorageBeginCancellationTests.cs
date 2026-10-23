@@ -67,7 +67,9 @@ public sealed class StorageBeginCancellationTests
                     begins.Add(begin);
                     try
                     {
-                        await WaitUntilAsync(() => engine.Io.Admitted == 1 && Queued() == 1, deadline.Token);
+                        // Shared counters can describe prerequisite/background work before this BEGIN rents its session.
+                        await WaitUntilAsync(() => engine.Io.Admitted == 1 && Queued() == 1
+                            && store.IdleCount == (write ? 1 : 0), deadline.Token);
                         // A read takes the idle session; a write uses the database's own writer connection instead.
                         await Assert.That(store.IdleCount).IsEqualTo(write ? 1 : 0);
                         await cancellation.CancelAsync();
