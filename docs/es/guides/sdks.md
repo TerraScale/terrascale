@@ -18,9 +18,10 @@ Use a TerraBase SDK to store and query JSON documents in a project database. Eac
 | JavaScript / TypeScript | `@terrascale/sdk@0.0.5`, `createTerraBaseV1Client` | Node 22 or 24; npm ≥11; bundled TypeScript declarations | npm; [quickstart](/es/getting-started/javascript) |
 | C# | `TerraScale.DotNet`, `TerraBaseDocumentsClient` | .NET 10; source also targets .NET 11 with that toolchain | Build the package from source; [quickstart](/es/getting-started/csharp) |
 | Go | `terrascale.tech/sdk/v1`, `New(Config)` | Go ≥1.25 | `go get terrascale.tech/sdk@v0.0.2` |
+| Python | `terrascale`, `TerraScale` / `AsyncTerraScale` | Python ≥3.10, httpx | `pip install` from Git; [quickstart](/es/getting-started/python) |
 | Rust | `terrascale::v1`, `Client::for_project` | Rust 2021 edition, Tokio | Git dependency; not on crates.io yet |
 
-The npm package declares the latest major Chrome, Firefox, Safari and Edge. Its React, Svelte and TanStack entrypoints have their own peer package requirements. There is no Python or Java SDK yet; call the HTTP API directly from those languages.
+The npm package declares the latest major Chrome, Firefox, Safari and Edge. Its React, Svelte and TanStack entrypoints have their own peer package requirements. There is no Java SDK yet; call the HTTP API directly from those languages.
 
 ### JavaScript / TypeScript
 
@@ -43,6 +44,14 @@ go get terrascale.tech/sdk@v0.0.2
 ```
 
 Import `terrascale.tech/sdk/v1`. `New(Config)` takes a `BaseURL` (or a `Resolver`) and a `Token`. `Database(projectId, name)` and named collections scope document operations.
+
+### Python
+
+```bash
+pip install "terrascale @ git+https://github.com/TerraScale/ts-python@v0.0.1"
+```
+
+`TerraScale()` takes the API key and project ID (or reads `TERRASCALE_API_KEY` and `TERRASCALE_PROJECT_ID`), exchanges the key for access tokens and refreshes them. `ts.database(name).collection(name)` provides `create`, `get`, `put`, `patch`, `delete`, `list`, `query`, `pages`, `items`, `search` (vector) and the TTL methods; the database handle runs SQL and transactions. `AsyncTerraScale` is the asyncio twin. See the [Python quickstart](/es/getting-started/python).
 
 ### Rust
 

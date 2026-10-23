@@ -11,6 +11,7 @@ const routes = [
   ['/getting-started/javascript', 'Published JavaScript SDK 0.0.5 installation and CRUD/query example'],
   ['/getting-started/csharp', 'C# quickstart with the SDK package built from source'],
   ['/getting-started/go', 'Go SDK installation and document, query, SQL and changes quickstart'],
+  ['/getting-started/python', 'Python SDK installation and sync/async document, query, SQL and vector quickstart'],
   ['/guides/sdks', 'Supported runtimes, installation and SDK contracts'],
   ['/guides/authentication', 'API keys, token exchange and scoped access'],
   ['/guides/queries', 'JSON filters, projection, opaque pagination and version preconditions'],
