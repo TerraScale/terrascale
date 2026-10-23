@@ -195,6 +195,8 @@ public sealed class StorageRecoveryTests
             DataSource = Path.Combine(root, organization, project, database + ".db"),
             Mode = SqliteOpenMode.ReadOnly,
             Pooling = false,
+            EncryptionCipher = "aegis256",
+            EncryptionKey = server.StoppedDatabaseKey(organization, project, database + ".db"),
         }.ToString());
         await tenant.OpenAsync();
         await using var read = tenant.CreateCommand();
@@ -206,6 +208,8 @@ public sealed class StorageRecoveryTests
             DataSource = Path.Combine(root, "_intents.db"),
             Mode = SqliteOpenMode.ReadWrite,
             Pooling = false,
+            EncryptionCipher = "aegis256",
+            EncryptionKey = server.StoppedDatabaseKey("_intents.db"),
         }.ToString());
         await journal.OpenAsync();
         await using var write = journal.CreateCommand();

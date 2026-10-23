@@ -26,6 +26,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     private readonly ConcurrentQueue<string> output = new();
     private readonly string directory;
+    private readonly byte[] masterKey = RandomNumberGenerator.GetBytes(32);
     private TestListenerRelay? publicFront;
     private TestListenerRelay? internalFront;
     private (int Internal, int Public, int Metrics) backendPorts;
@@ -45,6 +46,35 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     internal string StoppedDataDirectory => this.process is null
         ? Path.Combine(this.directory, "data")
         : throw new InvalidOperationException("Stop TerraBase before modifying its storage files.");
+
+    // Only stopped fixture storage is inspected; this synthetic master never comes from the environment.
+    internal string StoppedDatabaseKey(params string[] relativePath)
+    {
+        var path = Path.Combine(this.StoppedDataDirectory, Path.Combine(relativePath)) + ".key";
+        var record = File.ReadAllLines(path);
+        if (record.Length != 2 || record[0] != "TERRABASE-DB-KEY-1")
+        {
+            throw new InvalidDataException("The fixture database key record is malformed.");
+        }
+
+        var wrapped = Convert.FromBase64String(record[1]);
+        if (wrapped.Length != 60)
+        {
+            throw new InvalidDataException("The fixture database key envelope is malformed.");
+        }
+
+        var key = new byte[32];
+        try
+        {
+            using var aes = new AesGcm(this.masterKey, 16);
+            aes.Decrypt(wrapped.AsSpan(0, 12), wrapped.AsSpan(12, 32), wrapped.AsSpan(44, 16), key);
+            return Convert.ToHexString(key);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
 
     /// <summary>Origin of the public listener (Documents API with API keys and ts-auth tokens).</summary>
     public Uri ClientAddress => this.publicFront?.Address ?? throw new InvalidOperationException("TerraBase has not started.");
@@ -216,7 +246,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
         var path = Path.Combine(this.directory, "data", organization, project, database + ".db");
         var hashes = new Dictionary<string, string>();
-        foreach (var suffix in (string[])["", "-wal", "-journal"])
+        foreach (var suffix in (string[])["", "-wal", "-journal", ".key"])
         {
             if (suffix.Length == 0 || File.Exists(path + suffix))
             {
@@ -238,7 +268,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             return false;
         }
 
-        foreach (var suffix in (string[])["", "-wal", "-journal"])
+        foreach (var suffix in (string[])["", "-wal", "-journal", ".key"])
         {
             var path = copies[0] + suffix;
             if (File.Exists(path) != hashes.ContainsKey(suffix)
@@ -330,7 +360,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             var masterKeyFile = Path.Combine(secrets, "master-key");
             if (!File.Exists(masterKeyFile))
             {
-                File.WriteAllText(masterKeyFile, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)) + "\n");
+                File.WriteAllText(masterKeyFile, Convert.ToBase64String(this.masterKey) + "\n");
             }
             File.WriteAllText(Path.Combine(secrets, "peer-secret"), PeerSecret + "\n");
             start.Environment["TERRABASE_MASTER_KEY_FILE"] = Path.Combine(secrets, "master-key");
