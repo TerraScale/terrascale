@@ -47,8 +47,14 @@ public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment 
             if (published.TryGetValue(project, out var last) && last.Plan == plan && now - last.At < Fresh) continue;
             try
             {
-                using var response = await http.CreateClient(TerraBaseDashboardState.ClientName).PutAsJsonAsync(
-                    new Uri(origin, $"admin/projects/{project}/plan"), new PlanBody(plan), PlanSyncJson.Default.PlanBody, cancellationToken);
+                // The private listener speaks only HTTP/2 without TLS, so the request needs prior knowledge, as the SDK sends it.
+                using var request = new HttpRequestMessage(HttpMethod.Put, new Uri(origin, $"admin/projects/{project}/plan"))
+                {
+                    Version = HttpVersion.Version20,
+                    VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+                    Content = JsonContent.Create(new PlanBody(plan), PlanSyncJson.Default.PlanBody),
+                };
+                using var response = await http.CreateClient(TerraBaseDashboardState.ClientName).SendAsync(request, cancellationToken);
                 if (response.IsSuccessStatusCode) published[project] = (plan, now);
                 else if (response.StatusCode != HttpStatusCode.NotFound)
                     logger.LogWarning("TerraBase refused plan {Plan} for project {Project}: {Status}", plan, project, (int)response.StatusCode);
