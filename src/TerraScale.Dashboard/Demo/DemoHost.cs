@@ -437,6 +437,17 @@ sealed class TestWorkspace : ITsAuthPlatform
     { lock (Gate) { var org = Manage(session.UserId, organizationId); org.Name = name; org.Slug = AccountService.Slug(name); return Task.CompletedTask; } }
     public Task LeaveOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
     { lock (Gate) { var org = Member(session.UserId, organizationId); LastOwner(org, session.UserId); org.Members.Remove(session.UserId); return Task.CompletedTask; } }
+    public Task DeleteOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            var org = Member(session.UserId, organizationId);
+            if (ScopedRole(session.UserId, organizationId) != "owner") throw new AccountAccessException("Your role does not allow this change.", 403, "forbidden_role");
+            if (org.Projects.Count > 0) throw new AccountAccessException("Delete the organization's projects first.", 409, "not_empty");
+            Organizations.Remove(organizationId);
+            return Task.CompletedTask;
+        }
+    }
     public Task<IReadOnlyList<TerraScaleAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
     { lock (Gate) return Task.FromResult<IReadOnlyList<TerraScaleAuthPlatformMember>>(Member(session.UserId, organizationId).Members.Values.Where(member => member.Status == "active").Select(member => new TerraScaleAuthPlatformMember(member.UserId, member.Email, ScopedRole(member.UserId, organizationId), member.CreatedAt)).ToArray()); }
     public Task ChangeMemberRoleAsync(SessionRecord session, string organizationId, string userId, string role, CancellationToken cancellationToken)

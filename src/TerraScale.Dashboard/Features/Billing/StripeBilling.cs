@@ -203,6 +203,21 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         await RefreshAsync(orgId, cancellationToken);
     }
 
+    // Organization deletion ends the organization's Stripe subscription now, without proration.
+    // The caller has checked the live owner role; a subscription that already ended is left alone.
+    internal async Task EndSubscriptionAsync(string orgId, CancellationToken cancellationToken)
+    {
+        var binding = await ReadAsync(orgId, cancellationToken);
+        if (binding is not { Kind: "stripe", SubscriptionId.Length: > 0 }) return;
+        var client = await ClientAsync(cancellationToken);
+        var subscription = await client.V1.Subscriptions.GetAsync(binding.SubscriptionId, cancellationToken: cancellationToken);
+        if (subscription.Id != binding.SubscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId)
+            throw new IOException("Subscription ownership does not match.");
+        if (subscription.Status is not ("canceled" or "incomplete_expired"))
+            await client.V1.Subscriptions.CancelAsync(subscription.Id, new(), Idempotent("delete-organization-" + subscription.Id), cancellationToken);
+        await UpdateAsync(orgId, current => { if (current.SubscriptionId == subscription.Id) { current.Status = "canceled"; current.PaymentValidated = false; current.RenewalAt = null; } }, cancellationToken);
+    }
+
     private async Task<bool> RefreshAsync(string orgId, CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < 4; attempt++)

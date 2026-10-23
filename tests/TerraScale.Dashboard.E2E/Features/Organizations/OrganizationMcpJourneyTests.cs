@@ -9,7 +9,7 @@ namespace TerraScale.Dashboard.E2E.Features.Organizations;
 public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
-    public async Task NativePatProjectScopesAndQueuedDeletionPreserveResourcesAndDenyNewProvisioning()
+    public async Task NativePatProjectScopesAndConfirmedDeletionEndBillingAndRemoveTheOrganization()
     {
         using var owner = fixture.CreateClient();
         using var replica = fixture.CreateClient(replica: true);
@@ -59,48 +59,25 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(vendor.StatusCode).IsEqualTo(HttpStatusCode.Found);
         using var returned = await replica.GetAsync(vendor.Headers.Location);
         await Assert.That(returned.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        var businessProject = await ToolAsync(owner, secret, "create_project", new { organizationId = businessId, name = "Preserved data " + suffix, regions = new[] { "GRU" } });
+        await ToolAsync(owner, secret, "create_project", new { organizationId = businessId, name = "Deleted with the organization " + suffix, regions = new[] { "GRU" } });
         await ToolAsync(owner, secret, "rename_organization", new { organizationId = businessId, name = name + " renamed" });
         await ErrorAsync(owner, secret, "request_organization_deletion", new { organizationId = businessId, confirmName = name });
-        var csrf = await HttpJourney.CsrfAsync(owner, "/organization");
-        using var native = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/organization/deletion", new()
-        { ["_csrf"] = csrf, ["confirmation"] = name + " renamed" });
-        await Assert.That(native.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        var requested = Organization(await ContextAsync(replica, secret), businessId);
-        await Assert.That(requested.GetProperty("deletionRequested").GetBoolean()).IsTrue();
-        await Assert.That(requested.GetProperty("status").GetString()).IsEqualTo("active");
-        await Assert.That(requested.GetProperty("canProvision").GetBoolean()).IsFalse();
-        await Assert.That(requested.GetProperty("projects")[0].GetProperty("id").GetString()).IsEqualTo(businessProject.GetProperty("id").GetString());
-        await ToolAsync(replica, secret, "request_organization_deletion", new { organizationId = businessId, confirmName = name + " renamed" });
-        await ErrorAsync(owner, secret, "create_project", new { organizationId = businessId, name = "Deletion denied", regions = new[] { "GRU" } });
-        foreach (var billingPath in new[] { "/organization?tab=billing", "/organization?tab=billing&review=1&plan=pro&interval=monthly" })
-        {
-            using var billingRead = await owner.GetAsync(billingPath);
-            await Assert.That(billingRead.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var billingBody = await billingRead.Content.ReadAsStringAsync();
-            await Assert.That(billingBody.Contains("id=\"billing-summary\"", StringComparison.Ordinal)).IsTrue();
-            foreach (var mutationControl in new[] { "commandfor=\"change-billing-plan\"", "href=\"/billing/portal\"", "action=\"/billing/checkout\"", "action=\"/billing/change\"", "id=\"review-billing-plan\"" })
-                await Assert.That(billingBody.Contains(mutationControl, StringComparison.Ordinal)).IsFalse().Because(mutationControl);
-        }
-        var pendingBillingRead = await ToolAsync(owner, secret, "get_billing", new { organizationId = businessId });
-        await Assert.That(pendingBillingRead.GetProperty("canManage").GetBoolean()).IsTrue().Because("The source MCP summary identifies ownership; native mutation controls also reject a pending deletion.");
-        var vendorBefore = await owner.GetStringAsync("/__test/billing/plans/probe");
-        await ErrorAsync(owner, secret, "change_plan", new { organizationId = businessId, plan = "pro", interval = "monthly" });
-        await ErrorAsync(owner, secret, "create_checkout", new { organizationId = businessId, plan = "pro", interval = "monthly" });
-        await ErrorAsync(owner, secret, "get_billing_portal_url", new { organizationId = businessId });
-        using var nativeBilling = await HttpJourney.PostFormAsync(owner, "/billing/change", new()
-        { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly" });
-        await Assert.That(nativeBilling.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(await owner.GetStringAsync("/__test/billing/plans/probe")).IsEqualTo(vendorBefore);
-        // The dashboard records an explicit severity for its own events; requesting deletion is critical.
-        var audit = await ToolAsync(replica, secret, "list_audit_events", new { organizationId = businessId, action = "organization.deletion_requested", severity = "critical", range = "7d", page = 999, pageSize = 1 });
-        await Assert.That(audit.GetProperty("matching").GetInt32()).IsEqualTo(1);
-        await Assert.That(audit.GetProperty("critical").GetInt32()).IsEqualTo(1);
-        await Assert.That(audit.GetProperty("unknown").GetInt32()).IsEqualTo(0);
-        await Assert.That(audit.GetProperty("page").GetInt32()).IsEqualTo(1);
-        await Assert.That(audit.GetProperty("retentionDays").GetInt32()).IsEqualTo(90);
-        await Assert.That(audit.GetProperty("events")[0].GetProperty("severity").GetString()).IsEqualTo("critical");
         await ErrorAsync(owner, secret, "list_audit_events", new { organizationId = businessId, pageSize = 101 });
+        // The confirmed request deletes the organization at once: Stripe ends its plan, ts-auth drops it and the account moves on (Ku TS-916).
+        var csrf = await HttpJourney.CsrfAsync(owner, "/organization");
+        using (var native = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/organization/deletion", new()
+        { ["_csrf"] = csrf, ["confirmation"] = name + " renamed" }))
+        {
+            await Assert.That(native.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(native.Headers.Location?.OriginalString).StartsWith("/organization?deleted=1&organizationId=" + personalId);
+        }
+        var deleted = await ContextAsync(replica, secret);
+        await Assert.That(deleted.GetProperty("selection").GetProperty("organizationId").GetString()).IsEqualTo(personalId);
+        await Assert.That(deleted.GetProperty("organizations").EnumerateArray().Any(item => item.GetProperty("id").GetString() == businessId)).IsFalse();
+        using (var subscriptions = JsonDocument.Parse(await owner.GetStringAsync("/__test/billing/plans/subscriptions/" + businessId)))
+            await Assert.That(subscriptions.RootElement.EnumerateArray().Select(item => item.GetString()!).ToArray()).IsEquivalentTo(new[] { "canceled" });
+        await ErrorAsync(replica, secret, "request_organization_deletion", new { organizationId = businessId, confirmName = name + " renamed" });
+        await ErrorAsync(owner, secret, "create_project", new { organizationId = businessId, name = "Deletion denied", regions = new[] { "GRU" } });
         await ErrorAsync(owner, secret, "request_organization_deletion", new { organizationId = personalId, confirmName = "Personal" });
         await Assert.That(Organization(await ContextAsync(owner, secret), personalId).GetProperty("projects").EnumerateArray()
             .Any(item => item.GetProperty("id").GetString() == personalProject)).IsTrue();

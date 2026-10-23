@@ -171,13 +171,39 @@ public sealed class TsAuthPlatformJourneyTests
         { ["_csrf"] = csrf, ["organizationId"] = business, ["returnUrl"] = "/organization" }))
             await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         platform.Producer.Rename(business, "Renamed at ts-auth");
-        csrf = await HttpJourney.CsrfAsync(client, "/organization");
+        var businessProject = platform.Producer.AddProject(business, "Business project", owner.Subject);
+        // A project with a database refuses the deletion before anything is deleted (Ku TS-916).
+        await platform.ProjectionAsync(business, org => org.Projects[businessProject] = new()
+        { Id = businessProject, OrganizationId = business, Name = "Business project", Databases = { ["db"] = new() { Id = "db", ProjectId = businessProject, Name = "orders" } } });
+        csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=danger");
+        using (var refused = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/deletion", new()
+        { ["_csrf"] = csrf, ["confirmation"] = "Renamed at ts-auth" }))
+        {
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            await Assert.That((await refused.Content.ReadAsStringAsync()).Contains("Delete this organization&#x27;s databases before deleting it.", StringComparison.Ordinal)).IsTrue();
+        }
+        await Assert.That(platform.Producer.Count("DELETE", "/v1/terrascale/organizations/" + business, owner.Subject)).IsEqualTo(0);
+        await Assert.That(platform.Producer.Count("DELETE", "/v1/terrascale/organizations/" + business + "/projects/" + businessProject, owner.Subject)).IsEqualTo(0);
+        await Assert.That((await platform.ProjectionAsync(business)).DeletionRequested).IsFalse();
+
+        // An organization stuck at the old deletion request completes like a new one, with the name ts-auth now holds.
+        await platform.ProjectionAsync(business, org => { org.Projects[businessProject].Databases.Clear(); org.DeletionRequested = true; });
+        await Assert.That((await client.GetStringAsync("/organization?tab=danger")).Contains(">Delete organization</button>", StringComparison.Ordinal)).IsTrue();
+        csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=danger");
         using (var deletion = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/deletion", new()
         { ["_csrf"] = csrf, ["confirmation"] = "Renamed at ts-auth" }))
+        {
             await Assert.That(deletion.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        var organization = (await Context(client)).GetProperty("organizations").EnumerateArray().Single(org => org.GetProperty("id").GetString() == business);
-        await Assert.That(organization.GetProperty("deletionRequested").GetBoolean()).IsTrue();
-        await Assert.That(organization.GetProperty("name").GetString()).IsEqualTo("Renamed at ts-auth");
+            await Assert.That(deletion.Headers.Location?.OriginalString).StartsWith("/organization?deleted=1&organizationId=" + personal);
+            await Assert.That(await client.GetStringAsync(deletion.Headers.Location)).Contains("Organization deleted.");
+        }
+        await Assert.That(platform.Producer.Count("DELETE", "/v1/terrascale/organizations/" + business + "/projects/" + businessProject, owner.Subject)).IsEqualTo(1);
+        await Assert.That(platform.Producer.Count("DELETE", "/v1/terrascale/organizations/" + business, owner.Subject)).IsEqualTo(1);
+        await Assert.That(platform.Producer.Exists(business)).IsFalse();
+        var archived = await platform.ProjectionAsync(business);
+        await Assert.That(archived.Archived && archived.Status == "deleted").IsTrue();
+        await Assert.That((await Me(client)).GetProperty("organizationId").GetString()).IsEqualTo(personal);
+        await Assert.That((await Context(client)).GetProperty("organizations").EnumerateArray().Any(org => org.GetProperty("id").GetString() == business)).IsFalse();
         await Assert.That(platform.Producer.Failures).IsEmpty();
     }
 
@@ -384,14 +410,18 @@ public sealed class TsAuthPlatformJourneyTests
             return principal;
         });
 
-        public async Task PlanAsync(string organizationId, string planId)
+        public Task PlanAsync(string organizationId, string planId) => ProjectionAsync(organizationId, organization => organization.PlanId = planId);
+
+        public async Task<OrganizationRecord> ProjectionAsync(string organizationId, Action<OrganizationRecord>? change = null)
         {
             var current = await state!.GetAsync(AccountService.OrganizationsCollection, organizationId, default)
-                ?? throw new InvalidOperationException("The fixture plan targets an existing organization");
+                ?? throw new InvalidOperationException("The fixture targets an existing organization");
             var organization = current.Document.Deserialize<OrganizationRecord>()!;
-            organization.PlanId = planId;
+            if (change is null) return organization;
+            change(organization);
             await state.PutAsync(AccountService.OrganizationsCollection, organizationId, JsonSerializer.SerializeToElement(organization),
                 TerraBasePrecondition.Matches(current.Version), default);
+            return organization;
         }
 
         public HttpClient Client(bool replica = false) => new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
@@ -458,6 +488,7 @@ public sealed class TsAuthPlatformJourneyTests
             }
         }
         public void Rename(string organizationId, string name) { lock (gate) Find(organizationId)!.Name = name; }
+        public bool Exists(string organizationId) { lock (gate) return Find(organizationId) is not null; }
         public string AddProject(string organizationId, string name, string creator)
         { lock (gate) { var project = new Project(ids.NewId(), name, creator, DateTimeOffset.UtcNow); Find(organizationId)!.Projects.Add(project); return project.Id; } }
         public void AddMember(string organizationId, string userId, string email, string role) { lock (gate) Find(organizationId)!.Members[userId] = new(email, role, DateTimeOffset.UtcNow); }
@@ -541,6 +572,14 @@ public sealed class TsAuthPlatformJourneyTests
             var admin = self.Role is "owner" or "admin";
             switch (parts[2..], method)
             {
+                case ([], "DELETE"):
+                    if (self.Role != "owner") return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs owner.");
+                    if (organization.Projects.Count > 0) return Error(HttpStatusCode.Conflict, "not_empty", "Delete the organization's projects first.");
+                    organizations.Remove(organization);
+                    return new(HttpStatusCode.NoContent);
+                case (["projects", var deletedProject], "DELETE"):
+                    if (!admin) return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs admin.");
+                    return organization.Projects.RemoveAll(project => project.Id == deletedProject) == 1 ? new(HttpStatusCode.NoContent) : Error(HttpStatusCode.NotFound, "not_found", "Project not found.");
                 case ([], "PATCH"):
                     if (!admin) return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs admin.");
                     organization.Name = Field("name");

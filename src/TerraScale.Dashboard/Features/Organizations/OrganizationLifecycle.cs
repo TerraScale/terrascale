@@ -1,12 +1,13 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Organizations;
 
-public sealed class OrganizationLifecycleService(IDashboardState state, AccountService accounts, ITsAuthPlatform platform, TimeProvider time)
+public sealed class OrganizationLifecycleService(IDashboardState state, AccountService accounts, ITsAuthPlatform platform, StripeBilling billing, TimeProvider time)
 {
     public async Task LeaveAsync(AccountContext context, CancellationToken cancellationToken)
     {
@@ -19,21 +20,36 @@ public sealed class OrganizationLifecycleService(IDashboardState state, AccountS
         await ForgetAsync(context, cancellationToken);
     }
 
-    public async Task RequestDeletionAsync(AccountContext context, string confirmation, CancellationToken cancellationToken)
+    // Completes on the owner's confirmed request. An organization already marked by the earlier
+    // deletion request reaches the same path, so its owner can finish it.
+    public async Task DeleteAsync(AccountContext context, string confirmation, CancellationToken cancellationToken)
     {
         context = await FreshAsync(context, cancellationToken);
         var org = context.Organization!;
         if (org.Kind == "personal" || context.Role != "owner") throw new AccountAccessException("Only the owner can delete a business organization.");
         if (confirmation.Trim() != org.Name) throw new AccountAccessException("Type the organization name to confirm deletion.", 422);
+        // The mark stops new projects and billing changes while the deletion runs.
         await accounts.UpdateOrganizationAsync(context, current =>
         {
             if (current.Kind == "personal" || current.RoleFor(context.UserId) != "owner" || current.OwnerUserId != context.UserId)
-                throw new AccountAccessException("Only the owner can request deletion of a business organization.");
+                throw new AccountAccessException("Only the owner can delete a business organization.");
             if (confirmation.Trim() != current.Name) throw new AccountAccessException("Type the organization name to confirm deletion.", 422);
+            if (current.Projects.Values.Any(project => project.Databases.Count > 0)) throw new AccountAccessException("Delete this organization's databases before deleting it.", 409);
             if (current.DeletionRequested) return;
             current.DeletionRequested = true;
             current.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "organization.deletion_requested", current.Name, "organization", time.GetUtcNow()));
         }, cancellationToken);
+        await billing.EndSubscriptionAsync(org.Id, cancellationToken);
+        // ts-auth refuses an organization that still has projects; a 404 is a delete an interrupted request already made.
+        foreach (var projectId in org.Projects.Keys)
+        {
+            try { await platform.DeleteProjectAsync(context.Session, org.Id, projectId, cancellationToken); }
+            catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status404NotFound) { }
+        }
+        try { await platform.DeleteOrganizationAsync(context.Session, org.Id, cancellationToken); }
+        catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status404NotFound) { }
+        await ProjectAfterRemovalAsync(context, true, cancellationToken);
+        await ForgetAsync(context, cancellationToken);
     }
 
     public async Task DeleteProjectAsync(AccountContext context, string projectId, string confirmation, CancellationToken cancellationToken)

@@ -86,6 +86,10 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
             finally { serial.Release(); }
             return Results.NoContent();
         });
+        // Organization deletion removes the binding's organization, so this reads Stripe's side by its metadata.
+        app.MapGet("/__test/billing/plans/subscriptions/{organizationId}", async (HttpContext http, DashboardSessions sessions, AccountService accounts, string organizationId) =>
+            await AccountRequest.RequireAsync(http, sessions, accounts) is null ? Results.Unauthorized() : Results.Json(subscriptions.Values
+                .Where(item => item["metadata"]?["organization_id"]?.GetValue<string>() == organizationId).Select(item => item["status"]!.GetValue<string>()).ToArray()));
         app.MapGet("/__test/billing/plans/probe", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
@@ -203,6 +207,7 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
                         else { subscription["items"]!["data"]![0]!["price"] = price; subscription["pending_update"] = null; }
                     }
                 }
+                else if (request.Method == HttpMethod.Delete) { mutations.Enqueue((customer, path)); subscription["status"] = "canceled"; }
                 var reply = subscription.DeepClone().AsObject();
                 if (portalDefaults.ContainsKey(customer))
                 {
