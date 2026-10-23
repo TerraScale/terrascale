@@ -1,16 +1,13 @@
 ---
 title: Connect with libSQL clients
 description: Use the official libSQL clients for JavaScript, Go, Rust and Python to run SQL against a TerraBase database over HTTP, with the supported SQL, limits and error codes.
-head: [['meta', { name: 'robots', content: 'noindex' }]]
 ---
 
 # Connect with libSQL clients
 
 TerraBase databases accept SQL from the official libSQL clients (`@libsql/client`, `go-libsql`, the `libsql` Rust crate and the `libsql` Python package). The clients speak the libSQL remote protocol (Hrana) over HTTPS; you keep your existing client code and change the URL and token.
 
-::: warning Pending feature
-The libSQL endpoint follows the proposed relational SQL design and is not available on any serving release yet. The snippets below were checked with `@libsql/client` 0.18.0, `go-libsql` (commit `3051e37e6e04`), `libsql` crate 0.10.0 and `libsql` for Python 0.1.11 against a local protocol mock, not against TerraBase.
-:::
+Verified on 2026-10-23 against production (`gru`) with `@libsql/client` 0.18.0, `go-libsql` (commit `3051e37e6e04`), the `libsql` crate 0.10.0 and `libsql` for Python 0.1.11: create table, parameterized insert, batch, join, and committed and rolled-back transactions.
 
 ## URL and token
 
@@ -23,7 +20,7 @@ Replace `{api-origin}` with your provisioned HTTPS API origin, and `{project}` a
 
 - Keep the trailing slash. `@libsql/client` resolves `v2/pipeline` relative to the URL; without the slash it drops the last path segment and the request misses your database.
 - Use the `https://` URL. Only HTTP is served; WebSocket (`wss://`) URLs are not.
-- The token is a project data API key with `documents:read` for reads and `documents:write` for writes and `CREATE`/`DROP`. Obtain it through the supported access flow described in [Authentication](/guides/authentication#server-applications), keep it in your server's secret store and never ship it to a browser.
+- The token is an access token minted from a project data API key with `documents:read` for reads and `documents:write` for writes and `CREATE`/`DROP` (the client-credentials exchange in [Authentication](/guides/authentication#server-applications)). The raw API key is refused with `401`. Access tokens are short-lived (`expires_in`, 15 minutes today): mint a new one and recreate the client before it expires. Keep the key in your server's secret store and never ship it or a token to a browser.
 
 ## JavaScript and TypeScript
 
