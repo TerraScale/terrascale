@@ -104,4 +104,23 @@ public sealed class ColumnMetadataTests
         await Assert.That(reader.GetValue(0)).IsEqualTo(2.5);
         await Assert.That(reader.GetFieldType(0)).IsEqualTo(typeof(double));
     }
+
+    /// <summary>Only a column's own declaration converts a GUID: an expression over one, which has none, keeps its stored text.</summary>
+    [Test]
+    public async Task GuidConversionFollowsTheColumnsOwnDeclaration()
+    {
+        using var database = new TemporaryDatabase();
+        var guid = Guid.NewGuid();
+        using var write = database.Connection.CreateCommand();
+        write.CommandText = "CREATE TABLE typed (id INTEGER PRIMARY KEY, g GUID); INSERT INTO typed VALUES (1, $guid);";
+        write.Parameters.AddWithValue("$guid", guid.ToString());
+        write.ExecuteNonQuery();
+
+        using var query = database.Connection.CreateCommand();
+        query.CommandText = "SELECT g AS alias, coalesce(g, NULL) FROM (SELECT 1 AS id) k LEFT JOIN typed t ON t.id = k.id;";
+        using var reader = query.ExecuteReader();
+        await Assert.That(reader.Read()).IsTrue();
+        await Assert.That(reader.GetValue(0)).IsEqualTo(guid);
+        await Assert.That(reader.GetValue(1)).IsEqualTo(guid.ToString());
+    }
 }

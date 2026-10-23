@@ -400,6 +400,57 @@ public sealed class DocumentCacheTests
         await Assert.That(afterDelete.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
+    // The entry bound counts each entry as 4 KiB of the byte bound: a hot set of more than 4,096 small documents stays cached.
+    [Test]
+    public async Task A_hot_set_of_small_documents_larger_than_4096_entries_stays_cached()
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await using var management = await ManagementApi.StartAsync(settings =>
+            settings["memory-budget"] = (256L * 1024 * 1024).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        using var tenant = await CreateTenantAsync(management, "hot", enterprise: true, cancellationToken: deadline.Token);
+        var database = await tenant.ContextAsync(management.Server, "hot", deadline.Token);
+        var store = (await management.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
+        var cache = management.Server.Services.GetRequiredService<DocumentCache>();
+        var keys = Enumerable.Range(0, 6000).Select(key => new DocumentKey(database, "small", StorageFixture.Id($"hot{key}"))).ToList();
+        var reads = 0;
+        async Task ReadAllAsync()
+        {
+            foreach (var key in keys)
+            {
+                _ = await cache.GetAsync(key, store.Incarnation, () =>
+                {
+                    reads++;
+                    return ValueTask.FromResult<StoredDocument?>(new StoredDocument(key.Id, 1, Encoding.UTF8.GetBytes("""{"name":"first"}"""), Guid.Empty));
+                });
+            }
+        }
+
+        await ReadAllAsync();
+        await Assert.That(reads).IsEqualTo(keys.Count);
+        // Nothing wrote since: every document comes back from the cache, none from storage.
+        await ReadAllAsync();
+        await Assert.That(reads).IsEqualTo(keys.Count);
+    }
+
+    // A cache hit skips the storage read and the refusal check after it, never the one before the lookup.
+    [Test]
+    public async Task A_faulted_copy_refuses_a_document_it_has_cached()
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await using var management = await ManagementApi.StartAsync();
+        using var tenant = await CreateTenantAsync(management, "faulted", cancellationToken: deadline.Token);
+        await PutAsync(tenant, "faulted", "items", "hot", "first", deadline.Token);
+        var database = await tenant.ContextAsync(management.Server, "faulted", deadline.Token);
+        var documents = management.Server.Services.GetRequiredService<IDocumentService>();
+        var key = new DocumentKey(database, "items", StorageFixture.Id("hot"));
+        await Assert.That(await documents.GetAsync(key, deadline.Token) is StoredDocument).IsTrue();
+        await Assert.That(await documents.GetAsync(key, deadline.Token) is StoredDocument).IsTrue();
+
+        var store = (await management.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
+        await management.Server.Services.GetRequiredService<IReplicaCopyFaults>().RecordAsync(database, store.Incarnation, "a test fault", deadline.Token);
+        await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () => await documents.GetAsync(key, deadline.Token));
+    }
+
     [Test]
     public async Task List_pages_are_cached_until_the_collection_changes()
     {

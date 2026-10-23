@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -12,6 +13,10 @@ internal sealed record ProjectCatalogBinding(
 
 internal sealed partial class EngineManagementService : IProjectCatalog
 {
+    // Every project-token request resolves its project here (twice: admission and authorization), so the read is reused while
+    // the catalog has not committed since it began, like the database lookups.
+    private readonly ConcurrentDictionary<(string Project, string, string), (long Sequence, ProjectMapping Mapping)> _projectMappings = new();
+
     public async ValueTask<ResolveProjectResult> ResolveProjectAsync(string projectId, string actor, bool create, CancellationToken cancellationToken)
     {
         if (options.AuthIssuer is not { } issuer)
@@ -19,19 +24,36 @@ internal sealed partial class EngineManagementService : IProjectCatalog
             return ManagementErrors.NotFound;
         }
 
-        var lookup = await ReadAsync<ProjectMappingResult>(async transaction =>
+        var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
+        var key = (projectId, "", "");
+        var cacheable = CommitTransaction.Value is null;
+        ProjectMapping mapping;
+        if (cacheable && _projectMappings.TryGetValue(key, out var cached) && cached.Sequence == sequence)
         {
-            var organization = await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false);
-            return new ProjectMapping(organization, organization is not null
-                && await IsProjectBoundAsync(transaction, projectId, organization, cancellationToken).ConfigureAwait(false));
-        }, static error => error, cancellationToken).ConfigureAwait(false);
-        if (lookup is not ProjectMapping mapping)
+            mapping = cached.Mapping;
+        }
+        else
         {
-            return lookup switch
+            var lookup = await ShareMissAsync("project", key, sequence, token => ReadAsync<ProjectMappingResult>(async transaction =>
             {
-                Unavailable error => error,
-                ProjectMapping => throw new UnreachableException(),
-            };
+                var organization = await GetAsync(transaction, ProjectOrganizations, projectId, Id, token).ConfigureAwait(false);
+                return new ProjectMapping(organization, organization is not null
+                    && await IsProjectBoundAsync(transaction, projectId, organization, token).ConfigureAwait(false));
+            }, static error => error, token), cancellationToken).ConfigureAwait(false);
+            if (lookup is not ProjectMapping read)
+            {
+                return lookup switch
+                {
+                    Unavailable error => error,
+                    ProjectMapping => throw new UnreachableException(),
+                };
+            }
+
+            mapping = read;
+            if (cacheable)
+            {
+                Cache(_projectMappings, key, sequence, mapping);
+            }
         }
 
         if (mapping.Organization is not null || !create)
