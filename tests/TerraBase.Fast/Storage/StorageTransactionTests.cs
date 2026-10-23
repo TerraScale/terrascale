@@ -214,7 +214,12 @@ public sealed class StorageTransactionTests
     [Test]
     public async Task Idle_connections_stay_bounded_across_many_databases()
     {
-        await using var server = await TerraBaseTestServer.StartAsync(services: ConfigurePool);
+        await using var server = await TerraBaseTestServer.StartAsync(services: services =>
+        {
+            ConfigurePool(services);
+            // Maintenance may rent an idle session; freeze its clock for exact pool/LRU/file observations.
+            services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow));
+        });
         var engine = server.Services.GetRequiredService<TursoStorageEngine>();
         var stores = new List<TursoDatabaseStore>();
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
@@ -579,7 +584,7 @@ public sealed class StorageTransactionTests
             return new TursoStorageEngine(
                 options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                provider.GetRequiredService<ILogger<TursoStorageEngine>>(), options.ShutdownGrace, maxIdle: 8, maxIdlePerDatabase: 2);
+                provider.GetRequiredService<ILogger<TursoStorageEngine>>(), options.ShutdownGrace, maxIdle: 8, maxIdlePerDatabase: 2, backupTime: provider.GetRequiredService<TimeProvider>());
         });
     }
 
