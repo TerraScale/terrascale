@@ -66,15 +66,7 @@ internal sealed partial class SqliteStorageTransaction
     private SqliteCommand TableCommand(string sql, string collection, string? id = null)
     {
         var text = store.IsSystem ? sql : string.Format(CultureInfo.InvariantCulture, sql, Table(collection));
-        if (!_bodyCommands.TryGetValue(text, out var command))
-        {
-            command = session.Connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = text;
-            _bodyCommands.Add(text, command);
-        }
-
-        command.Parameters.Clear();
+        var command = session.TableCommand(text, transaction);
         command.Parameters.AddWithValue("$collection", collection);
         if (id is not null)
         {
