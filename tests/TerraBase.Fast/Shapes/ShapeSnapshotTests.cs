@@ -25,7 +25,7 @@ namespace TerraBase.Fast.Shapes;
 /// FR-13 snapshots (shape-reads.md sections 3.2 and 6): every page of a snapshot is built in one read transaction whose
 /// feed head is S, pages are written by short uncaptured writer transactions, and only finished snapshots are served.
 /// The snapshot API runs against the decorated production store; the raw SQLite store is used only to inspect and damage rows.
-/// Reseal policy: 4096 chunks past the newest snapshot's offset, or one hour since it was sealed.
+/// Reseal policy: 16 chunks per page of the newest snapshot past its offset (at most 4096), or one hour since it was sealed.
 /// </summary>
 public sealed class ShapeSnapshotTests
 {
@@ -509,6 +509,32 @@ public sealed class ShapeSnapshotTests
     }
 
     [Test]
+    public async Task A_one_page_snapshot_reseals_at_16_chunks_past_its_offset_but_not_at_15()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await using var fixture = await Fixture.OpenAsync(api);
+        _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(1)));
+        var shape = await ShapeAsync(fixture.Store);
+        var first = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
+        await Assert.That(await ScalarAsync(fixture.Raw, $"SELECT COUNT(*) FROM _tb_shape_snapshot WHERE handle = '{shape.Handle}';")).IsEqualTo(1L);
+
+        // A chunk ending at the snapshot's offset is already covered and does not count.
+        await RawWriteAsync(fixture.Raw, Chunks(shape.Handle, [(0, first.Offset), .. Enumerable.Range(0, ShapeSnapshots.ResealChunksPerPage - 1)
+            .Select(i => (first.Offset + i, first.Offset + i + 1))]));
+        _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(2)));
+
+        await Assert.That(await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None)).IsEqualTo(first)
+            .Because("15 chunks past a one-page snapshot cost a bootstrap fewer requests than resealing saves");
+
+        var last = first.Offset + ShapeSnapshots.ResealChunksPerPage - 1;
+        await RawWriteAsync(fixture.Raw, Chunks(shape.Handle, (last, last + 1)));
+        var second = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
+        await Assert.That(second.Offset).IsEqualTo(await CounterAsync(fixture.Raw))
+            .Because("a bootstrap after 16 chunks starts at the head, not 16 requests behind it");
+        await Assert.That(await fixture.Snapshots.NewestAsync(fixture.Store, shape.Handle, CancellationToken.None)).IsEqualTo(second);
+    }
+
+    [Test]
     public async Task A_snapshot_reseals_at_4096_chunks_past_its_offset_but_not_at_4095()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -517,6 +543,10 @@ public sealed class ShapeSnapshotTests
         var shape = await ShapeAsync(fixture.Store);
         var first = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         await Assert.That(first.Offset).IsGreaterThan(0L);
+        // Pages enough that 16 chunks per page pass 4096, so the cap decides.
+        await RawWriteAsync(fixture.Raw, "INSERT INTO _tb_shape_snapshot (handle, offset, page, next_id, body, sealed_at) VALUES "
+            + string.Join(", ", Enumerable.Range(1, ShapeSnapshots.ResealChunks / ShapeSnapshots.ResealChunksPerPage).Select(page =>
+                FormattableString.Invariant($"('{shape.Handle}', {first.Offset}, {page}, 'p{page}', X'7B7D', 1791849600000)"))) + ";");
 
         // A chunk ending at the snapshot's offset is already covered and does not count.
         await RawWriteAsync(fixture.Raw, Chunks(shape.Handle, (0, first.Offset)));

@@ -50,4 +50,5 @@ elsewhere ("section 15") are the file number prefixes.
 - [21. Slice plan: Sender ACK bookkeeping as built](replication/21-sender-ack-bookkeeping.md)
 - [22. Slice plan: Receiver database isolation as built](replication/22-receiver-database-isolation.md)
 - [22. Shape seals through the remote durable frontier](replication/22-shape-seal-through-frontier.md)
+- [22. Shape snapshots reseal at 16 chunks per page](replication/22-shape-snapshot-reseal-per-page.md)
 - [22. Open questions and risks](replication/22-open-questions-and-risks.md)
