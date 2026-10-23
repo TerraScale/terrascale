@@ -100,6 +100,9 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
     {
         if (request.RequestUri?.Host != "api.stripe.com") throw new HttpRequestException("Unexpected billing plan fixture origin.");
         var path = request.RequestUri.AbsolutePath;
+        // Stripe rejects expand strings with more than four properties.
+        if (Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query).Any(item => item.Key.StartsWith("expand[", StringComparison.Ordinal) && item.Value.Any(value => value!.Split('.').Length > 4)))
+            return Json(new JsonObject { ["error"] = new JsonObject { ["type"] = "invalid_request_error", ["message"] = "You cannot expand more than 4 levels of a property." } }, HttpStatusCode.BadRequest);
         if (request.Method == HttpMethod.Get && path.StartsWith("/v1/prices/", StringComparison.Ordinal))
         {
             if (request.Headers.Authorization?.Parameter != "sk_test_demo") return Json(new JsonObject { ["error"] = new JsonObject { ["message"] = "Unknown vendor credential." } }, HttpStatusCode.Unauthorized);

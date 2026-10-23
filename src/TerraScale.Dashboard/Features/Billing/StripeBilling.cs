@@ -150,6 +150,17 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         return await RefreshAsync(context.Organization!.Id, cancellationToken);
     }
 
+    // Reloading billing finishes a checkout whose browser return or webhook
+    // never reconciled it. Only Stripe's canonical facts grant the plan.
+    public async Task<bool> ReconcileCheckoutAsync(AccountContext context, CancellationToken cancellationToken)
+    {
+        context = await MemberAsync(context, cancellationToken);
+        if (context.Organization!.InternalBilling is not null ||
+            await ReadAsync(context.Organization.Id, cancellationToken) is not { Kind: "stripe", CheckoutId.Length: > 0, SubscriptionId.Length: 0, Status: "pending" }) return false;
+        await RefreshAsync(context.Organization.Id, cancellationToken);
+        return true;
+    }
+
     public async Task<string> PortalAsync(AccountContext context, CancellationToken cancellationToken)
     {
         context = await OwnerAsync(context, cancellationToken);
@@ -211,7 +222,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
             if (binding.SubscriptionId.Length == 0 && binding.CheckoutId.Length > 0)
             {
                 checkout = await client.V1.Checkout.Sessions.GetAsync(binding.CheckoutId,
-                    new() { Expand = ["setup_intent", "subscription.default_payment_method", "subscription.items.data.price.product"] }, cancellationToken: cancellationToken);
+                    new() { Expand = ["setup_intent"] }, cancellationToken: cancellationToken);
                 ValidateCheckout(binding, checkout);
             }
             BillingPlan plan;
