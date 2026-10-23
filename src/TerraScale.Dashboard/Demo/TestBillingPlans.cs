@@ -181,18 +181,6 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
                 if (scenario == "offline" || scenario == "reconcile-outage" && request.Method == HttpMethod.Get && outages.ContainsKey(customer))
                     return Json(new JsonObject { ["error"] = new JsonObject { ["message"] = "Test-only Stripe outage." } }, HttpStatusCode.ServiceUnavailable);
                 if (scenario == "foreign-customer") { var foreign = subscription.DeepClone(); foreign["customer"] = "cus_foreign"; return Json(foreign); }
-                if (request.Method == HttpMethod.Delete)
-                {
-                    // Stripe ends the subscription and any schedule managing it at once.
-                    var cancel = QueryHelpers.ParseQuery(request.RequestUri.Query);
-                    if (cancel.GetValueOrDefault("prorate") != "false" || cancel.GetValueOrDefault("invoice_now") != "false")
-                        throw new HttpRequestException("Unexpected subscription cancel serialization.");
-                    mutations.Enqueue((customer, "DELETE " + path));
-                    if (subscription["status"]!.GetValue<string>() is "canceled" or "incomplete_expired") throw new HttpRequestException("An ended subscription must not be canceled again.");
-                    subscription["status"] = "canceled"; subscription["canceled_at"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(); subscription["ended_at"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                    if (subscription["schedule"]?.GetValue<string>() is { } managed && schedules.TryGetValue(managed, out var managing)) managing["status"] = "canceled";
-                    subscription["schedule"] = null;
-                }
                 if (request.Method == HttpMethod.Post)
                 {
                     mutations.Enqueue((customer, path));
@@ -219,7 +207,11 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
                         else { subscription["items"]!["data"]![0]!["price"] = price; subscription["pending_update"] = null; }
                     }
                 }
-                else if (request.Method == HttpMethod.Delete) { mutations.Enqueue((customer, path)); subscription["status"] = "canceled"; }
+                else if (request.Method == HttpMethod.Delete)
+                {
+                    if (subscription["status"]!.GetValue<string>() is "canceled" or "incomplete_expired") throw new HttpRequestException("An ended subscription must not be canceled again.");
+                    mutations.Enqueue((customer, "DELETE " + path)); subscription["status"] = "canceled";
+                }
                 var reply = subscription.DeepClone().AsObject();
                 if (portalDefaults.ContainsKey(customer))
                 {
