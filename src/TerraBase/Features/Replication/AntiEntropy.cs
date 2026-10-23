@@ -5,6 +5,7 @@ using Grpc.Core;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -40,6 +41,7 @@ internal sealed class AntiEntropy : BackgroundService
     private readonly TimeProvider _time;
     private readonly ILogger<AntiEntropy> _logger;
     private readonly Counter<long> _repairs;
+    private readonly IUsageMeter _usage;
 
     // Per (database, peer machine): the buckets that differed in the last round, when it began and the copies it compared.
     private readonly ConcurrentDictionary<(TenantContext Database, string Peer), (HashSet<int> Buckets, long At, Ulid Local, Ulid Source)> _differed = new();
@@ -49,9 +51,10 @@ internal sealed class AntiEntropy : BackgroundService
 
     public AntiEntropy(
         IMembership membership, IChangeGroupSource source, IReplicaStates states, IChangeGroupSink sink, ITenantDirectory tenants, TimeProvider time,
-        IMeterFactory meters, ILogger<AntiEntropy> logger, PeerCredential credential)
+        IMeterFactory meters, ILogger<AntiEntropy> logger, PeerCredential credential, IUsageMeter usage)
     {
         _credential = credential;
+        _usage = usage;
         (_membership, _source, _states, _sink, _tenants, _time, _logger) = (membership, source, states, sink, tenants, time, logger);
         _repairs = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.replication.repairs", "{document}",
             "Documents anti-entropy changed, by the peer region they came from.");
@@ -254,6 +257,14 @@ internal sealed class AntiEntropy : BackgroundService
 
         var compared = _differed.TryGetValue((database, peer.Name), out var previous);
         _differed[(database, peer.Name)] = (differing, began, local.Incarnation, source);
+        if (database != ChangeGroups.System && (differing.Count > 0 || (compared && previous.Buckets.Count > 0)))
+        {
+            // Only a round that differs, or the first that matches again, goes to the analytics: idle rounds would rewrite
+            // every database's usage each minute.
+            Received(database, peer, reply.CalculateSize());
+            _usage.RecordReplicationState(database, peer.Region, remaining: differing.Count, diverged: differing.Count > 0);
+        }
+
         HashSet<int> repair = force ? differing : compared ? [.. differing.Where(previous.Buckets.Contains)] : [];
         // A bucket left for the next round differs only since the last one began, when it matched: held as of then, if
         // that round compared the same two copies.
@@ -278,6 +289,7 @@ internal sealed class AntiEntropy : BackgroundService
         var theirKeys = horizon is not null ? new HashSet<(string Collection, string Id)>() : null;
         while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
         {
+            Received(database, peer, call.ResponseStream.Current.CalculateSize());
             var states = Decode(database, call.ResponseStream.Current, source);
             theirKeys?.UnionWith(states.Select(state => (state.Collection, state.Id)));
             if (await _sink.RepairAsync(database, local.Incarnation, states, cancellationToken).ConfigureAwait(false) is not { } repaired)
@@ -327,6 +339,15 @@ internal sealed class AntiEntropy : BackgroundService
         _repairs.Add(changed, new KeyValuePair<string, object?>("peer_region", peer.Region));
         CatalogHeld(database, peer, held, local.Incarnation);
         return changed;
+    }
+
+    // A client database's comparison traffic goes to its replication analytics, never to its billed operations.
+    private void Received(TenantContext database, ClusterMember peer, long bytes)
+    {
+        if (database != ChangeGroups.System)
+        {
+            _usage.RecordReplicationBytes(database, peer.Region, "anti_entropy", sent: false, bytes);
+        }
     }
 
     // Whether this machine's copy in place is still `incarnation`.

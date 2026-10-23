@@ -44,6 +44,18 @@ internal sealed partial class UsageMeter
     // Requests in progress that report their transferred bytes on each flush tick; bounded by the server's open requests.
     private readonly ConcurrentDictionary<object, Action> _active = new();
     private readonly Dictionary<UsageKey, List<IMemoryReservation>> _measurementMemory = [];
+
+    /// <summary>The memory pending measurements hold until a flush writes them.</summary>
+    internal long MeasurementBytesHeld
+    {
+        get
+        {
+            lock (_measurements)
+            {
+                return _measurementMemory.Values.Sum(reservations => reservations.Sum(reservation => reservation.Bytes));
+            }
+        }
+    }
     // Open backlogs by database and peer region; when full, the least recently observed one (a removed database or peer) goes.
     private readonly Dictionary<(DatabaseOwner Database, string Region), (DateTimeOffset Started, DateTimeOffset? Applied, DateTimeOffset Seen)> _backlogs = [];
     private readonly Counter<long> _measurementDrops = meters.Create(Telemetry.MeterName).CreateCounter<long>(
