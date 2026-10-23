@@ -1,7 +1,6 @@
 ---
 title: Connect with psql and Postgres drivers
 description: Connect psql, node-postgres, psycopg, pgx, Npgsql and JDBC to a TerraBase database over the PostgreSQL wire protocol, with the supported SQL, transactions, limits and SQLSTATE codes.
-head: [['meta', { name: 'robots', content: 'noindex' }]]
 ---
 
 <!-- i18n:fallback:de -->
@@ -13,8 +12,8 @@ head: [['meta', { name: 'robots', content: 'noindex' }]]
 
 TerraBase databases accept connections over the PostgreSQL wire protocol (version 3). Use `psql` or a standard Postgres driver: you change the connection URL, not your client code. Tables are TerraBase collections and rows are documents, so SQL writes replicate across regions like writes through the Documents API.
 
-::: warning Pending feature
-The Postgres endpoint is not available on any serving release yet. The snippets below follow driver scripts that were checked with `pg` 8.23.1, `psycopg` 3.3.6, `pgx` v5.11.0, `Npgsql` 10.0.3 and `psql` 18 against PostgreSQL 17, not against TerraBase.
+::: tip Verified
+Checked on 2026-10-23 against production (`pg.terrascale.tech`) with `psql` 18, `pg` 8.23.1, `psycopg` 3.3.6, `pgx` v5.11.0 and `Npgsql` 10.0.3: tables, writes, joins, parameters, prepared statements and transactions.
 :::
 
 ## Connection URL
