@@ -54,6 +54,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/import TsAuth(databases:read) getImport Imports
         GET /v1/projects/{project}/databases/{database}/index-recommendations TsAuth(databases:read) listIndexRecommendations Indexes
         GET /v1/projects/{project}/databases/{database}/indexes TsAuth(databases:read) listIndexes Indexes
+        GET /v1/projects/{project}/databases/{database}/logs TsAuth(databases:read) listDatabaseLogs Logs
         GET /v1/projects/{project}/databases/{database}/point-in-time TsAuth(databases:read) getRestoreWindow Backups
         GET /v1/projects/{project}/databases/{database}/query-shapes TsAuth(databases:read) listQueryShapes Queries
         GET /v1/projects/{project}/databases/{database}/replication TsAuth(databases:read) getDatabaseReplication Replication
@@ -176,6 +177,7 @@ public sealed class ApiReferenceTests
         foreach (var (path, method, statuses) in new[]
         {
             (project + "/backup-destination", "get", "200,400,401,403,404,421,503"),
+            (project + "/databases/{database}/logs", "get", "200,400,401,403,404,421,503"),
             (project + "/backup-destination", "put", "200,400,401,403,404,421,503"),
             (project + "/backup-destination", "delete", "204,400,401,403,404,421,503"),
             (project + "/databases/{database}/point-in-time", "get", "200,400,401,403,404,421,503"),

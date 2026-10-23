@@ -4,6 +4,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -17,6 +18,12 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
     private const int Kept = 100;
     private const int MaxPending = 1024;
     private const int MaxSaved = 512;
+    private const int MaxRecordBytes = 4096;
+    private const int FlushPageEntries = 32;
+    private const int FlushPageBytes = FlushPageEntries * MaxRecordBytes;
+    // Latest decoded records plus one page, overlapping raw pages, saved IDs, a concurrently evicted batch and serialization.
+    private const long FlushBytes = (Kept + FlushPageEntries) * (2L * MaxRecordBytes + 2048)
+        + 2L * FlushPageBytes + MaxSaved * 128L + Kept * MaxRecordBytes + 128 * 1024;
     private const long ReadBytes = 4 * 1024 * 1024;
     private const string Format = "alpha";
     private readonly Lock _gate = new();
@@ -44,7 +51,8 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
                 entries.RemoveAt(0);
                 _count--;
             }
-            if (_count >= MaxPending || memory.TryReserve(MemoryLane.Foreground, 4096, database) is not { } reserved)
+            // Retained server diagnostics belong to the process, even inside the completing request's QoS context.
+            if (_count >= MaxPending || memory.TryReserve(MemoryLane.Foreground, MaxRecordBytes, tenant: null) is not { } reserved)
             {
                 RecordingLimited = true;
                 _drops.Add(1);
@@ -101,7 +109,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
             lock (_gate) { owners = [.. _pending.Keys]; }
             foreach (var owner in owners)
             {
-                using var admission = memory.TryReserve(MemoryLane.Foreground, ReadBytes);
+                using var admission = memory.TryReserve(MemoryLane.Foreground, FlushBytes, tenant: null);
                 if (admission is null) { return; }
                 DatabaseRequestLog[] batch;
                 lock (_gate) { batch = [.. _pending[owner].Select(entry => entry.Log)]; }
@@ -110,18 +118,34 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
                     // Deleting a database must not let a delayed observation recreate its state.
                     if (await EngineManagementService.DatabaseTenantUncheckedAsync(transaction, owner.OrganizationId, owner.ProjectId, owner.DatabaseId, cancellationToken).ConfigureAwait(false) is null) { return true; }
                     var collection = Records(owner.DatabaseId);
-                    var page = await transaction.ListAsync(collection, null, MaxSaved, 512 * 1024, cancellationToken).ConfigureAwait(false);
-                    if (page.HasMore)
+                    var previous = new List<DatabaseRequestLog>(Kept);
+                    var savedIds = new List<string>(MaxSaved);
+                    string? after = null;
+                    DocumentPage page;
+                    do
                     {
-                        // Replication can temporarily join several bounded rings. Trim an old page before admitting more.
-                        foreach (var document in page.Documents.Take(Kept)) { await transaction.DeleteAsync(collection, document.Id, cancellationToken).ConfigureAwait(false); }
-                        return false;
+                        // A page may include an oversized first row; admit its actual bytes before the engine copies it.
+                        using var pageAdmission = QosContext.Enter(tenant: null, budget: memory);
+                        page = await transaction.ListAsync(collection, after, FlushPageEntries, FlushPageBytes, cancellationToken).ConfigureAwait(false);
+                        foreach (var document in page.Documents)
+                        {
+                            if (savedIds.Count == MaxSaved)
+                            {
+                                // Replication can temporarily join several bounded rings. Trim before admitting more.
+                                foreach (var id in savedIds.Take(Kept)) { await transaction.DeleteAsync(collection, id, cancellationToken).ConfigureAwait(false); }
+                                return false;
+                            }
+                            if (Decode(document) is not { } log) { return false; }
+                            savedIds.Add(document.Id);
+                            previous.Add(log);
+                            after = document.Id;
+                        }
+                        previous = Recent(previous).Take(Kept).ToList();
                     }
-                    var previous = Decode(page);
-                    if (previous is null) { return false; }
+                    while (page.HasMore);
                     var kept = Recent(previous.Concat(batch)).Take(Kept).ToArray();
                     var ids = kept.Select(log => log.Id).ToHashSet(StringComparer.Ordinal);
-                    foreach (var document in page.Documents.Where(document => !ids.Contains(document.Id))) { await transaction.DeleteAsync(collection, document.Id, cancellationToken).ConfigureAwait(false); }
+                    foreach (var id in savedIds.Where(id => !ids.Contains(id))) { await transaction.DeleteAsync(collection, id, cancellationToken).ConfigureAwait(false); }
                     foreach (var log in kept.Where(log => batch.Any(item => item.Id == log.Id))) { await PutAsync(transaction, collection, log.Id, new RequestLogRecord(Format, log), TerraBaseJsonContext.Default.RequestLogRecord, cancellationToken).ConfigureAwait(false); }
                     return true;
                 }, static _ => false, cancellationToken).ConfigureAwait(false);
@@ -136,6 +160,7 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
                 }
             }
         }
+        catch (QosMemoryException) { return; }
         finally { _io.Release(); }
     }
 
@@ -150,16 +175,22 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         var result = new List<DatabaseRequestLog>(page.Documents.Count);
         foreach (var document in page.Documents)
         {
-            if (document.Json.Length > 4096) { return null; }
-            RequestLogRecord? record;
-            try { record = EntityPayload.Read(document, TerraBaseJsonContext.Default.RequestLogRecord); }
-            catch (Exception error) when (error is JsonException or InvalidOperationException) { return null; }
-            if (record is not { Format: Format, Request: { } log } || log.Id != document.Id || !EntityIds.IsValid(log.Id)
-                || log.Time == default || log.Route is not { Length: > 0 and <= 512 } || log.Route.Contains('?', StringComparison.Ordinal)
-                || log.Status is < 100 or > 599 || !double.IsFinite(log.LatencyMs) || log.LatencyMs < 0 || log.Operations < 0) { return null; }
+            if (Decode(document) is not { } log) { return null; }
             result.Add(log);
         }
         return [.. result];
+    }
+
+    private static DatabaseRequestLog? Decode(StoredDocument document)
+    {
+        if (document.Json.Length > MaxRecordBytes) { return null; }
+        RequestLogRecord? record;
+        try { record = EntityPayload.Read(document, TerraBaseJsonContext.Default.RequestLogRecord); }
+        catch (Exception error) when (error is JsonException or InvalidOperationException) { return null; }
+        if (record is not { Format: Format, Request: { } log } || log.Id != document.Id || !EntityIds.IsValid(log.Id)
+            || log.Time == default || log.Route is not { Length: > 0 and <= 512 } || log.Route.Contains('?', StringComparison.Ordinal)
+            || log.Status is < 100 or > 599 || !double.IsFinite(log.LatencyMs) || log.LatencyMs < 0 || log.Operations < 0) { return null; }
+        return log;
     }
 
     private IEnumerable<DatabaseRequestLog> Recent(IEnumerable<DatabaseRequestLog> logs) => logs

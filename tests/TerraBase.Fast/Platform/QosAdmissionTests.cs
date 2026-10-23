@@ -65,7 +65,7 @@ public sealed class QosAdmissionTests
     {
         const long Budget = 4 * 1024 * 1024;
         var hook = new UsageCommitHook();
-        await using var api = await ManagementApi.StartAsync(settings => settings["memory-budget"] = "4194304", hook.Install);
+        await using var api = await RequestLogMemoryFixture.StartAsync(settings => settings["memory-budget"] = "4194304", hook.Install);
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         _ = await tenant.ContextAsync(api.Server, "app");
         // Any catalog commit invalidates the warmed plan cache.
@@ -75,6 +75,7 @@ public sealed class QosAdmissionTests
         var client = management ? owner : tenant.Data;
         var uri = management ? new Uri($"/v1/management/organizations/{tenant.OrganizationId}", UriKind.Relative)
             : tenant.Database("app", "/collections");
+        await RequestLogMemoryFixture.DrainAsync(api.Server);
         var reads = 0;
         hook.BeforeGet = _ => Interlocked.Increment(ref reads);
         var budget = api.Server.Services.GetRequiredService<IMemoryBudget>();
@@ -205,7 +206,7 @@ public sealed class QosAdmissionTests
     [Test]
     public async Task Chunked_body_memory_refusal_releases_admission_and_does_not_write()
     {
-        await using var api = await ManagementApi.StartAsync(settings => settings["memory-budget"] = "4194304");
+        await using var api = await RequestLogMemoryFixture.StartAsync(settings => settings["memory-budget"] = "4194304");
         using var hobby = await api.CreateTenantAsync("documents:read", "documents:write");
         var database = await hobby.ContextAsync(api.Server, "app");
         await StorageFixture.CreateCollectionAsync(hobby, "app", "items");
@@ -223,6 +224,7 @@ public sealed class QosAdmissionTests
             await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
 
+        await RequestLogMemoryFixture.DrainAsync(api.Server);
         using (var released = api.Server.Services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Foreground, 262_144, database))
         {
             await Assert.That(released).IsNotNull();

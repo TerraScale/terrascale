@@ -24,7 +24,7 @@ public sealed class AllowanceEmailTests(TerraBaseFixture fixture)
         await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, services: services => services.AddSingleton<IEmailSender>(sender));
         var (_, _, tokens) = await oidc.SignInAndRedeemAsync("allowance-owner@example.test");
         var access = tokens.GetProperty("access_token").GetString()!;
-        var organization = await oidc.OkAsync(HttpMethod.Post, Organizations, access, new { name = "Allowance fixture" });
+        var organization = await oidc.OkAsync(HttpMethod.Post, Organizations, access, new { name = "Allowance fixture" }, HttpStatusCode.Created);
         var id = organization.GetProperty("id").GetString()!;
         var request = Request(id);
         var responses = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => SendAsync(oidc.Client, request)));
@@ -67,7 +67,7 @@ public sealed class AllowanceEmailTests(TerraBaseFixture fixture)
         var sender = new Sender(captured) { Outcome = EmailDeliveryOutcome.Retryable };
         await using var oidc = await OidcHarness.StartAsync(fixture, email: captured, services: services => services.AddSingleton<IEmailSender>(sender));
         var (_, _, tokens) = await oidc.SignInAndRedeemAsync("allowance-retry@example.test");
-        var organization = await oidc.OkAsync(HttpMethod.Post, Organizations, tokens.GetProperty("access_token").GetString()!, new { name = "Retry fixture" });
+        var organization = await oidc.OkAsync(HttpMethod.Post, Organizations, tokens.GetProperty("access_token").GetString()!, new { name = "Retry fixture" }, HttpStatusCode.Created);
         var request = Request(organization.GetProperty("id").GetString()!);
         using var retry = await SendAsync(oidc.Client, request);
         await Assert.That((await retry.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString()).IsEqualTo("retryable");

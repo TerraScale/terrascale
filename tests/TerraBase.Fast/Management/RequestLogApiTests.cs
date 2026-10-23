@@ -43,7 +43,7 @@ public sealed class RequestLogApiTests
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
-        using var failed = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/sql"), new { sql = "SELECT * FROM people" });
+        using var failed = await data.PostAsJsonAsync(ManagementApi.Uri(database.Data + "/sql"), new { sql = "SELECT * FROM people" });
         await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
         using var project = Project(api, database.Project, "databases:read");
         var body = await ReadAsync(project, database, "?status=5xx");
@@ -128,6 +128,7 @@ public sealed class RequestLogApiTests
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, time: time))
             {
                 database = await api.CreateManagedDatabaseAsync();
+                await api.SetPlanAsync(api.User, database.Organization, "enterprise");
                 await api.VerifyProjectBindingAsync(database.Organization, database.Project);
                 using var project = Project(api, database.Project, "databases:read");
                 using var data = await api.CreateClientAsync(database.Organization, "documents:read");
