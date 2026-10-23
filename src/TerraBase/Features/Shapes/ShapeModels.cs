@@ -68,8 +68,8 @@ internal interface IShapeChunks
 /// <summary>Live long-polls and their flights.</summary>
 internal interface IShapeLiveTail
 {
-    /// <summary>Waits at <paramref name="offset"/>; <paramref name="cursor"/> is the request's live bucket, null when absent.</summary>
-    ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, long? cursor, CancellationToken cancellationToken);
+    /// <summary>Waits at <paramref name="offset"/>; every live bucket shares the wait.</summary>
+    ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken);
 }
 
 /// <summary>Cross-machine resumes.</summary>

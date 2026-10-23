@@ -148,7 +148,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
             }
         }
 
-        public ValueTask<bool> HasCollectionAsync(string name, CancellationToken cancellationToken) => inner.HasCollectionAsync(name, cancellationToken);
+        public ValueTask<CollectionInfo?> FindCollectionAsync(string name, CancellationToken cancellationToken) => inner.FindCollectionAsync(name, cancellationToken);
     }
 
     private sealed class Transaction(StampingStorageEngine engine, TenantContext? database, IStorageTransaction inner) : IStorageTransaction
