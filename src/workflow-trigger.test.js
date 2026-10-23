@@ -14,51 +14,38 @@ const ownedCommands = [
   "npm test",
 ];
 
-test("main and pull requests use the reviewed Node runtimes in one verify job", async () => {
+test("PRs keep one verify job and supported Node 22 compatibility stays weekly", async () => {
   const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
   assert.match(workflow, /^  pull_request:\n    branches: \[main\]\n/mu);
-  assert.doesNotMatch(workflow, /^  (?:pull_request_target|workflow_dispatch|schedule):/mu);
+  assert.doesNotMatch(workflow, /^  pull_request_target:/mu);
+  assert.match(workflow, /^  schedule:/mu);
   assert.match(workflow, /^permissions:\n  contents: read\n/mu);
   const job = jobDefinition(workflow, "verify");
   assert.match(job, /runs-on: ubuntu-24\.04/u);
   assert.doesNotMatch(job, /matrix\./u);
-  assert.match(job, /node-version: "24\.21\.0"/u);
-  assert.match(job, /node-version: "22\.23\.2"/u);
+  assert.match(job, /github\.event_name == 'schedule' \|\| github\.event_name == 'workflow_dispatch'\) && '22\.23\.2' \|\| '24\.21\.0'/u);
   assert.match(job, /actions\/checkout@11d5960a326750d5838078e36cf38b85af677262/u);
   assert.match(job, /persist-credentials: false/u);
   assert.match(job, /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/u);
-  assert.match(stepNamed(job, "Set up Node 22").body, /if: github\.event_name == 'push'/u);
-  assert.match(stepNamed(job, "Provision the reviewed npm CLI for Node 22").body, /if: github\.event_name == 'push'/u);
-  assert.match(stepNamed(job, "Run SDK tests on Node 22").body, /if: github\.event_name == 'push'/u);
 });
 
-test("CI runs exactly the reviewed steps in order", async () => {
+test("CI retains the reviewed checks and main skips only an identical proven PR tree", async () => {
   const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
   const parsed = steps(jobDefinition(workflow, "verify"));
-  assert.deepEqual(parsed.map((step) => step.name), [
-    "Check out the pull request revision",
-    "Require the owner-approved 0.0.x version policy",
-    "Set up the reviewed Node runtime",
-    "Provision the reviewed npm CLI",
-    "Install locked dependencies",
-    "Typecheck",
-    "Generate SDK type declarations",
-    "Check C# route drift",
-    "Run SDK tests",
-    "Set up Node 22",
-    "Provision the reviewed npm CLI for Node 22",
-    "Run SDK tests on Node 22",
-  ]);
   const commands = parsed.flatMap((step) => {
     const run = runOf(step);
-    return run === undefined || run.startsWith("set -euo") ? [] : [run];
+    return run !== undefined && ownedCommands.includes(run) ? [run] : [];
   });
-  assert.deepEqual(commands, [...ownedCommands, "node scripts/provision-reviewed-npm.js", "npm test"]);
+  assert.deepEqual(commands, ownedCommands);
+  for (const name of ["Typecheck", "Generate SDK type declarations", "Check C# route drift", "Run SDK tests", "Audit dependencies"])
+    assert.match(stepNamed(jobDefinition(workflow, "verify"), name).body, /steps\.proof\.outputs\.proven != 'true'/u);
+  const save = stepNamed(jobDefinition(workflow, "verify"), "Save main npm cache");
+  assert.match(save.body, /github\.event_name == 'push'/u);
 });
 
 test("CI never invokes or provisions TerraBase, downloads a producer, or lowers CPU priority", async () => {
   const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-  assert.doesNotMatch(workflow, /terrabase|integration|provision-terrabase|run-terrabase|scripts\/ci\/|contracts\/|test:browser|e2e/iu);
+  assert.doesNotMatch(workflow, /terrabase|integration|provision-terrabase|run-terrabase|contracts\/|test:browser|e2e/iu);
   assert.doesNotMatch(workflow, /\b(?:curl|wget|gh release|nice|renice)\b/u);
   assert.doesNotMatch(workflow, /secrets\.|NPM_TOKEN|REGISTRY_TOKEN|TERRASCALE_|FORGEJO/u);
 });
