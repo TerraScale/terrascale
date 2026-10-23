@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Fast.Documents;
+using TerraBase.Fast.Storage;
 
 namespace TerraBase.Fast.Sql;
 
@@ -19,9 +20,9 @@ public sealed class SqlEngineReadTests
         }
 
         (await api.TransactAsync(
-            new { op = "put", collection = "people", id = "1", document = new { id = 1, name = "ann", team = "a" } },
-            new { op = "put", collection = "people", id = "2", document = new { id = 2, name = "bob", team = "b" } },
-            new { op = "put", collection = "teams", id = "a", document = new { code = "a", title = "Alpha" } })).Status.ShouldBe(HttpStatusCode.OK);
+            new { op = "put", collection = "people", id = StorageFixture.Id("1"), document = new { id = 1, name = "ann", team = "a" } },
+            new { op = "put", collection = "people", id = StorageFixture.Id("2"), document = new { id = 2, name = "bob", team = "b" } },
+            new { op = "put", collection = "teams", id = StorageFixture.Id("a"), document = new { code = "a", title = "Alpha" } })).Status.ShouldBe(HttpStatusCode.OK);
         return api;
     }
 

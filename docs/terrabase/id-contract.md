@@ -16,7 +16,8 @@ fields intact. API envelopes may return `id` beside `document` so clients can ad
 
 Every document id is a canonical ULID: 26 uppercase Crockford base32 characters. Any other form, including
 lowercase or hyphenated text, answers `400 invalid_document_id`, so one document has exactly one id. This applies
-equally to direct writes, transaction operations and imports. SQL queries take any value a field holds.
+equally to direct writes, transaction operations and imports. SQL is free: queries match any field value, and a
+SQL table (`CREATE TABLE`) keys its rows by their primary key value, which the Documents API does not address.
 Names, counters, pagination sequences, secret hashes and query fingerprints are lookup values rather than
 entity IDs; they are not generated entity identities.
 

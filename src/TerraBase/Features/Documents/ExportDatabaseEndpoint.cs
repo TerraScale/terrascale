@@ -64,7 +64,7 @@ public sealed class ExportDatabaseEndpoint(IDocumentService documents, ITenantDi
             return new ExportStart(null, null);
         }
 
-        return (DocumentRoute.CheckCollectionName(collection.ToString()), DocumentRoute.CheckDocumentId(query["after_id"].ToString())) switch
+        return (DocumentRoute.CheckCollectionName(collection.ToString()), DocumentRoute.CheckStoredId(query["after_id"].ToString())) switch
         {
             (Validation error, _) => error,
             (_, Validation error) => error,

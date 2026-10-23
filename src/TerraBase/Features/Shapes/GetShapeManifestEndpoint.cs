@@ -225,7 +225,7 @@ internal sealed class GetShapeManifestEndpoint(
 
         try
         {
-            return DocumentRoute.CheckDocumentId(StrictUtf8.GetString(bytes)) is string id ? new SnapshotOffset(snapshot, id) : null;
+            return DocumentRoute.CheckStoredId(StrictUtf8.GetString(bytes)) is string id ? new SnapshotOffset(snapshot, id) : null;
         }
         catch (DecoderFallbackException)
         {

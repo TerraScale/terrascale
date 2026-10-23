@@ -10,23 +10,18 @@ public sealed class SqlReadTests
 {
     private static readonly int[] TwoArguments = [1, 2];
 
-    // Rows are documents: seeded through the document API, key columns stored as fields too.
+    // Rows are documents keyed by their primary key, seeded through SQL.
     private static async Task<DocumentApi> SeedAsync()
     {
         var api = await DocumentApi.StartAsync();
         await SqlApi.OkAsync(api,
             "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL, team TEXT, age INTEGER, score REAL)",
-            "CREATE TABLE teams (code TEXT PRIMARY KEY, title TEXT)");
-        (await api.TransactAsync(
-            Put("people", "1", new { id = 1, name = "ann", team = "a", age = 31, score = 1.5 }),
-            Put("people", "2", new { id = 2, name = "bob", team = "a", age = 25, score = 2.5 }),
-            Put("people", "3", new { id = 3, name = "cy", team = "b", age = 40 }),
-            Put("teams", "a", new { code = "a", title = "Alpha" }),
-            Put("teams", "b", new { code = "b", title = "Beta" }))).Status.ShouldBe(HttpStatusCode.OK);
+            "CREATE TABLE teams (code TEXT PRIMARY KEY, title TEXT)",
+            "INSERT INTO people VALUES (1, 'ann', 'a', 31, 1.5), (2, 'bob', 'a', 25, 2.5)",
+            "INSERT INTO people (id, name, team, age) VALUES (3, 'cy', 'b', 40)",
+            "INSERT INTO teams VALUES ('a', 'Alpha'), ('b', 'Beta')");
         return api;
     }
-
-    private static object Put(string collection, string id, object document) => new { op = "put", collection, id, document };
 
     private static async Task<string> RowsAsync(DocumentApi api, object statement)
     {

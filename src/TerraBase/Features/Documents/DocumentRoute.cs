@@ -196,6 +196,15 @@ internal static class DocumentRoute
             ? id
             : new Validation("id must be a canonical ULID: 26 uppercase Crockford base32 characters", "invalid_document_id");
 
+    /// <summary>
+    /// A stored document id carried back in a cursor: a ULID, or a SQL table's primary key value (1 to 256 characters
+    /// without control characters), which the Documents API never accepts as input.
+    /// </summary>
+    public static Valid<string> CheckStoredId(string? id) =>
+        id is { Length: > 0 and <= 256 } && !id.Any(char.IsControl)
+            ? id
+            : new Validation("id must be 1 to 256 characters without control characters");
+
     /// <summary>A document URI built from escaped route values, escaping caller-supplied keys.</summary>
     public static string Location(HttpContext context, DocumentKey key) =>
         $"/v1/projects/{Uri.EscapeDataString(Project(context))}/databases/{Uri.EscapeDataString(Database(context).Value)}/collections/{Uri.EscapeDataString(key.Collection)}/documents/by-key?id={Uri.EscapeDataString(key.Id)}";
