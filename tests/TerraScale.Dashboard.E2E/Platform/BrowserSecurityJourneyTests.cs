@@ -32,6 +32,7 @@ public sealed class BrowserSecurityJourneyTests(DashboardE2EFixture fixture)
                 var html = await response.Content.ReadAsStringAsync();
                 await Assert.That(html).DoesNotContain("Synthetic exception detail");
                 var nonce = System.Text.RegularExpressions.Regex.Match(html, "nonce=\"([^\"]+)\"").Groups[1].Value;
+                nonce = System.Net.WebUtility.HtmlDecode(nonce); // Razor encodes "+" in the attribute
                 await Assert.That(nonce.Length).IsGreaterThan(0);
                 await Assert.That(response.Headers.GetValues("Content-Security-Policy").Single()).Contains("'nonce-" + nonce + "'");
             }
