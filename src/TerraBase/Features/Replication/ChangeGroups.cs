@@ -90,6 +90,12 @@ public interface IChangeGroupSource
     Task ChangedAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// Subscribes to database invalidations after committed local groups, catalog changes or copy publication. Subscribe
+    /// before initial discovery; callbacks may repeat or race disposal, and must only enqueue work without throwing.
+    /// </summary>
+    IDisposable Subscribe(Action<TenantContext> changed);
+
+    /// <summary>
     /// Records <paramref name="peer"/>'s stable stamp of the database, reported without an acknowledgement to a frontier of
     /// <paramref name="incarnation"/>. False, with nothing recorded, when refused.
     /// </summary>

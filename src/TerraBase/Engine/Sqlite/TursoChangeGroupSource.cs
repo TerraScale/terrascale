@@ -51,8 +51,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             "Age of the oldest local commit that a peer heard from in the last 24 h has not acknowledged, over every database.");
     }
 
-    // shortcut: lists every database file on each pass, so a database with unsent groups ships after a restart even when
-    // nothing opened it; keep a set of databases with unacknowledged groups once machines hold many databases.
+    // Startup, catalog changes and notification overflow rediscover files, including copies not opened since restart.
     public async IAsyncEnumerable<TenantContext> ListDatabasesAsync([EnumeratorCancellation] CancellationToken cancellationToken)
     {
         if (_engine.SystemDatabaseExists)
@@ -255,6 +254,27 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     }
 
     public Task ChangedAsync(CancellationToken cancellationToken) => _engine.NextCommitAsync(cancellationToken);
+
+    public IDisposable Subscribe(Action<TenantContext> changed)
+    {
+        ArgumentNullException.ThrowIfNull(changed);
+        var subscription = new Subscription(_engine, changed);
+        _engine.ReplicationChanged += changed;
+        return subscription;
+    }
+
+    private sealed class Subscription(SqliteStorageEngine engine, Action<TenantContext> changed) : IDisposable
+    {
+        private Action<TenantContext>? _changed = changed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _changed, null) is { } callback)
+            {
+                engine.ReplicationChanged -= callback;
+            }
+        }
+    }
 
     // Every row the peer lacks past `after` is still here: the rows past the end of the known quiet ranges from `after` are
     // all kept. Those ranges hold no local group, so deleted rows inside them are none a peer lacks: a live stream whose

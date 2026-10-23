@@ -13,6 +13,8 @@ internal sealed class FaultAwareReplicaSource(
 
     public Task ChangedAsync(CancellationToken cancellationToken) => source.ChangedAsync(cancellationToken);
 
+    public IDisposable Subscribe(Action<TenantContext> changed) => source.Subscribe(changed);
+
     public ValueTask<SourceGroups?> ReadAsync(
         TenantContext database, Ulid incarnation, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken) =>
         ReadAsync(database, incarnation, () => source.ReadAsync(database, incarnation, after, maxGroups, maxBytes, cancellationToken), static () => null, cancellationToken);
