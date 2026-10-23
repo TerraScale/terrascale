@@ -40,7 +40,7 @@ public sealed class AuthenticationMcpJourneyTests(DashboardRootFixture fixture)
             "The mobile section selector redirects to the existing section route");
         using var response = await browser.GetAsync("/auth/danger");
         var html = await response.Content.ReadAsStringAsync();
-        Check(response.StatusCode == HttpStatusCode.ServiceUnavailable, "The danger zone route answers 503 while ts-auth management is unavailable");
+        Check(response.StatusCode == HttpStatusCode.OK, "The danger zone route loads while ts-auth management is unavailable");
         Check(html.Contains("id=\"auth-danger\"") && html.Contains("Sign out all users") && html.Contains("Reset emails"),
             "The danger zone lists both rows with their actions");
         Check(Regex.Matches(html, "<button[^>]*disabled>(Sign out all users|Reset emails)</button>").Count == 2, "Both danger actions are disabled");
@@ -92,8 +92,10 @@ public sealed class AuthenticationMcpJourneyTests(DashboardRootFixture fixture)
             .EnumerateArray().Single(field => field.GetProperty("key").GetString() == "client_secret").GetProperty("type").GetString() == "password",
             "A provider secret is explicitly described as a write-only field");
         using var native = await browser.GetAsync("/auth");
-        Check(native.StatusCode == HttpStatusCode.ServiceUnavailable && (await native.Content.ReadAsStringAsync()).Contains(Unavailable, StringComparison.Ordinal),
+        var console = await native.Content.ReadAsStringAsync();
+        Check(native.StatusCode == HttpStatusCode.OK && console.Contains(Unavailable, StringComparison.Ordinal),
             "The native console and MCP expose the same authoritative project-provisioning gap");
+        Check(Regex.IsMatch(console, "id=\"auth-issuer\">https://auth\\.terrascale\\.tech/[0-9A-Za-z]+</code>"), "The console shows the project's ts-auth issuer");
         foreach (var (name, arguments) in UnprovisionedCalls)
             Error(await Call(replica, secret, name, arguments), Unavailable);
 

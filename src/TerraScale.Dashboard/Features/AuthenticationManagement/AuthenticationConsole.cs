@@ -47,11 +47,9 @@ public static class AuthenticationConsole
         var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
         if (context is null) return AccountEndpoints.LoginRedirect(http);
         if (context.Project is null) return HttpRedirects.SeeOther("/");
-        // Only the public demo registers this; production has no binding and keeps the 503 unavailable page.
+        // Only the public demo registers this; production shows the project's issuer and marks management unavailable.
         var data = http.RequestServices.GetService<IAuthenticationDemoData>()?.Snapshot;
-        var page = AuthenticationView.Create(new(ShellModel.For(http, context, key == "overview" ? "Authentication" : "Authentication · " + section.Title), section, http.Request.Query["q"].ToString(), data));
-        if (data is null) page.StatusCode = 503;
-        return page;
+        return AuthenticationView.Create(new(ShellModel.For(http, context, key == "overview" ? "Authentication" : "Authentication · " + section.Title), section, http.Request.Query["q"].ToString(), data));
     }
 }
 
@@ -68,6 +66,8 @@ public sealed record AuthenticationSnapshot(string Issuer, string ClientId, stri
 public sealed record AuthenticationPage(ShellModel Shell, AuthenticationSection Section, string Search = "", AuthenticationSnapshot? Data = null)
 {
     public AccountContext Context => Shell.Context;
+    // ts-auth serves every project tenant's OIDC discovery and JWKS at this issuer while the project exists.
+    public string Issuer => Data?.Issuer ?? "https://auth.terrascale.tech/" + Context.Project?.Id;
     public string Heading => Section.Key == "overview" ? "Authentication" : "Authentication: " + Section.Title;
 }
 public sealed record AuthenticationField(string Key, string Label, string Type = "text", bool Required = false, string Placeholder = "", string Hint = "", string[]? Options = null);
