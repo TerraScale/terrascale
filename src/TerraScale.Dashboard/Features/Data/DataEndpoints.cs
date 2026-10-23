@@ -162,7 +162,7 @@ public static class DataEndpoints
         try
         {
             collections = await data.CollectionsAsync(context, id, http.RequestAborted);
-            if (collection.Length == 0) collection = section == "documents" && !collections.Any(item => item.Name == "users") ? collections.FirstOrDefault()?.Name ?? "users" : "users";
+            if (collection.Length == 0) collection = section is "documents" or "schema" && !collections.Any(item => item.Name == "users") ? collections.FirstOrDefault()?.Name ?? "users" : "users";
             DataService.ValidCollection(collection);
             if (section == "documents" && collections.Count > 0)
             {
@@ -188,7 +188,8 @@ public static class DataEndpoints
                 if (sql.Length == 0 && submittedForm is null) sql = queries.FirstOrDefault(query => query.Id == http.Request.Query["savedQueryId"])?.Sql ?? "SELECT * FROM " + collection + " LIMIT 20";
                 catalog = await data.CatalogAsync(context, id, collections, http.RequestAborted);
             }
-            else if (section == "schema") schema = JsonSerializer.Serialize(await data.SchemaAsync(context, id, collection, http.RequestAborted), new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
+            // A collection exists once it holds a document; until then there is no schema to infer.
+            else if (section == "schema" && collections.Any(item => item.Name == collection)) schema = JsonSerializer.Serialize(await data.SchemaAsync(context, id, collection, http.RequestAborted), new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
             else if (section == "indexes") indexes = await data.IndexesAsync(context, id, http.RequestAborted);
             else if (section == "history") documentId = http.Request.Query["id"].ToString() is { Length: > 0 } historyId ? DataService.ValidDocumentId(historyId) : "";
         }
