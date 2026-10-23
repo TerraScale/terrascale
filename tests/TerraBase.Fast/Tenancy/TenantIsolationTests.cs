@@ -27,13 +27,14 @@ public sealed class TenantIsolationTests
 
     private static readonly string[] CallerOnlyRoutes =
     [
-        // Health probes and the API reference: no tenant data at all.
+        // Health probes, the region catalog and the API reference: no tenant data at all.
         "GET /",
         "GET /backupz",
         "GET /health/replication",
         "GET /healthz",
         "GET /openapi/{documentName}.json",
         "GET /readyz",
+        "GET /v1/regions",
         "GET /v1/management/current-organization",
         "GET /v1/management/organizations",
         "POST /v1/management/invitations/accept",

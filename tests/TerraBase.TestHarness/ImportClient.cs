@@ -31,9 +31,9 @@ public sealed class ImportClient : IAsyncDisposable
     /// <summary>A client with a project access token holding every scope.</summary>
     public HttpClient Client { get; }
 
-    public static async Task<ImportClient> StartAsync()
+    public static async Task<ImportClient> StartAsync(Action<Microsoft.Extensions.DependencyInjection.IServiceCollection>? services = null)
     {
-        var api = await ManagementApi.StartAsync();
+        var api = await ManagementApi.StartAsync(services: services);
         var project = EntityIds.New().ToString();
         return new ImportClient(api, project, api.WithToken(Token(api, project, AllScopes)));
     }

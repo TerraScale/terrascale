@@ -42,7 +42,7 @@ public static class DatabaseRegions
     /// regions. A new database of a cell (<paramref name="created"/> where writes are confirmed in another region, decision
     /// 0013a) names one; an update may remove them all, and the database then takes no writes until one is added back.
     /// </summary>
-    // Regions come and go with their machines, so any well-formed region is accepted; one without members replicates nothing.
+    // Commits apply this check everywhere alike, so it accepts any well-formed region; requests also check Unserved.
     internal static Valid<IReadOnlyList<string>> Check(string home, IReadOnlyList<string> replicas, bool created) =>
         replicas.Count == 0 && created ? TwoRegions
         : replicas.Count > MaxReplicas ? new Validation("replicaRegions holds at most 8 regions")
@@ -50,6 +50,15 @@ public static class DatabaseRegions
         : replicas.Distinct(StringComparer.Ordinal).Count() != replicas.Count ? new Validation("replicaRegions must not repeat a region")
         : replicas.Contains(home) ? new Validation("replicaRegions must not name the home region")
         : replicas;
+
+    /// <summary>
+    /// <c>400 invalid_request</c> naming the serving regions when <paramref name="regions"/> names one outside
+    /// <paramref name="serving"/> (the region catalog, and on update the database's current regions); otherwise null.
+    /// </summary>
+    internal static Validation? Unserved(string field, IEnumerable<string> regions, IReadOnlyList<string> serving) =>
+        regions.FirstOrDefault(region => !serving.Contains(region, StringComparer.Ordinal)) is { } unknown
+            ? new Validation($"{field} names {unknown}, a region TerraBase does not serve; choose from: {string.Join(", ", serving)}")
+            : null;
 
     /// <summary>
     /// <c>421 wrong_region</c>: the database is served in <paramref name="regions"/>, its home <paramref name="home"/> first; clients

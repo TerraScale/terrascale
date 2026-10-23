@@ -65,6 +65,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/saved-queries TsAuth(databases:read) listSavedQueries Queries
         GET /v1/projects/{project}/saved-queries/{query} TsAuth(databases:read) getSavedQuery Queries
         GET /v1/projects/{project}/usage TsAuth(databases:read) getProjectUsage Usage
+        GET /v1/regions anonymous listRegions Regions
         PATCH /v1/projects/{project}/databases/{database} TsAuth(databases:write) updateDatabase Databases
         PATCH /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) patchDocument Documents
         PATCH /v1/projects/{project}/databases/{database}/import TsAuth(databases:write,documents:write) updateImport Imports

@@ -93,7 +93,7 @@ public sealed class RegionalRoutingContractTests
             {
                 settings["region"] = "gru";
                 settings["data-directory"] = directory;
-            }))
+            }, new OtherRegions("sjc").Register))
             {
                 user = gru.User;
                 organization = await gru.CreateOrganizationAsync("Routing contract");

@@ -114,7 +114,7 @@ management database responses include `region`, identifying the responding node.
 Clients resolve endpoints through Atlas, support an explicit static endpoint
 override, and pin a session to the selected region. Keep regional endpoints out
 of client code. See [the region contract](region-identity.md) for pinning
-and Atlas compatibility.
+and Atlas compatibility, and [the region catalog](region-catalog.md) for the serving regions.
 
 ## Organization resource admission
 
