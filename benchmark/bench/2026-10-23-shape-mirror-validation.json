@@ -1,0 +1,64 @@
+{
+  "test_class": "TerraBase.Fast.Shapes.ShapeMirrorTests",
+  "pre_rebase_branch_head": "17d13ae3648bc6807c3569c61305cb9a63242791",
+  "fixture_sha256": "4a2878f2addb738ad927ae9abce7072b794528d25b04be586871cf0d876817de",
+  "root_cause": "Frozen test clock predates server startup and can cross the signing epoch; AWS presigning uses wall time while fixture computes expiry from stale time.",
+  "fix": "Default fixture clock follows wall time plus explicit manual advances. Epoch-sensitive retention test explicitly retains a frozen FakeTimeProvider. Valid SigV4 test asserts fixture time has not frozen behind wall time after startup.",
+  "execution_owner": "Separate ShapeMirror worker; reviewed and integrated by benchmark owner",
+  "parallelism": "Five runs using default TUnit parallel execution; no limiter or workflow changes",
+  "build": {
+    "configuration": "Release",
+    "warnings": 0,
+    "errors": 0,
+    "log_sha256": "a5c453b4e3cfd80d8dbda16c018cdc2025f922d29efb9b8241ec687109ba4088"
+  },
+  "runs": [
+    {
+      "repeat": 1,
+      "total": 17,
+      "failed": 0,
+      "succeeded": 17,
+      "skipped": 0,
+      "log_sha256": "8d30ccd1eed68a8ba648a83f705f1499635ca824359fb49ce5aeef1c59963783"
+    },
+    {
+      "repeat": 2,
+      "total": 17,
+      "failed": 0,
+      "succeeded": 17,
+      "skipped": 0,
+      "log_sha256": "613cf90f9e11ff1eb06dbd14b665cca5c34433db45ec66af70a9c07b0d4a4d16"
+    },
+    {
+      "repeat": 3,
+      "total": 17,
+      "failed": 0,
+      "succeeded": 17,
+      "skipped": 0,
+      "log_sha256": "db9fa54babd887d33674530c6c05a6be805bb7d74b10475630111a16dc3b4995"
+    },
+    {
+      "repeat": 4,
+      "total": 17,
+      "failed": 0,
+      "succeeded": 17,
+      "skipped": 0,
+      "log_sha256": "ee1a45238ff7b9984fe091c97e40b482f14dded7df770a66cc64e7a84bcd7dd4"
+    },
+    {
+      "repeat": 5,
+      "total": 17,
+      "failed": 0,
+      "succeeded": 17,
+      "skipped": 0,
+      "log_sha256": "bec63314d04f90e1d42268eb2b7b08c96a5abfd38c847d68cbde4c3290aa168e"
+    }
+  ],
+  "total": {
+    "passed": 85,
+    "failed": 0,
+    "skipped": 0
+  },
+  "artifacts": "Separate /tmp/shape461-artifacts; benchmark binaries unaffected",
+  "limits": "Executed before rebase. Current-head required CI remains gate; raw logs, test credentials and target configuration are not published."
+}
