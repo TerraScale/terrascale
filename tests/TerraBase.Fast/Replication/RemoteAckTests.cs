@@ -740,7 +740,7 @@ public sealed class RemoteAckTests
             await Assert.That(Rows(candidate).Any(row => row.Id == id && row.N == 2)).IsFalse()
                 .Because("materializing an older acknowledged event must not publish the newer unacknowledged value");
             await Assert.That((await pair.PersistedChunksAsync(unsealed.Handle)).Count).IsEqualTo(0)
-                .Because("values_at would be the unacked overwrite's head, so nothing seals at all");
+                .Because("the first commit's document has the unacked overwrite above F, so nothing seals at all");
             using var local = await pair.Client.GetAsync(pair.Document(id), pair.Token);
             await Assert.That(local.StatusCode).IsEqualTo(HttpStatusCode.OK);
             held.Release.TrySetResult();
@@ -750,6 +750,52 @@ public sealed class RemoteAckTests
             _ = await sealer.SealUpToHeadAsync(store, shape, SealedEnd(visible), pair.Token);
             var published = await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token);
             await Assert.That(Rows(published).Any(row => row.Id == id && row.N == 2)).IsTrue().Because("the ACK publishes the overwrite");
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+        }
+    }
+
+    // Under steady writes the head is never F: a commit below an unacked write of another document still publishes, at F.
+    [Test]
+    public async Task A_commit_below_an_unacked_write_of_another_document_publishes_at_the_frontier()
+    {
+        await using var pair = await Pair.StartAsync();
+        var (acked, unacked) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        using (var created = await pair.Client.PutAsJsonAsync(pair.Document(acked), new { n = 1 }, pair.Token))
+        {
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        }
+
+        var store = await pair.OriginStoreAsync();
+        var sealer = pair.OriginSealer;
+        var sqlite = await pair.OriginSqliteAsync();
+        var covered = await FeedHeadAsync(sqlite, pair.Token);
+        await TerraBaseTestServer.EventuallyAsync(async token => await sealer.FrontierAsync(store, token) >= covered);
+        pair.ExpectWait();
+        using var held = pair.PeerAck.Hold(unacked);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(unacked), new { n = 2 }, pair.Token);
+        try
+        {
+            await held.Applied.Task.WaitAsync(pair.Token);
+            _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            await Assert.That(await FeedHeadAsync(sqlite, pair.Token)).IsGreaterThan(covered);
+            var frontier = await sealer.FrontierAsync(store, pair.Token);
+            var shape = await ShapeAsync(store);
+            _ = await SealBoundedAsync(pair, sealer, store, shape, 0);
+            var visible = await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token);
+            await Assert.That(SealedEnd(visible)).IsEqualTo(frontier).Because("the seal covers every commit F holds");
+            await Assert.That(Rows(visible).Select(row => row.Id).ToArray()).IsEquivalentTo([acked])
+                .Because("the held write stays out, and does not hold back the document F covers");
+            using var body = JsonDocument.Parse(visible[^1].Body);
+            await Assert.That(body.RootElement.GetProperty("values_at").GetString()).IsEqualTo(frontier.ToString(CultureInfo.InvariantCulture));
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            _ = await sealer.SealUpToHeadAsync(store, shape, SealedEnd(visible), pair.Token);
+            await Assert.That(Rows(await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token)).Any(row => row.Id == unacked)).IsTrue();
         }
         finally
         {
