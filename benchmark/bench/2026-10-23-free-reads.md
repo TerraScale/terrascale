@@ -13,9 +13,8 @@ Tigris and R2 run the same binary. Only the env file differs: endpoint, bucket a
 - **R2 + Cloudflare (T2): 11 bucket reads for 11 objects at N = 1, 10, 100 and 1000, in each of 3 repeats.** That is
   exactly 1 bucket read per object per cache location, with no spread. The CDN hit ratio is 0.9, 0.99 and 0.999 at
   N = 10, 100 and 1000. The origin read no payload.
-- R2's own analytics agree. `r2OperationsAdaptiveGroups` counts `GetObject` = 11 on `ts-terrabase-bench` in each T2 step window
-  of repeats 1 and 2. That is the bucket's own count, not the client's `cf-cache-status`. Repeat 3's analytics were still being
-  ingested when this file was written (see section 4).
+- R2's own analytics agree. `r2OperationsAdaptiveGroups` counts `GetObject` = 11 on `ts-terrabase-bench` in every T2 step
+  window of all 3 repeats. That is the bucket's own count, not the client's `cf-cache-status` (section 4).
 - **Tigris (T1): one bucket read per object per reader**: 11, 110, 1,100 and 11,000. At N = 1000 that is 1,000× the T2
   count. The origin read no payload. Tigris has no T2: its objects keep presigned links.
 - T0 (origin) at this head grows with N: 3,876–7,035 `shape_body` reads at N = 1000. The closed-chunk cache and the
@@ -77,7 +76,7 @@ next to the harness's count of non-HIT responses:
 | --- | --- | --- | --- | --- |
 | 1 | 11 / 11 | 11 / 11 | 11 / 11 | 11 / 11 |
 | 2 | 11 / 11 | 11 / 11 | 11 / 11 | 11 / 11 |
-| 3 | still ingesting | still ingesting | still ingesting | still ingesting |
+| 3 | 11 / 11 | 11 / 11 | 11 / 11 | 11 / 11 |
 
 (R2 `GetObject` / harness misses.)
 
