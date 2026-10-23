@@ -140,7 +140,9 @@ internal static class TursoStatements
         FROM documents d WHERE d.collection = $collection AND d.id > $after AND tb_qos_scan(octet_length(d.body)) ORDER BY d.id LIMIT $limit;
         """;
 
-    public const string NextOffset = "UPDATE commit_offset SET value = value + 1 WHERE id = 1 AND value < 9223372036854775807 RETURNING value;";
+    // Set from the value just read under the writer: Turso runs an UPDATE ... RETURNING several times slower than the read and
+    // the plain UPDATE together.
+    public const string SetOffset = "UPDATE commit_offset SET value = $value WHERE id = 1;";
 
     public const string CurrentOffset = "SELECT value FROM commit_offset WHERE id = 1;";
 
@@ -200,7 +202,7 @@ internal static class TursoStatements
     /// <summary>Statements both client and system databases run, by name, for query-plan checks.</summary>
     public static IReadOnlyDictionary<string, string> Shared { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        [nameof(NextOffset)] = NextOffset,
+        [nameof(SetOffset)] = SetOffset,
         [nameof(CurrentOffset)] = CurrentOffset,
         [nameof(Incarnation)] = Incarnation,
         [nameof(RenewIncarnation)] = RenewIncarnation,

@@ -1592,12 +1592,13 @@ internal sealed partial class TursoStorageTransaction(
     {
         if (_offset is null)
         {
-            VersionClock.EnsureCanAllocate(GetOffset());
+            var current = GetOffset();
+            VersionClock.EnsureCanAllocate(current);
+            var next = session.Command(TursoStatements.SetOffset, transaction);
+            next.Parameters.AddWithValue("$value", current == long.MaxValue ? throw new OverflowException("the commit offset is exhausted") : current + 1);
+            _offset = next.ExecuteNonQuery() == 1 ? current + 1 : throw new OverflowException("the commit offset is exhausted");
         }
 
-        _offset ??= session.Command(TursoStatements.NextOffset, transaction).ExecuteScalar() is long offset
-            ? offset
-            : throw new OverflowException("the commit offset is exhausted");
         return _offset.Value;
     }
 

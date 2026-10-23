@@ -17,7 +17,13 @@ internal sealed partial class TursoStorageTransaction
 
     private const string InsertFeed = "INSERT INTO _tb_feed (seq, commit_offset, origin, stamp, collection, id, deleted, prefix) VALUES ($seq, $commit, $origin, $stamp, $collection, $id, $deleted, $prefix);";
 
-    private const string InsertFeedOrigin = "INSERT INTO _tb_feed_floor (origin, stamp, prefix) SELECT $origin, 0, zeroblob(32) WHERE NOT EXISTS (SELECT 1 FROM _tb_feed_floor WHERE origin = $origin);";
+    private const string InsertFeedOrigin = "INSERT INTO _tb_feed_floor (origin, stamp, prefix) VALUES ($origin, 0, zeroblob(32));";
+
+    private const string HasFeedOrigin = "SELECT 1 FROM _tb_feed_floor WHERE origin = $origin;";
+
+    private const string FeedSequence = "SELECT seq FROM _tb_feed_sequence WHERE id = 1;";
+
+    private const string SetFeedSequence = "UPDATE _tb_feed_sequence SET seq = $seq WHERE id = 1;";
 
     private const string FeedFloors = "SELECT origin, stamp FROM _tb_feed_floor;";
 
@@ -141,12 +147,22 @@ internal sealed partial class TursoStorageTransaction
 
         var origin = unchecked((long)at.Node.Value);
         // Retention may empty the feed: Turso reuses rowids even with AUTOINCREMENT after a reopen.
-        var seq = Command("UPDATE _tb_feed_sequence SET seq = seq + 1 WHERE id = 1 AND seq < 9223372036854775807 RETURNING seq;").ExecuteScalar() is long next
-            ? next
+        // Read, then set: under the writer nothing moves in between, and Turso runs an UPDATE ... RETURNING or an INSERT ...
+        // SELECT several times slower than these plain statements together.
+        var seq = Command(FeedSequence).ExecuteScalar() is long current && current < long.MaxValue
+            ? current + 1
             : throw new OverflowException("the feed sequence is exhausted");
-        var known = Command(InsertFeedOrigin);
+        var advance = Command(SetFeedSequence);
+        advance.Parameters.AddWithValue("$seq", seq);
+        advance.ExecuteNonQuery();
+        var known = Command(HasFeedOrigin);
         known.Parameters.AddWithValue("$origin", origin);
-        known.ExecuteNonQuery();
+        if (known.ExecuteScalar() is null)
+        {
+            var floor = Command(InsertFeedOrigin);
+            floor.Parameters.AddWithValue("$origin", origin);
+            floor.ExecuteNonQuery();
+        }
         var prefix = PrefixThrough(at.Node, default, at.Stamp, CancellationToken.None).Append(at.Stamp, collection, id, !live);
         var insert = Command(InsertFeed, collection);
         insert.Parameters.AddWithValue("$seq", seq);

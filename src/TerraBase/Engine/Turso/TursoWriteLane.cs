@@ -18,6 +18,21 @@ internal sealed class TursoWriteLane(string database, TursoIoPool io) : TursoRun
     // Calls queued, readable without the lock while the thread spins.
     private int _pending;
 
+    // The lane whose thread is the current thread, if any.
+    [ThreadStatic]
+    private static TursoWriteLane? t_lane;
+
+    // The lane a group commit loop's flow stays on (Resident): its calls to that lane resume on the lane's thread and run there inline.
+    private static readonly AsyncLocal<TursoWriteLane?> ResidentFlow = new();
+
+    /// <summary>
+    /// Lets the calling flow, a database's group commit loop, which holds its writer, stay on the lane's thread: each call
+    /// resumes the flow inline on that thread, and a call made from that thread runs at once instead of queueing behind
+    /// itself. A batch then pays one thread hop instead of two per storage call. Only for a flow that holds the writer for
+    /// all its calls, so no other transaction's call can be queued behind it, and that never blocks the thread.
+    /// </summary>
+    internal void Resident() => ResidentFlow.Value = this;
+
     /// <summary>Calls waiting for the thread, for tests.</summary>
     internal int Queued
     {
@@ -33,11 +48,34 @@ internal sealed class TursoWriteLane(string database, TursoIoPool io) : TursoRun
     /// <summary>Whether a call is running, for tests.</summary>
     internal bool Running => Volatile.Read(ref _executing) > 0;
 
-    public override async Task<T> RunAsync<T>(Func<T> call, CancellationToken cancellationToken)
+    public override Task<T> RunAsync<T>(Func<T> call, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var resident = ResidentFlow.Value == this;
+        if (resident && t_lane == this)
+        {
+            Interlocked.Increment(ref _executing);
+            try
+            {
+                return Task.FromResult(call());
+            }
+            catch (Exception error)
+            {
+                return Task.FromException<T>(error);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _executing);
+            }
+        }
+
+        return QueueAsync(call, resident, cancellationToken);
+    }
+
+    private async Task<T> QueueAsync<T>(Func<T> call, bool resident, CancellationToken cancellationToken)
+    {
         using var diagnostic = Diagnostics?.Submit();
-        var result = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var result = new TaskCompletionSource<T>(resident ? TaskCreationOptions.None : TaskCreationOptions.RunContinuationsAsynchronously);
 
         // 0 queued, 1 running, 2 cancelled before it ran.
         var context = io.CaptureContext();
@@ -57,7 +95,15 @@ internal sealed class TursoWriteLane(string database, TursoIoPool io) : TursoRun
                 }
 
                 diagnostic?.Cancel();
-                result.TrySetCanceled(cancellationToken);
+                if (resident)
+                {
+                    // Never resume a resident flow on the thread that cancelled.
+                    ThreadPool.UnsafeQueueUserWorkItem(_ => result.TrySetCanceled(cancellationToken), null);
+                }
+                else
+                {
+                    result.TrySetCanceled(cancellationToken);
+                }
             }
         });
         lock (_gate)
@@ -125,6 +171,7 @@ internal sealed class TursoWriteLane(string database, TursoIoPool io) : TursoRun
 
     private void Work()
     {
+        t_lane = this;
         while (true)
         {
             // A transaction's next call usually arrives within microseconds of the previous one returning: spin

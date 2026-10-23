@@ -192,6 +192,38 @@ public sealed class GroupCommitTests
         }
     }
 
+    // A batch's storage calls run back to back on the database's write thread: each call resumes the batch on that thread,
+    // so a write queues about one call there (its BEGIN) instead of one per storage call, two thread hops each.
+    [Test]
+    public async Task A_batch_queues_about_one_call_per_write_on_the_write_thread_and_runs_the_rest_there()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        _ = await api.PutAsync(DocumentApi.NewId(), new { n = 0 });
+        var store = await StoreAsync(api);
+        var diagnostics = new TursoRunnerDiagnostics();
+        var ids = Enumerable.Range(0, 20).Select(_ => DocumentApi.NewId()).ToArray();
+        store.WriteLane.Diagnostics = diagnostics;
+        try
+        {
+            foreach (var id in ids)
+            {
+                await Assert.That((await api.PutAsync(id, new { n = 1 })).Status).IsEqualTo(HttpStatusCode.Created);
+            }
+        }
+        finally
+        {
+            store.WriteLane.Diagnostics = null;
+        }
+
+        // Queued one by one, each write's BEGIN, reads, put, state flush, commit and cleanup took 8 or more.
+        await Assert.That(diagnostics.Sample().Submitted).IsLessThanOrEqualTo(ids.Length * 2);
+        foreach (var id in ids)
+        {
+            await Assert.That((await api.GetAsync(id)).Status).IsEqualTo(HttpStatusCode.OK);
+        }
+    }
+
     [Test]
     public async Task A_long_wait_for_the_writer_logs_what_held_it_and_for_how_long()
     {
