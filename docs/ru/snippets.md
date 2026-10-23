@@ -17,6 +17,8 @@ The [C# quickstart](/ru/getting-started/csharp) uses an exact candidate package 
 
 Local synthetic transport checks verify the JavaScript example's requests, preconditions, pagination and error handling. They do not access a production endpoint or qualify the hosted service. Use only synthetic data in an authorized isolated allocation for a real run.
 
-Older files under `docs/snippets` and the retained Next.js starter pin `@terrascale/sdk` 0.3.0, which is not published. They are compatibility fixtures for a separate contract. Their deterministic stub checks do not qualify the current SDK, branching, backups, exports or browser sign-in.
+Older files under `docs/snippets` and the retained Next.js starter pin `@terrascale/sdk` 0.3.0, which is not published. They are compatibility fixtures for a separate contract. Their deterministic stub checks do not qualify the current SDK, branching, backups or browser sign-in.
+
+`docs/snippets/exports.ts` targets the current client instead: it exports a database with `@terrascale/sdk` 0.0.5 `database(name).export()` and resumes from the last line's cursor. See [Export your data](/ru/guides/export). No CI job executes or type-checks the files under `docs/snippets`.
 
 </div>

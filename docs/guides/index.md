@@ -15,6 +15,7 @@ Use the [quickstart](/getting-started/) to establish one working application con
 - [Transactions](/guides/transactions): atomic multi-document writes with conditional asserts.
 - [Realtime changes](/guides/realtime): the server-sent changes feed and filtered collection shapes.
 - [Backups and restore](/guides/backups-and-restore): backup policy, point-in-time restore into a new database.
+- [Export your data](/guides/export): stream every document as NDJSON, resume and restore.
 - [Branches](/guides/branches): copy a database into a new branch database.
 - [Dashboard usage](/guides/dashboard): customer account and database workflow.
 - [Import an existing database](/guides/import) (pending): one-time import of a PostgreSQL or Turso export with dry-run preview and validation.
