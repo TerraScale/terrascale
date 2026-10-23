@@ -70,6 +70,46 @@ public sealed class UsageBackendContractTests
     }
 
     [Test]
+    public async Task ProjectUsageCarriesTerraBasesBilledOperationUnitsForTheUtcMonth()
+    {
+        using var wire = new Wire();
+        var selection = Selection();
+        var result = await new UsageBackend(wire, new Clock(), new Tokens()).ReadAsync(selection, CancellationToken.None);
+        await Assert.That(result.Monthly[selection.Context.Project!.Id].Reading!.Month).IsEqualTo(new UsageMonth("2026-10", 6, 3, 9));
+        await Assert.That(result.OperationUnits([selection.Context.Project.Id], Clock.Now)).IsEqualTo(9);
+        await Assert.That(result.OperationUnits([selection.Context.Project.Id], Clock.Now.AddMonths(1))).IsNull()
+            .Because("Last month's units are not this month's usage.");
+
+        using var older = new Wire { Month = null };
+        var omitted = await new UsageBackend(older, new Clock(), new Tokens()).ReadAsync(selection, CancellationToken.None);
+        await Assert.That(omitted.Monthly[selection.Context.Project.Id].State).IsEqualTo(UsageSourceState.Measured);
+        await Assert.That(omitted.Monthly[selection.Context.Project.Id].Reading!.Month).IsNull();
+        await Assert.That(omitted.OperationUnits([selection.Context.Project.Id], Clock.Now)).IsNull()
+            .Because("TerraBase without monthly units stays not metered instead of zero.");
+    }
+
+    [Test]
+    public async Task OrganizationOperationUnitsSumEveryProjectOrStayUnknown()
+    {
+        UsageObservation Project(string id, UsageMonth? month) => new(UsageSourceState.Measured,
+            new(id, "", 0, 0, new(Clock.Now, Clock.Now, "day", 0, 0), [], [], month));
+        var measured = new UsageMeasurements(new(UsageSourceState.Measured), new Dictionary<string, UsageObservation>
+        {
+            ["a"] = Project("a", new("2026-10", 6, 3, 9)),
+            ["b"] = Project("b", new("2026-10", 1, 1, 2)),
+            ["older"] = Project("older", null),
+            ["stale"] = Project("stale", new("2026-09", 5, 5, 10)),
+            ["down"] = new(UsageSourceState.Unavailable)
+        });
+        await Assert.That(measured.OperationUnits(["a", "b"], Clock.Now)).IsEqualTo(11)
+            .Because("Project tokens meter per-project storage organizations, so the organization is the sum of its projects.");
+        foreach (var missing in new[] { "older", "stale", "down", "absent" })
+            await Assert.That(measured.OperationUnits(["a", missing], Clock.Now)).IsNull();
+        await Assert.That((measured with { Monthly = new Dictionary<string, UsageObservation> { ["a"] = Project("a", new("2026-10", 0, long.MaxValue, long.MaxValue)), ["b"] = Project("b", new("2026-10", 1, 1, 2)) } })
+            .OperationUnits(["a", "b"], Clock.Now)).IsNull();
+    }
+
+    [Test]
     [Arguments(401, UsageSourceState.Unauthorized)]
     [Arguments(403, UsageSourceState.Unauthorized)]
     [Arguments(404, UsageSourceState.Restricted)]
@@ -95,6 +135,7 @@ public sealed class UsageBackendContractTests
         var result = await new UsageBackend(wire, new Clock(), new Tokens()).ReadAsync(selection, CancellationToken.None);
         await Assert.That(result.Monthly[empty.Id].State).IsEqualTo(UsageSourceState.Measured);
         await Assert.That(result.Monthly[empty.Id].Reading!.Period.Reads + result.Monthly[empty.Id].Reading!.Period.Writes).IsEqualTo(0);
+        await Assert.That(result.Monthly[empty.Id].Reading!.Month).IsEqualTo(new UsageMonth("2026-10", 0, 0, 0));
         await Assert.That(result.Monthly["01JA0000000000000000000001"].State).IsEqualTo(UsageSourceState.Restricted)
             .Because("A project with databases that TerraBase does not know stays unknown.");
     }
@@ -148,6 +189,7 @@ public sealed class UsageBackendContractTests
     {
         public int Failure { get; init; }
         public bool Foreign { get; init; }
+        public string? Month { get; init; } = "2026-10";
         public HashSet<string> Allowed { get; } = [];
         public HttpClient CreateClient(string name) => new(this, false);
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -167,7 +209,8 @@ public sealed class UsageBackendContractTests
             var row = new { databaseId, storageBytes = 2048, logicalBytes = 1024, collections = 1, documents = 2, reads = 22, writes = 5, period, series };
             var child = new { databaseId, storageBytes = 2048, logicalBytes = 1024, collections = 1, documents = 2, reads = 22, writes = 5, period, series = Array.Empty<object>() };
             var value = database ? JsonSerializer.Serialize(row) : JsonSerializer.Serialize(new
-            { projectId = "01JA0000000000000000000001", databases = 1, storageBytes = 2048, logicalBytes = 1024, documents = 2, reads = 22, writes = 5, period, series, items = new[] { child } });
+            { projectId = "01JA0000000000000000000001", databases = 1, storageBytes = 2048, logicalBytes = 1024, documents = 2, reads = 22, writes = 5, period, series, items = new[] { child },
+              month = Month is null ? null : new { month = Month, readUnits = 6, writeUnits = 3, units = 9, organizationUnits = 9 } });
             return Task.FromResult(Response(HttpStatusCode.OK, value));
         }
         private static HttpResponseMessage Response(HttpStatusCode status, string body) => new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };

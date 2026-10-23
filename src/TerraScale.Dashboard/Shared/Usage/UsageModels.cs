@@ -23,11 +23,25 @@ public sealed record UsageSelection(AccountContext Context, string Range, string
 public sealed record ActivityPoint(DateTimeOffset Start, long Reads, long Writes);
 public enum UsageSourceState { Measured, NotMetered, Unauthorized, Unavailable, NoProducer, Restricted, QueryTooExpensive }
 public sealed record UsagePeriod(DateTimeOffset From, DateTimeOffset To, string Granularity, long Reads, long Writes);
-public sealed record UsageReading(string ProjectId, string DatabaseId, long LogicalBytes, long Documents, UsagePeriod Period, IReadOnlyList<ActivityPoint> Series, IReadOnlyList<UsageReading> Items);
+public sealed record UsageReading(string ProjectId, string DatabaseId, long LogicalBytes, long Documents, UsagePeriod Period, IReadOnlyList<ActivityPoint> Series, IReadOnlyList<UsageReading> Items, UsageMonth? Month = null);
+// TerraBase's billed 4 KiB operation units for one UTC month ("yyyy-MM"); older TerraBase omits it.
+public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, long Units);
 public sealed record UsageObservation(UsageSourceState State, UsageReading? Reading = null);
 public sealed record UsageMeasurements(UsageObservation Scope, IReadOnlyDictionary<string, UsageObservation> Monthly)
 {
     public DateTimeOffset? MonthStart { get; init; }
+    // Sums only when every project reports this UTC month's units; otherwise the organization's month is unknown.
+    public long? OperationUnits(IEnumerable<string> projectIds, DateTimeOffset now)
+    {
+        var month = now.UtcDateTime.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
+        long units = 0;
+        foreach (var id in projectIds)
+        {
+            if (Monthly.GetValueOrDefault(id) is not { State: UsageSourceState.Measured, Reading.Month: { } reading } || reading.Month != month || reading.Units < 0) return null;
+            try { units = checked(units + reading.Units); } catch (OverflowException) { return null; }
+        }
+        return units;
+    }
 }
 public interface IUsageMeasurements
 {

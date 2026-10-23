@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
@@ -48,7 +49,9 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
             {
                 if (project.OrganizationId != context.Organization.Id) throw new JsonException("Usage project scope is invalid.");
                 var token = await tokens.GetAsync(context.Session, context.Organization.Id, project.Id, ["databases:read"], deadline.Token);
-                var sdk = new TerraBaseDocumentsClient(client, new TerraBaseDocumentsClientOptions
+                var tap = new MonthTap(client);
+                using var tapped = new HttpClient(tap);
+                var sdk = new TerraBaseDocumentsClient(tapped, new TerraBaseDocumentsClientOptions
                 {
                     BaseAddress = origin,
                     AccessTokenProvider = _ => ValueTask.FromResult(token)
@@ -75,14 +78,14 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
                     throw new JsonException("Project usage totals disagree with database usage.");
                 return new(UsageSourceState.Measured, new(project.Id, "", Count(totals.LogicalBytes), Count(totals.Documents),
                     Period(totals.Period, first, now, bucket), Points(totals.Series, totals.Period, bucket),
-                    totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket)).ToArray()));
+                    totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket)).ToArray(), tap.Month));
             }
             catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             { return new(UsageSourceState.Unauthorized); }
             // TerraBase registers a project with its first database, so a project without databases is 404 there yet has
             // truly done nothing; counting it as zero keeps one empty project from voiding the organization's month.
             catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound && databaseId.Length == 0 && project.Databases.Count == 0)
-            { return new(UsageSourceState.Measured, new(project.Id, "", 0, 0, new(first, End(now, bucket), bucket, 0, 0), [], [])); }
+            { return new(UsageSourceState.Measured, new(project.Id, "", 0, 0, new(first, End(now, bucket), bucket, 0, 0), [], [], new(now.UtcDateTime.ToString("yyyy-MM", CultureInfo.InvariantCulture), 0, 0, 0))); }
             catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound)
             { return new(UsageSourceState.Restricted); }
             catch (TerraBaseException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.ErrorCode == "invalid_query")
@@ -123,6 +126,31 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
         if (points.Length > 0 && (points.Sum(point => point.Reads) != period.Reads || points.Sum(point => point.Writes) != period.Writes))
             throw new JsonException("Usage totals disagree with its UTC buckets.");
         return points;
+    }
+
+    // TerraScale.DotNet 0.0.4 drops TerraBase's `month` operation units, so read them from the same usage response.
+    private sealed class MonthTap(HttpClient inner) : HttpMessageHandler
+    {
+        public UsageMonth? Month { get; private set; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Content is not null) throw new InvalidOperationException("Usage reads carry no body.");
+            var copy = new HttpRequestMessage(request.Method, request.RequestUri) { Version = request.Version, VersionPolicy = request.VersionPolicy };
+            foreach (var header in request.Headers) copy.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            var response = await inner.SendAsync(copy, cancellationToken);
+            if (!response.IsSuccessStatusCode) return response;
+            var body = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            using (var json = JsonDocument.Parse(body))
+                Month = json.RootElement.ValueKind == JsonValueKind.Object && json.RootElement.TryGetProperty("month", out var month) && month.ValueKind == JsonValueKind.Object
+                    ? new(month.GetProperty("month").GetString() is { Length: 7 } name ? name : throw new JsonException("Usage month is invalid."),
+                        Count(month.GetProperty("readUnits").GetInt64()), Count(month.GetProperty("writeUnits").GetInt64()), Count(month.GetProperty("units").GetInt64()))
+                    : null;
+            var content = new ByteArrayContent(body);
+            foreach (var header in response.Content.Headers) content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            response.Content.Dispose();
+            response.Content = content;
+            return response;
+        }
     }
 
     private static long Count(long count) => count >= 0 ? count : throw new JsonException("Usage counters must be nonnegative.");
