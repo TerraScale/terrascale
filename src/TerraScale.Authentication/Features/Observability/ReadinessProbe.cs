@@ -51,6 +51,19 @@ public sealed class ReadinessProbe(IStorageHealth health, TimeProvider clock, IL
     private long latestTimestamp;
     // The storage check itself, which can outlive a timed-out wait when it ignores cancellation.
     private Task? outstandingCheck;
+
+    // Completion of the exact unwrapped task used by the no-stacking guard, including cancellation propagation.
+    internal Task? OutstandingCheck
+    {
+        get
+        {
+            lock (this.gate)
+            {
+                return this.outstandingCheck;
+            }
+        }
+    }
+
     // Why the latest observation failed; null while ready. Only the logging transitions read it.
     private string? failure;
 

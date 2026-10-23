@@ -157,7 +157,17 @@ public sealed class HealthTests
             await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls == pass), TimeSpan.FromSeconds(15))).IsTrue();
             clock.Advance(TimeSpan.FromSeconds(2));
             await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(logs.Entries.Length == pass), TimeSpan.FromSeconds(15))).IsTrue();
-            // The deadline cancelled the check; once it has finished, the next pass is not stacked on it.
+            var check = server.App.Services.GetRequiredService<ReadinessProbe>().OutstandingCheck!;
+            // The fake's finally precedes completion of Task.Run's unwrapped task, which the no-stacking guard checks.
+            try
+            {
+                await check.WaitAsync(TimeSpan.FromSeconds(15));
+            }
+            catch (OperationCanceledException) when (check.IsCanceled)
+            {
+                // The two-second probe deadline cancelled this check.
+            }
+
             await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Completed == pass), TimeSpan.FromSeconds(15))).IsTrue();
         }
     }
