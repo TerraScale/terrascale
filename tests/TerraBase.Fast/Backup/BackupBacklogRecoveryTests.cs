@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
@@ -100,13 +101,61 @@ public sealed class BackupBacklogRecoveryTests
         var generation = host.Status().Generation!;
         await WriteBacklogAsync(host, cancellationToken);
 
-        await ((IHostedService)host.Api.Server.Services.GetRequiredService<IContinuousBackup>()).StopAsync(cancellationToken);
+        var trace = new ShutdownTrace();
+        var status = host.Status();
+        var tenantPrefix = host.File + "/";
+        trace.Record("pre_stop", cancellationToken, string.Create(CultureInfo.InvariantCulture,
+            $"generation_present={status.Generation is not null} shipping={status.Shipping} log_bytes={status.LogBytes} pending_bytes={status.PendingBytes} lag_seconds={status.LagSeconds:F3} error_present={status.LastError is not null} previous_read_bytes={engine.LastRead.Bytes} previous_read_remaining={engine.LastRead.Remaining}"));
+        engine.Trace = trace;
+        host.S3.BeforePut = (key, token) => Request("put.enter", key, token);
+        host.S3.BeforePart = (key, part, token) => Request("part.enter", key, token, part);
+        host.S3.BeforeList = (prefix, token) => Request("list.enter", prefix, token);
+        try
+        {
+            var started = Stopwatch.GetTimestamp();
+            trace.Record("stop.enter", cancellationToken);
+            try
+            {
+                await ((IHostedService)host.Api.Server.Services.GetRequiredService<IContinuousBackup>()).StopAsync(cancellationToken);
+            }
+            catch (Exception error)
+            {
+                trace.Record("stop.exception", cancellationToken, $"exception_type={error.GetType().Name}");
+                throw;
+            }
+            finally
+            {
+                trace.Record("stop.exit", cancellationToken, string.Create(CultureInfo.InvariantCulture,
+                    $"duration_ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F3}"));
+            }
 
-        // The last read before shutdown found nothing left, and every read went into a stored segment.
-        await Assert.That(engine.LastRead.Remaining).IsFalse();
-        var segments = host.Segments(generation);
-        await Assert.That(segments.Count).IsGreaterThanOrEqualTo(2);
-        await BackupShippingHost.AssertContiguousAsync(segments);
+            // The last read before shutdown found nothing left, and every read went into a stored segment.
+            var segments = host.Segments(generation);
+            trace.Record("post_stop", cancellationToken, string.Create(CultureInfo.InvariantCulture,
+                $"segments={segments.Count} last_read_bytes={engine.LastRead.Bytes} last_read_continuous={engine.LastRead.Continuous} last_read_remaining={engine.LastRead.Remaining}"));
+            var diagnostics = trace.Report();
+            await Assert.That(engine.LastRead.Remaining).IsFalse().Because(diagnostics);
+            await Assert.That(segments.Count).IsGreaterThanOrEqualTo(2).Because(diagnostics);
+            await BackupShippingHost.AssertContiguousAsync(segments);
+        }
+        finally
+        {
+            engine.Trace = null;
+            host.S3.BeforePut = null;
+            host.S3.BeforePart = null;
+            host.S3.BeforeList = null;
+            TUnit.Core.TestContext.Current!.OutputWriter.WriteLine(trace.Report());
+        }
+
+        Task Request(string operation, string key, CancellationToken token, int? part = null)
+        {
+            var scope = key.StartsWith(tenantPrefix, StringComparison.Ordinal) ? "tenant"
+                : key.StartsWith("v1/_system/", StringComparison.Ordinal) ? "system" : "other";
+            var kind = key.Contains("/wal/", StringComparison.Ordinal) ? "segment"
+                : key.Contains("/snapshots/", StringComparison.Ordinal) ? "snapshot" : "other";
+            trace.Record("s3." + operation, token, string.Create(CultureInfo.InvariantCulture, $"scope={scope} kind={kind} part={part}"));
+            return Task.CompletedTask;
+        }
     }
 
     [Test]
@@ -230,6 +279,28 @@ public sealed class BackupBacklogRecoveryTests
         }
     }
 
+    private sealed class ShutdownTrace
+    {
+        private const int Limit = 96;
+        private readonly long _started = Stopwatch.GetTimestamp();
+        private readonly ConcurrentQueue<(int Sequence, string Text)> _events = new();
+        private int _observed;
+
+        public void Record(string phase, CancellationToken token, string details = "")
+        {
+            var sequence = Interlocked.Increment(ref _observed);
+            if (sequence <= Limit)
+            {
+                _events.Enqueue((sequence, string.Create(CultureInfo.InvariantCulture,
+                    $"{sequence:D2} utc={DateTimeOffset.UtcNow:O} elapsed_ms={Stopwatch.GetElapsedTime(_started).TotalMilliseconds:F3} phase={phase} cancelled={token.IsCancellationRequested} {details}")));
+            }
+        }
+
+        public string Report() => "Shutdown backlog diagnostics (before_trim.return ends the hook, not cleanup; S3 markers are request entry only)\n"
+            + string.Join('\n', _events.OrderBy(item => item.Sequence).Select(item => item.Text))
+            + string.Create(CultureInfo.InvariantCulture, $"\ndropped_events={Math.Max(0, Volatile.Read(ref _observed) - Limit)}");
+    }
+
     // Watches one database's tap: its reads and snapshot reads, and fails its change-log cleanup once when asked.
     private sealed class WatchedBackup(IWalBackup engine) : IWalBackup
     {
@@ -240,6 +311,8 @@ public sealed class BackupBacklogRecoveryTests
         public ConcurrentQueue<long> SnapshotReads { get; } = new();
 
         public int TrimFailures => Volatile.Read(ref _trimFailures);
+
+        public ShutdownTrace? Trace { get; set; }
 
         // Written by the file's job; the test reads it only after shipping has stopped.
         public WalRead LastRead { get; set; }
@@ -258,14 +331,18 @@ public sealed class BackupBacklogRecoveryTests
 
             if (tap is TursoChangeTap turso)
             {
-                turso.BeforeTrim = _ =>
+                turso.BeforeTrim = token =>
                 {
+                    var trace = Trace;
+                    trace?.Record("tenant.before_trim.enter", token);
                     if (Interlocked.Exchange(ref _failTrim, 0) == 1)
                     {
                         Interlocked.Increment(ref _trimFailures);
+                        trace?.Record("tenant.before_trim.exception", token, "injected_io_failure=true");
                         throw new IOException("the change log cleanup failed");
                     }
 
+                    trace?.Record("tenant.before_trim.return", token);
                     return Task.CompletedTask;
                 };
             }
@@ -290,9 +367,31 @@ public sealed class BackupBacklogRecoveryTests
     {
         public async ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken)
         {
-            var read = await tap.ReadAsync(destination, cancellationToken);
-            owner.LastRead = read;
-            return read;
+            if (owner.Trace is not { } trace)
+            {
+                var read = await tap.ReadAsync(destination, cancellationToken);
+                owner.LastRead = read;
+                return read;
+            }
+
+            var started = Stopwatch.GetTimestamp();
+            var appended = destination.Length;
+            trace.Record("tenant.read.enter", cancellationToken);
+            using var cancellation = cancellationToken.Register(() => trace.Record("tenant.read.token_cancelled", cancellationToken));
+            try
+            {
+                var read = await tap.ReadAsync(destination, cancellationToken);
+                owner.LastRead = read;
+                trace.Record("tenant.read.return", cancellationToken, string.Create(CultureInfo.InvariantCulture,
+                    $"duration_ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F3} appended_bytes={destination.Length - appended} read_bytes={read.Bytes} continuous={read.Continuous} remaining={read.Remaining}"));
+                return read;
+            }
+            catch (Exception error)
+            {
+                trace.Record("tenant.read.exception", cancellationToken, string.Create(CultureInfo.InvariantCulture,
+                    $"duration_ms={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F3} appended_bytes={destination.Length - appended} exception_type={error.GetType().Name}"));
+                throw;
+            }
         }
 
         public async ValueTask<WalSnapshot> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken)
