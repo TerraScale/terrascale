@@ -32,8 +32,9 @@ Sender (`PeerStreams`):
 - A refusal dooms the batches after it (the receiver refuses them too); an applied ack for a doomed batch ends the
   stream. The database sends nothing more until every batch in flight answered, then resends from the ack.
 - Frontiers and refills go only with nothing in flight: a frontier claims every group below it held.
-- A refused batch retries after 100 ms, doubling to 10 s, each wait jittered to 50-100 %; a reconnect waits the same,
-  doubling to 30 s. The loop wakes for the earliest retry instead of the 1 s idle tick.
+- A refused batch retries after 100 ms, doubling to 10 s, each wait jittered to 50-100 % (before: a fixed 5 s). The
+  loop wakes for the earliest retry instead of the 1 s idle tick. The reconnect backoff is unchanged (1 s doubling to
+  30 s).
 
 Receiver (`PeerStreamReceiver`), for a sender whose Hello names protocol 2, per database on the stream (`Chain`):
 
