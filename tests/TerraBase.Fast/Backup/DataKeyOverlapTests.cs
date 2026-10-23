@@ -5,6 +5,8 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks.Sources;
 using Bogus;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Backup;
@@ -24,9 +26,11 @@ public sealed class DataKeyOverlapTests
         using var overlapping = CancellationTokenSource.CreateLinkedTokenSource(requests.Token);
         var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await StartAsync(s3, time);
+        var request = new ObserveRestore();
+        await using var api = await StartAsync(s3, time, request);
         var source = await api.CreateManagedDatabaseAsync("source");
         var other = await api.CreateManagedDatabaseAsync("other");
+        request.Path = other.Path + "/point-in-time/restore";
         foreach (var database in new[] { source, other })
         {
             await api.SetPlanAsync(api.User, database.Organization, "pro", token);
@@ -115,8 +119,9 @@ public sealed class DataKeyOverlapTests
             if (cancel)
             {
                 await overlapping.CancelAsync();
-                await header.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
                 await header.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                // Cleanup can unregister the completed header's callback; observe the aborted request finishing.
+                await request.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
                 await Assert.ThrowsAsync<OperationCanceledException>(() => second.WaitAsync(token));
                 await Assert.That(otherReads.Gets).IsEqualTo(0);
                 await Assert.That(first.IsCompleted).IsFalse();
@@ -202,12 +207,13 @@ public sealed class DataKeyOverlapTests
         }
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time)
+    private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time, ObserveRestore request)
     {
         var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
             s3.Route(services);
             ManualBackupHosting.Configure(services);
+            services.AddSingleton<IStartupFilter>(request);
         }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         return api;
@@ -277,6 +283,32 @@ public sealed class DataKeyOverlapTests
         return content;
     }
 
+    private sealed class ObserveRestore : IStartupFilter
+    {
+        public string? Path { get; set; }
+        public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, continuation) =>
+            {
+                var observed = context.Request.Path.Value == Path;
+                try
+                {
+                    await continuation();
+                }
+                finally
+                {
+                    if (observed && context.RequestAborted.IsCancellationRequested)
+                    {
+                        Cancelled.TrySetResult();
+                    }
+                }
+            });
+            next(app);
+        };
+    }
+
     private sealed class StalledKeyBody(byte[] content, Task release, Action entered) : MemoryStream(content, writable: false)
     {
         private int _entered;
@@ -320,7 +352,6 @@ public sealed class DataKeyOverlapTests
         private int _entered;
         private int _completed;
         public TaskCompletionSource Requested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public override bool CanSeek => false;
 
@@ -348,7 +379,6 @@ public sealed class DataKeyOverlapTests
             _buffer = buffer;
             _cancellation = cancellationToken.Register(() =>
             {
-                Cancelled.TrySetResult();
                 if (Interlocked.Exchange(ref _completed, 1) == 0)
                 {
                     _header.SetException(new OperationCanceledException(cancellationToken));
