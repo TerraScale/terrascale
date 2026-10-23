@@ -19,6 +19,7 @@ const routes = [
   ['/guides/dashboard', 'Customer dashboard and application database workflow'],
   ['/guides/mcp', 'Connect MCP clients with a personal access token and discover permitted tools'],
   ['/legal/data-deletion', 'Deletion, changes-feed and backup retention timelines'],
+  ['/legal/sla', 'No SLA during Public Alpha; measured uptime and publication prerequisites'],
   ['/guides/zero-configuration', 'Public always-on operating contract and secret-store delivery'],
   ['/concepts/replication', 'Write durability and multi-region behavior'],
   ['/concepts/sync', 'Shape reads and legacy live-update compatibility'],
