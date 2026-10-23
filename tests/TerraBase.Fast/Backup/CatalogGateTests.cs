@@ -262,6 +262,8 @@ public sealed class CatalogGateTests
         try
         {
             string secret;
+            string recoveryPath;
+            string recoveryUser;
             await using (var api = await ManagementApi.StartAsync(settings =>
             {
                 s3.Configure(settings);
@@ -273,6 +275,8 @@ public sealed class CatalogGateTests
             }, time))
             {
                 var database = await api.CreateManagedDatabaseAsync();
+                recoveryPath = database.Path + "/recovery/retry";
+                recoveryUser = api.User;
                 using var created = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/projects/{database.Project}/api-keys"),
                     new { name = "restore-drill", scopes = ReadScopes }, token);
                 created.EnsureSuccessStatusCode();
@@ -338,6 +342,12 @@ public sealed class CatalogGateTests
             var gate = restored.Services.GetRequiredService<ICatalogGate>();
             await Assert.That(gate.IsOpen).IsFalse();
             await Assert.That(gate.Trusted).IsFalse();
+            using var recoveryOperator = PeerTls.CreateClient(restored.BaseAddress);
+            recoveryOperator.DefaultRequestHeaders.Add("X-TerraBase-User-Id", recoveryUser);
+            using var recovery = await recoveryOperator.PostAsJsonAsync(ManagementApi.Uri(recoveryPath),
+                new { faultedIncarnation = EntityIds.New().ToString(), reason = "Review cannot substitute for current catalog trust" }, token);
+            await Assert.That(recovery.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(gate.IsOpen || gate.Trusted).IsFalse();
             using var channel = PeerChannel.Create(restored.PeerAddress!, PeerTls.Credential);
             var peer = new TerraBase.Features.Replication.V1.Replication.ReplicationClient(channel);
             var digest = await peer.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(ChangeGroups.System, null) }, cancellationToken: token);

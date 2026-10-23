@@ -37,6 +37,45 @@ public sealed class RebuildCertificationTests
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
     private static CancellationToken TestToken => TUnit.Core.TestContext.Current!.Execution.CancellationToken;
 
+    [Test]
+    public async Task An_authenticated_owner_retries_certified_recovery_without_reviving_a_deleted_document_and_cannot_replay_completion()
+    {
+        await using var pair = await Pair.StartAsync();
+        var (kept, only) = await pair.SeedAsync();
+        var deleted = EntityIds.New().ToString();
+        await pair.Gru.PutAsync(deleted, "{\"n\":5}");
+        await Assert.That(await pair.Sjc.UntilAsync(deleted, "{\"n\":5}")).IsTrue();
+        await pair.Gru.WriteAsync(async transaction => { _ = await transaction.DeleteAsync("items", deleted, pair.Token); });
+        await pair.WaitAsync(async _ => await pair.Sjc.ReadAsync(deleted) is null);
+        var faulted = await pair.Sjc.IncarnationAsync();
+        pair.Gru.Source.Arm(SourceFault.OmitsState, afterPage: null, omittedId: kept);
+        await Assert.That(await pair.Sjc.FaultAsync(faulted)).IsEqualTo(new RebuildOutcome.Refused(NoRefill));
+        var rebuilt = await pair.Sjc.SwappedAsync(faulted);
+        pair.Gru.Source.Disarm();
+        await pair.Sjc.Api.VerifyCatalogAsync(pair.Token);
+        var peer = (await pair.Members.ListAsync(pair.Token)).Single(member => member.Name == pair.Gru.Name);
+        await Assert.That(await pair.Sjc.Service<AntiEntropy>().PullAsync(ChangeGroups.System, peer, pair.Token)).IsNotNull();
+        var gate = pair.Sjc.Service<ICatalogGate>();
+        var digest = await gate.DigestAsync(pair.Token);
+        using var owner = pair.Sjc.Api.Service(pair.User);
+        var path = ManagementApi.Uri($"/v1/management/organizations/{pair.Database.OrganizationId}/projects/{pair.Database.ProjectId}/databases/{pair.Database.DatabaseId}/recovery/retry");
+        var request = new { faultedIncarnation = faulted.ToString(), reason = "Healthy peer restored after a refused certified refill" };
+
+        using var response = await owner.PostAsJsonAsync(path, request, pair.Token);
+
+        await Assert.That(response.StatusCode).IsEqualTo(System.Net.HttpStatusCode.NoContent);
+        await Assert.That(await pair.Sjc.IncarnationAsync()).IsEqualTo(rebuilt);
+        await pair.Sjc.CertifiedAsync(faulted, rebuilt, pair.Gru);
+        await Assert.That(await pair.Sjc.ReadAsync(only)).IsEqualTo("{\"n\":2}");
+        await Assert.That(await pair.Sjc.ReadAsync(deleted)).IsNull();
+        var attempts = pair.Sjc.Rebuilds.Outcomes.Count;
+        using var replay = await owner.PostAsJsonAsync(path, request, pair.Token);
+        await Assert.That(replay.StatusCode).IsEqualTo(System.Net.HttpStatusCode.Conflict);
+        await Assert.That(pair.Sjc.Rebuilds.Outcomes.Count).IsEqualTo(attempts);
+        await Assert.That(gate.IsOpen && gate.Trusted).IsTrue();
+        await Assert.That(await gate.DigestAsync(pair.Token)).IsEqualTo(digest);
+    }
+
     /// <summary>How the source misbehaves while a refill reads it.</summary>
     public enum SourceFault
     {

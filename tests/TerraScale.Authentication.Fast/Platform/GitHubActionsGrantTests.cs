@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -63,6 +64,9 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    [Arguments("sub", null)]
+    [Arguments("sub", "")]
+    [Arguments("sub", "repo:TerraScale/terrascale:environment:production")]
     [Arguments("repository_id", "1")]
     [Arguments("repository_owner_id", "1")]
     [Arguments("repository", "TerraScale/other")]
@@ -77,6 +81,8 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
     [Arguments("job_workflow_ref", "")]
     [Arguments("jti", null)]
     [Arguments("run_id", null)]
+    [Arguments("run_id", "")]
+    [Arguments("jti", "")]
     [Arguments("repository_id", null)]
     [Arguments("repository_owner_id", null)]
     [Arguments("repository", null)]
@@ -114,6 +120,42 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
             json: new Dictionary<string, JsonElement> { ["job_workflow_ref"] = value.RootElement.Clone() })));
 
         await Assert.That(error).IsEqualTo("invalid_grant");
+    }
+
+    [Test]
+    [Arguments("sub")]
+    [Arguments("repository_id")]
+    [Arguments("repository_owner_id")]
+    [Arguments("repository")]
+    [Arguments("ref")]
+    [Arguments("event_name")]
+    [Arguments("workflow_ref")]
+    [Arguments("jti")]
+    [Arguments("run_id")]
+    public async Task Required_claims_must_be_scalar_strings(string claim)
+    {
+        using var github = new FakeGitHubActions();
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
+        await GitHubActionsBinding.BindAsync(oidc.Server.App.Services, CancellationToken.None);
+        var valid = new JsonWebToken(github.Mint(OidcHarness.Issuer));
+        var expected = valid.GetClaim(claim).Value;
+        var invalid = new List<JsonElement>
+        {
+            JsonSerializer.SerializeToElement(new[] { expected }),
+            JsonSerializer.SerializeToElement<object?>(null),
+            JsonSerializer.SerializeToElement(true),
+        };
+        if (long.TryParse(expected, NumberStyles.None, CultureInfo.InvariantCulture, out var number))
+        {
+            invalid.Add(JsonSerializer.SerializeToElement(number));
+        }
+
+        foreach (var value in invalid)
+        {
+            var (_, error) = await ErrorAsync(await RequestAsync(oidc, github.Mint(OidcHarness.Issuer,
+                json: new Dictionary<string, JsonElement> { [claim] = value })));
+            await Assert.That(error).IsEqualTo("invalid_grant").Because(claim + " must be a scalar string");
+        }
     }
 
     [Test]
@@ -165,6 +207,7 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         // Each is signed with GitHub's published key, so only the named claim makes it wrong.
         var refused = new Dictionary<string, string>
         {
+            ["no issuer"] = github.Mint(OidcHarness.Issuer, issuer: null),
             ["issuer of another provider"] = github.Mint(OidcHarness.Issuer, issuer: "https://token.actions.githubusercontent.com.evil.example"),
             ["issuer with a path"] = github.Mint(OidcHarness.Issuer, issuer: GitHubActionsGrant.Issuer + "/terrascale"),
             ["no expiry"] = github.Mint(OidcHarness.Issuer, expires: false),
@@ -230,16 +273,24 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         var otherOrganization = AuthStore.NewId();
         var otherProject = AuthStore.NewId();
 
-        using var response = await RequestAsync(oidc, github.Mint(OidcHarness.Issuer), extra: new Dictionary<string, string>
+        using var response = await RequestAsync(oidc, github.Mint(OidcHarness.Issuer, new Dictionary<string, string?>
+        {
+            ["org_id"] = otherOrganization,
+            ["project_id"] = otherProject,
+            ["role"] = "admin",
+            ["scope"] = "api-keys:write",
+        }), extra: new Dictionary<string, string>
         {
             ["organization"] = otherOrganization,
             ["project"] = otherProject,
         });
         var access = new JsonWebToken((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("access_token").GetString());
 
-        // The binding alone names the project: request parameters never widen or move the token.
+        // Neither signed GitHub claims nor request parameters choose a tenant or add administrative capabilities.
         await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(project);
         await Assert.That(access.GetClaim("org_id").Value).IsEqualTo(organization);
+        await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(GitHubActionsGrant.Scopes);
+        await Assert.That(access.TryGetClaim("role", out _)).IsFalse();
     }
 
     private static Task<HttpResponseMessage> RequestAsync(OidcHarness oidc, string subjectToken, string? scope = null, IReadOnlyDictionary<string, string>? extra = null)
