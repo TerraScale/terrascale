@@ -106,62 +106,105 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
         try
         {
             DatabaseOwner[] owners;
-            lock (_gate) { owners = [.. _pending.Keys]; }
+            int evictions;
+            // Bound losses during unrelated foreground pressure; later ticks can retry what remains.
+            lock (_gate)
+            {
+                owners = [.. _pending.Keys];
+                evictions = Math.Min(Kept, _count / 2);
+            }
             foreach (var owner in owners)
             {
-                using var admission = memory.TryReserve(MemoryLane.Foreground, FlushBytes, tenant: null);
-                if (admission is null) { return; }
-                DatabaseRequestLog[] batch;
-                lock (_gate) { batch = [.. _pending[owner].Select(entry => entry.Log)]; }
-                var saved = await catalog.WriteAsync<bool>(async transaction =>
+                while (true)
                 {
-                    // Deleting a database must not let a delayed observation recreate its state.
-                    if (await EngineManagementService.DatabaseTenantUncheckedAsync(transaction, owner.OrganizationId, owner.ProjectId, owner.DatabaseId, cancellationToken).ConfigureAwait(false) is null) { return true; }
-                    var collection = Records(owner.DatabaseId);
-                    var previous = new List<DatabaseRequestLog>(Kept);
-                    var savedIds = new List<string>(MaxSaved);
-                    string? after = null;
-                    DocumentPage page;
-                    do
+                    cancellationToken.ThrowIfCancellationRequested();
+                    try
                     {
-                        // A page may include an oversized first row; admit its actual bytes before the engine copies it.
-                        using var pageAdmission = QosContext.Enter(tenant: null, budget: memory);
-                        page = await transaction.ListAsync(collection, after, FlushPageEntries, FlushPageBytes, cancellationToken).ConfigureAwait(false);
-                        foreach (var document in page.Documents)
-                        {
-                            if (savedIds.Count == MaxSaved)
-                            {
-                                // Replication can temporarily join several bounded rings. Trim before admitting more.
-                                foreach (var id in savedIds.Take(Kept)) { await transaction.DeleteAsync(collection, id, cancellationToken).ConfigureAwait(false); }
-                                return false;
-                            }
-                            if (Decode(document) is not { } log) { return false; }
-                            savedIds.Add(document.Id);
-                            previous.Add(log);
-                            after = document.Id;
-                        }
-                        previous = Recent(previous).Take(Kept).ToList();
+                        if (await FlushOwnerAsync(owner, cancellationToken).ConfigureAwait(false)) { break; }
                     }
-                    while (page.HasMore);
-                    var kept = Recent(previous.Concat(batch)).Take(Kept).ToArray();
-                    var ids = kept.Select(log => log.Id).ToHashSet(StringComparer.Ordinal);
-                    foreach (var id in savedIds.Where(id => !ids.Contains(id))) { await transaction.DeleteAsync(collection, id, cancellationToken).ConfigureAwait(false); }
-                    foreach (var log in kept.Where(log => batch.Any(item => item.Id == log.Id))) { await PutAsync(transaction, collection, log.Id, new RequestLogRecord(Format, log), TerraBaseJsonContext.Default.RequestLogRecord, cancellationToken).ConfigureAwait(false); }
-                    return true;
-                }, static _ => false, cancellationToken).ConfigureAwait(false);
-                if (!saved) { continue; }
-                var flushed = batch.Select(log => log.Id).ToHashSet(StringComparer.Ordinal);
-                lock (_gate)
-                {
-                    var entries = _pending[owner];
-                    foreach (var entry in entries.Where(entry => flushed.Contains(entry.Log.Id))) { entry.Memory.Dispose(); }
-                    _count -= entries.RemoveAll(entry => flushed.Contains(entry.Log.Id));
-                    if (entries.Count == 0) { _pending.Remove(owner); }
+                    catch (QosMemoryException) { }
+                    // The failed attempt has released its batch and admission before any lease is discarded.
+                    if (evictions-- == 0 || !DiscardOldest()) { return; }
                 }
             }
         }
-        catch (QosMemoryException) { return; }
         finally { _io.Release(); }
+    }
+
+    private async ValueTask<bool> FlushOwnerAsync(DatabaseOwner owner, CancellationToken cancellationToken)
+    {
+        lock (_gate) { if (!_pending.ContainsKey(owner)) { return true; } }
+        using var admission = memory.TryReserve(MemoryLane.Foreground, FlushBytes, tenant: null);
+        if (admission is null) { return false; }
+        DatabaseRequestLog[] batch;
+        lock (_gate)
+        {
+            if (!_pending.TryGetValue(owner, out var entries)) { return true; }
+            batch = [.. entries.Select(entry => entry.Log)];
+        }
+        var saved = await catalog.WriteAsync<bool>(async transaction =>
+        {
+            // Deleting a database must not let a delayed observation recreate its state.
+            if (await EngineManagementService.DatabaseTenantUncheckedAsync(transaction, owner.OrganizationId, owner.ProjectId, owner.DatabaseId, cancellationToken).ConfigureAwait(false) is null) { return true; }
+            var collection = Records(owner.DatabaseId);
+            var previous = new List<DatabaseRequestLog>(Kept);
+            var savedIds = new List<string>(MaxSaved);
+            string? after = null;
+            DocumentPage page;
+            do
+            {
+                // A page may include an oversized first row; admit its actual bytes before the engine copies it.
+                using var pageAdmission = QosContext.Enter(tenant: null, budget: memory);
+                page = await transaction.ListAsync(collection, after, FlushPageEntries, FlushPageBytes, cancellationToken).ConfigureAwait(false);
+                foreach (var document in page.Documents)
+                {
+                    if (savedIds.Count == MaxSaved)
+                    {
+                        // Replication can temporarily join several bounded rings. Trim before admitting more.
+                        foreach (var id in savedIds.Take(Kept)) { await transaction.DeleteAsync(collection, id, cancellationToken).ConfigureAwait(false); }
+                        return false;
+                    }
+                    if (Decode(document) is not { } log) { return false; }
+                    savedIds.Add(document.Id);
+                    previous.Add(log);
+                    after = document.Id;
+                }
+                previous = [.. Recent(previous).Take(Kept)];
+            }
+            while (page.HasMore);
+            var kept = Recent(previous.Concat(batch)).Take(Kept).ToArray();
+            var ids = kept.Select(log => log.Id).ToHashSet(StringComparer.Ordinal);
+            foreach (var id in savedIds.Where(id => !ids.Contains(id))) { await transaction.DeleteAsync(collection, id, cancellationToken).ConfigureAwait(false); }
+            foreach (var log in kept.Where(log => batch.Any(item => item.Id == log.Id))) { await PutAsync(transaction, collection, log.Id, new RequestLogRecord(Format, log), TerraBaseJsonContext.Default.RequestLogRecord, cancellationToken).ConfigureAwait(false); }
+            return true;
+        }, static _ => false, cancellationToken).ConfigureAwait(false);
+        if (!saved) { return true; }
+        var flushed = batch.Select(log => log.Id).ToHashSet(StringComparer.Ordinal);
+        lock (_gate)
+        {
+            var entries = _pending[owner];
+            foreach (var entry in entries.Where(entry => flushed.Contains(entry.Log.Id))) { entry.Memory.Dispose(); }
+            _count -= entries.RemoveAll(entry => flushed.Contains(entry.Log.Id));
+            if (entries.Count == 0) { _pending.Remove(owner); }
+        }
+        return true;
+    }
+
+    private bool DiscardOldest()
+    {
+        lock (_gate)
+        {
+            if (_pending.Count == 0) { return false; }
+            var oldest = _pending.MinBy(pair => pair.Value[0].Log.Time);
+            var entries = oldest.Value;
+            entries[0].Memory.Dispose();
+            entries.RemoveAt(0);
+            _count--;
+            if (entries.Count == 0) { _pending.Remove(oldest.Key); }
+            RecordingLimited = true;
+            _drops.Add(1);
+            return true;
+        }
     }
 
     private static async ValueTask<DatabaseRequestLog[]?> LoadAsync(IStorageTransaction transaction, string databaseId, CancellationToken cancellationToken)
