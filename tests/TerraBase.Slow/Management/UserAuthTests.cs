@@ -84,11 +84,11 @@ public sealed class UserAuthTests
     }
 
     [Test]
-    public async Task The_github_actions_workload_token_creates_and_uses_its_bound_projects_database_only()
+    public async Task The_github_actions_workload_token_reads_only_its_bound_database_and_cannot_write_or_manage()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var auth = await RealAuthFixture.StartAsync(token);
-        var (accessToken, project) = await auth.GitHubActionsTokenAsync(token);
+        var (accessToken, project, seedToken) = await auth.GitHubActionsTokenAsync(token);
         using var tls = new ClientTls();
         await using var server = await TerraBaseTestServer.StartAsync(settings =>
         {
@@ -98,19 +98,42 @@ public sealed class UserAuthTests
         using var client = tls.CreateClient(server.ClientAddress!, accessToken);
         var database = $"/v1/projects/{project}/databases/ci-e2e";
 
-        // As ci.yml's e2e job does first: TerraBase refused a workload sub that was not a ULID here with 401.
-        using var created = await client.PostAsJsonAsync(new Uri($"/v1/projects/{project}/databases", UriKind.Relative), new { name = "ci-e2e" }, token);
+        // A separate project-admin fixture credential provisions data; the workload receives only documents:read.
+        using var seed = tls.CreateClient(server.ClientAddress!, seedToken);
+        using var created = await seed.PostAsJsonAsync(new Uri($"/v1/projects/{project}/databases", UriKind.Relative), new { name = "ci-e2e" }, token);
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        using var collection = await client.PostAsJsonAsync(new Uri(database + "/collections", UriKind.Relative), new { name = "runs" }, token);
+        using var collection = await seed.PostAsJsonAsync(new Uri(database + "/collections", UriKind.Relative), new { name = "runs" }, token);
         await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var name = new Faker().Lorem.Word();
-        using var written = await client.PostAsJsonAsync(new Uri(database + "/collections/runs/documents", UriKind.Relative), new { name }, token);
+        using var written = await seed.PostAsJsonAsync(new Uri(database + "/collections/runs/documents", UriKind.Relative), new { name }, token);
         await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var id = (await written.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!;
         var read = await client.GetFromJsonAsync<JsonElement>(new Uri($"{database}/collections/runs/documents/by-key?id={Uri.EscapeDataString(id)}", UriKind.Relative), token);
         await Assert.That(read.GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
 
-        // Its project only: another project and the membership API answer 404.
+        using var otherDatabase = await seed.PostAsJsonAsync(new Uri($"/v1/projects/{project}/databases", UriKind.Relative), new { name = "other" }, token);
+        await Assert.That(otherDatabase.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        using var otherCollection = await seed.PostAsJsonAsync(new Uri($"/v1/projects/{project}/databases/other/collections", UriKind.Relative), new { name = "runs" }, token);
+        await Assert.That(otherCollection.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        var otherPath = $"/v1/projects/{project}/databases/other/collections/runs/documents";
+        await Assert.That(await StatusAsync(seed, otherPath, token)).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await StatusAsync(client, otherPath, token)).IsEqualTo(HttpStatusCode.NotFound);
+        var (_, otherProject, otherSeedToken) = await auth.SeedProjectAsync(token);
+        using var otherSeed = tls.CreateClient(server.ClientAddress!, otherSeedToken);
+        using var otherCreated = await otherSeed.PostAsJsonAsync(new Uri($"/v1/projects/{otherProject}/databases", UriKind.Relative), new { name = "ci-e2e" }, token);
+        await Assert.That(otherCreated.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        using var projectCollection = await otherSeed.PostAsJsonAsync(new Uri($"/v1/projects/{otherProject}/databases/ci-e2e/collections", UriKind.Relative), new { name = "runs" }, token);
+        await Assert.That(projectCollection.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        var otherProjectPath = $"/v1/projects/{otherProject}/databases/ci-e2e/collections/runs/documents";
+        await Assert.That(await StatusAsync(otherSeed, otherProjectPath, token)).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await StatusAsync(client, otherProjectPath, token)).IsEqualTo(HttpStatusCode.NotFound);
+        using var write = await client.PostAsJsonAsync(new Uri(database + "/collections/runs/documents", UriKind.Relative), new { name = "forbidden" }, token);
+        await Assert.That(write.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        using var create = await client.PostAsJsonAsync(new Uri($"/v1/projects/{project}/databases", UriKind.Relative), new { name = "forbidden" }, token);
+        await Assert.That(create.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(await StatusAsync(client, $"/v1/projects/{EntityIds.New()}/databases/ci-e2e/collections/runs/documents", token)).IsEqualTo(HttpStatusCode.NotFound);
+
+        // Another project and all management routes remain unreachable.
         using var elsewhere = await client.PostAsJsonAsync(new Uri($"/v1/projects/{EntityIds.New()}/databases", UriKind.Relative), new { name = "ci-e2e" }, token);
         await Assert.That(elsewhere.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await StatusAsync(client, "/v1/management/organizations", token)).IsEqualTo(HttpStatusCode.NotFound);

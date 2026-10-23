@@ -159,17 +159,28 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
     /// The GitHub Actions grant (<see cref="GitHubActionsGrant"/>): the bound workload's GitHub OIDC token, in
     /// <c>subject_token</c>, for a project token of the bound e2e project. The token must be signed by GitHub's current
     /// keys, name the platform issuer as its audience, be live, match every claim of the trust policy and carry a
-    /// <c>jti</c> never presented before. <paramref name="binding"/> is the properties of the client OpenIddict
-    /// authenticated; without the binding nothing is issued.
+    /// <c>jti</c> never presented before. <paramref name="binding"/> is the client OpenIddict authenticated;
+    /// without its exact live binding and permissions nothing is issued.
     /// </summary>
-    public async Task<IResult> GitHubActionsAsync(OpenIddictRequest request, IReadOnlyDictionary<string, JsonElement>? binding, CancellationToken cancellationToken)
+    public async Task<IResult> GitHubActionsAsync(OpenIddictRequest request, OidcApplication? binding, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (request.ClientId != GitHubActionsGrant.ClientId || binding is null
-            || !binding.TryGetValue(GitHubActionsGrant.OrganizationProperty, out var boundOrganization) || boundOrganization.GetString() is not { Length: > 0 } organization
-            || !binding.TryGetValue(GitHubActionsGrant.ProjectProperty, out var boundProject) || boundProject.GetString() is not { Length: > 0 } project)
+        if (request.ClientId != GitHubActionsGrant.ClientId || binding is null || binding.ClientType != ClientTypes.Public
+            || !GitHubActionsGrant.HasExactPermissions(binding.Permissions)
+            || !GitHubActionsGrant.TryReadBinding(binding.Properties, clock.GetUtcNow(), out var organization, out var project, out var database, out var deadline)
+            || await directory.OrganizationAsync(organization, cancellationToken).ConfigureAwait(false) is null
+            || await directory.ProjectAsync(project, cancellationToken).ConfigureAwait(false) is not { } found
+            || found.Value.OrganizationId != organization)
         {
-            return OidcResults.Forbid(Errors.InvalidClient, "The GitHub Actions workload is not bound.");
+            return OidcResults.Forbid(Errors.InvalidClient, "The GitHub Actions workload is not bound to a live approved target.");
+        }
+
+        foreach (var (name, expected) in new[] { ("organization", organization), ("project", project), ("database", database) })
+        {
+            if (request.GetParameter(name) is { } target && (string?)target != expected)
+            {
+                return OidcResults.Forbid(Errors.InvalidTarget, "The requested target differs from the binding.");
+            }
         }
 
         if (request.SubjectToken is not { Length: > 0 } encoded)
@@ -181,7 +192,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
         {
             ConfigurationManager = gitHubActions.Configuration,
             ValidIssuer = GitHubActionsGrant.Issuer,
-            ValidAudience = OidcIssuer.Issuer(options).AbsoluteUri,
+            ValidAudience = GitHubActionsGrant.Audience,
             // Exact audience, as every token ts-auth validates: no trailing-slash folding.
             IgnoreTrailingSlashWhenValidatingAudience = false,
             ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
@@ -196,7 +207,10 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
         var refused = token is null ? "signature, issuer, audience or lifetime"
             : new (string Claim, string Expected)[]
             {
+                ("iss", GitHubActionsGrant.Issuer),
+                ("aud", GitHubActionsGrant.Audience),
                 ("sub", GitHubActionsGrant.Subject),
+                ("environment", GitHubActionsGrant.Environment),
                 ("repository_id", GitHubActionsGrant.RepositoryId),
                 ("repository_owner_id", GitHubActionsGrant.RepositoryOwnerId),
                 ("repository", GitHubActionsGrant.Repository),
@@ -204,7 +218,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
                 ("event_name", GitHubActionsGrant.EventName),
                 ("workflow_ref", GitHubActionsGrant.WorkflowRef),
             }.FirstOrDefault(pair => Claim(claims, pair.Claim) != pair.Expected).Claim
-            ?? (JobWorkflowMatches(claims) ? null : "job_workflow_ref")
+            ?? (!claims.TryGetProperty("job_workflow_ref", out _) ? null : "job_workflow_ref")
             ?? (Claim(claims, "jti") is null ? "jti" : Claim(claims, "run_id") is null ? "run_id" : null);
         if (token is null || refused is not null)
         {
@@ -227,19 +241,20 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
             return OidcResults.Forbid(Errors.InvalidGrant, "The GitHub Actions token was already used.");
         }
 
-        var scopes = requested.IsEmpty ? GitHubActionsGrant.Scopes : [.. requested];
-        logger.ZLogWarning($"Audit: GitHub Actions project token for organization {organization}, project {project}: run {runId} attempt {Claim(claims, "run_attempt")}, sha {Claim(claims, "sha")}, jti {tokenId}, scopes {string.Join(' ', scopes)}");
-        // TerraBase takes only a ULID sub, as every client-credentials sub (the client id); the run stays in the audit line above.
-        return SignIn(Identity(GitHubActionsGrant.ClientId, organization, project, scopes, Lifetime));
-    }
+        var now = clock.GetUtcNow();
+        if (deadline <= now)
+        {
+            return OidcResults.Forbid(Errors.InvalidClient, "The workload binding has expired.");
+        }
 
-    // GitHub documents job_workflow_ref only for jobs of a reusable workflow, where it names the called workflow: absent is a
-    // job of the workflow itself; present in any JSON form (null, a number, an array), it must be exactly ci.yml's string,
-    // so no reusable workflow (here or elsewhere) matches. Read from the raw payload so no typed lookup hides a non-string.
-    private static bool JobWorkflowMatches(JsonElement claims)
-    {
-        return !claims.TryGetProperty("job_workflow_ref", out var value)
-            || (value.ValueKind == JsonValueKind.String && value.GetString() == GitHubActionsGrant.WorkflowRef);
+        var scopes = requested.IsEmpty ? GitHubActionsGrant.Scopes : [.. requested];
+        logger.ZLogWarning($"Audit: GitHub Actions project token for organization {organization}, project {project}, database {database}, deadline {deadline}: run {runId} attempt {Claim(claims, "run_attempt")}, sha {Claim(claims, "sha")}, scopes {string.Join(' ', scopes)}");
+        var expires = now + Lifetime < deadline ? now + Lifetime : deadline;
+        var identity = Identity(GitHubActionsGrant.ClientId, organization, project, scopes, expires - now)
+            .SetClaim(DatabaseClaim, database)
+            .SetResources(GitHubActionsGrant.ApiAudience)
+            .SetExpirationDate(expires);
+        return SignIn(identity);
     }
 
     // Numeric ids and other policy claims must remain scalar strings; typed JWT lookups can coerce other JSON forms.
