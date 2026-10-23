@@ -7,7 +7,9 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E.Features.Organizations;
 
@@ -128,6 +130,7 @@ public sealed class TsAuthPlatformJourneyTests
         using var personalClient = platform.Client();
         using (var login = await HttpJourney.LoginAsync(personalClient, member.Email, member.Password)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         var personal = (await Me(personalClient)).GetProperty("organizationId").GetString()!;
+        await platform.PlanAsync(personal, OrganizationRecord.StarterPlanId); // a Free plan would refuse the second project before ts-auth
         platform.Producer.RefuseNext("POST", "/v1/terrascale/organizations/" + personal + "/projects", HttpStatusCode.Conflict, "name_taken", "Producer text Taken@example.test is never shown.");
         csrf = await HttpJourney.CsrfAsync(personalClient, "/organization?tab=projects");
         using (var refused = await HttpJourney.PostFormAsync(personalClient, "/api/v1/dashboard/organization/projects", new()
@@ -340,6 +343,7 @@ public sealed class TsAuthPlatformJourneyTests
         private readonly List<WebApplication> hosts = [];
         private readonly ConcurrentDictionary<string, Principal> principals = new();
         private TestAuth? auth;
+        private IDashboardState? state;
         public PlatformProducer Producer { get; private set; } = null!;
         private Uri origin = null!;
         private Uri replica = null!;
@@ -362,6 +366,7 @@ public sealed class TsAuthPlatformJourneyTests
             var app = environment.CreateTestHost(Root, 0, publicOrigin, builder =>
             {
                 auth ??= (TestAuth)builder.Services.Last(service => service.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
+                state ??= (IDashboardState)builder.Services.Last(service => service.ServiceType == typeof(IDashboardState)).ImplementationInstance!;
                 Producer ??= new(auth.ResolveAccessToken);
                 var fallback = (IHttpClientFactory)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
                 builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new Factory(Producer, fallback)));
@@ -379,6 +384,16 @@ public sealed class TsAuthPlatformJourneyTests
             auth!.RegisterFixturePrincipal(new(principal.Subject, key, principal.Email, principal.Password));
             return principal;
         });
+
+        public async Task PlanAsync(string organizationId, string planId)
+        {
+            var current = await state!.GetAsync(AccountService.OrganizationsCollection, organizationId, default)
+                ?? throw new InvalidOperationException("The fixture plan targets an existing organization");
+            var organization = current.Document.Deserialize<OrganizationRecord>()!;
+            organization.PlanId = planId;
+            await state.PutAsync(AccountService.OrganizationsCollection, organizationId, JsonSerializer.SerializeToElement(organization),
+                TerraBasePrecondition.Matches(current.Version), default);
+        }
 
         public HttpClient Client(bool replica = false) => new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = replica ? this.replica : origin, Timeout = TimeSpan.FromSeconds(30) };

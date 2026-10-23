@@ -40,6 +40,7 @@ public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixt
                 """);
             var page = await context.NewPageAsync();
             await BrowserAudit.SignInAsync(page, new Uri(origin), "/organization?tab=projects");
+            await host.PlanAsync(await page.EvaluateAsync<string>("() => fetch('/api/v1/auth/me').then(response => response.json()).then(me => me.organizationId)"), PlanCatalog.For("pro").Id);
             var postCount = 0;
             page.Request += (_, request) => { if (request.Method == "POST" && new Uri(request.Url).AbsolutePath == "/api/v1/dashboard/organization/projects") Interlocked.Increment(ref postCount); };
             await page.GotoAsync(origin + "/organization?tab=projects");

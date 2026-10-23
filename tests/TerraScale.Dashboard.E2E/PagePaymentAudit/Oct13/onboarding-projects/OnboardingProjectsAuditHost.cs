@@ -1,9 +1,12 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.OnboardingProjects;
 
@@ -25,6 +28,18 @@ internal sealed class OnboardingProjectsAuditHost(WebApplication app, string ori
         }
         catch { await app.DisposeAsync(); throw; }
     }
+    // Test admission permits more projects than Free allows; it does not simulate a paid checkout.
+    public async Task PlanAsync(string organizationId, string planId)
+    {
+        var state = app.Services.GetRequiredService<IDashboardState>();
+        var current = await state.GetAsync(AccountService.OrganizationsCollection, organizationId, default)
+            ?? throw new InvalidOperationException("The fixture plan targets an existing organization");
+        var organization = current.Document.Deserialize<OrganizationRecord>()!;
+        organization.PlanId = planId;
+        await state.PutAsync(AccountService.OrganizationsCollection, organizationId, JsonSerializer.SerializeToElement(organization),
+            TerraBasePrecondition.Matches(current.Version), default);
+    }
+
     public async ValueTask DisposeAsync()
     {
         await app.StopAsync();

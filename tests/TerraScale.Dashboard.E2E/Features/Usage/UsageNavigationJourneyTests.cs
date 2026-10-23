@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.WebUtilities;
@@ -32,6 +33,11 @@ public sealed class UsageNavigationJourneyTests(DashboardRootFixture fixture)
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         using var database = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
         var databaseId = selectDatabase ? database.RootElement.GetProperty("id").GetString()! : "";
+        // Test admission permits a second project; it does not simulate a paid checkout.
+        using var producer = scenario.CreateProviderClient();
+        using (var admission = await producer.PostAsJsonAsync("/__test/control", new
+        { command = "plan", organizationId = identity.RootElement.GetProperty("organizationId").GetString(), value = OrganizationRecord.StarterPlanId }))
+            await Assert.That(admission.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         using var project = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/projects", new()
         { ["_csrf"] = csrf, ["name"] = "Usage navigation second", ["region"] = "GRU" });
         await Assert.That(project.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
