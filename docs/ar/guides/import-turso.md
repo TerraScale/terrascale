@@ -1,7 +1,6 @@
 ---
 title: Export from Turso
-description: Create a single-file SQLite export of a Turso or libSQL database for the proposed one-time import, with the storage-class mapping.
-head: [['meta', { name: 'robots', content: 'noindex' }]]
+description: Create a single-file SQLite export of a Turso or libSQL database for the one-time import, with the storage-class mapping.
 ---
 
 <!-- i18n:fallback:ar -->
@@ -13,8 +12,8 @@ head: [['meta', { name: 'robots', content: 'noindex' }]]
 
 Create one consistent SQLite file from a Turso, libSQL or SQLite database, check it and upload it with the [import steps](/ar/guides/import#import-step-by-step).
 
-::: warning Pending feature
-Import follows the proposed import contract v1 and is not available on any serving release yet. The commands on this page run on your own machine. SQLite commands were checked with SQLite 3.51 and Turso CLI flags with Turso CLI 1.0.26; confirm flags with `--help` for your version. No export from a real Turso account has been tested yet. TerraBase never connects to your database.
+::: info
+The commands on this page run on your own machine. SQLite commands were checked with SQLite 3.51 and Turso CLI flags with Turso CLI 1.0.26; confirm flags with `--help` for your version. No export from a real Turso account has been tested yet. TerraBase never connects to your database.
 :::
 
 ## 1. Rehearse with synthetic data

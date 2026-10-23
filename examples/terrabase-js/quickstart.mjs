@@ -74,8 +74,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     await ensureCollection(client, database, collection, signal)
     await runJourney(client, database, collection, signal)
     console.log('PASS_TERRABASE_CRUD_QUERY')
-  } catch {
-    console.error('Quickstart failed. Check access and reconcile any interrupted write before retrying.')
+  } catch (error) {
+    const cause = error instanceof TerraBaseV1Error ? `HTTP ${error.status} ${error.code}` : `${error.name}: ${error.message}`
+    console.error(`Quickstart failed: ${cause}. Reconcile any interrupted write before retrying.`)
     process.exitCode = 1
   }
 }

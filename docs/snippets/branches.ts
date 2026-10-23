@@ -1,21 +1,20 @@
-// Runnable snippet: cloud database branch with @terrascale/sdk 0.3.0.
-// Branch admission is a management operation and therefore requires a
-// project-scoped credential (`TERRASCALE_PROJECT_ID` in the docs runner).
+// Runnable snippet: branch a database with @terrascale/sdk 0.0.4. A branch is
+// a new database that starts as a copy of its source. The token needs
+// management access to the sandbox project.
 import { strict as assert } from "node:assert";
-import type { TerraScaleClient } from "@terrascale/sdk";
+import type { TerraBaseV1Client } from "@terrascale/sdk";
 
 type Sandbox = {
-  readonly databaseId: string;
-  readonly client: Pick<TerraScaleClient, "databaseBranches">;
+  readonly databaseName: string;
+  readonly client: Pick<TerraBaseV1Client, "databases">;
 };
 
-export const title = "Cloud database branch";
-// The project-scoped branch producer route is not published yet.
-export const runnable = false;
+export const runnable = true;
+export const title = "Database branch";
 
 export async function run(sandbox: Sandbox): Promise<void> {
-  const result = await sandbox.client.databaseBranches.requestClone({
-    sourceDatabaseId: sandbox.databaseId,
-  });
-  assert.equal(result.ok, true);
+  const source = await sandbox.client.databases.get(sandbox.databaseName);
+  const branch = await sandbox.client.databases.branch(source.name, { name: `${source.name}-preview` });
+  assert.equal(branch.branchedFrom, source.id);
+  await sandbox.client.databases.delete(branch.name);
 }

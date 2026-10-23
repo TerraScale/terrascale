@@ -1,7 +1,6 @@
 ---
 title: Export from PostgreSQL
-description: Create a pg_dump export for the proposed one-time PostgreSQL import, with a read-only role and the type mapping.
-head: [['meta', { name: 'robots', content: 'noindex' }]]
+description: Create a pg_dump export for the one-time PostgreSQL import, with a read-only role and the type mapping.
 ---
 
 <!-- i18n:fallback:de -->
@@ -13,8 +12,8 @@ head: [['meta', { name: 'robots', content: 'noindex' }]]
 
 Create a plain-text `pg_dump` export, check it and upload it with the [import steps](/de/guides/import#import-step-by-step).
 
-::: warning Pending feature
-Import follows the proposed import contract v1 and is not available on any serving release yet. The SQL and `pg_dump` commands on this page run on your own machine and were checked with PostgreSQL 17. TerraBase never connects to your database.
+::: info
+The SQL and `pg_dump` commands on this page run on your own machine and were checked with PostgreSQL 17. TerraBase never connects to your database.
 :::
 
 ## 1. Rehearse with synthetic data
