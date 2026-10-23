@@ -89,6 +89,51 @@ public sealed class CollectionAuthorizationAdmissionTests
         await Assert.That((asserted.Status, asserted.Code)).IsEqualTo((HttpStatusCode.BadRequest, "assert_requires_index"));
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Text_search_requires_collection_wide_read_before_native_scoring_or_admission(bool publicRead)
+    {
+        await using var api = await StartAsync();
+        var actor = DocumentApi.NewId();
+        var ownId = DocumentApi.NewId();
+        var hiddenId = DocumentApi.NewId();
+        (await api.PutAsync(ownId, new { owner = actor, body = "native search" })).Status.ShouldBe(HttpStatusCode.Created);
+        (await api.PutAsync(hiddenId, new { owner = DocumentApi.NewId(), body = "native search" })).Status.ShouldBe(HttpStatusCode.Created);
+        var store = await StoreAsync(api);
+        await using (var write = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            await Assert.That(DocumentField.TryParse("body", out var field)).IsTrue();
+            await Assert.That(await write.CreateIndexAsync(new IndexDefinition("text_docs", "items", [field], "text"), CancellationToken.None)).IsTrue();
+            await write.CommitAsync(CancellationToken.None);
+        }
+
+        using var owner = CollectionAccessRulesTests.Reader(api, actor, "reader");
+        var search = new { search = new[] { "/body", "native" } };
+        foreach (var filter in new object[] { search, new { not = search }, new { or = new object[] { search, new { exists = "/body" } } } })
+        {
+            var denied = await CollectionAccessRulesTests.SendAsync(owner, HttpMethod.Post, api.Query, new { filter, count = true });
+            await Assert.That((denied.Status, denied.Code, denied.Message)).IsEqualTo(
+                (HttpStatusCode.BadRequest, "invalid_query", "search requires collection-wide read access"));
+        }
+
+        var ranked = new { filter = search, sort = new[] { new { path = "$score", order = "desc" } }, count = true };
+        var deniedScore = await CollectionAccessRulesTests.SendAsync(owner, HttpMethod.Post, api.Query, ranked);
+        await Assert.That((deniedScore.Status, deniedScore.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query"));
+        var asserted = await CollectionAccessRulesTests.SendAsync(owner, HttpMethod.Post, api.Transactions,
+            new { ops = new[] { new { op = "assert_count", collection = "items", filter = search, gte = 1, lte = 1 } } });
+        await Assert.That((asserted.Status, asserted.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_query"));
+
+        await CollectionAccessRulesTests.DeclareAsync(api, CollectionAccessRulesTests.OwnerRules() with
+        {
+            Read = new CollectionAccessPolicy(true, publicRead, publicRead ? [] : ["reader"]),
+        });
+        var allowed = await CollectionAccessRulesTests.SendAsync(owner, HttpMethod.Post, api.Query, ranked);
+        await Assert.That(allowed.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(allowed.Ids).IsEquivalentTo([ownId, hiddenId]);
+        await Assert.That(allowed.Json.GetProperty("count").GetProperty("value").GetString()).IsEqualTo("2");
+    }
+
     private static async Task CheckReadsAsync(DocumentApi api, HttpClient reader, string? ownId)
     {
         var expected = ownId is null ? "0" : "1";

@@ -206,7 +206,6 @@ internal sealed class ShapeService(
         var read = Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
         return await RecheckAsync(store, scope, lineage, read, cancellationToken).ConfigureAwait(false);
 
-
         async ValueTask<ShapeRead> Read(IDatabaseStore current, CancellationToken token)
         {
             return Detach(await ReadPageAtAsync(current, scope, lineage, snapshot, afterId, token).ConfigureAwait(false));
@@ -293,7 +292,6 @@ internal sealed class ShapeService(
         var request = new ShapeFlightRequest(scope.Database, lineage.Handle, DocumentRoute.Decimal(offset), false);
         var read = Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
         return await RecheckAsync(store, scope, lineage, read, cancellationToken).ConfigureAwait(false);
-
 
         async ValueTask<ShapeRead> Read(IDatabaseStore current, CancellationToken token)
         {
