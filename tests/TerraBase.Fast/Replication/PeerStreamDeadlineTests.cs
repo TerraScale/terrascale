@@ -21,6 +21,7 @@ using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -835,6 +836,126 @@ public sealed class PeerStreamDeadlineTests
         await Assert.That(await EndsAsync(call.ResponseStream)).IsTrue();
     }
 
+    [Test]
+    public async Task A_stalled_progress_counter_expires_the_batch_one_deadline_after_its_last_increase()
+    {
+        var time = new ObservedTime();
+        var warnings = new PeerWarnings(time);
+        var observed = 0;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Every heartbeat repeats one count: only its first report is an increase.
+        await using var peer = await FakePeer.StartAsync(silentStreams: 0, batchRelease: release,
+            progress: (database, changeId, _) => [Progress(database, changeId, 1)]);
+        var (source, bindSource) = CreateSource();
+        TenantContext database = null!;
+        await using var api = await StartSenderAsync(peer, source, bindSource, time, async api =>
+        {
+            database = await CreateDatabaseAsync(api);
+            _ = source.Add(database, Incompressible(api.Server.Services.GetRequiredService<LocalReplica>().Id, 32));
+        }, warnings, checkpoint: Observed(() => _ = Interlocked.Increment(ref observed)));
+        await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
+        await Assert.That((await peer.NextAsync()).Batch).IsNotNull();
+        await time.UntilTimerAsync(Idle, after: 0, period: Idle);
+        var started = time.GetUtcNow();
+        for (var elapsed = Idle; elapsed <= ReplicationProtocol.ProgressTimeout; elapsed += Idle)
+        {
+            var changes = time.Changes;
+            time.Advance(Idle);
+            await Assert.That((await peer.NextAsync()).Heartbeat).IsNotNull();
+            // The progress frame and the empty answer each reset silence, so both were read before the next advance.
+            await time.UntilChangeAsync(ReplicationProtocol.ProgressTimeout, changes, count: 2);
+            await Assert.That(Volatile.Read(ref observed)).IsEqualTo(1);
+            await Assert.That(peer.FirstEnded.Task.IsCompleted).IsFalse();
+        }
+
+        // The increase at one second moved the deadline once; the repeats since then did not.
+        time.Advance(Idle);
+        await peer.FirstEnded.Task.WaitAsync(Deadline);
+        var failure = await warnings.Failure.Task.WaitAsync(Deadline);
+        await Assert.That(failure).IsTypeOf<TimeoutException>();
+        await Assert.That(failure!.Message).IsEqualTo("the peer did not acknowledge a batch in time");
+        await Assert.That(time.GetUtcNow() - started).IsEqualTo(ReplicationProtocol.ProgressTimeout + Idle);
+        await Assert.That(source.AckedBy(database, ReplicaId.Of(1, 9, 0))).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Progress_outside_the_in_flight_batch_is_ignored_and_progress_never_acknowledges(bool refill)
+    {
+        var time = new ObservedTime();
+        var observed = 0;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        TenantContext database = null!;
+        // Another incarnation, another change id and no increase come first; a refill's in-flight id is never a batch.
+        await using var peer = await FakePeer.StartAsync(silentStreams: 0, batchRelease: refill ? null : release, refillRelease: refill ? release : null,
+            progress: (wire, changeId, heartbeat) => heartbeat switch
+            {
+                1 => [Progress(ChangeGroups.Wire(database, Ulid.NewUlid()), changeId, 5)],
+                2 => [Progress(wire, changeId + 1, 5)],
+                3 => [Progress(wire, changeId, 0)],
+                _ => [Progress(wire, changeId, 5)],
+            });
+        var (source, bindSource) = CreateSource();
+        await using var api = await StartSenderAsync(peer, source, bindSource, time, async api =>
+        {
+            database = await CreateDatabaseAsync(api);
+            var node = api.Server.Services.GetRequiredService<LocalReplica>().Id;
+            _ = source.Add(database, Incompressible(node, 32));
+            if (refill)
+            {
+                _ = source.Add(database, Incompressible(node, 32));
+                source.CutBeforeNextRead(database, 1);
+            }
+        }, checkpoint: Observed(() => _ = Interlocked.Increment(ref observed)));
+        var waiter = api.Server.Services.GetRequiredService<RemoteAckWaiter>();
+        using var lease = waiter.TryAdmit(database) is RemoteLease admitted ? admitted : throw new InvalidOperationException("a free confirmation slot was refused");
+        await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
+        await Assert.That((await peer.NextAsync()).KindCase).IsEqualTo(refill ? PushFrame.KindOneofCase.Refill : PushFrame.KindOneofCase.Batch);
+        await time.UntilTimerAsync(Idle, after: 0, period: Idle);
+        if (refill)
+        {
+            await time.UntilTimerAsync(Idle, after: 0, period: Timeout.InfiniteTimeSpan);
+        }
+
+        var marker = new CommitMarker(await IncarnationAsync(api, database), refill ? 2 : 1);
+        for (var heartbeat = 1; heartbeat <= 5; heartbeat++)
+        {
+            var changes = time.Changes;
+            time.Advance(Idle);
+            await Assert.That((await peer.NextAsync()).Heartbeat).IsNotNull();
+            await time.UntilChangeAsync(ReplicationProtocol.ProgressTimeout, changes, count: 2);
+            await Assert.That(Volatile.Read(ref observed)).IsEqualTo(!refill && heartbeat >= 4 ? 1 : 0);
+            await Assert.That(source.AckedBy(database, ReplicaId.Of(1, 9, 0))).IsEqualTo(0);
+        }
+
+        // A covered marker returns at once; accepted progress left the confirmation ranges untouched.
+        var waiting = waiter.WaitAsync(database, marker, () => true, CancellationToken.None).AsTask();
+        await Assert.That(waiting.IsCompleted).IsFalse();
+        release.SetResult();
+        using var deadline = new CancellationTokenSource(Deadline);
+        await source.UntilAckedAsync(database, ReplicaId.Of(1, 9, 0), marker.ChangeId, deadline.Token);
+        await Assert.That(peer.Streams).IsEqualTo(1);
+        if (!refill)
+        {
+            await Assert.That(await waiter.WaitAsync(database, marker, () => true, deadline.Token)).IsTrue();
+        }
+
+        _ = await waiting;
+    }
+
+    // The sender calls it on its response reader: count only, never block.
+    private static DatabaseLifecycleCheckpoint Observed(Action count) => (step, _) =>
+    {
+        if (step == "replication.progress.observed")
+        {
+            count();
+        }
+    };
+
+    private static AckFrame Progress(Features.Replication.V1.Database database, ulong changeId, ulong progress) =>
+        new() { Applying = new Applying { Database = database, ChangeId = changeId, Progress = progress } };
+
     private static RepairState Repair()
     {
         var delta = Incompressible(ReplicaId.Of(1, 9, 0), 32);
@@ -869,7 +990,7 @@ public sealed class PeerStreamDeadlineTests
     private static async Task<ManagementApi> StartSenderAsync(
         FakePeer peer, IChangeGroupSource source, Action<IStorageEngine> bindSource, ObservedTime time,
         Func<ManagementApi, Task>? beforeJoin = null, PeerWarnings? warnings = null,
-        Func<IServiceProvider, IChangeGroupSource>? sourceFactory = null)
+        Func<IServiceProvider, IChangeGroupSource>? sourceFactory = null, DatabaseLifecycleCheckpoint? checkpoint = null)
     {
         var members = new FakeMemberStore();
         var api = await ManagementApi.StartAsync(settings =>
@@ -889,6 +1010,11 @@ public sealed class PeerStreamDeadlineTests
             if (warnings is not null)
             {
                 services.AddSingleton<ILogger<PeerStreams>>(warnings);
+            }
+
+            if (checkpoint is not null)
+            {
+                services.AddSingleton(checkpoint);
             }
         });
         if (beforeJoin is not null)
@@ -1176,8 +1302,8 @@ public sealed class PeerStreamDeadlineTests
         public ValueTask<Ulid?> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
             sink.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
 
-        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken) =>
-            sink.ApplyAsync(database, origin, groups, expected, cancellationToken);
+        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken, ApplyProgress? progress = null) =>
+            sink.ApplyAsync(database, origin, groups, expected, cancellationToken, progress);
 
         public async ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
         {
@@ -1425,6 +1551,7 @@ public sealed class PeerStreamDeadlineTests
         private readonly bool _stableBurst;
         private readonly bool _coverageRefusal;
         private readonly bool _repeatedCoverageRefusal;
+        private readonly Func<Features.Replication.V1.Database, ulong, int, AckFrame[]>? _progress;
         private WebApplication? _app;
         private int _streams;
         private int _batchesBeforeRelease;
@@ -1432,8 +1559,10 @@ public sealed class PeerStreamDeadlineTests
 
         private FakePeer(
             int silentStreams, RepairState? repair, TaskCompletionSource? refillRelease, TaskCompletionSource? batchRelease,
-            TaskCompletionSource? frontierRelease, int unansweredStreams, bool stableBeforeBatches, bool stableBurst, bool coverageRefusal, bool repeatedCoverageRefusal)
+            TaskCompletionSource? frontierRelease, int unansweredStreams, bool stableBeforeBatches, bool stableBurst, bool coverageRefusal, bool repeatedCoverageRefusal,
+            Func<Features.Replication.V1.Database, ulong, int, AckFrame[]>? progress)
         {
+            _progress = progress;
             _silentStreams = silentStreams;
             _unansweredStreams = unansweredStreams;
             _repair = repair;
@@ -1463,9 +1592,10 @@ public sealed class PeerStreamDeadlineTests
 
         public static async Task<FakePeer> StartAsync(
             int silentStreams, RepairState? repair = null, TaskCompletionSource? refillRelease = null, TaskCompletionSource? batchRelease = null,
-            TaskCompletionSource? frontierRelease = null, int unansweredStreams = 0, bool stableBeforeBatches = false, bool stableBurst = false, bool coverageRefusal = false, bool repeatedCoverageRefusal = false)
+            TaskCompletionSource? frontierRelease = null, int unansweredStreams = 0, bool stableBeforeBatches = false, bool stableBurst = false, bool coverageRefusal = false, bool repeatedCoverageRefusal = false,
+            Func<Features.Replication.V1.Database, ulong, int, AckFrame[]>? progress = null)
         {
-            var peer = new FakePeer(silentStreams, repair, refillRelease, batchRelease, frontierRelease, unansweredStreams, stableBeforeBatches, stableBurst, coverageRefusal, repeatedCoverageRefusal);
+            var peer = new FakePeer(silentStreams, repair, refillRelease, batchRelease, frontierRelease, unansweredStreams, stableBeforeBatches, stableBurst, coverageRefusal, repeatedCoverageRefusal, progress);
             var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
             builder.Configuration.Sources.Clear();
             builder.Logging.ClearProviders();
@@ -1590,6 +1720,7 @@ public sealed class PeerStreamDeadlineTests
             var reading = requests.MoveNext(context.CancellationToken);
             Queue<Ack> pending = [];
             Frontier? frontier = null;
+            var heartbeats = 0;
             try
             {
                 while (true)
@@ -1663,6 +1794,11 @@ public sealed class PeerStreamDeadlineTests
                             _ = StableSent.TrySetResult();
                         }
 
+                        if (pending.TryPeek(out var held))
+                        {
+                            await ProgressAsync(responses, held.Database, held.ChangeId, ++heartbeats, context);
+                        }
+
                         await responses.WriteAsync(new AckFrame(), context.CancellationToken);
                     }
 
@@ -1678,12 +1814,22 @@ public sealed class PeerStreamDeadlineTests
             }
         }
 
+        // Scripted Applying frames for the held batch or refill, before the heartbeat's empty answer.
+        private async Task ProgressAsync(IServerStreamWriter<AckFrame> responses, Features.Replication.V1.Database database, ulong changeId, int heartbeat, ServerCallContext context)
+        {
+            foreach (var frame in _progress?.Invoke(database, changeId, heartbeat) ?? [])
+            {
+                await responses.WriteAsync(frame, context.CancellationToken);
+            }
+        }
+
         // One serialized response loop keeps answering heartbeats while the refill's durable acknowledgement is held.
         private async Task HoldRefillAsync(IAsyncStreamReader<PushFrame> requests, IServerStreamWriter<AckFrame> responses, ServerCallContext context)
         {
             var released = _refillRelease!.Task;
             var reading = requests.MoveNext(context.CancellationToken);
             Refill? pending = null;
+            var heartbeats = 0;
             try
             {
                 while (true)
@@ -1715,6 +1861,11 @@ public sealed class PeerStreamDeadlineTests
                     }
                     else if (frame.Heartbeat is not null)
                     {
+                        if (pending is not null)
+                        {
+                            await ProgressAsync(responses, pending.Database, pending.ChangeId, ++heartbeats, context);
+                        }
+
                         await responses.WriteAsync(new AckFrame(), context.CancellationToken);
                     }
 
