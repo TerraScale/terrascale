@@ -163,6 +163,11 @@ public sealed class AnalyticsBackendContractTests
         {
             if (request.Method != HttpMethod.Get || request.RequestUri!.Host != "api.terrascale.tech")
                 throw new InvalidOperationException("Unexpected analytics origin or method.");
+            if (request.RequestUri.AbsolutePath == "/v1/regions")
+            {
+                if (request.Headers.Authorization is not null) throw new InvalidOperationException("Region catalog read received a user token.");
+                return Task.FromResult(Response("{\"regions\":[\"gru\"]}"));
+            }
             if (request.RequestUri.AbsolutePath == "/healthz")
             {
                 if (request.Headers.Authorization is not null) throw new InvalidOperationException("Health read received a user token.");
