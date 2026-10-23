@@ -80,6 +80,107 @@ A failed statement rolls back the whole request and answers:
 
 `401` means the token is missing, expired or revoked; mint a new one. `429` comes with `Retry-After`. See the [error guide](/zh-cn/guides/errors).
 
+## From the SDKs
+
+The SDKs call this endpoint for you: a batch is one request and one transaction, a query maps rows to your type, and a failed statement raises a typed SQL error with the statement index and the SQLite code. Every snippet takes a database handle for `shop`, built as in the [SDK reference](/zh-cn/guides/sdks).
+
+### JavaScript / TypeScript
+
+`@terrascale/sdk` 0.0.6 or later:
+
+```ts
+import { SqlError } from '@terrascale/sdk'
+
+const db = client.database('shop')
+await db.batch([
+  'CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)',
+  { sql: 'INSERT INTO customers (id, name) VALUES (?, ?)', args: [1, 'Ada'] },
+  { sql: 'INSERT INTO customers (id, name) VALUES (:id, :name)', named: { id: 2, name: 'Grace' } },
+])
+const customers = await db.query<{ id: number; name: string }>('SELECT id, name FROM customers WHERE id > ?', [0])
+
+try {
+  await db.execute('INSERT INTO customers (id, name) VALUES (?, ?)', [1, 'Ada'])
+} catch (err) {
+  if (!(err instanceof SqlError)) throw err
+  console.log(err.statement, err.sqliteCode) // 0 'SQLITE_CONSTRAINT_PRIMARYKEY'
+}
+```
+
+An integer beyond 2^53 comes back as an `ExactDecimal` that keeps every digit (convert it with `BigInt(String(value))`); pass large integer arguments as `bigint`.
+
+### Go
+
+`terrascale.tech/sdk` v0.0.3 or later:
+
+```go
+db := c.Database(projectID, "shop")
+_, err := db.BatchSQL(ctx, []v1.SQLStatement{
+	{SQL: "CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"},
+	{SQL: "INSERT INTO customers (id, name) VALUES (?, ?)", Args: []any{1, "Ada"}},
+	{SQL: "INSERT INTO customers (id, name) VALUES (:id, :name)", Named: map[string]any{"id": 2, "name": "Grace"}},
+})
+rows, err := db.QuerySQL(ctx, "SELECT id, name FROM customers WHERE id > :id", v1.Named("id", 0))
+// rows[0]["id"] == int64(1); values are nil, int64, float64 or string
+
+_, err = db.ExecuteSQL(ctx, "INSERT INTO customers (id, name) VALUES (?, ?)", 1, "Ada")
+var sqlErr *v1.SQLError
+if errors.As(err, &sqlErr) {
+	log.Println(sqlErr.Statement, sqlErr.SQLiteCode) // 0 SQLITE_CONSTRAINT_PRIMARYKEY
+}
+```
+
+### C#
+
+`TerraScale.DotNet` 0.0.6 or later:
+
+```csharp
+TerraBaseDatabase database = documents.Database(projectId, "shop");
+await database.ExecuteSqlBatchAsync([
+    new("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"),
+    new("INSERT INTO customers (id, name) VALUES (?, ?)", [1, "Ada"]),
+    new("INSERT INTO customers (id, name) VALUES (:id, :name)",
+        Named: new Dictionary<string, TerraBaseSqlValue> { ["id"] = 2, ["name"] = "Grace" }),
+], cancellationToken);
+
+foreach (TerraBaseSqlRecord row in await database.QuerySqlAsync("SELECT id, name FROM customers WHERE id > ?", [0], cancellationToken))
+    Console.WriteLine($"{row.GetInt64("id")} {row.GetString("name")}");
+
+try
+{
+    await database.ExecuteSqlAsync("INSERT INTO customers (id, name) VALUES (?, ?)", [1, "Ada"], cancellationToken);
+}
+catch (TerraBaseSqlException e)
+{
+    Console.WriteLine($"{e.Code} {e.Statement} {e.SqliteCode}"); // sql_error 0 SQLITE_CONSTRAINT_PRIMARYKEY
+}
+```
+
+### Rust
+
+The `terrascale` crate 0.0.2 or later. It is not on crates.io yet; install it from the `v0.0.2` tag (`cargo add terrascale --git https://github.com/TerraScale/ts-rust --tag v0.0.2`).
+
+```rust
+use terrascale::v1::{SqlStatement, SqlValue};
+
+#[derive(serde::Deserialize)]
+struct Customer { id: i64, name: String }
+
+let sql = client.database("shop").sql();
+sql.batch(vec![
+    SqlStatement::new("CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"),
+    SqlStatement::new("INSERT INTO customers (id, name) VALUES (?, ?)").args([SqlValue::from(1), "Ada".into()]),
+    SqlStatement::new("INSERT INTO customers (id, name) VALUES (:id, :name)").named("id", 2).named("name", "Grace"),
+]).await?;
+let customers: Vec<Customer> = sql.query("SELECT id, name FROM customers WHERE id > ?", &[0.into()]).await?;
+
+if let Err(err) = sql.execute("INSERT INTO customers (id, name) VALUES (?, ?)", &[1.into(), "Ada".into()]).await {
+    if let Some(e) = err.sql() { // None for auth, quota and network failures
+        println!("{} {:?} {:?}", e.code, e.statement, e.sqlite_code); // sql_error Some(0) Some("SQLITE_CONSTRAINT_PRIMARYKEY")
+    }
+}
+```
+
 ## Limits
 
 The [libSQL limits](/zh-cn/guides/libsql-clients#limits) apply: reads scan their tables (about 150,000 rows at most), a result holds at most 10,000 rows and 8 MiB, and a request body is at most 1 MiB. Page large reads with a key condition and `LIMIT`:

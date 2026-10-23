@@ -10,35 +10,35 @@ Use a TerraBase SDK to store and query JSON documents in a project database. Eac
 
 | Language | Package / entrypoint | Runtime | Install |
 | --- | --- | --- | --- |
-| JavaScript / TypeScript | `@terrascale/sdk@0.0.5`, `createTerraBaseV1Client` | Node 22 or 24; npm ≥11; bundled TypeScript declarations | npm; [quickstart](/getting-started/javascript) |
+| JavaScript / TypeScript | `@terrascale/sdk@0.0.6`, `createTerraBaseV1Client` | Node 22 or 24; npm ≥11; bundled TypeScript declarations | npm; [quickstart](/getting-started/javascript) |
 | C# | `TerraScale.DotNet`, `TerraBaseDocumentsClient` | .NET 10; source also targets .NET 11 with that toolchain | Build the package from source; [quickstart](/getting-started/csharp) |
-| Go | `terrascale.tech/sdk/v1`, `New(Config)` | Go ≥1.25 | `go get terrascale.tech/sdk@v0.0.2` |
+| Go | `terrascale.tech/sdk/v1`, `New(Config)` | Go ≥1.25 | `go get terrascale.tech/sdk@v0.0.3` |
 | Python | `terrascale`, `TerraScale` / `AsyncTerraScale` | Python ≥3.10, httpx | `pip install` from Git; [quickstart](/getting-started/python) |
-| Rust | `terrascale::v1`, `Client::for_project` | Rust 2021 edition, Tokio | Git dependency; not on crates.io yet |
+| Rust | `terrascale::v1`, `Client::for_project` | Rust 2021 edition, Tokio | Git tag `v0.0.2`; not on crates.io yet |
 
 The npm package declares the latest major Chrome, Firefox, Safari and Edge. Its React, Svelte and TanStack entrypoints have their own peer package requirements. There is no Java SDK yet; call the HTTP API directly from those languages.
 
 ### JavaScript / TypeScript
 
 ```bash
-npm install --save-exact @terrascale/sdk@0.0.5
+npm install --save-exact @terrascale/sdk@0.0.6
 ```
 
-Import from `@terrascale/sdk`. The root exposes `createTerraBaseV1Client`, `v1Filter` and typed errors. `client.database(name).collection(name)` selects a collection. It provides `create`, `get`, `put`, `patch`, `delete`, `query`, `pages` and `items`. See [the complete example](/getting-started/javascript).
+Import from `@terrascale/sdk`. The root exposes `createTerraBaseV1Client`, `v1Filter` and typed errors. `client.database(name).collection(name)` selects a collection. It provides `create`, `get`, `put`, `patch`, `delete`, `query`, `pages` and `items`; `db.execute`, `db.query` and `db.batch` run [SQL](/guides/sql-http#from-the-sdks). See [the complete example](/getting-started/javascript).
 
 ### C#
 
-`TerraScale.DotNet` is not on nuget.org yet. Build version `0.0.4` from the public [ts-dotnet](https://github.com/TerraScale/ts-dotnet) source into a local package feed; the [C# quickstart](/getting-started/csharp) shows the commands.
+`TerraScale.DotNet` is not on nuget.org yet. Build version `0.0.6` (tag `v0.0.6`) from the public [ts-dotnet](https://github.com/TerraScale/ts-dotnet) source into a local package feed, the way the [C# quickstart](/getting-started/csharp) builds its pinned version.
 
-`Database(projectId, databaseName)` returns a handle with `CreateDocumentAsync`, `GetDocumentAsync`, `PutDocumentAsync`, `PatchDocumentAsync`, `DeleteDocumentAsync`, `QueryAsync` and `TransactAsync`. A caller-owned `HttpClient` must disable redirects and cookies; use `TerraBaseHttp.CreateHandler()` and dispose the transport yourself.
+`Database(projectId, databaseName)` returns a handle with `CreateDocumentAsync`, `GetDocumentAsync`, `PutDocumentAsync`, `PatchDocumentAsync`, `DeleteDocumentAsync`, `QueryAsync` and `TransactAsync`; `ExecuteSqlAsync`, `QuerySqlAsync` and `ExecuteSqlBatchAsync` run [SQL](/guides/sql-http#from-the-sdks). A caller-owned `HttpClient` must disable redirects and cookies; use `TerraBaseHttp.CreateHandler()` and dispose the transport yourself.
 
 ### Go
 
 ```bash
-go get terrascale.tech/sdk@v0.0.2
+go get terrascale.tech/sdk@v0.0.3
 ```
 
-Import `terrascale.tech/sdk/v1`. `New(Config)` takes a `BaseURL` (or a `Resolver`) and a `Token`. `Database(projectId, name)` and named collections scope document operations.
+Import `terrascale.tech/sdk/v1`. `New(Config)` takes a `BaseURL` (or a `Resolver`) and a `Token`. `Database(projectId, name)` and named collections scope document operations; `ExecuteSQL`, `QuerySQL` and `BatchSQL` run [SQL](/guides/sql-http#from-the-sdks).
 
 ### Python
 
@@ -50,15 +50,15 @@ pip install "terrascale @ git+https://github.com/TerraScale/ts-python@v0.0.1"
 
 ### Rust
 
-The `terrascale` crate is not on crates.io yet. Add it from the public [ts-rust](https://github.com/TerraScale/ts-rust) repository:
+The `terrascale` crate is not on crates.io yet. Add version `0.0.2` from its tag in the public [ts-rust](https://github.com/TerraScale/ts-rust) repository:
 
 ```bash
-cargo add terrascale --git https://github.com/TerraScale/ts-rust
+cargo add terrascale --git https://github.com/TerraScale/ts-rust --tag v0.0.2
 cargo add tokio -F tokio/full
 cargo add serde_json
 ```
 
-Use `terrascale::v1`. `Client::for_project(projectId, accessToken).build()?` sends requests to `https://api.terrascale.tech`. `client.database(name).collection(name)` provides `get`, `put`, `create`, `patch`, `delete`, `query` and `pages`; `database.run_sql` runs the read-only SQL subset. The token is the access token from the [key exchange](/guides/authentication).
+Use `terrascale::v1`. `Client::for_project(projectId, accessToken).build()?` sends requests to `https://api.terrascale.tech`. `client.database(name).collection(name)` provides `get`, `put`, `create`, `patch`, `delete`, `query` and `pages`; `database.sql()` runs [SQL](/guides/sql-http#from-the-sdks) with `execute`, `query` and `batch`. The token is the access token from the [key exchange](/guides/authentication).
 
 ## Contract and routing
 
