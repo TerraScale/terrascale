@@ -24,8 +24,9 @@ public static class StorageFormat
     /// 14: persisted full-text indexes and derived text tables, batch 5 reset 2026-10-23.
     /// 15: maintained per-collection document counts and bytes (<c>_tb_collection_stats</c>).
     /// 16: collection access proofs and collection generations in the persisted change feed.
+    /// 17: aegis256 database/WAL pages, wrapped-key sidecars and encrypted snapshot bundles, batch 5.
     /// </summary>
-    public const int Version = 16;
+    public const int Version = 17;
 
     /// <summary>The format this build writes, for example <c>2-3f1a09c4e7b2</c>.</summary>
     public static string Id { get; } = $"{Version}-{Convert.ToHexStringLower(TursoDatabaseStore.FormatDigest)[..12]}";

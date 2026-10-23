@@ -69,9 +69,10 @@ and that operational procedure require their own authorization.
 
 ## Format cutover and evidence
 
-Needs format bump. This change does not modify `StorageFormat.cs` or reset
-serving data. The deployment owner must batch the format bump and authorize
-the cutover before activating this binary against existing plaintext data.
+Needs format bump: this change advances `StorageFormat.Version` from 12 to 13
+for the deployment owner's authorized batch 4 cutover. The deployment owner
+wipes and re-bootstraps the serving data after merge; this PR does not perform
+that reset. Existing plaintext data cannot be opened by the new binary.
 There is no migration or compatibility shim.
 
 Fast integration coverage writes a recognizable document, checks database
