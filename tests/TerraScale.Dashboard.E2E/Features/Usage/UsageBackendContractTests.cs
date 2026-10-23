@@ -108,6 +108,18 @@ public sealed class UsageBackendContractTests
         await Assert.That(result.Scope.Reading).IsNull();
     }
 
+    [Test]
+    public async Task AProjectWithoutDatabasesReportsNoReplicationInsteadOfAnError()
+    {
+        using var wire = new Wire { Failure = 404 };
+        var selection = Selection();
+        selection.Context.Project!.Databases.Clear();
+        // The wire refuses the replication path, so any TerraBase call would surface as an error.
+        var result = await new UsageReplicationBackend(wire, new Tokens(), null!).ReadAsync(selection with { DatabaseId = "" }, CancellationToken.None);
+        await Assert.That(result.Error).IsEqualTo("");
+        await Assert.That(result.Empty).Contains("No activity yet");
+    }
+
     private static UsageSelection Selection()
     {
         var project = new ProjectRecord { Id = "01JA0000000000000000000001", OrganizationId = "01JA0000000000000000000002", Name = "project" };
