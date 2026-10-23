@@ -112,9 +112,10 @@ public sealed class DatabaseBackend(IHttpClientFactory factory, IProjectAccessTo
     public async Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, bool allRegions, CancellationToken cancellationToken)
     {
         var sdk = await ClientAsync(scope, placement[0], "databases:write", cancellationToken);
-        // TerraBase refuses allRegions together with any replicaRegions list, even an empty one.
+        // TerraBase refuses allRegions together with any replicaRegions list, even an empty one, and refuses an empty list on
+        // a cell (decision 0013a: two regions or more). With only the home chosen, it places the database in every other serving region.
         return Map(await RunAsync(() => sdk.Project(scope.ProjectId).CreateDatabaseAsync(name, placement[0].Id,
-            allRegions ? null : placement.Skip(1).Select(region => region.Id).ToArray(), allRegions ? true : null, cancellationToken)));
+            allRegions || placement.Count == 1 ? null : placement.Skip(1).Select(region => region.Id).ToArray(), allRegions ? true : null, cancellationToken)));
     }
 
     public async Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
