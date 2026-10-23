@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using TerraBase.Configuration;
@@ -319,6 +320,81 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         catch (QueryCapacityException error)
         {
             return error.SortBudget ? SortBudget : TooExpensive;
+        }
+    }
+
+    public async IAsyncEnumerable<ExportRow> ExportAsync(
+        TenantContext database, string? afterCollection, string? afterId, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        {
+            yield break;
+        }
+
+        var incarnation = store.Incarnation;
+        if (await faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ReplicaCopyFaultedException("this database copy is awaiting certified recovery");
+        }
+
+        // shortcut: one read transaction pins the snapshot for the whole stream, so a slow client holds one session;
+        // move to a durable snapshot file if exports of very large databases need it.
+        var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            if (afterCollection is not null && await transaction.GetCollectionAsync(afterCollection, cancellationToken).ConfigureAwait(false) is not null)
+            {
+                await foreach (var row in ExportCollectionAsync(transaction, afterCollection, afterId, cancellationToken).ConfigureAwait(false))
+                {
+                    yield return row;
+                }
+            }
+
+            var after = afterCollection;
+            bool more;
+            do
+            {
+                (var collections, more) = await transaction.ListCollectionsAsync(after, 200, cancellationToken).ConfigureAwait(false);
+                foreach (var collection in collections)
+                {
+                    await foreach (var row in ExportCollectionAsync(transaction, collection.Name, null, cancellationToken).ConfigureAwait(false))
+                    {
+                        yield return row;
+                    }
+
+                    after = collection.Name;
+                }
+            }
+            while (more);
+        }
+
+        usage.RecordRead(database);
+        // A copy that stopped being trusted while it streamed aborts the response instead of ending it cleanly.
+        if (await faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ReplicaCopyFaultedException("this database copy changed while it was being read");
+        }
+    }
+
+    private static async IAsyncEnumerable<ExportRow> ExportCollectionAsync(
+        IStorageTransaction transaction, string collection, string? afterId, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var position = afterId is null ? null : new QueryPosition([], afterId);
+        while (true)
+        {
+            var page = await transaction.QueryAsync(
+                new DocumentQuery(collection, null, [], position, QueryParser.MaxLimit, DocumentRoute.MaxPageBytes), cancellationToken).ConfigureAwait(false);
+            foreach (var row in page.Rows)
+            {
+                yield return new ExportRow(collection, row.Document);
+            }
+
+            if (!page.HasMore)
+            {
+                yield break;
+            }
+
+            position = new QueryPosition(page.Rows[^1].Keys, page.Rows[^1].Document.Id);
         }
     }
 

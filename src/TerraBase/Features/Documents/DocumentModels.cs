@@ -25,6 +25,12 @@ public sealed record WriteBody(
 /// <param name="Exact">Whether every match was counted (at most 100000).</param>
 public sealed record CountBody(string Value, bool Exact);
 
+/// <summary>One line of a database export.</summary>
+/// <param name="Collection">Collection name.</param>
+/// <param name="Id">Document id.</param>
+/// <param name="Document">The stored document.</param>
+public sealed record ExportLineBody(string Collection, string Id, JsonElement Document);
+
 /// <summary>One page of documents.</summary>
 /// <param name="Items">Documents in query order.</param>
 /// <param name="NextCursor">Cursor of the next page; <see langword="null"/> on the last page.</param>

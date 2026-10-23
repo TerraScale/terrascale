@@ -375,6 +375,9 @@ public sealed class QueryCacheIntegrationTests
             return inner.WriteConfirmedAsync(database, operations, indexErrors, cancellationToken);
         }
 
+        public IAsyncEnumerable<ExportRow> ExportAsync(TenantContext database, string? afterCollection, string? afterId, CancellationToken cancellationToken) =>
+            inner.ExportAsync(database, afterCollection, afterId, cancellationToken);
+
         public ValueTask<ApplyOutcome> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken) =>
             inner.ApplyAsync(transaction, operation, cancellationToken);
 
