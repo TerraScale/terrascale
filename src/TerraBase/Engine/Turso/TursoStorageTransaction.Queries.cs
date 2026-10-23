@@ -455,6 +455,7 @@ internal sealed partial class TursoStorageTransaction
     private SqliteCommand PlainCommand(string sql)
     {
         // Not cached on the session: these statements embed collections and paths, so their text varies.
+        _ranPlain = true;
         var command = session.Connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = sql;

@@ -327,6 +327,42 @@ public sealed class StorageTransactionTests
         }
     }
 
+    // Each commit's marker names its own final CDC row, whether the marker statement is kept from an earlier transaction or
+    // read fresh after this transaction's DDL (a collection created by the put).
+    [Test]
+    public async Task Each_commit_marker_names_the_last_cdc_commit_row_across_commits_and_collection_creation()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var (_, store) = await OpenAsync(server);
+        Task<long> LastCommitRowAsync()
+        {
+            return store.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT max(change_id) FROM turso_cdc WHERE change_type = 2;";
+                return (long)command.ExecuteScalar()!;
+            }, "a test reading the change log", CancellationToken.None);
+        }
+
+        var markers = new List<long>();
+        foreach (var collection in new[] { "items", "items", "created", "items", "created" })
+        {
+            CommitResult commit;
+            await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+            {
+                _ = await writer.PutAsync(collection, EntityIds.New().ToString(), Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
+                commit = await writer.CommitAsync(CancellationToken.None);
+            }
+
+            await Assert.That(commit.Marker).IsNotNull();
+            await Assert.That(commit.Marker!.Value.Incarnation).IsEqualTo(store.Incarnation);
+            await Assert.That(commit.Marker.Value.ChangeId).IsEqualTo(await LastCommitRowAsync());
+            markers.Add(commit.Marker.Value.ChangeId);
+        }
+
+        await Assert.That(markers.Zip(markers.Skip(1)).All(pair => pair.First < pair.Second)).IsTrue();
+    }
+
     // The feed sequence and the commit offset are read and set under the writer: each feed row takes the next number, a
     // rolled-back savepoint gives its number back, each commit takes one offset, and an exhausted sequence refuses the write.
     [Test]
