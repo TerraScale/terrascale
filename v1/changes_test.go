@@ -107,7 +107,7 @@ func TestChangesRejectsHTTPAndMalformedEvents(t *testing.T) {
 }
 
 func TestChangesPreservesIssuerRoutingHeaders(t *testing.T) {
-	const replay = "instance=issuer-1;timeout=2s;fallback=force_self"
+	const replay = "region=sjc"
 	const body = `{"error":{"code":"cursor_elsewhere","message":"the cursor resumes on its issuing machine"}}`
 	calls := 0
 	db := changesDB(t, func(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +116,7 @@ func TestChangesPreservesIssuerRoutingHeaders(t *testing.T) {
 			t.Error("missing resume cursor")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Fly-Replay", replay)
+		w.Header().Set("Ts-Replay", replay)
 		w.Header().Set("X-Request-ID", "issuer-routing")
 		w.WriteHeader(http.StatusMisdirectedRequest)
 		fmt.Fprint(w, body)
@@ -125,7 +125,7 @@ func TestChangesPreservesIssuerRoutingHeaders(t *testing.T) {
 	for _, err := range db.Changes(t.Context(), v1.ChangesOptions{Cursor: "saved"}) {
 		failures++
 		var api *v1.APIError
-		if !errors.As(err, &api) || api.Status != http.StatusMisdirectedRequest || api.Code != "cursor_elsewhere" || string(api.Body) != body || api.RequestID != "issuer-routing" || api.Header.Get("Fly-Replay") != replay || api.Header.Get("X-Request-ID") != api.RequestID {
+		if !errors.As(err, &api) || api.Status != http.StatusMisdirectedRequest || api.Code != "cursor_elsewhere" || string(api.Body) != body || api.RequestID != "issuer-routing" || api.Header.Get("Ts-Replay") != replay || api.Header.Get("X-Request-ID") != api.RequestID {
 			t.Fatalf("issuer routing error = %#v", err)
 		}
 	}
