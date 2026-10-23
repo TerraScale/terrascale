@@ -46,14 +46,14 @@ public sealed class DatabaseDataAccessJourneyTests(DashboardE2EFixture fixture)
         var sqlCalls = 0;
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
         {
-            if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql", StringComparison.Ordinal)) return null;
+            if (http.Request.Method != "POST" || !http.Request.Path.Value!.EndsWith("/sql/execute", StringComparison.Ordinal)) return null;
             if (Interlocked.Increment(ref sqlCalls) == 1)
             {
                 using var cancellation = http.RequestAborted.Register(() => aborted.TrySetResult());
                 started.TrySetResult();
                 await Task.Delay(TimeSpan.FromSeconds(10), http.RequestAborted);
             }
-            return Results.Json(new { matched = 0, truncated = false, rows = Array.Empty<object>() });
+            return Results.Json(new { results = new[] { new { columns = Array.Empty<object>(), rows = Array.Empty<object>(), rows_affected = 0, last_insert_rowid = (long?)null } } });
         });
         using var client = scenario.CreateClient();
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);

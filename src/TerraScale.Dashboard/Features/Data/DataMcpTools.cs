@@ -78,7 +78,7 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
     }
 
     [McpServerTool(Name = "execute_sql", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Execute one bounded read-only SQL statement with the same checks as the dashboard editor.")]
-    public Task<DatabaseSqlResult> Sql(string databaseId, string sql, string? organizationId = null, string? projectId = null) => data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, Cancellation);
+    public Task<DatabaseSqlResult> Sql(string databaseId, string sql, string? organizationId = null, string? projectId = null) => data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, false, Cancellation);
 
     [McpServerTool(Name = "check_sql", Title = "Check SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Validate a read-only SQL statement without running it and suggest indexes for it.")]
     public SqlAnalysis CheckSql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
@@ -88,8 +88,11 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
     }
 
     [McpServerTool(Name = "run_sql", Title = "Run SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Run one read-only SQL query against a database.")]
-    public async Task<McpSqlResponse> RunSql(string databaseId, string sql, string? organizationId = null, string? projectId = null) =>
-        new(new((await data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, Cancellation)).Rows));
+    public async Task<McpSqlResponse> RunSql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
+    {
+        var result = await data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, false, Cancellation);
+        return new(new(result.Columns, result.Rows));
+    }
 
     [McpServerTool(Name = "list_indexes", Title = "List indexes", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a collection's indexed fields and their build state.")]
     public async Task<McpIndexResponse> Indexes(string databaseId, string collection, string? organizationId = null, string? projectId = null)
@@ -206,7 +209,7 @@ public sealed record McpHistoryVersion(string Revision, bool Deleted, [property:
 public sealed record McpDocumentHistory(IReadOnlyList<McpHistoryVersion> Versions);
 public sealed record McpCollectionSchema(string Collection, TerraBaseCollectionSchema Schema);
 public sealed record McpSchemaApplied(string Collection, string Status);
-public sealed record McpSqlRows(IReadOnlyList<DatabaseSqlRow> Rows);
+public sealed record McpSqlRows(IReadOnlyList<DatabaseSqlColumn> Columns, IReadOnlyList<IReadOnlyList<JsonElement>> Rows);
 public sealed record McpSqlResponse(McpSqlRows Result);
 public sealed record McpIndex(string Field, string State);
 public sealed record McpIndexResponse(string Collection, IReadOnlyList<McpIndex> Indexes);

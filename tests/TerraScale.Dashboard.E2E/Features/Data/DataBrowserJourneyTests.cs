@@ -111,7 +111,7 @@ public sealed class DataBrowserJourneyTests(DashboardRootFixture fixture)
         await Assert.That(analysis).Contains("ORDER BY sorts on createdAt; consider an index for bounded pagination.");
         await Assert.That(await page.Locator("#sql-result").CountAsync()).IsEqualTo(0)
             .Because("The native check validates and advises without executing the query.");
-        await EditorAsync("DELETE FROM orders");
+        await EditorAsync("BEGIN");
         await CheckAsync(422);
         await Assert.That(await page.Locator("#sql-analysis").CountAsync()).IsEqualTo(0);
         // Editor live regions may boot after navigation; keep their alert collision deterministic.
@@ -128,7 +128,7 @@ public sealed class DataBrowserJourneyTests(DashboardRootFixture fixture)
             """);
         var sqlAlert = page.Locator(".ts-data-sql .ts-alert-danger[role='alert']");
         await Assert.That(await sqlAlert.CountAsync()).IsEqualTo(1);
-        await Assert.That(await sqlAlert.InnerTextAsync()).IsEqualTo("Only SELECT, WITH, and EXPLAIN statements are allowed.");
+        await Assert.That(await sqlAlert.InnerTextAsync()).IsEqualTo("Transaction statements (BEGIN, COMMIT, ROLLBACK) are not accepted: each run is its own transaction.");
         await Assert.That(errors.ToArray()).IsEmpty();
         await Assert.That(bootFailures.ToArray()).IsEmpty();
 

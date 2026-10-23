@@ -17,7 +17,8 @@ public sealed class DatabaseBackendContractTests
     [Arguments("set-regions", "databases:write", true)]
     [Arguments("set-all-regions", "databases:write", true)]
     [Arguments("collections", "databases:read", true)]
-    [Arguments("sql", "databases:read", true)]
+    [Arguments("sql", "documents:read", true)]
+    [Arguments("sql-write", "documents:write", true)]
     [Arguments("indexes", "databases:read", true)]
     [Arguments("create-index", "databases:write", true)]
     [Arguments("drop-index", "databases:write", true)]
@@ -43,7 +44,8 @@ public sealed class DatabaseBackendContractTests
                         "set-regions" => backend.SetRegionsAsync(scope, home, DatabaseId, [home], false, CancellationToken.None),
                         "set-all-regions" => backend.SetRegionsAsync(scope, home, DatabaseId, [home], true, CancellationToken.None),
                         "collections" => backend.CollectionsAsync(scope, home, DatabaseId, CancellationToken.None),
-                        "sql" => backend.SqlAsync(scope, home, DatabaseId, "SELECT * FROM items", CancellationToken.None),
+                        "sql" => backend.SqlAsync(scope, home, DatabaseId, "SELECT * FROM items", false, CancellationToken.None),
+                        "sql-write" => backend.SqlAsync(scope, home, DatabaseId, "DELETE FROM items", true, CancellationToken.None),
                         "indexes" => backend.IndexesAsync(scope, home, DatabaseId, CancellationToken.None),
                         "create-index" => backend.CreateIndexAsync(scope, home, DatabaseId, "items", ["title"], CancellationToken.None),
                         "drop-index" => backend.DropIndexAsync(scope, home, DatabaseId, "items-title", CancellationToken.None),
@@ -79,7 +81,8 @@ public sealed class DatabaseBackendContractTests
             if (!ReferenceEquals(session, scope.Session) || organizationId != OrganizationId || projectId != ProjectId ||
                 session.AccessToken != "original-user-token" || cancellationToken.IsCancellationRequested)
                 throw new InvalidOperationException("Database authority changed.");
-            Scopes.Add(scopes.Single());
+            // A SQL write asks for read and write together; every other action asks for exactly one scope.
+            Scopes.Add(scopes.Count == 2 && scopes[0] == "documents:read" ? scopes[1] : scopes.Single());
             if (Scopes.Count == refusalAt) throw new HttpRequestException("Synthetic exchange refusal.", null, status == 0 ? null : (HttpStatusCode)status);
             return Task.FromResult("resolution-token");
         }
