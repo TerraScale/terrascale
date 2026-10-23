@@ -6,6 +6,9 @@ provisioning, session cookie or HA1 route is required.
 
 ## Backend mint contract
 
+The standalone [OpenAPI contract](scoped-end-user-tokens.openapi.yaml) supplements
+the platform API contract and declares the `projectApiKey` Bearer security scheme.
+
 ```http
 POST /v1/terrascale/projects/{project}/end-user-tokens
 Authorization: Bearer <whole project API key>

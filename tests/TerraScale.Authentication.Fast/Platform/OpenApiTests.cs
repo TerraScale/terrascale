@@ -132,9 +132,8 @@ public sealed partial class OpenApiTests
     [Test]
     public async Task Served_platform_operations_match_the_published_contract()
     {
-        // docs/auth/platform-api.openapi.yaml is the contract TerraBase, the SDKs and the dashboard build on (TS-598); every
-        // platform operation the service maps must appear there with the same path, method, operationId and response codes,
-        // and every platform operation published there must be served.
+        // The platform contract and end-user token supplement must cover every served platform operation,
+        // including its exact security alternatives, response codes, path, method and operationId.
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "TerraScale.slnx")))
         {
@@ -144,45 +143,89 @@ public sealed partial class OpenApiTests
         // The YAML is read line by line in the layout this repository writes; a line this cannot place fails the test
         // rather than being skipped, so no published operation goes unchecked.
         var contract = new Dictionary<(string Path, string Method, string Id), SortedSet<string>>();
-        string? path = null, method = null;
-        SortedSet<string>? statuses = null;
+        var security = new Dictionary<(string Path, string Method, string Id), SortedSet<string>>();
         var operationIds = 0;
         var planned = new HashSet<(string Path, string Method, string Id)>();
-        (string Path, string Method, string Id)? current = null;
-        foreach (var line in await File.ReadAllLinesAsync(Path.Combine(root!.FullName, "docs", "auth", "platform-api.openapi.yaml")))
+        foreach (var file in new[] { "platform-api.openapi.yaml", "scoped-end-user-tokens.openapi.yaml" })
         {
-            operationIds += line.TrimStart().StartsWith("operationId:", StringComparison.Ordinal) ? 1 : 0;
-            if (ContractPath().Match(line) is { Success: true } pathMatch)
+            string? path = null, method = null;
+            SortedSet<string>? statuses = null;
+            SortedSet<string> defaultSecurity = [];
+            SortedSet<string>? securityTarget = null;
+            var securityIndent = string.Empty;
+            (string Path, string Method, string Id)? current = null;
+            foreach (var line in await File.ReadAllLinesAsync(Path.Combine(root!.FullName, "docs", "auth", file)))
             {
-                path = pathMatch.Groups["path"].Value;
-                method = null;
-                statuses = null;
-            }
-            else if (ContractMethod().Match(line) is { Success: true } methodMatch)
-            {
-                method = methodMatch.Groups["method"].Value;
-                statuses = null;
-            }
-            else if (ContractPathMember().IsMatch(line))
-            {
-                // A path's parameters, summary or description: not an operation.
-                method = null;
-                statuses = null;
-            }
-            else if (ContractOperation().Match(line) is { Success: true } operation && path is not null && method is not null)
-            {
-                statuses = [];
-                current = (path, method, operation.Groups["id"].Value);
-                contract.Add(current.Value, statuses);
-            }
-            else if (line == "      x-planned: true" && current is { } marked)
-            {
-                // Published ahead of its slice: documented, not served yet.
-                planned.Add(marked);
-            }
-            else if (ContractResponse().Match(line) is { Success: true } documentedStatus)
-            {
-                statuses?.Add(documentedStatus.Groups["status"].Value);
+                if (securityTarget is not null && line.StartsWith(securityIndent, StringComparison.Ordinal))
+                {
+                    var requirement = ContractSecurity().Match(line);
+                    if (!requirement.Success || !securityTarget.Add(requirement.Groups["scheme"].Value))
+                    {
+                        throw new InvalidOperationException($"Unsupported or duplicate security alternative in {file}: {line}");
+                    }
+
+                    continue;
+                }
+
+                securityTarget = null;
+                if (line == "security:")
+                {
+                    securityTarget = defaultSecurity;
+                    securityIndent = "  ";
+                    continue;
+                }
+
+                operationIds += line.TrimStart().StartsWith("operationId:", StringComparison.Ordinal) ? 1 : 0;
+                if (ContractPath().Match(line) is { Success: true } pathMatch)
+                {
+                    path = pathMatch.Groups["path"].Value;
+                    method = null;
+                    statuses = null;
+                }
+                else if (ContractMethod().Match(line) is { Success: true } methodMatch)
+                {
+                    method = methodMatch.Groups["method"].Value;
+                    statuses = null;
+                }
+                else if (ContractPathMember().IsMatch(line))
+                {
+                    // A path's parameters, summary or description: not an operation.
+                    method = null;
+                    statuses = null;
+                }
+                else if (ContractOperation().Match(line) is { Success: true } operation && path is not null && method is not null)
+                {
+                    statuses = [];
+                    current = (path, method, operation.Groups["id"].Value);
+                    contract.Add(current.Value, statuses);
+                    security.Add(current.Value, new(defaultSecurity));
+                }
+                else if ((line is "      security:" or "      security: [{}]") && current is { } secured)
+                {
+                    security[secured].Clear();
+                    if (line.EndsWith("[{}]", StringComparison.Ordinal))
+                    {
+                        security[secured].Add(string.Empty);
+                    }
+                    else
+                    {
+                        securityTarget = security[secured];
+                        securityIndent = "        ";
+                    }
+                }
+                else if (line.StartsWith("      security:", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException($"Unsupported security declaration in {file}: {line}");
+                }
+                else if (line == "      x-planned: true" && current is { } marked)
+                {
+                    // Published ahead of its slice: documented, not served yet.
+                    planned.Add(marked);
+                }
+                else if (ContractResponse().Match(line) is { Success: true } documentedStatus)
+                {
+                    statuses?.Add(documentedStatus.Groups["status"].Value);
+                }
             }
         }
 
@@ -204,7 +247,20 @@ public sealed partial class OpenApiTests
                     mismatches.Add($"{id}: served {answered}, contract {string.Join(',', documented!)}");
                 }
 
-                await Assert.That(operation.GetProperty("security").EnumerateArray().Single().EnumerateObject().Single().Name).IsEqualTo("platformUser");
+                var declaredSecurity = security[(item.Name, verb, id)];
+                await Assert.That(declaredSecurity.Count).IsGreaterThan(0);
+                var servedSecurity = operation.GetProperty("security").EnumerateArray().Select(requirement =>
+                {
+                    var schemes = requirement.EnumerateObject().ToArray();
+                    // These contracts use alternatives with one scheme and no OAuth scopes.
+                    if (schemes.Length > 1 || schemes.Any(scheme => scheme.Value.GetArrayLength() != 0))
+                    {
+                        throw new InvalidOperationException($"Unsupported served security requirement for {id}");
+                    }
+
+                    return schemes.Length == 0 ? string.Empty : schemes[0].Name;
+                }).Order(StringComparer.Ordinal).ToArray();
+                await Assert.That(servedSecurity).IsEquivalentTo(declaredSecurity.ToArray());
                 served.Add((item.Name, verb, id));
             }
         }
@@ -306,6 +362,9 @@ public sealed partial class OpenApiTests
 
     [GeneratedRegex("""^      operationId: (?<quote>['"]?)(?<id>[A-Za-z0-9_.-]+)\k<quote>$""")]
     private static partial Regex ContractOperation();
+
+    [GeneratedRegex("""^(?<indent>  |        )- (?<scheme>[A-Za-z0-9]+): \[\]$""")]
+    private static partial Regex ContractSecurity();
 
     [GeneratedRegex("""^        (?<quote>['"]?)(?<status>[1-5][0-9]{2})\k<quote>:""")]
     private static partial Regex ContractResponse();
