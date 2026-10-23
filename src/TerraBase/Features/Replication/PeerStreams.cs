@@ -300,7 +300,6 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.RequiresRefill, cursor.Refilling, cursor.Live) =
                     (null, null, null, 0, false, false, null);
                 cursor.Confirmed = null;
-                cursor.RetryAt = 0;
             }
         }
 

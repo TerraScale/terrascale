@@ -438,6 +438,12 @@ public sealed class PeerStreamFaultIsolationTests
             await TerraBaseTestServer.EventuallyAsync(async token =>
                 sender.Status(sender.Database)?.Acknowledged > confirmed
                 && await receiver.HasAsync(receiver.Database, "after-busy", token), RemoteAckWaiter.Bound);
+            if (!stableReport)
+            {
+                await Assert.That(gate.MinimumRead).IsLessThan(long.MaxValue);
+                await Assert.That(gate.MinimumRead).IsGreaterThanOrEqualTo(confirmed)
+                    .Because("no source read may replay rows already confirmed on this connection");
+            }
             await Assert.That(source.Connections).IsEqualTo(connected)
                 .Because("a tenant's writer contention must not restart the shared connection");
         }
@@ -777,6 +783,7 @@ public sealed class PeerStreamFaultIsolationTests
     {
         public bool Busy { get; init; }
         public long After { get; init; }
+        public long MinimumRead { get; set; } = long.MaxValue;
         public TenantContext Database { get; } = database;
         public bool StableReport { get; } = stableReport;
         public CancellationToken CancellationToken { get; } = cancellationToken;
@@ -801,6 +808,7 @@ public sealed class PeerStreamFaultIsolationTests
             inner.MatchedAsync(database, digest, cancellationToken);
 
         private BookkeepingGate? _held;
+        private BookkeepingGate? _busy;
         private ShippingGate? _shipping;
         private int _connections;
         private int _nativeConnection = -1;
@@ -823,6 +831,11 @@ public sealed class PeerStreamFaultIsolationTests
 
         public async ValueTask<SourceGroups?> ReadAsync(TenantContext database, Ulid incarnation, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
         {
+            // This fixture has one sender loop; retain only the minimum, never a growing read history.
+            if (Volatile.Read(ref _busy) is { } busy && busy.Database == database)
+            {
+                busy.MinimumRead = Math.Min(busy.MinimumRead, after);
+            }
             if (Volatile.Read(ref _nativeConnection) == Connections)
             {
                 _ = Interlocked.Increment(ref _readsAfterNativeError);
@@ -935,6 +948,7 @@ public sealed class PeerStreamFaultIsolationTests
             await gate.Release.Task.WaitAsync(gate.CancellationToken);
             if (gate.Busy)
             {
+                Volatile.Write(ref _busy, gate);
                 _ = gate.Refused.TrySetResult();
                 throw new StorageBusyException();
             }
