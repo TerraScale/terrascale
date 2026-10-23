@@ -53,7 +53,7 @@ internal sealed class UsageFlushService(
 
     // Storage sampling lists every database, so it runs on its own loop: a slow volume never delays usage delivery.
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
-        Task.WhenAll(LoopAsync(FlushAsync, stoppingToken), LoopAsync(SampleStorageAsync, stoppingToken), LoopAsync(SeedMonthsAsync, stoppingToken));
+        Task.WhenAll(LoopAsync(FlushAsync, stoppingToken), LoopAsync(SampleStorageAsync, stoppingToken), LoopAsync(RefreshMonthsAsync, stoppingToken));
 
     private async Task LoopAsync(Func<CancellationToken, Task> work, CancellationToken stoppingToken)
     {
@@ -123,12 +123,12 @@ internal sealed class UsageFlushService(
         }
     }
 
-    // Monthly allowance counts read saved usage here, on their own loop, never on a request.
-    private async Task SeedMonthsAsync(CancellationToken cancellationToken)
+    // Monthly allowance counts read every region's saved usage here, on their own loop.
+    private async Task RefreshMonthsAsync(CancellationToken cancellationToken)
     {
         try
         {
-            await meter.SeedMonthsAsync(cancellationToken).ConfigureAwait(false);
+            await meter.RefreshMonthsAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {

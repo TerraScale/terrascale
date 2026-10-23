@@ -164,7 +164,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         }).ConfigureAwait(false);
         if (document is not null)
         {
-            usage.RecordRead(key.Database);
+            usage.RecordRead(key.Database, OperationUnits.Of(document.Json.Length));
             stats.CollectionRead(key.Database, key.Collection);
             return document;
         }
@@ -172,7 +172,8 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         var result = missed ?? new NeverWritten();
         if (result is NeverWritten)
         {
-            usage.RecordRead(key.Database);
+            // Not-found reads bill no unit.
+            usage.RecordRead(key.Database, 0);
             stats.CollectionRead(key.Database, key.Collection);
         }
 
@@ -272,7 +273,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                 return failure;
             }
 
-            usage.RecordRead(database);
+            usage.RecordRead(database, result.Page.Rows.Sum(row => OperationUnits.Of(row.Document.Json.Length)));
             stats.CollectionRead(database, query.Collection);
             return new QueryOutcome(result.Page, result.Count);
         }
@@ -339,6 +340,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
         // shortcut: one read transaction pins the snapshot for the whole stream, so a slow client holds one session;
         // move to a durable snapshot file if exports of very large databases need it.
+        var units = 0L;
         var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
@@ -346,6 +348,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             {
                 await foreach (var row in ExportCollectionAsync(transaction, afterCollection, afterId, cancellationToken).ConfigureAwait(false))
                 {
+                    units += OperationUnits.Of(row.Document.Json.Length);
                     yield return row;
                 }
             }
@@ -359,6 +362,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                 {
                     await foreach (var row in ExportCollectionAsync(transaction, collection.Name, null, cancellationToken).ConfigureAwait(false))
                     {
+                        units += OperationUnits.Of(row.Document.Json.Length);
                         yield return row;
                     }
 
@@ -368,7 +372,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             while (more);
         }
 
-        usage.RecordRead(database);
+        usage.RecordRead(database, units);
         // A copy that stopped being trusted while it streamed aborts the response instead of ending it cleanly.
         if (await faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false))
         {
@@ -526,11 +530,12 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
         using var lease = admission;
         var delta = 0L;
+        var units = 0L;
         var (outcome, commit) = await store.WriteAsync(
             async (transaction, token) =>
             {
-                var (result, change, growthOp) = await ApplyAllAsync(store, transaction, operations, indexErrors, admission.RequiresAccounting, token).ConfigureAwait(false);
-                delta = change;
+                var (result, change, growthOp, written) = await ApplyAllAsync(store, transaction, operations, indexErrors, admission.RequiresAccounting, token).ConfigureAwait(false);
+                (delta, units) = (change, written);
                 if (result is not WriteResult)
                 {
                     return result;
@@ -552,7 +557,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
         try
         {
-            RecordCommitted(database, operations, admission, delta);
+            RecordCommitted(database, operations, admission, delta, units);
         }
         catch (Exception error)
         {
@@ -564,13 +569,13 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
     }
 
     // Quota, usage and statistics of a committed client write.
-    private void RecordCommitted(TenantContext database, IReadOnlyList<DocumentOperation> operations, StorageQuotaLease admission, long delta)
+    private void RecordCommitted(TenantContext database, IReadOnlyList<DocumentOperation> operations, StorageQuotaLease admission, long delta, long units)
     {
         var writes = operations.Count(operation => operation is PutOperation or PatchOperation or DeleteOperation);
         if (writes > 0)
         {
             admission.Committed(delta);
-            usage.RecordWrites(database, writes);
+            usage.RecordWrites(database, writes, units);
             foreach (var operation in operations)
             {
                 if (operation is PutOperation or PatchOperation or DeleteOperation)
@@ -593,13 +598,15 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
     }
 
     // Every operation of one client write; the commit offset is filled in once its batch committed.
-    private async ValueTask<(WriteOutcome Outcome, long Delta, int? GrowthOp)> ApplyAllAsync(
+    // Units: each put or patch bills its stored document's started 4 KiB, each delete one unit.
+    private async ValueTask<(WriteOutcome Outcome, long Delta, int? GrowthOp, long Units)> ApplyAllAsync(
         IDatabaseStore store, IStorageTransaction transaction, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool accountStorage,
         CancellationToken cancellationToken)
     {
         var collections = new HashSet<string>(StringComparer.Ordinal);
         var results = new OperationResult[operations.Count];
         var delta = 0L;
+        var units = 0L;
         int? growthOp = null;
         // Assertions see the state before this transaction's writes.
         foreach (var assertions in new[] { true, false })
@@ -625,26 +632,30 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                 {
                     case OperationResult result:
                         results[i] = result;
-                        var after = !accountStorage ? 0 : operation switch
+                        var after = operation switch
                         {
                             PutOperation put => await transaction.GetDocumentBytesAsync(put.Collection, put.Id, cancellationToken).ConfigureAwait(false),
                             PatchOperation patch => await transaction.GetDocumentBytesAsync(patch.Collection, patch.Id, cancellationToken).ConfigureAwait(false),
                             _ => 0,
                         };
-                        delta += after - before;
-                        if (after > before)
+                        units += operation is DeleteOperation ? 1 : OperationUnits.Of(after);
+                        if (accountStorage)
                         {
-                            growthOp = i;
+                            delta += after - before;
+                            if (after > before)
+                            {
+                                growthOp = i;
+                            }
                         }
 
                         break;
                     case DocumentRejected rejected:
-                        return (rejected with { Op = indexErrors ? i : null }, 0, null);
+                        return (rejected with { Op = indexErrors ? i : null }, 0, null, 0);
                 }
             }
         }
 
-        return (new WriteResult(0, results, transaction.Scope), delta, growthOp);
+        return (new WriteResult(0, results, transaction.Scope), delta, growthOp, units);
     }
 
     // One operation of a client transaction: its collection must exist.
