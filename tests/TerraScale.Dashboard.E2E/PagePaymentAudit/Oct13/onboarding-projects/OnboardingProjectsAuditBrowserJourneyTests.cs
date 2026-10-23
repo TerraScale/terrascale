@@ -71,7 +71,8 @@ public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixt
             await ShotAsync("dialog");
             var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            await page.RouteAsync(origin + "/api/v1/dashboard/organization/projects", async route =>
+            Func<string, bool> projects = url => BrowserAudit.WithoutWorkspace(url) == origin + "/api/v1/dashboard/organization/projects";
+            await page.RouteAsync(projects, async route =>
             {
                 arrived.TrySetResult();
                 await release.Task.WaitAsync(TimeSpan.FromSeconds(20));
@@ -95,7 +96,7 @@ public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixt
             release.TrySetResult();
             await submitted.WaitAsync(TimeSpan.FromSeconds(20));
             await page.WaitForFunctionAsync("() => !document.querySelector('#create-project[open]')");
-            await page.UnrouteAsync(origin + "/api/v1/dashboard/organization/projects");
+            await page.UnrouteAsync(projects);
             await Assert.That(Volatile.Read(ref postCount)).IsEqualTo(1);
             await Assert.That(await page.Locator("#projects tbody").GetByText("Browser audit " + size, new() { Exact = true }).CountAsync()).IsEqualTo(1);
             await ShotAsync("success");

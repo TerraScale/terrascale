@@ -39,6 +39,7 @@ public sealed class BillingCheckoutAuditFixture : IAsyncInitializer, IAsyncDispo
         // the normal build copies Datastar unchanged and bundles button-loading alone.
         app.MapGet("/js/datastar.js", () => Results.File(Path.Combine(Root, "src/TerraScale.Dashboard/web/assets/js/vendor/datastar.js"), "text/javascript"));
         app.MapGet("/js/button-loading.js", () => Results.File(Path.Combine(Root, "src/TerraScale.Dashboard/web/assets/js/button-loading.js"), "text/javascript"));
+        app.MapGet("/js/workspace.js", () => Results.File(Path.Combine(Root, "src/TerraScale.Dashboard/web/assets/js/workspace.js"), "text/javascript"));
         app.MapPost("/__audit/billing/invoices", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
         {
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);

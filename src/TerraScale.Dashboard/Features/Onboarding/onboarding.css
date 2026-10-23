@@ -238,6 +238,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Links inside muted prose need more than color to stand out (WCAG link-in-text-block). */
+.ts-onboarding p.ts-meta a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 @media (max-width: 30rem) {
   .ts-onboarding-progress {
     margin-inline: calc(var(--ts-s5) + 1px);

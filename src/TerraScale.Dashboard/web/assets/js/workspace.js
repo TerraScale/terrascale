@@ -4,9 +4,10 @@ const organizationId = document.documentElement.dataset.workspaceOrganization;
 const projectId = document.documentElement.dataset.workspaceProject;
 const selection = {organizationId, projectId};
 
+// Invitation links go to another account, so they never carry this document's workspace.
 function scoped(value) {
   const url = new URL(value, location.href);
-  if (url.origin !== location.origin || /^\/(login|logout|js|css|fonts|brand|flags|img)(\/|$)/.test(url.pathname)) return url;
+  if (url.origin !== location.origin || /^\/(login|logout|invitations|js|css|fonts|brand|flags|img)(\/|$)/.test(url.pathname)) return url;
   const targetOrganization = url.searchParams.get('organizationId') ?? url.searchParams.get('organizationID');
   if (targetOrganization && targetOrganization !== organizationId) return url;
   if (!targetOrganization && url.searchParams.has('projectId') && url.searchParams.get('projectId') !== projectId) return url;
@@ -35,11 +36,14 @@ if (organizationId) {
           element.setAttribute('href', target.origin === location.origin ? target.pathname + target.search + target.hash : target.href);
         }
       } else {
-        const url = scoped(element.action);
+        // Read attributes: a control named "action" or "method" shadows form.action and form.method.
+        const action = element.getAttribute('action') ?? '';
+        const url = scoped(action);
         if (url.origin !== location.origin) continue;
-        if (element.action !== url.href) element.setAttribute('action', url.pathname + url.search + url.hash);
+        const target = url.pathname + url.search + url.hash;
+        if (element.hasAttribute('action') && action !== target) element.setAttribute('action', target);
         // Browsers replace a GET form action's query with its successful controls.
-        if (element.method === 'get') {
+        if ((element.getAttribute('method') ?? 'get').toLowerCase() === 'get') {
           for (const key of Object.keys(selection)) {
             if (!url.searchParams.has(key) || element.elements.namedItem(key)) continue;
             const input = document.createElement('input');
