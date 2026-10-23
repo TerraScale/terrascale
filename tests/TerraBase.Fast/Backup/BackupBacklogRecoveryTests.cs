@@ -160,7 +160,7 @@ public sealed class BackupBacklogRecoveryTests
                 return;
             }
 
-            stored = host.S3.Objects[acknowledged].ToArray();
+            stored = [.. host.S3.Objects[acknowledged]];
             blocked.TrySetResult(key);
             try
             {
@@ -198,7 +198,7 @@ public sealed class BackupBacklogRecoveryTests
             release.TrySetResult();
             if (stop is not null)
             {
-                await stop.WaitAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                await stop.WaitAsync(TimeSpan.FromSeconds(8), CancellationToken.None).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }
 
             host.S3.BeforePut = null;
@@ -332,7 +332,8 @@ public sealed class BackupBacklogRecoveryTests
         private string? _watched;
         private int _failTrim;
         private int _trimFailures;
-        private WatchedTap? _tap;
+        // The shipping job owns and disposes the tap; the fixture only borrows its staging operation.
+        private Func<CancellationToken, Task<WalRead[]>>? _stage;
 
         public ConcurrentQueue<long> SnapshotReads { get; } = new();
 
@@ -348,7 +349,7 @@ public sealed class BackupBacklogRecoveryTests
         public void FailNextTrim() => Volatile.Write(ref _failTrim, 1);
 
         public Task<WalRead[]> StageAsync(CancellationToken cancellationToken) =>
-            (_tap ?? throw new InvalidOperationException("the watched tap is not open")).StageAsync(cancellationToken);
+            (_stage ?? throw new InvalidOperationException("the watched tap is not open"))(cancellationToken);
 
         public async ValueTask<IWalTap?> OpenTapAsync(TenantContext? database, CancellationToken cancellationToken)
         {
@@ -372,7 +373,9 @@ public sealed class BackupBacklogRecoveryTests
                 };
             }
 
-            return _tap = new WatchedTap(tap, this);
+            var watched = new WatchedTap(tap, this);
+            _stage = watched.StageAsync;
+            return watched;
         }
 
         public ValueTask<bool> RollForwardAsync(string file, IAsyncEnumerable<Stream> segments, CancellationToken cancellationToken) =>
@@ -421,7 +424,7 @@ public sealed class BackupBacklogRecoveryTests
 
                 if (!reads[^1].Remaining)
                 {
-                    return reads.ToArray();
+                    return [.. reads];
                 }
             }
 
