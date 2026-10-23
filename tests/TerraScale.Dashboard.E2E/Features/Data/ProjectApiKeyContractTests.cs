@@ -21,8 +21,9 @@ public sealed class ProjectApiKeyContractTests
         var context = Context();
         var service = new ApiKeyService(wire, TimeProvider.System);
         var created = await service.CreateAsync(context, "api-key", "Synthetic", DatabaseId,
-            ["database:read", "database:write"], CancellationToken.None);
+            ["database:read", "database:write"], 0, CancellationToken.None);
         using var request = JsonDocument.Parse(wire.Body!);
+        await Assert.That(request.RootElement.TryGetProperty("expires_at", out var noExpiry) && noExpiry.ValueKind != JsonValueKind.Null).IsFalse();
         await Assert.That(request.RootElement.GetProperty("database").GetString()).IsEqualTo("app");
         await Assert.That(request.RootElement.GetProperty("scopes").EnumerateArray().Select(item => item.GetString()!))
             .IsEquivalentTo(new[] { "documents:read", "documents:write" });
@@ -34,6 +35,59 @@ public sealed class ProjectApiKeyContractTests
         await Assert.That(listed.Single().Id).IsEqualTo(KeyId);
         await Assert.That(JsonSerializer.Serialize(listed).Contains(created.Secret, StringComparison.Ordinal)).IsFalse();
         await Assert.That(wire.Requests).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(30)]
+    [Arguments(90)]
+    [Arguments(365)]
+    public async Task IssuanceSendsTheChosenExpiryAndChecksTheEchoedOne(int days)
+    {
+        var now = new DateTimeOffset(2026, 10, 23, 12, 0, 0, 750, TimeSpan.Zero);
+        using var wire = new Wire();
+        var created = await new ApiKeyService(wire, new FixedTime(now)).CreateAsync(Context(), "api-key", "Synthetic", DatabaseId,
+            ["database:read", "database:write"], days, CancellationToken.None);
+        using var request = JsonDocument.Parse(wire.Body!);
+        var expected = new DateTimeOffset(2026, 10, 23, 12, 0, 0, TimeSpan.Zero).AddDays(days);
+        await Assert.That(request.RootElement.GetProperty("expires_at").GetDateTimeOffset()).IsEqualTo(expected);
+        await Assert.That(created.Key.ExpiresAt).IsEqualTo(expected);
+        await Assert.That(ApiKeyService.Metadata(created.Key).ExpiresAt).IsEqualTo(expected.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Test]
+    [Arguments(-1)]
+    [Arguments(7)]
+    [Arguments(366)]
+    public async Task IssuanceRefusesAnExpiryOutsideTheOfferedChoices(int days)
+    {
+        using var wire = new Wire();
+        AccountAccessException? rejected = null;
+        try { await new ApiKeyService(wire, TimeProvider.System).CreateAsync(Context(), "api-key", "Synthetic", "", ["database:read"], days, CancellationToken.None); }
+        catch (AccountAccessException error) { rejected = error; }
+        await Assert.That(rejected?.StatusCode).IsEqualTo(422);
+        await Assert.That(wire.Requests).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task IssuanceRefusesADifferentEchoedExpiry()
+    {
+        using var wire = new Wire { Failure = "expiry" };
+        HttpRequestException? rejected = null;
+        try { await new ApiKeyService(wire, TimeProvider.System).CreateAsync(Context(), "api-key", "Synthetic", DatabaseId, ["database:read", "database:write"], 30, CancellationToken.None); }
+        catch (HttpRequestException error) { rejected = error; }
+        await Assert.That(rejected?.Message).IsEqualTo("Credential issuance returned different restrictions.");
+    }
+
+    [Test]
+    [Arguments("2026-10-22T09:15:30+00:00", "2026-10-22T09:15:30Z")]
+    [Arguments(null, "")]
+    public async Task ListingMapsLastUsedIntoCredentialMetadata(string? lastUsed, string expected)
+    {
+        using var wire = new Wire { LastUsedAt = lastUsed };
+        var key = (await new ApiKeyService(wire, TimeProvider.System).ListAsync(Context(), CancellationToken.None)).Single();
+        await Assert.That(key.LastUsedAt).IsEqualTo(lastUsed is null ? null : DateTimeOffset.Parse(lastUsed, System.Globalization.CultureInfo.InvariantCulture));
+        await Assert.That(ApiKeyService.CredentialMetadata(key).LastUsedAt).IsEqualTo(expected);
+        await Assert.That(ApiKeyService.Metadata(key).LastUsedAt).IsEqualTo(expected);
     }
 
     [Test]
@@ -116,9 +170,15 @@ public sealed class ProjectApiKeyContractTests
             new() { UserId = "user" }, [organization], organization, project);
     }
 
+    private sealed class FixedTime(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
     private sealed class Wire : HttpMessageHandler, IHttpClientFactory
     {
         public string Failure { get; init; } = "";
+        public string? LastUsedAt { get; init; }
         public int Requests { get; private set; }
         public string? Body { get; private set; }
         public string? Query { get; private set; }
@@ -147,6 +207,14 @@ public sealed class ProjectApiKeyContractTests
                 return Failure is "committed" or "refused" ? Error(HttpStatusCode.ServiceUnavailable, "temporarily_unavailable") : new(HttpStatusCode.NoContent);
             }
             var rotate = Path.EndsWith("/rotate", StringComparison.Ordinal);
+            string? expiresAt = null;
+            if (request.Method == HttpMethod.Post && !rotate)
+            {
+                using var created = JsonDocument.Parse(Body!);
+                // Echo the requested expiry, or a different one for "expiry".
+                if (created.RootElement.TryGetProperty("expires_at", out var requested) && requested.ValueKind == JsonValueKind.String)
+                    expiresAt = Failure == "expiry" ? requested.GetDateTimeOffset().AddSeconds(1).ToString("O") : requested.GetString();
+            }
             if (rotate && Failure == "pending") return Error(HttpStatusCode.Conflict, "rotation_pending");
             var key = new
             {
@@ -158,8 +226,9 @@ public sealed class ProjectApiKeyContractTests
                 scopes = new[] { "documents:read", "documents:write" },
                 created_by = "user",
                 created_at = "2026-01-01T00:00:00+00:00",
-                expires_at = (string?)null,
-                previous_secret_expires_at = (string?)null
+                expires_at = expiresAt,
+                previous_secret_expires_at = (string?)null,
+                last_used_at = LastUsedAt
             };
             var response = request.Method == HttpMethod.Post
                 ? JsonSerializer.Serialize(new { api_key = key, key = KeyId + "_synthetic-secret" })

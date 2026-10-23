@@ -43,6 +43,8 @@ public sealed record ProjectCredential(string Id, string ProjectId, string Name,
 {
     public string? DatabaseName { get; init; }
     public DateTimeOffset? ExpiresAt { get; init; }
+    // Last successful token exchange as ts-auth reports it (at most five minutes stale); null when never used.
+    public DateTimeOffset? LastUsedAt { get; init; }
     public bool IsActive { get; init; } = true;
 }
 public sealed record CreatedProjectCredential(ProjectCredential Key, string Secret)
