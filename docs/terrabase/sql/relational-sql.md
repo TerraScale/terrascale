@@ -73,10 +73,16 @@ WITH "t" AS (SELECT json_extract(doc, '$."c1"') AS "c1", … FROM main."t" WHERE
 - One CTE per SQL table the statement references; `main."t"` names the physical table, the CTE shadows it.
 - Arguments are bound parameters (`?`, `?NNN`, `:name`, `@name`, `$name`); values are typed (null, integer, real, text).
 - Bounds: the existing work budget (5 million units or 5 s, `QueryCapacityException` → "query too expensive"),
-  at most 10,000 rows and 8 MiB per result (truncation is an error for writes, a `truncated` flag for reads).
+  at most 10,000 rows and 8 MiB per result. Past either bound a statement fails with `SQLITE_TOOBIG` (DECISION, SQ1-c:
+  reads too, not a `truncated` flag, because neither `SqlResult` nor Hrana can carry one and silently dropped rows are wrong).
+- `WITH` only at the start of a statement, and not `RECURSIVE` (DECISION, SQ1-c: rows a recursive CTE generates pass no
+  table scan, so the work budget would never charge them).
+- Parameters are renumbered `$p1`, `$p2`, … in SQLite's order (`?` = largest so far + 1, `?NNN`, names on first use) before
+  parsing; positional arguments bind by number, named arguments (with or without prefix) by name, unbound ones are NULL.
 - shortcut: CTEs are not flattened by Turso, so every read scans each referenced table and no index serves it; the
-  work budget caps a read at roughly 150,000 rows. Upgrade to column rewriting over `json_extract` (index-served)
-  when a customer table passes that.
+  work budget caps a read at roughly 150,000 rows. The scan guard runs once per table row, not per join combination, so
+  a cross join's fan-out is bounded only by the statement and the result bounds. Upgrade to column rewriting over
+  `json_extract` (index-served, guard inside the join loops) when a customer table passes that.
 
 ## 5. Transactions
 

@@ -13,6 +13,9 @@ internal abstract record ParsedSql
 {
     /// <summary>Whether it writes rows or changes the schema, so it needs <c>documents:write</c>.</summary>
     public abstract bool IsWrite { get; }
+
+    /// <summary>Parameter names in SQLite's number order (see <see cref="SqlRead.Number"/>).</summary>
+    public IReadOnlyList<string?> Params { get; init; } = [];
 }
 
 /// <summary><c>CREATE TABLE [IF NOT EXISTS]</c>.</summary>
@@ -70,8 +73,11 @@ internal static partial class SqlParse
 
         try
         {
-            var statements = new Parser().ParseSql(sql, new SQLiteDialect());
-            return statements.Count == 1 ? Translate(statements[0]) : throw new FormatException("exactly one statement is supported");
+            var (numbered, names) = SqlRead.Number(sql);
+            var statements = new Parser().ParseSql(numbered, new SQLiteDialect());
+            return statements.Count == 1
+                ? Translate(statements[0]) with { Params = names }
+                : throw new FormatException("exactly one statement is supported");
         }
         catch (ParserException exception)
         {
@@ -92,6 +98,7 @@ internal static partial class SqlParse
 
     private static ParsedSql Translate(Statement statement) => statement switch
     {
+        Statement.Select { Query: var query } => SqlRead.Read(query),
         Statement.CreateTable { Element: var create } => CreateTable(create),
         Statement.Drop { ObjectType: ObjectType.Table } drop => DropTable(drop),
         _ => throw new FormatException("this statement is not supported"),
