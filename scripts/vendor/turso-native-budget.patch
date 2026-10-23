@@ -14,7 +14,7 @@ index 2aaa947..3bfb72b 100644
 @@ -4852,6 +4854,26 @@ impl Connection {
          self.progress_handler.ops()
      }
- 
+
 +    pub fn set_fts_progress_handler(
 +        &self,
 +        handler: Option<Box<dyn Fn(u64, u64) -> bool + Send + Sync>>,
@@ -56,16 +56,16 @@ index 0591fff..e011085 100644
 +++ b/core/index_method/fts/format.rs
 @@ -332,7 +332,8 @@ impl SegmentIdentities {
      }
- 
+
      pub fn resident_bytes(&self) -> usize {
 -        self.by_position.len() * (size_of::<DocumentIdentity>() + size_of::<u32>())
 +        self.by_position.capacity() * size_of::<DocumentIdentity>()
 +            + self.positions_by_identity.capacity() * size_of::<u32>()
      }
- 
+
      pub fn identity_of(&self, position: u32) -> Option<DocumentIdentity> {
 diff --git a/core/index_method/fts/mod.rs b/core/index_method/fts/mod.rs
-index bf97450..9b220c8 100644
+index bf97450..5ac1070 100644
 --- a/core/index_method/fts/mod.rs
 +++ b/core/index_method/fts/mod.rs
 @@ -37,7 +37,8 @@ use crate::{
@@ -81,7 +81,7 @@ index bf97450..9b220c8 100644
 @@ -146,11 +147,6 @@ const FTS_MAX_QUERY_BYTES: usize = 16 * 1024;
  /// recursive parser against stack overflow.
  const FTS_MAX_QUERY_NESTING: usize = 64;
- 
+
 -/// Maximum assembled searchers retained per FTS attachment. Entries are
 -/// keyed by the visible segment set (plus per-segment tombstone state), so
 -/// any snapshot seeing the same set shares one entry.
@@ -93,7 +93,7 @@ index bf97450..9b220c8 100644
 @@ -456,14 +452,8 @@ impl SegmentByteCache {
          Some(data)
      }
- 
+
 -    fn put(&mut self, id: SegmentId, data: Arc<SegmentData>, budget: usize) {
 -        self.entries.retain(|(entry, _)| *entry != id);
 -        self.entries.push((id, data));
@@ -104,13 +104,13 @@ index bf97450..9b220c8 100644
 -    }
 +    // Request admission ends at statement cleanup; retained payloads would need cache-owned admission.
 +    fn put(&mut self, _id: SegmentId, _data: Arc<SegmentData>, _budget: usize) {}
- 
+
      fn remove(&mut self, id: &SegmentId) {
          self.entries.retain(|(entry, _)| entry != id);
 @@ -512,13 +502,7 @@ impl SearcherCache {
          self.entries.last()
      }
- 
+
 -    fn put(&mut self, entry: SearcherCacheEntry) {
 -        self.entries.retain(|existing| existing.key != entry.key);
 -        self.entries.push(entry);
@@ -119,7 +119,7 @@ index bf97450..9b220c8 100644
 -        }
 -    }
 +    fn put(&mut self, _entry: SearcherCacheEntry) {}
- 
+
      fn purge_segments(&mut self, ids: &[SegmentId]) {
          self.entries
 @@ -533,9 +517,6 @@ struct FtsShared {
@@ -157,7 +157,7 @@ index bf97450..9b220c8 100644
 @@ -947,6 +922,36 @@ enum StatementCommitState {
      Finish,
  }
- 
+
 +// A callback is connection-owned; cached searchers must never retain another request's callback.
 +fn check_fts_work(connection: Option<&Connection>, work: u64, bytes: u64) -> Result<()> {
 +    if let Some(connection) = connection {
@@ -193,7 +193,7 @@ index bf97450..9b220c8 100644
      scorer: Box<dyn Scorer>,
 @@ -955,6 +960,7 @@ struct FtsStreamingSegment {
  }
- 
+
  struct FtsHitStream {
 +    connection: Option<Weak<Connection>>,
      segments: Vec<FtsStreamingSegment>,
@@ -202,7 +202,7 @@ index bf97450..9b220c8 100644
 @@ -969,7 +975,9 @@ impl FtsHitStream {
              return Ok(false);
          }
- 
+
 +        let connection = self.connection.as_ref().and_then(Weak::upgrade);
          while let Some(segment) = self.segments.get_mut(self.segment_pos) {
 +            check_fts_work(connection.as_deref(), 1, 0)?;
@@ -219,7 +219,7 @@ index bf97450..9b220c8 100644
          self.shared
              .stats
 @@ -1287,7 +1297,9 @@ impl FtsCursor {
- 
+
          let mut files: HashMap<PathBuf, Arc<[u8]>> = HashMap::default();
          for segment in &self.segments {
 +            check_fts_work(connection.as_deref(), 1, 0)?;
@@ -410,17 +410,39 @@ index bf97450..9b220c8 100644
              )?;
              let (segment, rows) =
                  segment_rows_from_files(segment_id, merged_meta.max_doc(), captured, identities)?;
-@@ -2329,6 +2409,9 @@ impl FtsCursor {
+@@ -2329,6 +2409,10 @@ impl FtsCursor {
          if self.segments.is_empty() {
              return Ok(Vec::new());
          }
++        let connection = self.connection.as_ref().and_then(Weak::upgrade);
 +        for segment in &self.segments {
 +            check_fts_work(connection.as_deref(), 1, segment.data.total_bytes as u64)?;
 +        }
          self.ensure_searcher()?;
          let searcher = self
              .searcher
-@@ -2424,7 +2507,7 @@ impl FtsCursor {
+@@ -2409,22 +2493,22 @@ impl FtsCursor {
+     /// correctly reverted backing rows), and close.
+     fn reset_to_init(&mut self) {
+         self.release_writer_slot();
+-        self.doc_buffer.clear();
+-        self.pending_tombstone_rows.clear();
++        self.doc_buffer = Vec::new();
++        self.pending_tombstone_rows = Vec::new();
+         self.publish = None;
+         self.merge_claim = None;
+         self.optimize_state = OptimizeState::Start;
+         self.statement_commit_state = StatementCommitState::Start;
+-        self.segments.clear();
++        self.segments = Vec::new();
+         self.snapshot_loaded = false;
+-        self.scan_descriptors.clear();
+-        self.scan_tombs.clear();
+-        self.scan_data.clear();
++        self.scan_descriptors = Vec::new();
++        self.scan_tombs = HashSet::default();
++        self.scan_data = HashMap::default();
+         self.control = None;
          self.invalidate_snapshot_view();
          self.fts_dir_cursor = None;
          self.backing = None;
@@ -429,7 +451,7 @@ index bf97450..9b220c8 100644
          self.streaming_hits = None;
          self.hit_pos = 0;
          self.probe_only = false;
-@@ -2441,6 +2524,7 @@ fn segment_data_from_files(
+@@ -2441,6 +2525,7 @@ fn segment_data_from_files(
      segment_id: SegmentId,
      max_doc: u32,
      files: HashMap<String, Arc<[u8]>>,
@@ -437,7 +459,7 @@ index bf97450..9b220c8 100644
  ) -> Result<SegmentData> {
      let by_path = files
          .iter()
-@@ -2452,6 +2536,7 @@ fn segment_data_from_files(
+@@ -2452,6 +2537,7 @@ fn segment_data_from_files(
          segment_id,
          max_doc,
          by_path,
@@ -445,7 +467,7 @@ index bf97450..9b220c8 100644
      )?;
      Ok(SegmentData::new(files, identities))
  }
-@@ -2466,7 +2551,9 @@ fn read_segment_identities(
+@@ -2466,7 +2552,9 @@ fn read_segment_identities(
      segment_id: SegmentId,
      max_doc: u32,
      files: HashMap<PathBuf, Arc<[u8]>>,
@@ -455,7 +477,7 @@ index bf97450..9b220c8 100644
      let spec = SegmentMetaSpec::new(segment_id, max_doc, 0);
      let meta_json = synthesize_meta_json(scratch, schema, &[spec])?;
      let index = Index::open(SnapshotDirectory::new(files, meta_json))
-@@ -2493,6 +2580,7 @@ fn read_segment_identities(
+@@ -2493,6 +2581,7 @@ fn read_segment_identities(
      })?;
      let by_position = (0..max_doc)
          .map(|position| {
@@ -463,7 +485,7 @@ index bf97450..9b220c8 100644
              hi.first(position)
                  .zip(lo.first(position))
                  .map(|(hi, lo)| DocumentIdentity::new((u128::from(hi) << 64) | u128::from(lo)))
-@@ -2504,7 +2592,10 @@ fn read_segment_identities(
+@@ -2504,7 +2593,10 @@ fn read_segment_identities(
                  })
          })
          .collect::<Result<Vec<_>>>()?;
@@ -473,9 +495,9 @@ index bf97450..9b220c8 100644
 +    check_fts_work(connection, 1, 0)?;
 +    Ok(identities)
  }
- 
+
  /// Assemble one segment's files from its scanned chunk rows, validating
-@@ -2512,9 +2603,11 @@ fn read_segment_identities(
+@@ -2512,9 +2604,11 @@ fn read_segment_identities(
  fn assemble_segment_files(
      descriptor: &SegmentDescriptor,
      mut chunks: HashMap<u32, HashMap<i64, Vec<u8>>>,
@@ -487,7 +509,7 @@ index bf97450..9b220c8 100644
          let file_ord = file_ord as u32;
          let chunk_map = chunks.remove(&file_ord).ok_or_else(|| {
              LimboError::Corrupt(format!(
-@@ -2531,7 +2624,8 @@ fn assemble_segment_files(
+@@ -2531,7 +2625,8 @@ fn assemble_segment_files(
                  entry.num_chunks
              )));
          }
@@ -497,7 +519,7 @@ index bf97450..9b220c8 100644
          if assembled.len() as u64 != entry.size {
              return Err(LimboError::Corrupt(format!(
                  "FTS segment file {} has {} bytes but the descriptor records {}",
-@@ -2557,7 +2651,17 @@ fn assemble_segment_files(
+@@ -2557,7 +2652,17 @@ fn assemble_segment_files(
  /// `Vec` first and converting it with `Arc::from` would copy every byte a
  /// second time and hold both copies at once. Each chunk is dropped as soon
  /// as it has been copied, so peak memory is the file plus one chunk.
@@ -516,7 +538,7 @@ index bf97450..9b220c8 100644
      let max_chunk =
          chunks.keys().max().copied().ok_or_else(|| {
              LimboError::Corrupt(format!("FTS file {} has no chunks", path.display()))
-@@ -2573,6 +2677,7 @@ fn assemble_chunks(path: &std::path::Path, mut chunks: HashMap<i64, Vec<u8>>) ->
+@@ -2573,6 +2678,7 @@ fn assemble_chunks(path: &std::path::Path, mut chunks: HashMap<i64, Vec<u8>>) ->
      let buffer = Arc::get_mut(&mut assembled).expect("a freshly allocated Arc is unique");
      let mut offset = 0;
      for chunk_no in 0..=max_chunk {
@@ -524,7 +546,29 @@ index bf97450..9b220c8 100644
          let data = chunks.remove(&chunk_no).ok_or_else(|| {
              LimboError::Corrupt(format!(
                  "FTS file {} is missing chunk {}",
-@@ -3004,6 +3109,8 @@ impl IndexMethodCursor for FtsCursor {
+@@ -2767,6 +2873,21 @@ impl FtsBackingRowDumper {
+     }
+ }
+
++fn fts_query_clause_count(query: &dyn tantivy::query::Query, query_bytes: u64) -> u64 {
++    if let Some(boolean) = query.downcast_ref::<tantivy::query::BooleanQuery>() {
++        return boolean.clauses().iter().fold(1u64, |count, (_, clause)| {
++            count.saturating_add(fts_query_clause_count(clause.as_ref(), query_bytes))
++        });
++    }
++    if query.is::<tantivy::query::BoostQuery>() {
++        // BoostQuery hides its subtree; the bounded source length bounds its syntax nodes.
++        return query_bytes;
++    }
++    let mut terms = 0u64;
++    query.query_terms(&mut |_, _| terms = terms.saturating_add(1));
++    terms.max(1)
++}
++
+ // ============================ trait impl ============================
+
+ impl Drop for FtsCursor {
+@@ -3004,6 +3125,8 @@ impl IndexMethodCursor for FtsCursor {
      /// Starts an FTS query. Parses the query string and executes the search.
      /// Returns true if there are results, false otherwise.
      fn query_start(&mut self, values: &[Register]) -> IOResultOr<bool> {
@@ -533,16 +577,16 @@ index bf97450..9b220c8 100644
          self.ensure_searcher()?;
          let searcher = self
              .searcher
-@@ -3070,7 +3177,7 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3070,7 +3193,7 @@ impl IndexMethodCursor for FtsCursor {
              }
          };
- 
+
 -        self.current_hits.clear();
 +        self.current_hits = Vec::new();
          self.streaming_hits = None;
          self.hit_pos = 0;
          let query_str = match values[1].get_value() {
-@@ -3111,12 +3218,14 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3111,12 +3234,14 @@ impl IndexMethodCursor for FtsCursor {
                  _ => {}
              }
          }
@@ -552,14 +596,14 @@ index bf97450..9b220c8 100644
          if let Some(error) = parse_errors.first() {
              return Err(LimboError::InternalError(format!("FTS parse error: {error:?}")).into());
          }
- 
+
 -        // TopDocs keeps a heap proportional to its limit. Cap that heap at the
 +        // Keep the ranking heap proportional to its limit. Cap that heap at the
          // number of live documents: this preserves unlimited-query semantics
          // and prevents a huge SQL LIMIT from allocating beyond the largest
          // possible result set.
-@@ -3127,12 +3236,22 @@ impl IndexMethodCursor for FtsCursor {
- 
+@@ -3127,12 +3252,29 @@ impl IndexMethodCursor for FtsCursor {
+
          // Unordered patterns can walk Tantivy's per-segment scorers directly.
          // This keeps memory constant for the common MATCH path. Global score
 -        // ordering still uses TopDocs because it inherently needs a top-k heap.
@@ -574,15 +618,22 @@ index bf97450..9b220c8 100644
 +        let mut term_work = 0u64;
 +        query.query_terms(&mut |_, _| term_work = term_work.saturating_add(1));
 +        let term_work = term_work.max(1);
++        let clauses = fts_query_clause_count(query.as_ref(), query_str.len() as u64).max(term_work);
++        // Tantivy 0.26.2: each term weight owns a 1 KiB BM25 table, plus wrappers and cloned terms.
++        check_fts_work(connection.as_deref(), 1, clauses.saturating_mul(4 * 1024))?;
 +        for segment in searcher.segment_readers() {
 +            let work = u64::from(segment.max_doc()).saturating_mul(term_work);
-+            check_fts_work(connection.as_deref(), work, work.saturating_mul(4))?;
++            // Per clause: posting decoders/scorer copies and up to a 4096-slot union score window.
++            let bytes = work
++                .saturating_mul(4)
++                .saturating_add(clauses.saturating_mul(64 * 1024));
++            check_fts_work(connection.as_deref(), work, bytes)?;
 +        }
 +        check_fts_work(connection.as_deref(), 1, 0)?;
          if let Some(scores_enabled) = streaming_scores {
              let scoring = if scores_enabled {
                  EnableScoring::enabled_from_searcher(searcher)
-@@ -3142,11 +3261,18 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3142,11 +3284,18 @@ impl IndexMethodCursor for FtsCursor {
              let weight = query
                  .weight(scoring)
                  .map_err(|e| LimboError::InternalError(format!("FTS query weight error: {e}")))?;
@@ -601,7 +652,7 @@ index bf97450..9b220c8 100644
                  segments.push(FtsStreamingSegment {
                      scorer,
                      rowids: self.rowid_readers[segment_ord].clone(),
-@@ -3154,6 +3280,7 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3154,6 +3303,7 @@ impl IndexMethodCursor for FtsCursor {
                  });
              }
              let mut stream = FtsHitStream {
@@ -609,10 +660,10 @@ index bf97450..9b220c8 100644
                  segments,
                  segment_pos: 0,
                  remaining: limit,
-@@ -3165,78 +3292,52 @@ impl IndexMethodCursor for FtsCursor {
+@@ -3165,78 +3315,52 @@ impl IndexMethodCursor for FtsCursor {
              return Ok(IOResult::Done(has_result));
          }
- 
+
 -        // A global score ordering with no effective LIMIT: TopDocs would
 -        // eagerly allocate per-segment heaps sized to the whole corpus before
 -        // scoring a single document. Walk the scorers and sort what actually
@@ -726,11 +777,27 @@ index bf97450..9b220c8 100644
 +            self.current_hits.push((hit.0, hit.1, hit.2));
 +        }
 +        self.current_hits.reverse();
- 
+
          Ok(IOResult::Done(!self.current_hits.is_empty()))
      }
+@@ -3417,9 +3541,14 @@ impl IndexMethodCursor for FtsCursor {
+         self.reset_to_init();
+     }
+
++    fn on_statement_committed(&mut self, _context: &IndexMethodContext) {
++        // The connection retains this cursor until transaction end; only published ids may outlive admission.
++        self.reset_to_init();
++    }
++
+     fn on_transaction_committed(&mut self, _context: &IndexMethodContext) {
+-        // Own segments are durable now; the shared byte cache entries stay.
+         self.own_published.clear();
++        self.reset_to_init();
+     }
+
+     fn on_transaction_rolled_back(&mut self, _context: &IndexMethodContext) {
 diff --git a/core/index_method/fts/tests.rs b/core/index_method/fts/tests.rs
-index 05ec657..d18e54b 100644
+index 05ec657..e2c5068 100644
 --- a/core/index_method/fts/tests.rs
 +++ b/core/index_method/fts/tests.rs
 @@ -401,6 +401,7 @@ fn segment_load_reads_the_identities_the_build_wrote() {
@@ -751,7 +818,7 @@ index 05ec657..d18e54b 100644
      assert!(matches!(&error, LimboError::Corrupt(_)));
 @@ -570,29 +572,18 @@ fn snapshots_with_different_segment_sets_do_not_share_searchers() {
  }
- 
+
  #[test]
 -fn segment_byte_cache_keeps_newest_and_respects_budget() {
 +fn segment_byte_cache_retains_no_unadmitted_payloads() {
@@ -788,7 +855,7 @@ index 05ec657..d18e54b 100644
 +    assert!(weak.upgrade().is_none());
 +    assert_eq!(cache.total_bytes(), 0);
  }
- 
+
  #[test]
 @@ -611,7 +602,9 @@ fn query_rowid_readers_follow_cached_searcher_order_and_snapshot() {
      let mut cached = FtsCursor::new(&attachment);
@@ -798,17 +865,103 @@ index 05ec657..d18e54b 100644
 +    assert!(!Arc::ptr_eq(&original.rowid_readers, &cached.rowid_readers));
 +    assert!(attachment.shared.searchers.lock().entries.is_empty());
 +    assert!(attachment.shared.segment_bytes.lock().entries.is_empty());
- 
+
      for cursor in [&mut original, &mut cached] {
          for pattern in [FTS_PATTERN_MATCH, FTS_PATTERN_COMBINED] {
+@@ -906,3 +899,85 @@ mod allocation_failures {
+         }
+     }
+ }
++
++#[cfg(feature = "test_helper")]
++#[test]
++fn completed_fts_statements_release_payloads_in_an_open_transaction() {
++    for mvcc in [false, true] {
++        let db = crate::Database::open(
++            Arc::new(crate::MemoryIO::new()),
++            ":memory:",
++            crate::OpenOptions::new(Arc::new(crate::SqliteDialect))
++                .db_opts(crate::DatabaseOpts::default().with_index_method(true)),
++        )
++        .unwrap();
++        let conn = db.connect().unwrap();
++        if mvcc {
++            conn.execute("PRAGMA journal_mode = 'mvcc'").unwrap();
++        }
++        for sql in [
++            "CREATE TABLE a(id INTEGER PRIMARY KEY, body TEXT)",
++            "CREATE TABLE b(id INTEGER PRIMARY KEY, body TEXT)",
++            "CREATE INDEX a_fts ON a USING fts(body)",
++            "CREATE INDEX b_fts ON b USING fts(body)",
++            "INSERT INTO a VALUES (1, 'native')",
++            "INSERT INTO b VALUES (1, 'native')",
++            "BEGIN",
++            "UPDATE a SET body = 'native updated' WHERE id = 1",
++        ] {
++            conn.execute(sql).unwrap();
++        }
++        for sql in [
++            "SELECT count(*) FROM a WHERE fts_match(body, 'native')",
++            "SELECT count(*) FROM b WHERE fts_match(body, 'native')",
++            "SELECT id, fts_score(body, 'native') FROM a WHERE fts_match(body, 'native') LIMIT 10001",
++            "SELECT count(*) FROM a WHERE fts_match(body, 'native')",
++        ] {
++            let rows = conn.prepare(sql).unwrap().run_collect_rows().unwrap();
++            assert_eq!(rows[0][0], Value::from_i64(1));
++            assert!(!conn.get_auto_commit());
++            let entries = conn.index_method_tx_cursors.lock();
++            assert!(!entries.is_empty());
++            for entry in entries.iter() {
++                let stats = entry.cursor.test_stats().unwrap().unwrap();
++                assert_eq!(stats.segment_count, None, "{sql}");
++                assert_eq!(stats.storage_file_count, 0, "{sql}");
++                assert_eq!(stats.cached_bytes, Some(0), "{sql}");
++            }
++        }
++        assert!(conn.index_method_tx_cursors.lock().len() >= 2);
++        conn.execute("ROLLBACK").unwrap();
++        let rows = conn
++            .prepare("SELECT count(*) FROM a WHERE fts_match(body, 'updated')")
++            .unwrap()
++            .run_collect_rows()
++            .unwrap();
++        assert_eq!(rows, vec![vec![Value::from_i64(0)]]);
++        let rows = conn
++            .prepare("SELECT count(*) FROM a WHERE fts_match(body, 'native')")
++            .unwrap()
++            .run_collect_rows()
++            .unwrap();
++        assert_eq!(rows, vec![vec![Value::from_i64(1)]]);
++    }
++}
++
++#[test]
++fn repeated_term_clauses_are_charged_individually_on_a_tiny_index() {
++    let attachment = test_attachment();
++    let (segment, _) = build_and_load_segment(&attachment, &[(1, "a")]);
++    let mut cursor = FtsCursor::new(&attachment);
++    cursor.segments = vec![segment];
++    cursor.ensure_searcher().unwrap();
++    let terms = std::iter::repeat_n("a", 500)
++        .collect::<Vec<_>>()
++        .join(" OR ");
++    assert_eq!(terms.len(), 2496);
++    let query = cursor
++        .cached_parser
++        .as_ref()
++        .unwrap()
++        .parse_query(&terms)
++        .unwrap();
++    assert!(fts_query_clause_count(query.as_ref(), terms.len() as u64) >= 500);
++}
 diff --git a/sdk-kit/src/capi.rs b/sdk-kit/src/capi.rs
 index 2610822..f3944f8 100644
 --- a/sdk-kit/src/capi.rs
 +++ b/sdk-kit/src/capi.rs
 @@ -21,6 +21,25 @@ pub mod c {
- 
+
  pub static PKG_VERSION_C: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
- 
+
 +/// TerraScale's internal ABI: configure only while this connection is idle.
 +/// The callback must remain alive until cleared and must not reenter Turso.
 +#[no_mangle]
@@ -863,7 +1016,7 @@ index b6e423e..9003ea9 100644
 @@ -317,6 +317,13 @@ turso_status_code_t turso_database_connect(
  /** Set busy timeout for the connection */
  void turso_connection_set_busy_timeout_ms(const turso_connection_t *self, int64_t timeout_ms);
- 
+
 +/* TerraScale internal ABI. Additive work and byte charges, nonzero callback result aborts.
 + * Configure while idle; callback must remain alive until cleared and must not reenter Turso. */
 +turso_status_code_t turso_connection_set_fts_progress_handler(
@@ -873,4 +1026,4 @@ index b6e423e..9003ea9 100644
 +
  /** Get autocommit state of the connection */
  bool turso_connection_get_autocommit(const turso_connection_t *self);
- 
+

@@ -85,10 +85,15 @@ Native charges share the request's existing work/deadline; native bytes use the
 plan scan-byte ceiling, capped at 128 MiB even for unlimited plans. Foreground memory
 admission is reserved before native allocation and released with the query budget.
 Shared segment-byte and assembled-searcher caches retain no payloads: query memory
-admission ends after the uncached native reader/command has disposed its cursor.
+admission ends after native reader completion/cleanup releases query payloads.
 This also prevents invalidated snapshots or earlier writes from leaving resident
-segment/searcher references across sequential queries. Per-cursor state is reset on
-close/abort/rollback; prepared query objects cannot retain it after cleanup.
+segment/searcher references across sequential queries. Turso parks completed cursors
+in its connection-owned transaction registry, so FTS resets read state on successful
+statement completion as well as transaction commit/close/abort/rollback. This releases
+segments, assembled views, scorer streams, result heaps and collection capacities
+before per-query admission ends. Published segment IDs remain for write-outcome
+bookkeeping until commit/rollback. The explicit-open-transaction regression inspects
+parked cursors after distinct-index counts and query-plus-count, then verifies rollback.
 Charges include segment residency, temporary chunk copies, identity arrays,
 tombstones and scorer/result buffers. They are conservative cumulative charges rather than
 measured peak RSS; repeated searches in one request can exhaust the ceiling.
@@ -96,14 +101,23 @@ measured peak RSS; repeated searches in one request can exhaust the ceiling.
 The callback polls loading/assembly, identity extraction, tombstone application,
 streaming posting advancement and ordered scoring. Ordered search uses a checked
 LIMIT-sized heap instead of opaque TopDocs traversal. Term/document work is charged
-before scorer construction. **Cancellation is cooperative:** individual Tantivy
+before scorer construction. Weight allocation additionally charges 4 KiB per clause;
+per-segment scorer allocation charges 64 KiB per clause before constructing weights
+or scorers. This covers the pinned Tantivy 0.26.2 per-term 1 KiB BM25 table,
+posting decoders/scorer copies and Boolean union score windows, including repeated
+clauses on tiny indexes. Boolean nodes count separately; hidden boosted subtrees
+use bounded source length as a conservative clause count. These are conservative
+charges and can reject a long valid query before actual allocations exhaust memory.
+**Cancellation is cooperative:** individual Tantivy
 parser, weight/scorer/advance and identity-sort calls remain opaque; checks bound
 inputs and run between calls, not inside them. This is not a hard wall-clock deadline
 guarantee for a single call.
 
 The mandatory C smoke asserts loading-byte refusal, interruption before aggregate
 output, ordered traversal interruption, cancellation after the first native reader
-row, callback clearing/recovery, and an EXPLAIN QUERY PLAN indexed ID seek for
+row, callback clearing/recovery, insufficient weight/scorer admission for 500 repeated
+clauses over one document, open-transaction distinct-index reads/rollback, and an
+EXPLAIN QUERY PLAN indexed ID seek for
 `json_each($ids) CROSS JOIN collection ON collection.id = hit_id`. It prints the
 actual plan and rejects a collection scan. No seek-plan runtime result is claimed
 until this patched artifact passes its coordinated build.

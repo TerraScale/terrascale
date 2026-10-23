@@ -39,19 +39,21 @@ static void search(turso_connection_t *connection, const char *sql, const char *
     turso_statement_deinit(statement);
 }
 
-static uint64_t callback_calls, charged_work, charged_bytes, work_limit;
+static uint64_t callback_calls, charged_work, charged_bytes, work_limit, byte_limit, largest_byte_charge;
 static int stop_requested, stop_on_bytes;
 
 static int32_t fts_budget(uint64_t work, uint64_t bytes) {
     callback_calls++;
     charged_work += work;
     charged_bytes += bytes;
-    return stop_requested || (stop_on_bytes && bytes != 0) || charged_work > work_limit;
+    if (bytes > largest_byte_charge) largest_byte_charge = bytes;
+    return stop_requested || (stop_on_bytes && bytes != 0) || charged_work > work_limit || charged_bytes > byte_limit;
 }
 
 static void reset_budget(turso_connection_t *connection) {
     callback_calls = charged_work = charged_bytes = 0;
-    work_limit = UINT64_MAX;
+    work_limit = byte_limit = UINT64_MAX;
+    largest_byte_charge = 0;
     stop_requested = stop_on_bytes = 0;
     expect(turso_connection_set_fts_progress_handler(connection, fts_budget, &error), TURSO_OK, "set FTS callback");
 }
@@ -115,6 +117,54 @@ static void budget_smoke(turso_connection_t *connection) {
     expect(turso_statement_step(statement, &error), TURSO_DONE, count);
     turso_statement_deinit(statement);
     puts("native smoke: loading bytes, count, ordered scoring, streaming cancellation and recovery passed");
+}
+
+static void expect_count(turso_connection_t *connection, const char *sql, int count) {
+    turso_statement_t *statement = prepare(connection, sql);
+    expect(turso_statement_step(statement, &error), TURSO_ROW, sql);
+    assert(turso_statement_row_value_int(statement, 0) == count);
+    expect(turso_statement_step(statement, &error), TURSO_DONE, sql);
+    turso_statement_deinit(statement);
+}
+
+static void many_clause_admission_smoke(turso_connection_t *connection) {
+    execute(connection, "CREATE TABLE tiny_docs(id INTEGER PRIMARY KEY, title TEXT)");
+    execute(connection, "CREATE INDEX tiny_fts ON tiny_docs USING fts(title)");
+    execute(connection, "INSERT INTO tiny_docs VALUES (1, 'a')");
+    char terms[4096] = "a";
+    for (int i = 1; i < 500; i++) strcat(terms, " OR a");
+    assert(strlen(terms) == 2496);
+    const char *sql = "SELECT id, fts_score(title, ?1) FROM tiny_docs WHERE fts_match(title, ?1) LIMIT 10001";
+    for (int scorer = 0; scorer < 2; scorer++) {
+        reset_budget(connection);
+        byte_limit = scorer ? 4 * 1024 * 1024 : 128 * 1024;
+        turso_statement_t *statement = prepare(connection, sql);
+        expect(turso_statement_bind_positional_text(statement, 1, terms, strlen(terms)), TURSO_OK, "bind 500 clauses");
+        expect(turso_statement_step(statement, &error), TURSO_INTERRUPT, "many clauses exceed native admission");
+        assert(largest_byte_charge >= (uint64_t)500 * (scorer ? 64 * 1024 : 1024));
+        expect(turso_statement_reset(statement, &error), TURSO_OK, "reset clause admission refusal");
+        turso_statement_deinit(statement);
+    }
+    expect(turso_connection_set_fts_progress_handler(connection, NULL, &error), TURSO_OK, "clear clause admission");
+    turso_statement_t *statement = prepare(connection, sql);
+    expect(turso_statement_bind_positional_text(statement, 1, terms, strlen(terms)), TURSO_OK, "bind healthy many clauses");
+    expect(turso_statement_step(statement, &error), TURSO_ROW, sql);
+    assert(turso_statement_row_value_int(statement, 0) == 1);
+    assert(turso_statement_row_value_double(statement, 1) > 0);
+    expect(turso_statement_step(statement, &error), TURSO_DONE, sql);
+    turso_statement_deinit(statement);
+    puts("native smoke: tiny index refuses unadmitted term weights and per-segment scorers");
+
+    /* Distinct attachments remain in Turso's transaction registry between these completed statements. */
+    execute(connection, "BEGIN");
+    execute(connection, "UPDATE tiny_docs SET title = 'a updated' WHERE id = 1");
+    expect_count(connection, "SELECT count(*) FROM tiny_docs WHERE fts_match(title, 'updated')", 1);
+    expect_count(connection, "SELECT count(*) FROM budget_docs WHERE fts_match(title, 'native')", 256);
+    expect_count(connection, "SELECT count(*) FROM tiny_docs WHERE fts_match(title, 'a')", 1);
+    execute(connection, "ROLLBACK");
+    expect_count(connection, "SELECT count(*) FROM tiny_docs WHERE fts_match(title, 'updated')", 0);
+    expect_count(connection, "SELECT count(*) FROM tiny_docs WHERE fts_match(title, 'a')", 1);
+    puts("native smoke: completed reads across indexes in an open transaction preserve rollback");
 }
 
 static void candidate_seek_smoke(turso_connection_t *connection) {
@@ -203,6 +253,7 @@ int main(int argc, char **argv) {
         search(connection, query, "rolledback", 0);
         puts("native smoke: column FTS match/score, commit, update, delete and rollback passed");
         budget_smoke(connection);
+        many_clause_admission_smoke(connection);
         candidate_seek_smoke(connection);
     } else {
         /* Expression support is diagnostic: the engine uses ordinary derived text columns. */
