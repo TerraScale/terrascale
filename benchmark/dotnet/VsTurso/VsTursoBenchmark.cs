@@ -15,8 +15,10 @@ namespace TerraBase.E2E
     /// <c>benchmark/dotnet/VsTurso/run.sh</c>). Compiled into TerraBase.E2E because the local nodes need its harness; without
     /// <c>TERRABASE_VS_TURSO_OUT</c> it skips: it is a benchmark, not a scenario.
     /// Lanes: <c>turso</c> (one upsert per transaction, WAL, synchronous FULL), <c>turso-cdc</c> (the same with change capture,
-    /// as TerraBase's writer runs), <c>engine</c> (one local node: <see cref="IDocumentService"/> in process) and <c>engine-3</c>
-    /// (gru of gru, sjc and fra, answered after a remote ack). Each compares with <c>turso</c>.
+    /// as TerraBase's writer runs), <c>engine</c> and <c>api</c> (one local node: <see cref="IDocumentService"/> in process, and
+    /// its public HTTP API over loopback), <c>floor</c> (that listener answering <c>GET /healthz</c>), <c>engine-3</c> and
+    /// <c>api-3</c> (gru of gru, sjc and fra, answered after a remote ack), and every <see cref="IVsTursoLane"/> in this assembly.
+    /// Every lane compares with <c>turso</c>.
     /// </summary>
     [Category("benchmark-host")]
     public sealed class VsTursoBenchmark
@@ -35,7 +37,12 @@ namespace TerraBase.E2E
             Skip.When(string.IsNullOrEmpty(output), "the vs-Turso benchmark: run it with benchmark/dotnet/VsTurso/run.sh");
             var seconds = int.Parse(Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_SECONDS") ?? "5", CultureInfo.InvariantCulture);
             var repeats = int.Parse(Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_REPEATS") ?? "3", CultureInfo.InvariantCulture);
-            var lanes = (Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_LANES") ?? "turso,turso-cdc,engine,engine-3").Split(',');
+            // Lanes other files add: every IVsTursoLane in this assembly, run against the single node.
+            var plugins = typeof(VsTursoBenchmark).Assembly.GetTypes()
+                .Where(type => typeof(IVsTursoLane).IsAssignableFrom(type) && type is { IsAbstract: false, IsInterface: false })
+                .Select(type => (IVsTursoLane)Activator.CreateInstance(type)!).ToList();
+            var lanes = (Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_LANES")
+                ?? string.Join(',', ["turso", "turso-cdc", "engine", "api", "floor", .. plugins.Select(plugin => plugin.Name), "engine-3", "api-3"])).Split(',');
             var workloads = (Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_WORKLOADS") ?? string.Join(',', Workloads)).Split(',');
             int[] concurrencies = Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_CONCURRENCY") is { Length: > 0 } list
                 ? [.. list.Split(',').Select(value => int.Parse(value, CultureInfo.InvariantCulture))]
@@ -49,13 +56,13 @@ namespace TerraBase.E2E
             try
             {
                 var single = new List<(string Lane, ITarget Target)>();
-                foreach (var lane in lanes.Where(lane => lane.StartsWith("turso", StringComparison.Ordinal)))
+                foreach (var lane in lanes.Where(lane => lane is "turso" or "turso-cdc"))
                 {
                     single.Add((lane, new TursoTarget(Path.Combine(directory, lane + ".db"), capture: lane == "turso-cdc")));
                 }
 
                 // One node outside a cell: change capture, change groups and the feed run, nothing ships and no write waits for a remote ack.
-                await using (var node = lanes.Any(lane => lane is "engine") ? await ManagementApi.StartAsync() : null)
+                await using (var node = lanes.Any(lane => lane is "engine" or "api" or "floor" || plugins.Any(plugin => plugin.Name == lane)) ? await ManagementApi.StartAsync() : null)
                 {
                     if (node is not null)
                     {
@@ -75,7 +82,13 @@ namespace TerraBase.E2E
                         }
 
                         single.AddRange(Targets(
-                            lanes, string.Empty, node.Server.Services, new TenantContext(database.Organization, PlanTier.Enterprise, database.Project, database.Id), "bench"));
+                            lanes, string.Empty, node.Server.Services, new TenantContext(database.Organization, PlanTier.Enterprise, database.Project, database.Id),
+                            node.Server.ClientAddress!, token, $"{database.Data}/collections/bench/documents/by-key?id=", "bench"));
+                        var setup = new VsTursoNode(node, new TenantContext(database.Organization, PlanTier.Enterprise, database.Project, database.Id), token, "bench", directory);
+                        foreach (var plugin in plugins.Where(plugin => lanes.Contains(plugin.Name)))
+                        {
+                            single.Add((plugin.Name, await plugin.StartAsync(setup, cancellationToken)));
+                        }
                     }
 
                     await RunAsync(single, workloads, concurrencies, repeats, duration, cells, log, cancellationToken);
@@ -86,7 +99,9 @@ namespace TerraBase.E2E
                     if (cluster is not null)
                     {
                         var (services, database) = cluster.Engine(Cluster.Gru);
-                        var targets = Targets(lanes, "-3", services, database, cluster.Collection);
+                        var (address, token, _) = cluster.Endpoint(Cluster.Gru);
+                        var targets = Targets(
+                            lanes, "-3", services, database, address, token, $"{cluster.DatabasePath}/collections/{cluster.Collection}/documents/by-key?id=", cluster.Collection);
                         await RunAsync(targets, workloads, concurrencies, repeats, duration, cells, log, cancellationToken);
                     }
                 }
@@ -106,13 +121,24 @@ namespace TerraBase.E2E
         }
 
         private static List<(string, ITarget)> Targets(
-            string[] lanes, string suffix, IServiceProvider services, TenantContext database, string collection)
+            string[] lanes, string suffix, IServiceProvider services, TenantContext database, Uri address, string token, string path, string collection)
         {
             var targets = new List<(string, ITarget)>();
             var engine = new EngineTarget(services.GetRequiredService<IDocumentService>(), database, collection);
             if (lanes.Contains("engine" + suffix))
             {
                 targets.Add(("engine" + suffix, engine));
+            }
+
+            if (lanes.Contains("api" + suffix))
+            {
+                targets.Add(("api" + suffix, new ApiTarget(address, token, path, engine)));
+            }
+
+            // The HTTP floor: the same client and listener answering GET /healthz, so no auth, catalog or storage.
+            if (lanes.Contains("floor" + suffix))
+            {
+                targets.Add(("floor" + suffix, new ApiTarget(address, token, "/healthz?", engine, floor: true)));
             }
 
             return targets;
@@ -241,8 +267,7 @@ namespace TerraBase.E2E
             {
                 var runs = group.ToList();
                 var ops = Median(runs.Select(run => run.OpsPerSecond));
-                // Like for like: a lane served over HTTP against raw Turso over the same HTTP host, an in-process one against raw Turso.
-                var against = group.Key.Lane.StartsWith("api", StringComparison.Ordinal) || group.Key.Lane.StartsWith("floor", StringComparison.Ordinal) ? "turso-http" : "turso";
+                const string against = "turso";
                 var baseline = cells.Where(cell => cell.Lane == against && cell.Size == group.Key.Size && cell.Workload == group.Key.Workload && cell.Concurrency == group.Key.Concurrency)
                     .Select(cell => cell.OpsPerSecond).ToList();
                 var versus = baseline.Count == 0 || group.Key.Lane == against ? "" : $"{(ops / Median(baseline) - 1) * 100:+0.0;-0.0} % vs {against}";
@@ -299,7 +324,7 @@ namespace TerraBase.E2E
 
     }
 
-    /// <summary>One lane's way to write, preload and point-read a document.</summary>
+    /// <summary>One lane's way to write, preload and point-read a document: the operations every cell times.</summary>
     internal interface ITarget : IAsyncDisposable
     {
         Task PutAsync(string id, byte[] json);
