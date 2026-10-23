@@ -14,6 +14,8 @@ public class SqliteConnectionStringBuilder : DbConnectionStringBuilder
         "Mode",
         "Cache",
         "Password",
+        "Encryption Cipher",
+        "Encryption Key",
         "Foreign Keys",
         "Recursive Triggers",
         "Default Timeout",
@@ -51,6 +53,10 @@ public class SqliteConnectionStringBuilder : DbConnectionStringBuilder
         ["Mode"] = "Mode",
         ["Cache"] = "Cache",
         ["Password"] = "Password",
+        ["Encryption Cipher"] = "Encryption Cipher",
+        ["EncryptionCipher"] = "Encryption Cipher",
+        ["Encryption Key"] = "Encryption Key",
+        ["EncryptionKey"] = "Encryption Key",
         ["Foreign Keys"] = "Foreign Keys",
         ["ForeignKeys"] = "Foreign Keys",
         ["Recursive Triggers"] = "Recursive Triggers",
@@ -296,6 +302,18 @@ public class SqliteConnectionStringBuilder : DbConnectionStringBuilder
         set => SetString("Password", value);
     }
 
+    public string EncryptionCipher
+    {
+        get => GetString("Encryption Cipher");
+        set => SetString("Encryption Cipher", value);
+    }
+
+    public string EncryptionKey
+    {
+        get => GetString("Encryption Key");
+        set => SetString("Encryption Key", value);
+    }
+
     public bool? ForeignKeys
     {
         get => GetNullableBool("Foreign Keys");
@@ -429,6 +447,8 @@ public class SqliteConnectionStringBuilder : DbConnectionStringBuilder
     private static readonly string[] ManagedKeywords =
     [
         "Data Source",
+        "Encryption Cipher",
+        "Encryption Key",
         "Default Timeout",
         "Pooling",
         "Auth Token",
@@ -565,6 +585,8 @@ public class SqliteConnectionStringBuilder : DbConnectionStringBuilder
             "Mode" => SqliteOpenMode.ReadWriteCreate,
             "Cache" => SqliteCacheMode.Default,
             "Password" => string.Empty,
+            "Encryption Cipher" => string.Empty,
+            "Encryption Key" => string.Empty,
             "Foreign Keys" => null!,
             "Recursive Triggers" => false,
             "Default Timeout" => 30,

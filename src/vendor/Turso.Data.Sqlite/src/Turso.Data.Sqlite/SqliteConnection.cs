@@ -167,13 +167,21 @@ public partial class SqliteConnection : DbConnection
         if (!string.IsNullOrEmpty(_connectionOptions.Password))
             throw new InvalidOperationException(Properties.Resources.EncryptionNotSupported("e_sqlite3"));
 
+        var encryption = new TursoConnectionStringBuilder(_connectionOptions.GetTursoConnectionString());
+        var cipher = encryption.GetEncryptionCipher();
+        if (cipher.HasValue != !string.IsNullOrWhiteSpace(_connectionOptions.EncryptionKey))
+            throw new InvalidOperationException("Encryption Cipher and Encryption Key must be specified together.");
+
         var originalState = State;
         var filename = NormalizeDataSource(_connectionOptions);
         var readOnly = _connectionOptions.Mode == SqliteOpenMode.ReadOnly;
         var sharedMemoryPath = IsSharedMemory(_connectionOptions) ? RegisterSharedMemoryFile(filename) : null;
         try
         {
-            _database = CanPool(_connectionOptions, filename, sharedMemoryPath)
+            // The filename-only pool must never reuse a handle authenticated with another key.
+            _database = cipher.HasValue
+                ? TursoBindings.OpenDatabaseWithEncryption(filename, cipher.Value, _connectionOptions.EncryptionKey)
+                : CanPool(_connectionOptions, filename, sharedMemoryPath)
                 ? SqliteDatabasePool.Connect(filename)
                 : TursoBindings.OpenDatabase(filename);
             _database.CloseRefusal = CloseRefusal;

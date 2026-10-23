@@ -25,7 +25,21 @@ public static class TursoBindings
         ArgumentNullException.ThrowIfNull(path);
         ArgumentNullException.ThrowIfNull(hexkey);
 
-        return OpenDatabase(path, cipher.ToRustString(), hexkey);
+        var nativeCipher = cipher.ToRustString();
+        var keyLength = cipher is TursoEncryptionCipher.Aes256Gcm
+            or TursoEncryptionCipher.Aegis256 or TursoEncryptionCipher.Aegis256x2 ? 64 : 32;
+        if (hexkey.Length != keyLength || hexkey.Any(c => !Uri.IsHexDigit(c)))
+            throw new ArgumentException("Encryption Key must be a hex-encoded key of the cipher's required length.", nameof(hexkey));
+
+        try
+        {
+            return OpenDatabase(path, nativeCipher, hexkey);
+        }
+        catch (TursoNativeException ex)
+        {
+            // Native diagnostics can contain supplied configuration; never retain key-bearing text.
+            throw new TursoNativeException(ex.StatusCode, "Unable to open encrypted database.");
+        }
     }
 
     /// <summary>
@@ -382,6 +396,7 @@ public static class TursoBindings
     private static IntPtr NewOpenedDatabase(string path, string? cipher, string? hexkey)
     {
         using var pathString = NativeUtf8String.From(path);
+        // Native database_opts starts with its defaults, then adds these named features.
         using var featuresString = NativeUtf8String.From(cipher is null ? null : "encryption");
         using var cipherString = NativeUtf8String.From(cipher);
         using var hexkeyString = NativeUtf8String.From(hexkey);
