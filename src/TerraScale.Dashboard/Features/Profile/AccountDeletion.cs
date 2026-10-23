@@ -37,8 +37,7 @@ public static class AccountDeletion
             try { await platform.DeleteAccountAsync(context.Session, cancellationToken); }
             catch (AccountAccessException error) when (error.Code == "last_owner")
             { throw new AccountAccessException("Transfer ownership of your shared organizations before deleting your account.", 409); }
-            // An earlier attempt deleted the user at ts-auth; finish the dashboard cleanup.
-            catch (AccountAccessException error) when (error.StatusCode is 401 or 404) { }
+            // Dashboard records go only after ts-auth confirms; a 401/404 can mean an expired token or a ts-auth without the route.
         }
         catch (AccountAccessException error)
         {
