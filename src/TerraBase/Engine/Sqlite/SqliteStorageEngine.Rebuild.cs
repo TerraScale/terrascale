@@ -1,9 +1,11 @@
 using System.Buffers.Text;
 using System.Text;
+using System.Text.Json;
 using Turso.Data.Sqlite;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -202,7 +204,13 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
         Io.Admit();
         try
         {
-            return await Io.RunAsync(() => ReadSide(workingPath, rows, cancellationToken), cancellationToken).ConfigureAwait(false);
+            var (states, skipped) = await Io.RunAsync(() => ReadSide(workingPath, rows, cancellationToken), cancellationToken).ConfigureAwait(false);
+            if (skipped > 0)
+            {
+                _logger.ZLogWarning($"A rebuild's salvage skipped {skipped:@Count} side-copy states that do not verify against their stored digests");
+            }
+
+            return states;
         }
         finally
         {
@@ -437,12 +445,14 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
         }
     }
 
-    // Worker-only: the measured rows' states, each checked against its stored digest.
-    private static List<RepairState> ReadSide(string workingPath, IReadOnlyList<SideRow> rows, CancellationToken cancellationToken)
+    // Worker-only: the measured rows' states that verify against their stored digests, and how many did not (the class doc
+    // of ReplicaRebuild: only verified states join the rebuild).
+    private static (List<RepairState> States, int Skipped) ReadSide(string workingPath, IReadOnlyList<SideRow> rows, CancellationToken cancellationToken)
     {
         using var connection = Working(workingPath);
         using var snapshot = connection.BeginTransaction(deferred: true);
         List<RepairState> states = [];
+        var skipped = 0;
         var documents = DocumentBytes(connection, rows.Select(row => (row.Collection, row.Id)), cancellationToken);
         foreach (var row in rows)
         {
@@ -459,10 +469,16 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
                 preflight.Parameters.AddWithValue("$collection", row.Collection);
                 preflight.Parameters.AddWithValue("$id", row.Id);
                 using var measured = preflight.ExecuteReader();
-                if (!measured.Read() || measured.IsDBNull(0) || measured.GetInt64(1) != 1
-                    || measured.GetInt64(0) <= 0 || checked(keyBytes + documentBytes + measured.GetInt64(0)) != row.Bytes)
+                if (!measured.Read() || measured.IsDBNull(0) || measured.GetInt64(0) <= 0
+                    || checked(keyBytes + documentBytes + measured.GetInt64(0)) != row.Bytes)
                 {
-                    throw new InvalidDataException("a side-copy state has invalid storage types or no longer matches its measured size");
+                    throw new InvalidDataException("a side-copy state no longer matches its measured size");
+                }
+
+                if (measured.GetInt64(1) != 1)
+                {
+                    skipped++;
+                    continue;
                 }
             }
 
@@ -487,21 +503,23 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
             {
                 state = DocumentStateEncoding.DecodeStored(Base64Url.DecodeFromChars(stored), Document(connection, row.Collection, row.Id));
             }
-            catch (FormatException error)
+            catch (Exception error) when (error is FormatException or InvalidDataException or JsonException)
             {
-                throw new InvalidDataException("a state of the side copy does not decode", error);
+                skipped++;
+                continue;
             }
 
             var digest = DocumentStateEncoding.Digest(row.Collection, row.Id, state);
             if (unchecked((long)(ulong)(digest >> 64)) != h1 || unchecked((long)(ulong)digest) != h2)
             {
-                throw new InvalidDataException("a state of the side copy does not match its stored digest");
+                skipped++;
+                continue;
             }
 
             states.Add(new RepairState(row.Collection, row.Id, state));
         }
 
-        return states;
+        return (states, skipped);
     }
 
     // An unpooled connection on a private working copy (never on the retained side copy).
