@@ -145,6 +145,7 @@ public sealed class BackupKeyRotationTests
             var coldFile = DatabaseFile(coldDirectory, database);
             Directory.CreateDirectory(Path.GetDirectoryName(coldFile)!);
             File.Copy(DatabaseFile(directory, database), coldFile);
+            File.Copy(DatabaseFile(directory, database) + ".key", coldFile + ".key");
             time.Advance(TimeSpan.FromHours(25));
 
             var cancellationToken = testCancellationToken;
@@ -404,6 +405,7 @@ public sealed class BackupKeyRotationTests
             var peerFile = DatabaseFile(peerDirectory, database);
             Directory.CreateDirectory(Path.GetDirectoryName(peerFile)!);
             File.Copy(DatabaseFile(directory, database), peerFile);
+            File.Copy(DatabaseFile(directory, database) + ".key", peerFile + ".key");
             var keys = Keys(database);
             var oldKey = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal));
             var oldRequests = s3.ObserveKey(oldKey);

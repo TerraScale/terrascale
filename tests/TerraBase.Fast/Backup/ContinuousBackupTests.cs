@@ -143,7 +143,7 @@ public sealed class ContinuousBackupTests
         await Assert.That(Generation(backup, database)).IsEqualTo(generation);
         await Assert.That(backup.Status.Files.Single(file => file.File == File(database)).LogBytes).IsGreaterThan(6 * 900_000);
         // Every change read was trimmed from the capture table but its newest row, so a reopen keeps counting ids.
-        await using var capture = new Turso.TursoConnection($"Data Source={Path.Combine(api.Server.DataDirectory, database.Organization, database.Project, database.Id + ".db")}");
+        await using var capture = new Turso.TursoConnection(TestMasterKey.ConnectionString(Path.Combine(api.Server.DataDirectory, database.Organization, database.Project, database.Id + ".db")));
         await capture.OpenAsync();
         await using var rows = capture.CreateCommand();
         rows.CommandText = "SELECT count(*) FROM turso_cdc;";

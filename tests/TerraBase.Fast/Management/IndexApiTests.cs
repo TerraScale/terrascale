@@ -288,12 +288,12 @@ public sealed class IndexApiTests
 
     private static async Task<string?> ReadIndexStatsAsync(ManagementApi api, ManagedDatabaseRef database, string index)
     {
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
         {
             DataSource = Path.Combine(api.Server.DataDirectory, database.Organization, database.Project, database.Id + ".db"),
             Mode = SqliteOpenMode.ReadOnly,
             Pooling = false,
-        }.ToString());
+        }));
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT stat FROM sqlite_stat1 WHERE idx = $index;";

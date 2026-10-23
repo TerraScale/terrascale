@@ -70,12 +70,12 @@ public sealed class UsageApiTests
         // Read the actual startup documents without invoking the foreground management catalog initializer.
         async Task<(string Collection, string Id, string Body)[]> SnapshotAsync()
         {
-            await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
             {
                 DataSource = catalog,
                 Mode = SqliteOpenMode.ReadOnly,
                 Pooling = false,
-            }.ToString());
+            }));
             await connection.OpenAsync(token);
             await using var command = connection.CreateCommand();
             command.CommandText = "SELECT collection, id, body FROM documents ORDER BY collection, id;";
@@ -1130,7 +1130,7 @@ public sealed class UsageApiTests
     private static async Task<List<string>> BucketsAsync(string dataDirectory, string databaseId, string granularity)
     {
         var path = Path.Combine(dataDirectory, "_system.db");
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }));
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT id FROM documents WHERE collection = $collection AND body IS NOT NULL ORDER BY id;";
@@ -1158,7 +1158,7 @@ public sealed class UsageApiTests
     private static async Task<string?> ReadSavedOpsAsync(string dataDirectory, string databaseId)
     {
         var path = Path.Combine(dataDirectory, "_system.db");
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }));
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT body FROM documents WHERE collection = $collection AND id LIKE 'ops~%';";
@@ -1169,7 +1169,7 @@ public sealed class UsageApiTests
     private static async Task<long> CountSavedQueryFieldsAsync(string dataDirectory, string databaseId)
     {
         var path = Path.Combine(dataDirectory, "_system.db");
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }));
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT count(*) FROM documents WHERE collection = $collection AND body IS NOT NULL;";

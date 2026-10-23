@@ -491,12 +491,12 @@ public sealed partial class A6LocalRebuildE2ETests
         public async Task<long> RetainedStateRowAsync(CancellationToken token)
         {
             var path = Path.Combine(DirectoryPath, pair.Managed.Organization, pair.Managed.Project, pair.Managed.Id + ".db");
-            await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
             {
                 DataSource = path,
                 Mode = SqliteOpenMode.ReadOnly,
                 Pooling = false,
-            }.ToString());
+            }));
             await connection.OpenAsync(token);
             await using var command = connection.CreateCommand();
             command.CommandText = """

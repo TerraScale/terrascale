@@ -27,7 +27,7 @@ public sealed class AbandonedStatementTests
         // Created on a connection of its own while no write runs: the provider cannot run a trigger body.
         await store.WithWritersHeldAsync(() =>
         {
-            using var connection = new Turso.TursoConnection($"Data Source={store.FilePath}");
+            using var connection = new Turso.TursoConnection(TestMasterKey.ConnectionString(store.FilePath));
             connection.Open();
             connection.ExecuteNonQuery(
                 "CREATE TRIGGER fail_marked BEFORE INSERT ON \"items\" WHEN json_extract(NEW.doc, '$.fail') = 1 BEGIN SELECT RAISE(ROLLBACK, 'the test fails this write'); END;");

@@ -191,7 +191,7 @@ public sealed class FeedSequenceTests
                 _ = await tap.SnapshotAsync(Stream.Null, path, CancellationToken.None);
             }
 
-            await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+            await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }));
             await connection.OpenAsync();
             await Assert.That(Scalar(connection, "SELECT COUNT(*) FROM _tb_feed;")).IsEqualTo((long)feed.Length);
             await Assert.That(Scalar(connection, "SELECT seq FROM _tb_feed_sequence WHERE id = 1;")).IsEqualTo(counter);

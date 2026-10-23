@@ -59,7 +59,7 @@ public sealed class BackupKeySaturationTests
 
             // Start from a real shipped snapshot and stopped database. The cold node receives only the catalog and
             // layout marker; its project file and plaintext key caches do not come from the live node.
-            foreach (var file in new[] { "_system.db", "_intents.db", ".terrabase.lock" })
+            foreach (var file in new[] { "_system.db", "_system.db.key", "_intents.db", "_intents.db.key", ".terrabase.lock" })
             {
                 File.Copy(Path.Combine(directory, file), Path.Combine(coldDirectory, file));
             }
@@ -78,7 +78,9 @@ public sealed class BackupKeySaturationTests
             var originalDataKey = s3.Unwrap(wrapped);
             var sourcePath = Path.Combine(directory, database.Organization, database.Project, database.Id + ".db");
             await Assert.That(new FileInfo(sourcePath).Length).IsLessThan(1L << 20);
-            var snapshotBytes = await File.ReadAllBytesAsync(sourcePath, cancellationToken);
+            using var snapshotBundle = new MemoryStream();
+            await SnapshotBundle.WriteAsync(sourcePath, snapshotBundle, cancellationToken);
+            var snapshotBytes = snapshotBundle.ToArray();
 
             // Stress fixtures are authenticated EMPTY WAL segments, not 65,534 real writes. Each distinct peer key
             // enters the real decrypt pipeline; zero frames keep every segment contiguous at position zero. The
