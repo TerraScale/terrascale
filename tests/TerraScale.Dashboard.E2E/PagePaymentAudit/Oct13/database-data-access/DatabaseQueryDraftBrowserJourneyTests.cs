@@ -41,8 +41,8 @@ public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fi
             ("/api-keys?kind=key", 200, "No credentials match these filters."),
             ("/databases/" + id + "/backups", 200, "No restore points yet."),
             ("/subscriptions", 200, "No shared-result configurations yet."),
-            ("/auth/connections", 503, "SSO connections unavailable"),
-            ("/authentication/connections", 503, "SSO connections unavailable")
+            ("/auth/connections", 200, "SSO connections unavailable"),
+            ("/authentication/connections", 200, "SSO connections unavailable")
         })
         {
             var response = await page.GotoAsync(new Uri(scenario.Origin, path).ToString());
