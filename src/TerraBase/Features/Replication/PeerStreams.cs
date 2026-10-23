@@ -475,6 +475,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     if (frame.Applying is { } applying)
                     {
                         var database = ChangeGroups.Tenant(applying.Database);
+                        var observed = false;
                         lock (link.Gate)
                         {
                             var cursor = link.Cursors.GetValueOrDefault(database);
@@ -484,8 +485,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                             {
                                 cursor.Progress = applying.Progress;
                                 cursor.ProgressAt = _time.GetTimestamp();
-                                _checkpoint("replication.progress.observed", database);
+                                observed = true;
                             }
+                        }
+                        if (observed)
+                        {
+                            _checkpoint("replication.progress.observed", database);
                         }
                         continue;
                     }
@@ -532,7 +537,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 using var timer = new PeriodicTimer(Idle, _time);
                 while (await timer.WaitForNextTickAsync(activity.Token).ConfigureAwait(false))
                 {
-                    if (writer.Quiet >= Idle)
+                    bool awaiting;
+                    lock (link.Gate)
+                    {
+                        awaiting = link.Cursors.Values.Any(cursor => cursor.InFlight is not null && !cursor.ResponseReceived && !cursor.Refilling);
+                    }
+                    // Active tenants must not suppress another batch's work-progress reports.
+                    if (writer.Quiet >= Idle || awaiting)
                     {
                         await writer.WriteAsync(new PushFrame { Heartbeat = new Heartbeat { Hlc = _self.Clock.Tick().Value } }, activity.Token).ConfigureAwait(false);
                     }
