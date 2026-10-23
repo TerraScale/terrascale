@@ -498,6 +498,25 @@ project, err := tsauth.NewExchangeSource(tsauth.ExchangeConfig{ClientID: "ts-das
 	SubjectToken: func(context.Context) (string, error) { return tokens.AccessToken, nil }, Organization: orgID, Project: projectID})
 ```
 
+### ts CLI (`cmd/ts`)
+
+`ts` signs in with `tsauth.Device` (the device grant of ts-auth's ts-cli
+client) and manages databases as that user. It keeps the sign-in in
+`terrascale/cli.json` under `os.UserConfigDir()` (mode 0600) and refreshes it.
+
+```sh
+go install terrascale.tech/sdk/cmd/ts@latest
+ts auth login                      # approve in the browser
+ts db create app && ts sql app 'SELECT * FROM users LIMIT 10'
+ts db branch app app-preview
+ts db list
+ts db delete app-preview
+ts auth logout
+```
+
+Commands act in the user's only project; `-project <name or id>` picks one
+when the user reaches several.
+
 ## Checks
 
 ```sh
