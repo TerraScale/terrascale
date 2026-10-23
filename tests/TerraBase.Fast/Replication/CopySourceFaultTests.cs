@@ -72,7 +72,8 @@ public sealed class CopySourceFaultTests
             var error = await Assert.ThrowsAsync<TursoNativeException>(async () =>
                 await engine.CopyDatabaseAsync(source.Database, target, CancellationToken.None));
             checkpoint = null;
-            await Assert.That(error!.StatusCode).IsEqualTo(133U).Because("the raw source's native corruption error must escape unchanged");
+            await Assert.That(error!.StatusCode).IsEqualTo(127U).Because("the raw source's native page-authentication error must escape unchanged");
+            await Assert.That(error.IsPageAuthenticationFailure).IsTrue();
             await Assert.That(openedWithIntent).IsTrue().Because("a committed SYSTEM intent precedes the raw source open");
             await Assert.That(refusedBeforeRecord).IsTrue().Because("the source is already refused when durable recording begins");
             await Assert.That(recordedAlready).IsFalse();

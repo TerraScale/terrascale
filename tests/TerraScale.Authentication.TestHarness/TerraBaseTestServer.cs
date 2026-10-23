@@ -53,7 +53,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     // Only stopped fixture storage is inspected; this synthetic master never comes from the environment.
     internal string StoppedDatabaseKey(params string[] relativePath)
     {
-        var path = Path.Combine(this.StoppedDataDirectory, Path.Combine(relativePath)) + ".key";
+        var path = Path.Combine([this.StoppedDataDirectory, .. relativePath]) + ".key";
         var record = File.ReadAllLines(path);
         if (record.Length != 2 || record[0] != "TERRABASE-DB-KEY-1")
         {

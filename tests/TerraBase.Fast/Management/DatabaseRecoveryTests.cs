@@ -625,6 +625,7 @@ public sealed class DatabaseRecoveryTests
         var paths = new[]
         {
             state.Path(unregistered),
+            state.Path(unregistered) + ".key",
             // Matching ids under another organization do not make this copy registered.
             System.IO.Path.Combine(state.Directory, EntityIds.New().ToString(), state.Project, state.Source + ".db"),
             System.IO.Path.Combine(state.Directory, state.Organization, state.Project, "operator-notes.txt"),
@@ -633,7 +634,7 @@ public sealed class DatabaseRecoveryTests
             System.IO.Path.Combine(state.Directory, state.Organization, "other", "nested", "archive.db"),
             System.IO.Path.Combine(state.Directory, "operator-notes.txt"),
         };
-        foreach (var path in paths.Skip(1))
+        foreach (var path in paths.Skip(2))
         {
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
             await File.WriteAllBytesAsync(path, state.Faker.Random.Bytes(73));

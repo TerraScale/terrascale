@@ -38,7 +38,10 @@ public static class TursoBindings
         catch (TursoNativeException ex)
         {
             // Native diagnostics can contain supplied configuration; never retain key-bearing text.
-            throw new TursoNativeException(ex.StatusCode, "Unable to open encrypted database.");
+            throw new TursoNativeException(ex.StatusCode, "Unable to open encrypted database.")
+            {
+                IsPageAuthenticationFailure = ex.IsPageAuthenticationFailure,
+            };
         }
     }
 
@@ -528,7 +531,17 @@ public static class TursoBindings
     private static void ThrowException(TursoStatusCode status, IntPtr errorPtr, string? messagePrefix = null)
     {
         var errorMessage = Marshal.PtrToStringUTF8(errorPtr);
-        var exception = new TursoNativeException((uint)status, $"{messagePrefix}{errorMessage ?? "Internal error"}");
+        // Match the native DecryptionError display before adding any managed prefix; SQL errors have their own prefix.
+        const string decryptionPrefix = "Decryption failed for page=";
+        var authenticationFailure = status == TursoStatusCode.Error
+            && errorMessage is not null
+            && errorMessage.StartsWith(decryptionPrefix, StringComparison.Ordinal)
+            && errorMessage.Length > decryptionPrefix.Length
+            && errorMessage.AsSpan(decryptionPrefix.Length).IndexOfAnyExceptInRange('0', '9') < 0;
+        var exception = new TursoNativeException((uint)status, $"{messagePrefix}{errorMessage ?? "Internal error"}")
+        {
+            IsPageAuthenticationFailure = authenticationFailure,
+        };
         TursoInterop.FreeString(errorPtr);
         throw exception;
     }
