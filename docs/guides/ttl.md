@@ -60,7 +60,7 @@ Deletion is not instant. Each database's home region checks for expired document
 
 ## From an SDK
 
-JavaScript (`@terrascale/sdk`), where `sessions` is a collection handle such as `client.database('app').collection('sessions')`:
+JavaScript (`@terrascale/sdk` 0.0.5 or newer; 0.0.3 has no TTL methods), where `sessions` is a collection handle such as `client.database('app').collection('sessions')`:
 
 ```js
 await sessions.putTtl('/expiresAt')   // { path: '/expiresAt' }
@@ -68,14 +68,7 @@ await sessions.getTtl()               // { path: '/expiresAt' } or { path: null 
 await sessions.deleteTtl()            // documents stop expiring
 ```
 
-Go (`terrascale.tech/sdk/v1`):
-
-```go
-sessions := c.Database(project, "app").Collection("sessions")
-err := sessions.SetTTL(ctx, "/expiresAt")
-path, err := sessions.TTL(ctx) // "" when documents never expire
-err = sessions.DeleteTTL(ctx)
-```
+The Go SDK (`terrascale.tech/sdk` v0.0.1) has no TTL methods yet; call the HTTP API above.
 
 C# (`TerraScale.DotNet`):
 
@@ -83,13 +76,4 @@ C# (`TerraScale.DotNet`):
 await database.SetCollectionTtlAsync("sessions", "/expiresAt", cancellationToken);
 TerraBaseCollectionTtl ttl = await database.GetCollectionTtlAsync("sessions", cancellationToken); // ttl.Path is null when none
 await database.ClearCollectionTtlAsync("sessions", cancellationToken);
-```
-
-Rust (`terrascale::v1`):
-
-```rust
-let sessions = client.database("app").collection("sessions");
-sessions.set_ttl("/expiresAt").await?;
-let path: Option<String> = sessions.get_ttl().await?; // None when documents never expire
-sessions.clear_ttl().await?;
 ```

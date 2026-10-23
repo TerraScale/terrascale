@@ -17,13 +17,13 @@ Create an account in the [TerraScale dashboard](https://dash.terrascale.tech/reg
 | --- | --- | --- |
 | JavaScript / TypeScript | [JavaScript quickstart](/zh-cn/getting-started/javascript) | `@terrascale/sdk@0.0.3` is published on npm |
 | C# | [C# quickstart](/zh-cn/getting-started/csharp) | Package built from source; not on nuget.org yet |
-| Go | [SDK reference](/zh-cn/guides/sdks) | `go get terrascale.tech/sdk@v0.0.1` |
+| Go | [Go quickstart](/zh-cn/getting-started/go) | `go get terrascale.tech/sdk@v0.0.1` |
 
 There is no Python, Java or Rust SDK yet; call the HTTP API directly from those languages.
 
 ## Create an account, a database and an API key
 
-1. Open [dash.terrascale.tech/register](https://dash.terrascale.tech/register), create your account and enter the code sent to your email.
+1. Open [dash.terrascale.tech/register](https://dash.terrascale.tech/register), select **Create account**, and enter the code sent to your email.
 2. Finish setup: choose a plan (or continue without a payment method), then name your first project and pick its region.
 3. Open **Databases**, select **New database**, enter a name (lowercase letters, digits and inner hyphens) and create it.
 4. Open **API keys**, select **Create credential**, then **API key**. Name it, limit **Database access** to that database, choose **Read and write** and select **Create key**. Copy the key when the dashboard shows it and keep it in your secret manager.

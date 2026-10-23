@@ -13,6 +13,6 @@ Use [JSON filter queries](/zh-cn/guides/queries) for the current project-scoped 
 
 The published JavaScript package has a separate `@terrascale/sdk/sql` entrypoint. It is not used with the Documents API.
 
-For SQL, see [Postgres clients](/zh-cn/guides/postgres-clients). The document quickstarts do not run SQL, DDL or cross-database transactions.
+For SQL, see [Postgres clients](/zh-cn/guides/postgres-clients). The Documents API also accepts read-only `SELECT` queries: the [Go quickstart](/zh-cn/getting-started/go) runs one and the [CLI](/zh-cn/cli#run-sql) has `ts sql`. Neither runs writes, DDL or cross-database transactions.
 
 </div>
