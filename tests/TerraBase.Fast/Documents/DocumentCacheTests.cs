@@ -432,6 +432,25 @@ public sealed class DocumentCacheTests
         await Assert.That(reads).IsEqualTo(keys.Count);
     }
 
+    // A cache hit skips the storage read and the refusal check after it, never the one before the lookup.
+    [Test]
+    public async Task A_faulted_copy_refuses_a_document_it_has_cached()
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await using var management = await ManagementApi.StartAsync();
+        using var tenant = await CreateTenantAsync(management, "faulted", cancellationToken: deadline.Token);
+        await PutAsync(tenant, "faulted", "items", "hot", "first", deadline.Token);
+        var database = await tenant.ContextAsync(management.Server, "faulted", deadline.Token);
+        var documents = management.Server.Services.GetRequiredService<IDocumentService>();
+        var key = new DocumentKey(database, "items", StorageFixture.Id("hot"));
+        await Assert.That(await documents.GetAsync(key, deadline.Token) is StoredDocument).IsTrue();
+        await Assert.That(await documents.GetAsync(key, deadline.Token) is StoredDocument).IsTrue();
+
+        var store = (await management.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
+        await management.Server.Services.GetRequiredService<IReplicaCopyFaults>().RecordAsync(database, store.Incarnation, "a test fault", deadline.Token);
+        await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () => await documents.GetAsync(key, deadline.Token));
+    }
+
     [Test]
     public async Task List_pages_are_cached_until_the_collection_changes()
     {
