@@ -190,19 +190,22 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
             ClockSkew = AuthenticationTimeClockSkew,
         }).ConfigureAwait(false);
         var token = validated.IsValid ? validated.SecurityToken as JsonWebToken : null;
+        using var payload = token is null ? null : JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(token.EncodedPayload));
+        var claims = payload?.RootElement ?? default;
         // Only the name of the first claim that failed is logged, never the token.
         var refused = token is null ? "signature, issuer, audience or lifetime"
             : new (string Claim, string Expected)[]
             {
+                ("sub", GitHubActionsGrant.Subject),
                 ("repository_id", GitHubActionsGrant.RepositoryId),
                 ("repository_owner_id", GitHubActionsGrant.RepositoryOwnerId),
                 ("repository", GitHubActionsGrant.Repository),
                 ("ref", GitHubActionsGrant.Ref),
                 ("event_name", GitHubActionsGrant.EventName),
                 ("workflow_ref", GitHubActionsGrant.WorkflowRef),
-            }.FirstOrDefault(pair => Claim(token, pair.Claim) != pair.Expected).Claim
-            ?? (JobWorkflowMatches(token) ? null : "job_workflow_ref")
-            ?? (Claim(token, "jti") is null ? "jti" : Claim(token, "run_id") is null ? "run_id" : null);
+            }.FirstOrDefault(pair => Claim(claims, pair.Claim) != pair.Expected).Claim
+            ?? (JobWorkflowMatches(claims) ? null : "job_workflow_ref")
+            ?? (Claim(claims, "jti") is null ? "jti" : Claim(claims, "run_id") is null ? "run_id" : null);
         if (token is null || refused is not null)
         {
             logger.ZLogWarning($"GitHub Actions token refused: {refused}");
@@ -215,8 +218,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
             return OidcResults.Forbid(Errors.InvalidScope, "A requested scope exceeds the workload's.");
         }
 
-        var runId = Claim(token, "run_id")!;
-        var tokenId = Claim(token, "jti")!;
+        var runId = Claim(claims, "run_id")!;
+        var tokenId = Claim(claims, "jti")!;
         // Single use on every replica: the claim is created only if absent.
         if (!await store.ClaimUniqueAsync(PlatformDirectory.Instance, GitHubActionsGrant.TokenIdKind, tokenId, runId, cancellationToken).ConfigureAwait(false))
         {
@@ -225,7 +228,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
         }
 
         var scopes = requested.IsEmpty ? GitHubActionsGrant.Scopes : [.. requested];
-        logger.ZLogWarning($"Audit: GitHub Actions project token for organization {organization}, project {project}: run {runId} attempt {Claim(token, "run_attempt")}, sha {Claim(token, "sha")}, jti {tokenId}, scopes {string.Join(' ', scopes)}");
+        logger.ZLogWarning($"Audit: GitHub Actions project token for organization {organization}, project {project}: run {runId} attempt {Claim(claims, "run_attempt")}, sha {Claim(claims, "sha")}, jti {tokenId}, scopes {string.Join(' ', scopes)}");
         // TerraBase takes only a ULID sub, as every client-credentials sub (the client id); the run stays in the audit line above.
         return SignIn(Identity(GitHubActionsGrant.ClientId, organization, project, scopes, Lifetime));
     }
@@ -233,15 +236,16 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
     // GitHub documents job_workflow_ref only for jobs of a reusable workflow, where it names the called workflow: absent is a
     // job of the workflow itself; present in any JSON form (null, a number, an array), it must be exactly ci.yml's string,
     // so no reusable workflow (here or elsewhere) matches. Read from the raw payload so no typed lookup hides a non-string.
-    private static bool JobWorkflowMatches(JsonWebToken token)
+    private static bool JobWorkflowMatches(JsonElement claims)
     {
-        using var payload = JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(token.EncodedPayload));
-        return !payload.RootElement.TryGetProperty("job_workflow_ref", out var value)
+        return !claims.TryGetProperty("job_workflow_ref", out var value)
             || (value.ValueKind == JsonValueKind.String && value.GetString() == GitHubActionsGrant.WorkflowRef);
     }
 
-    private static string? Claim(JsonWebToken token, string name) =>
-        token.TryGetPayloadValue<string>(name, out var value) && value is { Length: > 0 } ? value : null;
+    // Numeric ids and other policy claims must remain scalar strings; typed JWT lookups can coerce other JSON forms.
+    private static string? Claim(JsonElement claims, string name) =>
+        claims.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            && value.GetString() is { Length: > 0 } text ? text : null;
 
     private static bool Matches(string secret, IReadOnlyList<string> digests)
     {

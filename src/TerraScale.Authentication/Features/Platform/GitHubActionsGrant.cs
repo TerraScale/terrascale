@@ -42,6 +42,9 @@ public static class GitHubActionsGrant
     /// <summary>Only runs of <c>main</c>.</summary>
     public const string Ref = "refs/heads/main";
 
+    /// <summary>The exact GitHub subject of a main-branch job without an environment.</summary>
+    public const string Subject = "repo:TerraScale/terrascale:ref:refs/heads/main";
+
     /// <summary>Only pushes: a pull request never runs as <c>main</c>.</summary>
     public const string EventName = "push";
 

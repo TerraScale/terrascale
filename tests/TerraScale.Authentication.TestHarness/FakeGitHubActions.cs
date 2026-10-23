@@ -53,13 +53,13 @@ public sealed class FakeGitHubActions : IDisposable
     /// with raw JSON values (JSON null, numbers, arrays), which <paramref name="claims"/> cannot express.
     /// </summary>
     public string Mint(string? audience, IReadOnlyDictionary<string, string?>? claims = null, TimeSpan? expiresIn = null, SigningCredentials? signing = null,
-        string issuer = GitHubActionsGrant.Issuer, TimeSpan? notBeforeIn = null, bool expires = true, IReadOnlyDictionary<string, JsonElement>? json = null)
+        string? issuer = GitHubActionsGrant.Issuer, TimeSpan? notBeforeIn = null, bool expires = true, IReadOnlyDictionary<string, JsonElement>? json = null)
     {
         var now = DateTimeOffset.UtcNow;
         var payload = new Dictionary<string, object>(StringComparer.Ordinal)
         {
             ["jti"] = Guid.NewGuid().ToString(),
-            ["sub"] = "repo:TerraScale/terrascale:ref:refs/heads/main",
+            ["sub"] = GitHubActionsGrant.Subject,
             ["repository_id"] = GitHubActionsGrant.RepositoryId,
             ["repository_owner_id"] = GitHubActionsGrant.RepositoryOwnerId,
             ["repository"] = GitHubActionsGrant.Repository,
