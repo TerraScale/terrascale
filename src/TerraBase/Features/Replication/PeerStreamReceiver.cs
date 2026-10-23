@@ -146,7 +146,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         var refills = new Dictionary<(TenantContext Database, Ulid Incarnation), (Refill Frame, Task<int?> Done)>();
         HashSet<TenantContext> cut = [];
         // Per database, its newest batch or frontier in progress; the next one of the database runs after it.
-        var applying = new Dictionary<TenantContext, (Task<AckFrame?> Done, bool Batch)>();
+        var applying = new Dictionary<TenantContext, (Task<AckFrame?> Done, ApplyProgress? Progress, V1.Database? Wire, ulong ChangeId)>();
         // Batches and frontiers in arrival order. A database's frames run one after another, so they also complete in this order.
         var answers = new List<(TenantContext Database, Ulid Incarnation, Task<AckFrame?> Done, long Received)>();
         // A client database's batch or refill also follows the catalog's frame in progress: the sender lists the system
@@ -267,6 +267,17 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
                 if (frame.KindCase == PushFrame.KindOneofCase.Heartbeat)
                 {
+                    foreach (var active in applying.Values)
+                    {
+                        if (!active.Done.IsCompleted && active.Progress is { } work && work.Value is var value && value > work.Reported)
+                        {
+                            await responseStream.WriteAsync(new AckFrame
+                            {
+                                Applying = new Applying { Database = active.Wire, ChangeId = active.ChangeId, Progress = (ulong)value },
+                            }, stream.Token).ConfigureAwait(false);
+                            work.Reported = value;
+                        }
+                    }
                     // An empty frame answers it, so the sender's deadline for answers also holds on an idle link.
                     await responseStream.WriteAsync(new AckFrame(), stream.Token).ConfigureAwait(false);
                     continue;
@@ -294,7 +305,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     }
 
                     var recorded = FrontierAsync(at, origin, frontier, stream.Token);
-                    applying[at] = (recorded, false);
+                    applying[at] = (recorded, null, null, 0);
                     answers.Add((at, default, recorded, _timings.Now));
                     continue;
                 }
@@ -329,16 +340,17 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 var busy = applying.TryGetValue(database, out var pending);
                 var refilling = refills.Keys.Any(running => running.Database == database);
                 if (refilling || cut.Contains(database)
-                    || (busy ? pending.Batch : applying.Count >= MaxApplying))
+                    || (busy ? pending.Progress is not null : applying.Count >= MaxApplying))
                 {
                     await RefuseAsync(responseStream, batch.Database, stream.Token, cut.Contains(database) && !refilling).ConfigureAwait(false);
                     continue;
                 }
 
                 var previous = last.GetValueOrDefault(database);
-                var joined = ApplyAsync(After(database), received, database, incarnation, previous, origin, batch, region, stream.Token);
-                applying[database] = (joined, true);
-                answers.Add((database, incarnation, joined, received));
+                    var progress = new ApplyProgress();
+                    var joined = ApplyAsync(After(database), received, database, incarnation, previous, origin, batch, region, progress, stream.Token);
+                    applying[database] = (joined, progress, batch.Database, batch.LastChangeId);
+                    answers.Add((database, incarnation, joined, received));
             }
         }
         catch (OperationCanceledException) when (stream.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested)
@@ -520,7 +532,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     // without them is refused and sent again.
     private async Task<AckFrame?> ApplyAsync(
         Task before, long received, TenantContext database, Ulid incarnation, (Ulid Incarnation, ulong ChangeId) previous, ReplicaId origin, Batch batch,
-        string region, CancellationToken cancellationToken)
+        string region, ApplyProgress progress, CancellationToken cancellationToken)
     {
         var refused = new AckFrame { Ack = new Ack { Database = batch.Database, Refused = true } };
         using var reservation = _memory.TryReserve(MemoryLane.Replication, BatchBytes(batch), tenant: null);
@@ -560,7 +572,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         Hlc stableAt = default;
         try
         {
-            applied = await _sink.ApplyAsync(database, origin, groups, new Hlc(batch.Expect), cancellationToken).ConfigureAwait(false);
+            applied = await _sink.ApplyAsync(database, origin, groups, new Hlc(batch.Expect), cancellationToken, progress).ConfigureAwait(false);
             if (applied is not null)
             {
                 var stable = _timings.Now;

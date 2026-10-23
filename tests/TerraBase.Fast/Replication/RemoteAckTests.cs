@@ -1836,7 +1836,7 @@ public sealed class RemoteAckTests
 
     private sealed class HeldSink(IChangeGroupSink inner, AckGate gate) : IChangeGroupSink
     {
-        public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken)
+        public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken, ApplyProgress? progress = null)
         {
             if (database != ChangeGroups.System && gate.Refuse)
             {
@@ -1844,7 +1844,7 @@ public sealed class RemoteAckTests
                 return null;
             }
 
-            var applied = await inner.ApplyAsync(database, origin, groups, expected, cancellationToken);
+            var applied = await inner.ApplyAsync(database, origin, groups, expected, cancellationToken, progress);
             if (applied is not null)
             {
                 await gate.BeforeAckAsync(groups, cancellationToken);
