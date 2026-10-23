@@ -24,6 +24,15 @@ public sealed record SqlProgram(
     /// FROM item: the engine charges one unit of the work budget per call, so every evaluated row combination counts.
     /// </summary>
     public const string RowGuard = "tb_sql_row";
+
+    /// <summary>
+    /// The function a statement calls for SQL's <c>a || b</c>: SQLite's concatenation (NULL when either is NULL), but a
+    /// result past <see cref="MaxStringBytes"/> throws <see cref="SqlValueTooLargeException"/>.
+    /// </summary>
+    public const string Concat = "tb_sql_concat";
+
+    /// <summary>Largest string a relational read builds.</summary>
+    public const int MaxStringBytes = 1024 * 1024;
 }
 
 /// <summary>What a <see cref="SqlProgram"/> returned.</summary>
@@ -43,4 +52,17 @@ public sealed class SqlProgramException : Exception
 
     /// <inheritdoc />
     public SqlProgramException(string message) : base(message) { }
+}
+
+/// <summary>A relational read built a string larger than <see cref="SqlProgram.MaxStringBytes"/>.</summary>
+public sealed class SqlValueTooLargeException : Exception
+{
+    /// <inheritdoc />
+    public SqlValueTooLargeException() : base("a string value is larger than 1 MiB") { }
+
+    /// <inheritdoc />
+    public SqlValueTooLargeException(string message) : base(message) { }
+
+    /// <inheritdoc />
+    public SqlValueTooLargeException(string message, Exception inner) : base(message, inner) { }
 }

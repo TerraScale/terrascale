@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using TerraBase.Fast.Documents;
+using TerraBase.Features.Sql;
 
 namespace TerraBase.Fast.Sql;
 
@@ -35,22 +36,40 @@ public sealed class SqlBudgetTests
         await Assert.That(watch.Elapsed).IsLessThan(TimeSpan.FromSeconds(6));
     }
 
-    // Each statement stays under its own budget; together they pass the request's 5 s deadline, holding the writer.
+    // All statements of one request share a 5 s deadline; a clock the test advances makes it deterministic.
     [Test]
     public async Task A_request_shares_one_deadline_across_its_statements()
     {
-        await using var api = await DocumentApi.StartAsync();
+        var time = new SteppedTime();
+        await using var api = await DocumentApi.StartAsync(time: time);
         await SqlApi.OkAsync(api, "CREATE TABLE t (id INTEGER PRIMARY KEY)");
-        var heavy = $"SELECT count(*) FROM {string.Join(", ", Enumerable.Range(0, 5).Select(i => $"{Digits} d{i}"))}";
-        var watch = Stopwatch.StartNew();
+        await using var session = SqlHarness.Open(api, canWrite: true);
 
-        var one = await SqlApi.ExecuteAsync(api, heavy);
-        var many = await SqlApi.ExecuteAsync(api, [.. Enumerable.Repeat(heavy, 255).Prepend("INSERT INTO t VALUES (1)")]);
+        await session.ExecuteAsync(SqlHarness.Command("BEGIN"), CancellationToken.None);
+        var first = await session.ExecuteAsync(SqlHarness.Command("INSERT INTO t VALUES (1)"), CancellationToken.None);
+        time.Advance(TimeSpan.FromSeconds(6));
+        var late = await session.ExecuteAsync(SqlHarness.Command("SELECT 1"), CancellationToken.None);
+        var open = !session.IsAutocommit;
+        await session.EndRequestAsync();
+        // The next request has its own deadline and replays the insert.
+        var replayed = await session.ExecuteAsync(SqlHarness.Command("SELECT count(*) FROM t"), CancellationToken.None);
+        await session.ExecuteAsync(SqlHarness.Command("ROLLBACK"), CancellationToken.None);
 
-        await Assert.That(one.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(SqlApi.Error(many).Sqlite).IsEqualTo("SQLITE_INTERRUPT");
-        await Assert.That(watch.Elapsed).IsLessThan(TimeSpan.FromSeconds(15));
-        await Assert.That((await SqlApi.OkAsync(api, "SELECT count(*) FROM t"))[0].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(0);
+        await Assert.That(SqlHarness.Code(first)).IsNull();
+        await Assert.That(SqlHarness.Code(late)).IsEqualTo("SQLITE_INTERRUPT");
+        await Assert.That(open).IsTrue();
+        await Assert.That(replayed is SqlResult { Rows: [[{ Integer: 1 }]] }).IsTrue();
+    }
+
+    private sealed class SteppedTime : TimeProvider
+    {
+        private long _ticks;
+
+        public void Advance(TimeSpan by) => Interlocked.Add(ref _ticks, (long)(by.TotalSeconds * TimestampFrequency));
+
+        public override long GetTimestamp() => System.GetTimestamp() + Interlocked.Read(ref _ticks);
+
+        public override DateTimeOffset GetUtcNow() => System.GetUtcNow() + TimeSpan.FromSeconds(Interlocked.Read(ref _ticks) / (double)TimestampFrequency);
     }
 
     [Test]

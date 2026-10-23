@@ -49,7 +49,10 @@ Only plain and `"…"` names and only `'…'` string literals are accepted (SQ1-
 `N'a''b'` back without escaping, which made SQLite read other text than the validator saw. Literals in expressions are
 numbers, strings, NULL, booleans and parameters. The rendered text must parse back to itself, and the engine refuses a
 program whose text holds more than one statement (Turso runs every statement of a command). `printf`, `format` and
-`replace` are not in the allow-list: nested calls build unbounded strings.
+`replace` are not in the allow-list: nested calls build unbounded strings. Every `a || b` is rendered as
+`tb_sql_concat(a, b)`, SQLite's concatenation and text conversion with results bounded to 1 MiB (`SQLITE_TOOBIG`
+past it; SQ1-e8); `concat` and `concat_ws` are refused. `group_concat` stays: its growth is bounded by stored data and
+the row budget.
 
 Column types follow SQLite affinity on write (`INTEGER`, `REAL`, `TEXT`, `NUMERIC`, none). `NOT NULL`, literal
 `DEFAULT`, `PRIMARY KEY` and `UNIQUE` (through the unique-constraint service) are enforced; `CHECK` and `FOREIGN KEY`

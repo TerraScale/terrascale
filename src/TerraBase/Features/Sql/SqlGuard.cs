@@ -19,6 +19,7 @@ internal static class SqlGuard
 
     public static void Apply(Query query, IReadOnlyDictionary<string, SqlTableDefinition> tables)
     {
+        Concat(query, [with(ReferenceEqualityComparer.Instance)]);
         var ctes = new Dictionary<string, string?>(StringComparer.Ordinal);
         foreach (var cte in query.With?.CteTables ?? [])
         {
@@ -47,6 +48,60 @@ internal static class SqlGuard
             Guard(select, tables, ctes);
         }
     }
+
+    // Every a || b becomes tb_sql_concat(a, b) (SqlProgram.Concat), which bounds the string it builds: nested subqueries
+    // doubling a string reached gigabytes. Post-order, so operands are rewritten first; the node is replaced in its parent.
+    private static void Concat(object node, HashSet<object> seen)
+    {
+        if (!seen.Add(node))
+        {
+            return;
+        }
+
+        foreach (var property in node.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (property.GetIndexParameters().Length > 0 || property.PropertyType.IsValueType || property.PropertyType == typeof(string))
+            {
+                continue;
+            }
+
+            switch (property.GetValue(node))
+            {
+                case Expression expression:
+                    Concat(expression, seen);
+                    if (Rewritten(expression) is { } call && property.CanWrite)
+                    {
+                        property.SetValue(node, call);
+                    }
+
+                    break;
+                case System.Collections.IList list:
+                    for (var i = 0; i < list.Count; i++)
+                    {
+                        if (list[i] is { } item && item.GetType().Namespace?.StartsWith("SqlParser", StringComparison.Ordinal) == true)
+                        {
+                            Concat(item, seen);
+                            if (item is Expression element && Rewritten(element) is { } replaced)
+                            {
+                                list[i] = replaced;
+                            }
+                        }
+                    }
+
+                    break;
+                case { } child when child.GetType().Namespace?.StartsWith("SqlParser", StringComparison.Ordinal) == true:
+                    Concat(child, seen);
+                    break;
+            }
+        }
+    }
+
+    private static Expression? Rewritten(Expression expression) =>
+        expression is Expression.BinaryOp { Op: BinaryOperator.StringConcat, Left: var left, Right: var right }
+            && new Parser().ParseSql($"SELECT {SqlProgram.Concat}({left.ToSql()}, {right.ToSql()})", new SQLiteDialect())
+                is [Statement.Select { Query.Body: SetExpression.SelectExpression { Select.Projection: [SelectItem.UnnamedExpression { Expression: var call }] } }]
+            ? call
+            : null;
 
     private static void Collect(SetExpression? body, HashSet<Select> selects)
     {

@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using SqlParser;
@@ -19,7 +18,7 @@ internal sealed class SqlService(IStorageEngine engine, IDocumentService documen
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        return new SqlSession(engine, quota, usage, new SqlExecutor(documents, time), database, canWrite);
+        return new SqlSession(engine, quota, usage, new SqlExecutor(documents, time), time, database, canWrite);
     }
 
     public async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken)
@@ -67,7 +66,8 @@ internal sealed class SqlService(IStorageEngine engine, IDocumentService documen
 /// and result hashes and never holds the database writer between requests. Each request that continues it replays the log
 /// in a fresh storage transaction and checks every hash: a mismatch is a conflict (<c>SQLITE_BUSY</c>), and nothing commits.
 /// </summary>
-internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, SqlExecutor executor, TenantContext database, bool canWrite)
+internal sealed class SqlSession(
+    IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, SqlExecutor executor, TimeProvider time, TenantContext database, bool canWrite)
     : ISqlSession
 {
     private const int MaxStatements = 256;
@@ -303,7 +303,7 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
         try
         {
             var transaction = await store.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false);
-            return (new Request(transaction, lease, new SqlTally(lease is { RequiresAccounting: true })), null);
+            return (new Request(transaction, lease, new SqlTally(lease is { RequiresAccounting: true }), time.GetTimestamp()), null);
         }
         catch (StorageBusyException)
         {
@@ -322,7 +322,7 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
     {
         // Each statement has its own work budget; a request's statements (and a replay) also share one deadline, so a
         // request that holds the writer cannot hold it for 256 budgets.
-        if (Stopwatch.GetElapsedTime(request.Started) > MaxRequestTime)
+        if (time.GetElapsedTime(request.Started) > MaxRequestTime)
         {
             return SqlErrors.Interrupt;
         }
@@ -367,6 +367,7 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
         StorageBusyException => SqlErrors.Busy("the database is busy; retry"),
         ChangeGroupCapacityException or StorageWriteLimitException => SqlErrors.TooBig("a transaction writes at most 1024 rows and 2 MiB"),
         QueryCapacityException => SqlErrors.Interrupt,
+        SqlValueTooLargeException large => SqlErrors.TooBig(large.Message),
         SqlProgramException { Message: "syntax error" } => SqlErrors.Error("SQL syntax error"),
         SqlProgramException program => SqlErrors.Error(program.Message),
         _ => null,
@@ -416,7 +417,7 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
     }
 
     /// <summary>A storage transaction of one request, its quota admission and the byte growth of its writes.</summary>
-    private sealed class Request(IStorageTransaction transaction, StorageQuotaLease? lease, SqlTally tally) : IAsyncDisposable
+    private sealed class Request(IStorageTransaction transaction, StorageQuotaLease? lease, SqlTally tally, long started) : IAsyncDisposable
     {
         public IStorageTransaction Transaction { get; } = transaction;
 
@@ -425,7 +426,7 @@ internal sealed class SqlSession(IStorageEngine engine, IStorageQuota quota, IUs
         public SqlTally Tally { get; } = tally;
 
         /// <summary>When the storage transaction opened: one request's statements share one deadline.</summary>
-        public long Started { get; } = Stopwatch.GetTimestamp();
+        public long Started { get; } = started;
 
         public async ValueTask DisposeAsync()
         {

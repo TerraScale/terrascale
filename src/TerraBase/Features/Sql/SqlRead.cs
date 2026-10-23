@@ -28,7 +28,7 @@ internal static class SqlRead
     private static readonly HashSet<string> Functions =
     [
         with(StringComparer.Ordinal),
-        "abs", "char", "coalesce", "concat", "concat_ws", "glob", "hex", "ifnull", "iif", "instr", "length", "like",
+        "abs", "char", "coalesce", "glob", "hex", "ifnull", "iif", "instr", "length", "like",
         "likelihood", "likely", "lower", "ltrim", "max", "min", "nullif", "octet_length", "quote", "random",
         "round", "rtrim", "sign", "soundex", "substr", "substring", "trim", "typeof", "unicode", "unlikely", "upper",
         "avg", "count", "group_concat", "string_agg", "sum", "total",
@@ -76,7 +76,7 @@ internal static class SqlRead
                 case Word { QuoteStyle: not (null or '"') }:
                     throw new FormatException("names are plain or \"quoted\"; [ ] and ` quotes are not supported");
                 case StringToken literal when literal is not SingleQuotedString
-                    && (literal.GetType().Name.Contains("String", StringComparison.Ordinal) || literal.GetType().Name.Contains("Literal", StringComparison.Ordinal)):
+                    && (literal.GetType().Name.EndsWith("String", StringComparison.Ordinal) || literal.GetType().Name.Contains("Literal", StringComparison.Ordinal)):
                     throw new FormatException("strings are '…' literals; other string and blob literals are not supported");
                 default:
                     text.Append(tokens[i]);

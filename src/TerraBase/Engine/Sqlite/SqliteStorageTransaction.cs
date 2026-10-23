@@ -506,6 +506,7 @@ internal sealed partial class SqliteStorageTransaction(
             session.ThrowIfStopped();
             return 1;
         }, isDeterministic: false);
+        session.Connection.CreateFunction<object?, object?, string?>(SqlProgram.Concat, SqliteText.Concat, isDeterministic: true);
         _qosScanRegistered = true;
         return _queryBudget = budget;
     }
@@ -519,6 +520,7 @@ internal sealed partial class SqliteStorageTransaction(
             // Turso throws when removing a function that is not registered.
             session.Connection.CreateFunction<long, long>("tb_qos_scan", null);
             session.Connection.CreateFunction<object?, long>("tb_sql_row", null);
+            session.Connection.CreateFunction<object?, object?, string?>(SqlProgram.Concat, null);
             _qosScanRegistered = false;
         }
     }

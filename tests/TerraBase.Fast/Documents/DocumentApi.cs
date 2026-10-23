@@ -77,10 +77,10 @@ internal sealed class DocumentApi : IAsyncDisposable
     /// <summary>Starts a server and creates <c>db</c> and <c>items</c> in a new tenant, with a read and write key.</summary>
     public static async Task<DocumentApi> StartAsync(
         Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null,
-        CancellationToken cancellationToken = default)
+        TimeProvider? time = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var management = await ManagementApi.StartAsync(configure, services);
+        var management = await ManagementApi.StartAsync(configure, services, time);
         Tenant? tenant = null;
         try
         {

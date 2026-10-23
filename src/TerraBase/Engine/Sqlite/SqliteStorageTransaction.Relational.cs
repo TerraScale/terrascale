@@ -166,6 +166,10 @@ internal sealed partial class SqliteStorageTransaction
 
             return new SqlProgramResult(columns, rows, Truncated: false);
         }
+        catch (SqliteException error) when (error.Message.Contains(SqliteText.TooLarge, StringComparison.Ordinal))
+        {
+            throw new SqlValueTooLargeException("a string value is larger than 1 MiB", error);
+        }
         catch (SqliteException error) when (!SqliteSession.Stopped(error))
         {
             var phrase = SqlFailures.FirstOrDefault(failure => error.Message.Contains(failure, StringComparison.OrdinalIgnoreCase));
