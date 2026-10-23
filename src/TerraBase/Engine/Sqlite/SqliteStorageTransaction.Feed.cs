@@ -34,6 +34,8 @@ internal sealed partial class SqliteStorageTransaction
 
     private const string FeedDocument = "SELECT doc, octet_length(doc) FROM {0} WHERE id = $id;";
 
+    private bool _feedChanged;
+
     public ValueTask<FeedPage> ReadFeedAsync(
         FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
         RunAsync(() => ReadFeed(cursor, collections, maxEvents, maxBytes, cancellationToken), cancellationToken);
@@ -109,7 +111,8 @@ internal sealed partial class SqliteStorageTransaction
             // An origin whose events all aged out leaves the feed and the cursors; see FeedCursor.Forget.
             var forget = Command("DELETE FROM _tb_feed_floor WHERE stamp > 0 AND stamp < $forget AND NOT EXISTS (SELECT 1 FROM _tb_feed f WHERE f.origin = _tb_feed_floor.origin);");
             forget.Parameters.AddWithValue("$forget", Version(Before(before, FeedCursor.Retention)));
-            forget.ExecuteNonQuery();
+            var forgotten = forget.ExecuteNonQuery();
+            _feedChanged |= deleted > 0 || forgotten > 0;
             return deleted;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
@@ -188,7 +191,7 @@ internal sealed partial class SqliteStorageTransaction
             }
         }
 
-        // A stamp alone cannot prove another machine saw this origin's earlier events: refill and repair can omit them.
+        // A stamp alone cannot prove this machine saw all earlier events: a late join can change a previously read prefix.
         foreach (var (origin, stamp) in scanned)
         {
             var floor = floors.Find(item => item.Origin == origin).Floor;
@@ -196,8 +199,7 @@ internal sealed partial class SqliteStorageTransaction
             {
                 prefixes[origin] = PrefixThrough(origin, floor, stamp, cancellationToken);
             }
-            else if (cursor?.Issuer != Member.Id &&
-                (floor.Value > prefix.Floor.Value || !PrefixThrough(origin, prefix.Floor, stamp, cancellationToken).Hash.Span.SequenceEqual(prefix.Hash.Span)))
+            else if (floor.Value > stamp.Value || !PrefixThrough(origin, prefix.Floor, stamp, cancellationToken).Hash.Span.SequenceEqual(prefix.Hash.Span))
             {
                 return new FeedPage([], stamps, More: false, Expired: true);
             }

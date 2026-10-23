@@ -14,6 +14,12 @@ if (args.Length > 0 && args[0] is "anti-entropy" or "anti-entropy-pull")
     return;
 }
 
+if (args.Length > 0 && args[0] == "readers")
+{
+    await FeedReadersBenchmark.RunAsync().ConfigureAwait(false);
+    return;
+}
+
 var mode = args[0];
 var data = Path.GetFullPath(args[1]);
 const int count = 1_000_000;

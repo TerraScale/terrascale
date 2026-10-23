@@ -217,7 +217,8 @@ public sealed class DatabaseChangesTests
         }
 
         // A client that still names the forgotten origin gets it dropped from the next cursor.
-        var named = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc> { [gone] = old }, FeedCursor.At(now)));
+        var scope = ChangeCursor.Scope(await api.TenantOfAsync(), null);
+        var named = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc> { [gone] = old }, FeedCursor.At(now)), scope);
         using (var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(named)}"))
         {
             _ = await stream.NextAsync();
@@ -227,7 +228,7 @@ public sealed class DatabaseChangesTests
         }
 
         // A cursor issued longer ago than the retention could lack such an origin: expired.
-        var stale = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc>(), FeedCursor.At(now - FeedCursor.Retention - TimeSpan.FromMinutes(1))));
+        var stale = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc>(), FeedCursor.At(now - FeedCursor.Retention - TimeSpan.FromMinutes(1))), scope);
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(stale)}", UriKind.Relative)),
             HttpStatusCode.Gone, "cursor_expired", "events after the cursor are no longer retained here; start again with cursor=now and re-read");
     }
@@ -255,7 +256,7 @@ public sealed class DatabaseChangesTests
     {
         await using var api = await DocumentApi.StartAsync();
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        var future = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc>(), FeedCursor.At(DateTimeOffset.UtcNow + TimeSpan.FromDays(30))));
+        var future = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc>(), FeedCursor.At(DateTimeOffset.UtcNow + TimeSpan.FromDays(30))), ChangeCursor.Scope(await api.TenantOfAsync(), null));
         var joined = await JoinAsync(store, ReplicaId.Of(4518, 12, 1), DateTimeOffset.UtcNow);
         await Assert.That(await TrimAsync(store, new Hlc(joined.Value + 1))).IsEqualTo(1);
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(future)}", UriKind.Relative)),
@@ -316,9 +317,11 @@ public sealed class DatabaseChangesTests
     }
 
     [Test]
-    public async Task A_database_holds_at_most_32_streams_per_machine_and_a_closed_one_frees_its_place()
+    public async Task A_database_bounds_streams_per_machine_and_a_closed_one_frees_its_place()
     {
         await using var api = await DocumentApi.StartAsync();
+        // Test the stream bound without exhausting Hobby's 100-request burst first.
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "pro");
         var changes = $"{api.DatabasePath()}/changes?cursor=now";
         var streams = new List<Sse>();
         try
@@ -347,18 +350,66 @@ public sealed class DatabaseChangesTests
     }
 
     [Test]
+    public async Task A_hundred_readers_share_a_write_and_one_leaving_does_not_cancel_the_rest()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var api = await DocumentApi.StartAsync(cancellationToken: token);
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "pro", token);
+        var streams = new List<Sse>();
+        try
+        {
+            string? cursor = null;
+            var scope = ChangeCursor.Scope(await api.TenantOfAsync(cancellationToken: token), null);
+            for (var i = 0; i < 100; i++)
+            {
+                // Readers resume the same position with independently issued cursors.
+                var resume = cursor is null ? "now" : ChangeCursor.Encode(ChangeCursor.Decode(cursor)! with
+                {
+                    Issued = FeedCursor.At(DateTimeOffset.UtcNow - TimeSpan.FromSeconds(i)),
+                }, scope);
+                var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(resume)}");
+                streams.Add(stream);
+                cursor = (await stream.NextAsync()).Id;
+            }
+
+            var before = await api.Server.MetricAsync("terrabase_storage_reads_total", "path=\"feed\"", token);
+            streams[0].Dispose();
+            streams.RemoveAt(0);
+            var id = DocumentApi.NewId();
+            (await api.PutAsync(id, new { shared = true })).Status.ShouldBe(HttpStatusCode.Created);
+            var changes = await Task.WhenAll(streams.Select(stream => stream.NextAsync()));
+            foreach (var change in changes)
+            {
+                await Assert.That(change.Event).IsEqualTo("change");
+                await Assert.That(change.Data.GetProperty("id").GetString()).IsEqualTo(id);
+            }
+
+            var reads = await api.Server.MetricAsync("terrabase_storage_reads_total", "path=\"feed\"", token) - before;
+            await Assert.That(reads).IsLessThan(20);
+        }
+        finally
+        {
+            streams.ForEach(stream => stream.Dispose());
+        }
+    }
+
+    [Test]
     public async Task An_idle_stream_sends_its_cursor_every_15_seconds()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var clock = new HeartbeatClock();
         await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
-        using var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor=now");
-        var head = await stream.NextAsync();
+        using var initial = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor=now");
+        var head = await initial.NextAsync();
+        // Seed a normal-cursor cache entry whose output equals its input while time is frozen.
+        using var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(head.Id)}");
+        _ = await stream.NextAsync();
         await Assert.That(head.Event).IsEqualTo("cursor");
         for (var interval = 0; interval < 2; interval++)
         {
             var next = stream.NextAsync();
             // The server arms the interval after flushing its cursor; the client can read that cursor much later.
+            await Assert.That(await clock.NextIntervalAsync(token)).IsEqualTo(TimeSpan.FromSeconds(15));
             await Assert.That(await clock.NextIntervalAsync(token)).IsEqualTo(TimeSpan.FromSeconds(15));
             clock.Advance(TimeSpan.FromSeconds(14));
             await Assert.That(next.IsCompleted).IsFalse();
@@ -368,12 +419,16 @@ public sealed class DatabaseChangesTests
             // The same position, issued again at the read before the heartbeat.
             await Assert.That(ChangeCursor.Decode(beat.Id)!.Stamps).IsEquivalentTo(ChangeCursor.Decode(head.Id)!.Stamps);
             await Assert.That(beat.Data.GetProperty("cursor").GetString()).IsEqualTo(beat.Id);
+            if (interval > 0)
+            {
+                await Assert.That(ChangeCursor.Decode(beat.Id)!.Issued.Value).IsGreaterThan(ChangeCursor.Decode(head.Id)!.Issued.Value);
+            }
         }
     }
 
     private sealed class HeartbeatClock() : FakeTimeProvider(DateTimeOffset.UtcNow)
     {
-        private readonly Channel<TimeSpan> _intervals = Channel.CreateBounded<TimeSpan>(1);
+        private readonly Channel<TimeSpan> _intervals = Channel.CreateBounded<TimeSpan>(2);
 
         public ValueTask<TimeSpan> NextIntervalAsync(CancellationToken token) => _intervals.Reader.ReadAsync(token);
 
@@ -428,6 +483,8 @@ public sealed class DatabaseChangesTests
             cursor = (await stream.ChangesAsync(1))[0].Id;
         }
 
+        // These fixtures have separate tenant identities; preserve the prefix proof while matching the target scope.
+        cursor = ChangeCursor.Encode(ChangeCursor.Decode(cursor)!, ChangeCursor.Scope(await destination.TenantOfAsync(), new HashSet<string>(StringComparer.Ordinal) { DocumentApi.Collection }));
         var uri = $"{destination.DatabasePath()}/changes?collections={DocumentApi.Collection}&cursor={Uri.EscapeDataString(cursor)}";
         using var response = await destination.Client.GetAsync(new Uri(uri, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead);
         await Assert.That(response.StatusCode).IsEqualTo(differentPrefix ? HttpStatusCode.Gone : HttpStatusCode.OK);
@@ -480,6 +537,7 @@ public sealed class DatabaseChangesTests
 
         _ = await destination.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await destination.TenantOfAsync(), origin,
             [Group(3, events[2].Id, events[2].Stamp, origin)], CancellationToken.None);
+        cursor = ChangeCursor.Encode(ChangeCursor.Decode(cursor)!, ChangeCursor.Scope(await destination.TenantOfAsync(), null));
         using var resumed = await Sse.OpenAsync(destination.Client, $"{destination.DatabasePath()}/changes?cursor={Uri.EscapeDataString(cursor)}");
         _ = await resumed.NextAsync();
         await Assert.That((await resumed.ChangesAsync(1))[0].Data.GetProperty("id").GetString()).IsEqualTo(events[2].Id);
@@ -569,7 +627,8 @@ public sealed class DatabaseChangesTests
         {
             foreach (var (region, api, sentinel) in new[] { ("fra", fra, fraSentinel), ("gru", gru, gruSentinel) })
             {
-                var uri = $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(cursor)}";
+                var scoped = ChangeCursor.Encode(ChangeCursor.Decode(cursor)!, ChangeCursor.Scope(await api.TenantOfAsync(), null));
+                var uri = $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(scoped)}";
                 using (var probe = await api.Client.GetAsync(new Uri(uri, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead))
                 {
                     if (probe.StatusCode != HttpStatusCode.OK)
