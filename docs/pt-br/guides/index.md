@@ -20,6 +20,7 @@ Use the [quickstart](/pt-br/getting-started/) to establish one working applicati
 - [Transactions](/pt-br/guides/transactions): atomic multi-document writes with conditional asserts.
 - [Realtime changes](/pt-br/guides/realtime): the server-sent changes feed and filtered collection shapes.
 - [Backups and restore](/pt-br/guides/backups-and-restore): backup policy, point-in-time restore into a new database.
+- [Export your data](/pt-br/guides/export): stream every document as NDJSON, resume and restore.
 - [Branches](/pt-br/guides/branches): copy a database into a new branch database.
 - [Dashboard usage](/pt-br/guides/dashboard): customer account and database workflow.
 - [Import an existing database](/pt-br/guides/import) (pending): one-time import of a PostgreSQL or Turso export with dry-run preview and validation.

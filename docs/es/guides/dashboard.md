@@ -29,6 +29,6 @@ The dashboard uses TerraBase through SDKs. This docs site adopts its shared visu
 
 ## Review usage and destructive actions
 
-Review [pricing](/es/pricing/) and [limits](/es/limits) before increasing traffic or selecting placement. Confirm the resource name and scope before a customer deletion. Export data you need to retain and verify the serving release's deletion and recovery behavior. A document tombstone is not a promise of immediate physical erasure.
+Review [pricing](/es/pricing/) and [limits](/es/limits) before increasing traffic or selecting placement. Confirm the resource name and scope before a customer deletion. [Export data you need to retain](/es/guides/export) and verify the serving release's deletion and recovery behavior. A document tombstone is not a promise of immediate physical erasure.
 
 </div>

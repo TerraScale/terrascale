@@ -20,6 +20,7 @@ Use the [quickstart](/zh-cn/getting-started/) to establish one working applicati
 - [Transactions](/zh-cn/guides/transactions): atomic multi-document writes with conditional asserts.
 - [Realtime changes](/zh-cn/guides/realtime): the server-sent changes feed and filtered collection shapes.
 - [Backups and restore](/zh-cn/guides/backups-and-restore): backup policy, point-in-time restore into a new database.
+- [Export your data](/zh-cn/guides/export): stream every document as NDJSON, resume and restore.
 - [Branches](/zh-cn/guides/branches): copy a database into a new branch database.
 - [Dashboard usage](/zh-cn/guides/dashboard): customer account and database workflow.
 - [Import an existing database](/zh-cn/guides/import) (pending): one-time import of a PostgreSQL or Turso export with dry-run preview and validation.
