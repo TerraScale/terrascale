@@ -82,7 +82,11 @@ export function mountTodos(root, { userId, getAccessToken, project, database }) 
         input.value = ''
         await refresh()
       }
-    } catch (error) { writeBlocked = true; failure(error, true) }
+    } catch (error) {
+      readEpoch++
+      writeBlocked = true
+      failure(error, true)
+    }
     finally {
       busy = false
       form.inert = writeBlocked

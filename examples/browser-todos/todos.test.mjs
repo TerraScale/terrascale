@@ -172,6 +172,27 @@ test('conflicts and lost write responses send once and require explicit reconcil
   }
 })
 
+test('a query started before a failed create cannot unblock another submission', async t => {
+  const f = fixture(t)
+  await f.app.ready
+  const held = f.delayNextQuery()
+  const oldRead = f.app.refresh()
+  await until(() => held.started)
+  const form = f.node.children[0]
+  form.children[0].value = 'New todo'
+  f.loseWrite()
+  await form.fire('submit')
+  held.release()
+  await oldRead
+  assert.match(status(f), /outcome may be unknown/)
+  assert.equal(form.inert, true)
+  assert.equal(form.children[0].value, 'New todo')
+  await form.fire('submit')
+  assert.equal(writes(f).length, 1, 'A stale read cannot authorize repeating an uncertain create')
+  await f.app.refresh()
+  assert.equal(form.inert, false, 'Only a subsequent authorized read can unblock writes')
+})
+
 test('unauthenticated mount performs no request and clears the prior root', t => {
   const node = root()
   node.append(document.createElement('p'))
