@@ -23,24 +23,27 @@ import (
 	"terrascale.tech/ts-benchmark/internal/replbench"
 )
 
-// The free-read tiers (docs/terrabase/free-reads-edge.md) as a catch-up load (README "Catch-up tiers"): readers that join
-// behind the head read the same sealed snapshot page and chunks, from the origin (t0), the bucket (t1) or the shape edge (t2).
+// The free-read tiers (docs/terrabase/free-reads-cdn.md) as a catch-up load (README "Catch-up tiers"): readers that join
+// behind the head read the same sealed snapshot page and chunks, from the origin (t0), the bucket by presigned URL (t1) or
+// Cloudflare's cache in front of an R2 bucket (t2). The bucket decides t1 or t2: an R2 bucket's manifest links its CDN.
 const (
-	edgePrefix   = "https://shapes.terrascale.tech/" // ShapeObjectStore.Edge
-	catchupJoinS = 10                                // readers join evenly over this many seconds
-	sealPace     = 50 * time.Millisecond             // one write per 50 ms, 20 per second
+	catchupJoinS = 10                    // readers join evenly over this many seconds
+	sealPace     = 50 * time.Millisecond // one write per 50 ms, 20 per second
 	mirrorWait   = 2 * time.Minute
+	cdnHost      = ".terrascale.tech" // ShapeObjectStore.Cdn: shapes-<bucket>.terrascale.tech
 )
 
 // catchupStep is one (tier, readers, repeat) measurement.
 type catchupStep struct {
 	Tier                          string
 	N, Repeat, Chunks             int
-	Reads                         map[string]int64 // terrabase.storage.reads delta by path, both nodes
-	Sealed, Mirrored              int64            // terrabase.shape.seals and mirror uploads (bucket PUTs) during the readers
-	MirroredAhead                 int              // objects the manifest chain listed before the readers started
-	Origin, Manifests, ObjectGets int64            // reader requests: origin shape reads, manifest calls, object fetches
-	EdgeHits, EdgeMisses          int64            // object fetches the edge answered from cache, or forwarded to the bucket
+	Reads                         map[string]int64    // terrabase.storage.reads delta by path, both nodes
+	Sealed, Mirrored              int64               // terrabase.shape.seals and mirror uploads (bucket PUTs) during the readers
+	MirroredAhead                 int                 // objects the manifest chain listed before the readers started
+	Origin, Manifests, ObjectGets int64               // reader requests: origin shape reads, manifest calls, object fetches
+	EdgeHits, EdgeMisses          int64               // t2 object fetches Cloudflare answered from cache (cf-cache-status HIT), or not
+	Locations                     map[string][2]int64 // t2 [hits, misses] by Cloudflare location (the cf-ray suffix)
+	Start, End                    time.Time           // the readers' window, for the bucket's own GetObject count (R2 analytics)
 	OriginBytes, ObjectBytes      int64
 	Failures                      int64
 	Error                         string `json:",omitempty"`
@@ -95,7 +98,7 @@ func catchup(args []string) error {
 		}
 	} else {
 		if os.Getenv("BUCKET_NAME") == "" && slices.ContainsFunc(ts, func(t string) bool { return t != "t0" }) {
-			return fmt.Errorf("t1 and t2 need a bucket: BUCKET_NAME and the AWS_* variables of a private ts-*-test bucket")
+			return fmt.Errorf("t1 and t2 need a bucket: BUCKET_NAME and the AWS_* variables of a private ts-* test bucket")
 		}
 		work, err := os.MkdirTemp("", "shape-bench-")
 		if err != nil {
@@ -200,6 +203,7 @@ func runCatchup(ctx context.Context, b *bench, objects *http.Client, nodes []str
 		}
 	}
 	before := scrapeAll(ctx, nodes)
+	s.Start = time.Now().UTC()
 	var wg sync.WaitGroup
 	for range s.N {
 		sleep(ctx, time.Duration(catchupJoinS)*time.Second/time.Duration(s.N))
@@ -210,6 +214,7 @@ func runCatchup(ctx context.Context, b *bench, objects *http.Client, nodes []str
 		})
 	}
 	wg.Wait()
+	s.End = time.Now().UTC()
 	sleep(ctx, 2*time.Second)
 	after := scrapeAll(ctx, nodes)
 	s.Reads = map[string]int64{}
@@ -329,15 +334,16 @@ func (b *bench) catchUp(ctx context.Context, objects *http.Client, s *catchupSte
 	return nil
 }
 
-// fetchObject reads one object (t1 straight from the bucket, t2 through the edge) and checks its size and digest.
+// fetchObject reads one object (t1 straight from the bucket, t2 through Cloudflare) and checks its size and digest.
 func fetchObject(ctx context.Context, client *http.Client, s *catchupStep, o manifestObject) error {
-	u := o.URL
-	if s.Tier == "t1" {
-		if rest, ok := strings.CutPrefix(u, edgePrefix); ok {
-			u = "https://" + rest
-		}
+	u, err := url.Parse(o.URL)
+	if err != nil {
+		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if cdn := strings.HasPrefix(u.Host, "shapes-") && strings.HasSuffix(u.Host, cdnHost); cdn != (s.Tier == "t2") {
+		return fmt.Errorf("tier %s cannot run on this bucket: its manifest links %s (t2 needs an R2 bucket, t1 any other)", s.Tier, u.Host)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.URL, nil)
 	if err != nil {
 		return err
 	}
@@ -359,12 +365,28 @@ func fetchObject(ctx context.Context, client *http.Client, s *catchupStep, o man
 	}
 	s.add(&s.ObjectGets, 1)
 	s.add(&s.ObjectBytes, int64(len(bytes)))
-	switch resp.Header.Get("Tb-Edge-Cache") {
-	case "HIT":
-		s.add(&s.EdgeHits, 1)
-	case "MISS":
-		s.add(&s.EdgeMisses, 1)
+	if s.Tier != "t2" {
+		return nil
 	}
+	// Any status but HIT may have read the bucket (MISS, EXPIRED, ...), so it counts as a miss. A lower-tier MISS that the
+	// upper tier answered counts too: an upper bound on bucket reads, which R2's own GetObject count then measures.
+	hit := resp.Header.Get("Cf-Cache-Status") == "HIT"
+	location := resp.Header.Get("Cf-Ray")
+	location = location[strings.LastIndexByte(location, '-')+1:]
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Locations == nil {
+		s.Locations = map[string][2]int64{}
+	}
+	counts := s.Locations[location]
+	if hit {
+		s.EdgeHits++
+		counts[0]++
+	} else {
+		s.EdgeMisses++
+		counts[1]++
+	}
+	s.Locations[location] = counts
 	return nil
 }
 
@@ -405,12 +427,12 @@ func catchupTable(steps []*catchupStep) string {
 		return fmt.Sprintf("%s (%s–%s)", trim(med), trim(v[0]), trim(v[len(v)-1]))
 	}
 	var b strings.Builder
-	b.WriteString("| tier | readers | repeats | objects per reader | mirrored ahead | origin shape_body reads | origin shape reads | shape_body reads per object | origin requests | manifest calls | object GETs | bucket GETs | edge hit ratio | bucket PUTs | origin MB | object MB | failures |\n")
-	b.WriteString("|" + strings.Repeat(" --- |", 17) + "\n")
+	b.WriteString("| tier | readers | repeats | objects per reader | mirrored ahead | origin shape_body reads | origin shape reads | shape_body reads per object | origin requests | manifest calls | object GETs | bucket GETs | CDN locations | bucket GETs per object per location | CDN hit ratio | bucket PUTs | origin MB | object MB | failures |\n")
+	b.WriteString("|" + strings.Repeat(" --- |", 19) + "\n")
 	for _, k := range order {
 		ss := groups[k]
 		objectsPerReader := float64(ss[0].Chunks + 1)
-		fmt.Fprintf(&b, "| %s | %d | %d | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", k.tier, k.n, len(ss), trim(objectsPerReader),
+		fmt.Fprintf(&b, "| %s | %d | %d | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", k.tier, k.n, len(ss), trim(objectsPerReader),
 			stat(ss, func(s *catchupStep) float64 { return float64(s.MirroredAhead) }),
 			stat(ss, func(s *catchupStep) float64 { return float64(s.Reads["shape_body"]) }),
 			stat(ss, func(s *catchupStep) float64 { return float64(s.Reads["shape"]) }),
@@ -419,6 +441,10 @@ func catchupTable(steps []*catchupStep) string {
 			stat(ss, func(s *catchupStep) float64 { return float64(s.Manifests) }),
 			stat(ss, func(s *catchupStep) float64 { return float64(s.ObjectGets) }),
 			stat(ss, func(s *catchupStep) float64 { return float64(bucketGets(s)) }),
+			stat(ss, func(s *catchupStep) float64 { return float64(len(s.Locations)) }),
+			stat(ss, func(s *catchupStep) float64 {
+				return math.Round(float64(bucketGets(s))/objectsPerReader/float64(max(len(s.Locations), 1))*1000) / 1000
+			}),
 			stat(ss, func(s *catchupStep) float64 {
 				if t := s.EdgeHits + s.EdgeMisses; t > 0 {
 					return math.Round(float64(s.EdgeHits)/float64(t)*1000) / 1000
@@ -439,7 +465,7 @@ func catchupTable(steps []*catchupStep) string {
 	return b.String()
 }
 
-// bucketGets are the object reads that reached the bucket: every fetch on t1, edge misses on t2.
+// bucketGets are the object reads that may have reached the bucket: every fetch on t1, cache misses on t2.
 func bucketGets(s *catchupStep) int64 {
 	if s.Tier == "t2" {
 		return s.EdgeMisses
