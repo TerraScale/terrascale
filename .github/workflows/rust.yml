@@ -31,8 +31,9 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [[ "$EVENT_NAME" == schedule || "$EVENT_NAME" == workflow_dispatch ]] ||
-             ! git diff --quiet HEAD^ HEAD -- . ':(exclude)*.md' ':(exclude)docs/**'; then
+          if [[ "$EVENT_NAME" != pull_request ]] ||
+             ! git diff --quiet HEAD^ HEAD -- '*.rs' 'Cargo.*' 'rust-toolchain*' \
+               .cargo src tests examples .github/workflows/rust.yml ':(exclude)*.md'; then
             echo 'rust=true' >> "$GITHUB_OUTPUT"
           fi
       - name: Install pinned Rust toolchain
