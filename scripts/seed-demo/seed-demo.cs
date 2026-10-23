@@ -106,25 +106,26 @@ var comments = Enumerable.Range(1, 400).Select(i => (Id: ids.Next(), Doc: new Js
     ["likes"] = rng.Next(0, 40), ["createdAt"] = now.AddHours(-rng.Next(1, 24 * 300)).ToString("O"),
 })).ToArray();
 
-// iot: 50 devices, a reading every ~22 minutes per device over the last 30 days (about 100k readings).
+// iot: 50 devices, one reading per device per hour over the last 30 days (36,000 readings). A seed run writes
+// about 41k operations, inside a hobby organization's 100,000 a month (TerraBase counts every organization as hobby today).
 string[] kinds = ["thermostat", "air-quality", "freezer", "greenhouse", "server-room"];
 var devices = Enumerable.Range(1, 50).Select(i => (Id: ids.Next(), Kind: kinds[i % kinds.Length], Doc: new JsonObject
 {
     ["name"] = $"device-{i:D2}", ["kind"] = kinds[i % kinds.Length], ["site"] = Pick(cities), ["firmware"] = $"1.{rng.Next(0, 9)}.{rng.Next(0, 20)}",
 })).ToArray();
 foreach (var device in devices) device.Doc["kind"] = device.Kind;
-var readings = new List<(string Id, JsonObject Doc)>(100_000);
-for (var step = 0; step < 2000; step++)
+var readings = new List<(string Id, JsonObject Doc)>(36_000);
+for (var step = 0; step < 720; step++)
     foreach (var (deviceId, kind, _) in devices)
     {
-        var at = now.AddMinutes(-30 * 24 * 60 + step * 21.6);
+        var at = now.AddHours(-720 + step);
         var daily = Math.Sin((at.Hour + at.Minute / 60.0) / 24 * 2 * Math.PI);
         var baseline = kind switch { "freezer" => -18.0, "server-room" => 21.0, "greenhouse" => 26.0, _ => 22.0 };
         readings.Add((ids.Next(), new JsonObject
         {
             ["deviceId"] = deviceId, ["kind"] = kind, ["at"] = at.ToString("O"),
             ["temperature"] = Math.Round(baseline + daily * 3 + rng.NextDouble() - 0.5, 2), ["humidity"] = Math.Round(45 + daily * 10 + rng.NextDouble() * 4, 1),
-            ["battery"] = Math.Round(100 - step / 25.0 - rng.NextDouble(), 1), ["alert"] = rng.Next(400) == 0,
+            ["battery"] = Math.Round(100 - step / 9.0 - rng.NextDouble(), 1), ["alert"] = rng.Next(400) == 0,
         }));
     }
 
