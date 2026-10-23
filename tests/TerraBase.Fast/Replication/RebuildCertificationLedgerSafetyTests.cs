@@ -714,9 +714,13 @@ public sealed class RebuildCertificationLedgerSafetyTests
             await Assert.That(page).IsGreaterThan(1);
             offset = (page - 1) * size;
         }
-        using var file = File.OpenWrite(path);
+        using var file = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         file.Position = offset;
-        file.WriteByte(0xFF);
+        var original = file.ReadByte();
+        await Assert.That(original).IsGreaterThanOrEqualTo(0);
+        file.Position = offset;
+        file.WriteByte((byte)(original ^ 0x80));
+        file.Flush(flushToDisk: true);
     }
 
     private static async Task<(int ExitCode, string Output)> RunCrashChildAsync(string root)
