@@ -129,6 +129,10 @@ public sealed class Cluster : IAsyncDisposable
     /// </summary>
     public static Task<Cluster> StartAsync(params string[] regions) => StartAsync(regions, skews: null);
 
+    /// <summary>Local <paramref name="regions"/> whose backups and shape mirrors use a real S3-compatible bucket (the shape benchmark's T1 and T2).</summary>
+    internal static Task<Cluster> StartBucketAsync(string[] regions, Action<Dictionary<string, string>> bucket) =>
+        StartLocalAsync(regions, new Dictionary<string, TimeSpan>(), bucket: bucket);
+
     // Backup qualification owns a whole database: snapshots never include other parallel tests' collections.
     internal static Task<Cluster> StartBackupAsync()
     {
@@ -265,9 +269,10 @@ public sealed class Cluster : IAsyncDisposable
 
     private Local RequireLocal() => _local ?? throw new NotSupportedException("this fault needs local nodes");
 
-    private static async Task<Cluster> StartLocalAsync(string[] regions, IReadOnlyDictionary<string, TimeSpan> skews, FakeS3? backups = null)
+    private static async Task<Cluster> StartLocalAsync(string[] regions, IReadOnlyDictionary<string, TimeSpan> skews, FakeS3? backups = null,
+        Action<Dictionary<string, string>>? bucket = null)
     {
-        var local = new Local(regions, skews, backups);
+        var local = new Local(regions, skews, backups, bucket);
         try
         {
             await local.StartAsync();
@@ -550,7 +555,8 @@ public sealed class Cluster : IAsyncDisposable
     /// The local nodes: one per region, sharing one machine directory. Each node keeps its data directory
     /// and machine ID across a stop, so a start brings the same replica back, as a Fly machine restarts on its volume.
     /// </summary>
-    private sealed class Local(string[] regions, IReadOnlyDictionary<string, TimeSpan> skews, FakeS3? backups) : IAsyncDisposable
+    private sealed class Local(string[] regions, IReadOnlyDictionary<string, TimeSpan> skews, FakeS3? backups,
+        Action<Dictionary<string, string>>? bucket = null) : IAsyncDisposable
     {
         private readonly FakeMemberStore _machines = new();
         private readonly Dictionary<string, Node> _nodes = [with(StringComparer.Ordinal)];
@@ -800,6 +806,7 @@ public sealed class Cluster : IAsyncDisposable
                 settings["node-name"] = node.MachineId;
                 settings["data-directory"] = node.DataDirectory;
                 backups?.Configure(settings);
+                bucket?.Invoke(settings);
             }, services =>
             {
                 services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
