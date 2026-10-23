@@ -76,12 +76,15 @@ message Database {
 }
 
 // Consecutive change groups of one database, the last one's change id, and the groups: a GroupList inside a TBLZ4E01 LZ4
-// application envelope (decision 0007). At most 1024 groups and 2 MiB of encoded groups; one batch per database in flight.
+// application envelope (decision 0007). At most 1024 groups and 2 MiB of encoded groups. Protocol 1: one batch per
+// database in flight. Protocol 2: up to ReplicationProtocol.Window, each naming in after the change id it follows (the
+// previous batch's last_change_id, or the sender's resume position); the receiver applies them in that chain only.
 message Batch {
   Database database = 1;
   uint64 last_change_id = 2;
   bytes groups = 3;
   optional fixed64 expect = 4;
+  uint64 after = 5;
 }
 
 // Sent every second while nothing else is.
@@ -139,7 +142,9 @@ message Welcome {
 }
 
 // A batch committed durably (change_id = its last_change_id), with the highest stamp of the origin joined. Refused: the
-// receiver does not hold the database (yet); nothing was applied, and the sender retries later.
+// receiver does not hold the database (yet); nothing was applied, and the sender retries later. A protocol 2 receiver
+// answers a database's batches in the order they arrived, refusals included; after a refusal its later batches of the
+// database are refused until one follows the last applied batch again.
 message Ack {
   Database database = 1;
   uint64 change_id = 2;

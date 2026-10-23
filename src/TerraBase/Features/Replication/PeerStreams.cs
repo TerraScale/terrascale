@@ -741,6 +741,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
 
             Ulid incarnation;
+            long after;
             SourceGroups read;
             bool retained;
             long head = 0;
@@ -785,7 +786,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     continue;
                 }
 
-                incarnation = found;
+                (incarnation, after) = (found, acked);
                 if (cursor.Incarnation is { } previous && previous != incarnation)
                 {
                     Reset(link, database, cursor);
@@ -917,7 +918,15 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
             await stream.WriteAsync(new PushFrame
             {
-                Batch = new Batch { Database = ChangeGroups.Wire(database, incarnation), LastChangeId = checked((ulong)last), Groups = ChangeGroups.Encode(groups), Expect = cursor.Stable.Value },
+                // One batch per database in flight: it follows the ack (protocol 2's chain of one).
+                Batch = new Batch
+                {
+                    Database = ChangeGroups.Wire(database, incarnation),
+                    LastChangeId = checked((ulong)last),
+                    Groups = ChangeGroups.Encode(groups),
+                    After = checked((ulong)after),
+                    Expect = cursor.Stable.Value,
+                },
             }, cancellationToken).ConfigureAwait(false);
 
             sent = true;

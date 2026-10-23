@@ -20,7 +20,9 @@ namespace TerraBase.Features.Replication;
 /// it ended, so one origin's groups apply in order. A refill runs beside the stream: other databases' batches go on, while
 /// its own database's are refused until a refill of it commits, also on the origin's next stream when this one ends first.
 /// A batch that fails to apply is refused for its database only. An undecodable batch is refused for its database; the sender reconnects
-/// and resumes from its last ack.
+/// and resumes from its last ack. A protocol 2 sender keeps up to <see cref="ReplicationProtocol.Window"/> batches of a database
+/// in flight, chained by <c>Batch.after</c>: each applies only after the one it follows applied, so an ack still covers every
+/// batch before it, and after a refusal the database's batches are refused until one follows the last applied batch again.
 /// </summary>
 internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 {
@@ -141,12 +143,17 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         // Keyed by database and the incarnation of the origin's copy its frames name: change ids of one incarnation say
         // nothing of another's, which restart.
         var last = new Dictionary<TenantContext, (Ulid Incarnation, ulong ChangeId)>();
+        // A protocol 2 sender's chains, per database (Chain).
+        var pipelined = ReplicationProtocol.Negotiate(hello.Protocol) >= 2;
+        var chains = new Dictionary<TenantContext, Chain>();
         // The databases a refill runs for, and those whose last refill failed: their batches are refused until a refill of
         // them commits, so none joins before the repairs it follows.
         var refills = new Dictionary<(TenantContext Database, Ulid Incarnation), (Refill Frame, Task<int?> Done)>();
         HashSet<TenantContext> cut = [];
         // Per database, its newest batch or frontier in progress; the next one of the database runs after it.
-        var applying = new Dictionary<TenantContext, (Task<AckFrame?> Done, ApplyProgress? Progress, V1.Database? Wire, ulong ChangeId)>();
+        var applying = new Dictionary<TenantContext, (Task<AckFrame?> Done, ApplyProgress? Progress)>();
+        // Every batch in progress with its work, reported on heartbeats: a pipelined database has several, applied in turn.
+        var working = new List<(Task<AckFrame?> Done, ApplyProgress Progress, V1.Database Wire, ulong ChangeId)>();
         // Batches and frontiers in arrival order. A database's frames run one after another, so they also complete in this order.
         var answers = new List<(TenantContext Database, Ulid Incarnation, Task<AckFrame?> Done, long Received)>();
         // A client database's batch or refill also follows the catalog's frame in progress: the sender lists the system
@@ -160,6 +167,41 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 : catalog.IsCompletedSuccessfully ? own
                 : Task.WhenAll(own, catalog);
         }
+        // Whether a protocol 2 batch continues its database's chain on this stream, and if so takes its place in it.
+        bool Admit(TenantContext database, Ulid incarnation, Batch batch, bool busy)
+        {
+            if (!chains.TryGetValue(database, out var chain) || chain.Incarnation != incarnation)
+            {
+                // Another copy of the sender's starts a chain at its resume position, once the last copy's batches ended;
+                // refused before then, it is broken: only a resend from that position restarts it.
+                var ended = chain is not { Pending: > 0 };
+                chain = chains[database] = new Chain(incarnation, batch.After) { Broken = !ended };
+                if (!ended)
+                {
+                    return false;
+                }
+            }
+
+            if (chain.Broken)
+            {
+                // Restarted only by a batch following the last applied one, once the batches it may follow all ended.
+                if (chain.Pending > 0 || batch.After != chain.Applied)
+                {
+                    return false;
+                }
+
+                (chain.Broken, chain.Expected) = (false, chain.Applied);
+            }
+
+            if (batch.After != chain.Expected || chain.Pending >= ReplicationProtocol.Window || (!busy && applying.Count >= MaxApplying))
+            {
+                return false;
+            }
+
+            (chain.Pending, chain.Expected) = (chain.Pending + 1, batch.LastChangeId);
+            return true;
+        }
+
         Task<bool>? reading = null;
         try
         {
@@ -181,14 +223,18 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             while (true)
             {
                 // A refill may take minutes: it runs beside the frames, so other databases' batches are still acked in time.
-                _ = await Task.WhenAny([reading, .. refills.Values.Select(refilling => refilling.Done), .. answers.Select(answer => answer.Done)])
+                // Only each database's oldest answer can go next: a later one may complete first, but is written after it.
+                _ = await Task.WhenAny([reading, .. refills.Values.Select(refilling => refilling.Done),
+                        .. answers.DistinctBy(answer => answer.Database).Select(answer => answer.Done)])
                     .ConfigureAwait(false);
                 // Before refills: a refill that waited for its database's batch is answered after it.
+                HashSet<TenantContext>? waiting = null;
                 for (var index = 0; index < answers.Count;)
                 {
                     var answer = answers[index];
-                    if (!answer.Done.IsCompleted)
+                    if (!answer.Done.IsCompleted || waiting?.Contains(answer.Database) == true)
                     {
+                        (waiting ??= []).Add(answer.Database);
                         index++;
                         continue;
                     }
@@ -199,7 +245,15 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                         _ = applying.Remove(answer.Database);
                     }
 
-                    if (await answer.Done.ConfigureAwait(false) is not { } response)
+                    var response = await answer.Done.ConfigureAwait(false);
+                    if (answer.Incarnation != default && chains.TryGetValue(answer.Database, out var chain) && chain.Incarnation == answer.Incarnation)
+                    {
+                        chain.Pending--;
+                        chain.Broken |= response?.Ack is not { Refused: false };
+                        chain.Applied = response?.Ack is { Refused: false } done ? done.ChangeId : chain.Applied;
+                    }
+
+                    if (response is null)
                     {
                         continue;
                     }
@@ -233,6 +287,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     {
                         _ = cut.Remove(tenant.Database);
                         last[tenant.Database] = (tenant.Incarnation, asked.ChangeId);
+                        chains[tenant.Database] = new Chain(tenant.Incarnation, asked.ChangeId);
                     }
                     else
                     {
@@ -267,15 +322,16 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
                 if (frame.KindCase == PushFrame.KindOneofCase.Heartbeat)
                 {
-                    foreach (var active in applying.Values)
+                    _ = working.RemoveAll(active => active.Done.IsCompleted);
+                    foreach (var active in working)
                     {
-                        if (!active.Done.IsCompleted && active.Progress is { } work && work.Value is var value && value > work.Reported)
+                        if (active.Progress.Value is var value && value > active.Progress.Reported)
                         {
                             await responseStream.WriteAsync(new AckFrame
                             {
                                 Applying = new Applying { Database = active.Wire, ChangeId = active.ChangeId, Progress = (ulong)value },
                             }, stream.Token).ConfigureAwait(false);
-                            work.Reported = value;
+                            active.Progress.Reported = value;
                         }
                     }
                     // An empty frame answers it, so the sender's deadline for answers also holds on an idle link.
@@ -305,7 +361,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     }
 
                     var recorded = FrontierAsync(at, origin, frontier, stream.Token);
-                    applying[at] = (recorded, null, null, 0);
+                    applying[at] = (recorded, null);
                     answers.Add((at, default, recorded, _timings.Now));
                     continue;
                 }
@@ -340,16 +396,32 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 var busy = applying.TryGetValue(database, out var pending);
                 var refilling = refills.Keys.Any(running => running.Database == database);
                 if (refilling || cut.Contains(database)
-                    || (busy ? pending.Progress is not null : applying.Count >= MaxApplying))
+                    || (pipelined ? !Admit(database, incarnation, batch, busy) : busy ? pending.Progress is not null : applying.Count >= MaxApplying))
                 {
-                    await RefuseAsync(responseStream, batch.Database, stream.Token, cut.Contains(database) && !refilling).ConfigureAwait(false);
+                    var refillRequired = cut.Contains(database) && !refilling;
+                    if (pipelined)
+                    {
+                        // Answered after the database's batches in progress, so a sender reads its answers in order.
+                        if (chains.TryGetValue(database, out var broken))
+                        {
+                            broken.Broken = true;
+                        }
+
+                        answers.Add((database, default, RefuseAfterAsync(busy ? pending.Done : Task.CompletedTask, batch.Database, refillRequired), received));
+                        continue;
+                    }
+
+                    await RefuseAsync(responseStream, batch.Database, stream.Token, refillRequired).ConfigureAwait(false);
                     continue;
                 }
 
-                var previous = last.GetValueOrDefault(database);
+                // A chained batch follows its predecessor, which it applies after; one it follows that was refused refuses it.
+                var previous = pipelined ? (incarnation, batch.After) : last.GetValueOrDefault(database);
+                var predecessor = pipelined && busy && pending.Progress is not null ? pending.Done : null;
                 var progress = new ApplyProgress();
-                var joined = ApplyAsync(After(database), received, database, incarnation, previous, origin, batch, region, progress, stream.Token);
-                applying[database] = (joined, progress, batch.Database, batch.LastChangeId);
+                var joined = ApplyAsync(After(database), predecessor, received, database, incarnation, previous, origin, batch, region, progress, stream.Token);
+                applying[database] = (joined, progress);
+                working.Add((joined, progress, batch.Database, batch.LastChangeId));
                 answers.Add((database, incarnation, joined, received));
             }
         }
@@ -531,14 +603,15 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     // Reserves the batch's bytes before decoding it and holds them until it applied, not until its ack is written; a batch
     // without them is refused and sent again.
     private async Task<AckFrame?> ApplyAsync(
-        Task before, long received, TenantContext database, Ulid incarnation, (Ulid Incarnation, ulong ChangeId) previous, ReplicaId origin, Batch batch,
-        string region, ApplyProgress progress, CancellationToken cancellationToken)
+        Task before, Task<AckFrame?>? predecessor, long received, TenantContext database, Ulid incarnation, (Ulid Incarnation, ulong ChangeId) previous,
+        ReplicaId origin, Batch batch, string region, ApplyProgress progress, CancellationToken cancellationToken)
     {
         var refused = new AckFrame { Ack = new Ack { Database = batch.Database, Refused = true } };
         using var reservation = _memory.TryReserve(MemoryLane.Replication, BatchBytes(batch), tenant: null);
         // Even a refusal follows its database's frontier; failed catalog work starts no dependent application.
         await before.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        if (reservation is null || !before.IsCompletedSuccessfully)
+        if (reservation is null || !before.IsCompletedSuccessfully
+            || (predecessor is not null && (await predecessor.ConfigureAwait(false))?.Ack is not { Refused: false }))
         {
             return refused;
         }
@@ -666,6 +739,12 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private static Task RefuseAsync(IServerStreamWriter<AckFrame> responseStream, V1.Database database, CancellationToken cancellationToken, bool refillRequired = false) =>
         responseStream.WriteAsync(new AckFrame { Ack = new Ack { Database = database, Refused = true, RefillRequired = refillRequired } }, cancellationToken);
 
+    private static async Task<AckFrame?> RefuseAfterAsync(Task before, V1.Database database, bool refillRequired)
+    {
+        await before.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        return new AckFrame { Ack = new Ack { Database = database, Refused = true, RefillRequired = refillRequired } };
+    }
+
     private static TenantContext Tenant(V1.Database? database)
     {
         try
@@ -691,6 +770,22 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         {
             throw new RpcException(new Status(StatusCode.InvalidArgument, error.Message));
         }
+    }
+
+    // One database's chain of a protocol 2 sender's batches on one stream: the incarnation they name, the change id the
+    // newest applied one ended at (or the chain's start), the one the next batch must follow, the batches in progress, and
+    // whether a refusal broke it.
+    private sealed class Chain(Ulid incarnation, ulong start)
+    {
+        public Ulid Incarnation { get; } = incarnation;
+
+        public ulong Applied { get; set; } = start;
+
+        public ulong Expected { get; set; } = start;
+
+        public int Pending { get; set; }
+
+        public bool Broken { get; set; }
     }
 
     private void Observe(List<OriginGroup> groups, string region)
