@@ -31,7 +31,7 @@ public sealed class BackupPolicyJourneyTests(DashboardRootFixture fixture)
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new PolicyDeadlineFactory(original, () => Volatile.Read(ref failedPolicy) == "deadline", policyArrived.Task)));
         }, producerExtension: async http =>
         {
-            if (http.Request.Method != "GET" || !http.Request.Path.Value!.StartsWith("/v1/management/", StringComparison.Ordinal) ||
+            if (http.Request.Method != "GET" || !http.Request.Path.Value!.StartsWith("/v1/projects/", StringComparison.Ordinal) ||
                 !http.Request.Path.Value.EndsWith("/backup-policy", StringComparison.Ordinal) || Volatile.Read(ref failedPolicy).Length == 0)
                 return null;
             if (Volatile.Read(ref failedPolicy) == "deadline")

@@ -46,7 +46,7 @@ public sealed class BackupService(AccountService accounts, DatabaseService datab
         context = await databases.CurrentAsync(context, ct);
         var database = Manage(context, databaseId);
         if (!string.IsNullOrWhiteSpace(incrementalBackupCron))
-            throw new AccountAccessException("The backup provider does not expose incremental schedules.", 503);
+            throw new AccountAccessException("Incremental schedules are not offered. Leave the incremental schedule empty.", 422);
         if (fullBackupCron.Length > 256) throw new AccountAccessException("Enter a valid full-backup cron schedule or leave it empty.", 422);
         fullBackupCron = string.Join(' ', fullBackupCron.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         if (!ValidCron(fullBackupCron))

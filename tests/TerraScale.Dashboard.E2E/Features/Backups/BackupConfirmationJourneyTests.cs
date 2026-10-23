@@ -5,7 +5,6 @@ using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using TerraScale.Dashboard.E2E.Features.Databases;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.E2E.Features.Backups;
 
@@ -21,22 +20,22 @@ public sealed class BackupConfirmationJourneyTests(DashboardRootFixture fixture)
         var placeOnConfirmation = false;
         var rawNullObserved = false;
         var confirmedRequests = 0;
-        TestAuth auth = null!;
+        var pending = 0;
+        var writeBearer = "";
         HttpClient? producer = null;
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root,
-            builder => auth = (TestAuth)builder.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!, producerExtension: async http =>
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
         {
-            var id = ConfirmationId(http, organizationId, projectId, sourceId);
-            if (id is null) return null;
-            DemandScope(http, organizationId);
+            if (RestoreRequest(http, projectId)) { writeBearer = http.Request.Headers.Authorization.ToString(); Volatile.Write(ref pending, 1); return null; }
+            var name = ConfirmationName(http, projectId);
+            if (name is null || Interlocked.Exchange(ref pending, 0) == 0) return null;
+            DemandScope(http);
             Interlocked.Increment(ref confirmedRequests);
             if (Volatile.Read(ref placeOnConfirmation))
             {
                 Volatile.Write(ref placeOnConfirmation, false);
-                var stored = await StoredAsync(producer!, id);
+                var stored = await StoredAsync(producer!, name);
                 rawNullObserved = stored.GetProperty("replicaRegions").ValueKind == JsonValueKind.Null;
-                using var request = ScopedRequest(http, HttpMethod.Patch, CanonicalDatabasePath(projectId, stored.GetProperty("name").GetString()!));
-                request.Headers.Authorization = new("Bearer", await WriteTokenAsync(auth, http.Request.Headers.Authorization.ToString(), organizationId, projectId));
+                using var request = ScopedRequest(http, HttpMethod.Patch, CanonicalDatabasePath(projectId, name), writeBearer);
                 request.Content = JsonContent.Create(new { replicaRegions = new[] { "sfo" } });
                 using var changed = await producer!.SendAsync(request, http.RequestAborted);
                 changed.EnsureSuccessStatusCode();
@@ -85,7 +84,7 @@ public sealed class BackupConfirmationJourneyTests(DashboardRootFixture fixture)
             var target = rows.EnumerateArray().Single(row => row.GetProperty("name").GetString() == "paused-source-restore");
             var restoredId = target.GetProperty("id").GetString()!;
             await Assert.That(rawNullObserved).IsTrue().Because("The real restore201 catalog body permits null replicas before the managed GET normalizes them.");
-            await Assert.That(Volatile.Read(ref confirmedRequests)).IsEqualTo(2).Because("The official SDK identity confirmation and the full managed placement confirmation both cross the actual HTTP boundary.");
+            await Assert.That(Volatile.Read(ref confirmedRequests)).IsEqualTo(1).Because("The full managed placement confirmation crosses the actual HTTP boundary.");
             await Assert.That(target.GetProperty("region").GetString()).IsEqualTo("GRU");
             await Assert.That(Regions(target)).IsEqualTo("GRU,SFO");
             await Assert.That(target.GetProperty("branchedFrom").GetString()).IsEqualTo(sourceId);
@@ -122,20 +121,15 @@ public sealed class BackupConfirmationJourneyTests(DashboardRootFixture fixture)
         var projectId = "";
         var sourceId = "";
         var corrupt = false;
-        var admittedBearer = "";
-        var actingUser = "";
-        TestAuth auth = null!;
+        var writeBearer = "";
         HttpClient? producer = null;
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root,
-            builder => auth = (TestAuth)builder.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!, producerExtension: async http =>
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
         {
-            var id = ConfirmationId(http, organizationId, projectId, sourceId);
-            if (id is null) return null;
-            DemandScope(http, organizationId);
-            admittedBearer = http.Request.Headers.Authorization.ToString();
-            actingUser = http.Request.Headers["X-TerraBase-User-Id"].ToString();
-            if (!Volatile.Read(ref corrupt)) return null;
-            var stored = await StoredAsync(producer!, id);
+            if (RestoreRequest(http, projectId)) { writeBearer = http.Request.Headers.Authorization.ToString(); return null; }
+            var name = ConfirmationName(http, projectId);
+            if (name is null || !Volatile.Read(ref corrupt)) return null;
+            DemandScope(http);
+            var stored = await StoredAsync(producer!, name);
             var row = JsonNode.Parse(stored.GetRawText())!.AsObject();
             row["replicaRegions"] = new JsonArray();
             switch (failure)
@@ -193,9 +187,7 @@ public sealed class BackupConfirmationJourneyTests(DashboardRootFixture fixture)
             using (var request = new HttpRequestMessage(HttpMethod.Delete, CanonicalDatabasePath(projectId, restoredName)))
             {
                 request.Headers.Host = "gru.api.terrascale.tech";
-                request.Headers.Authorization = new("Bearer", await WriteTokenAsync(auth, admittedBearer, organizationId, projectId));
-                request.Headers.Add("X-TerraBase-Organization-Id", organizationId);
-                request.Headers.Add("X-TerraBase-User-Id", actingUser);
+                request.Headers.Add("Authorization", writeBearer);
                 using var removed = await producer.SendAsync(request);
                 await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await EvidenceAsync(removed, producer));
             }
@@ -266,48 +258,40 @@ public sealed class BackupConfirmationJourneyTests(DashboardRootFixture fixture)
         await DeleteAsync(client, csrf, sourceId, "cron-source");
     }
 
-    private static string? ConfirmationId(HttpContext http, string organizationId, string projectId, string sourceId)
+    // The dashboard's restore POST carries an action-scoped databases:write project token; the test reuses it for cleanup.
+    private static bool RestoreRequest(HttpContext http, string projectId) =>
+        http.Request.Method == "POST" && projectId.Length > 0 && (http.Request.Path.Value ?? "").StartsWith(CanonicalDatabasePath(projectId, ""), StringComparison.Ordinal) &&
+        (http.Request.Path.Value ?? "").EndsWith("/restore", StringComparison.Ordinal);
+    private static string? ConfirmationName(HttpContext http, string projectId)
     {
-        var prefix = DatabasePath(organizationId, projectId, "");
+        var prefix = CanonicalDatabasePath(projectId, "");
         var path = http.Request.Path.Value ?? "";
-        if (http.Request.Method != "GET" || !path.StartsWith(prefix, StringComparison.Ordinal)) return null;
-        var id = path[prefix.Length..];
-        return id.Length == 0 || id == sourceId || id.Contains('/') ? null : id;
+        if (http.Request.Method != "GET" || projectId.Length == 0 || !path.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        var name = path[prefix.Length..];
+        return name.Length == 0 || name.Contains('/') ? null : Uri.UnescapeDataString(name);
     }
-    private static void DemandScope(HttpContext http, string organizationId)
+    private static void DemandScope(HttpContext http)
     {
-        if (http.Request.Host.Host != "gru.api.terrascale.tech" || http.Request.Headers["X-TerraBase-Organization-Id"] != organizationId ||
-            !http.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.Ordinal) ||
-            string.IsNullOrWhiteSpace(http.Request.Headers["X-TerraBase-User-Id"]))
-            throw new InvalidOperationException("Restore confirmation must cross the genuine scoped home with admitted official identity headers.");
+        if (http.Request.Host.Host != "gru.api.terrascale.tech" || http.Request.Headers["X-TerraScale-Region-Pin"] != "gru" ||
+            !http.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.Ordinal))
+            throw new InvalidOperationException("Restore confirmation must cross the genuine pinned home with an admitted project bearer.");
     }
-    private static HttpRequestMessage ScopedRequest(HttpContext http, HttpMethod method, string path)
+    private static HttpRequestMessage ScopedRequest(HttpContext http, HttpMethod method, string path, string bearer)
     {
         var request = new HttpRequestMessage(method, path);
         request.Headers.Host = http.Request.Host.Host;
-        request.Headers.Add("Authorization", http.Request.Headers.Authorization.ToString());
-        request.Headers.Add("X-TerraBase-Organization-Id", http.Request.Headers["X-TerraBase-Organization-Id"].ToString());
-        request.Headers.Add("X-TerraBase-User-Id", http.Request.Headers["X-TerraBase-User-Id"].ToString());
+        request.Headers.Add("Authorization", bearer);
         return request;
     }
-    private static async Task<JsonElement> StoredAsync(HttpClient producer, string id)
+    private static async Task<JsonElement> StoredAsync(HttpClient producer, string name)
     {
         using var response = await producer.GetAsync("/__test/observations");
         response.EnsureSuccessStatusCode();
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        return body.RootElement.GetProperty("databases").EnumerateArray().Single(row => row.GetProperty("id").GetString() == id).Clone();
+        return body.RootElement.GetProperty("databases").EnumerateArray().Single(row => row.GetProperty("name").GetString() == name).Clone();
     }
-    private static string DatabasePath(string organizationId, string projectId, string id) =>
-        "/v1/management/organizations/" + organizationId + "/projects/" + projectId + "/databases/" + id;
     private static string CanonicalDatabasePath(string projectId, string name) =>
         "/v1/projects/" + projectId + "/databases/" + Uri.EscapeDataString(name);
-    private static Task<string> WriteTokenAsync(TestAuth auth, string bearer, string organizationId, string projectId)
-    {
-        var token = bearer["Bearer ".Length..];
-        var actor = auth.ResolveAccessToken(token) ?? throw new InvalidOperationException("Cleanup requires a live signed-in actor.");
-        return auth.GetAsync(new SessionRecord(actor.UserId, "", actor.Email, token, null, DateTimeOffset.UtcNow.AddHours(1)),
-            organizationId, projectId, ["databases:write"], default);
-    }
     private static Task<HttpResponseMessage> RestoreAsync(HttpClient client, string csrf, string id, string backupId, string name) =>
         HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups/restore", new()
         { ["_csrf"] = csrf, ["databaseId"] = id, ["backupId"] = backupId, ["name"] = name });
