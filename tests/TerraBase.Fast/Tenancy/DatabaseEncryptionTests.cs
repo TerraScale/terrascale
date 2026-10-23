@@ -155,7 +155,7 @@ public sealed class DatabaseEncryptionTests
         var apiKey = await api.Server.IssueAsync(organization, "documents:read", "documents:write");
         using var data = api.DataClient(apiKey);
         Seed? first = null;
-        foreach (var name in new[] { "first", "second" })
+        foreach (var name in (string[])["first", "second"])
         {
             var database = await api.CreateManagedDatabaseAsync(organization, project, name);
             await ManagementApi.CreateCollectionAsync(data, database, "items");
