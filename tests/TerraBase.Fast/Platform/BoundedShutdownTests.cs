@@ -202,6 +202,60 @@ public sealed class BoundedShutdownTests
     }
 
     [Test]
+    public async Task A_changes_producer_cancelled_before_the_linked_stream_token_ends_the_response_cleanly()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var api = await DocumentApi.StartAsync();
+        var lifetime = api.Server.Services.GetRequiredService<IHostApplicationLifetime>();
+        var engine = api.Server.Services.GetRequiredService<TursoStorageEngine>();
+        var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(api.DatabasePath() + "/changes?cursor=now", UriKind.Relative));
+        using var response = await api.Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(token));
+        await ReadEventAsync(reader, "cursor", token);
+
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Cancellation callbacks run newest first. Hold dispatch here so the producer observes the original
+        // cancelled token while the stream's earlier linked-token callback has definitely not run yet.
+        using var registration = lifetime.ApplicationStopping.Register(() =>
+        {
+            entered.TrySetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(15), token))
+            {
+                throw new TimeoutException("shutdown callback ordering check was not released");
+            }
+        });
+        var stopping = Task.Run(lifetime.StopApplication, token);
+        try
+        {
+            await entered.Task.WaitAsync(token);
+            // A real commit wakes the already-open stream and starts its next shared producer.
+            await using (var transaction = await store.BeginTransactionAsync(write: true, token))
+            {
+                _ = await transaction.PutAsync(DocumentApi.Collection, DocumentApi.NewId(), "{\"n\":1}"u8.ToArray(), token);
+                _ = await transaction.CommitAsync(token);
+            }
+
+            using var drain = CancellationTokenSource.CreateLinkedTokenSource(token);
+            drain.CancelAfter(TimeSpan.FromSeconds(10));
+            while (await reader.ReadLineAsync(drain.Token) is not null)
+            {
+            }
+        }
+        finally
+        {
+            release.Set();
+            await stopping;
+        }
+
+        await api.Server.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task.WaitAsync(TimeSpan.FromSeconds(45), token);
+        await Assert.That(engine.CleanupCompletion.IsCompletedSuccessfully).IsTrue();
+        await Assert.That(engine.Pool.OpenCount).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task A_healthy_reader_can_retire_its_intent_after_the_shutdown_grace_expires()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
