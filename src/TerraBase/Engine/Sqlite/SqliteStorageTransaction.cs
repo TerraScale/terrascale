@@ -1255,12 +1255,12 @@ internal sealed partial class SqliteStorageTransaction(
             {
                 // The commit landed but its final CDC row could not be read: the log of this file is not what it wrote.
                 NoteCopyFault("the commit marker could not be read after COMMIT");
-                NotifyReplicationCommitted();
                 if (_offset is not null || _feedChanged)
                 {
                     Follow("the commit notification", committed);
                 }
 
+                NotifyReplicationCommitted();
                 throw;
             }
 
@@ -1280,13 +1280,14 @@ internal sealed partial class SqliteStorageTransaction(
             return result;
         }, cancellationToken).ConfigureAwait(false);
 
-        NotifyReplicationCommitted();
         // A failed wake-up only delays its waiter, which also wakes on its own timeout.
         if (_offset is not null || _feedChanged)
         {
             Follow("the commit notification", committed);
         }
 
+        // Placement readers must observe the advanced catalog cache generation when this wake arrives.
+        NotifyReplicationCommitted();
         if (_followFailure is { } failure)
         {
             ExceptionDispatchInfo.Throw(failure);
