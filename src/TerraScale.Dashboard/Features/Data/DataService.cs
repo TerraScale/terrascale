@@ -38,7 +38,8 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         string? cursor = null;
         do
         {
-            var result = await documents.DocumentsAsync(DatabaseService.Scope(context), home, database.Name, collection, query with { Limit = 1000 - rows.Count, Cursor = cursor }, cancellationToken);
+            // TerraBase refuses one 1000-document page of real documents as "query too expensive"; 100 per page stays well inside its budget.
+            var result = await documents.DocumentsAsync(DatabaseService.Scope(context), home, database.Name, collection, query with { Limit = Math.Min(100, 1000 - rows.Count), Cursor = cursor }, cancellationToken);
             rows.AddRange(result.Items);
             cursor = result.NextCursor;
             if (!string.IsNullOrEmpty(cursor) && !seen.Add(cursor)) throw new HttpRequestException("Document pagination did not advance.");
