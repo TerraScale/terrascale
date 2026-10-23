@@ -3,13 +3,14 @@
   import RouteLink from '@/components/RouteLink.svelte'
   import { dict, locale } from '@/lib/i18n'
   import { localeMeta } from '@/lib/i18n/locales'
-  import { formatPlanLimits } from '@/lib/pricing'
+  import { formatPlanBilling, formatPlanLimits } from '@/lib/pricing'
   import { publicAlphaCatalog } from '@/lib/site'
 
   $: plans = publicAlphaCatalog
     .filter((plan) => plan.available)
     .map((plan) => ({
       ...plan,
+      billing: formatPlanBilling(plan, $dict.pricing, localeMeta($locale).bcp47),
       summary: formatPlanLimits({ ...plan.limits, members: null }, $dict.pricing.limits, localeMeta($locale).bcp47).join(' · '),
     }))
 </script>
@@ -29,6 +30,7 @@
     </RouteLink>
   </div>
 
+  <p>{$dict.pricing.status}</p>
   <div class="pricing-teaser__grid">
     {#each plans as plan (plan.slug)}
       <RouteLink
@@ -44,9 +46,10 @@
           {/if}
         </h3>
         <p class="pricing-teaser__price">
-          <strong>${plan.price}</strong>
-          <span>{$dict.pricing.suffixMonthly}</span>
+          <strong>{plan.billing.price}</strong>
+          <span>{plan.billing.suffix}</span>
         </p>
+        <p class="pricing-teaser__limits">{plan.billing.cadence}</p>
         <p class="pricing-teaser__limits">{plan.summary}</p>
       </RouteLink>
     {/each}
@@ -99,7 +102,7 @@
 
   .pricing-teaser__grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: var(--ts-space-4);
   }
 

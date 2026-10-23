@@ -1014,19 +1014,12 @@ Section `*__inner` containers shrink their gutter from `0 40px` to
 - **Casing rhythm.** Sentence case for headlines and body. UPPERCASE for
   eyebrows, pill labels, button text, status chips, column headings. Never
   Title Case for a whole paragraph.
-- **Keep signup verification separate from billing.** The target onboarding
-  contract opens with identity and email verification already counted as one
-  completed step. It then guides the User through the first Organization,
-  Project, and logical Database before requiring a payment card for signup
-  abuse control, not to start a paid trial. Card verification creates no
-  charge, subscription, or automatic renewal. Copy must make the later choice
-  explicit: continue with no paid plan and no automatic renewal while retaining
-  the Developer allowance, or select Starter or Pro with monthly automatic
-  renewal and an eligible first 30 days at no charge. Invited-user onboarding
-  remains separate and does not require signup card verification or a plan
-  choice. Until
-  [TerraScale.Internals issue 30](https://git.terrascale.tech/TerraScale/TerraScale.Internals/issues/30)
-  ships, label this as the target contract rather than released behavior.
+- **Keep Free separate from paid billing.** Free requires no payment card.
+  Starter is billed $30 yearly only ($2.50/month equivalent); Pro and Team
+  renew monthly. Do not advertise trials or annual Pro/Team discounts.
+  Enterprise is $999/month support plus usage through sales. Subscription
+  prices are approved; allowances and usage rates remain proposed, and usage
+  charges are not yet collected. Do not imply checkout or billing readiness.
 - **Export + no-lock-in is a first-class story.** FAQ addresses this
   directly: rate-limit on exports is for platform health, never charges,
   never locks users in.

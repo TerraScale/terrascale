@@ -26,7 +26,7 @@
     '/pricing': {
       title: 'TerraScale Public Alpha pricing',
       description:
-        'Compare the Starter and Pro Public Alpha plans and review the unavailable Enterprise plan.',
+        'Free requires no card. Starter is $30/year ($2.50/month equivalent), Pro $20/month, Team $50/month. Enterprise $999/month support plus usage: contact sales. Allowances proposed; usage charges not yet collected.',
     },
     '/404': {
       title: '404 | TerraScale',
