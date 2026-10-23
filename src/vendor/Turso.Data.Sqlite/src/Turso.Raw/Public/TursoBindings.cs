@@ -68,7 +68,7 @@ public static class TursoBindings
         try
         {
             var status = TursoInterop.DatabaseConnect(database.DangerousGetHandle(), out var connectionPtr, out var errorPtr);
-            ThrowIfError(status, errorPtr);
+            ThrowIfError(status, errorPtr, storageOnly: true);
 
             try
             {
@@ -109,7 +109,7 @@ public static class TursoBindings
         ArgumentNullException.ThrowIfNull(sql);
 
         var status = TursoInterop.ConnectionPrepareSingle(db, sql, out var statementPtr, out var errorPtr);
-        ThrowIfError(status, errorPtr, "Unable to prepare statement: ");
+        ThrowIfError(status, errorPtr, "Unable to prepare statement: ", database: db);
 
         return db.OwnStatement(statementPtr);
     }
@@ -118,7 +118,7 @@ public static class TursoBindings
     {
         statement.ThrowIfInvalid();
         var status = TursoInterop.StatementReset(statement, out var errorPtr);
-        ThrowIfError(status, errorPtr);
+        ThrowIfError(status, errorPtr, database: statement.Owner);
     }
 
     public static void RegisterScalarFunction(
@@ -279,11 +279,11 @@ public static class TursoBindings
             {
                 runExternalIo?.Invoke();
                 var ioStatus = TursoInterop.StatementRunIo(statement, out errorPtr);
-                ThrowIfError(ioStatus, errorPtr);
+                ThrowIfError(ioStatus, errorPtr, storageOnly: true);
                 continue;
             }
 
-            ThrowIfError(status, errorPtr);
+            ThrowIfError(status, errorPtr, database: statement.Owner);
         }
     }
 
@@ -398,7 +398,7 @@ public static class TursoBindings
         try
         {
             var status = TursoInterop.DatabaseConnect(databasePtr, out connectionPtr, out var errorPtr);
-            ThrowIfError(status, errorPtr);
+            ThrowIfError(status, errorPtr, storageOnly: true);
 
             return TursoDatabaseHandle.FromPtrs(databasePtr, connectionPtr);
         }
@@ -431,12 +431,12 @@ public static class TursoBindings
         };
 
         var status = TursoInterop.DatabaseNew(ref config, out var databasePtr, out var errorPtr);
-        ThrowIfError(status, errorPtr);
+        ThrowIfError(status, errorPtr, storageOnly: true);
 
         try
         {
             status = TursoInterop.DatabaseOpen(databasePtr, out errorPtr);
-            ThrowIfError(status, errorPtr);
+            ThrowIfError(status, errorPtr, storageOnly: true);
             return databasePtr;
         }
         catch
@@ -517,10 +517,11 @@ public static class TursoBindings
 
     private static UIntPtr ToNativeLength(int length) => checked((UIntPtr)(ulong)length);
 
-    private static void ThrowIfError(TursoStatusCode status, IntPtr errorPtr, string? messagePrefix = null)
+    private static void ThrowIfError(TursoStatusCode status, IntPtr errorPtr, string? messagePrefix = null,
+        TursoDatabaseHandle? database = null, bool storageOnly = false)
     {
         if (errorPtr != IntPtr.Zero)
-            ThrowException(status, errorPtr, messagePrefix);
+            ThrowException(status, errorPtr, messagePrefix, database, storageOnly);
 
         if (status is TursoStatusCode.Ok or TursoStatusCode.Done or TursoStatusCode.Row)
             return;
@@ -528,22 +529,59 @@ public static class TursoBindings
         throw new TursoNativeException((uint)status, $"Turso native call failed with status {status}.");
     }
 
-    private static void ThrowException(TursoStatusCode status, IntPtr errorPtr, string? messagePrefix = null)
+    private static bool IsPageAuthenticationError(TursoStatusCode status, string? message)
+    {
+        const string prefix = "Decryption failed for page=";
+        return status == TursoStatusCode.Error && message is not null
+            && message.StartsWith(prefix, StringComparison.Ordinal) && message.Length > prefix.Length
+            && message.AsSpan(prefix.Length).IndexOfAnyExceptInRange('0', '9') < 0;
+    }
+
+    private static void ThrowException(TursoStatusCode status, IntPtr errorPtr, string? messagePrefix,
+        TursoDatabaseHandle? database, bool storageOnly)
     {
         var errorMessage = Marshal.PtrToStringUTF8(errorPtr);
-        // Match the native DecryptionError display before adding any managed prefix; SQL errors have their own prefix.
-        const string decryptionPrefix = "Decryption failed for page=";
-        var authenticationFailure = status == TursoStatusCode.Error
-            && errorMessage is not null
-            && errorMessage.StartsWith(decryptionPrefix, StringComparison.Ordinal)
-            && errorMessage.Length > decryptionPrefix.Length
-            && errorMessage.AsSpan(decryptionPrefix.Length).IndexOfAnyExceptInRange('0', '9') < 0;
-        var exception = new TursoNativeException((uint)status, $"{messagePrefix}{errorMessage ?? "Internal error"}")
+        TursoInterop.FreeString(errorPtr);
+        // SQL RAISE can return identical text/status. Confirm it with a trusted read before refusing a copy.
+        var authenticationFailure = IsPageAuthenticationError(status, errorMessage)
+            && (storageOnly || database is not null && ConfirmPageAuthenticationFailure(database));
+        throw new TursoNativeException((uint)status, $"{messagePrefix}{errorMessage ?? "Internal error"}")
         {
             IsPageAuthenticationFailure = authenticationFailure,
         };
-        TursoInterop.FreeString(errorPtr);
-        throw exception;
+    }
+
+    private static bool ConfirmPageAuthenticationFailure(TursoDatabaseHandle database)
+    {
+        // Direct native calls avoid recursive error classification; quick_check does not execute SQL triggers.
+        var status = TursoInterop.ConnectionPrepareSingle(database, "PRAGMA quick_check;", out var pointer, out var errorPtr);
+        if (status != TursoStatusCode.Ok || errorPtr != IntPtr.Zero)
+            return ProbeError(status, errorPtr);
+
+        using var statement = database.OwnStatement(pointer);
+        while (true)
+        {
+            status = TursoInterop.StatementStep(statement, out errorPtr);
+            if (errorPtr != IntPtr.Zero)
+                return ProbeError(status, errorPtr);
+            if (status == TursoStatusCode.Row)
+                continue;
+            if (status == TursoStatusCode.Done)
+                return false;
+            if (status != TursoStatusCode.Io)
+                return false;
+            status = TursoInterop.StatementRunIo(statement, out errorPtr);
+            if (status != TursoStatusCode.Ok || errorPtr != IntPtr.Zero)
+                return ProbeError(status, errorPtr);
+        }
+    }
+
+    private static bool ProbeError(TursoStatusCode status, IntPtr errorPtr)
+    {
+        var message = Marshal.PtrToStringUTF8(errorPtr);
+        if (errorPtr != IntPtr.Zero)
+            TursoInterop.FreeString(errorPtr);
+        return IsPageAuthenticationError(status, message);
     }
 
     private sealed class NativeUtf8String : IDisposable
