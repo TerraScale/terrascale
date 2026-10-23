@@ -741,7 +741,7 @@ public class SqliteDataReader : DbDataReader
 
         _hasCurrentRow = false;
         _hasPrefetchedRow = false;
-        _statement.Dispose();
+        _command.ReleaseStatement(_statement, failed: false);
         _statement = null;
         _currentStatementRowsAffectedCounted = false;
 
@@ -783,8 +783,7 @@ public class SqliteDataReader : DbDataReader
         }
         catch (TursoException ex)
         {
-            _statement?.Dispose();
-            _statement = null;
+            ReleaseCurrent(failed: true);
             _hasPrefetchedRow = false;
             _remainingSql.Clear();
             _command.Connection?.CheckTransactionAfterFailure();
@@ -888,8 +887,7 @@ public class SqliteDataReader : DbDataReader
         {
             try
             {
-                _statement?.Dispose();
-                _statement = null;
+                ReleaseCurrent(failed: true);
                 _remainingSql.Clear();
             }
             finally
@@ -897,6 +895,14 @@ public class SqliteDataReader : DbDataReader
                 FinishClose();
             }
         }
+    }
+
+    // TerraScale: hands the current statement back to its command, which resets a kept one for reuse or finalizes it.
+    private void ReleaseCurrent(bool failed)
+    {
+        if (_statement is not null)
+            _command.ReleaseStatement(_statement, failed);
+        _statement = null;
     }
 
     private void CloseCore(bool throwOnError = true)
@@ -920,8 +926,7 @@ public class SqliteDataReader : DbDataReader
 
                 CountCurrentStatementRowsAffected();
 
-                _statement.Dispose();
-                _statement = null;
+                ReleaseCurrent(failed: false);
                 _hasPrefetchedRow = false;
                 _currentStatementRowsAffectedCounted = false;
             }
@@ -930,8 +935,7 @@ public class SqliteDataReader : DbDataReader
         }
         catch (TursoException ex)
         {
-            _statement?.Dispose();
-            _statement = null;
+            ReleaseCurrent(failed: true);
             _remainingSql.Clear();
             FinishClose();
             _command.Connection?.CheckTransactionAfterFailure();
@@ -941,8 +945,7 @@ public class SqliteDataReader : DbDataReader
         }
         catch (SqliteException)
         {
-            _statement?.Dispose();
-            _statement = null;
+            ReleaseCurrent(failed: true);
             _remainingSql.Clear();
             FinishClose();
             if (throwOnError)
