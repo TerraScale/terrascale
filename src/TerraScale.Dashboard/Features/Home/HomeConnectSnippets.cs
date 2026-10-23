@@ -1,0 +1,85 @@
+using TerraScale.Dashboard.Platform.Persistence;
+
+namespace TerraScale.Dashboard.Features.Home;
+
+// Copy-ready connect snippets for the Connect tab. Each SDK lists the first page of one collection with an access
+// token exchanged from a dashboard API key (ts-docs docs/getting-started; sending the raw key as a bearer answers 401).
+public static class HomeConnectSnippets
+{
+    public const string Collection = "posts";
+    public static string ApiUrl => TerraBaseDiscovery.Origin.ToString().TrimEnd('/');
+
+    public const string TokenExchange = """
+        read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY  # paste the key, then press Enter
+        export TERRASCALE_ACCESS_TOKEN="$(curl -sS --fail-with-body \
+          -u "${TERRASCALE_API_KEY%%_*}:$TERRASCALE_API_KEY" -d grant_type=client_credentials \
+          https://auth.terrascale.tech/terrascale/oauth/token \
+          | sed -nE 's/.*"access_token": *"([^"]+)".*/\1/p')"
+        """;
+
+    public static IReadOnlyList<(string Id, string Label, string Install, string Code)> For(string projectId, string database) =>
+    [
+        ("curl", "curl", "", $"""
+            curl -sS -H "Authorization: Bearer $TERRASCALE_ACCESS_TOKEN" \
+              "{ApiUrl}/v1/projects/{projectId}/databases/{database}/collections/{Collection}/documents?limit=10"
+            """),
+        ("js", "JavaScript", "npm install @terrascale/sdk", $$"""
+            import { createTerraBaseV1Client } from "@terrascale/sdk";
+
+            const client = createTerraBaseV1Client({
+              baseUrl: "{{ApiUrl}}",
+              project: "{{projectId}}",
+              token: process.env.TERRASCALE_ACCESS_TOKEN,
+            });
+            const page = await client.database("{{database}}").collection("{{Collection}}").list({ limit: 10 });
+            console.log(page.items);
+            """),
+        ("csharp", "C#", "dotnet add package TerraScale.DotNet", $$"""
+            using TerraScale.DotNet.TerraBase;
+
+            using var http = new HttpClient(TerraBaseHttp.CreateHandler());
+            var client = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
+            {
+                BaseAddress = new Uri("{{ApiUrl}}"),
+                ApiKey = Environment.GetEnvironmentVariable("TERRASCALE_ACCESS_TOKEN"), // the exchanged access token
+            });
+            var page = await client.Database("{{projectId}}", "{{database}}").ListDocumentsAsync("{{Collection}}", limit: 10);
+            Console.WriteLine(page.Items.Count);
+            """),
+        ("go", "Go", "go get terrascale.tech/sdk/v1", $$"""
+            package main
+
+            import (
+            	"context"
+            	"fmt"
+            	"os"
+
+            	v1 "terrascale.tech/sdk/v1"
+            )
+
+            func main() {
+            	c, err := v1.New(v1.Config{BaseURL: "{{ApiUrl}}", Token: os.Getenv("TERRASCALE_ACCESS_TOKEN")})
+            	if err != nil {
+            		panic(err)
+            	}
+            	page, err := c.Database("{{projectId}}", "{{database}}").Collection("{{Collection}}").List(context.Background(), v1.ListOptions{Limit: 10})
+            	if err != nil {
+            		panic(err)
+            	}
+            	fmt.Println(len(page.Items))
+            }
+            """),
+        ("rust", "Rust", "cargo add terrascale serde_json tokio --features tokio/full", $$"""
+            use terrascale::v1::Client;
+
+            #[tokio::main]
+            async fn main() -> terrascale::v1::Result<()> {
+                let token = std::env::var("TERRASCALE_ACCESS_TOKEN").expect("TERRASCALE_ACCESS_TOKEN");
+                let client = Client::for_project("{{projectId}}", token).build()?;
+                let page = client.database("{{database}}").collection("{{Collection}}").list::<serde_json::Value>(Some(10), None).await?;
+                println!("{}", page.items.len());
+                Ok(())
+            }
+            """),
+    ];
+}

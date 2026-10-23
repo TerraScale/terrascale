@@ -179,3 +179,12 @@
 .ts-home-region-map .ts-region-node[data-region="sjc"] { top: 35.73%; left: 15.44%; }
 .ts-home-region-map .ts-region-node-ring { animation: none; }
 .ts-home-region-map .ts-region-map-image { filter: grayscale(1); }
+
+.ts-home-sdk > summary {
+  padding: var(--ts-s2) 0;
+  cursor: pointer;
+}
+
+.ts-home-sdk .ts-snippet-body {
+  tab-size: 4;
+}

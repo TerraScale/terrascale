@@ -9,6 +9,43 @@ namespace TerraScale.Dashboard.E2E.Features.Home;
 public sealed class HomeReportingJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
+    public async Task ConnectTabShowsPrefilledSdkSnippets()
+    {
+        await using var scenario = await AuthProviderScenario.StartReportingAsync(fixture.Root, _ => Task.FromResult<IResult?>(null));
+        using var client = scenario.CreateClient();
+        using var login = await HttpJourney.LoginAsync(client);
+        await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        foreach (var step in new Dictionary<string, string>[]
+        {
+            new() { ["step"] = "account-information", ["displayName"] = "Connect User" },
+            new() { ["step"] = "payment-method", ["bypass"] = "1" },
+            new() { ["step"] = "project", ["name"] = "Connect project", ["region"] = "GRU" }
+        })
+        {
+            step["_csrf"] = await HttpJourney.CsrfAsync(client, "/onboarding");
+            using var advanced = await HttpJourney.PostFormAsync(client, "/onboarding/step", step);
+            await Assert.That(advanced.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        }
+        using var identityResponse = await client.GetAsync("/api/v1/auth/me");
+        using var identity = JsonDocument.Parse(await identityResponse.Content.ReadAsStringAsync());
+        var projectId = identity.RootElement.GetProperty("projectId").GetString()!;
+
+        using var connect = await client.GetAsync("/?tab=connect");
+        await Assert.That(connect.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var html = WebUtility.HtmlDecode(await connect.Content.ReadAsStringAsync());
+        var js = html[html.IndexOf("id=\"connect-js\"", StringComparison.Ordinal)..];
+        js = js[..js.IndexOf("</pre>", StringComparison.Ordinal)];
+        await Assert.That(js).Contains("createTerraBaseV1Client");
+        await Assert.That(js).Contains($"project: \"{projectId}\"");
+        await Assert.That(js).Contains("baseUrl: \"https://api.terrascale.tech\"");
+        foreach (var id in new[] { "connect-token", "connect-curl", "connect-csharp", "connect-go", "connect-rust" })
+            await Assert.That(html).Contains($"id=\"{id}\"");
+        await Assert.That(html).Contains($"/v1/projects/{projectId}/databases/");
+        await Assert.That(html).Contains("href=\"/api-keys\"");
+        await Assert.That(html).Contains("https://docs.terrascale.tech/getting-started/");
+    }
+
+    [Test]
     public async Task HomeReadsAnalyticsAndReplicationWithScopedProjectTokens()
     {
         var reports = new ConcurrentBag<(string Path, string Query)>();
