@@ -109,6 +109,29 @@ zero warnings/errors and verified both assemblies' commit identity before tests.
 This is focused proof; exact-head CI and unified-native compatibility remain
 separate gates.
 
+## Idle-pool fixture isolation
+
+CI run `39982646431` at `93e23bd9656719ca785677bc1f9d87f23ffa8464` reported
+2,508 TerraBase passes, one failure and zero skips. The idle-pool test expected
+eight idle sessions but observed seven. A two-second catalog-convergence read
+can rent a SYSTEM session from this shared pool during the exact-count check.
+The interleaving exists on main; CI does not identify the actual renter and
+encryption's timing contribution is unmeasured.
+
+Commit `7708b9ba2c8daadf8e9674e47b6d81a09e4bcc43` freezes that fixture's host
+clock and forwards the registered clock through its existing engine factory.
+Pool caps, exact count, LRU, file-handle and reopening assertions are unchanged.
+Independent review found no functional timeout regression in shared callers.
+
+At that literal commit, five complete `StorageTransactionTests` repetitions
+passed 19/19 each, with runner durations 13.947, 15.858, 39.296, 25.390 and
+9.684 seconds. Shared-factory controls passed once: StorageBeginCancellation
+2/2, StampingTransaction 6/6, StoragePool 9/9 and TenantLookupCache 9/9.
+Total 121 passed, zero failures/skips; all nine commands and aggregate exited 0.
+One Release build passed with zero warnings/errors. The subsequent QoS conflict
+resolution preserves main's request-log drain and request-scoped read counting;
+that union passed static review and awaits CI on the rebased head.
+
 ## Retained evidence
 
 Raw logs are outside Git under
@@ -135,6 +158,10 @@ Raw logs are outside Git under
   `8f0a400d860ad55a2385317a5ba858a6279da9ae1eb88288fb2b0ffa71292c48`.
   Retry results and exits are under `authorized-retry/`; the original failed
   build and its nonzero exits are preserved separately.
+- `repair-proof-pool-7708-20261023T162221Z/`: idle-pool isolation and shared
+  factory controls; `report.md` SHA-256
+  `6b5bef2dec313e95c35dc6785bd26aaedac695782db49ff26bb0c3db6226b5fb`.
+  All nine original runner JSON/HTML reports and their hashes are retained.
 
 Reports retain exact commands, commits, SDK/native identity, loads, timings,
 per-command exits, and actual runner totals. Encryption cost measurements remain
