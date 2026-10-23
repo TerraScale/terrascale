@@ -32,7 +32,7 @@ namespace TerraBase.Features.Wire;
 internal sealed class WireConnectionHandler(IServiceProvider services) : ConnectionHandler
 {
     public const byte Version = 1;
-    public const byte Hello = 0;
+    public const byte Hello = 0, Get = 1, Put = 2;
 
     /// <summary>Requests one connection runs at once; the next frame is read when one answers.</summary>
     public const int MaxInFlight = 128;
@@ -75,6 +75,9 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
                 return;
             }
 
+            // Requests to one document run in arrival order: each starts after the connection's previous request to it answered.
+            // Requests to different documents run concurrently, so pipelined puts share the engine's group commit.
+            var latest = new Dictionary<string, Task>(StringComparer.Ordinal);
             while (true)
             {
                 await slots.WaitAsync(closing.Token).ConfigureAwait(false);
@@ -95,8 +98,31 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
                     break;
                 }
 
+                var address = frame.Body.Length > 0 && frame.Body.Length >= 1 + frame.Body[0] + 26 ? Encoding.UTF8.GetString(frame.Body, 0, 1 + frame.Body[0] + 26) : "";
+                Task? prior;
+                lock (latest)
+                {
+                    prior = latest.GetValueOrDefault(address);
+                }
+
                 // On the thread pool: a request's synchronous storage work never holds up reading the next frame.
-                _ = Task.Run(() => RequestAsync(session, frame, slots, answers.Writer, closing, closed), CancellationToken.None);
+                var running = Task.Run(() => RequestAsync(session, frame, prior ?? Task.CompletedTask, slots, answers.Writer, closing, closed), CancellationToken.None);
+                lock (latest)
+                {
+                    latest[address] = running;
+                }
+
+                _ = running.ContinueWith(
+                    done =>
+                    {
+                        lock (latest)
+                        {
+                            if (latest.GetValueOrDefault(address) == done)
+                            {
+                                latest.Remove(address);
+                            }
+                        }
+                    }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             }
         }
         catch (InvalidDataException error)
@@ -205,12 +231,13 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
     }
 
     private async Task RequestAsync(
-        Session session, Frame frame, SemaphoreSlim slots, ChannelWriter<Outgoing> answers, CancellationTokenSource closing, CancellationToken closed)
+        Session session, Frame frame, Task prior, SemaphoreSlim slots, ChannelWriter<Outgoing> answers, CancellationTokenSource closing, CancellationToken closed)
     {
         byte[]? answer = null;
         IMemoryReservation? held = null;
         try
         {
+            await prior.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             answer = await ExecuteAsync(session, frame, closing, closed).ConfigureAwait(false);
             // Held until written, so a client that stops reading holds at most MaxInFlight admitted answers.
             held = services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Foreground, answer.Length, session.Grant.Database);
@@ -257,13 +284,37 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
             }
 
             tenant = grant.Database;
+            if (frame.Op is not (Get or Put))
+            {
+                return answer = Error(frame.Id, new Validation("unknown operation", "unknown_operation"));
+            }
+
+            if (frame.Op == Put && !grant.Key.Scopes.Contains(ApiKeyScopes.DocumentsWrite))
+            {
+                return answer = Error(frame.Id, new Forbidden("the API key lacks documents:write", "forbidden_scope"));
+            }
+
             using var lease = services.GetRequiredService<IQosAdmission>().TryEnter(tenant, out _);
             if (lease is null)
             {
                 return answer = Error(frame.Id, new QuotaExceeded("organization request budget exceeded", "tenant_busy"));
             }
 
-            return answer = Error(frame.Id, new Validation("unknown operation", "unknown_operation"));
+            services.GetRequiredService<IDocumentCacheQuota>().Reconcile(tenant);
+            using var scope = QosContext.Enter(tenant);
+            return answer = await DocumentAsync(tenant, frame, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ReplicaCopyFaultedException)
+        {
+            return answer = Error(frame.Id, new Unavailable("Storage is awaiting certified recovery.", "copy_faulted"));
+        }
+        catch (StorageBusyException error)
+        {
+            return answer = Error(frame.Id, new Unavailable(error.Message, "storage_busy"));
+        }
+        catch (QosMemoryException)
+        {
+            return answer = Error(frame.Id, new QuotaExceeded("organization memory budget exceeded", "tenant_memory"));
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
@@ -277,10 +328,80 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
             {
                 var elapsed = Stopwatch.GetElapsedTime(started);
                 var status = BinaryPrimitives.ReadUInt16LittleEndian(answer.AsSpan(8));
-                services.GetRequiredService<IUsageMeter>().RecordRequest(tenant, "OTHER", status, elapsed, frame.Body.Length, answer.Length - 10);
+                services.GetRequiredService<IUsageMeter>().RecordRequest(tenant, frame.Op switch { Get => "GET", Put => "PUT", _ => "OTHER" }, status, elapsed, frame.Body.Length, answer.Length - 10);
                 services.GetRequiredService<IPressureSignals>().Record(TerraBaseListener.Client, elapsed, tenant.OrganizationId, tenant.Plan);
             }
         }
+    }
+
+    // Body: u8 collection length, the collection, the document's 26-character ULID, then (put only) u8 durability and the JSON document.
+    private async ValueTask<byte[]> DocumentAsync(TenantContext tenant, Frame frame, CancellationToken cancellationToken)
+    {
+        var body = frame.Body;
+        var length = body.Length > 0 ? body[0] : 0;
+        if (body.Length < 1 + length + 26)
+        {
+            return Error(frame.Id, new Validation("the frame is too short for a collection and a document id", "invalid_frame"));
+        }
+
+        var checkedCollection = DocumentRoute.CheckCollectionName(Encoding.UTF8.GetString(body, 1, length));
+        var checkedId = DocumentRoute.CheckDocumentId(Encoding.ASCII.GetString(body, 1 + length, 26));
+        if (checkedCollection is Validation badCollection)
+        {
+            return Error(frame.Id, badCollection);
+        }
+
+        if (checkedId is Validation badId)
+        {
+            return Error(frame.Id, badId);
+        }
+
+        var (collection, id) = (checkedCollection, checkedId) is (string checkedName, string checkedKey) ? (checkedName, checkedKey) : throw new UnreachableException();
+
+        // The node's own copy here; the document service refuses a faulted copy of this database on every read and write.
+        if (await services.GetRequiredService<IReplicaCopyFaults>().RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ReplicaCopyFaultedException("this database copy is awaiting certified recovery");
+        }
+
+        var documents = services.GetRequiredService<IDocumentService>();
+        if (frame.Op == Get)
+        {
+            var key = new DocumentKey(tenant, collection, id);
+            return await documents.GetAsync(key, cancellationToken).ConfigureAwait(false) switch
+            {
+                StoredDocument { UniqueConflict: true } => Error(frame.Id, new Conflict("the document lost a replicated uniqueness conflict", "unique_violation")),
+                StoredDocument { Deleted: false } document => Answer(
+                    frame.Id, 200, Short(ETags.Version(document.Scope, collection, document.Id, document.Version, document.Json)), document.Json.Span),
+                StoredDocument or NeverWritten => Error(frame.Id, new NotFound("the document does not exist")),
+                NotFound error => Error(frame.Id, error),
+                Validation error => Error(frame.Id, error),
+                Forbidden error => Error(frame.Id, error),
+            };
+        }
+
+        // After the id: u8 durability, as the HTTP API's TB-Durability (0 local_durable, 1 remote_durable), then the document.
+        if (body.Length < 1 + length + 27 || body[1 + length + 26] > 1)
+        {
+            return Error(frame.Id, new Validation($"a put carries its durability: 0 {WriteResult.LocalDurable} or 1 {WriteResult.RemoteDurable}"));
+        }
+
+        var waitForRemote = body[1 + length + 26] == 1;
+        var json = body.AsMemory(1 + length + 27).ToArray();
+        if (!RequestJson.IsText(json))
+        {
+            return Error(frame.Id, new Validation(RequestJson.TextRule));
+        }
+
+        var none = new Precondition(null, IfMatchAny: false, IfNoneMatch: false);
+        return await documents.WriteConfirmedAsync(tenant, [new PutOperation(collection, id, json, none)], indexErrors: false, waitForRemote, cancellationToken)
+            .ConfigureAwait(false) switch
+        {
+            DocumentRejected rejected => Error(frame.Id, rejected.Error),
+            WriteResult written => Answer(
+                frame.Id, written.Results[0].Created ? (ushort)201 : (ushort)200,
+                [(byte)(written.Durability == WriteResult.RemoteDurable ? 1 : 0), .. Short(written.Results[0].ETag!)], []),
+        };
     }
 
     // A frame: u32 length of the rest, u32 request id, u8 operation, body. The memory budget admits it while it is read; the

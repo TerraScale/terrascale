@@ -12,6 +12,15 @@ public sealed record WireAnswer(int Status, byte[] Payload, byte Operation)
 {
     /// <summary>The error code of an error answer.</summary>
     public string Code => Status >= 400 ? Encoding.ASCII.GetString(Payload, 1, Payload[0]) : "";
+
+    /// <summary>The ETag of a get or put answer.</summary>
+    public string ETag => Operation == 2 ? Encoding.ASCII.GetString(Payload, 2, Payload[1]) : Encoding.ASCII.GetString(Payload, 1, Payload[0]);
+
+    /// <summary>The JSON document of a get answer.</summary>
+    public string Json => Encoding.UTF8.GetString(Payload, 1 + Payload[0], Payload.Length - 1 - Payload[0]);
+
+    /// <summary>Whether a put answered remote_durable rather than local_durable.</summary>
+    public bool RemoteDurable => Payload[0] == 1;
 }
 
 /// <summary>
@@ -63,6 +72,12 @@ public sealed class WireClient : IAsyncDisposable
     public Task<WireAnswer> HelloAsync(string key, string project, string database) =>
         SendAsync(0, [1, .. Text(key), .. Text(project), .. Text(database)]);
 
+    public Task<WireAnswer> GetAsync(string collection, string id) => SendAsync(1, Address(collection, id));
+
+    /// <summary>A put, answered locally durable or, with <paramref name="remoteDurable"/>, after another region's acknowledgement.</summary>
+    public Task<WireAnswer> PutAsync(string collection, string id, string json, bool remoteDurable = false) =>
+        SendAsync(2, [.. Address(collection, id), remoteDurable ? (byte)1 : (byte)0, .. Encoding.UTF8.GetBytes(json)]);
+
     /// <summary>Sends any frame; an answer that never comes fails when the connection closes.</summary>
     public Task<WireAnswer> SendAsync(byte operation, byte[] body)
     {
@@ -89,6 +104,8 @@ public sealed class WireClient : IAsyncDisposable
         _tcp.Dispose();
         await Task.WhenAll(Closed, _writing).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     }
+
+    private static byte[] Address(string collection, string id) => [(byte)Encoding.UTF8.GetByteCount(collection), .. Encoding.UTF8.GetBytes(collection), .. Encoding.ASCII.GetBytes(id)];
 
     private static byte[] Text(string text)
     {
