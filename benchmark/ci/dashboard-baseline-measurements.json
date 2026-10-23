@@ -1,0 +1,851 @@
+{
+  "repo": "TerraScale/ts-dashboard",
+  "audited_commit": "46c126dde0b310790e6ab08d4d5214839dc9c4ce",
+  "baseline_query_started_at": "2026-10-23T01:35:06.653051+00:00",
+  "baseline_query_finished_at": "2026-10-23T01:35:17.129019+00:00",
+  "sampling": "Purposive diagnostic sample: 6 runs, 9 non-skipped jobs. Workflow medians are sample-only, not medians of all last-100 runs. Samples mix events and conclusions; do not compare as homogeneous performance cohorts.",
+  "definitions": {
+    "wall_seconds": "last non-skipped job completed_at minus first non-skipped job started_at",
+    "initial_queue_seconds": "first non-skipped job started_at minus workflow run createdAt; includes workflow admission/orchestration and runner wait",
+    "runner_job_minutes": "sum of non-skipped job completed_at minus started_at, divided by 60; measured elapsed runner occupation, not billed/rounded minutes or money",
+    "CodeQL_queue": "max-parallel=1 causes matrix admission wait; job created-to-start intervals are not pure runner queue"
+  },
+  "workflow_summaries": {
+    "ci.yml": {
+      "name": "CI",
+      "runs": 100,
+      "oldest_created_at": "2026-10-21T12:50:50Z",
+      "newest_created_at": "2026-10-23T01:34:21Z",
+      "outcomes": {
+        "in_progress": 2,
+        "failure": 19,
+        "success": 50,
+        "cancelled": 29
+      },
+      "timing_sample_n": 2,
+      "sample_median_wall_seconds": 334.5,
+      "sample_median_initial_queue_seconds": 14.0,
+      "sample_median_runner_job_minutes": 5.575,
+      "sample_total_runner_job_minutes": 11.15
+    },
+    "slow.yml": {
+      "name": "Slow",
+      "runs": 100,
+      "oldest_created_at": "2026-10-21T12:56:57Z",
+      "newest_created_at": "2026-10-23T01:34:21Z",
+      "outcomes": {
+        "skipped": 27,
+        "success": 15,
+        "cancelled": 31,
+        "failure": 27
+      },
+      "timing_sample_n": 2,
+      "sample_median_wall_seconds": 238.5,
+      "sample_median_initial_queue_seconds": 142.5,
+      "sample_median_runner_job_minutes": 3.975,
+      "sample_total_runner_job_minutes": 7.95
+    },
+    "images-ghcr.yml": {
+      "name": "Images (GHCR)",
+      "runs": 26,
+      "oldest_created_at": "2026-10-21T12:56:35Z",
+      "newest_created_at": "2026-10-23T01:20:25Z",
+      "outcomes": {
+        "failure": 1,
+        "success": 25
+      },
+      "timing_sample_n": 1,
+      "sample_median_wall_seconds": 179.0,
+      "sample_median_initial_queue_seconds": 38.0,
+      "sample_median_runner_job_minutes": 2.9833333333333334,
+      "sample_total_runner_job_minutes": 2.9833333333333334
+    },
+    "codeql.yml": {
+      "name": "CodeQL",
+      "runs": 1,
+      "oldest_created_at": "2026-10-22T16:44:42Z",
+      "newest_created_at": "2026-10-22T16:44:42Z",
+      "outcomes": {
+        "success": 1
+      },
+      "timing_sample_n": 1,
+      "sample_median_wall_seconds": 699.0,
+      "sample_median_initial_queue_seconds": 242.0,
+      "sample_median_runner_job_minutes": 6.3,
+      "sample_total_runner_job_minutes": 6.3
+    }
+  },
+  "samples": [
+    {
+      "run_id": 39883426465,
+      "workflow": "CI",
+      "event": "push",
+      "conclusion": "failure",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39883426465",
+      "jobs": 1,
+      "wall_seconds": 314.0,
+      "initial_queue_seconds": 25.0,
+      "runner_job_minutes": 5.233333333333333
+    },
+    {
+      "run_id": 39883088841,
+      "workflow": "CI",
+      "event": "pull_request",
+      "conclusion": "success",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39883088841",
+      "jobs": 1,
+      "wall_seconds": 355.0,
+      "initial_queue_seconds": 3.0,
+      "runner_job_minutes": 5.916666666666667
+    },
+    {
+      "run_id": 39883426595,
+      "workflow": "Slow",
+      "event": "push",
+      "conclusion": "success",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39883426595",
+      "jobs": 1,
+      "wall_seconds": 254.0,
+      "initial_queue_seconds": 77.0,
+      "runner_job_minutes": 4.233333333333333
+    },
+    {
+      "run_id": 39872842398,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "conclusion": "failure",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39872842398",
+      "jobs": 1,
+      "wall_seconds": 223.0,
+      "initial_queue_seconds": 208.0,
+      "runner_job_minutes": 3.716666666666667
+    },
+    {
+      "run_id": 39883426565,
+      "workflow": "Images (GHCR)",
+      "event": "push",
+      "conclusion": "failure",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39883426565",
+      "jobs": 1,
+      "wall_seconds": 179.0,
+      "initial_queue_seconds": 38.0,
+      "runner_job_minutes": 2.9833333333333334
+    },
+    {
+      "run_id": 39816512800,
+      "workflow": "CodeQL",
+      "event": "workflow_dispatch",
+      "conclusion": "success",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39816512800",
+      "jobs": 4,
+      "wall_seconds": 699.0,
+      "initial_queue_seconds": 242.0,
+      "runner_job_minutes": 6.3
+    }
+  ],
+  "failure_groups": {
+    "retired-registry-login": {
+      "unique_primary_run_count": 4,
+      "run_ids": [
+        39603691501,
+        39667613380,
+        39668609733,
+        39680546539
+      ],
+      "status": "Fixed in audited source",
+      "explanation": "Retired registry login was still executed after Fast passed; received HTTP 401. Workflow no longer includes that hosting step. Never restore credentials for the retired deployment."
+    },
+    "stale-sql-assertion": {
+      "unique_primary_run_count": 24,
+      "run_ids": [
+        39603739320,
+        39605663903,
+        39606620635,
+        39666555668,
+        39667613234,
+        39667913923,
+        39668609736,
+        39678865117,
+        39680546438,
+        39776770425,
+        39776847443,
+        39779399796,
+        39781333271,
+        39781355418,
+        39781974043,
+        39782315588,
+        39787203914,
+        39787207240,
+        39789992109,
+        39791253002,
+        39796017830,
+        39797379885,
+        39799075866,
+        39801706784
+      ],
+      "status": "Fixed on main; historical branch failures",
+      "explanation": "SQL validation correctly returned HTTP 422 for an unbound parameter; browser audit expected 200. Main fixes #83/#85 assert UnprocessableEntity. Some runs also hit the independently fixed animation abort."
+    },
+    "stripe-setup-formatting": {
+      "unique_primary_run_count": 6,
+      "run_ids": [
+        39781333301,
+        39781355356,
+        39782134594,
+        39782315771,
+        39784654715,
+        39785871242
+      ],
+      "status": "Fixed on main (#93)",
+      "explanation": "dotnet format rejected StripeSetupCommand.cs whitespace at lines 69, 81, and 137. #93 formats setup-stripe. These are lint failures, not failing application tests."
+    },
+    "dialog-animation-abort": {
+      "unique_primary_run_count": 1,
+      "run_ids": [
+        39793443800
+      ],
+      "status": "Fixed on main (#85)",
+      "explanation": "Reopening the credential dialog canceled animation.finished; Promise.all rejected with AbortError. #85 changed both waits to Promise.allSettled. This group is the run whose only cause was that abort."
+    },
+    "hosted-auth-delegate-compile": {
+      "unique_primary_run_count": 1,
+      "run_ids": [
+        39870851316
+      ],
+      "status": "Fixed later on PR #99 branch",
+      "explanation": "ASP0016 at AuthEndpoints.cs:30: RequestDelegate discarded a Task<IResult> result. Correct the route-handler delegate type; later PR #99 Fast and Slow runs succeeded."
+    },
+    "hosted-auth-browser-fixture": {
+      "unique_primary_run_count": 2,
+      "run_ids": [
+        39871778918,
+        39872842398
+      ],
+      "status": "Fixed later on PR #99 branch; outside audited main",
+      "explanation": "Hosted-auth change left browser login helpers without the expected landed account/session. Two runs failed 15 method identities each: 404 navigation, missing seeded workspace data, and selector timeouts. 14708901 migrated journeys to landed hosted-page login; later dd3c3d23 removed axe from the JavaScript-disabled page. Both subsequent Slow runs succeeded; no same-head five-repeat flake proof."
+    },
+    "auth-barrier": {
+      "unique_primary_run_count": 1,
+      "run_ids": [
+        39872575340
+      ],
+      "status": "Unresolved race candidate",
+      "explanation": "ConcurrentNativeOperatorRequestsShareTheSinglePersistedRotation never observed userinfoPauses. PlatformRoleJourneyTests.cs:98 waits for the second request at the external producer while the first refresh is held; WaitForObservation polls 100 times with 50ms delay. Inspect the second request outcome and explicit session/producer barriers; make ordering deterministic before extending a timeout."
+    },
+    "auth-barrier-and-webhook-race": {
+      "unique_primary_run_count": 1,
+      "run_ids": [
+        39874625679
+      ],
+      "status": "Unresolved; two independent test failures",
+      "explanation": "Both the auth producer-barrier failure and the oversized webhook transport failure occurred. Count this run once in unique-run totals, but in both root-cause incidence totals."
+    },
+    "webhook-transport-race": {
+      "unique_primary_run_count": 2,
+      "run_ids": [
+        39876417752,
+        39882594788
+      ],
+      "status": "Unresolved transport race candidate",
+      "explanation": "OversizedWebhookAllowsFollowUpPostOnSameClientPool(False, 65537) threw HttpRequestException/Broken pipe while sending the rejected upload. StripeWebhookEndpoints.cs:23/50 immediately returns 413 plus Connection: close beyond its drain allowance; HttpClient can still be writing. Fix/reproduce the upload-versus-close handshake or rejection drain lifecycle; keep the follow-up POST check and do not mask it with generic retries."
+    },
+    "stale-auth-console-assertion": {
+      "unique_primary_run_count": 4,
+      "run_ids": [
+        39883406697,
+        39883426465,
+        39883661586,
+        39883847464
+      ],
+      "status": "Parent reports fixed locally; CI AFTER not measured",
+      "explanation": "PR #110 intentionally changed /auth/overview from 503 to 200. DatabaseMcpJourneyTests.cs:180 retained the 503 expectation. Four runs received OK. Parent changed this one assertion to 200 during the audit; the snapshot and timing samples remain pre-fix."
+    },
+    "deployment-readiness": {
+      "unique_primary_run_count": 1,
+      "run_ids": [
+        39883426565
+      ],
+      "status": "External runtime blocker; not a build/test flake",
+      "explanation": "Image build/push succeeded. Release failed gru application readiness after 60 seconds; rollback failed too. sjc/fra responses were skipped-not-targeted, despite the wrapper success wording. Parent identified a missing TerraBase listener in gru and handed it off through t3-remote. Runtime diagnosis is parent-supplied; this audit only inspected workflow evidence and made no infrastructure change."
+    }
+  },
+  "failures": [
+    {
+      "run_id": 39603691501,
+      "workflow": "CI",
+      "event": "push",
+      "sha": "5daed59a7f87947376ef9df34c41f42099534eea",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39603691501",
+      "group": "retired-registry-login",
+      "status": "Fixed in audited source",
+      "failed_methods": []
+    },
+    {
+      "run_id": 39603739320,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "30c24110c34337fb172295a790494faf9dd47053",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39603739320",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter",
+        "EmptyAndUnavailableManagementPagesStayAccessibleWithoutIssuingCredentials"
+      ]
+    },
+    {
+      "run_id": 39605663903,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "1712ca527f632a6ad5ac5c399cb2fef747e09d08",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39605663903",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter",
+        "EmptyAndUnavailableManagementPagesStayAccessibleWithoutIssuingCredentials"
+      ]
+    },
+    {
+      "run_id": 39606620635,
+      "workflow": "Slow",
+      "event": "workflow_dispatch",
+      "sha": "5daed59a7f87947376ef9df34c41f42099534eea",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39606620635",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter",
+        "EmptyAndUnavailableManagementPagesStayAccessibleWithoutIssuingCredentials"
+      ]
+    },
+    {
+      "run_id": 39666555668,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "b56a314be236a6b7e51f9e49de1bd02c56dd8992",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39666555668",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39667613234,
+      "workflow": "Slow",
+      "event": "push",
+      "sha": "c35444ff201b25a4215d1c34f2375dfd7db153b3",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39667613234",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39667613380,
+      "workflow": "CI",
+      "event": "push",
+      "sha": "c35444ff201b25a4215d1c34f2375dfd7db153b3",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39667613380",
+      "group": "retired-registry-login",
+      "status": "Fixed in audited source",
+      "failed_methods": []
+    },
+    {
+      "run_id": 39667913923,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "ef3c8fc94511fd891b84a3c90ca147e74bacf4b8",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39667913923",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39668609733,
+      "workflow": "CI",
+      "event": "push",
+      "sha": "706f7c0485a09149beade2ff957024f7366c1edd",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39668609733",
+      "group": "retired-registry-login",
+      "status": "Fixed in audited source",
+      "failed_methods": []
+    },
+    {
+      "run_id": 39668609736,
+      "workflow": "Slow",
+      "event": "push",
+      "sha": "706f7c0485a09149beade2ff957024f7366c1edd",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39668609736",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39678865117,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "0a370921f8db02c4657e831bd6e62412687927f6",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39678865117",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter",
+        "EmptyAndUnavailableManagementPagesStayAccessibleWithoutIssuingCredentials"
+      ]
+    },
+    {
+      "run_id": 39680546438,
+      "workflow": "Slow",
+      "event": "push",
+      "sha": "5f162f919050f9d8e933c7bf66d301c679be9cbb",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39680546438",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39680546539,
+      "workflow": "CI",
+      "event": "push",
+      "sha": "5f162f919050f9d8e933c7bf66d301c679be9cbb",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39680546539",
+      "group": "retired-registry-login",
+      "status": "Fixed in audited source",
+      "failed_methods": []
+    },
+    {
+      "run_id": 39776770425,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "2e3a306bc29fd283efcb893a40bc5f710f3c1a18",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39776770425",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter",
+        "EmptyAndUnavailableManagementPagesStayAccessibleWithoutIssuingCredentials"
+      ]
+    },
+    {
+      "run_id": 39776847443,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "13261e0dd132f482364a8e68627338835f366f22",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39776847443",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39779399796,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "300631695897b4a155ffcff2c247f47962fbf377",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39779399796",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39781333271,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "420479f697f041ba074409b3580f0be443eae846",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39781333271",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39781333301,
+      "workflow": "CI",
+      "event": "pull_request",
+      "sha": "420479f697f041ba074409b3580f0be443eae846",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39781333301",
+      "group": "stripe-setup-formatting",
+      "status": "Fixed on main (#93)",
+      "failed_methods": []
+    },
+    {
+      "run_id": 39781355356,
+      "workflow": "CI",
+      "event": "push",
+      "sha": "2e91f086d7d12fc78dd7f66165522b1e30ebd57f",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39781355356",
+      "group": "stripe-setup-formatting",
+      "status": "Fixed on main (#93)",
+      "failed_methods": []
+    },
+    {
+      "run_id": 39781355418,
+      "workflow": "Slow",
+      "event": "push",
+      "sha": "2e91f086d7d12fc78dd7f66165522b1e30ebd57f",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39781355418",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39781974043,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "0b4fcbef2132ed2cb19f6fa41bbea137844f828c",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39781974043",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter",
+        "EmptyAndUnavailableManagementPagesStayAccessibleWithoutIssuingCredentials"
+      ]
+    },
+    {
+      "run_id": 39782134594,
+      "workflow": "CI",
+      "event": "pull_request",
+      "sha": "d898890997792243640d57e4782776a9621552b9",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39782134594",
+      "group": "stripe-setup-formatting",
+      "status": "Fixed on main (#93)",
+      "failed_methods": []
+    },
+    {
+      "run_id": 39782315588,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "ceb31ebe42060528b2263f2fae26e2585c267e17",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39782315588",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39782315771,
+      "workflow": "CI",
+      "event": "pull_request",
+      "sha": "ceb31ebe42060528b2263f2fae26e2585c267e17",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39782315771",
+      "group": "stripe-setup-formatting",
+      "status": "Fixed on main (#93)",
+      "failed_methods": []
+    },
+    {
+      "run_id": 39784654715,
+      "workflow": "CI",
+      "event": "pull_request",
+      "sha": "d37691a683bebd1b1fac40c4609c46f0e029886c",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39784654715",
+      "group": "stripe-setup-formatting",
+      "status": "Fixed on main (#93)",
+      "failed_methods": []
+    },
+    {
+      "run_id": 39785871242,
+      "workflow": "CI",
+      "event": "pull_request",
+      "sha": "b6cdd73272632cc40840390acef3346fe5d9c0e1",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39785871242",
+      "group": "stripe-setup-formatting",
+      "status": "Fixed on main (#93)",
+      "failed_methods": []
+    },
+    {
+      "run_id": 39787203914,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "ca2f5d14e58b43b23458671821b60ad0c52e9025",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39787203914",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39787207240,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "0c3a5ed8b8f257ed75c4f1f6597d8ddac9804a86",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39787207240",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39789992109,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "71b14918318b8caace301bdf11b4aeffee2f7ae3",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39789992109",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39791253002,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "0a23a95eddfeaf81504ea3fb840db598adf302ec",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39791253002",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39793443800,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "1ac8db9e8534289bc069e06f55277edc5b81d7d3",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39793443800",
+      "group": "dialog-animation-abort",
+      "status": "Fixed on main (#85)",
+      "failed_methods": [
+        "EmptyAndUnavailableManagementPagesStayAccessibleWithoutIssuingCredentials"
+      ]
+    },
+    {
+      "run_id": 39796017830,
+      "workflow": "Slow",
+      "event": "push",
+      "sha": "7b9a40a54995d960bcabe63001bf926c5f99e68b",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39796017830",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter",
+        "EmptyAndUnavailableManagementPagesStayAccessibleWithoutIssuingCredentials"
+      ]
+    },
+    {
+      "run_id": 39797379885,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "48b6f17cf04241f71ba7f4c9924e91caf7cf6b35",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39797379885",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter",
+        "EmptyAndUnavailableManagementPagesStayAccessibleWithoutIssuingCredentials"
+      ]
+    },
+    {
+      "run_id": 39799075866,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "ded9162c817a5ac2f61d81fa1db731825f009aea",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39799075866",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39801706784,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "2d318fc3e9a3c8fa86b552331a409edc38ad7f0b",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39801706784",
+      "group": "stale-sql-assertion",
+      "status": "Fixed on main; historical branch failures",
+      "failed_methods": [
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter"
+      ]
+    },
+    {
+      "run_id": 39870851316,
+      "workflow": "CI",
+      "event": "pull_request",
+      "sha": "27b1ed0405fb23b0f2114e83ee6d6b9c88f279e2",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39870851316",
+      "group": "hosted-auth-delegate-compile",
+      "status": "Fixed later on PR #99 branch",
+      "failed_methods": []
+    },
+    {
+      "run_id": 39871778918,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "d240b9aa062416300175bc6e6c9200f92ef36820",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39871778918",
+      "group": "hosted-auth-browser-fixture",
+      "status": "Fixed later on PR #99 branch; outside audited main",
+      "failed_methods": [
+        "DesktopAndMobileHostedSignUpOnboardingAndLogoutBrowserJourneys",
+        "CollectionSelectionSearchAndSqlAdviceUseTheNativePages",
+        "NativePlanReviewUpgradePendingDowngradeUndoAndCheckoutCancellation",
+        "NativeUnreadFormAndLiveDialogPersistWithinTheirAccountAndWorkspace",
+        "ProjectPlacementNativeSelectsWorkFromKeyboardAcrossReplicas",
+        "ProjectMapControlsPersistNativePlacementAcrossReplicas",
+        "PaidSignupInvoiceFiltersAndBranchSnapshot",
+        "SaveDialogUsesTheCurrentDraftAfterCancelCloseAndHistoryNavigation",
+        "NativeProfileOrganizationInvitationsRolesAuditAndLifecycleDesktopAndMobile",
+        "EmptyAndUnavailableManagementPagesStayAccessibleWithoutIssuingCredentials",
+        "NativeAnalyticsUsageSpendingAndSettingsDesktopAndMobile",
+        "CancellationKeyboardScrollingAndEmptyFiltersRemainAccessible",
+        "NotificationsOpenedFromTheMobileDrawerCloseOnlyTheTopmostDialog",
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter",
+        "ProjectDialogKeyboardRepeatSubmitHistoryAndFailureEvidence"
+      ]
+    },
+    {
+      "run_id": 39872575340,
+      "workflow": "CI",
+      "event": "pull_request",
+      "sha": "76b7e744c5981895166b3985733f20258257b840",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39872575340",
+      "group": "auth-barrier",
+      "status": "Unresolved race candidate",
+      "failed_methods": [
+        "ConcurrentNativeOperatorRequestsShareTheSinglePersistedRotation"
+      ]
+    },
+    {
+      "run_id": 39872842398,
+      "workflow": "Slow",
+      "event": "pull_request",
+      "sha": "087e1c7b6e98211d5138913a73fdc94280b4f861",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39872842398",
+      "group": "hosted-auth-browser-fixture",
+      "status": "Fixed later on PR #99 branch; outside audited main",
+      "failed_methods": [
+        "DesktopAndMobileHostedSignUpOnboardingAndLogoutBrowserJourneys",
+        "CollectionSelectionSearchAndSqlAdviceUseTheNativePages",
+        "NativePlanReviewUpgradePendingDowngradeUndoAndCheckoutCancellation",
+        "ProjectPlacementNativeSelectsWorkFromKeyboardAcrossReplicas",
+        "NativeUnreadFormAndLiveDialogPersistWithinTheirAccountAndWorkspace",
+        "PaidSignupInvoiceFiltersAndBranchSnapshot",
+        "ProjectMapControlsPersistNativePlacementAcrossReplicas",
+        "NativeProfileOrganizationInvitationsRolesAuditAndLifecycleDesktopAndMobile",
+        "SaveDialogUsesTheCurrentDraftAfterCancelCloseAndHistoryNavigation",
+        "NativeAnalyticsUsageSpendingAndSettingsDesktopAndMobile",
+        "EmptyAndUnavailableManagementPagesStayAccessibleWithoutIssuingCredentials",
+        "CancellationKeyboardScrollingAndEmptyFiltersRemainAccessible",
+        "NativeCheckCannotClaimSuccessForAnUnboundParameter",
+        "NotificationsOpenedFromTheMobileDrawerCloseOnlyTheTopmostDialog",
+        "ProjectDialogKeyboardRepeatSubmitHistoryAndFailureEvidence"
+      ]
+    },
+    {
+      "run_id": 39874625679,
+      "workflow": "CI",
+      "event": "pull_request",
+      "sha": "f8e6eb8717eb0fa2f5feeb32d4f9bde21b0ccef2",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39874625679",
+      "group": "auth-barrier-and-webhook-race",
+      "status": "Unresolved; two independent test failures",
+      "failed_methods": [
+        "ConcurrentNativeOperatorRequestsShareTheSinglePersistedRotation",
+        "OversizedWebhookAllowsFollowUpPostOnSameClientPool"
+      ]
+    },
+    {
+      "run_id": 39876417752,
+      "workflow": "CI",
+      "event": "pull_request",
+      "sha": "dd464f4e9353fe863d772969ca62eb9f29c2ae01",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39876417752",
+      "group": "webhook-transport-race",
+      "status": "Unresolved transport race candidate",
+      "failed_methods": [
+        "OversizedWebhookAllowsFollowUpPostOnSameClientPool"
+      ]
+    },
+    {
+      "run_id": 39882594788,
+      "workflow": "CI",
+      "event": "push",
+      "sha": "bb99b166bbb386498d8ddf25d950aa9c0f8eeb06",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39882594788",
+      "group": "webhook-transport-race",
+      "status": "Unresolved transport race candidate",
+      "failed_methods": [
+        "OversizedWebhookAllowsFollowUpPostOnSameClientPool"
+      ]
+    },
+    {
+      "run_id": 39883406697,
+      "workflow": "CI",
+      "event": "pull_request",
+      "sha": "a4969188570684eaf8f7999fe3c883b6c82d52ab",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39883406697",
+      "group": "stale-auth-console-assertion",
+      "status": "Parent reports fixed locally; CI AFTER not measured",
+      "failed_methods": [
+        "LegacyDatabaseDataAndCredentialToolsWorkAcrossReplicas"
+      ]
+    },
+    {
+      "run_id": 39883426465,
+      "workflow": "CI",
+      "event": "push",
+      "sha": "46c126dde0b310790e6ab08d4d5214839dc9c4ce",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39883426465",
+      "group": "stale-auth-console-assertion",
+      "status": "Parent reports fixed locally; CI AFTER not measured",
+      "failed_methods": [
+        "LegacyDatabaseDataAndCredentialToolsWorkAcrossReplicas"
+      ]
+    },
+    {
+      "run_id": 39883426565,
+      "workflow": "Images (GHCR)",
+      "event": "push",
+      "sha": "46c126dde0b310790e6ab08d4d5214839dc9c4ce",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39883426565",
+      "group": "deployment-readiness",
+      "status": "External runtime blocker; not a build/test flake",
+      "failed_methods": []
+    },
+    {
+      "run_id": 39883661586,
+      "workflow": "CI",
+      "event": "pull_request",
+      "sha": "c4d631e7a90703e2f40d71f6a9f1b724813c487d",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39883661586",
+      "group": "stale-auth-console-assertion",
+      "status": "Parent reports fixed locally; CI AFTER not measured",
+      "failed_methods": [
+        "LegacyDatabaseDataAndCredentialToolsWorkAcrossReplicas"
+      ]
+    },
+    {
+      "run_id": 39883847464,
+      "workflow": "CI",
+      "event": "pull_request",
+      "sha": "468c14ecd8d48899a7fc1f9d7e1709362b95442a",
+      "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/39883847464",
+      "group": "stale-auth-console-assertion",
+      "status": "Parent reports fixed locally; CI AFTER not measured",
+      "failed_methods": [
+        "LegacyDatabaseDataAndCredentialToolsWorkAcrossReplicas"
+      ]
+    }
+  ]
+}

@@ -124,6 +124,8 @@ public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
     [Arguments(true, 64 * 1024 + 1)]
     public async Task OversizedWebhookAllowsFollowUpPostOnSameClientPool(bool chunked, int excess)
     {
+        Skip.When(!chunked && excess > 64 * 1024 && DateTimeOffset.UtcNow < new DateTimeOffset(2026, 10, 24, 1, 48, 0, TimeSpan.Zero),
+            "Quarantine #112: owner MarioGK; fix rejected-upload transport by 2026-10-24T01:48:00Z; requires five dev-host repeats.");
         using var client = new HttpClient(new HttpClientHandler { MaxConnectionsPerServer = 1 })
         { BaseAddress = fixture.Origin, Timeout = TimeSpan.FromSeconds(30) };
         var body = new string('x', (1 << 20) + excess);

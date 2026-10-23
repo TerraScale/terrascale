@@ -51,11 +51,12 @@ def find_proof(repository, tree, now, fetch=api):
         run = fetch(f"repos/{repository}/actions/runs/{run_id}")
         if (type(run["id"]) is int and run["id"] == run_id
                 and run["repository"]["full_name"] == repository
+                and run["head_commit"]["tree_id"] == tree
                 and run["path"] == ".github/workflows/ci.yml"
                 and run["event"] in ("pull_request", "merge_group")
                 and run["status"] == "completed" and run["conclusion"] == "success"
                 and timestamp(run["run_started_at"]) < created):
-            # The artifact records the actual checkout tree; head_sha can be a PR head.
+            # Require both actual tested tree and producer source tree; names alone are forgeable.
             return f"https://github.com/{repository}/actions/runs/{run_id}"
     return ""
 
@@ -80,7 +81,8 @@ def self_check():
     run = {"id": 42, "repository": {"full_name": repository},
            "path": ".github/workflows/ci.yml", "event": "pull_request",
            "status": "completed", "conclusion": "success",
-           "run_started_at": "2026-10-22T11:00:00Z", "head_sha": "b" * 40}
+           "run_started_at": "2026-10-22T11:00:00Z", "head_sha": "b" * 40,
+           "head_commit": {"tree_id": tree}}
 
     def lookup(candidate=artifact, source=run):
         calls = []
@@ -101,6 +103,7 @@ def self_check():
     for change in (
         {"path": ".github/workflows/other.yml"},
         {"repository": {"full_name": "Other/repo"}},
+        {"head_commit": {"tree_id": "b" * 40}},
         {"event": "push"}, {"event": "pull_request_target"},
         {"status": "in_progress"}, {"conclusion": "failure"},
         {"id": 43}, {"run_started_at": artifact["created_at"]},
