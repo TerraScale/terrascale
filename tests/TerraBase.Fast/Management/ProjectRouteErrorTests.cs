@@ -58,6 +58,27 @@ public sealed class ProjectRouteErrorTests
         await ErrorAssert.ErrorAsync(client.GetAsync(path), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
     }
 
+    [Test]
+    public async Task A_deleted_project_refuses_the_next_request_of_a_token_it_already_answered()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var organization = await api.CreateOrganizationAsync("Revoked");
+        var project = await api.CreateProjectAsync(organization, "Revoked project");
+        await api.VerifyProjectBindingAsync(organization, project);
+        using var client = ProjectClient(api, project);
+        var databases = Uri($"/v1/projects/{project}/databases");
+        // Twice: the second answer comes from the resolved project the node keeps between catalog commits.
+        for (var i = 0; i < 2; i++)
+        {
+            using var listed = await client.GetAsync(databases);
+            await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await listed.Content.ReadAsStringAsync());
+        }
+
+        using var deleted = await api.Client.DeleteAsync(Uri($"/v1/management/organizations/{organization}/projects/{project}"));
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await deleted.Content.ReadAsStringAsync());
+        await ErrorAssert.ErrorAsync(client.GetAsync(databases), HttpStatusCode.NotFound, "unknown_database", "the database does not exist");
+    }
+
     private static HttpClient ProjectClient(ManagementApi api, string project, string? database = null) =>
         api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token =>
         {

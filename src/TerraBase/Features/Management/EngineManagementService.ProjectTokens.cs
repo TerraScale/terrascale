@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -12,6 +13,12 @@ internal sealed record ProjectCatalogBinding(
 
 internal sealed partial class EngineManagementService : IProjectCatalog
 {
+    // Every project-token request resolves its project, twice (request admission and the project catalog). Like the tenant
+    // caches (EngineManagementService.Tenants.cs) a lookup stays valid while the catalog has not committed since it was
+    // read, so a deleted project or changed binding refuses the next request; the incarnation, like the plan cache's, so a
+    // replaced system database starting its count again does not match. Keyed by the project id alone.
+    private readonly ConcurrentDictionary<(string Project, string, string), (long Sequence, (Ulid Incarnation, ProjectMapping Mapping) Value)> _projects = new();
+
     public async ValueTask<ResolveProjectResult> ResolveProjectAsync(string projectId, string actor, bool create, CancellationToken cancellationToken)
     {
         if (options.AuthIssuer is not { } issuer)
@@ -19,19 +26,38 @@ internal sealed partial class EngineManagementService : IProjectCatalog
             return ManagementErrors.NotFound;
         }
 
-        var lookup = await ReadAsync<ProjectMappingResult>(async transaction =>
+        // Taken before the read: a commit racing it leaves the entry stale-tagged. Inside a commit, its transaction decides.
+        var system = CommitTransaction.Value is null ? await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false) : null;
+        var (incarnation, sequence) = (system?.Incarnation, system?.CommitSequence);
+        var key = (projectId, string.Empty, string.Empty);
+        ProjectMapping mapping;
+        if (sequence is { } current && _projects.TryGetValue(key, out var cached) && cached.Sequence == current && cached.Value.Incarnation == incarnation)
         {
-            var organization = await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false);
-            return new ProjectMapping(organization, organization is not null
-                && await IsProjectBoundAsync(transaction, projectId, organization, cancellationToken).ConfigureAwait(false));
-        }, static error => error, cancellationToken).ConfigureAwait(false);
-        if (lookup is not ProjectMapping mapping)
+            mapping = cached.Value.Mapping;
+        }
+        else
         {
-            return lookup switch
+            var lookup = await ReadAsync<ProjectMappingResult>(async transaction =>
             {
-                Unavailable error => error,
-                ProjectMapping => throw new UnreachableException(),
-            };
+                var organization = await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false);
+                return new ProjectMapping(organization, organization is not null
+                    && await IsProjectBoundAsync(transaction, projectId, organization, cancellationToken).ConfigureAwait(false));
+            }, static error => error, cancellationToken).ConfigureAwait(false);
+            if (lookup is not ProjectMapping found)
+            {
+                return lookup switch
+                {
+                    Unavailable error => error,
+                    ProjectMapping => throw new UnreachableException(),
+                };
+            }
+
+            if (sequence is { } read && incarnation is { } of)
+            {
+                Cache(_projects, key, read, (of, found));
+            }
+
+            mapping = found;
         }
 
         if (mapping.Organization is not null || !create)
