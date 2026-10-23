@@ -58,6 +58,8 @@ export const publicAlphaCatalog = pricingJson.plans.map((plan) => ({
   name: plan.name,
   slug: plan.id as PublicAlphaPlanSlug,
   ...planPresentation[plan.id as PublicAlphaPlanSlug],
+  accent: 'var(--ts-primary)',
+  accentRgb: 'var(--ts-primary-rgb)',
   available: plan.available,
   price: plan.priceMonthlyUsd,
   annualPrice: plan.priceAnnualUsd,
@@ -101,7 +103,7 @@ export const footerColumns: FooterColumn[] = [
   {
     key: 'resources',
     links: [
-      { key: 'apiReference', href: 'https://docs.terrascale.tech/getting-started/' },
+      { key: 'apiReference', href: 'https://api.terrascale.tech/scalar/' },
       { key: 'status', href: 'https://status.terrascale.tech' },
       { key: 'community', href: 'https://discord.gg/8Zr2Nw9g' },
     ],
