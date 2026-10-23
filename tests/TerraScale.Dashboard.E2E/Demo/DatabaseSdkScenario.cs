@@ -732,6 +732,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 var all = body.TryGetProperty("allRegions", out var every) && every.GetBoolean();
                 if (all && body.TryGetProperty("replicaRegions", out _)) return Error(400, "placement_conflict");
                 var replicas = body.TryGetProperty("replicaRegions", out var listed) ? listed.EnumerateArray().Select(value => value.GetString()!).ToArray() : [];
+                // As production TerraBase on a cell (decision 0013a): an explicit empty list places the database in one region only.
+                if (listed.ValueKind == JsonValueKind.Array && replicas.Length == 0) return Error(400, "placement_needs_two_regions");
                 if (home != answering) return WrongRegion(http, new(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas));
                 if (createGate is { } paused) { Interlocked.Increment(ref pausedCreates); await paused.Task.WaitAsync(http.RequestAborted); }
                 lock (gate)

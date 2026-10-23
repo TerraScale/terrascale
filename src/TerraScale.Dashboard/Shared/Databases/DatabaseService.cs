@@ -92,7 +92,8 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         if (recovered && remote.HomeRegion != placement[0].Id)
             throw new AccountAccessException("A database with this name already exists in another home region.", 409);
         var actualPlacement = await RemotePlacementAsync(remote, cancellationToken);
-        if (!recovered && (actualPlacement[0].Id != placement[0].Id || !SameReplicas(actualPlacement, placement) || remote.AllRegions != allRegions))
+        // Only the home chosen: TerraBase picked the replicas (every other serving region), so any it returns is the placement.
+        if (!recovered && (actualPlacement[0].Id != placement[0].Id || (placement.Count > 1 && !SameReplicas(actualPlacement, placement)) || remote.AllRegions != allRegions))
             throw new HttpRequestException("Database provisioning returned a different placement.");
         placement = actualPlacement;
         var record = Record(remote, placement, "ready");
