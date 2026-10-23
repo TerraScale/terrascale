@@ -16,6 +16,9 @@ internal sealed partial class TursoStorageTransaction
     // CDC rows read per query; a transaction may span pages.
     private const int TailPageRows = 4096;
 
+    // Unknown commit positions may replay a retained suffix only up to 64 MiB; known waiting markers are not capped.
+    private const long MaxUnknownReplayBytes = 64L * 1024 * 1024;
+
     /// <summary>
     /// Deletes the CDC rows of a client database that are shipped (docs/terrabase/multi-region-replication.md section 7):
     /// below the newest commit row that every peer heard from since <c>$gone</c> (Unix ms; 24 h ago, see
@@ -265,6 +268,31 @@ internal sealed partial class TursoStorageTransaction
     internal ValueTask<long> GetHeadAsync(CancellationToken cancellationToken) =>
         RunAsync(() => Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null ? 0
             : Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0, cancellationToken);
+
+    internal ValueTask<long> GetRetainedAfterAsync(long? through, long head, CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            if (Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null)
+            {
+                return 0L;
+            }
+
+            if (through is null && Command("SELECT coalesce(sum(length(after)), 0) FROM turso_cdc;").ExecuteScalar() is long bytes
+                && bytes > MaxUnknownReplayBytes)
+            {
+                through = head;
+            }
+
+            // Retention deletes strictly below a commit row; never resume inside a transaction's captured deltas.
+            var command = Command("""
+                SELECT max(coalesce((SELECT change_id FROM turso_cdc
+                    WHERE change_type = 2 AND change_id <= $through ORDER BY change_id DESC LIMIT 1), 0),
+                    coalesce((SELECT CASE WHEN change_type = 2 THEN change_id ELSE change_id - 1 END
+                        FROM turso_cdc ORDER BY change_id LIMIT 1), 0));
+                """);
+            command.Parameters.AddWithValue("$through", through is { } bound ? bound : DBNull.Value);
+            return (long)command.ExecuteScalar()!;
+        }, cancellationToken);
 
     /// <summary>
     /// Retention without an acknowledgement (uncaptured): first each peer's acknowledged id rises over the rows past it that

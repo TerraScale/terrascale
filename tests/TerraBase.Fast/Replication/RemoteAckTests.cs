@@ -456,6 +456,132 @@ public sealed class RemoteAckTests
         }
     }
 
+    [Test]
+    [Arguments(false, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, false, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, true)]
+    public async Task A_cut_log_refill_replays_unconfirmed_writes_without_certifying_the_refill(bool cutWrite, bool unregistered, bool large)
+    {
+        await using var pair = await Pair.StartAsync();
+        var store = await pair.OriginTursoAsync();
+        store.BackupAnchor = null;
+        async Task LocalAsync(string id, byte[]? body = null)
+        {
+            _ = await store.WriteAsync(async (transaction, token) =>
+            {
+                _ = await transaction.PutAsync("items", id, body ?? Encoding.UTF8.GetBytes("{\"n\":1}"), token);
+                return true;
+            }, static _ => true, pair.Token);
+        }
+
+        await LocalAsync(EntityIds.New().ToString());
+        var before = (await pair.Source.HeadAsync(pair.Database, store.Incarnation, pair.Token))!.Value;
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            await pair.Source.AckedAsync(pair.Database, pair.PeerNode, token) is { } cursor && cursor.Acked >= before);
+        pair.PeerAck.Refuse = true;
+        await LocalAsync(EntityIds.New().ToString());
+        await pair.PeerAck.Refused.Task.WaitAsync(pair.Token);
+
+        var head = pair.HoldDatabaseHead = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<HttpResponseMessage>? pending = null;
+        try
+        {
+            await pair.AgeOriginCaptureAsync(TimeSpan.FromHours(25));
+            var source = pair.OriginServer.Services.GetRequiredService<TursoChangeGroupSource>();
+            await source.TrimAsync(store, pair.Token);
+            await Assert.That(await pair.Source.RetainsAsync(pair.Database, store.Incarnation, before, pair.Token)).IsFalse();
+            await pair.DatabaseHeadReached.Task.WaitAsync(pair.Token);
+            var floor = (await source.RetainedAfterAsync(pair.Database, store.Incarnation, null, long.MaxValue, pair.Token))!.Value;
+            // An older retained backlog must be repaired without forcing it into the waiting write's live replay.
+            for (var n = 0; n < 3; n++)
+            {
+                await LocalAsync(EntityIds.New().ToString());
+            }
+
+            if (unregistered || large)
+            {
+                pair.HoldWait = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
+            var id = EntityIds.New().ToString();
+            pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
+            var marker = await pair.ReachedWait.Task.WaitAsync(pair.Token);
+            if (large)
+            {
+                var padding = Encoding.UTF8.GetBytes("{\"padding\":\"" + new string('x', 900 * 1024) + "\"}");
+                // Real captured documents, not a mocked byte count: keep more than 64 MiB above the pending marker.
+                for (var n = 0; n < 76; n++)
+                {
+                    await LocalAsync(EntityIds.New().ToString(), padding);
+                }
+
+                var bytes = await store.WithWriterAsync(session =>
+                {
+                    using var command = session.Connection.CreateCommand();
+                    command.CommandText = "SELECT coalesce(sum(length(after)), 0) FROM turso_cdc WHERE change_id > $after;";
+                    command.Parameters.AddWithValue("$after", marker.ChangeId);
+                    return (long)command.ExecuteScalar()!;
+                }, "a test measuring pending replay bytes", pair.Token);
+                await Assert.That(bytes).IsGreaterThan(64L * 1024 * 1024);
+                await Assert.That(await source.RetainedAfterAsync(pair.Database, store.Incarnation, null, floor, pair.Token))
+                    .IsEqualTo(floor).Because("the capped fallback must not swallow writes admitted after its captured head");
+            }
+
+            if (cutWrite)
+            {
+                await pair.AgeOriginCaptureAsync(TimeSpan.FromHours(25));
+                await source.TrimAsync(store, pair.Token);
+            }
+
+            if (!unregistered)
+            {
+                pair.HoldWait?.TrySetResult();
+                _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            }
+
+            var replay = pair.ReplayStart = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            pair.PeerAck.Refuse = false;
+            head.TrySetResult();
+            var start = await replay.Task.WaitAsync(pair.Token);
+            var unknown = cutWrite || (unregistered && large);
+            if (unknown)
+            {
+                await Assert.That(start).IsGreaterThanOrEqualTo(marker.ChangeId);
+            }
+            else if (unregistered)
+            {
+                await Assert.That(start).IsEqualTo(floor).Because("an admitted attempt's commit position is not registered yet");
+            }
+            else
+            {
+                await Assert.That(start).IsGreaterThan(floor).Because("known waiters do not replay the whole retained backlog");
+                await Assert.That(start).IsLessThan(marker.ChangeId);
+            }
+
+            pair.HoldWait?.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+            await Assert.That(response.StatusCode).IsEqualTo(unknown ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.Created);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token);
+            await Assert.That(unknown ? body.GetProperty("error").GetProperty("code").GetString() : body.GetProperty("durability").GetString())
+                .IsEqualTo(unknown ? "write_outcome_unknown" : "remote_durable");
+            using var remote = await pair.PeerClient.GetAsync(pair.Document(id), pair.Token);
+            await Assert.That(remote.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await remote.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
+        }
+        finally
+        {
+            pair.PeerAck.Refuse = false;
+            head.TrySetResult();
+            pair.HoldWait?.TrySetResult();
+            if (pending is not null)
+            {
+                using var response = await pending.WaitAsync(pair.Token);
+            }
+        }
+    }
+
     // A copy keeps the source's peer rows under the old scope: its cursor is 0 and requires a refill. A write that commits
     // before the first refill takes the copy's head must still be confirmed by a live ACK, not hidden under the refill.
     [Test]
@@ -1581,6 +1707,12 @@ public sealed class RemoteAckTests
             await _origin!.Server.Services.GetRequiredService<IManagementService>().SetDatabaseRegionsAsync(
                 _tenant!.UserId, _tenant.OrganizationId, _tenant.ProjectId, Database.DatabaseId!, regions, Token) is ManagedDatabase;
 
+        public TaskCompletionSource? HoldDatabaseHead { get; set; }
+
+        public TaskCompletionSource DatabaseHeadReached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<long>? ReplayStart { get; set; }
+
         // Copies db on the origin through the management service (as a restore copies its snapshot) and binds it on the peer.
         public async Task<TenantContext> CopyAsync(string name)
         {
@@ -1638,12 +1770,12 @@ public sealed class RemoteAckTests
             }, "a test reading the scanned frontier", cancellationToken);
 
         // Ages every captured row of the origin past retention's 60 s hold, as if the commits were older.
-        public async Task AgeOriginCaptureAsync() =>
+        public async Task AgeOriginCaptureAsync(TimeSpan? age = null) =>
             await (await OriginTursoAsync()).WithWriterAsync(session =>
             {
                 using var command = session.Connection.CreateCommand();
                 command.CommandText = "UPDATE turso_cdc SET change_time = $aged;";
-                command.Parameters.AddWithValue("$aged", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 120);
+                command.Parameters.AddWithValue("$aged", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - (long)(age ?? TimeSpan.FromMinutes(2)).TotalSeconds);
                 return command.ExecuteNonQuery();
             }, "a test ageing the change log", Token);
 
@@ -1903,6 +2035,8 @@ public sealed class RemoteAckTests
 
         public void Below(long changeId) => Volatile.Write(ref _below, changeId);
 
+        public long Boundary => Volatile.Read(ref _below);
+
         // Replication tenants carry no plan: only the ids identify the database.
         public bool Refills(TenantContext database, long after)
         {
@@ -2018,6 +2152,24 @@ public sealed class RemoteAckTests
         public async ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) =>
             refill.Refills(database, after) ? false : await inner.RetainsAsync(database, incarnation, after, cancellationToken);
 
+        public async ValueTask<long?> RetainedAfterAsync(TenantContext database, Ulid incarnation, long? through, long head, CancellationToken cancellationToken)
+        {
+            // This gate models a cut through the marker, so the retained boundary overrides the requested replay start.
+            if (refill.Refills(database, 0))
+            {
+                var currentHead = await inner.HeadAsync(database, incarnation, cancellationToken);
+                return currentHead is { } current ? Math.Min(current, refill.Boundary) : null;
+            }
+
+            var start = await inner.RetainedAfterAsync(database, incarnation, through, head, cancellationToken);
+            if (ReferenceEquals(refill, pair.Refill) && start is { } found)
+            {
+                pair.ReplayStart?.TrySetResult(found);
+            }
+
+            return start;
+        }
+
         public async ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken)
         {
             if (refusal.RefusesHead(database))
@@ -2029,6 +2181,12 @@ public sealed class RemoteAckTests
             if (pair.HoldHead is { } held && database.ProjectId == pair.Database.ProjectId && database.DatabaseId != pair.Database.DatabaseId)
             {
                 await held.Task.WaitAsync(cancellationToken);
+            }
+
+            if (ReferenceEquals(refill, pair.Refill) && pair.HoldDatabaseHead is { } head && (database with { Plan = PlanTier.Hobby }) == pair.Database)
+            {
+                pair.DatabaseHeadReached.TrySetResult();
+                await head.Task.WaitAsync(cancellationToken);
             }
 
             return await inner.HeadAsync(database, incarnation, cancellationToken);

@@ -391,6 +391,19 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         }
     }
 
+    public async ValueTask<long?> RetainedAfterAsync(TenantContext database, Ulid incarnation, long? through, long head, CancellationToken cancellationToken)
+    {
+        if (await BeginAsync(database, incarnation, write: false, cancellationToken).ConfigureAwait(false) is not (_, var transaction))
+        {
+            return null;
+        }
+
+        await using (transaction.ConfigureAwait(false))
+        {
+            return await transaction.GetRetainedAfterAsync(through, head, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     public async ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken)
     {
         // Discovery pins the copy in place first; the transaction then checks it is still that copy.

@@ -842,8 +842,16 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     }
 
                     head = heldHead;
-                    // A whole copied log resumes at the ack so post-restore writes still receive live durable acknowledgements.
-                    refillResume = retained ? acked : head;
+                    // Keep admitted writes in live batches after the refill, even when the earlier log was cut.
+                    var retainedStart = retained ? acked : await _source.RetainedAfterAsync(database, incarnation,
+                        _acks.ReplayThrough(database, incarnation, head), head, cancellationToken).ConfigureAwait(false);
+                    if (retainedStart is not { } start)
+                    {
+                        await HoldOrResetAsync(link, database, cursor, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    refillResume = start;
                     // A faulted frontier throws: no refill with a fabricated zero horizon can be sent.
                     horizon = await _states.HorizonAsync(database, cancellationToken).ConfigureAwait(false);
                 }

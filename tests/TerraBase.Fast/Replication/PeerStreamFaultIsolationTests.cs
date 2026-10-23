@@ -994,6 +994,8 @@ public sealed class PeerStreamFaultIsolationTests
             return head;
         }
 
+        public ValueTask<long?> RetainedAfterAsync(TenantContext database, Ulid incarnation, long? through, long head, CancellationToken cancellationToken) => inner.RetainedAfterAsync(database, incarnation, through, head, cancellationToken);
+
         public ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken) => inner.DigestAsync(database, expected, cancellationToken);
         public ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)?> ReadBucketsAsync(
             TenantContext database, Ulid incarnation, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken) =>
