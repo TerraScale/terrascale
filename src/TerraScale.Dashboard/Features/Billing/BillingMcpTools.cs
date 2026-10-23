@@ -8,7 +8,7 @@ using TerraScale.Dashboard.Shared.Validation;
 namespace TerraScale.Dashboard.Features.Billing;
 
 [McpServerToolType]
-public sealed class BillingMcpTools(IHttpContextAccessor http, StripeBilling billing, TimeProvider time)
+public sealed class BillingMcpTools(IHttpContextAccessor http, StripeBilling billing, TimeProvider time, ILogger<BillingMcpTools> logger)
 {
     [McpServerTool(Name = "cancel_checkout", Title = "Cancel plan checkout", OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Cancel the organization's checkout in progress without changing its plan. Owner only.")]
     public Task<CheckoutCanceled> CancelCheckout(string? organizationId = null, string? projectId = null) => Invoke(async () =>
@@ -71,7 +71,10 @@ public sealed class BillingMcpTools(IHttpContextAccessor http, StripeBilling bil
         catch (OnboardingValidationException error) { throw new AccountAccessException(error.Message, 400); }
         catch (Exception error) when (error is StripeException or HttpRequestException or IOException ||
                                       error is OperationCanceledException && !Cancellation.IsCancellationRequested)
-        { throw new AccountAccessException("Stripe could not complete this billing change. Reload billing and try again.", 502); }
+        {
+            logger.LogWarning("Billing MCP tool failed ({ErrorType}: {Error})", error.GetType().Name, BillingPlanEndpoints.Describe(error));
+            throw new AccountAccessException("Stripe could not complete this billing change. Reload billing and try again.", 502);
+        }
     }
 }
 

@@ -47,11 +47,16 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await ScenarioAsync("pending");
             await ConfirmAsync();
             await page.GetByText("Awaiting payment", new() { Exact = true }).WaitForAsync();
+            await Assert.That(await page.GetByRole(AriaRole.Link, new() { Name = "Complete payment", Exact = true }).GetAttributeAsync("href"))
+                .StartsWith("https://invoice.stripe.com/i/pending_").Because("a payment that needs 3D Secure links to Stripe's hosted invoice page");
             await Assert.That(await PlanAsync()).IsEqualTo(Starter).Because("Pending payment keeps the existing allowance.");
             await ScenarioAsync("confirm-payment");
             await GotoAsync("/organization?tab=billing&payment=success");
             await Assert.That(await page.Locator("#billing-summary").InnerTextAsync()).Contains("Pro");
             await Assert.That(await PlanAsync()).IsEqualTo(Pro);
+            await ScenarioAsync("portal-default");
+            await GotoAsync("/organization?tab=billing&payment=success");
+            await Assert.That(await PlanAsync()).IsEqualTo(Pro).Because("a default card set in the billing portal lives on the customer and keeps the paid plan");
             var upgraded = await MutationsAsync(path => path.StartsWith("/v1/subscriptions/", StringComparison.Ordinal));
             await PostAsync("/billing/change", new() { ["plan"] = "pro", ["interval"] = "monthly" });
             await Assert.That(await MutationsAsync(path => path.StartsWith("/v1/subscriptions/", StringComparison.Ordinal))).IsEqualTo(upgraded).Because("repeated confirmed change never calls the vendor again");
@@ -73,7 +78,11 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
             await page.GetByText("Change scheduled", new() { Exact = true }).WaitForAsync();
             await Assert.That(await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "Change scheduled" }).InnerTextAsync()).Contains("Free");
             await Assert.That(await PlanAsync()).IsEqualTo(Pro);
-            await SubmitAsync(page, "form:is([action=\"/billing/change/undo\"],[action^=\"/billing/change/undo?\"])", "Undo scheduled change");
+            await ScenarioAsync("reconcile-outage");
+            await PostAsync("/billing/change/undo", []);
+            await ScenarioAsync("confirmed");
+            await GotoAsync("/organization?tab=billing");
+            await Assert.That(await page.GetByText("Change scheduled", new() { Exact = true }).CountAsync()).IsEqualTo(0).Because("a change Stripe accepted redirects even when reconciliation cannot read Stripe yet");
             checks.Add("pending payment cannot grant a new plan; provider confirmation, scheduled downgrade/replay/undo and Personal Free cancellation use real SDK operations");
 
             var personal = await SelectedAsync();

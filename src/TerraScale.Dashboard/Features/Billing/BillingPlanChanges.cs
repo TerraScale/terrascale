@@ -7,7 +7,7 @@ using AccountService = TerraScale.Dashboard.Shared.Accounts.AccountService;
 namespace TerraScale.Dashboard.Features.Billing;
 
 public sealed record BillingPlanState(string PlanKey, string Interval, DateTimeOffset RenewalAt, string ScheduledPlanKey,
-    string ScheduledInterval, DateTimeOffset? ScheduledAt, string PendingPlanKey, string PendingInterval, bool CancelAtPeriodEnd, bool Entitled);
+    string ScheduledInterval, DateTimeOffset? ScheduledAt, string PendingPlanKey, string PendingInterval, bool CancelAtPeriodEnd, bool Entitled, string PaymentUrl = "");
 public sealed record BillingPlanPreview(string PlanKey, string Interval,
     [property: Description("Whether the change applies now (upgrade) instead of at renewal (downgrade).")] bool Immediate, DateTimeOffset EffectiveAt,
     [property: Description("Estimated charge today in the smallest currency unit.")] long AmountDueCents, long ProrationCents, string Currency, string Note);
@@ -90,26 +90,34 @@ public sealed partial class StripeBilling
         else
         {
             var schedules = snapshot.Client.V1.SubscriptionSchedules;
-            var scheduleId = snapshot.Subscription.ScheduleId;
-            var schedule = scheduleId is { Length: > 0 }
-                ? await schedules.GetAsync(scheduleId, cancellationToken: cancellationToken)
-                : await schedules.CreateAsync(new() { FromSubscription = snapshot.Subscription.Id, Metadata = new() { ["dashboard_change_key"] = receipt.RequestId } }, Idempotent("plan-" + receipt.RequestId + "-create"), cancellationToken);
-            if (schedule.SubscriptionId != snapshot.Subscription.Id || schedule.CustomerId != snapshot.Binding.CustomerId ||
-                schedule.Metadata.GetValueOrDefault("dashboard_change_key") != receipt.RequestId || schedule.CurrentPhase is null ||
+            var schedule = snapshot.Subscription.ScheduleId is { Length: > 0 } scheduleId ? await schedules.GetAsync(scheduleId, cancellationToken: cancellationToken) : null;
+            if (schedule?.Metadata.GetValueOrDefault("dashboard_change_key") != receipt.RequestId)
+            {
+                // Stripe rejects every other parameter with from_subscription, so the update below binds the change key.
+                // A schedule without the key is ours only when this receipt's idempotent create replays its ID.
+                SubscriptionSchedule created;
+                try { created = await schedules.CreateAsync(new() { FromSubscription = snapshot.Subscription.Id }, Idempotent("plan-" + receipt.RequestId + "-schedule"), cancellationToken); }
+                catch (StripeException) when (schedule is not null) { throw Conflict("The subscription schedule does not belong to this change."); }
+                if (schedule is not null && created.Id != schedule.Id) throw Conflict("The subscription schedule does not belong to this change.");
+                schedule ??= created;
+            }
+            if (schedule.SubscriptionId != snapshot.Subscription.Id || schedule.CustomerId != snapshot.Binding.CustomerId || schedule.CurrentPhase is null ||
                 schedule.CurrentPhase.StartDate >= snapshot.Item.CurrentPeriodEnd) throw Conflict("The subscription schedule does not belong to this change.");
             await schedules.UpdateAsync(schedule.Id, new()
             {
                 EndBehavior = "release",
                 ProrationBehavior = "none",
+                Metadata = new() { ["dashboard_change_key"] = receipt.RequestId },
                 Phases = [
                     new() { StartDate = schedule.CurrentPhase.StartDate, EndDate = snapshot.Item.CurrentPeriodEnd, Items = [new() { Price = snapshot.Item.Price.Id, Quantity = 1 }],
                         TrialEnd = snapshot.Subscription.Status == "trialing" ? snapshot.Subscription.TrialEnd : null },
-                    new() { StartDate = snapshot.Item.CurrentPeriodEnd, Duration = new() { Interval = interval == "annual" ? "year" : "month", IntervalCount = 1 },
+                    // Stripe starts each later phase where the previous one ends.
+                    new() { Duration = new() { Interval = interval == "annual" ? "year" : "month", IntervalCount = 1 },
                         Items = [new() { Price = nextPrice!.Id, Quantity = 1 }], Metadata = new() { ["organization_id"] = context.Organization!.Id, ["plan"] = key, ["interval"] = interval } }
                 ]
             }, Idempotent("plan-" + receipt.RequestId + "-update"), cancellationToken);
         }
-        await ReconcileChangeAsync(context, receipt);
+        await SettleChangeAsync(context, receipt);
         return Rank(key) > Rank(receipt.SourcePlanKey) ? "pending" : "scheduled";
     }
 
@@ -134,7 +142,7 @@ public sealed partial class StripeBilling
         else if (snapshot.Subscription.ScheduleId is { Length: > 0 } scheduleId)
             await snapshot.Client.V1.SubscriptionSchedules.ReleaseAsync(scheduleId, new(), Idempotent("plan-" + receipt.RequestId), cancellationToken);
         else throw Conflict("The scheduled change changed in Stripe.");
-        await ReconcileChangeAsync(context, receipt);
+        await SettleChangeAsync(context, receipt);
         return "undone";
     }
 
@@ -195,7 +203,7 @@ public sealed partial class StripeBilling
         if (binding?.SubscriptionId is not { Length: > 0 }) return null;
         var client = await ClientAsync(cancellationToken);
         var subscription = await client.V1.Subscriptions.GetAsync(binding.SubscriptionId,
-            new() { Expand = ["items.data.price.product", "pending_update.subscription_items.price.product"] }, cancellationToken: cancellationToken);
+            new() { Expand = ["items.data.price.product", "pending_update.subscription_items.price.product", "latest_invoice"] }, cancellationToken: cancellationToken);
         if (subscription.Id != binding.SubscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != context.Organization.Id)
             throw new IOException("Subscription ownership does not match.");
         var item = subscription.Items?.Data is { Count: 1 } items ? items[0] : null;
@@ -217,15 +225,18 @@ public sealed partial class StripeBilling
                 (scheduledKey, scheduledInterval) = (nextMapped.Value.Plan.Key, nextMapped.Value.Interval); scheduledAt = next.StartDate;
             }
         }
-        var pendingKey = ""; var pendingInterval = "";
+        var pendingKey = ""; var pendingInterval = ""; var paymentUrl = "";
         if (subscription.PendingUpdate is { } pending)
         {
             var pendingMapped = pending.SubscriptionItems is { Count: 1 } pendingItems && pendingItems[0].Quantity == 1 ? EffectivePlan(pendingItems[0].Price) : null;
             if (pendingMapped is null) throw Conflict("The pending plan needs billing attention.");
             (pendingKey, pendingInterval) = (pendingMapped.Value.Plan.Key, pendingMapped.Value.Interval);
+            // The update's open invoice is where the customer authenticates (3D Secure) or retries its payment.
+            if (subscription.LatestInvoice is { Status: "open" } invoice && invoice.CustomerId == binding.CustomerId)
+                paymentUrl = Invoices.InvoiceHistory.SafeUrl(invoice.HostedInvoiceUrl);
         }
         return new(client, binding, subscription, item, new(plan.Key, interval, item.CurrentPeriodEnd, scheduledKey, scheduledInterval, scheduledAt,
-            pendingKey, pendingInterval, subscription.CancelAtPeriodEnd, subscription.Status is "active" or "trialing"));
+            pendingKey, pendingInterval, subscription.CancelAtPeriodEnd, subscription.Status is "active" or "trialing", paymentUrl));
     }
 
     private async Task<BillingChangeReceipt> ReserveChangeAsync(AccountContext context, PlanSnapshot snapshot, string action, string key, string interval, CancellationToken cancellationToken)
@@ -326,6 +337,14 @@ public sealed partial class StripeBilling
         current.Status = "abandoned";
         try { await state.PutAsync(ChangesCollection, orgId, JsonSerializer.SerializeToElement(current), TerraBasePrecondition.Matches(document.Version), cleanup.Token); }
         catch (TerraBasePreconditionFailedException) { }
+    }
+    private async Task SettleChangeAsync(AccountContext context, BillingChangeReceipt receipt)
+    {
+        // Stripe accepted the operation, so it is the outcome even when the local projection loses a race with the
+        // webhooks reconciling the same change; they and the next billing view finish it from Stripe's facts.
+        try { await ReconcileChangeAsync(context, receipt); }
+        catch (Exception error) when (error is IOException or HttpRequestException or StripeException or AccountAccessException or OperationCanceledException)
+        { logger.LogWarning("Billing {Action} {RequestId} applied in Stripe; reconciliation deferred ({ErrorType}: {Error})", receipt.Action, receipt.RequestId, error.GetType().Name, BillingPlanEndpoints.Describe(error)); }
     }
     private async Task ReconcileChangeAsync(AccountContext context, BillingChangeReceipt receipt)
     {

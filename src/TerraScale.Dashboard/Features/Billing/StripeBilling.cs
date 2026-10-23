@@ -11,7 +11,7 @@ namespace TerraScale.Dashboard.Features.Billing;
 // Every entitlement is derived from a bound checkout and Stripe's current
 // subscription. Browser return parameters and webhook snapshots grant nothing.
 public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboardState state, AccountService accounts,
-    IHttpClientFactory http, TimeProvider time, TerraBasePlanSync plans)
+    IHttpClientFactory http, TimeProvider time, TerraBasePlanSync plans, ILogger<StripeBilling> logger)
 {
     public const string Collection = "dashboard_billing";
     public const string CustomersCollection = "dashboard_stripe_customers";
@@ -240,7 +240,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
                 // plan changes and cancellation remain effective even while a
                 // later checkout is open or expired.
                 var subscription = await client.V1.Subscriptions.GetAsync(subscriptionId,
-                    new() { Expand = ["items.data.price.product", "default_payment_method"] }, cancellationToken: cancellationToken);
+                    new() { Expand = ["items.data.price.product", "default_payment_method", "customer"] }, cancellationToken: cancellationToken);
                 if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId)
                     throw new IOException("Subscription ownership does not match.");
                 var item = subscription.Items.Data.Count == 1 ? subscription.Items.Data[0] : null;
@@ -248,7 +248,9 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
                 unmappedPrice = mapped is null;
                 (plan, effectiveInterval) = mapped ?? (PlanCatalog.For("free"), "");
                 status = subscription.Status;
-                paymentValid = !unmappedPrice && (status is "active" or "trialing") && subscription.DefaultPaymentMethodId is { Length: > 0 };
+                // Invoices fall back to the customer's default, which the billing portal sets when a card is made default.
+                paymentValid = !unmappedPrice && (status is "active" or "trialing") && (subscription.DefaultPaymentMethodId is { Length: > 0 } ||
+                    subscription.Customer is { Deleted: not true, InvoiceSettings.DefaultPaymentMethodId.Length: > 0 });
                 if (item is not null && status is not ("canceled" or "incomplete_expired")) renewalAt = item.CurrentPeriodEnd;
             }
             else

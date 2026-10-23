@@ -20,6 +20,8 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
     private readonly ConcurrentDictionary<string, JsonObject> expiredCheckouts = new();
     private readonly ConcurrentDictionary<string, string> idempotency = new();
     private readonly ConcurrentDictionary<string, string> scenarios = new();
+    private readonly ConcurrentDictionary<string, byte> portalDefaults = new();
+    private readonly ConcurrentDictionary<string, byte> outages = new();
     private readonly ConcurrentDictionary<string, BillingPlanBarrier> barriers = new();
     private readonly ConcurrentDictionary<string, string> republishedPrices = new();
     private readonly ConcurrentDictionary<string, byte> observedPublishedPrices = new();
@@ -39,10 +41,12 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
             var binding = await billing.ReadBindingAsync(context, http.RequestAborted);
             if (binding?.CustomerId is not { Length: > 0 }) return Results.BadRequest();
             var scenario = form["scenario"].ToString();
-            if (scenario is not ("confirmed" or "pending" or "offline" or "foreign-customer" or "confirm-payment" or "source-race" or "release-source-race" or "uncertain-upgrade" or "republish-price")) return Results.BadRequest();
+            if (scenario is not ("confirmed" or "pending" or "offline" or "foreign-customer" or "confirm-payment" or "source-race" or "release-source-race" or "uncertain-upgrade" or "republish-price" or "portal-default" or "reconcile-outage")) return Results.BadRequest();
             await serial.WaitAsync(http.RequestAborted);
             try
             {
+                // The billing portal's "use as default" sets the customer's invoice default, not the subscription's.
+                if (scenario == "portal-default") { portalDefaults[binding.CustomerId] = 0; return Results.NoContent(); }
                 if (scenario == "republish-price")
                 {
                     var admitted = uncertainUpdates.Values.FirstOrDefault(update => update.Customer == binding.CustomerId);
@@ -75,6 +79,7 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
                     if (subscription["pending_update"]?["subscription_items"]?[0] is not { } item) return Results.BadRequest();
                     subscription["items"]!["data"]![0]!["price"] = item["price"]!.DeepClone();
                     subscription["pending_update"] = null;
+                    if (subscription["latest_invoice"] is JsonObject invoice) invoice["status"] = "paid";
                 }
                 if (scenario is not ("source-race" or "release-source-race" or "republish-price")) scenarios[binding.CustomerId] = scenario == "confirm-payment" ? "confirmed" : scenario;
             }
@@ -168,11 +173,14 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
             {
                 var id = path.Split('/')[3]; var subscription = await SubscriptionAsync(id, cancellationToken);
                 var customer = subscription["customer"]!.GetValue<string>(); var scenario = scenarios.GetValueOrDefault(customer, "confirmed");
-                if (scenario == "offline") return Json(new JsonObject { ["error"] = new JsonObject { ["message"] = "Test-only Stripe outage." } }, HttpStatusCode.ServiceUnavailable);
+                // reconcile-outage: Stripe accepts the mutation, then reads fail until the scenario changes.
+                if (scenario == "offline" || scenario == "reconcile-outage" && request.Method == HttpMethod.Get && outages.ContainsKey(customer))
+                    return Json(new JsonObject { ["error"] = new JsonObject { ["message"] = "Test-only Stripe outage." } }, HttpStatusCode.ServiceUnavailable);
                 if (scenario == "foreign-customer") { var foreign = subscription.DeepClone(); foreign["customer"] = "cus_foreign"; return Json(foreign); }
                 if (request.Method == HttpMethod.Post)
                 {
                     mutations.Enqueue((customer, path));
+                    if (scenario == "reconcile-outage") outages[customer] = 0; else outages.TryRemove(customer, out _);
                     if (form.TryGetValue("cancel_at_period_end", out var cancel)) subscription["cancel_at_period_end"] = cancel == "true";
                     else
                     {
@@ -190,11 +198,19 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
                         {
                             var pending = subscription["items"]!["data"]![0]!.DeepClone(); pending["price"] = price;
                             subscription["pending_update"] = new JsonObject { ["expires_at"] = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(), ["subscription_items"] = new JsonArray(pending) };
+                            subscription["latest_invoice"] = new JsonObject { ["id"] = "in_pending_" + id, ["object"] = "invoice", ["customer"] = customer, ["status"] = "open", ["hosted_invoice_url"] = "https://invoice.stripe.com/i/pending_" + id };
                         }
                         else { subscription["items"]!["data"]![0]!["price"] = price; subscription["pending_update"] = null; }
                     }
                 }
-                return Json(subscription.DeepClone());
+                var reply = subscription.DeepClone().AsObject();
+                if (portalDefaults.ContainsKey(customer))
+                {
+                    reply["default_payment_method"] = null;
+                    if (QueryHelpers.ParseQuery(request.RequestUri.Query).Any(item => item.Key.StartsWith("expand[", StringComparison.Ordinal) && item.Value == "customer"))
+                        reply["customer"] = new JsonObject { ["id"] = customer, ["object"] = "customer", ["invoice_settings"] = new JsonObject { ["default_payment_method"] = "pm_portal_default" } };
+                }
+                return Json(reply);
             }
             if (isPreview())
             {
@@ -226,6 +242,9 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
             }
             if (request.Method == HttpMethod.Post && path == "/v1/subscription_schedules")
             {
+                // Stripe rejects any other parameter alongside from_subscription.
+                if (form.Keys.Any(name => name != "from_subscription"))
+                    return Json(new JsonObject { ["error"] = new JsonObject { ["type"] = "invalid_request_error", ["message"] = "You cannot set other parameters when from_subscription is set." } }, HttpStatusCode.BadRequest);
                 var subscription = await SubscriptionAsync(form.GetValueOrDefault("from_subscription").ToString(), cancellationToken);
                 mutations.Enqueue((subscription["customer"]!.GetValue<string>(), path));
                 var id = "sub_sched_" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)))[..24];
@@ -240,7 +259,7 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
                         ["customer"] = subscription["customer"]!.DeepClone(),
                         ["subscription"] = subscription["id"]!.DeepClone(),
                         ["status"] = "active",
-                        ["metadata"] = new JsonObject { ["dashboard_change_key"] = form.GetValueOrDefault("metadata[dashboard_change_key]").ToString() },
+                        ["metadata"] = new JsonObject(),
                         ["current_phase"] = new JsonObject { ["start_date"] = start, ["end_date"] = end },
                         ["phases"] = new JsonArray(Phase(start, end, subscription["items"]!["data"]![0]!["price"]!.DeepClone()))
                     };
@@ -260,11 +279,12 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
                 if (form.GetValueOrDefault("end_behavior") != "release" || form.GetValueOrDefault("proration_behavior") != "none" || form.GetValueOrDefault("phases[0][items][0][quantity]") != "1" || form.GetValueOrDefault("phases[1][items][0][quantity]") != "1")
                     throw new HttpRequestException("Unexpected subscription schedule serialization.");
                 var start = long.Parse(form["phases[0][start_date]"].ToString()); var renewal = long.Parse(form["phases[0][end_date]"].ToString());
-                if (long.Parse(form["phases[1][start_date]"].ToString()) != renewal) throw new HttpRequestException("Plan phases do not meet at renewal.");
+                if (form.ContainsKey("phases[1][start_date]") && long.Parse(form["phases[1][start_date]"].ToString()) != renewal) throw new HttpRequestException("Plan phases do not meet at renewal.");
                 var nextPrice = Price(form["phases[1][items][0][price]"].ToString()); var duration = form["phases[1][duration][interval]"].ToString();
                 var end = (duration == "year" ? DateTimeOffset.FromUnixTimeSeconds(renewal).AddYears(1) : DateTimeOffset.FromUnixTimeSeconds(renewal).AddMonths(1)).ToUnixTimeSeconds();
                 var next = Phase(renewal, end, nextPrice); next["metadata"] = new JsonObject { ["organization_id"] = form.GetValueOrDefault("phases[1][metadata][organization_id]").ToString(), ["plan"] = form.GetValueOrDefault("phases[1][metadata][plan]").ToString(), ["interval"] = form.GetValueOrDefault("phases[1][metadata][interval]").ToString() };
                 schedule["phases"] = new JsonArray(Phase(start, renewal, Price(form["phases[0][items][0][price]"].ToString())), next);
+                if (form.TryGetValue("metadata[dashboard_change_key]", out var changeKey)) schedule["metadata"] = new JsonObject { ["dashboard_change_key"] = changeKey.ToString() };
             }
             return Json(schedule.DeepClone());
             bool isPreview() => path == "/v1/invoices/create_preview";
