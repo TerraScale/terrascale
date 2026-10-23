@@ -104,9 +104,13 @@ which reads the user directly and `credential:authorization` which reads the
 original device authorization. Approval authorization records use the existing
 authorization schema. No SDK expansion or new collection is used.
 
-**Needs format bump.** The auth persisted schema changed; `StorageFormat.cs`
-is unchanged. HANDOFF: the orchestrator/deploy lane batches the format bump
-and reviewed reset/rollout. This feature branch does not perform it.
+**Needs format bump: batch 4.** The deploy lane explicitly authorized each of
+PRs #464, #469 and #473 to advance `StorageFormat.Version` by one over current
+main, rebasing before merge. This PR currently advances 12 to 13; if another
+batch member merges first, rebase and advance from that new main version.
+HANDOFF: send this PR's merge SHA to the batch-4 deploy lane. FR1 owns the
+approved alpha wipe after all three PRs merge, or the lane's 60-minute cutoff.
+This branch does not itself wipe or reset serving data.
 
 API-key records additionally persist `secretBindings` (`SecretBindings`) and
 `previousSecretBindings` (`PreviousSecretBindings`) beside their respective
@@ -130,11 +134,10 @@ ancestors. Existing keys need an operator-reviewed replacement or rotation
 from a fresh valid sign-in; this change does not infer old ancestry or perform
 that rollout automatically.
 
-This is an auth-record change, not an automatic production migration or reset.
-The owning rollout lane must review existing records and outstanding credentials before
-rollout. Tests recreate isolated data with this schema. Do not delete serving
-production state to make old records match. No production reset, deployment,
-credential change or multi-region activation is authorized by this document.
+This is an auth-record change with no migration. The owning rollout lane
+coordinates the batch-4 reset and outstanding credentials; tests recreate
+isolated data with this schema. The batch authorization does not authorize
+this branch to change credentials or activate additional production regions.
 
 Proof lists are bounded at 64, including state and issuance proofs. Rotation
 never drops ancestors: a session at the bound returns HTTP 401

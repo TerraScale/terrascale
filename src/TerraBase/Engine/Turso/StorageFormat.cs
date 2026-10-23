@@ -20,8 +20,9 @@ public static class StorageFormat
     /// 11: FULL operation intents in <c>_intents.db</c>, the node-bound replica identity (R6) and maintained SYSTEM
     /// <c>_tb_merkle</c> bucket digests (R9), batched reset 2026-10-22.
     /// 12: persisted collected-state join floors (<c>_tb_gc_floor</c>), batch 3 reset 2026-10-23.
+    /// 13: regional auth credential ancestry and authentication-state stamps, batch 4 reset 2026-10-23.
     /// </summary>
-    public const int Version = 12;
+    public const int Version = 13;
 
     /// <summary>The format this build writes, for example <c>2-3f1a09c4e7b2</c>.</summary>
     public static string Id { get; } = $"{Version}-{Convert.ToHexStringLower(TursoDatabaseStore.FormatDigest)[..12]}";
