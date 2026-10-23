@@ -771,8 +771,8 @@ public sealed class RemoteAckTests
 
         var store = await pair.OriginStoreAsync();
         var sealer = pair.OriginSealer;
-        var sqlite = await pair.OriginSqliteAsync();
-        var covered = await FeedHeadAsync(sqlite, pair.Token);
+        var turso = await pair.OriginTursoAsync();
+        var covered = await FeedHeadAsync(turso, pair.Token);
         await TerraBaseTestServer.EventuallyAsync(async token => await sealer.FrontierAsync(store, token) >= covered);
         pair.ExpectWait();
         using var held = pair.PeerAck.Hold(unacked);
@@ -781,7 +781,7 @@ public sealed class RemoteAckTests
         {
             await held.Applied.Task.WaitAsync(pair.Token);
             _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
-            await Assert.That(await FeedHeadAsync(sqlite, pair.Token)).IsGreaterThan(covered);
+            await Assert.That(await FeedHeadAsync(turso, pair.Token)).IsGreaterThan(covered);
             var frontier = await sealer.FrontierAsync(store, pair.Token);
             var shape = await ShapeAsync(store);
             _ = await SealBoundedAsync(pair, sealer, store, shape, 0);
