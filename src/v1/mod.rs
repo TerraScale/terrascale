@@ -36,6 +36,7 @@ mod reporting;
 mod shape_crypto;
 mod shapes;
 mod sql;
+mod sql_exec;
 mod system;
 mod tooling;
 mod tx;
@@ -55,7 +56,7 @@ pub use documents::{
     ProjectCollectionInfo, ProjectCollectionPage, ProjectDatabaseInfo, Sibling, WriteOptions,
     WriteResult,
 };
-pub use errors::{Error, Result};
+pub use errors::{Error, Result, SqlError};
 pub use ids::{is_valid_name, ulid_for, DocumentId, Version};
 pub use management::{DatabasePlacement, ManagementPage};
 pub use query::{
@@ -63,6 +64,9 @@ pub use query::{
 };
 pub use shapes::{Shape, ShapeChange, ShapeDocument, ShapeOp, ShapeState, ShapeUpdate};
 pub use sql::{SqlCheck, SqlIndexSuggestion, SqlResult, SqlRow};
+pub use sql_exec::{
+    Sql, SqlColumn, SqlStatement, SqlStatementResult, SqlValue, MAX_SQL_BYTES, MAX_SQL_STATEMENTS,
+};
 pub use system::HealthResponse;
 pub use tx::{CountBounds, OpResult, Tx, TxResult, MAX_ASSERT_COUNT_OPS, MAX_TX_OPS};
 pub use types::{opt_u64_string, u64_string, Durability, Number};

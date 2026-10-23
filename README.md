@@ -60,6 +60,38 @@ The current auth client still requires origin/credential inputs; automatic
 acquisition remains a runtime implementation gap. Customer issuer trust and
 consumer authorization remain necessary. TerraBase credentials and routing selectors never reach ts-auth. Authentication mutations are never automatically replayed. The canonical issuer is unchanged by regional endpoint selection.
 
+### Relational SQL
+
+`Database::sql()` runs parameterized SQL on `POST /v1/projects/{project}/databases/{database}/sql/execute`
+([guide](https://docs.terrascale.tech/guides/sql-http)). Each request is one transaction: every
+statement commits or none does, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused.
+
+```rust,no_run
+# async fn demo(client: terrascale::v1::Client) -> terrascale::v1::Result<()> {
+use terrascale::v1::{SqlStatement, SqlValue};
+#[derive(serde::Deserialize)]
+struct User { id: i64, name: String }
+
+let sql = client.database("main").sql();
+sql.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)", &[]).await?;
+let inserted = sql.execute("INSERT INTO users(name) VALUES (?)", &["Ada".into()]).await?;
+let users: Vec<User> = sql.query("SELECT id, name FROM users WHERE id = ?", &[inserted.last_insert_rowid.into()]).await?;
+let results = sql.batch(vec![
+    SqlStatement::new("UPDATE users SET name = :name WHERE id = :id").named("name", "Grace").named("id", 1),
+    SqlStatement::new("SELECT count(*) FROM users"),
+]).await?;
+assert!(matches!(results[1].rows[0][0], SqlValue::Integer(_)));
+# let _ = users; Ok(()) }
+```
+
+Results carry `columns` (name, `decltype`), `rows` of `SqlValue` (`Null`, `Integer(i64)`, `Real(f64)`,
+`Text`), `rows_affected` and `last_insert_rowid`; `decode_rows` maps rows into any `Deserialize` type
+by column name. Booleans bind as `1`/`0`. Integers are JSON numbers: this client keeps `i64`, but
+JavaScript peers lose precision beyond 2^53. SQL failures (`sql_error`, `forbidden_scope`,
+`sql_conflict`, `sql_too_large`) are `Error::Sql`, available through `Error::sql()` with `code`,
+`message`, `statement` and `sqlite_code`; other failures keep the generic error variants. The
+older read-only `run_sql` route below is deprecated: dashboard keys get 403 there.
+
 Current project SQL uses the implemented HTTP `sql`, `sql/check` and `sql/explain` routes through `Database::run_sql`, `check_sql` and `explain_sql`. The optional PostgreSQL consumer in `src/postgres.rs` belongs to the older producer; it does not qualify the current C# server. Its Cargo feature remains inventoried for removal. Actual admitted-listener and packaged qualification remain open; source presence does not prove that runtime works. Native unique/schema extensions, actual Atlas/native packaged caller and clock qualification, durable security authority and real packaged producer evidence remain release blockers. Local codec tests are not deployment or serving evidence.
 
 Run `cargo fmt --all --check`, `cargo clippy --locked --all-targets --all-features -- -D warnings`, and `cargo test --locked --all-features`. `scripts/check-native-contract.py` verifies the exact producer contract pin and `scripts/check-atlas-contract.py` separately verifies the frozen receiver contract and fixed-clock raw codec fixtures; `scripts/qualification/run.sh` exercises a separately unpacked `.crate` against a real native producer and fails when required fixture configuration is absent.
