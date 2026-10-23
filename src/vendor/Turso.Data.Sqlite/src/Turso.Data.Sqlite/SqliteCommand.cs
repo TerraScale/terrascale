@@ -14,6 +14,23 @@ public class SqliteCommand : DbCommand
     private SqliteConnection? _connection;
     private SqliteTransaction? _transaction;
     private TursoStatementHandle? _statement;
+    // TerraScale: with ReuseStatement, Execute keeps its single statement's native program across executions (reset, then
+    // rebound) instead of preparing it every time: the SQL it was prepared from, and whether a reader is running it.
+    private bool _reuseStatement;
+    private string? _statementSql;
+    private bool _statementBusy;
+    // TerraScale: a kept statement's parameter count and parameter indexes by name, read from it once: each native read
+    // cost more than binding the value.
+    private TursoStatementHandle? _indexedStatement;
+    private int _indexedCount;
+    private Dictionary<string, int>? _indexes;
+    // TerraScale: with ReuseStatement, what Execute derives from the command text is kept with that text instance: whether
+    // it is empty, its statements, and the single one that needs no facade rewrite (with whether it counts rows affected).
+    private string? _parsedText;
+    private bool _parsedEmpty;
+    private List<string>? _parsed;
+    private string? _plainStatement;
+    private bool _plainCountsRows;
     private string _commandText = string.Empty;
     private int _commandTimeout = 30;
     private bool _hasOpenReader;
@@ -21,6 +38,18 @@ public class SqliteCommand : DbCommand
 
     public SqliteCommand()
     {
+    }
+
+    /// <summary>
+    /// TerraScale: keeps a single-statement command's prepared statement across executions, reset when each one finishes
+    /// and finalized on failure or when the command is disposed. Only for a command its owner disposes before closing the
+    /// connection. Inside an explicit transaction Turso cannot run a statement prepared against an older schema than the
+    /// transaction's snapshot ("Database schema changed"): the owner drops kept statements when the schema changes.
+    /// </summary>
+    public bool ReuseStatement
+    {
+        get => _reuseStatement;
+        set => _reuseStatement = value;
     }
 
     public SqliteCommand(string? commandText)
@@ -178,6 +207,7 @@ public class SqliteCommand : DbCommand
             preparedStatement = PrepareSingleStatement(statements[0]);
             _statement?.Dispose();
             _statement = preparedStatement;
+            _statementSql = null;
             preparedStatement = null;
         }
         catch (TursoException ex)
@@ -261,6 +291,7 @@ public class SqliteCommand : DbCommand
         {
             _activeManagedCommand?.Dispose();
             _statement?.Dispose();
+            _statement = null;
         }
 
         base.Dispose(disposing);
@@ -276,7 +307,8 @@ public class SqliteCommand : DbCommand
                 .GetResult();
         }
 
-        if (IsEmptyCommand(CommandText))
+        ParseCommandText();
+        if (_parsedEmpty)
         {
             _hasOpenReader = true;
             Connection?.ReaderOpened();
@@ -292,15 +324,22 @@ public class SqliteCommand : DbCommand
             throw new SqliteException(Properties.Resources.SqliteNativeError(8, "attempt to write a readonly database"), 8);
 
         var recordsAffected = 0;
-        var statements = SplitStatements(CommandText);
+        var statements = _parsed!;
         try
         {
             for (var i = 0; i < statements.Count; i++)
             {
-                if (TryHandleFacadeStatement(statements[i], out var sql))
+                var plain = ReferenceEquals(statements[i], _plainStatement);
+                var sql = statements[i];
+                if (!plain && TryHandleFacadeStatement(statements[i], out sql))
                     continue;
 
-                var statement = PrepareSingleStatement(sql);
+                if (!plain && _reuseStatement && statements.Count == 1 && ReferenceEquals(sql, statements[i]))
+                {
+                    (_plainStatement, _plainCountsRows, plain) = (sql, CountsRowsAffected(sql), true);
+                }
+
+                var statement = statements.Count == 1 ? Statement(sql) : PrepareSingleStatement(sql);
                 try
                 {
                     if (TursoBindings.GetFieldCount(statement) > 0)
@@ -314,18 +353,18 @@ public class SqliteCommand : DbCommand
                     {
                     }
 
-                    if (CountsRowsAffected(statements[i]))
+                    if (plain ? _plainCountsRows : CountsRowsAffected(statements[i]))
                         recordsAffected += TursoBindings.RowsAffected(statement);
                 }
                 catch
                 {
                     // TerraScale: finalize a failed statement here, not on the finalizer thread, which would use the
                     // connection while its owner does ("concurrent use forbidden").
-                    statement.Dispose();
+                    ReleaseStatement(statement, failed: true);
                     throw;
                 }
 
-                statement.Dispose();
+                ReleaseStatement(statement, failed: false);
             }
         }
         catch (TursoException ex)
@@ -628,6 +667,54 @@ public class SqliteCommand : DbCommand
         };
     }
 
+    // TerraScale: the statement that runs sql: with ReuseStatement, the kept one, rebound, unless a reader still runs it.
+    private TursoStatementHandle Statement(string sql)
+    {
+        if (!_reuseStatement || _statementBusy)
+            return PrepareSingleStatement(sql);
+
+        if (_statement is null || _statementSql != sql)
+        {
+            var statement = PrepareSingleStatement(sql);
+            _statement?.Dispose();
+            _statement = statement;
+            _statementSql = sql;
+        }
+        else
+        {
+            BindParameters(_statement);
+        }
+
+        _statementBusy = true;
+        return _statement;
+    }
+
+    // TerraScale: a statement that finished running. The kept one is reset for its next execution unless it failed; any
+    // other is finalized here, never on the finalizer thread.
+    internal void ReleaseStatement(TursoStatementHandle statement, bool failed)
+    {
+        if (ReferenceEquals(statement, _statement))
+        {
+            _statementBusy = false;
+            if (!failed)
+            {
+                try
+                {
+                    TursoBindings.ResetStatement(statement);
+                    return;
+                }
+                catch (TursoException)
+                {
+                }
+            }
+
+            _statement = null;
+            _statementSql = null;
+        }
+
+        statement.Dispose();
+    }
+
     internal TursoStatementHandle PrepareSingleStatement(string sql)
     {
         var connection = Connection!;
@@ -654,9 +741,29 @@ public class SqliteCommand : DbCommand
         }
     }
 
+    // TerraScale: splits the command text once per text instance while ReuseStatement is on, and on every call otherwise.
+    private void ParseCommandText()
+    {
+        if (_reuseStatement && ReferenceEquals(_parsedText, CommandText))
+            return;
+
+        _parsedEmpty = IsEmptyCommand(CommandText);
+        _parsed = _parsedEmpty ? [] : SplitStatements(CommandText);
+        _parsedText = _reuseStatement ? CommandText : null;
+        _plainStatement = null;
+    }
+
     private void BindParameters(TursoStatementHandle statement)
     {
-        var parameterCount = TursoBindings.GetParameterCount(statement);
+        var indexed = _reuseStatement;
+        if (indexed && !ReferenceEquals(statement, _indexedStatement))
+        {
+            (_indexes ??= new(StringComparer.Ordinal)).Clear();
+            _indexedCount = TursoBindings.GetParameterCount(statement);
+            _indexedStatement = statement;
+        }
+
+        var parameterCount = indexed ? _indexedCount : TursoBindings.GetParameterCount(statement);
         var boundParameters = new bool[parameterCount + 1];
 
         for (var i = 0; i < Parameters.Count; i++)
@@ -667,7 +774,11 @@ public class SqliteCommand : DbCommand
             if (!parameter.HasValue)
                 throw new InvalidOperationException(Properties.Resources.RequiresSet(nameof(parameter.Value)));
 
-            var parameterIndex = FindParameterIndex(statement, parameter.ParameterName, parameterCount);
+            int parameterIndex;
+            if (!indexed)
+                parameterIndex = FindParameterIndex(statement, parameter.ParameterName, parameterCount);
+            else if (!_indexes!.TryGetValue(parameter.ParameterName, out parameterIndex))
+                _indexes[parameter.ParameterName] = parameterIndex = FindParameterIndex(statement, parameter.ParameterName, parameterCount);
             if (parameterIndex == 0)
                 continue;
 
