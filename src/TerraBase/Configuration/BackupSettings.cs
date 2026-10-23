@@ -49,12 +49,12 @@ public sealed class BackupSettings
     public int KeyRotationDays { get; init; } = 90;
 
     /// <summary>
-    /// Days each plan keeps backups (<c>backup-retention-days</c>, default <c>hobby=1,pro=7,enterprise=30</c>): a database
+    /// Days each plan keeps backups (<c>backup-retention-days</c>, default <c>hobby=1,starter=3,pro=7,enterprise=30</c>): a database
     /// restores to any time in that window. Plans move to ts-dashboard (TS-599); this stays the fallback.
     /// </summary>
     public IReadOnlyDictionary<PlanTier, int> RetentionDays { get; init; } = DefaultRetentionDays;
 
-    private static readonly Dictionary<PlanTier, int> DefaultRetentionDays = new() { [PlanTier.Hobby] = 1, [PlanTier.Pro] = 7, [PlanTier.Enterprise] = 30 };
+    private static readonly Dictionary<PlanTier, int> DefaultRetentionDays = new() { [PlanTier.Hobby] = 1, [PlanTier.Starter] = 3, [PlanTier.Pro] = 7, [PlanTier.Enterprise] = 30 };
 
     /// <summary>Names the bucket only: the credentials stay out of logs.</summary>
     public override string ToString() => $"backup to {Bucket}";
@@ -99,10 +99,10 @@ public sealed class BackupSettings
         foreach (var entry in value.Split(',', StringSplitOptions.TrimEntries))
         {
             var parts = entry.Split('=', 2);
-            PlanTier? plan = parts[0] switch { "hobby" => PlanTier.Hobby, "pro" => PlanTier.Pro, "enterprise" => PlanTier.Enterprise, _ => null };
+            PlanTier? plan = parts[0] switch { "hobby" => PlanTier.Hobby, "starter" => PlanTier.Starter, "pro" => PlanTier.Pro, "enterprise" => PlanTier.Enterprise, _ => null };
             if (parts.Length != 2 || plan is null || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var count) || count is < 1 or > 3650)
             {
-                throw new TerraBaseConfigurationException("backup-retention-days must be comma-separated plan=days pairs (hobby, pro, enterprise; 1 to 3650 days)");
+                throw new TerraBaseConfigurationException("backup-retention-days must be comma-separated plan=days pairs (hobby, starter, pro, enterprise; 1 to 3650 days)");
             }
 
             days[plan.Value] = count;

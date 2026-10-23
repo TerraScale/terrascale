@@ -92,6 +92,12 @@ internal sealed partial class EngineManagementService : IProjectCatalog
                 return ManagementErrors.NotFound;
             }
 
+            // The dashboard republishes plans periodically; an unchanged plan writes nothing and records no audit event.
+            if (organization.Plan == plan)
+            {
+                return organization;
+            }
+
             organization = organization with { Plan = plan };
             await PutAsync(transaction, Organizations, organization.Id, organization, TerraBaseJsonContext.Default.Organization, cancellationToken)
                 .ConfigureAwait(false);

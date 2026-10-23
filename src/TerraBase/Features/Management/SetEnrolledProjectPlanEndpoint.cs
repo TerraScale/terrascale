@@ -19,7 +19,7 @@ public sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog) : En
         Put("/admin/projects/{project}/plan");
         Name("setEnrolledProjectPlan");
         Summary("Sets an enrolled project's plan");
-        Description("Publishes hobby (the default), pro or enterprise for the organization TerraBase created when a signed project token created its first database. 404 not_found for an unknown project or one bound to an existing organization, whose owners set its plan.");
+        Description("Publishes hobby (the default), starter, pro or enterprise for the organization TerraBase created when a signed project token created its first database. 404 not_found for an unknown project or one bound to an existing organization, whose owners set its plan.");
         Tags("Administration");
         Produces<Organization>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

@@ -7,6 +7,7 @@ usage reduction remain available.
 | Plan | Operation units per UTC month |
 |---|---|
 | hobby | 100,000 |
+| starter | 1,000,000 |
 | pro | 100,000,000 |
 | enterprise | unlimited |
 

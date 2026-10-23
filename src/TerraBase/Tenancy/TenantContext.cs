@@ -12,6 +12,10 @@ public enum PlanTier
     [JsonStringEnumMemberName("hobby")]
     Hobby,
 
+    /// <summary>Entry paid plan. Order matters: QoS compares plans, so tiers stay sorted by entitlement.</summary>
+    [JsonStringEnumMemberName("starter")]
+    Starter,
+
     /// <summary>Paid plan.</summary>
     [JsonStringEnumMemberName("pro")]
     Pro,

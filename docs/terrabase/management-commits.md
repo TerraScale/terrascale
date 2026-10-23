@@ -302,7 +302,7 @@ commit keeps the guarantees of the database lifecycle recovery in [management-ap
 | Invitations by token hash, single use, history, resend (invariant 12) | [Invitations by token hash](#invitations-by-token-hash) |
 | Viewer is read-only | native `viewer` role, never mapped to a writable one |
 | Exactly one owner, transfer swaps owner and nominee | the dashboard grants `owner` only through `start_transfer`/`confirm_transfer`; TerraBase refuses to leave an organization without an owner |
-| Billing plans (`plan_free`, …) | dashboard documents; the native `plan` (`hobby`, `pro`, `enterprise`) is a trusted resource policy published by the platform service and enforced by TerraBase. TerraBase does not implement billing or derive subscriptions from it |
+| Billing plans (`plan_free`, …) | dashboard documents; the native `plan` (`hobby`, `starter`, `pro`, `enterprise`) is a trusted resource policy published by the platform service and enforced by TerraBase. TerraBase does not implement billing or derive subscriptions from it |
 | `commit_uncertain` retry with the same key | same commit id and body, or `GET /v1/management/commits/{id}` |
 
 ## Crash and restart

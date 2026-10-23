@@ -12,7 +12,7 @@ public sealed class ManagementErrorTests
     [Test]
     [Arguments("POST", "/v1/management/organizations", "{}", "name must be 1 to 128 characters, include a letter or digit and have no control characters")]
     [Arguments("PUT", "/v1/management/current-organization", "{}", "organizationId is required")]
-    [Arguments("PUT", "/v1/management/organizations/missing/plan", "{}", "plan must be hobby, pro or enterprise")]
+    [Arguments("PUT", "/v1/management/organizations/missing/plan", "{}", "plan must be hobby, starter, pro or enterprise")]
     [Arguments("POST", "/v1/management/organizations/missing/projects", "{}", "name must be 1 to 128 characters, include a letter or digit and have no control characters")]
     [Arguments("POST", "/v1/management/organizations/missing/projects/missing/databases", "{\"name\":\"Main\"}", "name must be a lowercase database name of at most 63 characters")]
     [Arguments("PUT", "/v1/management/organizations/missing/members/member/role", "{}", "role must be owner, admin, member or viewer")]
