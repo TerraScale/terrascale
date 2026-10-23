@@ -281,6 +281,13 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <remarks><paramref name="observation"/> retains candidate visits when the stream is cancelled or disposed early.</remarks>
     IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken, QueryObservation? observation = null);
 
+    /// <summary>
+    /// Runs one relational read (docs/terrabase/sql/relational-sql.md section 4) under the query work budget of
+    /// <see cref="QueryAsync"/>: past it a <see cref="QueryCapacityException"/>. Reads at most the program's rows and bytes,
+    /// fully, before returning. A statement the engine refuses throws <see cref="SqlProgramException"/>.
+    /// </summary>
+    ValueTask<SqlProgramResult> ExecuteSqlAsync(SqlProgram program, CancellationToken cancellationToken);
+
     /// <summary>Describes how the engine would run <paramref name="query"/>, without running it.</summary>
     ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken);
 

@@ -35,7 +35,7 @@ public sealed class GroupCommitTests
         {
             services.AddHttpContextAccessor();
             hook.InstallQuota(services);
-        }, deadline.Token);
+        }, cancellationToken: deadline.Token);
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var store = await StoreAsync(api);
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();

@@ -32,7 +32,7 @@ tree, so the engine never sees text the validator did not see.
 | `INSERT INTO t [(cols)] VALUES … \| SELECT …` | evaluate the rows with one engine read, then a create-only `put` per row (`Precondition.Absent`) |
 | `INSERT OR REPLACE`, `REPLACE` | unconditional `put` |
 | `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING` | create-only `put`, existing rows skipped |
-| `UPDATE t SET … WHERE …` | engine read `SELECT <key>, <new values> FROM t WHERE …`, then a `patch` per row: `c = NULL` → `unset`; `c = c ± <integer literal>` → `inc` (counters add across regions); anything else → `set` (per-field last-writer-wins) |
+| `UPDATE t SET … WHERE …` | engine read `SELECT <key>, <new values> FROM t WHERE …`, then a `patch` per row: `c = NULL` → `unset`; `c = c ± <integer literal>` on an `INTEGER NOT NULL` column → `inc` (counters add across regions), on any other column the computed value (NULL stays NULL); anything else → `set` (per-field last-writer-wins) |
 | `DELETE FROM t WHERE …` | engine read of the keys, then a `delete` per row |
 | `CREATE TABLE [IF NOT EXISTS]` | create the collection and write its definition |
 | `DROP TABLE [IF EXISTS]` | drop the collection |
@@ -45,6 +45,12 @@ of the database or a CTE of the statement, and every function outside the allow-
 date/time and JSON functions of SQLite; no table-valued functions). Blob values are refused: a JSON document cannot
 hold bytes.
 
+Only plain and `"…"` names and only `'…'` string literals are accepted (SQ1-e4): SqlParserCS renders `[a]]b]` and
+`N'a''b'` back without escaping, which made SQLite read other text than the validator saw. Literals in expressions are
+numbers, strings, NULL, booleans and parameters. The rendered text must parse back to itself, and the engine refuses a
+program whose text holds more than one statement (Turso runs every statement of a command). `printf`, `format` and
+`replace` are not in the allow-list: nested calls build unbounded strings.
+
 Column types follow SQLite affinity on write (`INTEGER`, `REAL`, `TEXT`, `NUMERIC`, none). `NOT NULL`, literal
 `DEFAULT`, `PRIMARY KEY` and `UNIQUE` (through the unique-constraint service) are enforced; `CHECK` and `FOREIGN KEY`
 are refused.
@@ -53,7 +59,8 @@ are refused.
 
 - Single-column primary key: `INTEGER` → canonical decimal (`42`), `TEXT` → the text. Users choose their keys; nothing
   forces ULIDs (id contract: 1–256 characters, UTF-8, no control characters).
-- Composite primary key: the JSON array of the key values (`[1,"a"]`).
+- Composite primary key, or a single key column of another affinity (none, `NUMERIC`, `REAL`): the JSON array of the
+  key values (`[1,"a"]`, `[1]`, `["1"]`), so `1` and `'1'` stay different keys where SQLite keeps them apart (SQ1-e6).
 - No primary key: a generated ULID, invisible to SQL.
 - `INTEGER PRIMARY KEY` omitted on insert: a generated positive integer below 2^53 (milliseconds since 2026-01-01
   times 4096 plus 12 random bits). A local collision retries; two regions inserting the same generated key in the same
@@ -73,10 +80,21 @@ WITH "t" AS (SELECT json_extract(doc, '$."c1"') AS "c1", … FROM main."t" WHERE
 - One CTE per SQL table the statement references; `main."t"` names the physical table, the CTE shadows it.
 - Arguments are bound parameters (`?`, `?NNN`, `:name`, `@name`, `$name`); values are typed (null, integer, real, text).
 - Bounds: the existing work budget (5 million units or 5 s, `QueryCapacityException` → "query too expensive"),
-  at most 10,000 rows and 8 MiB per result (truncation is an error for writes, a `truncated` flag for reads).
+  at most 10,000 rows and 8 MiB per result. Past either bound a statement fails with `SQLITE_TOOBIG` (DECISION, SQ1-c:
+  reads too, not a `truncated` flag, because neither `SqlResult` nor Hrana can carry one and silently dropped rows are wrong).
+- `WITH` only at the start of a statement, and not `RECURSIVE` (DECISION, SQ1-c: rows a recursive CTE generates pass no
+  table scan, so the work budget would never charge them).
+- Parameters are renumbered `$p1`, `$p2`, … in SQLite's order (`?` = largest so far + 1, `?NNN`, names on first use) before
+  parsing; positional arguments bind by number, named arguments (with or without prefix) by name, unbound ones are NULL.
 - shortcut: CTEs are not flattened by Turso, so every read scans each referenced table and no index serves it; the
-  work budget caps a read at roughly 150,000 rows. Upgrade to column rewriting over `json_extract` (index-served)
-  when a customer table passes that.
+  work budget caps a read at roughly 150,000 rows. Upgrade to column rewriting over `json_extract` (index-served) when a
+  customer table passes that.
+- Join fan-out: every SELECT of a statement (top level, subqueries, CTE bodies, both sides of a compound) gets
+  `WHERE tb_sql_row(coalesce(<a column of each FROM item>, 0)) AND (…)`, which charges one work unit per evaluated row
+  combination (Turso evaluates a function of constants once, so the argument names every joined item). A joined
+  subquery or CTE whose first column has no name is refused (SQ1-e3). The guard runs in SELECTs over CTEs and
+  `VALUES` too, and checks the deadline. Besides each statement's budget, all statements of one request (a replay
+  included) share a 5 s deadline, so a write request cannot hold the writer for 256 budgets (SQ1-e5).
 
 ## 5. Transactions
 
@@ -89,6 +107,17 @@ WITH "t" AS (SELECT json_extract(doc, '$."c1"') AS "c1", … FROM main."t" WHERE
   transaction read it; retry the transaction", and nothing commits (optimistic, serializable).
   Limits: 256 statements, 1 MiB of log, 1024 rows written (one change group, as any transaction), 30 s idle.
 - Statements using `random()` or the current time inside a multi-request transaction can conflict at `COMMIT`; retry.
+- A statement that fails inside a transaction undoes only itself, as in SQLite: the request's storage transaction is
+  dropped (a refused document write may leave it uncommittable) and the next statement replays the log without it. The
+  transaction stays open for more statements, `COMMIT` or `ROLLBACK`. A failed `COMMIT` (a conflict) ends it; `ROLLBACK`
+  without a transaction is a no-op.
+- `SqlError.Kind` is a stable sub-code (`no_such_table`, `no_such_column`, `already_exists`, `syntax`, `invalid_input`,
+  `constraint`, `conflict`, `auth`, `too_big`, `interrupt`); `ISqlService.ListTablesAsync` lists tables with their
+  columns for front ends (PG1 catalog queries).
+- `ISqlSession.ExecuteScriptAsync` (added for Hrana `sequence`) splits text with the same parser and runs each
+  statement without arguments; `BEGIN READONLY` is not available inside a script.
+- `…/sql/execute` wraps its statements in `BEGIN` … `COMMIT` (`BEGIN READONLY` when none writes, so reads never take the
+  writer) and refuses transaction statements in the body.
 - Sessions live in memory on the node that opened them, bounded (count and bytes); a restart or an expired baton
   answers "stream not found".
 
@@ -105,7 +134,9 @@ WITH "t" AS (SELECT json_extract(doc, '$."c1"') AS "c1", … FROM main."t" WHERE
 
 All statements run as one transaction (all or nothing). Response:
 `{"results": [{"columns": [...], "rows": [[...]], "rows_affected": 0, "last_insert_rowid": null}]}`.
-Errors: `400 sql_error` with `{"error": {"code", "message", "statement"}}`, `409 sql_conflict`, `413 sql_too_large`.
+Errors: `400 sql_error` with `{"error": {"code", "message", "statement", "sqlite_code"}}`, `403 forbidden_scope`
+(`SQLITE_AUTH`), `409 sql_conflict`, `413 sql_too_large`. `sqlite_code` carries the `SqlError` code (DECISION, SQ1-b:
+the HTTP code stays the API's own vocabulary; clients that map SQLite codes read `sqlite_code`).
 
 ### Hrana over HTTP (libSQL clients)
 
@@ -120,14 +151,14 @@ for @libsql/client, which resolves `v2/pipeline` relative to it). `authToken` is
   `describe`, `store_sql`, `close_sql`, `close`, `get_autocommit`.
 - SQL errors are `{"type":"error","error":{"message","code"}}` results inside a 200 response; `code` is always set.
 - Batons are random 128-bit strings, rotated on every response, bound to the API key and database.
-- Wire traps: `last_insert_rowid` always present (`null` or a decimal string); integers as strings; blob base64 without
-  padding out, both forms in; no `Content-Type` requirement on requests; relaxed JSON escaping in responses.
+- Wire traps: `last_insert_rowid` always present (`null` or a decimal string); integers as strings; blob values are refused
+  (an argument fails with `SQLITE_ERROR` "blob values are not supported"; results never hold blobs); no `Content-Type` requirement on requests; relaxed JSON escaping in responses.
 
 ### Scopes and limits
 
 Reads need `documents:read`; any write or DDL needs `documents:write`, checked per statement after parsing. Every route
 is under the existing QoS request budget (429 `tenant_busy`), like the existing SQL route. Bodies are at most 1 MiB,
-SQL text 16 KiB per statement, 1000 statements per request.
+SQL text 16 KiB per statement, 256 statements per request (the transaction log limit, SQ1-e7).
 
 ## 7. Slices
 
