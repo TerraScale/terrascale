@@ -65,6 +65,16 @@ public sealed record TerraBaseOrganization(string Id, string Name, string Create
 /// <param name="CreatedAt">Creation time.</param>
 public sealed record TerraBaseProject(string Id, string OrganizationId, string Name, DateTimeOffset CreatedAt);
 
+/// <summary>Where a project closure stands in TerraBase.</summary>
+/// <param name="Status"><c>accepted</c> once every catalog holder confirmed the project empty under the fence; otherwise <c>pending</c>.</param>
+/// <param name="ClosureId">The closure id the fence was written with.</param>
+/// <param name="PendingHolders">TerraBase machines that have not confirmed the project empty under the fence.</param>
+public sealed record TerraBaseProjectClosure(string Status, string ClosureId, int PendingHolders)
+{
+    /// <summary>Whether TerraBase accepted the closure in every catalog holder.</summary>
+    public bool Accepted => this.Status == "accepted";
+}
+
 /// <summary>A database registered in a project. The Documents API addresses it by <see cref="ProjectId"/> and <see cref="Name"/>.</summary>
 /// <param name="Id">Canonical uppercase ULID.</param>
 /// <param name="ProjectId">Owning project.</param>

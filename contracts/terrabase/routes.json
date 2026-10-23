@@ -213,6 +213,12 @@
     },
     {
       "client": "management",
+      "operation": "closeProject",
+      "method": "PUT",
+      "path": "/admin/projects/{project}/closure"
+    },
+    {
+      "client": "management",
       "operation": "deleteProject",
       "method": "DELETE",
       "path": "/v1/management/organizations/{organization}/projects/{project}"

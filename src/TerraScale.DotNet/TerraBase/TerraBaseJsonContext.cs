@@ -30,6 +30,7 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBaseOrganization))]
 [JsonSerializable(typeof(TerraBasePage<TerraBaseOrganization>))]
 [JsonSerializable(typeof(TerraBaseProject))]
+[JsonSerializable(typeof(TerraBaseProjectClosure))]
 [JsonSerializable(typeof(TerraBasePage<TerraBaseProject>))]
 [JsonSerializable(typeof(TerraBaseManagedDatabase))]
 [JsonSerializable(typeof(TerraBasePage<TerraBaseManagedDatabase>))]
@@ -154,4 +155,10 @@ internal sealed record RequestBody
     public TerraBaseImportOptions? Options { get; init; }
 
     public string? PreviewId { get; init; }
+
+    public int? Version { get; init; }
+
+    public string? ClosureId { get; init; }
+
+    public string? AuthorityOrganizationId { get; init; }
 }

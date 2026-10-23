@@ -128,6 +128,27 @@ public sealed class TerraBaseManagementClient
     public Task DeleteProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Delete, Project(organizationId, projectId), userId, organizationId, null, cancellationToken);
 
+    /// <summary>
+    /// ts-auth's project closure handoff (TerraBase docs/terrabase/project-closure.md): fences <paramref name="projectId"/>
+    /// permanently against new databases and enrollment, or reads the fence's status. Served only on TerraBase's private
+    /// listener behind the peer credential, so use a client without <see cref="TerraBaseManagementClientOptions.AccessTokenProvider"/>;
+    /// no user acts. Idempotent: retry with the same <paramref name="closureId"/> after a lost response. A refusal writes
+    /// nothing and throws <see cref="TerraBaseConflictException"/> (<c>not_empty</c>, <c>closure_conflict</c> or
+    /// <c>binding_conflict</c>). Any other failure, a 404 included, proves nothing about the project.
+    /// </summary>
+    public async Task<TerraBaseProjectClosure> CloseProjectAsync(string projectId, string authorityOrganizationId, string closureId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(authorityOrganizationId);
+        ArgumentException.ThrowIfNullOrEmpty(closureId);
+        var body = TerraBaseConnection.Json(new RequestBody { Version = 1, ClosureId = closureId, AuthorityOrganizationId = authorityOrganizationId }, Json.RequestBody);
+        var (closure, status) = await connection.SendAsync(HttpMethod.Put, "/admin/projects/" + TerraBaseConnection.Segment(projectId, nameof(projectId)) + "/closure",
+            body, Json.TerraBaseProjectClosure, null, cancellationToken).ConfigureAwait(false);
+        // A body that does not answer this closure, or contradicts its status code, is not evidence either way.
+        return closure.ClosureId == closureId && (status, closure.Status) is (System.Net.HttpStatusCode.OK, "accepted") or (System.Net.HttpStatusCode.Accepted, "pending")
+            ? closure
+            : throw new TerraBaseException(status, "TerraBase answered a project closure with a status or closure id that does not match the request.", "invalid_response", null);
+    }
+
     // Databases and branches
 
     /// <summary>Creates an empty database in a project.</summary>
