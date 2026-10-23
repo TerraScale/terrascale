@@ -8,7 +8,7 @@ const check = process.argv.includes('--check');
 const routes = [
   ['/', 'Developer documentation'],
   ['/getting-started/', 'Current quickstarts and service availability'],
-  ['/getting-started/javascript', 'Published JavaScript SDK 0.0.3 installation and CRUD/query example'],
+  ['/getting-started/javascript', 'Published JavaScript SDK 0.0.5 installation and CRUD/query example'],
   ['/getting-started/csharp', 'C# quickstart with the SDK package built from source'],
   ['/getting-started/go', 'Go SDK installation and document, query, SQL and changes quickstart'],
   ['/guides/sdks', 'Supported runtimes, installation and SDK contracts'],
@@ -32,7 +32,7 @@ const routes = [
 const text = `# TerraScale documentation
 
 > TerraBase stores project-scoped JSON documents. The JavaScript SDK
-> @terrascale/sdk@0.0.3 is on npm, the Go module terrascale.tech/sdk@v0.0.1
+> @terrascale/sdk@0.0.5 is on npm, the Go module terrascale.tech/sdk@v0.0.2
 > is on the Go proxy, and the C# package builds from source. Exchange a
 > dashboard API key at https://auth.terrascale.tech/terrascale/oauth/token and
 > call https://api.terrascale.tech.

@@ -15,11 +15,12 @@ Create an account in the [TerraScale dashboard](https://dash.terrascale.tech/reg
 
 | Language | Start here | Availability |
 | --- | --- | --- |
-| JavaScript / TypeScript | [JavaScript quickstart](/ar/getting-started/javascript) | `@terrascale/sdk@0.0.3` is published on npm |
+| JavaScript / TypeScript | [JavaScript quickstart](/ar/getting-started/javascript) | `@terrascale/sdk@0.0.5` is published on npm |
 | C# | [C# quickstart](/ar/getting-started/csharp) | Package built from source; not on nuget.org yet |
-| Go | [Go quickstart](/ar/getting-started/go) | `go get terrascale.tech/sdk@v0.0.1` |
+| Go | [Go quickstart](/ar/getting-started/go) | `go get terrascale.tech/sdk@v0.0.2` |
+| Rust | [SDK reference](/ar/guides/sdks#rust) | Git dependency; not on crates.io yet |
 
-There is no Python, Java or Rust SDK yet; call the HTTP API directly from those languages.
+There is no Python or Java SDK yet; call the HTTP API directly from those languages.
 
 ## Create an account, a database and an API key
 

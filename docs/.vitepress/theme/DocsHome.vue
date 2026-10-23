@@ -56,7 +56,7 @@ onBeforeUnmount(() => clearTimeout(statusTimer))
     </section>
     <div class="docs-release" role="note">
       <span class="docs-badge"><span class="docs-dot" aria-hidden="true"></span>Pre-launch</span>
-      <span>JavaScript SDK <code>0.0.3</code> is published. Hosted access and SDK qualification have separate availability checks.</span>
+      <span>JavaScript SDK <code>0.0.5</code> is published. Hosted access and SDK qualification have separate availability checks.</span>
     </div>
     <section class="docs-block" aria-labelledby="docs-start">
       <div class="docs-section-head">
