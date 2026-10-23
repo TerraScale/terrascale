@@ -1,2 +1,2 @@
-# Pending real combined FTS + contract1 artifacts. Never use encryption-only v1 hashes.
-# Parent must replace this file with the two verified terrascale-turso-linux-*.so lines.
+1d4f3b552d11eadb703d6abc13cd8f5f1621c7504642d6f2b875226d88cb5eef  terrascale-turso-linux-arm64.so
+efd5916aa9ee1eeaa04784813b08e250912ae25d89f8a92499a216c2711f3e8b  terrascale-turso-linux-x64.so

@@ -90,6 +90,7 @@ FROM build-terrabase AS test-terrabase
 ARG TERRABASE_REVISION
 # Finish Fast's incremental builds before the independent E2E processes read those outputs.
 RUN make -o restore terrabase-test-fast CONFIGURATION=Release \
+    && scripts/vendor/test-turso-native-singlefile.sh \
     && make -j2 -o restore -o terrabase-build terrabase-replication-matrix terrabase-e2e-local CONFIGURATION=Release \
     && touch /passed
 

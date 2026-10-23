@@ -8,11 +8,10 @@ The required `native` job still gates `test`. Native maintenance is an explicit
 Maintenance runs build once per architecture and prepare an artifact for parent
 publication; they do not qualify Fast, publish images or upload a release.
 
-Release: `turso-native-v0.8.2-fts-contract1-20261023`.
-The tag and release were absent when checked on 2026-10-23. Never replace or
-append assets to `turso-native-v1`: it contains encryption-only libraries.
-`SHA256SUMS` deliberately has no binary hashes until real combined artifacts
-pass qualification. Downloads and managed builds fail closed until it is filled.
+Release: [`turso-native-v0.8.2-fts-contract1-20261023`](https://github.com/TerraScale/terrascale/releases/tag/turso-native-v0.8.2-fts-contract1-20261023).
+`SHA256SUMS` pins both qualified libraries; downloads and managed builds reject
+missing or mismatched bytes. Never replace or append assets to encryption-only
+`turso-native-v1` or overwrite the combined release.
 
 ## Pinned inputs and native behavior
 
@@ -51,12 +50,33 @@ a SQL trigger spoof remaining a constraint, and real ciphertext tamper producing
 native corruption. Native admission bounds opaque scoring allocations; it does
 not promise a hard deadline inside third-party work.
 
-## Parent bootstrap after the push/queue gate opens
+## Qualification evidence
 
-The existing CI workflow already supports dispatch on default, allowing its
-maintenance route to run from this pushed branch before merge. A new standalone
-workflow would not have that bootstrap property. This route is prepared and
-statically checked; its first real dispatch remains to be proven.
+[Run 39969762871](https://github.com/TerraScale/terrascale/actions/runs/39969762871)
+and independent [run 39997989468](https://github.com/TerraScale/terrascale/actions/runs/39997989468)
+passed on real x64 and ARM64 runners. Every assembled asset passes its manifest;
+both runs produced identical library hashes:
+
+| Architecture | SHA-256 |
+| --- | --- |
+| linux-x64 | `efd5916aa9ee1eeaa04784813b08e250912ae25d89f8a92499a216c2711f3e8b` |
+| linux-arm64 | `1d4f3b552d11eadb703d6abc13cd8f5f1621c7504642d6f2b875226d88cb5eef` |
+
+The exact candidate bytes passed 2,540/2,540 TerraBase Fast tests, 23/23 driver
+tests, and 14/14 focused FTS HTTP tests on linux-x64 at `52ca8e1bd`. The isolated
+single-file driver also passes 23/23 and its extracted Turso library matches the
+pin. `ClassifyTursoNativeForSingleFile` restores native metadata lost through
+project references; otherwise .NET 11 leaves a sidecar outside the bundle.
+Normal TerraBase CI repeats the executable-only loading and extracted-hash check.
+ARM64 native smoke proof does not imply ARM64 managed Fast qualification.
+
+## Maintenance and publication
+
+Dispatch only for changed native inputs, with the parent queue/build admission.
+The existing workflow supports maintenance on a pushed feature branch before
+merge. Maintenance uses a distinct aggregate check identity and cannot satisfy
+the ordinary required `test` check. Future native inputs require a new release
+tag and reviewed pins; the published tag above is immutable.
 
 1. Push the reviewed pipeline head, then dispatch **once**:
 
@@ -68,9 +88,9 @@ statically checked; its first real dispatch remains to be proven.
    rejects a host/target mismatch; no qemu/cross-architecture publication is
    accepted. Each build checks ELF64 little-endian and e_machine x64 `3e00` /
    arm64 `b700`, rejects RPATH/RUNPATH and absolute dynamic dependencies, and runs
-   the full FTS and contract1 smokes before producing any output. Initial normal
-   CI fails quickly on pending pins; it cannot run Fast against an unqualified
-   substitute. Parent owns the push, dispatch, queue gate and check watching.
+   the full FTS and contract1 smokes before producing any output. Normal CI never
+   substitutes an unqualified library. Parent owns the push, dispatch, queue gate
+   and check watching.
 
 2. After the maintenance run succeeds, download its assembled artifact:
 
@@ -126,7 +146,8 @@ Assembly is `scripts/vendor/prepare-turso-native-release.sh <x64-output>
 <arm64-output> <empty-release-directory>`; inputs must pass manifests and both
 smokes, with identical shared source/patch receipts.
 
-**Needs format bump.** StorageFormat.cs is unchanged; the parent storage lane
-owns the integrated on-disk format decision. Pending combined native builds,
-independent-run reproducibility, final binary pins, publication and managed/Fast
-qualification are not implied by static replay or C syntax checks.
+**Needs format bump.** `Engine/Turso/StorageFormat.cs` matches main; the deploy
+lane owns the integrated on-disk format decision. Native publication does not
+qualify final feature-head CI, complete benchmarks or production activation.
+Admission estimates are conservative, not strict RSS bounds, and cancellation
+does not establish hard deadlines inside third-party calls.
