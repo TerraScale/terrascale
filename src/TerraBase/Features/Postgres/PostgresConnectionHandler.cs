@@ -410,6 +410,17 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     }
 
                     (statement.Columns, statement.Described) = (columns, true);
+                    if (statement.Statement.Kind == PgKind.Sql && Array.Exists(statement.Oids, oid => oid == 0))
+                    {
+                        // Drivers that prepare (pgx) encode each parameter in the type this reports.
+                        _ = await GuardAsync(session, async (database, token) =>
+                        {
+                            PostgresStatements.InferParameters(statement.Statement, statement.Oids,
+                                await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false));
+                            return Array.Empty<PgResult>();
+                        }, cancellationToken).ConfigureAwait(false);
+                    }
+
                     output.Begin('t');
                     output.Int16(statement.Oids.Length);
                     Array.ForEach(statement.Oids, oid => output.Int32(oid == 0 ? PostgresStatements.TextOid : oid));
@@ -506,7 +517,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 }, cancellationToken).ConfigureAwait(false);
                 return guarded is PgError failure || shape is null
                     ? (null, false, guarded is PgError refused ? refused : new PgError("XX000", "internal error"))
-                    : (shape.Columns.Count == 0 ? null : [.. shape.Columns.Select(column => new PgColumn(column.Name, PostgresStatements.TextOid))],
+                    : (shape.Columns.Count == 0 ? null : [.. shape.Columns.Select(column => new PgColumn(column.Name, PostgresStatements.DescribedOid(column)))],
                         shape.IsReadOnly, null);
             default:
                 return (null, false, null);
