@@ -1,6 +1,6 @@
 ---
 title: CLI installation and usage
-description: Install the TerraScale CLI with go install, sign in, and manage databases, collections, documents, SQL and API keys.
+description: Install the TerraScale CLI in one line, sign in, and manage projects, databases, collections, documents, indexes, imports, SQL and API keys.
 ---
 
 <!-- i18n:fallback:es -->
@@ -12,85 +12,51 @@ description: Install the TerraScale CLI with go install, sign in, and manage dat
 
 The `ts` CLI signs you into TerraScale and manages databases, collections,
 documents, read-only SQL and project API keys as your user.
-You need a TerraScale account and a project in the [dashboard](https://dash.terrascale.tech).
+You need a [TerraScale account](https://dash.terrascale.tech).
 
-::: warning Public release pending
-The CLI source is merged into [ts-go](https://github.com/TerraScale/ts-go/tree/main/cmd/ts),
-but the first public CLI release, hosted installer, and Homebrew tap are still pending.
-Install with `go install` or the source build below today. Installation does not establish hosted service availability.
-:::
+## Install
 
-## Install with Go today
-
-Install [Go](https://go.dev/doc/install) 1.25 or later. In a terminal:
-
-```sh
-GOPROXY=direct go install terrascale.tech/sdk/cmd/ts@main
-export PATH="$(go env GOPATH)/bin:$PATH"
-ts help
-```
-
-Use `@main`: `@latest` resolves to SDK `v0.0.1`, which predates `cmd/ts` and
-fails with `does not contain package terrascale.tech/sdk/cmd/ts`. `GOPROXY=direct`
-fetches `main` from GitHub; the public Go module proxy caches `@main` and can
-serve an older CLI for a while after a change. On Windows PowerShell, run
-`$env:GOPROXY="direct"` first. On Windows,
-the same command installs `ts.exe` into `%USERPROFILE%\go\bin`; add that
-directory to `PATH`.
-
-## Build from source
-
-Install Go 1.25 or later and Git. In a terminal:
-
-```sh
-git clone https://github.com/TerraScale/ts-go.git
-cd ts-go
-go build -o ts ./cmd/ts
-```
-
-Run `./ts` from this directory, or move the executable to a directory on your `PATH`
-to use `ts` as shown below. On Windows, build with `go build -o ts.exe ./cmd/ts`
-and run `.\ts.exe` from PowerShell, or add its directory to `PATH`.
-
-## Release installation (pending)
-
-These commands describe the intended release installation. They are **not available yet**.
-Wait for a CLI release on the [releases page](https://github.com/TerraScale/ts-go/releases)
-and the installer or tap to be published before using them.
-
-### macOS and Linux
-
-The release target is macOS and Linux on Intel/AMD 64-bit (`amd64`) and ARM64 (`arm64`):
+macOS and Linux, Intel/AMD 64-bit (`amd64`) and ARM64 (`arm64`):
 
 ```sh
 curl -fsSL https://terrascale.tech/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
+ts --version
 ```
 
-Homebrew installation is planned through the TerraScale tap:
+The installer downloads the latest `v0.0.X` release from the
+[releases page](https://github.com/TerraScale/ts-go/releases), checks its
+SHA-256 against `checksums.txt`, and installs `ts` to `~/.local/bin` without
+sudo. `sh install.sh 0.0.2` installs a specific release.
+
+With Homebrew on macOS or Linux:
 
 ```sh
 brew install terrascale/tap/ts
 ```
 
-### Windows
+On Windows, download `ts_windows_amd64.zip` or `ts_windows_arm64.zip` from the
+[releases page](https://github.com/TerraScale/ts-go/releases), verify it against
+`checksums.txt` (`Get-FileHash .\ts_windows_amd64.zip -Algorithm SHA256`), and
+extract `ts.exe` into a user-owned directory on `PATH`.
 
-Use the source build for now. Tagged releases will provide `amd64` and `arm64`
-ZIP archives on the [releases page](https://github.com/TerraScale/ts-go/releases).
-Verify the archive's SHA-256 against `checksums.txt` before extracting `ts.exe`
-into a user-owned directory on `PATH`.
-
-### Check the installed version
-
-The release CLI is expected to report its version with:
+With Go 1.25 or later on any platform:
 
 ```sh
-ts --version
+go install terrascale.tech/sdk/cmd/ts@latest
 ```
 
-Release builds print `ts 0.0.X`. `go install` and source builds print `ts dev`.
+Release builds print `ts 0.0.X`; `go install` and source builds print `ts dev`.
 `ts help` (or `ts --help`) lists every command. Invalid arguments exit with
 status 2 and other failures with status 1.
+
+### Shell completion
+
+```sh
+ts completion bash > ~/.local/share/bash-completion/completions/ts
+ts completion zsh > "${fpath[1]}/_ts"
+ts completion fish > ~/.config/fish/completions/ts.fish
+```
 
 ## Sign in
 
@@ -118,8 +84,16 @@ projects, put `-project` **before** the command and use a project name or ID:
 ts -project my-project db list
 ```
 
-Use the project ID from `ts projects` if names are ambiguous. Create a project
-in the dashboard if the CLI reports `no project`.
+Use the project ID from `ts projects` if names are ambiguous. If the CLI
+reports `no project`, create one:
+
+```sh
+ts projects create my-project
+ts -org my-org projects create other-project   # pick the organization
+```
+
+`projects create` uses your only organization, or creates an organization of
+the same name when you have none.
 
 ## Manage databases
 
@@ -149,6 +123,14 @@ database from the backup and leaves the source untouched. See
 [Backups and restore](/es/guides/backups-and-restore) and
 [Replication and durability](/es/concepts/replication). `db branch` takes the
 source database name first and the new branch name second.
+
+```sh
+ts backup restore-at example 2026-10-23T12:00:00Z example-at-noon
+```
+
+`backup restore-at` restores the database as it was at an RFC 3339 time into a
+new database. The time must be inside the database's restore window; a time
+continuous backup has not yet covered fails with `backup_history_incomplete`.
 
 ::: danger Database deletion
 `ts db delete example-preview` deletes that database immediately, without a
@@ -186,6 +168,62 @@ ts -project other-project doc import example customers < customers.jsonl
 This is a client-side copy, one request per document. For whole-database
 exports and bulk imports see [Export your data](/es/guides/export) and
 [Import an existing database](/es/guides/import).
+
+## Indexes, schemas and TTL
+
+```sh
+ts index create example customers plan region   # 1 to 4 dotted member paths
+ts index list example [customers]
+ts index drop example customers_plan_region
+ts schema set example customers '{"type":"object","required":["name"]}'
+ts schema get example customers
+ts schema delete example customers
+ts ttl set example sessions /expiresAt
+ts ttl get example sessions
+ts ttl delete example sessions
+```
+
+`index create` builds the index before it returns and prints its name, derived
+from the collection and fields. `schema set` declares a JSON Schema (2020-12)
+that writes must satisfy; pass `-` to read it from standard input. `ttl set`
+takes a JSON Pointer: documents whose member there holds a past RFC 3339 UTC
+time are deleted by an hourly sweep. See [Indexes](/es/guides/indexes) and [TTL](/es/guides/ttl).
+
+## Import a database file
+
+```sh
+ts import legacy sqlite ./app.db
+ts import legacy postgres_plain ./dump.sql
+ts import status legacy
+ts import cancel legacy
+```
+
+`import` creates a new database, uploads the file (up to 1 GiB), prints the
+preview of each source table and its target collection, confirms it, and waits
+until the copy and validation finish. It refuses a preview with blocking
+issues; `import status` prints the whole job as JSON. Running the same command
+again resumes the same import. See [Import an existing database](/es/guides/import).
+
+## Watch changes
+
+```sh
+ts db changes example                 # every collection
+ts db changes example customers orders
+```
+
+`db changes` prints each committed change from now on as one JSON line with
+the collection, ID, operation, version and document, until you press Ctrl-C.
+Delivery is at least once. See [Realtime changes](/es/guides/realtime).
+
+## Usage
+
+```sh
+ts usage           # the project and each database, as JSON
+ts usage example   # one database
+```
+
+`usage` prints storage, document counts and hourly reads and writes for the
+last day.
 
 ## Run SQL
 

@@ -50,6 +50,6 @@ TerraScale uses TerraBase through the same SDK boundary as customer applications
 
 ## Failed authorization
 
-Handle `401` by checking expiry and revocation, then run the token exchange again. Handle `403` by checking the resource scope and operation permissions. Do not retry these errors automatically. Never log the token, authorization header, raw server error body or a customer document while diagnosing the request.
+Handle `401` by checking expiry and revocation, then run the token exchange again. Handle `403` by checking the resource scope and operation permissions. Do not retry these errors automatically. Revoking a key does not end access tokens already issued from it: they stay valid until they expire, up to 15 minutes. Never log the token, authorization header, raw server error body or a customer document while diagnosing the request.
 
 </div>

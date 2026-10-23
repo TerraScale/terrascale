@@ -25,16 +25,16 @@ postgresql://{label}:{api-key}@pg.terrascale.tech:5432/{database}?sslmode=requir
 | Part | Value |
 | --- | --- |
 | `{label}` | Any user name. TerraBase ignores it; use it to tell your applications apart in your own logs. |
-| `{api-key}` | A TerraBase project API key (`tb_…`). It is the password. |
+| `{api-key}` | The API key you create on the dashboard's **API keys** page. It is the password. |
 | `{database}` | The database name in the key's project. With an organization-wide key, use `{projectId}/{name}`, written `{projectId}%2F{name}` in a URL. |
 | `sslmode=require` | Required. TLS is mandatory and plaintext connections are refused. |
 
-Use a key with `documents:read` for reads and `documents:write` for writes and `CREATE`/`DROP`. Obtain it through the supported access flow in [Authentication](/ja/guides/authentication#server-applications), keep it in your server's secret store, and pass the URL to your application through an environment variable. Never commit it, put it on a command line or log it.
+Use a key with `documents:read` for reads and `documents:write` for writes and `CREATE`/`DROP`. Create it in the dashboard, keep it in your server's secret store, and pass the URL to your application through an environment variable. Never commit it, put it on a command line or log it.
 
 ## psql
 
 ```sh
-export DATABASE_URL='postgresql://app:tb_…@pg.terrascale.tech:5432/shop?sslmode=require'
+export DATABASE_URL='postgresql://app:YOUR_API_KEY@pg.terrascale.tech:5432/shop?sslmode=require'
 psql "$DATABASE_URL"
 ```
 
