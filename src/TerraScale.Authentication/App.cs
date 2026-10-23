@@ -207,6 +207,7 @@ public static class App
             TokenRateLimitMiddleware.UseClientGuard(app);
         }
         app.UseTenancy();
+        app.UseHostedTheme();
         // OpenIddict answers discovery, JWKS and protocol errors here and validates passthrough requests first.
         app.UseAuthentication();
         app.MapTerraScaleEndpoints();

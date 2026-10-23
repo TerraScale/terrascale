@@ -27,7 +27,7 @@ case SignInStep.Rejected:
 <p class="sub">Start again from the application you were signing in to.</p>
 break;
 case SignInStep.SignUp:
-<p class="sub">Get started with @HostedLayoutModel.DefaultName in under a minute.</p>
+<p class="sub">Get started with @Model.Brand in under a minute.</p>
 break;
 case SignInStep.SignUpCode:
 <p class="sub">We emailed a six-digit code to <strong>@Model.Email</strong>. It expires in 10 minutes.</p>
@@ -64,20 +64,32 @@ break;
 @switch (Model.Step)
 {
 case SignInStep.Email:
-<form method="post" action="/ui/@Model.Slug/sign-in">
+<form method="post" action="/ui/@Model.Slug/sign-in@(Model.Theme.Passcode ? "" : "/password")">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="field">
 <label for="sign-in-email">Email</label>
 <input id="sign-in-email" name="email" type="email" autocomplete="username" placeholder="you@company.com" required autofocus value="@Model.Email">
 </div>
 <div class="actions">
+@if (Model.Theme.Passcode)
+{
 <button type="submit">Email me a sign-in code<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></button>
-<button type="submit" class="secondary" formaction="/ui/@Model.Slug/sign-in/password"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>Use a password instead</button>
+}
+@if (Model.Theme.Password)
+{
+<button type="submit" class="@(Model.Theme.Passcode ? "secondary" : "")" formaction="/ui/@Model.Slug/sign-in/password"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>@(Model.Theme.Passcode ? "Use a password instead" : "Continue with a password")</button>
+}
 </div>
 </form>
 <div class="row">
+@if (Model.Theme.Password)
+{
 <a href="@Model.Link("reset")">Forgot password?</a>
+}
+@if (Model.Theme.SignUp)
+{
 <span class="alt">New here? <a href="@Model.Link("sign-up")">Create account</a></span>
+}
 </div>
 break;
 case SignInStep.Password:
@@ -229,7 +241,7 @@ break;
 }
 @functions {
     /// <inheritdoc />
-    public HostedLayoutModel LayoutModel => new(Model.Title, Model.Nonce);
+    public HostedLayoutModel LayoutModel => new(Model.Title, Model.Nonce, Model.Theme.ThemeColor, Model.Theme.LogoUrl, Model.Theme.Name);
 
     /// <inheritdoc />
     protected override Task ExecuteSectionAsync(string name)
