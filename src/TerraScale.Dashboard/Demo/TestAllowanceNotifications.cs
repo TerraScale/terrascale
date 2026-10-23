@@ -16,14 +16,14 @@ sealed class TestAllowanceNotifications(TimeProvider clock) : IAllowanceNotifica
     public ConcurrentQueue<AllowanceAlert> Attempts { get; } = new();
     public ConcurrentDictionary<string, AllowanceAlert> Sent { get; } = new();
 
-    internal void Observe(AllowanceUsageObservation? value, string delivery = "accepted", bool supported = true)
+    internal void Observe(AllowanceUsageObservation? value, string delivery = "accepted", bool supported = true, string? operationContract = null)
     {
         lock (gate)
         {
             observation = value;
             deliveryConfigured = value is not null;
             outcome = delivery;
-            operationsContract = supported ? AllowanceNotifications.OperationsContract : "document-operations-node-v1";
+            operationsContract = operationContract ?? (supported ? AllowanceNotifications.OperationsContract : "document-operations-node-v1");
             storageContract = supported ? AllowanceNotifications.StorageContract : "logical-bytes-node-v1";
         }
     }

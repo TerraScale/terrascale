@@ -67,7 +67,8 @@ internal sealed class AllowanceNotificationScenario(string root) : IAsyncDisposa
             var limits = PlanCatalog.Limits("free");
             long? Used(string key, long limit) => int.TryParse(form[key], out var percent) ? limit * percent / 100 : null;
             backend.Observe(new(organizationId, Used("operations", limits.MonthlyOperations), Used("storage", limits.StorageBytes)),
-                form["outcome"].ToString() is { Length: > 0 } delivery ? delivery : "accepted", form["unsupported"] != "true");
+                form["outcome"].ToString() is { Length: > 0 } delivery ? delivery : "accepted", form["unsupported"] != "true",
+                form["operationsContract"].ToString() is { Length: > 0 } contract ? contract : null);
             clock.Tick();
             await backend.WaitForReadAsync(http.RequestAborted);
             // A second, empty pass can only start after the observed pass finished, even if it failed closed.
