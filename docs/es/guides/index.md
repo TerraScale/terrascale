@@ -16,6 +16,7 @@ Use the [quickstart](/es/getting-started/) to establish one working application 
 - [Queries and pagination](/es/guides/queries): filters, projection, cursors and version preconditions.
 - [Connect with psql and Postgres drivers](/es/guides/postgres-clients): SQL over the PostgreSQL wire protocol from psql and standard drivers (pending).
 - [Connect with libSQL clients](/es/guides/libsql-clients): SQL from the official libSQL clients (pending).
+- [Use Drizzle ORM](/es/guides/orm-drizzle), [Prisma ORM](/es/guides/orm-prisma) and [SQLAlchemy](/es/guides/orm-sqlalchemy): ORMs over the libSQL clients.
 - [Errors and safe retries](/es/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/es/guides/indexes): secondary indexes, recommendations and automatic indexing.
 - [Schema validation](/es/guides/schema-validation): JSON Schema checks and unique keys per collection.
