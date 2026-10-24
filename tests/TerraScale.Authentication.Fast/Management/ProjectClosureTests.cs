@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
@@ -552,7 +553,14 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     public async Task An_existing_account_intent_handles_late_last_owner_through_its_refusal_path(bool committed)
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
-        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services =>
+        {
+            // HTTP drives this refusal, then the committed case resumes explicitly. A hosted pass could start
+            // cancelling the seeded intent first, so the request would correctly report cancellation in progress (202).
+            var hosted = services.Single(service => service.ServiceType == typeof(IHostedService)
+                && service.ImplementationFactory?.Method.ReturnType == typeof(ClosureWorker));
+            _ = services.Remove(hosted);
+        });
         var (alice, token) = await oidc.SignInUserAsync("alice@example.test");
         var (bob, _) = await oidc.SignInUserAsync("bob@example.test");
         var shared = await oidc.CreateOrganizationAsync(token, "Shared");

@@ -1,0 +1,66 @@
+openapi: 3.1.0
+info:
+  title: TerraScale deletion history correlation API
+  version: v1
+  description: Read-only supplement to account-deletion.openapi.yaml; see ../terrabase/history-erasure-inspection.md.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://auth.terrascale.tech
+security:
+  - accountDeletionReceipt: []
+tags:
+  - name: Members
+    description: Receipt-authorized deletion history metadata.
+paths:
+  /v1/terrascale/account/deletion/history:
+    get:
+      operationId: account_deletion_history
+      tags: [Members]
+      summary: Read your deletion's history request metadata
+      description: Requires the existing generation-specific deletion receipt. Reads only the logically deleted account or a candidate organization bound to that receipt. Returns no subject identifiers, contents or tokens. Does not advance cleanup or erasure. Responses have Cache-Control no-store; missing metadata never proves physical completion.
+      parameters:
+        - name: organization
+          in: query
+          description: Candidate organization ULID covered by the receipt.
+          schema:
+            type: string
+            pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+      responses:
+        '200':
+          description: Opaque history request metadata, not a physical-erasure certificate.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountDeletionHistory'
+        '400': { $ref: 'platform-api.openapi.yaml#/components/responses/BadRequest' }
+        '404': { description: 'Unknown or expired receipt, noncandidate organization, pending logical deletion, or missing/retired history job.' }
+        '409': { description: 'deletion_refused; generation ended without completion proof.' }
+        '503': { $ref: 'platform-api.openapi.yaml#/components/responses/Unavailable' }
+components:
+  securitySchemes:
+    accountDeletionReceipt:
+      type: apiKey
+      in: header
+      name: X-TerraScale-Deletion-Receipt
+      description: The existing private 32-byte unpadded base64url deletion capability; expires after 15 days.
+  schemas:
+    AccountDeletionHistory:
+      type: object
+      required: [erasureId, requestedAt, authLogicalVerifiedAt, historyStatus, historyCompletedAt]
+      properties:
+        erasureId:
+          type: string
+          pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+        requestedAt:
+          type: string
+          format: date-time
+        authLogicalVerifiedAt:
+          type: [string, 'null']
+          format: date-time
+        historyStatus:
+          type: [string, 'null']
+        historyCompletedAt:
+          type: [string, 'null']
+          format: date-time
