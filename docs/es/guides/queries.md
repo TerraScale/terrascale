@@ -215,7 +215,7 @@ JSON
 }
 ```
 
-Like the [vector `near` sort](/es/guides/vector-search), it must be the only sort key and returns one page of at most 100 documents with no cursor. Documents without a point are skipped.
+Like the [vector `near` sort](/es/guides/vector-search), it must be the only sort key and returns one page of at most 1000 documents with no cursor. Documents without a point are skipped.
 
 ### Geo queries from an SDK
 

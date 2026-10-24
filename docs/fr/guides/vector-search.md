@@ -11,7 +11,7 @@ title: Vector similarity search
 
 Store an embedding in each document, then ask for the documents nearest to a query vector. This powers semantic search and retrieval-augmented generation (RAG) without a separate vector database.
 
-The search is exact (brute force): every document that passes your filter is scored. There is no approximate (ANN) index, and TerraScale does not create embeddings. Use any embedding model and store its output as a JSON array of numbers.
+Without an index the search is exact (brute force): every document that passes your filter is scored. For large collections, create a [vector index](#index-large-collections) to make it approximate and fast. TerraScale does not create embeddings: use any embedding model and store its output as a JSON array of numbers.
 
 ## Set up the shell
 
@@ -64,6 +64,26 @@ Results come nearest first (ties by id). Each item carries a `distance`:
 - `near` combines with `filter`, `project` and `count`. Filter first to score fewer documents.
 - Only documents whose `path` is an array of numbers of the query vector's length are scored. Other documents are skipped, not errors.
 
+## Index large collections
+
+Brute force scores every document, so it slows down as a collection grows. A vector index makes `near` queries approximate and fast:
+
+```bash
+api -H 'Content-Type: application/json' \
+  -d '{"collection":"chunks","kind":"vector","fields":["embedding"],"dimensions":768,"name":"chunks_embedding"}' \
+  "$DB/indexes" | jq
+```
+
+- `fields` holds exactly one dotted member path to the embedding array, and `dimensions` is its length (1 to 4096).
+- On a collection that already has documents, the response says `"state": "building"`. Existing documents are added in the background; new writes are indexed as they happen, and a write waits at most for one small batch of the build. Until the index lists as `"active"` (`GET $DB/indexes?collection=chunks`), `near` queries keep scanning.
+- A `near` query whose `path` and vector length match an active index uses it, with either metric. Nothing else changes in the request or response.
+- Results are approximate. The index shortlists candidates by a compact sign-bit code of each vector, then ranks the shortlist with exact distances. In our benchmark on 100,000 real 768-dimension text embeddings, 99.65% of the exact top 10 came back.
+- With a `filter`, the filter applies to the 4,096 closest candidates only. A very selective filter can return fewer than `limit` documents; brute force (no index) never misses.
+- Documents whose `path` is not an array of exactly `dimensions` numbers are not in the index and are never returned by indexed queries.
+- Reads restricted by [collection access rules](/fr/guides/end-user-authentication) do not use the index.
+
+Delete the index with `DELETE $DB/indexes/chunks_embedding`; `near` queries go back to scanning. See [indexes](/fr/guides/indexes).
+
 ## Limits
 
 | Limit | Value |
@@ -71,12 +91,12 @@ Results come nearest first (ties by id). Each item carries a `distance`:
 | Vector length | 1 to 4096 numbers, each within the 32-bit float range |
 | Cosine vector | Not all zeros |
 | Sort keys | `near` is the only sort key: no `path` or `order` beside it |
-| Results | One page, `limit` at most 100, no `next_cursor`; a `cursor` is rejected |
+| Results | One page, `limit` at most 1000, no `next_cursor`; a `cursor` is rejected |
 | Page size | 8 MiB of JSON, as for every query |
 | Work | The query work budget and 5-second deadline apply |
 | Document size | 1 MiB, which bounds how large an embedding can be |
 
-A request outside these limits answers `400 invalid_query`. A search over too many documents answers `400 invalid_query` (query too expensive): add a filter, such as a tenant or category, to narrow the candidates. See [limits](/fr/limits).
+A request outside these limits answers `400 invalid_query`. A brute-force search over too many documents answers `400 invalid_query` (query too expensive): create a [vector index](#index-large-collections), or add a filter, such as a tenant or category, to narrow the candidates. See [limits](/fr/limits).
 
 ## RAG example (JavaScript)
 

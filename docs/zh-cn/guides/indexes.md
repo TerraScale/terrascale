@@ -40,6 +40,8 @@ api -H 'Content-Type: application/json' \
 
 The index is built before the response. A `201` returns the index with `state` set to `active`. An existing index answers `409 index_exists`.
 
+`kind` (optional) is `btree` (the default), `text` for [full-text search](/zh-cn/guides/full-text-search), or `vector` for fast [`near` queries](/zh-cn/guides/vector-search#index-large-collections) over one embedding field with its `dimensions`. A vector index over existing documents answers `state: building` and becomes `active` once a background build has added them.
+
 ## List and drop indexes
 
 ```bash
