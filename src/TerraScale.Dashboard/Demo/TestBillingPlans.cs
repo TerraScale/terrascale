@@ -131,7 +131,10 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
         var isExpire = request.Method == HttpMethod.Post && path.StartsWith("/v1/checkout/sessions/", StringComparison.Ordinal) && path.EndsWith("/expire", StringComparison.Ordinal);
         var checkoutId = path.StartsWith("/v1/checkout/sessions/", StringComparison.Ordinal) ? path.Split('/')[4] : "";
         if (request.Method == HttpMethod.Get && expiredCheckouts.TryGetValue(checkoutId, out var ended)) return Json(ended.DeepClone());
-        if (!isSubscription && !isSchedule && !isExpire && path != "/v1/invoices/create_preview") return await vendor.SendAsync(request, cancellationToken);
+        // The overage reporter's monthly pending-item interval is not a plan change; the underlying vendor records it.
+        var pendingInterval = isSubscription && request.Method == HttpMethod.Post && request.Content is not null &&
+            QueryHelpers.ParseQuery(await request.Content.ReadAsStringAsync(cancellationToken)).ContainsKey("pending_invoice_item_interval[interval]");
+        if (pendingInterval || !isSubscription && !isSchedule && !isExpire && path != "/v1/invoices/create_preview") return await vendor.SendAsync(request, cancellationToken);
         if (request.Headers.Authorization?.Parameter != "sk_test_demo") return Json(new JsonObject { ["error"] = new JsonObject { ["message"] = "Unknown vendor credential." } }, HttpStatusCode.Unauthorized);
         BillingPlanBarrier? blocked = null;
         if (isSubscription && request.Method == HttpMethod.Get)

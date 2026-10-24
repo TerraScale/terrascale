@@ -403,6 +403,9 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 if (http.Request.Method is not "GET" and not "HEAD") Interlocked.Increment(ref managementMutations);
                 return Results.NotFound();
             }
+            // This producer predates the two-factor routes; like such a ts-auth it answers 404, and the dashboard leaves the status unknown.
+            if (http.Request.Method == "GET" && (path == "/v1/terrascale/account/mfa" || path.StartsWith("/v1/terrascale/organizations/", StringComparison.Ordinal)))
+                return Results.NotFound();
             if (!http.Request.HasFormContentType) return ContractFailure("Missing form-encoded auth operation.");
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (form["client_id"] == "00000000000000000000000007" && !http.Request.Headers.ContainsKey("Authorization") && form["client_secret"].Count == 0)
