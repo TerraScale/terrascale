@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -8,6 +9,7 @@ using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Webhooks;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -19,19 +21,24 @@ public static class FunctionsExtensions
 {
     /// <summary>Registers the always-on function store and runtime.</summary>
     public static IServiceCollection AddTerraBaseFunctions(this IServiceCollection services) =>
-        services.AddSingleton<FunctionService>().AddSingleton<IFunctions>(provider => provider.GetRequiredService<FunctionService>());
+        services.AddSingleton<FunctionService>().AddSingleton<IFunctions>(provider => provider.GetRequiredService<FunctionService>())
+            .AddSingleton<IWebhookLocalReceiver, FunctionTriggerReceiver>()
+            .AddSingleton<FunctionScheduler>().AddHostedService(provider => provider.GetRequiredService<FunctionScheduler>());
 }
 
 internal sealed class FunctionService(SystemCatalog catalog, IDocumentService documents, IUsageMeter usage, IMemoryBudget memory,
-    TerraBaseOptions options, TimeProvider time) : IFunctions
+    TerraBaseOptions options, TimeProvider time, IWebhooks webhooks) : IFunctions
 {
+    public const string Schedules = "function_schedules";
+    private const int MaxChangeDocumentBytes = 1024 * 1024;
     private const int MaxFunctions = 32;
     private const int KeptLogs = 100;
     private static readonly Unavailable Busy = new("function capacity is temporarily unavailable");
 
-    public async ValueTask<FunctionResult> DeployAsync(TenantContext tenant, string name, string? source, CancellationToken cancellationToken)
+    public async ValueTask<FunctionResult> DeployAsync(TenantContext tenant, string database, string name, DeployFunctionRequest request,
+        CancellationToken cancellationToken)
     {
-        if (source is null || source.Length > FunctionRunner.MaxSourceChars)
+        if (request.Source is not { Length: <= FunctionRunner.MaxSourceChars } source)
         {
             return new Validation("source is required and at most 256 KiB");
         }
@@ -41,8 +48,43 @@ internal sealed class FunctionService(SystemCatalog catalog, IDocumentService do
             return new Validation("source is not valid JavaScript: " + error);
         }
 
+        var trigger = request.Trigger;
+        if (trigger is not null && (!DatabaseName.TryParse(trigger.Collection, out _)
+            || trigger.Events is { } events && (events.Length is 0 or > 2 || events.Any(e => e is not ("upsert" or "delete")))))
+        {
+            return new Validation("trigger.collection must be a collection name; trigger.events must be upsert and/or delete");
+        }
+
+        if (request.Cron is { } cron && !FunctionScheduler.IsValid(cron))
+        {
+            return new Validation("cron must be a five-field cron expression");
+        }
+
+        var previous = await catalog.ReadAsync(transaction => GetAsync(transaction, tenant, name, cancellationToken), static _ => null, cancellationToken)
+            .ConfigureAwait(false);
+        // Keep the registration of an unchanged trigger collection: its cursor and delivery history carry over.
+        var webhookId = trigger is null ? null : previous?.Trigger?.Collection == trigger.Collection ? previous.WebhookId : null;
+        string? created = null;
+        if (trigger is not null && webhookId is null)
+        {
+            switch (await webhooks.CreateAsync(tenant, database, trigger.Collection, Url(tenant, database, name), cancellationToken).ConfigureAwait(false))
+            {
+                case CreatedWebhookBody hook:
+                    webhookId = created = hook.Id;
+                    break;
+                case NotFound:
+                    return new NotFound("the trigger collection does not exist");
+                case Conflict refused:
+                    return refused;
+                case Unavailable refused:
+                    return refused;
+                default:
+                    return new Validation("the trigger could not be registered");
+            }
+        }
+
         var now = time.GetUtcNow();
-        return await catalog.WriteDurableAsync<FunctionResult>(async transaction =>
+        var result = await catalog.WriteDurableAsync<FunctionResult>(async transaction =>
         {
             if (await SystemCatalog.GetAsync(transaction, $"projects/{tenant.ProjectId}/databases", tenant.DatabaseId!,
                 TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is null)
@@ -57,11 +99,108 @@ internal sealed class FunctionService(SystemCatalog catalog, IDocumentService do
                 return new Conflict($"at most {MaxFunctions} functions may be deployed per database", "function_limit");
             }
 
-            var record = new FunctionRecord(1, name, source, options.MachineId, existing?.CreatedAt ?? now, now);
+            var record = new FunctionRecord(1, name, source, options.MachineId, existing?.CreatedAt ?? now, now, trigger, request.Cron, webhookId, tenant);
             await SystemCatalog.PutAsync(transaction, Records(tenant), name, record, TerraBaseJsonContext.Default.FunctionRecord, cancellationToken)
                 .ConfigureAwait(false);
+            if (request.Cron is { } schedule)
+            {
+                await SystemCatalog.PutAsync(transaction, Schedules, ScheduleId(tenant, name), new FunctionSchedule(tenant, name, schedule, options.MachineId),
+                    TerraBaseJsonContext.Default.FunctionSchedule, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await transaction.DeleteAsync(Schedules, ScheduleId(tenant, name), cancellationToken).ConfigureAwait(false);
+            }
+
             return Body(record, withSource: true);
         }, static error => error, cancellationToken).ConfigureAwait(false);
+
+        // On success drop the replaced registration; on failure drop the one just created.
+        var (staleCollection, staleId) = result is FunctionBody
+            ? (previous?.Trigger?.Collection, previous?.WebhookId != webhookId ? previous?.WebhookId : null)
+            : (trigger?.Collection, created);
+        if (staleCollection is not null && staleId is not null)
+        {
+            _ = await webhooks.DeleteAsync(tenant, staleCollection, staleId, cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
+    }
+
+    public async ValueTask<FunctionResult> DeliveriesAsync(TenantContext tenant, string name, CancellationToken cancellationToken)
+    {
+        var record = await catalog.ReadAsync(transaction => GetAsync(transaction, tenant, name, cancellationToken), static _ => null, cancellationToken)
+            .ConfigureAwait(false);
+        if (record is not { Trigger: { } trigger, WebhookId: { } id })
+        {
+            return record is null ? new NotFound() : Array.Empty<WebhookDeliveryBody>();
+        }
+
+        return await webhooks.DeliveriesAsync(tenant, trigger.Collection, id, null, 100, cancellationToken).ConfigureAwait(false) switch
+        {
+            WebhookDeliveryBody[] deliveries => deliveries,
+            Unavailable error => error,
+            _ => Array.Empty<WebhookDeliveryBody>(),
+        };
+    }
+
+    /// <summary>Runs a change trigger's delivery; a failed run answers a status that makes the webhook worker retry.</summary>
+    public async ValueTask<WebhookAttempt> ReceiveAsync(WebhookPayload payload, string databaseId, string name, CancellationToken cancellationToken)
+    {
+        var record = await catalog.ReadAsync(transaction => SystemCatalog.GetAsync(transaction, SystemCatalog.DatabaseState(databaseId) + "functions", name,
+            TerraBaseJsonContext.Default.FunctionRecord, cancellationToken), static _ => null, cancellationToken).ConfigureAwait(false);
+        if (record is not { Trigger: { } trigger, Tenant: { } tenant } || trigger.Collection != payload.Collection
+            || tenant.ProjectId != payload.ProjectId || tenant.DatabaseId != databaseId)
+        {
+            return new(404, "function_error");
+        }
+
+        var output = new ArrayBufferWriter<byte>();
+        var included = 0L;
+        var count = 0;
+        using (var writer = new Utf8JsonWriter(output))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("trigger", "change");
+            writer.WriteString("collection", payload.Collection);
+            writer.WriteStartArray("changes");
+            foreach (var change in payload.Events.Where(change => trigger.Events is null || trigger.Events.Contains(change.Deleted ? "delete" : "upsert")))
+            {
+                count++;
+                writer.WriteStartObject();
+                writer.WriteString("id", change.Id);
+                writer.WriteBoolean("deleted", change.Deleted);
+                writer.WritePropertyName("document");
+                // Current state, within one 1 MiB budget per delivery; later documents beyond it are null.
+                if (!change.Deleted && await documents.GetAsync(new DocumentKey(tenant, payload.Collection, change.Id), cancellationToken).ConfigureAwait(false)
+                    is StoredDocument { Deleted: false } document && included + document.Json.Length <= MaxChangeDocumentBytes)
+                {
+                    included += document.Json.Length;
+                    writer.WriteRawValue(document.Json.Span, skipInputValidation: true);
+                }
+                else
+                {
+                    writer.WriteNullValue();
+                }
+
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        }
+
+        if (count == 0)
+        {
+            return new(204, null);
+        }
+
+        return await RunAsync(tenant, name, "change", Encoding.UTF8.GetString(output.WrittenSpan), payload.Collection, cancellationToken).ConfigureAwait(false) switch
+        {
+            FunctionResponse response => new(response.Status, response.Status is >= 200 and <= 299 ? null : "function_error"),
+            Unavailable => new(503, "function_unavailable"),
+            _ => new(404, "function_error"),
+        };
     }
 
     public async ValueTask<FunctionResult> ListAsync(TenantContext tenant, CancellationToken cancellationToken) =>
@@ -76,18 +215,28 @@ internal sealed class FunctionService(SystemCatalog catalog, IDocumentService do
                 ? Body(record, withSource: true) : new NotFound(),
             static error => error, cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<FunctionResult> DeleteAsync(TenantContext tenant, string name, CancellationToken cancellationToken) =>
-        await catalog.WriteDurableAsync<FunctionResult>(async transaction =>
+    public async ValueTask<FunctionResult> DeleteAsync(TenantContext tenant, string name, CancellationToken cancellationToken)
+    {
+        FunctionRecord? deleted = null;
+        var result = await catalog.WriteDurableAsync<FunctionResult>(async transaction =>
         {
-            if (await GetAsync(transaction, tenant, name, cancellationToken).ConfigureAwait(false) is null)
+            if ((deleted = await GetAsync(transaction, tenant, name, cancellationToken).ConfigureAwait(false)) is null)
             {
                 return new NotFound();
             }
 
             await transaction.DeleteAsync(Records(tenant), name, cancellationToken).ConfigureAwait(false);
+            await transaction.DeleteAsync(Schedules, ScheduleId(tenant, name), cancellationToken).ConfigureAwait(false);
             await transaction.DropCollectionAsync(Logs(tenant, name), cancellationToken).ConfigureAwait(false);
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (result is Done && deleted is { Trigger: { } trigger, WebhookId: { } id })
+        {
+            _ = await webhooks.DeleteAsync(tenant, trigger.Collection, id, cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
+    }
 
     public async ValueTask<FunctionResult> LogsAsync(TenantContext tenant, string name, int limit, CancellationToken cancellationToken) =>
         await catalog.ReadAsync<FunctionResult>(async transaction =>
@@ -190,7 +339,11 @@ internal sealed class FunctionService(SystemCatalog catalog, IDocumentService do
     };
 
     private static FunctionBody Body(FunctionRecord record, bool withSource) =>
-        new(record.Name, withSource ? record.Source : null, record.CreatedAt, record.UpdatedAt);
+        new(record.Name, withSource ? record.Source : null, record.Trigger, record.Cron, record.CreatedAt, record.UpdatedAt);
+
+    private static string Url(TenantContext tenant, string database, string name) => $"{FunctionTriggerReceiver.Scheme}{tenant.ProjectId}/{database}/{tenant.DatabaseId}/{name}";
+
+    internal static string ScheduleId(TenantContext tenant, string name) => tenant.DatabaseId + "-" + name;
 
     private static ValueTask<FunctionRecord?> GetAsync(IStorageTransaction transaction, TenantContext tenant, string name, CancellationToken cancellationToken) =>
         SystemCatalog.GetAsync(transaction, Records(tenant), name, TerraBaseJsonContext.Default.FunctionRecord, cancellationToken);

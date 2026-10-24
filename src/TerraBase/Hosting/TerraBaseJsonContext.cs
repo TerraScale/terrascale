@@ -42,6 +42,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.FileSignedUrl))]
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.FileBucketPage))]
 [JsonSerializable(typeof(TerraBase.Features.FileStorage.FileObjectPage))]
+[JsonSerializable(typeof(FunctionSchedule))]
 [JsonSerializable(typeof(CreateWebhookRequest))]
 [JsonSerializable(typeof(CreatedWebhookBody))]
 [JsonSerializable(typeof(WebhookBody[]))]
