@@ -643,7 +643,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         using var redeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(session, challenge), verifier);
         var token = (await OidcHarness.JsonAsync(redeemed)).GetProperty("access_token").GetString()!;
         var organization = await oidc.CreateOrganizationAsync(token);
-        await oidc.CreateProjectAsync(token, organization);
+        await oidc.CreateProjectAsync(token, organization, "Pending receipt");
         var receipt = Receipt();
         await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete)).IsEqualTo((401, "unauthorized"));
         await Assert.That(await ReceiptCallAsync(oidc.Client, receipt)).IsEqualTo((404, "not_found"));
