@@ -393,7 +393,8 @@ public sealed class ShapeMetricsTests
             var collection = (await transaction.GetCollectionAsync(DocumentApi.Collection, token))!;
             var random = new Faker().Random;
             shape = new ShapeSealDefinition(Convert.ToHexStringLower(random.Bytes(16)),
-                "h1-" + Convert.ToHexStringLower(random.Bytes(8)), DocumentApi.Collection, collection.Id, random.Bytes(16));
+                "h1-" + Convert.ToHexStringLower(random.Bytes(8)), DocumentApi.Collection, collection.Id, random.Bytes(16),
+                store.Incarnation);
         }
 
         var shapeStorage = new TursoShapeStorage(api.Server.Services.GetRequiredService<TursoStorageEngine>());

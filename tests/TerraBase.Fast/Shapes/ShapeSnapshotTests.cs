@@ -639,7 +639,7 @@ public sealed class ShapeSnapshotTests
             ?? throw new InvalidOperationException("the collection is missing");
         return new ShapeSnapshotDefinition(
             "h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)),
-            DocumentApi.Collection, collection.Id, RandomNumberGenerator.GetBytes(16), predicate);
+            DocumentApi.Collection, collection.Id, RandomNumberGenerator.GetBytes(16), store.Incarnation, predicate);
     }
 
     /// <summary>The FR-12 chunk shape with the snapshot's identity, bound to the collection's current generation.</summary>
@@ -648,7 +648,7 @@ public sealed class ShapeSnapshotTests
         await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         var collection = await transaction.GetCollectionAsync(shape.Collection, CancellationToken.None)
             ?? throw new InvalidOperationException("the collection is missing");
-        return new ShapeSealDefinition(shape.ShapeId, shape.Handle, shape.Collection, collection.Id, shape.ResumeScope);
+        return new ShapeSealDefinition(shape.ShapeId, shape.Handle, shape.Collection, collection.Id, shape.ResumeScope, store.Incarnation);
     }
 
     /// <summary>Applies the contiguous closed chunks of (from, through] in order: upsert stores id, version and document, delete removes.</summary>

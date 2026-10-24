@@ -49,11 +49,12 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
                 return deleted;
             }
 
-            // The newest snapshot keeps every page, however old: it is the only full read a refetch can start from.
+            // The newest complete snapshot keeps every page, however old: it is the only full read a refetch can start from,
+            // and an incomplete newer one being sealed does not replace it.
             var snapshots = Command("""
                 SELECT rowid, offset, octet_length(body) FROM _tb_shape_snapshot
                 WHERE handle = $handle AND offset < $floor AND sealed_at < $before
-                AND offset < (SELECT max(offset) FROM _tb_shape_snapshot WHERE handle = $handle)
+                AND offset < (SELECT max(offset) FROM _tb_shape_snapshot WHERE handle = $handle AND next_id IS NULL)
                 ORDER BY offset, page LIMIT $limit;
                 """);
             snapshots.Parameters.AddWithValue("$handle", handle);
@@ -68,35 +69,54 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
     public async ValueTask<int> DropShapeAsync(string handle, int maxRows, long maxBytes, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
-        return await RunAsync(() =>
+        return await RunAsync(() => DropShape(handle, maxRows, maxBytes, cancellationToken).Rows, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    // Worker-only: one bounded batch of a retired handle's rows and the body bytes they held.
+    private (int Rows, long Bytes) DropShape(string handle, int maxRows, long maxBytes, CancellationToken cancellationToken)
+    {
+        var chunks = Command("SELECT rowid, end_offset, octet_length(body) FROM _tb_shape_chunk WHERE handle = $handle ORDER BY offset LIMIT $limit;");
+        chunks.Parameters.AddWithValue("$handle", handle);
+        chunks.Parameters.AddWithValue("$limit", (long)maxRows);
+        var (rows, bytes, _) = ShapeBudget(chunks, maxBytes);
+        var deleted = DeleteShapeRows("_tb_shape_chunk", rows, cancellationToken);
+
+        var snapshots = Command("SELECT rowid, offset, octet_length(body) FROM _tb_shape_snapshot WHERE handle = $handle ORDER BY offset, page LIMIT $limit;");
+        snapshots.Parameters.AddWithValue("$handle", handle);
+        snapshots.Parameters.AddWithValue("$limit", (long)(maxRows - deleted));
+        (rows, var snapshotBytes, _) = ShapeBudget(snapshots, maxBytes - bytes);
+        deleted += DeleteShapeRows("_tb_shape_snapshot", rows, cancellationToken);
+        bytes += snapshotBytes;
+
+        if (deleted == maxRows)
         {
-            var chunks = Command("SELECT rowid, end_offset, octet_length(body) FROM _tb_shape_chunk WHERE handle = $handle ORDER BY offset LIMIT $limit;");
-            chunks.Parameters.AddWithValue("$handle", handle);
-            chunks.Parameters.AddWithValue("$limit", (long)maxRows);
-            var (rows, bytes, _) = ShapeBudget(chunks, maxBytes);
-            var deleted = DeleteShapeRows("_tb_shape_chunk", rows, cancellationToken);
+            return (deleted, bytes);
+        }
 
-            var snapshots = Command("SELECT rowid, offset, octet_length(body) FROM _tb_shape_snapshot WHERE handle = $handle ORDER BY offset, page LIMIT $limit;");
-            snapshots.Parameters.AddWithValue("$handle", handle);
-            snapshots.Parameters.AddWithValue("$limit", (long)(maxRows - deleted));
-            (rows, _, _) = ShapeBudget(snapshots, maxBytes - bytes);
-            deleted += DeleteShapeRows("_tb_shape_snapshot", rows, cancellationToken);
+        // The sentinel outlives the real rows until the last batch, so a partial drop still refuses old offsets; the
+        // lineage record outlives the floor, so the handle stays classifiable until nothing of it is left.
+        var forget = Command("""
+            DELETE FROM _tb_shape_chunk WHERE handle = $sentinel AND offset = 0
+            AND NOT EXISTS (SELECT 1 FROM _tb_shape_chunk WHERE handle = $handle)
+            AND NOT EXISTS (SELECT 1 FROM _tb_shape_snapshot WHERE handle = $handle);
+            """);
+        forget.Parameters.AddWithValue("$sentinel", ShapeFloorPrefix + handle);
+        forget.Parameters.AddWithValue("$handle", handle);
+        deleted += forget.ExecuteNonQuery();
+        if (deleted == maxRows)
+        {
+            return (deleted, bytes);
+        }
 
-            if (deleted == maxRows)
-            {
-                return deleted;
-            }
-
-            // The sentinel outlives the real rows until the last batch, so a partial drop still refuses old offsets.
-            var forget = Command("""
-                DELETE FROM _tb_shape_chunk WHERE handle = $sentinel AND offset = 0
-                AND NOT EXISTS (SELECT 1 FROM _tb_shape_chunk WHERE handle = $handle)
-                AND NOT EXISTS (SELECT 1 FROM _tb_shape_snapshot WHERE handle = $handle);
-                """);
-            forget.Parameters.AddWithValue("$sentinel", ShapeFloorPrefix + handle);
-            forget.Parameters.AddWithValue("$handle", handle);
-            return deleted + forget.ExecuteNonQuery();
-        }, cancellationToken, mutation: true).ConfigureAwait(false);
+        var lineage = Command("""
+            DELETE FROM _tb_shape_chunk WHERE handle = $lineage AND offset = 0
+            AND NOT EXISTS (SELECT 1 FROM _tb_shape_chunk WHERE handle IN ($handle, $sentinel))
+            AND NOT EXISTS (SELECT 1 FROM _tb_shape_snapshot WHERE handle = $handle);
+            """);
+        lineage.Parameters.AddWithValue("$lineage", ShapeLineagePrefix + handle);
+        lineage.Parameters.AddWithValue("$sentinel", ShapeFloorPrefix + handle);
+        lineage.Parameters.AddWithValue("$handle", handle);
+        return (deleted + lineage.ExecuteNonQuery(), bytes);
     }
 
     // Worker-only: the handle's sentinel floor, or the feed's when higher.

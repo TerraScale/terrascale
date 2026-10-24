@@ -50,7 +50,7 @@ public sealed class ShapeSealProbeEndpoint : EndpointWithoutRequest<IResult>
             try
             {
                 sealedTo = await sealer.SealUpToHeadAsync(store, new ShapeSealDefinition(shapeId, handle, collection, generation,
-                    Convert.FromHexString(shapeId)), 0, bound.Token);
+                    Convert.FromHexString(shapeId), store.Incarnation), 0, bound.Token);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {

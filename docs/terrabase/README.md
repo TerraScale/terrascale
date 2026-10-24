@@ -143,6 +143,8 @@ The replication end-to-end suite runs against the disposable ts-orch service ([e
 Optional declared JSON Schema per collection: [attach, validate, and detach](collection-schemas.md).
 Per-collection TTL: [declare an expiry member; the home region sweeps expired documents](collection-ttl.md).
 
+Shape data of dropped or recreated collections is retired by an always-on sweep: [shape sweep](shape-sweep.md).
+
 Export a database as NDJSON, resumable by cursor: [export](export.md).
 
 Import NDJSON (an export, or mongoexport-style documents) through the import pipeline: [NDJSON import](import-ndjson.md).

@@ -351,7 +351,7 @@ public sealed class ShapeFilterTests
             using var canonical = JsonDocument.Parse(filter.Canonical);
             var identity = ShapeHandle.Compute(store, engine.ReplicaId, collection, canonical.RootElement);
             shape = new ShapeSealDefinition(identity.ShapeId, identity.Handle, collection.Name, collection.Id,
-                RandomNumberGenerator.GetBytes(16), filter.Matches);
+                RandomNumberGenerator.GetBytes(16), store.Incarnation, filter.Matches);
         }
 
         var sealer = new ShapeSealer(api.Server.Services.GetRequiredService<IMemoryBudget>(),

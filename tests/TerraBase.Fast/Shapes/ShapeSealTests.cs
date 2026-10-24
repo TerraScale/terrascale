@@ -762,7 +762,7 @@ public sealed class ShapeSealTests
             ?? throw new InvalidOperationException("the collection is missing");
         return new ShapeSealDefinition(Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)),
             "h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), db.CollectionName, collection.Id,
-            RandomNumberGenerator.GetBytes(16), predicate);
+            RandomNumberGenerator.GetBytes(16), db.Store.Incarnation, predicate);
     }
 
     private static byte[] Json(object value) => JsonSerializer.SerializeToUtf8Bytes(value);

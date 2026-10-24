@@ -230,6 +230,28 @@ public sealed class ShapeRetentionTests
     }
 
     [Test]
+    public async Task The_newest_complete_snapshot_keeps_every_page_while_a_newer_one_is_still_being_sealed()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var store = await StoreAsync(api.Server, await api.TenantOfAsync());
+        var time = new FakeTimeProvider(Now);
+        var retention = Retention(api.Server, time);
+        await WriteAsync(store, connection =>
+        {
+            Chunk(connection, H1, 0, 50, Ago(time, TimeSpan.FromDays(8)));
+            Snapshot(connection, H1, 10, 0, Ago(time, TimeSpan.FromDays(30)), next: "a");
+            Snapshot(connection, H1, 10, 1, Ago(time, TimeSpan.FromDays(30)));
+            // A seal of offset 30 published its first page only: it has no terminal page yet.
+            Snapshot(connection, H1, 30, 0, Ago(time, TimeSpan.FromDays(30)), next: "b");
+        });
+
+        await DrainAsync(retention, store, H1);
+
+        await Assert.That(await PagesAsync(store, H1)).IsEquivalentTo([(10L, 0L), (10L, 1L), (30L, 0L)])
+            .Because("an incomplete newer offset is not a snapshot a refetch can start from");
+    }
+
+    [Test]
     public async Task Dropping_a_handle_removes_chunks_and_snapshots_of_every_age_and_only_that_handle()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -390,10 +412,11 @@ public sealed class ShapeRetentionTests
             "INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) VALUES ($h, $o, $e, $b, $s);",
             ("$h", handle), ("$o", offset), ("$e", end), ("$b", new byte[bytes]), ("$s", sealedAt.ToUnixTimeMilliseconds()));
 
-    private static void Snapshot(SqliteConnection connection, string handle, long offset, long page, DateTimeOffset sealedAt, int bytes = 2) =>
+    private static void Snapshot(SqliteConnection connection, string handle, long offset, long page, DateTimeOffset sealedAt, int bytes = 2,
+        string? next = null) =>
         Execute(connection,
-            "INSERT INTO _tb_shape_snapshot (handle, offset, page, next_id, body, sealed_at) VALUES ($h, $o, $p, NULL, $b, $s);",
-            ("$h", handle), ("$o", offset), ("$p", page), ("$b", new byte[bytes]), ("$s", sealedAt.ToUnixTimeMilliseconds()));
+            "INSERT INTO _tb_shape_snapshot (handle, offset, page, next_id, body, sealed_at) VALUES ($h, $o, $p, $n, $b, $s);",
+            ("$h", handle), ("$o", offset), ("$p", page), ("$n", next), ("$b", new byte[bytes]), ("$s", sealedAt.ToUnixTimeMilliseconds()));
 
     private static Task<long[]> OffsetsAsync(TursoDatabaseStore store, string handle) => store.WithWriterAsync(session =>
     {
