@@ -8,4 +8,4 @@ The replicated drop pauses after each 512 units of work. `JoinAsync` increments 
 
 The webhook replay test reads persisted SYSTEM documents through a keyed native connection for its positive live-neighbor sentinel and refused-payload absence. It also searches decrypted CDC before/after images for the refused payload and retains raw physical-file plaintext checks. Ciphertext scans do not prove absence from decrypted free pages; erasure certification, replay, tombstone and restart/repair checks remain independent assertions.
 
-These changes affect test fixtures only. Exact-head CI and the five-repeat timing-sensitive proof remain pending; earlier passing evidence does not qualify this head.
+These changes affect test fixtures only. The [focused five-repeat proof](../../benchmark/bench/2026-10-24-encryption-rebased-fixtures.md) passed 55/55 at `839065c23`, including all four previously failing cases and recovery safety coverage. Full exact-head CI remains a separate gate; earlier passing evidence does not qualify this head.
