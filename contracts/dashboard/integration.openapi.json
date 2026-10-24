@@ -286,7 +286,7 @@
           "Credentials"
         ],
         "summary": "Create a project key and reveal its secret once",
-        "description": "Uses the original user session at ts-auth. Scopes are documents:read/write and databases:read/write (database:read/write are aliases of documents:read/write). expiresInDays is 0 (default, the key works until revoked), 30, 90 or 365. Machine-client kind is unavailable. Secrets are never persisted by the dashboard.",
+        "description": "Uses the original user session at ts-auth. Scopes are documents:read/write and databases:read/write (database:read/write are aliases of documents:read/write). expiresInDays is 0 (default, the key works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, comma or newline separated; empty allows any IP) limits where the key's requests may come from. Machine-client kind is unavailable. Secrets are never persisted by the dashboard.",
         "operationId": "createDashboardCredential",
         "parameters": [
           {
@@ -767,6 +767,12 @@
               "string"
             ],
             "format": "int32"
+          },
+          "allowedCidrs": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -908,6 +914,15 @@
               "null",
               "string"
             ]
+          },
+          "allowedCidrs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -995,6 +1010,15 @@
               "null",
               "string"
             ]
+          },
+          "allowedCidrs": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

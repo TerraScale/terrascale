@@ -22,13 +22,17 @@ public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys
             && (search.Length == 0 || (key.Name + " " + key.Id + "_").Contains(search, StringComparison.OrdinalIgnoreCase))).Select(ApiKeyService.CredentialMetadata).ToArray());
     }
 
-    [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Issue a project API key for the TerraScale SDKs. Returns the secret once; store it securely. expiresInDays is 0 (default, works until revoked), 30, 90 or 365. Requires an owner or admin role.")]
-    public Task<ProjectApiKeySecret> CreateApiKey(string name, string[] scopes, string databaseId = "", int expiresInDays = 0, string? organizationId = null, string? projectId = null) =>
-        CreateCredentialAsync(Scope(organizationId, projectId), "api-key", name, scopes, databaseId, expiresInDays);
+    [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Issue a project API key for the TerraScale SDKs. Returns the secret once; store it securely. expiresInDays is 0 (default, works until revoked), 30, 90 or 365. allowedCidrs (up to 32 IPs or CIDR ranges, empty = any IP) limits where requests with the key may come from. Requires an owner or admin role.")]
+    public Task<ProjectApiKeySecret> CreateApiKey(string name, string[] scopes, string databaseId = "", int expiresInDays = 0, string[]? allowedCidrs = null, string? organizationId = null, string? projectId = null) =>
+        CreateCredentialAsync(Scope(organizationId, projectId), "api-key", name, scopes, databaseId, expiresInDays, allowedCidrs ?? []);
+
+    [McpServerTool(Name = "set_api_key_allowed_cidrs", Title = "Set API key allowed IPs", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Replace the IPs or CIDR ranges (up to 32; an empty list allows any IP) that requests with an API key may come from. Requests must also match the project's list when it has one. Changes apply within 60 seconds. Requires an owner or admin role.")]
+    public async Task<ProjectCredentialMetadata> SetApiKeyAllowedCidrs(string keyId, string[] allowedCidrs, string? organizationId = null, string? projectId = null) =>
+        ApiKeyService.CredentialMetadata(await keys.SetAllowedCidrsAsync(Scope(organizationId, projectId), keyId, allowedCidrs, Cancellation));
 
     [McpServerTool(Name = "create_m2m_client", Title = "Create M2M client", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Issue a machine-to-machine client credential for a project. Requires an owner or admin role and a producer M2M contract.")]
     public Task<ProjectApiKeySecret> CreateM2mClient(string name, string[] scopes, string databaseId = "", string? organizationId = null, string? projectId = null) =>
-        CreateCredentialAsync(Scope(organizationId, projectId), "m2m", name, scopes, databaseId, 0);
+        CreateCredentialAsync(Scope(organizationId, projectId), "m2m", name, scopes, databaseId, 0, []);
 
     [McpServerTool(Name = "rotate_api_key", Title = "Rotate API key", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Replace an API key's secret and return the new secret once; store it securely. The old secret keeps working for previousSecretTtlSeconds (0 to 86400, default 0 = stops immediately); another rotation is refused while that grace period lasts. Requires an owner or admin role.")]
     public async Task<ProjectApiKeySecret> RotateApiKey(string keyId, int previousSecretTtlSeconds = 0, string? organizationId = null, string? projectId = null)
@@ -49,9 +53,9 @@ public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys
     private AccountContext Scope(string? organizationId, string? projectId) => DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
     private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 
-    private async Task<ProjectApiKeySecret> CreateCredentialAsync(AccountContext context, string kind, string name, string[] scopes, string databaseId, int expiresInDays)
+    private async Task<ProjectApiKeySecret> CreateCredentialAsync(AccountContext context, string kind, string name, string[] scopes, string databaseId, int expiresInDays, string[] allowedCidrs)
     {
-        var result = await keys.CreateAsync(context, kind, name, databaseId, scopes, expiresInDays, Cancellation);
+        var result = await keys.CreateAsync(context, kind, name, databaseId, scopes, expiresInDays, allowedCidrs, Cancellation);
         await keys.RecordAsync(accounts, context, result.Key.Id, true, Cancellation);
         return new(ApiKeyService.Metadata(result.Key), result.Secret);
     }
