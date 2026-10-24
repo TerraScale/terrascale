@@ -12,13 +12,14 @@
 <main class="ts-page ts-idp" data-auth-section="@current.Key">
 <h1 class="ts-sr-only">@Model.Heading</h1><div class="ts-page-actions"></div>
 <form class="ts-idp-mobile-nav" method="get" action="/auth"><label class="ts-sr-only" for="auth-section-select">Authentication section</label><select class="ts-select" id="auth-section-select" name="section" data-on:change="el.form.requestSubmit()">@foreach(var section in AuthenticationSection.All){<option value="@(section.Key)" selected="@(section.Key == current.Key)">@(section.Title)</option>}</select><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Open</button></form>
-<div class="ts-idp-layout"><nav aria-label="Authentication sections">@foreach (var group in AuthenticationSection.All.GroupBy(section => section.Group)) { <div class="ts-nav-group">@if (group.Key.Length > 0) { <div class="ts-nav-group-label">@group.Key</div> }<ul class="ts-nav">@foreach (var section in group) { <li><a class="ts-nav-link" href="@("/auth/" + section.Key)" aria-current="@(section.Key == current.Key ? "page" : null)"><span class="ts-nav-icon" aria-hidden="true">@Icons.Render(section.Icon, 16)</span><span class="ts-nav-label">@(section.Title)</span></a></li> }</ul></div> }</nav><div class="ts-stack-lg ts-idp-content">
+<div class="ts-idp-layout"><nav aria-label="Authentication sections">@foreach (var group in AuthenticationSection.All.GroupBy(section => section.Group)) { <div class="ts-nav-group">@if (group.Key.Length > 0 && group.Key != "Danger") { <div class="ts-nav-group-label">@group.Key</div> }<ul class="ts-nav">@foreach (var section in group) { <li><a class="ts-nav-link" href="@("/auth/" + section.Key)" aria-current="@(section.Key == current.Key ? "page" : null)"><span class="ts-nav-icon" aria-hidden="true">@Icons.Render(section.Icon, 16)</span><span class="ts-nav-label">@(section.Title)</span></a></li> }</ul></div> }</nav><div class="ts-stack-lg ts-idp-content">
 @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert" id="auth-error"><p class="ts-alert-body">@Model.Error</p></div> }
+@if (Model.Saved) { <div class="ts-alert ts-alert-success" role="status"><p class="ts-alert-body">Changes saved.</p></div> }
 @if (!manage && current.Key != "overview") { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">You can view this configuration. Organization owners and admins can change it.</p></div> }
 @if (Model.Created is { } created) {
 <section class="ts-alert ts-alert-success" role="status" id="auth-created" data-init="history.replaceState(null, '', '/auth/clients')"><h2 class="ts-alert-title">Created @created.Name</h2><p class="ts-alert-body">Client ID <code>@created.ClientId</code>.@if (created.ClientSecret is not null) { <text> Copy the client secret now: it is shown only once.</text> }</p>@if (created.ClientSecret is { } secret) { <div class="ts-row"><code class="ts-apikeys-secret-value" id="auth-client-secret">@secret</code><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-signals="{_copied: false}" data-on:click="navigator.clipboard.writeText(el.previousElementSibling.textContent).then(() => $_copied = true)">@Icons.Render("Copy", 14)<span data-text="$_copied ? 'Copied' : 'Copy'">Copy</span></button></div> }</section>
 }
-<section class="ts-card" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")">
+<section class="@(current.Key == "branding" ? "ts-idp-brand-section" : "ts-card")" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")">
 @if (current.Key == "overview") {
 Card("Project authentication", "Point your OpenID Connect library at this issuer; users sign in on the hosted pages.");
 <div class="ts-card-body">@if (settings is null) { Empty("Authentication details unavailable"); } else {
@@ -74,14 +75,35 @@ Card("Social sign-in", current.Description);
 <div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="@(id + "-dialog")">Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Save @info.Name</button></div></form></div></dialog> }
 </li> }</ul> }</div>
 }
+else if (current.Key == "configuration") {
+Card("Configuration", current.Description);
+<div class="ts-card-body">@if (settings is null) { Empty("Configuration unavailable"); } else {
+var config = settings.Configuration;
+string Field(string name, string saved) => Model.Draft is { } draft ? draft[name].ToString() : saved;
+<form class="ts-form" method="post" action="/api/v1/auth-management/configuration"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><fieldset class="ts-stack" disabled="@(!manage)">
+<div class="ts-field"><label class="ts-label" for="auth-redirects">Allowed redirect URLs</label><textarea class="ts-input ts-mono" id="auth-redirects" name="redirect_urls" rows="5" spellcheck="false" placeholder="https://app.example.com/callback">@Field("redirect_urls", string.Join("\n", config?.RedirectUrls ?? []))</textarea><p class="ts-hint">Up to 100 exact URLs, one per line. HTTPS, or HTTP on localhost and loopback. No wildcards, fragments or credentials. Empty adds no restriction to each OAuth application's exact registered redirect URIs.</p></div>
+<div class="ts-field"><label class="ts-label" for="auth-lifetime">Session lifetime (seconds)</label><input class="ts-input" id="auth-lifetime" name="session_lifetime_seconds" type="number" required min="300" max="2592000" value="@Field("session_lifetime_seconds", (config?.SessionLifetimeSeconds ?? 1209600).ToString(System.Globalization.CultureInfo.InvariantCulture))" /><p class="ts-hint">300 to 2592000 seconds (5 minutes to 30 days). Reductions apply at the next session or grant check. Expired sessions stay expired after later increases.</p></div>
+@if(manage){<div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save configuration</button></div>}
+</fieldset></form> }</div>
+}
+else if (current.Key == "danger") {
+Card("Danger zone", "These actions affect this project's end users. They cannot be undone.");
+<div class="ts-card-body ts-stack-lg">
+@foreach(var (family,title,description,items) in new[]{
+("sessions", "Revoke a session", "The selected session ends. The user must sign in again.", (Model.Sessions ?? []).Select(item => (item.Id, item.Email + " · " + Date(item.CreatedAt)))),
+("users", "Delete an end user", "Permanently removes the selected user and their sessions.", (Model.Users ?? []).Select(item => (item.Id, item.Email))),
+("clients", "Delete an OAuth application", "The selected application can no longer sign users in.", (Model.Clients ?? []).Select(item => (item.ClientId, item.Name)))}){
+<section class="ts-idp-danger-action"><h3>@title</h3><p class="ts-meta">@description</p>
+@if(!items.Any()){<p class="ts-hint">No records available.</p>}else if(manage){
+<form class="ts-form" method="post" action="@("/api/v1/auth-management/danger/" + family)"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><div class="ts-field"><label class="ts-label" for="@("danger-" + family)">Record</label><select class="ts-select" id="@("danger-" + family)" name="record_id" required><option value="">Choose a record</option>@foreach(var (id,label) in items){<option value="@id">@label</option>}</select></div><div class="ts-field"><label class="ts-label" for="@("confirm-" + family)">Type @Model.Context.Project?.Name to confirm</label><input class="ts-input" id="@("confirm-" + family)" name="confirmation" required autocomplete="off" /></div><div><button class="ts-btn ts-btn-danger" type="submit">@title</button></div></form>}
+</section>}
+<p class="ts-hint">Showing the first page of users and sessions. Use <a href="/auth/users">Users</a> and <a href="/auth/sessions">Sessions</a> to find other records.</p>
+</div>
+}
 else {
-Card("Hosted page branding", current.Description);
-<div class="ts-card-body">@if (settings is null) { Empty("Branding unavailable"); } else {
-<form class="ts-form" method="post" action="/api/v1/auth-management/branding"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><fieldset class="ts-stack" disabled="@(!manage)">
-<div class="ts-field"><label class="ts-label" for="auth-brand-name">Application name</label><input class="ts-input" id="auth-brand-name" name="name" value="@settings.Branding.Name" maxlength="64" /><p class="ts-hint">Shown in the sign-in heading. Empty uses the project name.</p></div>
-<div class="ts-field"><label class="ts-label" for="auth-brand-logo">Logo URL</label><input class="ts-input" id="auth-brand-logo" type="url" name="logo_url" value="@settings.Branding.LogoUrl" placeholder="https://assets.example.com/logo.svg" /><p class="ts-hint">An https image. Empty shows no logo.</p></div>
-<div class="ts-field"><label class="ts-label" for="auth-brand-color">Theme color</label><input class="ts-input ts-mono" id="auth-brand-color" name="theme_color" value="@settings.Branding.ThemeColor" placeholder="#2158e8" pattern="#[0-9a-fA-F]{6}" /><p class="ts-hint">A #rrggbb color for buttons and links. Empty uses the default.</p></div>
-@if (manage) { <div class="ts-form-actions"><button class="ts-btn ts-btn-primary" type="submit">Save branding</button></div> }</fieldset></form> }</div>
+@if (settings is null) { Card("Branding", current.Description); Empty("Branding unavailable"); } else {
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.AuthenticationManagement.BrandingEditor, AuthenticationPage>(Model))
+}
 }
 </section>
 </div></div></main>

@@ -204,6 +204,7 @@ async function build() {
       'button-loading': resolve(source, 'button-loading.js'),
       'document-changes': resolve(source, 'document-changes.js'),
       'import-upload': resolve(source, 'import-upload.js'),
+      'auth-branding': resolve(source, 'auth-branding.js'),
     },
     entryNames: '[name]',
     chunkNames: '[name].[hash]',
