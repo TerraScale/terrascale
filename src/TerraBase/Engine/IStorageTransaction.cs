@@ -352,6 +352,12 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <summary>Builds a secondary index over live documents; <see langword="false"/> when an index with the name already exists.</summary>
     ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Adds the next bounded batch of existing documents to a vector index still building (<see cref="IndexDefinition.Building"/>);
+    /// <see langword="true"/> while one remains.
+    /// </summary>
+    ValueTask<bool> BuildVectorIndexAsync(CancellationToken cancellationToken);
+
     /// <summary>Drops a secondary index; <see langword="false"/> when it did not exist.</summary>
     ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken);
 
