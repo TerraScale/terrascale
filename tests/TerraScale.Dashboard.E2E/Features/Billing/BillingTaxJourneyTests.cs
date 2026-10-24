@@ -111,12 +111,20 @@ public sealed class BillingTaxJourneyTests
             var customerId = customer["id"]!.GetValue<string>();
             customer["name"] = "Tax fixture GmbH <script>tax-fixture</script>";
             customer["address"] = new JsonObject { ["line1"] = "Example Street 10", ["postal_code"] = "10115", ["city"] = "Berlin", ["country"] = "DE" };
-            customer["tax_ids"] = new JsonObject { ["object"] = "list", ["has_more"] = Fault == "incomplete-tax-ids", ["data"] = new JsonArray(new JsonObject
+            customer["tax_ids"] = new JsonObject
             {
-                ["id"] = "txi_fixture", ["object"] = "tax_id", ["type"] = "eu_vat", ["value"] = "DE123456789",
-                ["customer"] = Fault == "foreign-tax-id" ? "cus_foreign" : customerId,
-                ["verification"] = new JsonObject { ["status"] = Verification }
-            }) };
+                ["object"] = "list",
+                ["has_more"] = Fault == "incomplete-tax-ids",
+                ["data"] = new JsonArray(new JsonObject
+                {
+                    ["id"] = "txi_fixture",
+                    ["object"] = "tax_id",
+                    ["type"] = "eu_vat",
+                    ["value"] = "DE123456789",
+                    ["customer"] = Fault == "foreign-tax-id" ? "cus_foreign" : customerId,
+                    ["verification"] = new JsonObject { ["status"] = Verification }
+                })
+            };
             if (Fault == "customer-mismatch") customer["metadata"]!["organization_id"] = "00000000000000000000000009";
             response.Content.Dispose();
             response.Content = new StringContent(customer.ToJsonString(), Encoding.UTF8, "application/json");
