@@ -7,7 +7,7 @@ using TerraScale.Dashboard.Platform.Mcp;
 namespace TerraScale.Dashboard.Features.ApiKeys;
 
 [McpServerToolType]
-public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys)
+public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys, AccountService accounts)
 {
     [McpServerTool(Name = "list_api_keys", Title = "List API keys", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a project's API keys and machine-to-machine (M2M) clients without their secrets.")]
     public async Task<McpCredentialList> ListApiKeys(string kind = "", string status = "", string databaseId = "", string search = "", string? organizationId = null, string? projectId = null)
@@ -40,7 +40,9 @@ public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys
     [McpServerTool(Name = "revoke_api_key", Title = "Revoke API key", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Revoke a project API key to prevent new token issuance. Previously issued tokens remain valid until they expire, within 60 seconds.")]
     public async Task<McpCredentialRevoked> RevokeApiKey(string keyId, string? organizationId = null, string? projectId = null)
     {
-        await keys.RevokeAsync(Scope(organizationId, projectId), keyId, Cancellation);
+        var context = Scope(organizationId, projectId);
+        await keys.RevokeAsync(context, keyId, Cancellation);
+        await keys.RecordAsync(accounts, context, keyId, false, Cancellation);
         return new(keyId, true);
     }
 
@@ -50,6 +52,7 @@ public sealed class ApiKeyMcpTools(IHttpContextAccessor http, ApiKeyService keys
     private async Task<ProjectApiKeySecret> CreateCredentialAsync(AccountContext context, string kind, string name, string[] scopes, string databaseId, int expiresInDays)
     {
         var result = await keys.CreateAsync(context, kind, name, databaseId, scopes, expiresInDays, Cancellation);
+        await keys.RecordAsync(accounts, context, result.Key.Id, true, Cancellation);
         return new(ApiKeyService.Metadata(result.Key), result.Secret);
     }
 }

@@ -183,7 +183,7 @@ public static class DatabaseEndpoints
         var activityRead = tab is "overview" or "replication"
             ? DatabaseActivity.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, database.Id,
                 key => tab == "overview" && http.Request.Query[key].ToString() is { Length: > 0 } selected ? HomePage.NormalizeRange(selected) : range, http.RequestAborted) : null;
-        var backupsRead = tab is "backups" or "overview" ? BackupEndpoints.PageAsync(http, context, database, error) : null;
+        var backupsRead = tab is "backups" or "overview" ? BackupEndpoints.PageAsync(http, context, database, error, tab == "backups") : null;
         var choicesRead = tab == "replication" ? backend.RegionsAsync(http.RequestAborted) : null;
         async Task<IReadOnlyList<CollectionStats>> ContentsAsync() =>
             await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), id, http.RequestAborted);

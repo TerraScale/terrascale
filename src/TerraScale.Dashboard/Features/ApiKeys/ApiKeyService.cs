@@ -71,6 +71,10 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         }
     }
 
+    // After ts-auth committed a create or revoke: the dashboard records who made it and from where.
+    public Task RecordAsync(AccountService accounts, AccountContext context, string keyId, bool created, CancellationToken cancellationToken) =>
+        accounts.RecordAsync(context, org => org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, created ? "api_key.created" : "api_key.revoked", keyId, "api_key", time.GetUtcNow())), cancellationToken);
+
     // ts-auth keeps the old secret valid for previousSecretTtl seconds (at most one day) and returns the new secret once.
     public async Task<CreatedProjectCredential> RotateAsync(AccountContext context, string keyId, int previousSecretTtl, CancellationToken cancellationToken)
     {

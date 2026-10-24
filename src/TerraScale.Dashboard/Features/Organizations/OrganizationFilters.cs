@@ -8,13 +8,16 @@ public sealed record OrganizationFilters(string Query = "", string Role = "all",
         int.TryParse(http.Request.Query["page"], out var page) ? Math.Max(1, page) : 1,
         http.Request.Query["search"].ToString().Trim(), http.Request.Query["action"].ToString() is { Length: > 0 } action ? action : "all",
         http.Request.Query["severity"].ToString() is "info" or "warn" or "critical" or "unknown" ? http.Request.Query["severity"].ToString() : "all",
-        http.Request.Query["range"].ToString() is "24h" or "30d" or "90d" ? http.Request.Query["range"].ToString() : "7d",
+        http.Request.Query["range"].ToString() is "24h" or "30d" or "90d" or "365d" ? http.Request.Query["range"].ToString() : "7d",
         http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow());
 
+    public static IReadOnlyList<(string Id, string Label, int Days)> Ranges { get; } =
+        [("24h", "Last 24 hours", 1), ("7d", "Last 7 days", 7), ("30d", "Last 30 days", 30), ("90d", "Last 90 days", 90), ("365d", "Last 365 days", 365)];
     public IReadOnlyList<AuditRecord> ApplyAudit(IEnumerable<AuditRecord> events, int? retentionDays = null)
     {
-        var days = Range switch { "24h" => 1, "30d" => 30, "90d" => 90, _ => 7 };
-        if (retentionDays is >= 1 and <= 90) days = Math.Min(days, retentionDays.Value);
+        var days = Ranges.FirstOrDefault(range => range.Id == Range).Days;
+        if (days == 0) days = 7;
+        if (retentionDays is >= 1) days = Math.Min(days, retentionDays.Value);
         var from = (Now ?? DateTimeOffset.UtcNow).AddDays(-days);
         return events.Where(item => (item.OccurredAt == DateTimeOffset.MinValue || item.OccurredAt >= from) && (Action == "all" || item.Action == Action) &&
             (Severity == "all" || AuditSeverity(item) == Severity) &&
@@ -42,6 +45,7 @@ public sealed record OrganizationFilters(string Query = "", string Role = "all",
     }
     public static string AuditActionLabel(AuditRecord item) => item.Action switch
     {
+        "session.created" => "Signed in",
         "api_key.created" => "API key created",
         "member.role_changed" => "Member role changed",
         "document.batch_upsert" => "Documents batch upserted",

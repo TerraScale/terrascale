@@ -288,6 +288,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         private readonly Dictionary<string, ManagedDatabase> databases = [];
         private readonly Dictionary<string, ProducerSnapshot> snapshots = [];
         private readonly Dictionary<string, ProducerBackupPolicy> policies = [];
+        private readonly Dictionary<string, BackupDestinationView> destinations = [];
+        private readonly Dictionary<string, ExportScheduleView> schedules = [];
         private string backupFailure = "";
         private int backupLists;
         private int backupCreates;
@@ -421,6 +423,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                         return Results.Json(new { projectId = parts[2], range, from = to.AddSeconds(-durationSeconds), to, bucketSeconds, items = Array.Empty<object>() });
                     }
                     var route = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                    if (route is [_, _, _, "backup-destination"]) return await DestinationAsync(http, route[2]);
                     if (route is not [_, _, _, "databases", _, "collections", ..]) return await CanonicalAsync(http);
                     Interlocked.Increment(ref documentsRequests);
                     return await DocumentsAsync(http);
@@ -602,6 +605,18 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             if (callerRole.Length == 0) return Error(404, "not_found");
             if (http.Request.Method != "GET" && callerRole is not ("owner" or "admin")) return Error(403, "role_too_low");
             if (backupFailure == "outage") return Error(503, "unavailable");
+            if (parts.Length == 6 && parts[5] == "export-schedule")
+            {
+                lock (gate)
+                {
+                    if (http.Request.Method == "GET") return Results.Json(schedules.GetValueOrDefault(source.Id) ?? new ExportScheduleView(null, null, null));
+                    if (!destinations.ContainsKey(project)) return Error(409, "conflict");
+                }
+                Require(http.Request.Method == "PUT", "Export schedule uses PUT");
+                var cron = (await JsonAsync(http)).GetProperty("cron").GetString();
+                if (!string.IsNullOrEmpty(cron) && !CronExpression.TryParse(cron, CronFormat.Standard, out _)) return Error(400, "validation");
+                lock (gate) return Results.Json(schedules[source.Id] = new(string.IsNullOrEmpty(cron) ? null : cron, DateTimeOffset.UtcNow, null));
+            }
             if (parts.Length == 6 && parts[5] == "backup-policy")
             {
                 if (http.Request.Method == "GET")
@@ -703,7 +718,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 [_, _, _, _, _, "schema"] => "databases:read",
                 [_, _, _, _, _, "schema", _] when method == "GET" => "databases:read",
                 [_, _, _, _, _, "indexes"] when method == "GET" => "databases:read",
-                [_, _, _, _, _, "backups" or "backup-policy"] when method == "GET" => "databases:read",
+                [_, _, _, _, _, "backups" or "backup-policy" or "export-schedule"] when method == "GET" => "databases:read",
                 _ => "databases:write"
             };
             if (Authorize(http, project, scope) is { } denied) return denied;
@@ -755,7 +770,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 if (found is null) return Error(404, "not_found");
                 current = found;
             }
-            if (parts.Length >= 6 && parts[5] is "backups" or "backup-policy") return await BackupsAsync(http, parts, project, current, callerRole);
+            if (parts.Length >= 6 && parts[5] is "backups" or "backup-policy" or "export-schedule") return await BackupsAsync(http, parts, project, current, callerRole);
             var atHome = current.HomeRegion == answering;
             switch (parts.Length, method, parts.ElementAtOrDefault(5))
             {
@@ -891,6 +906,25 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
 
         // An exchanged project bearer (TestAuth RFC 8693 grant) for exactly this project and its tenant, holding the action scope.
         // A bare session token, a ts-auth API key secret, or another project's bearer is refused.
+        // TerraBase's project backup destination: the credentials are write-only and the bucket probe always passes here.
+        private async Task<IResult> DestinationAsync(HttpContext http, string project)
+        {
+            if (Authorize(http, project, http.Request.Method == "GET" ? "databases:read" : "databases:write") is { } denied) return denied;
+            if (http.Request.Method != "GET" && (string)http.Items["producer-role"]! is not ("owner" or "admin")) return Error(403, "role_too_low");
+            lock (gate)
+            {
+                if (http.Request.Method == "GET") return destinations.TryGetValue(project, out var saved) ? Results.Json(saved) : Error(404, "not_found");
+                if (http.Request.Method == "DELETE") return destinations.Remove(project) ? Results.NoContent() : Error(404, "not_found");
+            }
+            Require(http.Request.Method == "PUT", "Backup destination uses PUT");
+            var body = await JsonAsync(http);
+            Require(body.EnumerateObject().Select(field => field.Name).Order(StringComparer.Ordinal)
+                .SequenceEqual(new[] { "accessKeyId", "bucket", "endpoint", "mode", "region", "secretKey" }) && body.GetProperty("mode").GetString() == "both",
+                "The destination sends the documented fields and keeps platform backups");
+            lock (gate) return Results.Json(destinations[project] = new(body.GetProperty("endpoint").GetString()!, body.GetProperty("region").GetString()!,
+                body.GetProperty("bucket").GetString()!, "both", DateTimeOffset.UtcNow));
+        }
+
         private IResult? Authorize(HttpContext http, string project, string scope)
         {
             var text = http.Request.Headers.Authorization.ToString();

@@ -106,6 +106,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
             DemandName(project, name);
             DemandRoom(org);
             project.Databases[record.Id] = record;
+            org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "database.created", record.Name, "database", accounts.Now));
         }, cancellationToken);
         return record;
     }
@@ -200,7 +201,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         {
             if (!org.CanManage(context.UserId)) throw new AccountAccessException("Organization management access is required.");
             var project = org.Projects.GetValueOrDefault(scope.ProjectId) ?? throw new AccountAccessException("Project is unavailable.", 404);
-            project.Databases.Remove(id);
+            if (project.Databases.Remove(id)) org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "database.deleted", database.Name, "database", accounts.Now));
         }, cancellationToken);
     }
 

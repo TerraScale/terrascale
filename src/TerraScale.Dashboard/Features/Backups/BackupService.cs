@@ -95,8 +95,58 @@ public sealed class BackupService(AccountService accounts, DatabaseService datab
             if (project.Databases.ContainsKey(record.Id)) throw new AccountAccessException("The restored database identity is already in use.", 409);
             DatabaseService.DemandRoom(org);
             project.Databases.Add(record.Id, record);
+            org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "database.restored", record.Name, "database", accounts.Now));
         }, ct);
         return new(record.Id, record.Name, record.Status);
+    }
+
+    public async Task<BackupExportView> ExportAsync(AccountContext context, string databaseId, CancellationToken ct)
+    {
+        context = await databases.CurrentAsync(context, ct);
+        var scope = DatabaseService.Scope(context);
+        var home = await databases.HomeAsync(context, DatabaseService.Database(context, databaseId), ct);
+        var destination = backend.DestinationAsync(scope, home, ct);
+        var schedule = await backend.ExportScheduleAsync(scope, home, databaseId, ct);
+        if (schedule.LastRun is { Status: not ("succeeded" or "failed") } || schedule.Cron is { Length: > 0 } cron && !ValidCron(cron))
+            throw new HttpRequestException("The provider returned an invalid export schedule.");
+        return new(await destination, schedule);
+    }
+
+    // Credentials go to TerraBase, which seals them; the dashboard never stores or shows them again.
+    public async Task<BackupDestinationView> SetDestinationAsync(AccountContext context, string databaseId, string endpoint, string region, string bucket,
+        string accessKeyId, string secretKey, CancellationToken ct)
+    {
+        context = await databases.CurrentAsync(context, ct);
+        var home = await databases.HomeAsync(context, Manage(context, databaseId), ct);
+        (endpoint, region, bucket, accessKeyId) = (endpoint.Trim(), region.Trim(), bucket.Trim(), accessKeyId.Trim());
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps || region.Length is 0 or > 64 ||
+            bucket.Length is < 3 or > 63 || accessKeyId.Length is 0 or > 256 || secretKey.Length is 0 or > 256)
+            throw new AccountAccessException("Enter an https endpoint, the region, a bucket name of 3 to 63 characters, and the access key ID and secret.", 422);
+        BackupDestinationView saved;
+        try { saved = await backend.SetDestinationAsync(DatabaseService.Scope(context), home, endpoint, region, bucket, accessKeyId, secretKey, ct); }
+        catch (DatabaseProviderException error) when (error.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+        { throw new AccountAccessException("TerraBase could not access that bucket. Check the endpoint, region, bucket and key, then try again.", 503); }
+        if (saved.Bucket != bucket) throw new HttpRequestException("The provider did not confirm the submitted bucket.");
+        await accounts.RecordAsync(context, org => org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "backup.destination_updated", bucket, "backup_destination", accounts.Now)), ct);
+        return saved;
+    }
+
+    public async Task RemoveDestinationAsync(AccountContext context, string databaseId, CancellationToken ct)
+    {
+        context = await databases.CurrentAsync(context, ct);
+        await backend.RemoveDestinationAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, Manage(context, databaseId), ct), ct);
+        await accounts.RecordAsync(context, org => org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "backup.destination_removed", context.Project!.Name, "backup_destination", accounts.Now)), ct);
+    }
+
+    public async Task<ExportScheduleView> SetExportScheduleAsync(AccountContext context, string databaseId, string cron, CancellationToken ct)
+    {
+        context = await databases.CurrentAsync(context, ct);
+        var database = Manage(context, databaseId);
+        cron = string.Join(' ', cron.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (!ValidCron(cron)) throw new AccountAccessException("Choose off, daily or weekly, or enter a valid 5-field UTC cron schedule.", 422);
+        try { return await backend.SetExportScheduleAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, ct), databaseId, cron.Length == 0 ? null : cron, ct); }
+        catch (DatabaseProviderException error) when (error.StatusCode == System.Net.HttpStatusCode.Conflict)
+        { throw new AccountAccessException("Save your bucket for this project before scheduling exports.", 409); }
     }
 
     public static void RejectOverwrite() => throw new AccountAccessException("The backup provider restores into a new database and cannot overwrite this database.", 503);

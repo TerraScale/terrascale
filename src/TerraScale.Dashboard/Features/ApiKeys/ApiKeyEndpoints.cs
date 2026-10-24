@@ -36,6 +36,7 @@ public static class ApiKeyEndpoints
                 if (expires.Length > 0 && !int.TryParse(expires, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out expiresInDays))
                     throw new AccountAccessException("Choose no expiry, 30 days, 90 days, or 1 year.", 422);
                 var credential = await keys.CreateAsync(context, kind, form["name"].ToString(), form["databaseId"].ToString(), form["scope"].Concat(form["scopes"]).SelectMany(value => (value ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)), expiresInDays, http.RequestAborted);
+                await keys.RecordAsync(accounts, context, credential.Key.Id, true, http.RequestAborted);
                 return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret, statusCode: 201);
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error))
@@ -53,7 +54,7 @@ public static class ApiKeyEndpoints
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
-            try { await keys.RevokeAsync(context, keyId, http.RequestAborted); }
+            try { await keys.RevokeAsync(context, keyId, http.RequestAborted); await keys.RecordAsync(accounts, context, keyId, false, http.RequestAborted); }
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
             return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys") : Results.NoContent();
         }).WithGroupName("integration").WithName("revokeDashboardCredentialById").WithTags("Credentials")
@@ -67,7 +68,7 @@ public static class ApiKeyEndpoints
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
-            try { await keys.RevokeAsync(context, form["keyId"].ToString(), http.RequestAborted); }
+            try { await keys.RevokeAsync(context, form["keyId"].ToString(), http.RequestAborted); await keys.RecordAsync(accounts, context, form["keyId"].ToString(), false, http.RequestAborted); }
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
             return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
         }).WithGroupName("integration").WithName("revokeDashboardCredential").WithTags("Credentials")

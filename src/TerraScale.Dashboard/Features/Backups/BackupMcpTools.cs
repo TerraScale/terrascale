@@ -25,6 +25,14 @@ public sealed class BackupMcpTools(IHttpContextAccessor http, BackupService back
     public Task<BackupRestoreResult> RestoreBackup(string databaseId, string name = "", string backupId = "", string? organizationId = null, string? projectId = null) =>
         backups.RestoreAsync(Scope(organizationId, projectId), databaseId, backupId, name, Cancellation);
 
+    [McpServerTool(Name = "get_export_schedule", Title = "Get export schedule", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read the project's own backup bucket (endpoint and bucket; credentials are never returned) and a database's scheduled NDJSON export to it, with the last run.")]
+    public Task<BackupExportView> GetExportSchedule(string databaseId, string? organizationId = null, string? projectId = null) =>
+        backups.ExportAsync(Scope(organizationId, projectId), databaseId, Cancellation);
+
+    [McpServerTool(Name = "set_export_schedule", Title = "Set export schedule", Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Schedule a database's NDJSON export to the project's bucket: a 5-field UTC cron such as 0 3 * * * (daily) or 0 3 * * 0 (weekly), or empty to turn it off. The bucket is saved in the dashboard first. Requires an owner or admin role.")]
+    public Task<ExportScheduleView> SetExportSchedule(string databaseId, string cron, string? organizationId = null, string? projectId = null) =>
+        backups.SetExportScheduleAsync(Scope(organizationId, projectId), databaseId, cron, Cancellation);
+
     private AccountContext Scope(string? organizationId, string? projectId) => DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
     private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 }

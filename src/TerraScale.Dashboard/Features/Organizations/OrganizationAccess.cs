@@ -51,9 +51,13 @@ public sealed class TsOrganizationAccess(ITsAuthPlatform platform) : IOrganizati
                 new AuditRecord(item.Id, item.Actor, item.Action, item.Target ?? "", item.Detail ?? "", item.OccurredAt, Source: "ts-auth")));
         }
         var transfer = await transferRead;
-        // ts-auth keeps audit events at least 90 days (its list_audit_events contract) and has no retention setting.
-        return new(members, invitations, audit.Concat(context.Organization!.AuditEvents).OrderByDescending(item => item.OccurredAt).ToArray(),
-            transfer is null ? null : new(transfer.FromUserId, transfer.ToUserId, transfer.CreatedAt, transfer.ExpiresAt), context.CanManage ? 90 : null);
+        // ts-auth also records some changes the dashboard records (API keys, member changes); the dashboard's copy names the client IP.
+        var local = context.Organization!.AuditEvents;
+        audit.RemoveAll(item => local.Any(own => own.Action == item.Action && own.Target == item.Target && (own.OccurredAt - item.OccurredAt).Duration() < TimeSpan.FromMinutes(5)));
+        // The plan decides the window; ts-auth keeps its events at least 90 days (its list_audit_events contract).
+        return new(members, invitations, audit.Concat(local).OrderByDescending(item => item.OccurredAt).ToArray(),
+            transfer is null ? null : new(transfer.FromUserId, transfer.ToUserId, transfer.CreatedAt, transfer.ExpiresAt),
+            context.CanManage ? Audit.OrganizationAudit.RetentionDays(context.Organization) : null);
     }
     public async Task<CreatedInvitation> InviteAsync(AccountContext context, string email, string role, string? projectId, CancellationToken cancellationToken)
     {
