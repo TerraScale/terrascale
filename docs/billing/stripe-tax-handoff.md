@@ -4,6 +4,8 @@ TS-954 must be proved against Stripe **test mode** before live activation. The i
 
 ## One user step before live tax invoices
 
+Until this account is eligible, Checkout Sessions collect the billing address, name and tax IDs but do not request `automatic_tax`: Stripe refuses every session that asks for it on an ineligible account (TS-981, 2026-10-24, checkout answered 503). Turning `automatic_tax` on in `StripeBilling.StartCheckoutAsync` is part of finishing this handoff.
+
 The current delivered **test** account is Brazilian. On 2026-10-24, Stripe returned HTTP 400 from `GET /v1/tax/settings`: “Stripe Tax isn't yet supported for your country. Please contact stripe-tax-support@stripe.com to register your interest or if you want to collect tax in a supported market.” The same test credential succeeds on account and portal reads. This blocks the real Stripe test invoice/PDF proof as well as live activation. Ask Stripe whether this actual account can be enabled, or supply an existing eligible test account through the secure credential-installation workflow. Do not change a business country or invent an entity to bypass eligibility. No further retries of the unsupported endpoint are useful until eligibility changes.
 
 In the Stripe Dashboard, select the TerraScale account and **live mode** (leave test/sandbox mode):

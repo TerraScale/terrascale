@@ -19,9 +19,11 @@ public sealed class BillingTaxJourneyTests
         using var owner = scenario.Client();
         await scenario.SignUpAsync(owner);
         var checkout = scenario.Wire.Checkout;
-        foreach (var (field, value) in new[] { ("automatic_tax[enabled]", "true"), ("billing_address_collection", "required"),
+        foreach (var (field, value) in new[] { ("billing_address_collection", "required"),
             ("tax_id_collection[enabled]", "true"), ("customer_update[address]", "auto"), ("customer_update[name]", "auto") })
             await Assert.That(checkout.GetValueOrDefault(field)).IsEqualTo(value);
+        // Stripe refuses automatic_tax on an account whose country Stripe Tax does not support, and with it every checkout.
+        await Assert.That(checkout.ContainsKey("automatic_tax[enabled]")).IsFalse();
         using var page = await owner.GetAsync("/organization?tab=billing");
         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var html = await page.Content.ReadAsStringAsync();
