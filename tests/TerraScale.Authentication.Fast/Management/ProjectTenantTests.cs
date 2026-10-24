@@ -1,9 +1,12 @@
 using System.Globalization;
 using System.Net;
+using System.Security.Cryptography;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
@@ -91,6 +94,50 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         using var deleted = await oidc.CallAsync(HttpMethod.Delete, $"{root}/clients/{clientId}", token);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{root}/clients", token)).GetProperty("items").GetArrayLength()).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Admins_configure_social_providers_whose_secrets_are_sealed_and_never_answered()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var (_, token, project, root) = await this.ProjectAsync(oidc);
+        var (viewer, viewerToken) = await oidc.SignInUserAsync(this.Email(2));
+        await Assert.That(await oidc.GrantAsync(project, viewer.Id, "viewer")).IsTrue();
+        var secret = this.faker.Random.AlphaNumeric(40);
+
+        // Every provider is listed with the callback to register, configured or not.
+        var initial = (await oidc.OkAsync(HttpMethod.Get, $"{root}/settings", viewerToken)).GetProperty("providers");
+        await Assert.That(initial.EnumerateArray().Select(item => item.GetProperty("provider").GetString()!).ToList()).IsEquivalentTo(["google", "github", "apple", "oidc"]);
+        await Assert.That(initial[0].GetProperty("configured").GetBoolean()).IsFalse();
+        await Assert.That(initial[0].GetProperty("callback_url").GetString()).IsEqualTo($"{OidcHarness.PublicOrigin}/ui/{project}/social/google/callback");
+
+        await Assert.That(await oidc.FailAsync(HttpMethod.Put, $"{root}/providers/google", token, new { client_id = "id" })).IsEqualTo((400, "invalid_request"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Put, $"{root}/providers/google", viewerToken, new { client_id = "id", client_secret = secret })).IsEqualTo((403, "forbidden_role"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Put, $"{root}/providers/facebook", token, new { client_id = "id", client_secret = secret })).IsEqualTo((404, "not_found"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Put, $"{root}/providers/oidc", token, new { client_id = "id", client_secret = secret, issuer = "http://idp.example.test" })).IsEqualTo((400, "invalid_request"));
+        await Assert.That(await oidc.FailAsync(HttpMethod.Put, $"{root}/providers/apple", token, new { client_id = "tech.example.app", client_secret = "not a key", team_id = "ABCDE12345", key_id = "KEY1234567" })).IsEqualTo((400, "invalid_request"));
+
+        var google = (await oidc.OkAsync(HttpMethod.Put, $"{root}/providers/google", token, new { client_id = "123.apps.example.test", client_secret = secret })).GetProperty("providers")[0];
+        await Assert.That(google.GetProperty("configured").GetBoolean()).IsTrue();
+        await Assert.That(google.GetProperty("client_id").GetString()).IsEqualTo("123.apps.example.test");
+        await Assert.That(google.ToString()).DoesNotContain(secret);
+        using var apple = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var configured = await oidc.OkAsync(HttpMethod.Put, $"{root}/providers/apple", token, new { client_id = "tech.example.app", client_secret = apple.ExportPkcs8PrivateKeyPem(), team_id = "ABCDE12345", key_id = "KEY1234567" });
+        await Assert.That(configured.GetProperty("providers")[2].GetProperty("team_id").GetString()).IsEqualTo("ABCDE12345");
+
+        // A change without client_secret keeps the sealed one; the stored document never holds it in clear.
+        await oidc.OkAsync(HttpMethod.Put, $"{root}/providers/google", token, new { client_id = "456.apps.example.test" });
+        var services = oidc.Server.App.Services;
+        var stored = await services.GetRequiredService<AuthStore>().GetAsync(AuthStore.ProjectAuthSettingsCollection, project, project);
+        await Assert.That(stored!.Document.GetRawText()).DoesNotContain(secret);
+        var record = (await services.GetRequiredService<ProjectAuthSettings>().GetAsync(project)).Provider("google")!;
+        await Assert.That(record.ClientId).IsEqualTo("456.apps.example.test");
+        await Assert.That(SocialProviders.Open(services.GetRequiredService<AuthOptions>(), project, record)).IsEqualTo(secret);
+        await Assert.That(() => SocialProviders.Open(services.GetRequiredService<AuthOptions>(), AuthStore.NewId(), record)).Throws<CryptographicException>();
+
+        var removed = await oidc.OkAsync(HttpMethod.Delete, $"{root}/providers/google", token);
+        await Assert.That(removed.GetProperty("providers")[0].GetProperty("configured").GetBoolean()).IsFalse();
+        await Assert.That(removed.GetProperty("providers")[2].GetProperty("configured").GetBoolean()).IsTrue();
     }
 
     private string Email(int index) =>
