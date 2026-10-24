@@ -9,7 +9,7 @@ const analytics = { ...common, items: [{ databaseId: entity, databaseName: "app"
 const replication = { ...common, items: [{ databaseId: entity, databaseName: "app", region: "gru", status: "stopped",
   replicatedOps: 0, lagMs: null, divergence: null, convergenceMs: null, lastApplied: null, bandwidth: [], series: [] }] };
 test("all six usage routes preserve envelopes, buckets, nullable observations and filters", async () => {
-  const replies = [{ projectId: project, databases: 1, storageBytes: 10, logicalBytes: 4, documents: 1, reads: 2, writes: 1, period, series: [], items: [usage] },
+  const replies = [{ projectId: project, databases: 1, storageBytes: 15, logicalBytes: 9, fileBytes: 5, documents: 1, reads: 2, writes: 1, period, series: [], items: [usage] },
     usage, analytics, analytics, replication, replication];
   const { client, requests } = await fixture((_r, response) => json(response, replies[requests.length - 1]));
   const db = client.database("app");

@@ -67,7 +67,7 @@ export class V1FileStorage {
   constructor(transport, fetcher) { this.#transport = transport; this.#fetch = fetcher; Object.freeze(this); }
   /** @param {string} name @param {FileAccessRules} accessRules @param {FileRequestOptions} [options] @returns {Promise<FileBucketInfo>} */
   async createBucket(name, accessRules, options = {}) {
-    return bucketInfo((await this.#transport.call("createFileBucket", {}, { body: stringifyExactJson({ name, rules: accessRules }), contentType: "application/json", signal: options.signal })).value);
+    return bucketInfo((await this.#transport.call("createFileBucket", {}, { body: stringifyExactJson({ name, rules: accessRules }, "file bucket"), contentType: "application/json", signal: options.signal })).value);
   }
   /** @param {FileListOptions} [options] @returns {Promise<{items: FileBucketInfo[], next: string | null}>} */
   async listBuckets(options = {}) {
@@ -87,7 +87,7 @@ export class V1FileBucket {
   constructor(transport, fetcher, bucket) { this.#transport = transport; this.#fetch = fetcher; this.#bucket = requireId(bucket); Object.freeze(this); }
   /** @param {FileAccessRules} accessRules @param {FileRequestOptions} [options] @returns {Promise<FileBucketInfo>} */
   async setRules(accessRules, options = {}) {
-    return bucketInfo((await this.#transport.call("setFileBucketRules", { bucket: this.#bucket }, { body: stringifyExactJson({ rules: accessRules }), contentType: "application/json", signal: options.signal })).value);
+    return bucketInfo((await this.#transport.call("setFileBucketRules", { bucket: this.#bucket }, { body: stringifyExactJson({ rules: accessRules }, "file bucket rules"), contentType: "application/json", signal: options.signal })).value);
   }
   /** @param {FileRequestOptions} [options] @returns {Promise<void>} */
   async delete(options = {}) { await this.#transport.call("deleteFileBucket", { bucket: this.#bucket }, { signal: options.signal }); }
@@ -95,7 +95,7 @@ export class V1FileBucket {
   async createUpload(request, options = {}) {
     assertJsonObject(request.metadata, "file metadata");
     if (!Number.isSafeInteger(request.size) || request.size < 1 || request.size > maxFileBytes) throw new TypeError("Files must contain 1–104857600 bytes.");
-    return signed((await this.#transport.call("createFileUpload", { bucket: this.#bucket }, { body: stringifyExactJson(request), contentType: "application/json", signal: options.signal })).value);
+    return signed((await this.#transport.call("createFileUpload", { bucket: this.#bucket }, { body: stringifyExactJson(request, "file upload"), contentType: "application/json", signal: options.signal })).value);
   }
   /** @param {string} id @param {FileRequestOptions} [options] @returns {Promise<StoredFile>} */
   async completeUpload(id, options = {}) {
@@ -125,7 +125,16 @@ export class V1FileBucket {
     const headers = new Headers(capability.headers);
     // Fetch computes Content-Length from the body; browsers prohibit setting it explicitly.
     headers.delete("Content-Length");
-    const response = await this.#fetch(capability.url, { method: "PUT", headers, body: bytes, credentials: "omit", redirect: "error", signal: options.signal ?? null });
+    /** @type {RequestInit & { duplex?: "half" }} */
+    const init = { method: "PUT", headers, body: bytes, credentials: "omit", redirect: "error", signal: options.signal ?? null };
+    if (typeof process !== "undefined" && process.release?.name === "node") {
+      // A one-shot stream prevents Node fetch from replaying the signed PUT on HTTP 421.
+      headers.set("Content-Length", String(size));
+      init.body = new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } });
+      init.duplex = "half";
+    }
+    const response = await this.#fetch(capability.url, init);
+    void response.body?.cancel().catch(() => {});
     if (!response.ok) throw new Error(`Object upload failed (${response.status}).`);
     return this.completeUpload(capability.id, options);
   }
@@ -141,6 +150,7 @@ export class V1FileBucket {
     let length = 0;
     try {
       for (;;) {
+        options.signal?.throwIfAborted();
         const part = await reader.read();
         if (part.done) break;
         length += part.value.byteLength;

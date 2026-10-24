@@ -1,4 +1,3 @@
-using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -29,5 +28,5 @@ public sealed class ListBucketFilesEndpoint(IFileStorage files) : EndpointWithou
 
     /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        FileStorageRoute.RunAsync(HttpContext, () => files.ListFilesAsync(FileStorageRoute.Bucket(HttpContext), FileStorageRoute.After(HttpContext), cancellationToken), 200);
+        FileStorageRoute.RunAsync(HttpContext, () => files.ListFilesAsync(FileStorageRoute.BucketId(HttpContext), FileStorageRoute.After(HttpContext), cancellationToken), 200);
 }

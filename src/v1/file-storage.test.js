@@ -19,6 +19,12 @@ it("pins file operations to the producer's versioned endpoints and scopes", asyn
   }
   const paths = sources.get("FileStorageRoute.cs");
   expect(paths).toContain('ProjectApiRoute.Project + "/buckets"');
+  expect(paths).toContain('Bucket = Buckets + "/{bucket}"');
+  expect(paths).toContain('Files = Bucket + "/files"');
+  expect(paths).toContain('File = Files + "/{file}"');
+  /** @type {Record<string, string>} */
+  const routePaths = { Buckets: "/v1/projects/{project}/buckets", Bucket: "/v1/projects/{project}/buckets/{bucket}",
+    Files: "/v1/projects/{project}/buckets/{bucket}/files", File: "/v1/projects/{project}/buckets/{bucket}/files/{file}" };
   expect(fileStorageRoutes).toHaveLength(9);
   for (const route of fileStorageRoutes) {
     const name = route.operation.charAt(0).toUpperCase() + route.operation.slice(1) + "Endpoint.cs";
@@ -26,6 +32,12 @@ it("pins file operations to the producer's versioned endpoints and scopes", asyn
     expect(source).toContain(`Name("${route.operation}")`);
     expect(source).toContain(`RequireAuthorization("${route.permission}")`);
     expect(source).toContain(`${route.method.charAt(0) + route.method.slice(1).toLowerCase()}(FileStorageRoute.`);
+    const declared = /(?:Get|Post|Put|Delete)\(FileStorageRoute\.(\w+)(?: \+ "([^"]+)")?\);/u.exec(source);
+    expect(declared).not.toBeNull();
+    expect(route.pathTemplate).toBe(`${routePaths[declared?.[1] ?? ""]}${declared?.[2] ?? ""}`);
+    for (const status of route.successStatuses)
+      expect(source).toContain(status === 204 ? "Produces(StatusCodes.Status204NoContent)" : `>(${status})`);
+    expect(route.requestMediaTypes).toEqual(source.includes("new RequestBodyMetadata(") ? ["application/json"] : []);
     expect(route.pathTemplate).toMatch(/^\/v1\/projects\/\{project\}\/buckets/u);
   }
 });
@@ -36,7 +48,7 @@ describe("file SDK", () => {
     const client = createTerraBaseClient({ project, baseUrl: "https://api.example", token: "aaa.bbb.ccc", fetch: async (input, init = {}) => {
       const url = String(input); requests.push({ url, init });
       if (url.endsWith("/files/upload")) {
-        const body = JSON.parse(String(init.body));
+        const body = await new Request(input, init).json();
         expect(body.size).toBe(5);
         expect(body.sha256).toBe(createHash("sha256").update("hello").digest("base64"));
         return Response.json({ id: file, url: "https://objects.example/upload", expiresAt: record.uploadExpiresAt, headers: { "Content-Length": "5", "x-amz-checksum-sha256": body.sha256 } }, { status: 201 });
@@ -44,7 +56,7 @@ describe("file SDK", () => {
       if (url === "https://objects.example/upload") {
         expect(new Headers(init.headers).has("Authorization")).toBe(false);
         expect(init.credentials).toBe("omit"); expect(init.redirect).toBe("error");
-        expect(init.body).toEqual(new TextEncoder().encode("hello"));
+        expect(new Uint8Array(await new Request(input, init).arrayBuffer())).toEqual(new TextEncoder().encode("hello"));
         return new Response(null, { status: 200 });
       }
       expect(url).toBe(`https://api.example/v1/projects/${project}/buckets/${bucket}/files/${file}/complete`);
@@ -66,5 +78,19 @@ describe("file SDK", () => {
   it("rejects signed responses that request forwarding authorization", async () => {
     const client = createTerraBaseClient({ project, baseUrl: "https://api.example", token: "aaa.bbb.ccc", fetch: async () => Response.json({ id: file, url: "https://objects.example/download", expiresAt: record.uploadExpiresAt, headers: { Authorization: "never-forward" } }) });
     await expect(client.storage.bucket(bucket).downloadUrl(file)).rejects.toThrow("malformed");
+  });
+
+  it("downloads bytes with no project credentials and rejects insecure capabilities", async () => {
+    const client = createTerraBaseClient({ project, baseUrl: "https://api.example", token: "aaa.bbb.ccc", fetch: async (input, init = {}) => {
+      if (String(input).startsWith("https://api.example/"))
+        return Response.json({ id: file, url: "https://objects.example/download", expiresAt: record.uploadExpiresAt, headers: {} });
+      expect(new Headers(init.headers).has("Authorization")).toBe(false);
+      expect(init.credentials).toBe("omit"); expect(init.redirect).toBe("error");
+      return new Response("hello");
+    } });
+    expect(await (await client.storage.bucket(bucket).download(file)).text()).toBe("hello");
+    const insecure = createTerraBaseClient({ project, baseUrl: "https://api.example", token: "aaa.bbb.ccc", fetch: async () =>
+      Response.json({ id: file, url: "http://objects.example/download", expiresAt: record.uploadExpiresAt, headers: {} }) });
+    await expect(insecure.storage.bucket(bucket).download(file)).rejects.toThrow("HTTPS");
   });
 });

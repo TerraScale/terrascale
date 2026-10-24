@@ -20,16 +20,21 @@ internal static class FileStorageRoute
         + "Keep URLs private. List accepts after (exclusive ULID), 50 results per page, with authorized filtering before pagination. "
         + "Delete queues cleanup; reserved bytes remain billed until physical deletion succeeds. Replicas are never counted again. No automatic mutation retries.";
 
-    public static string Bucket(HttpContext context) => (string)context.Request.RouteValues["bucket"]!;
-    public static string File(HttpContext context) => (string)context.Request.RouteValues["file"]!;
+    public static string BucketId(HttpContext context) => (string)context.Request.RouteValues["bucket"]!;
+    public static string FileId(HttpContext context) => (string)context.Request.RouteValues["file"]!;
     public static string? After(HttpContext context) => context.Request.Query.TryGetValue("after", out var value) ? value.ToString() : null;
 
     public static async ValueTask<IResult> RunAsync(HttpContext context, Func<ValueTask<FileStorageResult>> operation, int success)
     {
         context.Response.Headers.CacheControl = "no-store";
-        if (ProjectAccess.Current is not { DatabaseName: null }) return ErrorResponse.From(new Forbidden("an unrestricted project token is required"));
+        if (ProjectAccess.Current is not { DatabaseName: null })
+        {
+            return ErrorResponse.From(new Forbidden("an unrestricted project token is required"));
+        }
         if (context.Request.Query.Keys.Any(key => key != "after") || After(context) is { } after && !EntityIds.IsValid(after))
+        {
             return ErrorResponse.From(new Validation("only after (a canonical ULID) is accepted"));
+        }
         return await operation().ConfigureAwait(false) switch
         {
             FileBucket bucket => TypedResults.Json(bucket, statusCode: success),

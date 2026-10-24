@@ -83,6 +83,7 @@
     "!types/integration",
     "sdk-v1-route-manifest.json",
     "sdk-public-v1-route-manifest.json",
+    "sdk-file-storage-route-manifest.json",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

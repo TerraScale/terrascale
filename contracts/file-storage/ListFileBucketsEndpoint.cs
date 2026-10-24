@@ -1,4 +1,3 @@
-using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;

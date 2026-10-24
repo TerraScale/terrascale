@@ -1,6 +1,6 @@
 # Project files
 
-`client.storage` uses the same project configuration and ts-auth token as document operations. Projects create buckets with document-style rules; end-user tokens are restricted by those rules. API contract: [producer file buckets](https://github.com/TerraScale/terrascale/blob/1c3ecefab/docs/terrabase/file-buckets.md).
+`client.storage` uses the same project configuration and ts-auth token as document operations. Projects create buckets with document-style rules; end-user tokens are restricted by those rules. API contract: [producer file buckets](https://github.com/TerraScale/terrascale/blob/ed8ba40539c8232fca200483f69a6a8d43271213/docs/terrabase/file-buckets.md).
 
 ```js
 import { createTerraBaseClient } from "@terrascale/sdk";

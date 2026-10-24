@@ -3,6 +3,7 @@ import { createTerraBaseV1Client, V1ForbiddenScopeError, V1InvalidKeyError } fro
 import { createTsAuthClient } from "../src/ts-auth.js";
 import { v1Routes, shapeV1Routes } from "../src/v1/routes.js";
 import { managementV1Routes } from "../src/v1/management-routes.js";
+import { fileStorageRoutes } from "../src/v1/file-storage-routes.js";
 
 // ts-auth -> TerraBase platform token contract (terrascale TerraBaseOptions.PlatformAuthIssuer/Audience,
 // ApiKeys.TerraBaseScopes, IApiKeyStore ApiKeyScopes). Fixtures only; no live service.
@@ -36,7 +37,7 @@ const token = { access_token: "header.payload.signature", token_type: "Bearer", 
 describe("platform token contract", () => {
   test("every runtime TerraBase route requires one of the four contract scopes", () => {
     // readShape is the historical shapes:read release route; the runtime shape reader uses readFreeShape.
-    const runtime = [...v1Routes.filter(route => route.operation !== "readShape"), ...shapeV1Routes,
+    const runtime = [...v1Routes.filter(route => route.operation !== "readShape"), ...shapeV1Routes, ...fileStorageRoutes,
       ...managementV1Routes.filter(route => route.permission !== "anonymous" && route.permission !== "platform-admin")];
     for (const route of runtime) {
       expect(scopes, route.operation).toContain(route.permission);
