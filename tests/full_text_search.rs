@@ -4,7 +4,9 @@ mod http;
 use http::{reply, Fixture, PROJECT};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use terrascale::v1::{Error, Filter, Index, IndexKind, IndexRequest, Near, Query, SortKey};
+use terrascale::v1::{
+    Error, Filter, GeoNear, Index, IndexKind, IndexRequest, Near, Query, SortKey,
+};
 
 #[tokio::test]
 async fn search_queries_preserve_grammar_scores_and_cursor() {
@@ -14,6 +16,11 @@ async fn search_queries_preserve_grammar_scores_and_cursor() {
         Filter::and([
             Filter::eq("/published", true),
             Filter::search("/title", "quick fox"),
+        ]),
+        Filter::and([
+            Filter::search("/title", "quick fox"),
+            Filter::within_radius("/loc", 0.0, 0.0, 1000.0),
+            Filter::within_box("/loc", -1.0, -1.0, 1.0, 1.0),
         ]),
         Filter::from_json(raw).unwrap(),
     ];
@@ -44,7 +51,7 @@ async fn search_queries_preserve_grammar_scores_and_cursor() {
             json!({"filter":filter,"sort":[{"path":"$score","order":"desc"}],"cursor":"score-id"})
         );
     }
-    assert_eq!(serde_json::to_string(&filters[2]).unwrap(), raw);
+    assert_eq!(serde_json::to_string(filters.last().unwrap()).unwrap(), raw);
 }
 
 #[tokio::test]
@@ -82,6 +89,9 @@ async fn invalid_search_and_score_queries_fail_before_sending() {
         Query::new()
             .filter(search())
             .near(Near::new("/embedding", vec![1.0])),
+        Query::new()
+            .filter(search())
+            .geo_near(GeoNear::new("/loc", 0.0, 0.0)),
     ];
     for query in queries {
         assert!(matches!(

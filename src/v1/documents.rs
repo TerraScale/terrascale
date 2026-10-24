@@ -290,7 +290,7 @@ pub struct Document<T = Box<RawValue>> {
     /// Vector distance on results of a [`super::Near`] query, meters on
     /// results of a [`super::GeoNear`] query; otherwise `None`.
     pub distance: Option<f64>,
-    /// Relevance score; set on full-text search query results.
+    /// Relevance score on results sorted by `$score`; otherwise `None`.
     pub score: Option<f64>,
 }
 
