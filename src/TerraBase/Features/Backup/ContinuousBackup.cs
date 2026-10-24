@@ -197,6 +197,17 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         await _pass.WaitAsync(schedulingToken).ConfigureAwait(false);
         try
         {
+            // A healthy rewrite waits for an ended tap's reader to close, and the catalog reads below wait while it rewrites
+            // SYSTEM: release such taps first, or neither moves until the rewrite gives up (TS-982). Discovery opens new ones.
+            foreach (var (prefix, file) in _files)
+            {
+                if (file.Job is null && file.Tap.Ended)
+                {
+                    _files.TryRemove(prefix, out _);
+                    await file.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+
             if (_stopped || !_catalogGate.Value.IsOpen)
             {
                 return pass ?? _scheduleCounter;
@@ -494,7 +505,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                     {
                         await ShipAsync(file, cancellationToken).ConfigureAwait(false);
                     }
-                    while (file.Behind && file.Failures == 0 && file.Generation is not null && !cancellationToken.IsCancellationRequested);
+                    while (file.Behind && file.Failures == 0 && file.Generation is not null && !file.Removed && !cancellationToken.IsCancellationRequested);
                 }
                 catch (Exception error)
                 {
@@ -596,6 +607,14 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     {
         try
         {
+            if (file.Tap.Ended)
+            {
+                // Released before HoldAsync reads the catalog (see ScheduleAsync).
+                file.Removed = true;
+                await file.Tap.DisposeAsync().ConfigureAwait(false);
+                return;
+            }
+
             if (!await HoldAsync(file, cancellationToken).ConfigureAwait(false))
             {
                 // Another member ships this file: read only to checkpoint it.

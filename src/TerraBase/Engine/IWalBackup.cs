@@ -54,6 +54,12 @@ public interface IWalTap : IAsyncDisposable
     /// the last change appended, to a new file at <paramref name="snapshotPath"/>. Changes appended later apply on top of it.
     /// </summary>
     ValueTask<WalSnapshot> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Whether the file this tap reads was replaced, or a healthy rewrite replacing it waits for its handles: the owner disposes
+    /// the tap without reading it, and opens a new one later.
+    /// </summary>
+    bool Ended => false;
 }
 
 /// <summary>Continuous physical backup of this node's storage files (TS-633): one file per database, plus the system database.</summary>

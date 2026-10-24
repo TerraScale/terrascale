@@ -91,7 +91,7 @@ public sealed class HealthyRewriteTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task A_rewrite_holds_cached_readers_and_writers_until_the_new_file_serves_them(bool system)
+    public async Task A_rewrite_waits_for_a_held_reader_while_cached_readers_and_writers_go_on(bool system)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var server = await TerraBaseTestServer.StartAsync();
@@ -108,28 +108,26 @@ public sealed class HealthyRewriteTests
         }
 
         await PutAsync(store, StorageFixture.Id("kept"), """{"name":"kept"}""", token);
+        var before = store.Incarnation;
         var reader = await store.BeginTransactionAsync(write: false, token);
         var waiting = PausedAsync(store);
         var rewriting = engine.RewriteAsync(database, 0, token).AsTask();
         await waiting.WaitAsync(token);
-        // Through the cached fast path: both wait rather than fail or reach the old file.
+        // Through the cached fast path: the rewrite holds nothing while it waits, so both go on with the old file (TS-982).
         var cached = system ? (TursoDatabaseStore)await engine.OpenSystemDatabaseAsync(token)
             : (TursoDatabaseStore)(await engine.OpenDatabaseAsync(database!, token))!;
-        var waitingReader = cached.BeginTransactionAsync(write: false, token).AsTask();
-        var queued = PutAsync(cached, StorageFixture.Id("queued"), """{"name":"queued"}""", token);
+        await using (var other = await cached.BeginTransactionAsync(write: false, token).AsTask().WaitAsync(TimeSpan.FromSeconds(5), token))
+        {
+            await Assert.That(await other.GetIncarnationAsync(token)).IsEqualTo(before);
+        }
+
+        await PutAsync(cached, StorageFixture.Id("queued"), """{"name":"queued"}""", token).WaitAsync(TimeSpan.FromSeconds(5), token);
         await Assert.That(rewriting.IsCompleted).IsFalse();
-        await Assert.That(waitingReader.IsCompleted).IsFalse();
-        await Assert.That(queued.IsCompleted).IsFalse();
         await Assert.That(await reader.GetAsync(Probe, StorageFixture.Id("kept"), token)).IsNotNull();
         await reader.DisposeAsync();
 
         var rewrite = await rewriting;
-        await queued;
-        await using (var resumed = await waitingReader)
-        {
-            await Assert.That(await resumed.GetIncarnationAsync(token)).IsEqualTo(rewrite.TargetIncarnation);
-        }
-
+        await Assert.That(rewrite.SourceIncarnation).IsEqualTo(before);
         await using var read = await store.BeginTransactionAsync(write: false, token);
         await Assert.That(await read.GetIncarnationAsync(token)).IsEqualTo(rewrite.TargetIncarnation);
         await Assert.That(await read.GetAsync(Probe, StorageFixture.Id("queued"), token)).IsNotNull();
@@ -174,7 +172,8 @@ public sealed class HealthyRewriteTests
         var rewriting = engine.RewriteAsync(database, 0, token).AsTask();
         await paused.WaitAsync(token);
         await Assert.That(rewriting.IsCompleted).IsFalse();
-        // Its owner reads next, learns the file is being replaced, and disposes it (ContinuousBackup.Failed).
+        // Its owner sees the file is being replaced and disposes it (ContinuousBackup); a read now would fail.
+        await Assert.That(tap.Ended).IsTrue();
         await Assert.That(async () => await tap.ReadAsync(Stream.Null, token)).Throws<ObjectDisposedException>();
         await tap.DisposeAsync();
         _ = await rewriting;
