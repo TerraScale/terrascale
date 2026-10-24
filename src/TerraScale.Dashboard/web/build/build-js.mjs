@@ -205,6 +205,7 @@ async function build() {
       'document-changes': resolve(source, 'document-changes.js'),
       'import-upload': resolve(source, 'import-upload.js'),
       'auth-branding': resolve(source, 'auth-branding.js'),
+      'file-storage': resolve(source, 'file-storage.js'),
     },
     entryNames: '[name]',
     chunkNames: '[name].[hash]',

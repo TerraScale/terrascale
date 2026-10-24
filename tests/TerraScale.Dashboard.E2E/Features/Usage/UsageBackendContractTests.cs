@@ -13,6 +13,18 @@ namespace TerraScale.Dashboard.E2E.Features.Usage;
 public sealed class UsageBackendContractTests
 {
     [Test]
+    public async Task ProjectUsageIncludesFileReservationsAlongsideDatabaseStorage()
+    {
+        using var wire = new Wire { FileBytes = 512 };
+        var selection = Selection();
+        var result = await new UsageBackend(wire, new Clock(), new Tokens()).ReadAsync(selection, CancellationToken.None);
+        var monthly = result.Monthly[selection.Context.Project!.Id];
+        await Assert.That(monthly.State).IsEqualTo(UsageSourceState.Measured);
+        await Assert.That(monthly.Reading!.LogicalBytes).IsEqualTo(1536);
+        await Assert.That(result.Scope.Reading!.LogicalBytes).IsEqualTo(1024);
+    }
+
+    [Test]
     public async Task ProducerMonthlyUsageComputesInternalBillAndCapWithHonestRoundedPeriodEnd()
     {
         using var wire = new Wire();
@@ -190,6 +202,7 @@ public sealed class UsageBackendContractTests
         public int Failure { get; init; }
         public bool Foreign { get; init; }
         public string? Month { get; init; } = "2026-10";
+        public long FileBytes { get; init; }
         public HashSet<string> Allowed { get; } = [];
         public HttpClient CreateClient(string name) => new(this, false);
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -210,7 +223,7 @@ public sealed class UsageBackendContractTests
             var child = new { databaseId, storageBytes = 2048, logicalBytes = 1024, collections = 1, documents = 2, reads = 22, writes = 5, period, series = Array.Empty<object>() };
             var month = Month is null ? null : new { month = Month, readUnits = 6, writeUnits = 3, units = 9, organizationUnits = 9 };
             var value = database ? JsonSerializer.Serialize(row) : JsonSerializer.Serialize(new
-            { projectId = "01JA0000000000000000000001", databases = 1, storageBytes = 2048, logicalBytes = 1024, documents = 2, reads = 22, writes = 5, period, series, items = new[] { child }, month });
+            { projectId = "01JA0000000000000000000001", databases = 1, storageBytes = 2048 + FileBytes, logicalBytes = 1024 + FileBytes, fileBytes = FileBytes, documents = 2, reads = 22, writes = 5, period, series, items = new[] { child }, month });
             return Task.FromResult(Response(HttpStatusCode.OK, value));
         }
         private static HttpResponseMessage Response(HttpStatusCode status, string body) => new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };

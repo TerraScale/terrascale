@@ -19,6 +19,7 @@ using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.Features.Settings;
 using TerraScale.Dashboard.Features.QuerySubscriptions;
+using TerraScale.Dashboard.Features.FileStorage;
 using TerraScale.Dashboard.Platform.Assets;
 using TerraScale.Dashboard.Platform.Development;
 using TerraScale.Dashboard.Platform.Persistence;
@@ -63,6 +64,7 @@ public static class DashboardApplication
         builder.Services.AddUsageFeatures();
         builder.Services.AddSettingsFeatures();
         builder.Services.AddQuerySubscriptions();
+        builder.Services.AddFileStorage();
         builder.Services.AddOrganizationFeatures();
         builder.Services.AddSingleton<AccessTokens>();
         builder.Services.AddSingleton<IProfileTokens>(services => services.GetRequiredService<AccessTokens>());
@@ -95,13 +97,15 @@ public static class DashboardApplication
                 path.StartsWith("/databases/", StringComparison.Ordinal) &&
                 (path.Contains("/documents", StringComparison.Ordinal) || path.EndsWith("/sql", StringComparison.Ordinal) || path.EndsWith("/schema", StringComparison.Ordinal));
             var reference = context.Request.Path.StartsWithSegments("/reference");
+            var fileStorage = path == "/storage" || path.StartsWith("/api/v1/dashboard/storage/", StringComparison.Ordinal);
+            var fileOrigins = fileStorage ? " https://*.r2.cloudflarestorage.com" : "";
             var styles = reference ? $"style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'" :
                 editorStyles ? $"style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'; worker-src 'self'" : "style-src 'self'";
             // form-action covers the redirects that follow forms: sign-out to ts-auth, checkout and portal to Stripe,
             // and an MCP consent's return to the client's registered redirect URI.
             string Policy() =>
                 $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; {(context.Items.ContainsKey("auth-branding") ? $"style-src 'self' 'nonce-{nonce}'" : styles)}; " +
-                $"img-src 'self' data:{(context.Items.ContainsKey("auth-branding") ? " https:" : "")}; font-src 'self'; connect-src 'self'; form-action 'self' https://auth.terrascale.tech https://checkout.stripe.com https://billing.stripe.com" +
+                $"img-src 'self' data:{(context.Items.ContainsKey("auth-branding") ? " https:" : "")}; font-src 'self'; connect-src 'self'" + fileOrigins + "; form-action 'self' https://auth.terrascale.tech https://checkout.stripe.com https://billing.stripe.com" + fileOrigins +
                 (context.Items[Platform.Mcp.McpOAuth.FormActionKey] is string client ? " " + client : "") + "; base-uri 'none'; frame-ancestors 'none'";
             context.Response.OnStarting(() =>
             {
@@ -222,6 +226,7 @@ public static class DashboardApplication
         app.MapUsage();
         app.MapSettings();
         app.MapQuerySubscriptions();
+        app.MapFileStorage();
         app.MapProfile();
         app.MapProfileAccessTokens();
         app.MapSupport();

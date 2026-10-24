@@ -68,8 +68,8 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
                 if (totals.ProjectId != project.Id || Count(totals.Databases) != totals.Items.Count ||
                     totals.Items.Select(item => item.DatabaseId).Distinct(StringComparer.Ordinal).Count() != totals.Items.Count)
                     throw new JsonException("Usage returned a different project or repeated database.");
-                if (Count(totals.StorageBytes) != totals.Items.Sum(item => Count(item.StorageBytes)) ||
-                    Count(totals.LogicalBytes) != totals.Items.Sum(item => Count(item.LogicalBytes)) ||
+                if (Count(totals.StorageBytes) != checked(totals.Items.Sum(item => Count(item.StorageBytes)) + Count(totals.FileBytes)) ||
+                    Count(totals.LogicalBytes) != checked(totals.Items.Sum(item => Count(item.LogicalBytes)) + Count(totals.FileBytes)) ||
                     Count(totals.Documents) != totals.Items.Sum(item => Count(item.Documents)) ||
                     Count(totals.Reads) != totals.Items.Sum(item => Count(item.Reads)) ||
                     Count(totals.Writes) != totals.Items.Sum(item => Count(item.Writes)) ||
