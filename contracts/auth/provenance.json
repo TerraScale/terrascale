@@ -20,20 +20,20 @@
   },
   "qualification": "Source-derived contracts; HTTP fakes only. Producer parity and live qualification remain unproven.",
   "ts873_closure_producer": {
-    "state": "Unmerged TS-873 producer candidate; server PR #495 must merge before this SDK PR.",
+    "state": "Merged TS-873 producer: TerraScale/terrascale#495.",
     "base_revision": "2d639336d1df5799bd2d62bd6cfded1498774dde",
     "sources_sha256": {
       "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "a7436836b58919b0804661cdacfd30760f568d3d41a969823514cfceb54f04fd",
-      "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "5d21c3a21f13c1d39da5f7926d65a193e96f86b7c2c5cc5f08201bcbaf6f040e",
-      "src/TerraScale.Authentication/Features/Platform/Closures.cs": "9e9d9e3485a8f4c4825ae2009492bfed6ea6d1814ac7ee0a5225764358a4c27b",
-      "src/TerraScale.Authentication/Features/Platform/AccountDeletion.cs": "46c44484be3f81dcfcd5f69c74c0d3490f41432cca87949a8b2c33ccd99b3dcd",
-      "docs/auth/platform-api.openapi.yaml": "e11da164426128960ea7726dad0805571b43cb54ff3e55e62a6cd8e392033516"
+      "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "c8ed08c159da30b5c6538f6202b5a4f970353740a984728590427e1174518856",
+      "src/TerraScale.Authentication/Features/Platform/Closures.cs": "deefbefc6fb13b864cf5499d4e4c19b206cda60129afb7a28f8589f38cb72216",
+      "src/TerraScale.Authentication/Features/Platform/AccountDeletion.cs": "dc4e2a4ff6c4c66969555ccf0e2cdef11da820f6fbf8ee7bcc16abbaac2b757f",
+      "docs/auth/platform-api.openapi.yaml": "7265b724ceef3201da65c95b283da827818ee97a6c6ecb92199fcb73aeff0aa7"
     },
     "codes": [
       "closure_conflict",
       "binding_conflict"
     ],
     "statuses": "delete_account and delete_project answer 202 while a TerraBase project closure is pending",
-    "revision": "d4ca15be9607e26b03951dcdd629e46d75d3d500"
+    "revision": "c1a1d9662662698739750a9af45db979abb2cea7"
   }
 }
