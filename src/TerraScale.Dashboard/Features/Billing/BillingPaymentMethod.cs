@@ -36,15 +36,18 @@ public sealed partial class StripeBilling
         if (index is null || index.Id != binding.CustomerId || AccountService.Read<CustomerBinding>(index).OrganizationId != context.Organization.Id)
             throw new IOException("Payment method customer ownership does not match.");
         var client = await ClientAsync(cancellationToken);
-        var customer = await client.V1.Customers.GetAsync(binding.CustomerId,
+        // The customer and its subscription are separate Stripe reads; they run together.
+        var customerRead = client.V1.Customers.GetAsync(binding.CustomerId,
             new() { Expand = ["invoice_settings.default_payment_method"] }, cancellationToken: cancellationToken);
+        var subscriptionRead = binding.SubscriptionId is { Length: > 0 } ? client.V1.Subscriptions.GetAsync(binding.SubscriptionId,
+            new() { Expand = ["default_payment_method"] }, cancellationToken: cancellationToken) : null;
+        var customer = await customerRead;
         if (customer.Id != binding.CustomerId || customer.Deleted == true || customer.Metadata?.GetValueOrDefault("organization_id") != context.Organization.Id)
             throw new BillingPaymentMethodUnavailableException("Payment method customer ownership does not match.");
         var method = customer.InvoiceSettings?.DefaultPaymentMethod;
-        if (binding.SubscriptionId is { Length: > 0 })
+        if (subscriptionRead is not null)
         {
-            var subscription = await client.V1.Subscriptions.GetAsync(binding.SubscriptionId,
-                new() { Expand = ["default_payment_method"] }, cancellationToken: cancellationToken);
+            var subscription = await subscriptionRead;
             if (subscription.Id != binding.SubscriptionId || subscription.CustomerId != binding.CustomerId ||
                 subscription.Metadata?.GetValueOrDefault("organization_id") != context.Organization.Id)
                 throw new BillingPaymentMethodUnavailableException("Payment method subscription ownership does not match.");
