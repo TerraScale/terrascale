@@ -46,6 +46,9 @@ public sealed record TerraBaseDatabaseUsage(string DatabaseId, long StorageBytes
 public sealed record TerraBaseProjectUsage(string ProjectId, long Databases, long StorageBytes, long LogicalBytes, long Documents,
     long Reads, long Writes, TerraBaseUsagePeriod Period, IReadOnlyList<TerraBaseUsagePoint> Series, IReadOnlyList<TerraBaseDatabaseUsage> Items) : IJsonOnDeserialized
 {
+    /// <summary>Logical file bytes including pending uploads, counted once across replicas. Included in project storage totals.</summary>
+    public long FileBytes { get; init; }
+
     void IJsonOnDeserialized.OnDeserialized()
     {
         TerraBaseJsonContext.RequireNonNullItems(Series);
