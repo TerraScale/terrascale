@@ -155,15 +155,15 @@ internal sealed partial class CatalogGate
             Pending = [.. Pending, "external revocations not covered"];
             return false;
         }
-        finally
-        {
-            _revocationStage = null;
-        }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
             // Provider/key failures may contain credentials. Classify without logging their text.
             Pending = [.. Pending, $"external revocations unreadable ({error.GetType().Name})"];
             return false;
+        }
+        finally
+        {
+            _revocationStage = null;
         }
     }
 
