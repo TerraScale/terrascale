@@ -156,7 +156,7 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
         {
             var form = QueryHelpers.ParseQuery(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
             var key = request.Headers.TryGetValues("Idempotency-Key", out var keys) ? keys.Single() : "";
-            if (request.Method == HttpMethod.Post && !isPreview() && key.Length == 0) throw new HttpRequestException("Stripe mutations must retain an idempotency key.");
+            if ((request.Method == HttpMethod.Post && !isPreview() || request.Method == HttpMethod.Delete) && key.Length == 0) throw new HttpRequestException("Stripe mutations must retain an idempotency key.");
             if (key.Length > 0)
             {
                 var fingerprint = path + "?" + string.Join('&', form.OrderBy(pair => pair.Key).Select(pair => pair.Key + "=" + pair.Value));
@@ -207,7 +207,11 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
                         else { subscription["items"]!["data"]![0]!["price"] = price; subscription["pending_update"] = null; }
                     }
                 }
-                else if (request.Method == HttpMethod.Delete) { mutations.Enqueue((customer, path)); subscription["status"] = "canceled"; }
+                else if (request.Method == HttpMethod.Delete)
+                {
+                    if (subscription["status"]!.GetValue<string>() is "canceled" or "incomplete_expired") throw new HttpRequestException("An ended subscription must not be canceled again.");
+                    mutations.Enqueue((customer, "DELETE " + path)); subscription["status"] = "canceled";
+                }
                 var reply = subscription.DeepClone().AsObject();
                 if (portalDefaults.ContainsKey(customer))
                 {
@@ -296,6 +300,9 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
         }
         finally { serial.Release(); }
     }
+    internal string? SubscriptionStatus(string id) => subscriptions.TryGetValue(id, out var subscription) ? subscription["status"]!.GetValue<string>() : null;
+    internal string[] Mutations(string customer) => mutations.Where(row => row.Customer == customer).Select(row => row.Path).ToArray();
+    internal void SetScenario(string customer, string scenario) => scenarios[customer] = scenario;
     private async Task<JsonObject> SubscriptionAsync(string id, CancellationToken cancellationToken)
     {
         if (subscriptions.TryGetValue(id, out var known)) return known;

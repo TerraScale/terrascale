@@ -1,5 +1,6 @@
 using System.Net;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Billing;
 using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.E2E.Features.Accounts;
@@ -60,13 +61,54 @@ public sealed class AccountDeletionJourneyTests
         await Assert.That(session.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
+    [Test]
+    public async Task PaidSoleOrganizationEndsImmediatelyAndStripeFailureKeepsTheAccount()
+    {
+        await using var scenario = await Scenario.StartAsync(signIn: false);
+        var suffix = Guid.NewGuid().ToString()[..8];
+        var email = "paid-delete-" + suffix + "@example.test";
+        await Billing.BillingPlanJourneyTests.SignUpPaidAsync(scenario.Client, email, "E2E-delete-" + suffix, suffix);
+        var userId = scenario.Environment.Workspace.Organizations.Values.Single(org => org.Members.Values.Any(member => member.Email == email)).OwnerUserId;
+        var personal = scenario.PersonalOrganizationId(userId);
+        // The reported case: the owner scheduled the switch to Free, which keeps the subscription until renewal.
+        var csrf = await HttpJourney.CsrfAsync(scenario.Client, "/organization?tab=billing");
+        using (var free = await HttpJourney.PostFormAsync(scenario.Client, "/billing/change", new() { ["_csrf"] = csrf, ["plan"] = "free" }))
+            await Assert.That(free.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var binding = StripeBilling.ReadBinding((await scenario.Environment.State.GetAsync(StripeBilling.Collection, personal, default))!, personal);
+        var stripe = scenario.Environment.BillingPlans;
+        await Assert.That(stripe.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("active");
+
+        stripe.SetScenario(binding.CustomerId, "offline");
+        using (var failed = await scenario.DeleteAsync(email))
+        {
+            await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.BadGateway);
+            await Assert.That(await failed.Content.ReadAsStringAsync()).Contains("Stripe could not cancel the paid plan of");
+        }
+        await Assert.That(await scenario.ExistsAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(userId))).IsTrue();
+        await Assert.That(await scenario.ExistsAsync(StripeBilling.Collection, personal)).IsTrue();
+        await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsTrue();
+
+        stripe.SetScenario(binding.CustomerId, "confirmed");
+        using (var deleted = await scenario.DeleteAsync(email))
+        {
+            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(deleted.Headers.Location!.OriginalString).IsEqualTo("/login");
+        }
+        await Assert.That(stripe.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("canceled");
+        await Assert.That(stripe.Mutations(binding.CustomerId).Count(path => path == "DELETE /v1/subscriptions/" + binding.SubscriptionId)).IsEqualTo(1);
+        await Assert.That(await scenario.ExistsAsync(StripeBilling.Collection, personal)).IsFalse();
+        await Assert.That(await scenario.ExistsAsync(StripeBilling.CustomersCollection, binding.CustomerId)).IsFalse();
+        await Assert.That(await scenario.ExistsAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(userId))).IsFalse();
+        await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
+    }
+
     private sealed class Scenario : IAsyncDisposable
     {
         public required DemoEnvironment Environment { get; init; }
         public required Microsoft.AspNetCore.Builder.WebApplication App { get; init; }
         public required HttpClient Client { get; init; }
 
-        public static async Task<Scenario> StartAsync()
+        public static async Task<Scenario> StartAsync(bool signIn = true)
         {
             var environment = new DemoEnvironment();
             await environment.InitializeAsync();
@@ -74,14 +116,17 @@ public sealed class AccountDeletionJourneyTests
             await app.StartAsync();
             var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
             { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
-            using var login = await HttpJourney.LoginAsync(client);
-            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            if (signIn)
+            {
+                using var login = await HttpJourney.LoginAsync(client);
+                await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            }
             return new() { Environment = environment, App = app, Client = client };
         }
 
-        public string PersonalOrganizationId()
+        public string PersonalOrganizationId(string userId = UserId)
         {
-            lock (Environment.Workspace.Gate) return Environment.Workspace.Organizations.Values.Single(org => org.Members.ContainsKey(UserId)).Id;
+            lock (Environment.Workspace.Gate) return Environment.Workspace.Organizations.Values.Single(org => org.Members.ContainsKey(userId)).Id;
         }
 
         public string AddOrganization(string name, string owner, string member)

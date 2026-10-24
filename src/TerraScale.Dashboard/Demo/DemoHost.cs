@@ -58,6 +58,7 @@ public sealed class DemoEnvironment
     }
 
     internal TestWorkspace Workspace => workspace;
+    internal TestBillingPlanTransport BillingPlans => billingPlans;
     internal TestAuthApiKeys ApiKeys => apiKeys;
     // The E2E suite seeds its reference fixtures through these.
     internal TestState State => state;
