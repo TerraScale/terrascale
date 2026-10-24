@@ -61,22 +61,22 @@ public sealed class AlertRules(IDashboardState state, IAlertSource source, ICust
         var key = (await identity.ReadAsync(cancellationToken)).SessionEncryptionKey;
         var rule = new AlertRule(id, name, metric, threshold, databaseId, form["email"] == "on", url,
             secret is null ? null : SealedSecret.Seal(secret, key, Purpose(project.Id, id)), clock.GetUtcNow());
-        await UpdateAsync(Collection, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), document => Read(document, project.Id), set =>
+        await state.UpdateAsync(Collection, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), document => Read(document, project.Id), set =>
         {
             if (set.Rules.Count >= 20) throw new AccountAccessException("A project can have up to 20 alert rules.", 409);
             set.Rules.Add(rule);
-            return true;
+            return set;
         }, cancellationToken);
-        await UpdateAsync(IndexCollection, "all", () => new AlertProjectIndex([]), AccountService.Read<AlertProjectIndex>,
-            index => index.Projects.TryAdd(project.Id, organization.Id), cancellationToken);
+        await state.UpdateAsync(IndexCollection, "all", () => new AlertProjectIndex([]), AccountService.Read<AlertProjectIndex>,
+            index => index.Projects.TryAdd(project.Id, organization.Id) ? index : null, cancellationToken);
         return (rule, secret);
     }
 
     public async Task DeleteAsync(AccountContext context, string id, CancellationToken cancellationToken)
     {
         var (organization, project) = Owner(context);
-        await UpdateAsync(Collection, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), document => Read(document, project.Id),
-            set => set.Rules.RemoveAll(rule => rule.Id == id) > 0 ? true : throw new AccountAccessException("Alert rule is unavailable.", 404), cancellationToken);
+        await state.UpdateAsync(Collection, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), document => Read(document, project.Id),
+            set => set.Rules.RemoveAll(rule => rule.Id == id) > 0 ? set : throw new AccountAccessException("Alert rule is unavailable.", 404), cancellationToken);
     }
 
     // A changed threshold takes effect on the next run: raising it above the current value resolves a firing rule.
@@ -84,12 +84,12 @@ public sealed class AlertRules(IDashboardState state, IAlertSource source, ICust
     {
         var (organization, project) = Owner(context);
         var threshold = Threshold(value);
-        await UpdateAsync(Collection, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), document => Read(document, project.Id), set =>
+        await state.UpdateAsync(Collection, project.Id, () => new AlertRuleSet(project.Id, organization.Id, []), document => Read(document, project.Id), set =>
         {
             var index = set.Rules.FindIndex(rule => rule.Id == id);
             if (index < 0) throw new AccountAccessException("Alert rule is unavailable.", 404);
             set.Rules[index] = set.Rules[index] with { Threshold = threshold };
-            return true;
+            return set;
         }, cancellationToken);
     }
 
@@ -124,7 +124,7 @@ public sealed class AlertRules(IDashboardState state, IAlertSource source, ICust
         if (rules.Any(rule => rule.Metric == "operation_units_percent") && PlanCatalog.Limits(organization).MonthlyOperations is > 0 and var allowance &&
             (await units()).TryGetValue(organizationId, out var used)) percent = used * 100d / allowance;
         var now = clock.GetUtcNow();
-        var saved = await UpdateAsync(Collection, projectId, () => throw new IOException("Alert rules disappeared."), current => Read(current, projectId), set =>
+        var saved = await state.UpdateAsync(Collection, projectId, () => throw new IOException("Alert rules disappeared."), current => Read(current, projectId), set =>
         {
             var changed = false;
             for (var index = 0; index < set.Rules.Count; index++)
@@ -144,18 +144,18 @@ public sealed class AlertRules(IDashboardState state, IAlertSource source, ICust
                     rule.Email ? "pending" : "none", rule.WebhookUrl is null ? "none" : "pending")).ToList();
                 set.Rules[index] = rule with { State = firing ? "firing" : "ok", Since = now, AlertId = alertId, Value = value, Events = events };
             }
-            return changed;
+            return changed ? set : null;
         }, cancellationToken);
         var results = new Dictionary<string, AlertEvent>(StringComparer.Ordinal);
         foreach (var rule in saved.Rules)
             foreach (var pending in rule.Events.Where(item => item.Pending))
                 results[pending.DeliveryId] = await DeliverAsync(saved, rule, pending, cancellationToken);
         if (results.Count == 0 && !saved.Rules.Any(rule => rule.Events.Any(item => !item.Pending))) return;
-        await UpdateAsync(Collection, projectId, () => throw new IOException("Alert rules disappeared."), current => Read(current, projectId), set =>
+        await state.UpdateAsync(Collection, projectId, () => throw new IOException("Alert rules disappeared."), current => Read(current, projectId), set =>
         {
             for (var index = 0; index < set.Rules.Count; index++)
                 set.Rules[index] = set.Rules[index] with { Events = set.Rules[index].Events.Select(item => results.GetValueOrDefault(item.DeliveryId) ?? item).Where(item => item.Pending).ToList() };
-            return true;
+            return set;
         }, cancellationToken);
     }
 
@@ -221,23 +221,6 @@ public sealed class AlertRules(IDashboardState state, IAlertSource source, ICust
     }
 
     private static string Purpose(string projectId, string ruleId) => "alert-webhook/" + projectId + "/" + ruleId;
-
-    private async Task<T> UpdateAsync<T>(string collection, string key, Func<T> create, Func<TerraBaseDocument, T> read, Func<T, bool> change, CancellationToken cancellationToken)
-    {
-        for (var attempt = 0; attempt < 8; attempt++)
-        {
-            var document = await state.GetAsync(collection, key, cancellationToken);
-            var current = document is null ? create() : read(document);
-            if (!change(current)) return current;
-            try
-            {
-                await state.PutAsync(collection, key, JsonSerializer.SerializeToElement(current), document is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(document.Version), cancellationToken);
-                return current;
-            }
-            catch (TerraBasePreconditionFailedException) when (attempt < 7) { }
-        }
-        throw new IOException("Alert rules changed concurrently.");
-    }
 
     public static AlertRuleSet Read(TerraBaseDocument document, string projectId)
     {

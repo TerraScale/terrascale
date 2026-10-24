@@ -28,6 +28,8 @@ public static class DashboardStateSchema
         "dashboard_stripe_checkouts",
         "dashboard_allowance_alerts",
         "dashboard_alert_rules",
-        "dashboard_alert_projects"
+        "dashboard_alert_projects",
+        "dashboard_log_drains",
+        "dashboard_log_drain_projects"
     });
 }

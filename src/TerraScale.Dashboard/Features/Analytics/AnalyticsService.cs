@@ -8,7 +8,22 @@ public sealed record AnalyticsTotals(long Requests, long Errors, long Operations
     long ReplicationSentBytes, long ReplicationReceivedBytes, double? LatestP95Ms, IReadOnlyList<AnalyticsRegionRow> Regions);
 public sealed record AnalyticsRegionRow(string Code, string Flag, long Requests, double? LatestP95Ms);
 public sealed record AnalyticsChart(string Title, AnalyticsLinePlot Plot, AnalyticsSelection Selection);
-public sealed record AnalyticsPage(ShellModel Shell, AnalyticsSelection Selection, AnalyticsTotals? Totals, IReadOnlyList<AnalyticsChart> Charts, string Error = "", string Empty = "No analytics measurements for these filters.");
+public sealed record AnalyticsPage(ShellModel Shell, AnalyticsSelection Selection, AnalyticsTotals? Totals, IReadOnlyList<AnalyticsChart> Charts, string Error = "", string Empty = "No analytics measurements for these filters.")
+{
+    // OAuth2 client credentials: the client ID is the API key's prefix before its first underscore, the secret is the whole key.
+    public string PrometheusConfig => $"""
+        scrape_configs:
+          - job_name: terrascale
+            scheme: https
+            metrics_path: /v1/projects/{Selection.Context.Project!.Id}/metrics
+            static_configs:
+              - targets: [api.terrascale.tech]
+            oauth2:
+              client_id: <API key up to its first _>
+              client_secret: <API key>
+              token_url: https://auth.terrascale.tech/terrascale/oauth/token
+        """;
+}
 
 public sealed class AnalyticsService(IAnalyticsBackend backend)
 {

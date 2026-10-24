@@ -40,6 +40,24 @@
             @foreach (var log in Model.SlowQueries) { <tr><td>@log.Time.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</td><td><code>@log.Method @log.Route</code></td><td>@log.Status</td><td>@log.LatencyMs.ToString("0.##", CultureInfo.InvariantCulture) ms</td></tr> }
         </tbody></table></div> }
     </div></section>
+    <section class="ts-card" id="log-drain" aria-labelledby="log-drain-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="log-drain-title">Project log drain</h2><p class="ts-card-description">Sends every database's request logs in this project to an OpenTelemetry (OTLP/HTTP JSON) logs endpoint about every 15 seconds, starting when the drain is saved. Each check reads the latest 100 requests per database, so heavier traffic or a failing endpoint leaves gaps; late requests from other regions can be skipped.</p></div></header><div class="ts-card-body ts-stack">
+        @if (Model.DrainError.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.DrainError</p></div> }
+        @if (Model.Drain is { } drain)
+        {
+            <dl class="ts-kv"><dt>Endpoint</dt><dd class="ts-break">@drain.Url</dd><dt>Header</dt><dd>@(drain.HeaderName is null ? "None" : drain.HeaderName + ": set")</dd><dt>Last success</dt><dd>@(drain.LastSuccessAt?.UtcDateTime.ToString("MMM d HH:mm:ss 'UTC'", CultureInfo.InvariantCulture) ?? "Not yet")</dd><dt>Last error</dt><dd data-drain-error="@drain.LastErrorStatus">@(drain.LastErrorAt is { } failed ? (drain.LastErrorStatus is > 0 ? "HTTP " + drain.LastErrorStatus : "No response") + " at " + failed.UtcDateTime.ToString("MMM d HH:mm:ss 'UTC'", CultureInfo.InvariantCulture) : "None")</dd></dl>
+        }
+        else { <p class="ts-meta">No log drain is set for this project.</p> }
+        @if (Model.CanManageDrain)
+        {
+            <form method="post" action="/api/v1/dashboard/log-drain" class="ts-form"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><div class="ts-form-grid">
+                <div class="ts-field"><label class="ts-label" for="drain-url">OTLP logs URL</label><input class="ts-input" id="drain-url" name="url" type="url" maxlength="2048" value="@Model.Drain?.Url" placeholder="https://otlp-gateway-prod-us-east-0.grafana.net/otlp/v1/logs" autocomplete="off" required /><p class="ts-hint">The full logs URL, usually ending in /v1/logs. Public HTTPS only.</p></div>
+                <div class="ts-field"><label class="ts-label" for="drain-header-name">Header name (optional)</label><input class="ts-input" id="drain-header-name" name="headerName" maxlength="64" value="@Model.Drain?.HeaderName" placeholder="Authorization or DD-API-KEY" autocomplete="off" /></div>
+                <div class="ts-field"><label class="ts-label" for="drain-header-value">Header value</label><input class="ts-input" id="drain-header-value" name="headerValue" type="password" maxlength="4096" placeholder="@(Model.Drain?.HeaderValue is null ? "" : "Set; leave blank to keep")" autocomplete="off" /><p class="ts-hint">Stored encrypted and never shown again, for example Basic followed by the base64 of instance:token for Grafana Cloud.</p></div>
+            </div><div class="ts-form-actions"><button type="submit" class="ts-btn ts-btn-primary">Save log drain</button></div></form>
+            @if (Model.Drain is not null) { <form method="post" action="/api/v1/dashboard/log-drain/delete"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><button type="submit" class="ts-btn ts-btn-danger ts-btn-sm">Remove log drain</button></form> }
+        }
+        else { <p class="ts-meta">Organization owners manage the log drain.</p> }
+    </div></section>
 </main>
 
 @functions { public ShellModel LayoutModel => Model.Shell; }

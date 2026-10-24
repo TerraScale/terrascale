@@ -7,18 +7,20 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using TerraScale.Dashboard.E2E.Features.Databases;
+using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Features.Notifications;
 
 namespace TerraScale.Dashboard.E2E;
 
-// Fakes only TerraBase analytics, ts-auth email and the customer's receiver; rule storage, evaluation and pages stay real.
-// The hosted worker is removed so each test drives runs explicitly.
+// Alerts and log drains. Fakes only TerraBase analytics and logs, ts-auth email and the customer's receiver; storage,
+// evaluation, shipping and pages stay real. The hosted workers are removed so each test drives runs explicitly.
 internal sealed class AlertScenario(string root) : IAsyncDisposable
 {
     private readonly DemoEnvironment environment = new();
     private WebApplication? host;
     public FakeAlertSource Source { get; } = new();
     public RecordingDelivery Delivery { get; } = new();
+    public FakeLogSource Logs { get; } = new();
     public HttpClient Client { get; private set; } = null!;
     public string Csrf { get; private set; } = "";
     public string DatabaseId { get; private set; } = "";
@@ -31,7 +33,9 @@ internal sealed class AlertScenario(string root) : IAsyncDisposable
         {
             builder.Services.Replace(ServiceDescriptor.Singleton<IAlertSource>(Source));
             builder.Services.Replace(ServiceDescriptor.Singleton<ICustomerDelivery>(Delivery));
-            builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(AlertWorker)));
+            builder.Services.Replace(ServiceDescriptor.Singleton<ILogDrainSource>(Logs));
+            foreach (var worker in new[] { typeof(AlertWorker), typeof(LogDrainWorker) })
+                builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == worker));
         });
         await host.StartAsync();
         Client = new(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
@@ -51,6 +55,7 @@ internal sealed class AlertScenario(string root) : IAsyncDisposable
     public void Role(string role) => environment.Workspace.GlobalRole = role;
 
     public Task RunAsync() => host!.Services.GetRequiredService<AlertRules>().RunOnceAsync(CancellationToken.None);
+    public Task RunDrainsAsync() => host!.Services.GetRequiredService<LogDrains>().RunOnceAsync(CancellationToken.None);
 
     public Task<HttpResponseMessage> PostAsync(string path, Dictionary<string, string> form)
     {
@@ -96,4 +101,20 @@ internal sealed class RecordingDelivery : ICustomerDelivery
         Requests.Enqueue((url, Encoding.UTF8.GetString(body), headers.ToDictionary(header => header.Key, header => header.Value)));
         return Task.FromResult(Status);
     }
+}
+
+internal sealed class FakeLogSource : ILogDrainSource
+{
+    private readonly ConcurrentStack<DatabaseLogEntry> entries = new();
+
+    public DatabaseLogEntry Record(int status, DateTimeOffset? time = null)
+    {
+        var at = time ?? DateTimeOffset.UtcNow;
+        var entry = new DatabaseLogEntry(NUlid.Ulid.NewUlid(at).ToString(), at, "sa-saopaulo-1", "POST", "/v1/collections/orders/documents", status, 12.5, 3, false);
+        entries.Push(entry);
+        return entry;
+    }
+
+    public Task<DatabaseLogBatch> ReadAsync(string projectId, string databaseId, CancellationToken cancellationToken) =>
+        Task.FromResult(new DatabaseLogBatch(databaseId, entries.Take(100).ToArray(), false, false));
 }

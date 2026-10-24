@@ -77,6 +77,6 @@ public sealed class AlertWorker(AlertRules rules, TimeProvider clock, ILogger<Al
 
 public static class AlertRegistration
 {
-    public static IServiceCollection AddAlerts(this IServiceCollection services) => services.AddCustomerDelivery()
+    public static IServiceCollection AddAlerts(this IServiceCollection services) => services
         .AddSingleton<IAlertSource, AlertSource>().AddSingleton<AlertRules>().AddHostedService<AlertWorker>();
 }

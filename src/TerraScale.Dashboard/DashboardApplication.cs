@@ -49,6 +49,7 @@ public static class DashboardApplication
         builder.Services.AddSingleton<DashboardSessions>();
         builder.Services.AddAccountFeatures();
         builder.Services.AddAllowanceNotifications();
+        builder.Services.AddCustomerDelivery();
         builder.Services.AddAlerts();
         builder.Services.AddAuth();
         builder.Services.AddDatabaseFeatures();
