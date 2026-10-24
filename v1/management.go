@@ -199,6 +199,14 @@ func (r *SQLRow) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// IndexKind identifies a secondary index's search strategy.
+type IndexKind string
+
+const (
+	IndexBTree IndexKind = "btree"
+	IndexText  IndexKind = "text"
+)
+
 // Index is a secondary index of a database's collection.
 type Index struct {
 	Name       string `json:"name"`
@@ -206,7 +214,8 @@ type Index struct {
 	// Fields are the key fields in order, as dotted member paths.
 	Fields []string `json:"fields"`
 	// State is active: TerraBase builds an index before creating it.
-	State string `json:"state"`
+	State string    `json:"state"`
+	Kind  IndexKind `json:"kind,omitempty"`
 }
 
 // IndexRequest describes an index to create: Fields are 1-4 distinct dotted
@@ -215,6 +224,8 @@ type IndexRequest struct {
 	Collection string   `json:"collection"`
 	Fields     []string `json:"fields"`
 	Name       string   `json:"name,omitempty"`
+	// Kind defaults to IndexBTree when omitted.
+	Kind IndexKind `json:"kind,omitempty"`
 }
 
 // ProjectAPIKey is a project's data API key (tb_…) without its secret.

@@ -9,10 +9,16 @@ import (
 	"iter"
 	"math"
 	"net/http"
+	"slices"
+	"strings"
+	"unicode/utf8"
 )
 
 // IDPath is the pseudo-path for the document ID.
 const IDPath = "$id"
+
+// ScorePath sorts one search predicate by relevance, descending and as the only key.
+const ScorePath = "$score"
 
 // Path is a filter or sort path: an RFC 6901 JSON Pointer string or IDPath.
 // TerraBase does not serve {"lower":…} paths yet.
@@ -21,12 +27,13 @@ type Path interface{ ~string }
 func pathValue[P Path](p P) any { return any(p) }
 
 // Filter is a query-v1 filter expression, built with And, Or, Not, Eq, Ne,
-// Lt, Lte, Gt, Gte, In, Nin, Exists, Prefix, Contains, WithinRadius and
+// Lt, Lte, Gt, Gte, In, Nin, Exists, Prefix, Contains, Search, WithinRadius and
 // WithinBox. The zero Filter
 // matches everything and is omitted from requests.
 type Filter struct {
-	node map[string]any
-	err  error
+	node     map[string]any
+	err      error
+	searches int
 }
 
 // IsZero reports whether f is the empty filter.
@@ -48,13 +55,15 @@ func combine(op string, fs []Filter) Filter {
 		return Filter{err: fmt.Errorf("terrabase: %s needs at least one filter", op)}
 	}
 	var errs error
+	searches := 0
 	for _, f := range fs {
 		if f.IsZero() {
 			errs = errors.Join(errs, fmt.Errorf("terrabase: %s child is an empty filter", op))
 		}
 		errs = errors.Join(errs, f.err)
+		searches += f.searches
 	}
-	return Filter{node: map[string]any{op: fs}, err: errs}
+	return Filter{node: map[string]any{op: slices.Clone(fs)}, err: errs, searches: searches}
 }
 
 // And matches when every child matches (1-64 children).
@@ -68,7 +77,7 @@ func Not(f Filter) Filter {
 	if f.IsZero() {
 		return Filter{err: errors.New("terrabase: not of an empty filter")}
 	}
-	return Filter{node: map[string]any{"not": f}, err: f.err}
+	return Filter{node: map[string]any{"not": f}, err: f.err, searches: f.searches}
 }
 
 // scalar encodes a JSON scalar operand: string, exact number, bool or nil.
@@ -111,6 +120,20 @@ func Contains[P Path](path P, value any) Filter { return compare("contains", pat
 
 // Prefix matches strings at path that start with prefix.
 func Prefix[P Path](path P, prefix string) Filter { return compare("prefix", path, prefix) }
+
+// Search matches full-text terms at an RFC 6901 pointer.
+// It requires a text index on that field; $id is not searchable.
+// Terms use native Tantivy syntax, must be 1-4096 UTF-8 bytes and contain no NUL.
+func Search[P Path](path P, terms string) Filter {
+	f := Filter{node: map[string]any{"search": []any{pathValue(path), terms}}, searches: 1}
+	if !strings.HasPrefix(string(path), "/") {
+		f.err = errors.New("terrabase: search needs a document field pointer")
+	}
+	if !utf8.ValidString(terms) || len(terms) == 0 || len(terms) > 4096 || strings.ContainsRune(terms, 0) {
+		f.err = errors.Join(f.err, errors.New("terrabase: search terms need valid UTF-8, 1-4096 bytes and no NUL"))
+	}
+	return f
+}
 
 func set[P Path](op string, path P, values []any) Filter {
 	raws := make([]json.RawMessage, 0, len(values))
@@ -178,10 +201,11 @@ func WithinBox[P Path](path P, south, west, north, east float64) Filter {
 
 // SortKey is one sort key.
 type SortKey struct {
-	path any
-	desc bool
-	near *near
-	err  error
+	path  any
+	desc  bool
+	near  *near
+	err   error
+	score bool
 }
 
 type near struct {
@@ -233,10 +257,18 @@ func NearPoint[P Path](path P, lat, lon float64) SortKey {
 }
 
 // Asc sorts by path ascending.
-func Asc[P Path](path P) SortKey { return SortKey{path: pathValue(path)} }
+func Asc[P Path](path P) SortKey {
+	k := SortKey{path: pathValue(path)}
+	if string(path) == ScorePath {
+		k.err = errors.New("terrabase: $score requires descending order")
+	}
+	return k
+}
 
 // Desc sorts by path descending.
-func Desc[P Path](path P) SortKey { return SortKey{path: pathValue(path), desc: true} }
+func Desc[P Path](path P) SortKey {
+	return SortKey{path: pathValue(path), desc: true, score: string(path) == ScorePath}
+}
 
 // MarshalJSON encodes {"path":…,"order":"asc"|"desc"} or {"near":{…}}.
 func (k SortKey) MarshalJSON() ([]byte, error) {
@@ -322,6 +354,12 @@ type QueryResult struct {
 // Query runs one page of q against the collection.
 func (col *Collection) Query(ctx context.Context, q Query) (*QueryResult, error) {
 	for _, k := range q.Sort {
+		if k.score && (len(q.Sort) != 1 || q.Filter.searches != 1) {
+			return nil, errors.New("terrabase: $score must be the only sort key and requires exactly one search predicate")
+		}
+		if k.near != nil && q.Filter.searches != 0 {
+			return nil, errors.New("terrabase: search cannot combine with near")
+		}
 		if k.near != nil && (len(q.Sort) > 1 || q.Limit > 100 || q.Cursor != "") {
 			return nil, errors.New("terrabase: near must be the only sort key, with Limit <= 100 and no Cursor")
 		}
