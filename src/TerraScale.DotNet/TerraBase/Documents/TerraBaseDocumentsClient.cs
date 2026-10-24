@@ -219,7 +219,7 @@ public sealed partial class TerraBaseDatabase
         (await connection.SendAsync(HttpMethod.Delete, DocumentPath(collection, id), null, Json.TerraBaseWriteResult, precondition is null ? null : precondition.Apply, cancellationToken)
             .ConfigureAwait(false)).Value;
 
-    /// <summary>Filters, sorts and projects a collection's documents.</summary>
+    /// <summary>Filters, sorts and projects a collection's documents, or groups them with <see cref="TerraBaseQuery.Aggregate"/>.</summary>
     public async Task<TerraBaseDocumentPage> QueryAsync(string collection, TerraBaseQuery query, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
@@ -227,6 +227,20 @@ public sealed partial class TerraBaseDatabase
             && (query.Sort.Count != 1 || query.Cursor is not null || query.Limit > 100))
         {
             throw new ArgumentException("A near sort is the only sort key, without a cursor, and limit is at most 100.", nameof(query));
+        }
+
+        if (query.Aggregate is { } aggregate)
+        {
+            if (query.Sort is not null || query.Project is not null || query.Cursor is not null || query.Count is not null)
+            {
+                throw new ArgumentException("An aggregate takes no sort, project, cursor or count.", nameof(query));
+            }
+
+            if (aggregate.GroupBy?.Count > 4
+                || (aggregate.Sum?.Count ?? 0) + (aggregate.Avg?.Count ?? 0) + (aggregate.Min?.Count ?? 0) + (aggregate.Max?.Count ?? 0) > 16)
+            {
+                throw new ArgumentException("An aggregate has at most 4 group_by paths and 16 sum, avg, min and max paths.", nameof(query));
+            }
         }
 
         var body = TerraBaseConnection.Json(query, Json.TerraBaseQuery);

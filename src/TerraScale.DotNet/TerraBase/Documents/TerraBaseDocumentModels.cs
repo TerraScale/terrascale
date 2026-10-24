@@ -36,7 +36,9 @@ public sealed record TerraBaseCollectionPage(
 /// </param>
 /// <param name="State"><c>value</c>, or <c>conflict</c> on causal reads; <see cref="Document"/> then holds the last-writer-wins value. Other states may be added.</param>
 /// <param name="Document">The JSON object, or its projection for queries that project.</param>
-/// <param name="Distance">Distance to the query vector of a <see cref="TerraBaseSort.Near"/> query; otherwise null.</param>
+/// <param name="Distance">
+/// Distance to the query vector of a <see cref="TerraBaseSort.Near"/> query, or meters to the point of a <see cref="TerraBaseSort.NearPoint"/> query; otherwise null.
+/// </param>
 public sealed record TerraBaseDocument(string Id, string Version, string State, JsonElement Document, double? Distance = null);
 
 /// <summary>A count of query matches.</summary>
@@ -48,12 +50,59 @@ public sealed record TerraBaseCount(long Value, bool Exact);
 /// <param name="Items">Documents in id order (lists) or query order.</param>
 /// <param name="NextCursor">Cursor of the next page; <see langword="null"/> on the last page.</param>
 /// <param name="Count">Match count, when the query asked for it.</param>
+/// <param name="Groups">An <see cref="TerraBaseQuery.Aggregate"/> query's groups in key order (<paramref name="Items"/> is then empty); otherwise null.</param>
 public sealed record TerraBaseDocumentPage(
     IReadOnlyList<TerraBaseDocument> Items,
     [property: JsonPropertyName("next_cursor")] string? NextCursor,
-    TerraBaseCount? Count = null) : IJsonOnDeserialized
+    TerraBaseCount? Count = null,
+    IReadOnlyList<TerraBaseGroup>? Groups = null) : IJsonOnDeserialized
 {
-    void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(Items);
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        TerraBaseJsonContext.RequireNonNullItems(Items);
+        if (Groups is not null)
+        {
+            TerraBaseJsonContext.RequireNonNullItems(Groups);
+        }
+    }
+}
+
+/// <summary>One group of an aggregate query. Summaries consider numbers only and are keyed by their JSON Pointer.</summary>
+/// <param name="Key">One JSON value per <see cref="TerraBaseAggregate.GroupBy"/> path; missing members group as JSON null.</param>
+/// <param name="Count">Matching documents in the group.</param>
+/// <param name="Sum">Per <see cref="TerraBaseAggregate.Sum"/> path, the sum (0 without numbers).</param>
+/// <param name="Avg">Per <see cref="TerraBaseAggregate.Avg"/> path, the mean; null without numbers.</param>
+/// <param name="Min">Per <see cref="TerraBaseAggregate.Min"/> path, the least number; null without numbers.</param>
+/// <param name="Max">Per <see cref="TerraBaseAggregate.Max"/> path, the greatest number; null without numbers.</param>
+public sealed record TerraBaseGroup(
+    IReadOnlyList<JsonElement> Key,
+    long Count,
+    IReadOnlyDictionary<string, double?>? Sum = null,
+    IReadOnlyDictionary<string, double?>? Avg = null,
+    IReadOnlyDictionary<string, double?>? Min = null,
+    IReadOnlyDictionary<string, double?>? Max = null);
+
+/// <summary>
+/// Groups a query's matches instead of returning documents. Each summary list takes distinct JSON Pointers, at most 16
+/// summary paths in total; sums and averages are 64-bit floats.
+/// </summary>
+public sealed record TerraBaseAggregate
+{
+    /// <summary>0 to 4 JSON Pointers or <c>$id</c>; without them every match forms one group.</summary>
+    [JsonPropertyName("group_by")]
+    public IReadOnlyList<string>? GroupBy { get; init; }
+
+    /// <summary>JSON Pointers to sum.</summary>
+    public IReadOnlyList<string>? Sum { get; init; }
+
+    /// <summary>JSON Pointers to average.</summary>
+    public IReadOnlyList<string>? Avg { get; init; }
+
+    /// <summary>JSON Pointers to take the least number of.</summary>
+    public IReadOnlyList<string>? Min { get; init; }
+
+    /// <summary>JSON Pointers to take the greatest number of.</summary>
+    public IReadOnlyList<string>? Max { get; init; }
 }
 
 /// <summary>The result of one document write.</summary>
@@ -120,13 +169,13 @@ public sealed class TerraBasePrecondition
 }
 
 /// <summary>One sort key of a query.</summary>
-/// <param name="Path">A JSON Pointer to object members, or <c>$id</c>; null for a <see cref="Near"/> sort.</param>
+/// <param name="Path">A JSON Pointer to object members, or <c>$id</c>; null for a <see cref="Near"/> or <see cref="NearPoint"/> sort.</param>
 /// <param name="Order"><c>asc</c> (the default) or <c>desc</c>.</param>
 public sealed record TerraBaseSort(string? Path, string? Order = null)
 {
     private const int MaxNearDimensions = 4096;
 
-    /// <summary>The vector similarity order of a <see cref="Near"/> sort.</summary>
+    /// <summary>The vector or geo distance order of a <see cref="Near"/> or <see cref="NearPoint"/> sort.</summary>
     [JsonPropertyName("near")]
     public TerraBaseNearSort? Nearest { get; private init; }
 
@@ -159,17 +208,40 @@ public sealed record TerraBaseSort(string? Path, string? Order = null)
 
         return new(Path: null) { Nearest = new(path, vector, metric) };
     }
+
+    /// <summary>
+    /// Nearest points first, by ascending haversine meters from (<paramref name="lat"/>, <paramref name="lon"/>) to the
+    /// <c>{"lat","lon"}</c> object at <paramref name="path"/>. Like <see cref="Near"/>, it must be the only sort key; the query
+    /// returns one page of at most 100 documents, without a cursor, with each item's <see cref="TerraBaseDocument.Distance"/>
+    /// in meters. Documents without a numeric point are skipped.
+    /// </summary>
+    /// <param name="path">JSON Pointer of the point member.</param>
+    /// <param name="lat">Latitude, -90 to 90 WGS 84 degrees.</param>
+    /// <param name="lon">Longitude, -180 to 180 WGS 84 degrees.</param>
+    public static TerraBaseSort NearPoint(string path, double lat, double lon)
+    {
+        TerraBaseFilter.RequirePoint(path, lat, lon);
+        return new(Path: null) { Nearest = new(path) { Lat = lat, Lon = lon } };
+    }
 }
 
-/// <summary>A vector similarity order; create it with <see cref="TerraBaseSort.Near"/>.</summary>
-/// <param name="Path">JSON Pointer of the embedding member.</param>
-/// <param name="Vector">Query vector.</param>
-/// <param name="Metric"><c>cosine</c> or <c>l2</c>.</param>
-public sealed record TerraBaseNearSort(string Path, IReadOnlyList<float> Vector, string Metric);
+/// <summary>A vector or geo distance order; create it with <see cref="TerraBaseSort.Near"/> or <see cref="TerraBaseSort.NearPoint"/>.</summary>
+/// <param name="Path">JSON Pointer of the embedding or point member.</param>
+/// <param name="Vector">Query vector of a vector order.</param>
+/// <param name="Metric"><c>cosine</c> or <c>l2</c> for a vector order.</param>
+public sealed record TerraBaseNearSort(string Path, IReadOnlyList<float>? Vector = null, string? Metric = null)
+{
+    /// <summary>Latitude of a geo order's point.</summary>
+    public double? Lat { get; init; }
+
+    /// <summary>Longitude of a geo order's point.</summary>
+    public double? Lon { get; init; }
+}
 
 /// <summary>
 /// A query (TerraBase query v1). Every member is optional. <see cref="Filter"/> uses TerraBase's JSON filter grammar,
-/// for example <c>{"eq":["/status","active"]}</c>, <c>{"and":[…]}</c> or <c>{"in":["/role",["a","b"]]}</c>.
+/// for example <c>{"eq":["/status","active"]}</c>, <c>{"and":[…]}</c> or <c>{"in":["/role",["a","b"]]}</c>;
+/// <see cref="TerraBaseFilter"/> builds geo <c>within</c> nodes.
 /// </summary>
 public sealed record TerraBaseQuery
 {
@@ -190,6 +262,12 @@ public sealed record TerraBaseQuery
 
     /// <summary>Whether to count every match (first page only).</summary>
     public bool? Count { get; init; }
+
+    /// <summary>
+    /// Groups the matches instead of returning documents (<see cref="TerraBaseDocumentPage.Groups"/>). It takes no sort,
+    /// project, cursor or count; <see cref="Limit"/> then bounds the groups, and more groups fail the query.
+    /// </summary>
+    public TerraBaseAggregate? Aggregate { get; init; }
 }
 
 /// <summary>One operation of an <c>application/vnd.terrabase.ops+json</c> patch, applied in order.</summary>

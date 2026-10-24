@@ -185,6 +185,27 @@ TerraBaseDocumentPage nearest = await database.QueryAsync("items",
     new TerraBaseQuery { Sort = [TerraBaseSort.Near("/embedding", embedding)], Limit = 10 }, cancellationToken);
 ```
 
+Points are `{"lat": …, "lon": …}` objects (WGS 84 degrees). `TerraBaseFilter.WithinRadius(path, lat, lon, meters)`
+and `TerraBaseFilter.WithinBox(path, south, west, north, east)` build `within` filter nodes (a box with `west > east`
+crosses the antimeridian); they nest under `and`, `or` and `not`. `TerraBaseSort.NearPoint(path, lat, lon)` orders
+by haversine meters, nearest first, with the same one-key, one-page (at most 100) rules as the vector `Near`;
+`Distance` then holds meters. `TerraBaseQuery.Aggregate` groups matches instead of returning documents: up to 4
+`GroupBy` paths and up to 16 `Sum`, `Avg`, `Min` and `Max` paths, without sort, project, cursor or count. The page's
+`Groups` hold each `Key`, `Count` and per-path summaries (numbers only; `null` without numbers, sums `0`), and
+`Limit` bounds the groups.
+
+```csharp
+TerraBaseDocumentPage nearby = await database.QueryAsync("places", new TerraBaseQuery
+{
+    Filter = TerraBaseFilter.WithinRadius("/loc", -23.55, -46.63, 1000),
+    Sort = [TerraBaseSort.NearPoint("/loc", -23.55, -46.63)],
+}, cancellationToken);
+TerraBaseDocumentPage totals = await database.QueryAsync("orders", new TerraBaseQuery
+{
+    Aggregate = new() { GroupBy = ["/status"], Sum = ["/amount"], Avg = ["/amount"] },
+}, cancellationToken);
+```
+
 ```csharp
 // Use the ts-orch NetBird service address; the caller configures the required peer credential on httpClient.
 // Qualify this pinned-contract example against the OCI server before use.

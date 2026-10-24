@@ -21,6 +21,8 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBasePlatformDatabaseList))]
 [JsonSerializable(typeof(TerraBaseWriteResult))]
 [JsonSerializable(typeof(TerraBaseQuery))]
+[JsonSerializable(typeof(TerraBaseAggregate))]
+[JsonSerializable(typeof(TerraBaseGroup))]
 [JsonSerializable(typeof(TerraBasePatchOperations))]
 [JsonSerializable(typeof(TerraBaseTransaction))]
 [JsonSerializable(typeof(TerraBaseTransactionResult))]
