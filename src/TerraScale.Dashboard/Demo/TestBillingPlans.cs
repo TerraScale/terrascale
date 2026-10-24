@@ -186,6 +186,8 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
                     mutations.Enqueue((customer, path));
                     if (scenario == "reconcile-outage") outages[customer] = 0; else outages.TryRemove(customer, out _);
                     if (form.TryGetValue("cancel_at_period_end", out var cancel)) subscription["cancel_at_period_end"] = cancel == "true";
+                    else if (form.TryGetValue("pending_invoice_item_interval[interval]", out var interval) && form.Count == 2)
+                        subscription["pending_invoice_item_interval"] = new JsonObject { ["interval"] = interval.ToString(), ["interval_count"] = 1 };
                     else
                     {
                         if (form.GetValueOrDefault("payment_behavior") != "pending_if_incomplete" || form.GetValueOrDefault("proration_behavior") != "always_invoice" ||
@@ -300,6 +302,8 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
         }
         finally { serial.Release(); }
     }
+    internal string? PendingInvoiceItemInterval(string id) =>
+        subscriptions.TryGetValue(id, out var subscription) ? subscription["pending_invoice_item_interval"]?["interval"]?.GetValue<string>() : null;
     internal string? SubscriptionStatus(string id) => subscriptions.TryGetValue(id, out var subscription) ? subscription["status"]!.GetValue<string>() : null;
     internal string[] Mutations(string customer) => mutations.Where(row => row.Customer == customer).Select(row => row.Path).ToArray();
     internal void SetScenario(string customer, string scenario) => scenarios[customer] = scenario;

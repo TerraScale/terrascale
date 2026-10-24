@@ -23,7 +23,7 @@ public sealed partial class StripeBilling
             // A yearly subscription would hold pending items until its renewal; invoice them every month instead.
             if (binding.EffectiveInterval == "annual")
                 await client.V1.Subscriptions.UpdateAsync(binding.SubscriptionId, new()
-                { PendingInvoiceItemInterval = new() { Interval = "month", IntervalCount = 1 } }, cancellationToken: cancellationToken);
+                { PendingInvoiceItemInterval = new() { Interval = "month", IntervalCount = 1 } }, Idempotent($"overage-interval-{binding.SubscriptionId}"), cancellationToken);
             var monthKey = month.ToString("yyyy-MM", CultureInfo.InvariantCulture);
             await client.V1.InvoiceItems.CreateAsync(new()
             {

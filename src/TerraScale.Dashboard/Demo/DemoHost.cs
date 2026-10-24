@@ -141,7 +141,7 @@ public sealed class DemoEnvironment
                 item.UnitAmountDecimal,
                 item.Invoice,
                 item.Metadata,
-                PendingInvoiceItemInterval = stripe.PendingInvoiceItemIntervals.GetValueOrDefault(item.Subscription ?? "")
+                PendingInvoiceItemInterval = billingPlans.PendingInvoiceItemInterval(item.Subscription)
             }));
         });
         // Test-only stand-in for ts-auth's hosted sign-in and sign-up pages: the journey names the
@@ -881,7 +881,6 @@ sealed class TestStripeTransport : HttpMessageHandler
     public ConcurrentQueue<(string Field, string Url)> ReturnUrls { get; } = new();
     private readonly ConcurrentDictionary<string, Checkout> checkouts = new();
     private readonly ConcurrentDictionary<string, object> subscriptions = new();
-    public ConcurrentDictionary<string, string> PendingInvoiceItemIntervals { get; } = new();
     private readonly ConcurrentDictionary<string, string> customerIds = new();
     private readonly ConcurrentDictionary<string, string> customerOrganizations = new();
     private readonly ConcurrentDictionary<string, string> checkoutIds = new();
@@ -989,11 +988,6 @@ sealed class TestStripeTransport : HttpMessageHandler
             value = Session(checkouts[path[("/v1/checkout/sessions/".Length)..]]);
         else if (request.Method == HttpMethod.Get && path.StartsWith("/v1/subscriptions/", StringComparison.Ordinal))
             value = subscriptions[path[("/v1/subscriptions/".Length)..]];
-        else if (request.Method == HttpMethod.Post && path.StartsWith("/v1/subscriptions/", StringComparison.Ordinal) && form["pending_invoice_item_interval[interval]"] == "month")
-        {
-            PendingInvoiceItemIntervals[path["/v1/subscriptions/".Length..]] = "month";
-            value = subscriptions[path["/v1/subscriptions/".Length..]];
-        }
         else if (request.Method == HttpMethod.Post && path == "/v1/billing_portal/sessions")
         {
             ObserveReturn("return_url", form["return_url"].ToString());
