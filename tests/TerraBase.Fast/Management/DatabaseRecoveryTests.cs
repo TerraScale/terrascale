@@ -1177,6 +1177,117 @@ public sealed class DatabaseRecoveryTests
     }
 
     [Test]
+    public async Task Registration_clearing_a_paged_intent_preserves_the_database_during_startup()
+    {
+        await using var state = new RecoveryData();
+        var registration = await UnregisterSourceWithCleanupIntentAsync(state);
+        var hook = new UsageCommitHook();
+        var reached = false;
+        await using var api = await state.StartAsync(services =>
+        {
+            hook.Install(services);
+            services.AddSingleton<DatabaseLifecycleCheckpoint>(provider => (step, storage) =>
+            {
+                if (step == "recovery.intent" && storage.DatabaseId == state.Source)
+                {
+                    // The page's transaction is closed; commit both facts before recovery opens its next snapshot.
+                    hook.BeforeCatalogBegin = async (_, token) =>
+                    {
+                        hook.BeforeCatalogBegin = null;
+                        var system = await provider.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+                        await using var transaction = await system.BeginTransactionAsync(write: true, token);
+                        await transaction.PutAsync($"projects/{state.Project}/databases", state.Source, registration.Json, token);
+                        await transaction.DeleteAsync("pending_database_cleanup", state.Source, token);
+                        await transaction.CommitAsync(token);
+                        reached = true;
+                    };
+                }
+            });
+        });
+
+        await Assert.That(reached).IsTrue();
+        await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
+        using var owner = api.As(state.User);
+        await state.AssertPreservedAsync(api, owner);
+        await AssertReadyAsync(api);
+    }
+
+    [Test]
+    [Arguments("recovery.intent")]
+    [Arguments("cleanup.clearing")]
+    public async Task Recovery_does_not_clear_a_replacement_of_its_paged_intent(string replacementStep)
+    {
+        await using var state = new RecoveryData();
+        _ = await UnregisterSourceWithCleanupIntentAsync(state);
+        var source = await File.ReadAllBytesAsync(state.Path(state.Source));
+        var hook = new UsageCommitHook();
+        var replaced = false;
+        var revisited = false;
+        List<string>? replacementCatalog = null;
+        await Assert.That(async () =>
+        {
+            await using var failed = await state.StartAsync(services =>
+            {
+                hook.Install(services);
+                services.AddSingleton<DatabaseLifecycleCheckpoint>(provider => (step, storage) =>
+                {
+                    if (storage.DatabaseId != state.Source)
+                    {
+                        return;
+                    }
+
+                    if (step == "recovery.intent" && replaced)
+                    {
+                        // Stop before authorizing the replacement itself; only the stale page has run.
+                        revisited = true;
+                        throw new IOException("replacement intent awaits its own recovery");
+                    }
+
+                    if (step == replacementStep)
+                    {
+                        // Arm before either the recovery read or cleanup's write (including a durable begin).
+                        hook.BeforeCatalogBegin = async (_, token) =>
+                        {
+                            // The replacement's own transaction must not reenter this callback.
+                            hook.BeforeCatalogBegin = null;
+                            var system = await provider.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+                            long version;
+                            await using (var transaction = await system.BeginTransactionAsync(write: true, token))
+                            {
+                                var pending = (await transaction.GetAsync("pending_database_cleanup", state.Source, token))!;
+                                // PUT mints a fresh state stamp even for identical JSON; version distinguishes the intent.
+                                version = await transaction.PutAsync("pending_database_cleanup", state.Source, pending.Json, token);
+                                await Assert.That(version).IsGreaterThan(pending.Version);
+                                await transaction.CommitAsync(token);
+                            }
+
+                            await using (var transaction = await system.BeginTransactionAsync(write: false, token))
+                            {
+                                var replacement = (await transaction.GetAsync("pending_database_cleanup", state.Source, token))!;
+                                await Assert.That(replacement.Version).IsEqualTo(version);
+                            }
+
+                            replacementCatalog = await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"));
+                            replaced = true;
+                        };
+                    }
+                });
+            });
+        }).Throws<IOException>();
+
+        await Assert.That(replaced).IsTrue();
+        await Assert.That(revisited).IsTrue();
+        await Assert.That(await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"))).IsEquivalentTo(replacementCatalog!);
+        if (replacementStep == "recovery.intent")
+        {
+            await Assert.That((await File.ReadAllBytesAsync(state.Path(state.Source))).SequenceEqual(source)).IsTrue();
+        }
+
+        await Assert.That(File.Exists(state.Path(state.Neighbor))).IsTrue();
+        await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(state.Directory)).IsFalse();
+    }
+
+    [Test]
     public async Task An_intent_conflicting_with_a_registered_database_refuses_startup_without_deleting_data()
     {
         await using var state = new RecoveryData();
@@ -2316,6 +2427,22 @@ public sealed class DatabaseRecoveryTests
         await Assert.That(samples.Length).IsEqualTo(1);
         var count = samples[0];
         await Assert.That(double.Parse(count.Split(' ')[1], CultureInfo.InvariantCulture)).IsEqualTo((double)expected);
+    }
+
+    private static async Task<StoredDocument> UnregisterSourceWithCleanupIntentAsync(RecoveryData state)
+    {
+        // Keep background convergence from consuming the fixture before the startup under test.
+        await using var api = await state.StartAsync(services => services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow)));
+        await state.SeedAsync(api);
+        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        await using var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None);
+        var registration = (await transaction.GetAsync($"projects/{state.Project}/databases", state.Source, CancellationToken.None))!;
+        var storage = new TenantContext(state.Organization, PlanTier.Hobby, state.Project, state.Source);
+        await transaction.PutAsync("pending_database_cleanup", state.Source,
+            JsonSerializer.SerializeToUtf8Bytes(storage, TerraBaseJsonContext.Default.TenantContext), CancellationToken.None);
+        await transaction.DeleteAsync($"projects/{state.Project}/databases", state.Source, CancellationToken.None);
+        await transaction.CommitAsync(CancellationToken.None);
+        return registration;
     }
 
     private static async Task<DocumentPage> PendingAsync(ManagementApi api)
