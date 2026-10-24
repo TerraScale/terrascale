@@ -192,6 +192,7 @@
     },
     {
       "operation_id": "delete_account",
+      "receipt_producer_revision": "b1c8fc92c55fd1235b6b94e1350a5c76908e20ed",
       "method": "DELETE",
       "path": "/v1/terrascale/account",
       "request_dto": null,
@@ -199,6 +200,7 @@
       "success_status": 204,
       "pending_status": 202,
       "errors": [
+        400,
         401,
         409,
         503
@@ -208,7 +210,28 @@
       "response_media_type": null,
       "pagination": null,
       "retry": "none; no idempotency contract",
+      "request_headers": [{"name": "X-TerraScale-Deletion-Receipt", "required": false, "encoding": "canonical unpadded base64url of 32 bytes"}],
       "sdk_method": "Platform.DeleteAccountAsync"
+    },
+    {
+      "operation_id": "account_deletion_status",
+      "producer_revision": "b1c8fc92c55fd1235b6b94e1350a5c76908e20ed",
+      "method": "GET",
+      "path": "/v1/terrascale/account/deletion",
+      "request_dto": null,
+      "response_dto": null,
+      "success_status": 204,
+      "pending_status": 202,
+      "errors": [400, 404, 409, 503],
+      "security": "accountDeletionReceipt",
+      "request_headers": [{"name": "X-TerraScale-Deletion-Receipt", "required": true, "encoding": "canonical unpadded base64url of 32 bytes"}],
+      "query": [{"name": "organization", "required": false, "type": "canonical ULID"}],
+      "request_media_type": null,
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; caller controls polling",
+      "organization_status": "204 requires completed account generation and candidate organization's deletion fence; 202 may mean retained; noncandidate is 404",
+      "sdk_method": "Platform.AccountDeletionCompletedAsync; Platform.AccountDeletionOrganizationCompletedAsync"
     },
     {
       "operation_id": "create_project",

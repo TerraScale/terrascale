@@ -89,6 +89,7 @@ internal static class TerraScaleAuthErrors
         "already_member",
         "binding_conflict",
         "closure_conflict",
+        "deletion_refused",
         "forbidden_role",
         "invalid_target",
         "last_owner",
