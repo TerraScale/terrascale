@@ -66,25 +66,33 @@ internal sealed partial class UsageMeter
     public void RecordOperation(TenantContext database, string kind, int count)
     {
         RequestLogOperations.Current.Value?.Add(database, count);
-        Record(database, new(new("ops", options.Region, "", kind), count));
+        if (count != 0 && Dimension("ops", kind) is { } dimension)
+        {
+            Buffer(database, null, dimension, count, 0, latencyIndex: -1);
+        }
     }
 
     public void RecordRequest(TenantContext database, string method, int status, TimeSpan elapsed, long received, long sent)
     {
-        var kind = method is "GET" or "POST" or "PUT" or "PATCH" or "DELETE" or "HEAD" or "OPTIONS" ? method.ToLowerInvariant() : "other";
-        var latency = new long[UsageReading.LatencyBounds.Count];
+        var kind = method switch
+        {
+            "GET" => "get",
+            "POST" => "post",
+            "PUT" => "put",
+            "PATCH" => "patch",
+            "DELETE" => "delete",
+            "HEAD" => "head",
+            "OPTIONS" => "options",
+            _ => "other",
+        };
         var index = 0;
-        while (index < latency.Length - 1 && elapsed.TotalMilliseconds > UsageReading.LatencyBounds[index])
+        while (index < UsageReading.LatencyBounds.Count - 1 && elapsed.TotalMilliseconds > UsageReading.LatencyBounds[index])
         {
             index++;
         }
 
-        latency[index] = 1;
-        // One update for the request and its bytes: each update takes the measurements lock.
-        Record(database, null,
-            new(new("requests", options.Region, "", kind), 1, status >= 400 ? 1 : 0, latency),
-            new(new("client_bytes", options.Region, "", "received"), received),
-            new(new("client_bytes", options.Region, "", "sent"), sent));
+        BufferRequest(database, Dimension("requests", kind), status >= 400 ? 1 : 0, index,
+            Dimension("client_bytes", "received"), received, Dimension("client_bytes", "sent"), sent);
         stats.Request(database, elapsed, status >= 400);
     }
 

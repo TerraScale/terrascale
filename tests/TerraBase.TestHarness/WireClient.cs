@@ -7,17 +7,17 @@ using System.Threading.Channels;
 
 namespace TerraBase.Testing;
 
-/// <summary>An answer of the TerraBase wire protocol: the HTTP API's status and the rest of the frame.</summary>
-public sealed record WireAnswer(int Status, byte[] Payload, byte Operation)
+/// <summary>An answer of the TerraBase wire protocol: the HTTP API's status and the rest of the frame, read in place.</summary>
+public sealed record WireAnswer(int Status, ArraySegment<byte> Payload, byte Operation)
 {
     /// <summary>The error code of an error answer.</summary>
-    public string Code => Status >= 400 ? Encoding.ASCII.GetString(Payload, 1, Payload[0]) : "";
+    public string Code => Status >= 400 ? Encoding.ASCII.GetString(Payload.Slice(1, Payload[0])) : "";
 
     /// <summary>The ETag of a get or put answer.</summary>
-    public string ETag => Operation == 2 ? Encoding.ASCII.GetString(Payload, 2, Payload[1]) : Encoding.ASCII.GetString(Payload, 1, Payload[0]);
+    public string ETag => Operation == 2 ? Encoding.ASCII.GetString(Payload.Slice(2, Payload[1])) : Encoding.ASCII.GetString(Payload.Slice(1, Payload[0]));
 
     /// <summary>The JSON document of a get answer.</summary>
-    public string Json => Encoding.UTF8.GetString(Payload, 1 + Payload[0], Payload.Length - 1 - Payload[0]);
+    public string Json => Encoding.UTF8.GetString(Payload[(1 + Payload[0])..]);
 
     /// <summary>Whether a put answered remote_durable rather than local_durable.</summary>
     public bool RemoteDurable => Payload[0] == 1;
@@ -148,7 +148,7 @@ public sealed class WireClient : IAsyncDisposable
                 var id = BinaryPrimitives.ReadUInt32LittleEndian(frame);
                 if (_pending.TryRemove(id, out var pending))
                 {
-                    pending.Answer.TrySetResult(new WireAnswer(BinaryPrimitives.ReadUInt16LittleEndian(frame.AsSpan(4)), frame[6..], pending.Operation));
+                    pending.Answer.TrySetResult(new WireAnswer(BinaryPrimitives.ReadUInt16LittleEndian(frame.AsSpan(4)), new ArraySegment<byte>(frame, 6, frame.Length - 6), pending.Operation));
                 }
                 else if (id == 0)
                 {
