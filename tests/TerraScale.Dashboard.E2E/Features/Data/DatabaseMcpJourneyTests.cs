@@ -78,6 +78,10 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             var docFields = new Dictionary<string, object?> { ["databaseId"] = databaseId, ["collection"] = "users" };
             for (var index = 0; index < 31; index++)
                 await CallAsync(client, "create_document", new(docFields) { ["documentId"] = "01K78CVSTMER000000000000" + index.ToString("D2"), ["document"] = new { name = "Customer " + index, score = index, profile = new { city = "GRU", remove = true } } });
+            var duplicateFields = new Dictionary<string, object?>(docFields) { ["organizationId"] = organizationId, ["projectId"] = projectId, ["documentId"] = "01K78CVSTMER00000000000000", ["document"] = new { name = "Duplicate" } };
+            var duplicate = await HttpJourney.McpAsync(replica, secret, "tools/call", new { name = "create_document", arguments = duplicateFields });
+            await Assert.That(duplicate.GetProperty("result").GetProperty("isError").GetBoolean()).IsTrue();
+            await Assert.That(duplicate.GetRawText()).Contains("already exists");
             var documents = await CallAsync(replica, "list_documents", new(docFields));
             await Assert.That(documents.GetProperty("documents").GetArrayLength()).IsEqualTo(31);
             var firstDocument = documents.GetProperty("documents")[0];
