@@ -12,6 +12,7 @@ title: Legal documents
 - [Terms of Service](/ja/legal/terms): the agreement for using TerraScale.
 - [Privacy Policy](/ja/legal/privacy): what personal data we collect, why, and your rights, including our subprocessor list.
 - [Data Processing Agreement](/ja/legal/dpa): our commitments as your processor under GDPR and LGPD.
+- [Support](/ja/legal/support): how to contact support, what to include, and first-response targets by plan.
 
 Questions: [legal@terrascale.tech](mailto:legal@terrascale.tech).
 

@@ -1,5 +1,5 @@
 ---
-title: Support availability
+title: Support
 ---
 
 <!-- i18n:fallback:fr -->
@@ -7,20 +7,43 @@ title: Support availability
 
 <div lang="en" dir="ltr">
 
-# Support availability
+# Support
 
-Contact support at [support@terrascale.tech](mailto:support@terrascale.tech) or through the [dashboard](https://dash.terrascale.tech/). Each plan has a first-response target:
+## How to contact us
 
-| Plan | Response target |
+- **Dashboard (recommended):** sign in and choose **Contact support** in the sidebar, or open [dash.terrascale.tech/support](https://dash.terrascale.tech/support). Pick the organization, project and database the request is about, then choose a severity. Requests from the dashboard are linked to your account.
+- **Email:** [support@terrascale.tech](mailto:support@terrascale.tech). Every email is acknowledged automatically.
+- **Status:** [status.terrascale.tech](https://status.terrascale.tech) shows current service health. Check it before you report an outage.
+
+## What to include
+
+- The organization, project and database IDs.
+- Request IDs, error messages and the time of the problem, with its time zone.
+- The steps to reproduce the problem and what you expected to happen.
+
+Never include passwords, API keys, tokens or customer data. Replace any of them with a placeholder before you send a request.
+
+## Severity
+
+| Severity | Use it for |
 | --- | --- |
-| Free | Community |
+| Low | Questions and non-urgent requests |
+| Normal | A problem that affects your work and has a workaround |
+| High | A significant problem with no workaround |
+| Urgent | Production is down |
+
+## First-response targets
+
+Business hours are Monday to Friday, 09:00 to 18:00 CET/CEST.
+
+| Plan | First-response target |
+| --- | --- |
+| Free | Community support, best effort (no target) |
 | Starter | 2 business days |
 | Pro | 1 business day |
-| Team | 8 hours |
-| Enterprise | Custom, arranged through sales |
+| Team | 8 business hours |
+| Enterprise | Custom, as set out in your contract |
 
-These are response targets, not a service-level agreement (SLA). The same targets appear in [plan entitlements](/fr/limits#plan-entitlements). Keep diagnostics free of credentials and customer data.
-
-See [authentication](/fr/guides/authentication) and [service availability](/fr/getting-started/).
+These are response targets, not a service-level agreement, and they carry no service credits. The same targets appear in [plan entitlements](/fr/limits#plan-entitlements). For what is published about uptime, see [availability and SLA](/fr/legal/sla).
 
 </div>
