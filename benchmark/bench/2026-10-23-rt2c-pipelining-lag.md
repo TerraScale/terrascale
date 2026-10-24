@@ -65,3 +65,65 @@ received per node: main ~1250, branch ~5200.
 - Idle: p50 unchanged (one write, one batch). p95/p99 within this host's run-to-run noise (one of the three branch runs
   had a slow p50 in the gru directions); a repeat in reverse order was disturbed by another job on the host (load 87)
   and is not reported. A first pass on mariogk-dev (load 40-58 on 46 cores) showed the same load-case shape.
+
+## Receiver coalescing (feat/rt2c-receiver-coalesce): queued chained batches of a database in one transaction
+
+The batch whose turn comes applies the batches admitted behind it in its chain in one durable transaction (up to one
+batch's groups and bytes and one transaction's deltas), then acks each in order. Host beta (12 cores), same cell and
+scripts. main = `1a3a7a72e` (#505), pipe = `30398963b` (window 8), coal = `d07b3dd06` (pipe + coalescing; the same
+receiver code as the branch's rebase onto the restacked pipelining branches). Order: idle main, pipe, coal; load coal,
+pipe, main; load main, pipe, coal; idle coal, pipe, main. The first idle coal cell overlapped another job's .NET build
+on the host (every storage step's p99 rose 5-30x on all nodes, including steps coalescing never touches, and no batch
+was coalesced: transactions = batches); the idle table uses the second idle pass, run with the host quiet.
+
+### Idle (second pass): write at A visible at B (ms; p50 / p95 / p99), remote ack delay (p50 / p99)
+
+| Direction | main visible | pipe visible | coal visible | main ack | pipe ack | coal ack |
+| --- | --- | --- | --- | --- | --- | --- |
+| fra → gru | 132.2 / 254.4 / 270.5 | 131.0 / 193.8 / 216.6 | 129.4 / 135.3 / 141.2 | 237 / 484 | 228 / 298 | 224 / 280 |
+| fra → sjc | 106.7 / 169.1 / 201.4 | 103.7 / 135.2 / 167.0 | 103.6 / 112.6 / 123.9 | 187 / 470 | 178 / 258 | 174 / 235 |
+| gru → fra | 130.2 / 193.6 / 213.5 | 132.2 / 199.5 / 208.8 | 129.9 / 137.3 / 154.0 | 234 / 479 | 231 / 299 | 228 / 299 |
+| gru → sjc | 122.6 / 187.8 / 207.3 | 120.3 / 177.5 / 202.2 | 122.3 / 190.4 / 205.9 | 225 / 477 | 220 / 299 | 219 / 295 |
+| sjc → fra | 105.6 / 164.8 / 187.9 | 105.1 / 174.0 / 184.9 | 102.4 / 113.4 / 120.2 | 181 / 460 | 184 / (6560) | 174 / 237 |
+| sjc → gru | 119.5 / 170.7 / 190.4 | 121.8 / 192.3 / 205.5 | 119.6 / 128.9 / 147.4 | 214 / 476 | 212 / 299 | 202 / 249 |
+
+Idle has one write per batch, so nothing coalesces (transactions = batches on every node); the idle difference is
+within this host's run-to-run spread (the first pass had p99 152-274 ms for main and 182-235 ms for pipe). (6560): one
+outlier group in the bucket-interpolated histogram.
+
+### 8 writers on the origin: visible p50 and p99, remote ack p50 (ms, run 1 / run 2)
+
+| Direction | main p50 | pipe p50 | coal p50 | main p99 | pipe p99 | coal p99 | main ack p50 | pipe ack p50 | coal ack p50 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fra → gru | 208 / 222 | 190 / 192 | 195 / 187 | 402 / 1991 | 324 / 388 | 435 / 479 | 365 / 361 | 350 / 342 | 260 / 267 |
+| fra → sjc | 228 / 206 | 218 / 188 | 140 / 160 | 351 / 283 | 550 / 355 | 318 / 321 | 337 / 321 | 339 / 305 | 212 / 217 |
+| gru → fra | 189 / 207 | 198 / 185 | 146 / 189 | 471 / 391 | 614 / 345 | 307 / 385 | 374 / 366 | 263 / 279 | 235 / 265 |
+| gru → sjc | 238 / 279 | 124 / 174 | 122 / 178 | 403 / 322 | 282 / 292 | 210 / 318 | 378 / 364 | 273 / 277 | 204 / 241 |
+| sjc → fra | 213 / 214 | 179 / 184 | 168 / 158 | 323 / 2524 | 384 / 313 | 1589 / 233 | 323 / 321 | 289 / 308 | 218 / 218 |
+| sjc → gru | 214 / 190 | 182 / 211 | 174 / 181 | 328 / 326 | 330 / 604 | 252 / 342 | 345 / 350 | 336 / 333 | 240 / 241 |
+
+The second main load run ended with host load 10.6 (another job); its 1991 and 2524 ms p99 are disturbed.
+
+### Step split under load (p50 per node, ms; fra / gru / sjc; run 1, run 2)
+
+| Step | main | pipe | coal |
+| --- | --- | --- | --- |
+| receive.wait (behind the database's previous batch) | 0.25 / 0.25 / 0.25 | 48 / 78 / 87; 52 / 77 / 73 | 0.5 / 5.7 / 0.4; 7.5 / 7.9 / 7.2 |
+| receive.total | 18 / 17 / 24; 15 / 15 / 15 | 90 / 123 / 130; 96 / 122 / 117 | 38 / 53 / 32; 57 / 58 / 56 |
+| receive.begin + commit + stable | 13 / 12 / 17; 10 / 10 / 10 | 26 / 31 / 28; 27 / 30 / 28 | 22 / 29 / 19; 31 / 31 / 30 |
+| send.read / send.ack | 3.5 / 8.0 (fra) | 0.7 / 1.5 | 0.7 / 1.7 |
+| batches received / transactions (per node) | ~1300 / ~1300 | ~5250 / ~5250 | ~4900 / ~4400 (9-12 % fewer) |
+
+### Reading
+
+- Under load the receiver's wait behind the database's previous batch falls from 48-87 ms p50 to 0.4-8 ms, and its
+  total per batch from 90-130 ms to 32-58 ms. Remote ack p50 falls 15-35 % against pipe in 11 of 12 direction-runs
+  (204-267 ms against 263-350), and against main by 25-45 %.
+- Visible p50 falls against pipe in 8 of 12 direction-runs (by up to 78 ms on fra → sjc) and is within 10 ms in the
+  rest. Visible p99 under load is 210-479 ms for coal, with one 1589 ms tail (sjc → fra, run 1); pipe 282-614 ms. The
+  200 ms p99 target is not met under 8 writers on this cell; idle p99 is 120-206 ms.
+- Only 9-12 % of batches joined another's transaction, yet the wait collapsed: a batch that queues behind a slow
+  apply is now applied with it instead of starting its own begin/commit/stable cycle afterwards, which removes the
+  queue's growth. The per-transaction cost (begin + FULL commit + stable read, 19-31 ms p50 under load, of which the
+  stable read is 9-15 ms) is now the largest receiver contributor; next on the path are the sender's ship pass and the
+  remote ack delay above the visible time (the client wait ends at the remote durable ack).
