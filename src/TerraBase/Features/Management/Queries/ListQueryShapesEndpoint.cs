@@ -16,7 +16,7 @@ public sealed class ListQueryShapesEndpoint(IManagementService management, IQuer
         Name("listQueryShapes");
         Summary("Lists observed query shapes and workload statistics");
         Description("At most 128 canonical shapes per database, with literal values removed, including pending observations on the primary. " +
-            "Most queried first, then by collection and shape id. Statistics are best-effort; new shapes are dropped when bounds are full. " +
+            "Most queried first, then by collection and shape id. Each item has power-of-two millisecond latencyBuckets and their p95LatencyMs. Statistics are best-effort; new shapes are dropped when bounds are full. " +
             "Catalog followers forward observations to the primary and return replicated persisted statistics only; replication can delay visibility. Pending observations are lost on crash. " +
             ProjectApiRoute.IdentityDescription);
         Tags("Queries");

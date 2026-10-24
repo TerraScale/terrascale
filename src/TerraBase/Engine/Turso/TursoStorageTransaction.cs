@@ -507,7 +507,6 @@ internal sealed partial class TursoStorageTransaction(
         private readonly long _workLimit = policy?.QueryWork ?? 5_000_000;
         private long _rows;
         private long _bytes;
-        private long _work;
         private long _nativeBytes;
         private long _nativeReserved;
         private bool ScanExceeded { get; set; }
@@ -516,6 +515,9 @@ internal sealed partial class TursoStorageTransaction(
 
         /// <summary>Charges each later candidate row the JSON reads (filter and sort keys) of the statement about to run.</summary>
         public void Charge(string sql) => _jsonReads = JsonRead().Count(sql);
+
+        /// <summary>Engine work units charged so far.</summary>
+        public long Work { get; private set; }
 
         public bool Limited => _workLimit != long.MaxValue
             || policy is not null && (policy.ScanRows != long.MaxValue || policy.ScanBytes != long.MaxValue);
@@ -527,15 +529,15 @@ internal sealed partial class TursoStorageTransaction(
         /// <summary>Charges one row combination of a relational read; true once the work limit is spent.</summary>
         public bool Row()
         {
-            _work += RowWork;
-            ScanExceeded |= _work > _workLimit;
+            Work += RowWork;
+            ScanExceeded |= Work > _workLimit;
             return ScanExceeded;
         }
 
         public bool Scan(long size)
         {
-            _work += RowWork + ReadWork * _jsonReads;
-            if (_work > _workLimit || policy is not null && (_rows >= policy.ScanRows || size > policy.ScanBytes - _bytes))
+            Work += RowWork + ReadWork * _jsonReads;
+            if (Work > _workLimit || policy is not null && (_rows >= policy.ScanRows || size > policy.ScanBytes - _bytes))
             {
                 ScanExceeded = true;
                 return true;
@@ -550,14 +552,14 @@ internal sealed partial class TursoStorageTransaction(
         public bool Native(ulong work, ulong bytes)
         {
             var byteLimit = Math.Min(policy?.ScanBytes ?? 128 * 1024 * 1024, 128 * 1024 * 1024);
-            if (Exceeded || work > (ulong)Math.Max(0, _workLimit - _work)
+            if (Exceeded || work > (ulong)Math.Max(0, _workLimit - Work)
                 || bytes > (ulong)Math.Max(0, byteLimit - _nativeBytes))
             {
                 ScanExceeded = true;
                 return true;
             }
 
-            _work += (long)work;
+            Work += (long)work;
             _nativeBytes += (long)bytes;
             if (memory is not null && _nativeBytes > _nativeReserved)
             {
@@ -633,6 +635,32 @@ internal sealed partial class TursoStorageTransaction(
     private QueryPage ReadQuery(DocumentQuery query, QueryObservation? observation, CancellationToken cancellationToken)
     {
         using var searches = PrepareSearch(query.Collection, query.Filter, cancellationToken);
+        var page = ReadQuery(query, searches, observation, cancellationToken);
+        return query.Explain ? page with { Plan = ExplainQuery(query, searches, observation, cancellationToken) } : page;
+    }
+
+    // The plan of the statement the query just ran, with what running it cost: EXPLAIN QUERY PLAN prepares, never runs.
+    private DocumentQueryPlan ExplainQuery(DocumentQuery query, SearchResults searches, QueryObservation? observation, CancellationToken cancellationToken)
+    {
+        using var command = Uncached(query.Collection);
+        var compiler = new TursoQueryCompiler(command.Parameters, Rows(query.Collection), searches.Ordinals, searches.Candidates);
+        command.CommandText = "EXPLAIN QUERY PLAN " + (query.Aggregate is null ? compiler.Compile(query) : compiler.CompileAggregate(query));
+        var steps = new List<string>();
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                steps.Add(reader.GetString(3));
+            }
+        }
+
+        var indexes = steps.SelectMany(step => UsedIndex().Matches(step).Select(match => match.Groups[1].Value)).Distinct().ToList();
+        return new DocumentQueryPlan(steps, indexes, observation?.RowsScanned ?? 0, _queryBudget?.Work ?? 0);
+    }
+
+    private QueryPage ReadQuery(DocumentQuery query, SearchResults searches, QueryObservation? observation, CancellationToken cancellationToken)
+    {
         if (query.Aggregate is not null)
         {
             using var grouped = Uncached(query.Collection);

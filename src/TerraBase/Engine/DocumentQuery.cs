@@ -182,9 +182,17 @@ public sealed record QueryPosition(IReadOnlyList<object?> Keys, string Id);
 /// <param name="MaxBytes">Most JSON bytes per page beyond the first document.</param>
 /// <param name="Near">Vector similarity order instead of <paramref name="Sort"/>; its rows' only key is the distance.</param>
 /// <param name="Aggregate">Groups instead of documents: at most <paramref name="Limit"/> of them, or the query is invalid.</param>
+/// <param name="Explain">Also report the statement's plan and cost in <see cref="QueryPage.Plan"/>.</param>
 public sealed record DocumentQuery(
     string Collection, DocumentFilter? Filter, IReadOnlyList<SortKey> Sort, QueryPosition? After, int Limit, long MaxBytes, NearSort? Near = null,
-    DocumentAggregate? Aggregate = null);
+    DocumentAggregate? Aggregate = null, bool Explain = false);
+
+/// <summary>How a query ran.</summary>
+/// <param name="Steps">Engine plan steps, such as <c>SCAN items</c> or <c>SEARCH items USING INDEX tb_index_by_status</c>.</param>
+/// <param name="Indexes">Names of the indexes the plan uses.</param>
+/// <param name="RowsScanned">Candidate documents visited.</param>
+/// <param name="WorkUnits">Engine work units charged against the query budget.</param>
+public sealed record DocumentQueryPlan(IReadOnlyList<string> Steps, IReadOnlyList<string> Indexes, long RowsScanned, long WorkUnits);
 
 /// <summary>
 /// Orders documents by ascending distance from <paramref name="Vector"/> to the numeric array at <paramref name="Path"/>,
@@ -205,4 +213,5 @@ public sealed record QueryRow(StoredDocument Document, IReadOnlyList<object?> Ke
 /// <param name="Rows">Matching documents in order.</param>
 /// <param name="HasMore">Whether more matching documents follow.</param>
 /// <param name="Groups">An aggregate's groups.</param>
-public sealed record QueryPage(IReadOnlyList<QueryRow> Rows, bool HasMore, IReadOnlyList<QueryGroup>? Groups = null);
+/// <param name="Plan">The plan, when the query asked to explain.</param>
+public sealed record QueryPage(IReadOnlyList<QueryRow> Rows, bool HasMore, IReadOnlyList<QueryGroup>? Groups = null, DocumentQueryPlan? Plan = null);

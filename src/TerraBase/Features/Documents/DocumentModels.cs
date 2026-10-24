@@ -41,11 +41,29 @@ public sealed record ExportLineBody(string Collection, string Id, JsonElement Do
 /// <param name="NextCursor">Cursor of the next page; <see langword="null"/> on the last page.</param>
 /// <param name="Count">Match count, when requested.</param>
 /// <param name="Groups">An aggregate's groups, in key order; <c>items</c> is then empty.</param>
+/// <param name="Explain">How the query ran, when requested.</param>
 public sealed record DocumentPageBody(
     IReadOnlyList<DocumentBody> Items,
     [property: JsonPropertyName("next_cursor")] string? NextCursor,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] CountBody? Count = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<GroupBody>? Groups = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<GroupBody>? Groups = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExplainBody? Explain = null);
+
+/// <summary>How a query ran (<c>explain: true</c>).</summary>
+/// <param name="Plan">Engine plan steps, such as <c>SCAN items</c> or <c>SEARCH items USING INDEX tb_index_by_status (…)</c>.</param>
+/// <param name="Indexes">Index names the plan uses.</param>
+/// <param name="FullScan">Whether the plan walks the whole collection.</param>
+/// <param name="RowsScanned">Candidate documents visited.</param>
+/// <param name="WorkUnits">Engine work units charged against the query budget (5 million).</param>
+/// <param name="ElapsedMs">Server time for the query, in milliseconds.</param>
+/// <param name="SuggestedIndex">On a full scan, the filtered field for a btree index (<c>POST …/indexes</c> <c>fields</c>).</param>
+public sealed record ExplainBody(
+    IReadOnlyList<string> Plan, IReadOnlyList<string> Indexes,
+    [property: JsonPropertyName("full_scan")] bool FullScan,
+    [property: JsonPropertyName("rows_scanned")] long RowsScanned,
+    [property: JsonPropertyName("work_units")] long WorkUnits,
+    [property: JsonPropertyName("elapsed_ms")] double ElapsedMs,
+    [property: JsonPropertyName("suggested_index"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? SuggestedIndex);
 
 /// <summary>One group of an aggregate query.</summary>
 /// <param name="Key">Per <c>group_by</c> path, the group's value (missing members group as null).</param>
@@ -109,7 +127,7 @@ public sealed record QueryAggregateRequest(
 /// <param name="Limit">1 to 1000, default 50.</param>
 /// <param name="Cursor"><c>next_cursor</c> of the previous page.</param>
 /// <param name="Count">Whether to count every match (first page only).</param>
-/// <param name="Explain">Not supported yet; must be absent.</param>
+/// <param name="Explain"><c>true</c> to also return how the query ran (<c>explain</c>); bypasses the result cache.</param>
 /// <param name="Aggregate">Groups instead of documents; <c>limit</c> then bounds the groups.</param>
 public sealed record QueryRequest(
     JsonElement Filter,

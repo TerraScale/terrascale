@@ -17,9 +17,10 @@ namespace TerraBase.Features.Documents;
 /// <param name="Digest">Binds cursors to this database, collection, filter, sort and projection.</param>
 /// <param name="Near">Vector similarity order replacing <paramref name="Sort"/>.</param>
 /// <param name="Aggregate">Groups instead of documents.</param>
+/// <param name="Explain">Also report how the query ran.</param>
 internal sealed record ParsedQuery(
     DocumentFilter? Filter, IReadOnlyList<SortKey> Sort, IReadOnlyList<DocumentPath>? Project, int Limit, string Digest, NearSort? Near = null,
-    DocumentAggregate? Aggregate = null);
+    DocumentAggregate? Aggregate = null, bool Explain = false);
 
 /// <summary>Parses the query v1 grammar shared by queries and transaction assertions.</summary>
 internal static class QueryParser
@@ -57,9 +58,9 @@ internal static class QueryParser
 
     private static ParsedQuery Parsed(TenantContext database, string collection, QueryRequest request)
     {
-        if (request.Explain.ValueKind != JsonValueKind.Undefined)
+        if (request.Explain.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.True or JsonValueKind.False))
         {
-            throw Invalid("explain is not supported yet");
+            throw Invalid("explain is true or false");
         }
 
         if (request.Limit is < 1 or > MaxLimit)
@@ -119,7 +120,8 @@ internal static class QueryParser
         var project = request.Project is null ? null : Projection.Normalize(request.Project.Select(Path));
         var digest = Digest(database, collection, Normalize(request.Filter), JsonSerializer.Serialize(sort, TerraBaseJsonContext.Default.IReadOnlyListQuerySortRequest),
             request.Project is null ? "" : JsonSerializer.Serialize(request.Project, TerraBaseJsonContext.Default.IReadOnlyListJsonElement));
-        return new ParsedQuery(filter, keys, project, request.Limit ?? DefaultLimit, digest, near, request.Aggregate is { } aggregate ? Aggregate(aggregate, request) : null);
+        return new ParsedQuery(filter, keys, project, request.Limit ?? DefaultLimit, digest, near, request.Aggregate is { } aggregate ? Aggregate(aggregate, request) : null,
+            request.Explain.ValueKind == JsonValueKind.True);
     }
 
     private static DocumentAggregate Aggregate(QueryAggregateRequest aggregate, QueryRequest request)
