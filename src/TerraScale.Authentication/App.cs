@@ -189,6 +189,8 @@ public static class App
         });
         app.UseAuthMetrics();
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
+        // Inside the envelope, so a failing page still answers 500; only empty, unstarted responses reach the handler.
+        app.UseStatusCodePages(NotFoundPage.HandleAsync);
         TokenRateLimitMiddleware.UsePeerGuard(app);
         if (options.TrustedProxies.Count > 0)
         {
