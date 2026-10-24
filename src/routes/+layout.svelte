@@ -26,7 +26,7 @@
     '/pricing': {
       title: 'TerraScale Public Alpha pricing',
       description:
-        'Free requires no card. Starter is $30/year ($2.50/month equivalent), Pro $20/month, Team $50/month. Enterprise $999/month support plus usage: contact sales. Allowances and usage rates approved; usage charges not yet collected.',
+        'Free requires no card. Starter is $30/year ($2.50/month equivalent), Pro $20/month, Team $50/month. Enterprise $999/month support plus usage: contact sales. Operation units over a paid allowance bill on the next invoice.',
     },
     '/404': {
       title: '404 | TerraScale',
