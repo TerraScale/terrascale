@@ -11,30 +11,25 @@ namespace TerraBase.Features.FileStorage;
 internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
 {
     private readonly AmazonS3Client? _client;
-    private readonly string? _testBucket;
     private readonly TimeProvider _time;
 
     public S3FileObjectStore(TerraBaseOptions options, TimeProvider time, IHostEnvironment environment)
     {
         _time = time;
-        if (options.Backup is not { } settings)
+        if (options.FileStorage is not { } settings)
         {
             return;
         }
-        // Existing OCI Vault delivery supplies the object-store identity. No customer or operator setting is added.
         var r2 = settings.Endpoint.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase);
-        // Backups may use another S3 endpoint, including their isolated HTTP test fake.
-        // Leave file operations unavailable without preventing the database or backups from starting.
-        // Production never sends customer files to Tigris or to an arbitrary backup endpoint.
+        // Customer files use their own identity. Tigris is accepted only in development tests.
         if (!r2 && (!environment.IsDevelopment() || settings.Endpoint.Host != "fly.storage.tigris.dev"))
         {
             return;
         }
-        _testBucket = r2 ? null : settings.Bucket;
         _client = new AmazonS3Client(new BasicAWSCredentials(settings.AccessKeyId, settings.SecretKey), new AmazonS3Config
         {
             ServiceURL = settings.Endpoint.ToString(),
-            AuthenticationRegion = settings.Region,
+            AuthenticationRegion = "auto",
             ForcePathStyle = true,
             RequestChecksumCalculation = RequestChecksumCalculation.WHEN_REQUIRED,
             ResponseChecksumValidation = ResponseChecksumValidation.WHEN_REQUIRED,
@@ -42,7 +37,7 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
     }
 
     private AmazonS3Client Client => _client ?? throw new IOException("file object storage credentials are unavailable");
-    private string Bucket(string region) => _testBucket ?? "terrascale-" + region + "-files";
+    private static string Bucket(string region) => "terrascale-" + region + "-files";
 
     public ValueTask<FileSignedUrl> UploadAsync(string region, string key, FileObject file, CancellationToken cancellationToken)
     {

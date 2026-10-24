@@ -49,10 +49,12 @@ public sealed class FileStorageTests
     }
 
     [Test]
-    public async Task A_backup_only_endpoint_keeps_documents_available_and_file_uploads_fail_closed()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_backup_only_endpoint_keeps_documents_available_and_file_uploads_fail_closed(bool r2)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var backups = new FakeS3();
+        var backups = new FakeS3 { R2 = r2 };
         await using var api = await DocumentApi.StartAsync(backups.Configure, backups.Route, cancellationToken: token);
         await Assert.That((await api.SendAsync(HttpMethod.Get, api.Documents, cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.OK);
         using var owner = api.Management.As(api.Tenant.User);
@@ -72,6 +74,53 @@ public sealed class FileStorageTests
         await Assert.That(upload.Status).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         var used = await api.Server.Services.GetRequiredService<IFileStorageUsage>().BytesAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, token);
         await Assert.That(used).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    [Arguments(true, false)]
+    public async Task File_signing_uses_only_its_independent_identity(bool backupConfigured, bool completeIdentity)
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var backups = new FakeS3();
+        await using var api = await DocumentApi.StartAsync(settings =>
+        {
+            if (backupConfigured)
+            {
+                backups.Configure(settings);
+            }
+            settings["files-s3-endpoint"] = "https://file-account.r2.cloudflarestorage.com";
+            settings["files-s3-access-key-id"] = "file-only-test-key";
+            if (completeIdentity)
+            {
+                settings["files-s3-secret-access-key"] = "file-only-test-secret";
+            }
+        }, backupConfigured ? backups.Route : null, cancellationToken: token);
+        await Assert.That((await api.SendAsync(HttpMethod.Get, api.Documents, cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.OK);
+        using var owner = api.Management.As(api.Tenant.User);
+        await api.Management.VerifyProjectBindingAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, owner);
+        using var project = api.Management.WithToken(api.Management.Issuer.Mint(api.Tenant.User, descriptor =>
+        {
+            descriptor.Claims["project_id"] = api.Tenant.ProjectId;
+            descriptor.Claims["scope"] = "documents:read documents:write";
+        }));
+        var buckets = api.Project + "/buckets";
+        var created = await Send(project, HttpMethod.Post, buckets,
+            new { name = "files", rules = new CollectionAccessRules(null, new(false, true, []), new(false, true, [])) });
+        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
+        var upload = await Send(project, HttpMethod.Post, buckets + "/" + created.Json.GetProperty("id").GetString() + "/files/upload",
+            new { name = "one", contentType = "text/plain", size = 1, sha256 = Convert.ToBase64String(new byte[32]), metadata = new { } });
+        await Assert.That(upload.Status).IsEqualTo(completeIdentity ? HttpStatusCode.Created : HttpStatusCode.ServiceUnavailable);
+        if (completeIdentity)
+        {
+            var signed = new Uri(upload.Json.GetProperty("url").GetString()!);
+            await Assert.That(signed.Host).IsEqualTo("file-account.r2.cloudflarestorage.com");
+            await Assert.That(signed.AbsolutePath.StartsWith("/terrascale-test-region-files/", StringComparison.Ordinal)).IsTrue();
+            await Assert.That(signed.Query.Contains("file-only-test-key", StringComparison.Ordinal)).IsTrue();
+        }
+        var used = await api.Server.Services.GetRequiredService<IFileStorageUsage>().BytesAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, token);
+        await Assert.That(used).IsEqualTo(completeIdentity ? 1 : 0);
     }
 
     [Test]

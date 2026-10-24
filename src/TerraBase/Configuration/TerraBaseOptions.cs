@@ -59,7 +59,7 @@ public sealed record TerraBaseOptions
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["port", "internal-port", "metrics-port", "postgres-port", "wire-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys]);
+        ["port", "internal-port", "metrics-port", "postgres-port", "wire-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. FileStorageSettings.Keys]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -194,6 +194,9 @@ public sealed record TerraBaseOptions
     /// <summary>Continuous backup to object storage (TS-633); <see langword="null"/> turns it off.</summary>
     public BackupSettings? Backup { get; init; }
 
+    /// <summary>Independent customer-file identity delivered by OCI Vault; never the backup identity.</summary>
+    public FileStorageSettings? FileStorage { get; init; }
+
     /// <summary>The master key wrapping database keys, independently of continuous backup.</summary>
     public byte[]? DatabaseMasterKey { get; init; }
 
@@ -229,6 +232,12 @@ public sealed record TerraBaseOptions
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
                 {
+                    if (name.StartsWith("TERRABASE_FILES_S3_", StringComparison.Ordinal))
+                    {
+                        // Missing file credentials make only file transfers unavailable. Never retain a stale value.
+                        Environment.SetEnvironmentVariable(name, null);
+                        continue;
+                    }
                     // Names the variable, never the file's contents.
                     throw new TerraBaseConfigurationException($"{key} must name a readable file");
                 }
@@ -354,6 +363,7 @@ public sealed record TerraBaseOptions
             ReadinessCacheTtl = TimeSpan.FromSeconds(ParseReadinessCacheSeconds(values)),
             QueryBudget = TimeSpan.FromSeconds(ParseInteger(values, "query-budget-seconds", 1, MaxQueryBudgetSeconds) ?? DefaultQueryBudgetSeconds),
             Backup = BackupSettings.Parse(values),
+            FileStorage = FileStorageSettings.Parse(values),
             DatabaseMasterKey = values.TryGetValue("master-key", out var masterKey) ? BackupSettings.ParseMasterKey(masterKey) : null,
         };
     }
