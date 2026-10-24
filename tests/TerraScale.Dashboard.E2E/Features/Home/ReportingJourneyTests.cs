@@ -130,11 +130,11 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/settings/audit-retention", new() { ["retentionDays"] = "30" });
             var provider = (await (await ownerContext.APIRequest.GetAsync(flow.Origin + "/__test/reporting/probe")).JsonAsync())!.Value;
             await Assert.That(provider.GetProperty("requests").EnumerateArray().Any(request => request.GetProperty("path").GetString()!.EndsWith("/audit-retention", StringComparison.Ordinal)))
-                .IsTrue().Because("native retention mutation reaches the real SDK producer request");
+                .IsFalse().Because("audit retention is the dashboard's setting; TerraBase's management retention does not know ts-auth organizations");
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/settings/backup-now", new() { ["databaseId"] = orders }, 503);
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/settings/restore", new() { ["databaseId"] = orders, ["backupId"] = "demo-backup" }, 400);
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/settings/delete-project", new() { ["projectId"] = projectId, ["confirmName"] = "Measured project" }, 409);
-            flow.Checks.Add("customer spending setters absent, internal-only cap protected and real SDK audit-retention with honest backup/protected-delete gaps");
+            flow.Checks.Add("customer spending setters absent, internal-only cap protected and dashboard audit-retention with honest backup/protected-delete gaps");
 
             await flow.GotoAsync(ownerPage, "/organization?tab=members");
             await ownerPage.Locator("#invite-email").FillAsync(guestUser.Email);

@@ -16,9 +16,11 @@ public static class OrganizationAudit
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    // How far back the plan shows and exports audit events. The dashboard keeps its own events; ts-auth keeps its
+    // How far back audit events are shown and exported: the plan's window, narrowed by the owner's retention setting. The dashboard keeps its own events; ts-auth keeps its
     // events at least 90 days, so a longer window lists the ts-auth events it still has.
-    public static int RetentionDays(OrganizationRecord org) =>
+    public static int RetentionDays(OrganizationRecord org) => Math.Min(PlanRetentionDays(org), org.AuditRetentionDays ?? int.MaxValue);
+
+    private static int PlanRetentionDays(OrganizationRecord org) =>
         (org.InternalBilling is not null ? "internal" : PlanCatalog.Plans.FirstOrDefault(plan => plan.Id == org.PlanId)?.Key) switch
         {
             "starter" => 30,
