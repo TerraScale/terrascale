@@ -16,7 +16,7 @@ public static class QueryShape
         ArgumentNullException.ThrowIfNull(query);
         return Weight(query.Filter) + query.Sort.Sum(key => Weight(key.Path)) + (query.Near is { } weighed ? Weight(weighed.Path) : 0) > MaxWeight ? null
             : Serialize("json", Filter(query.Filter), query.Near is { } near
-                ? [new JsonArray("near", Path(near.Path), near.Euclidean ? "l2" : "cosine", near.Vector.Count)]
+                ? [new JsonArray("near", Path(near.Path), near.Point is not null ? "geo" : near.Euclidean ? "l2" : "cosine", near.Vector.Count)]
                 : Sort(query.Sort));
     }
 
@@ -43,6 +43,7 @@ public static class QueryShape
         PrefixFilter prefix => new JsonArray("prefix", Path(prefix.Path), "Text"),
         ContainsFilter contains => new JsonArray("contains", Path(contains.Path), contains.Value.Kind.ToString()),
         SearchFilter search => new JsonArray("search", Path(search.Path), "Text"),
+        WithinFilter within => new JsonArray("within", Path(within.Path), within.Center is null ? "box" : "circle"),
         _ => throw new InvalidOperationException("unknown document filter"),
     };
 
@@ -144,6 +145,7 @@ public static class QueryShape
         PrefixFilter prefix => Weight(prefix.Path),
         ContainsFilter contains => Weight(contains.Path),
         SearchFilter search => Weight(search.Path),
+        WithinFilter within => Weight(within.Path),
         _ => 0,
     });
 

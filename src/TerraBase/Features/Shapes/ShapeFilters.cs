@@ -110,6 +110,11 @@ internal sealed class ShapeFilter
             return new Validation("search is supported by document queries, not shape filters", Code);
         }
 
+        if (QueryParser.Leaves(filter).OfType<WithinFilter>().Any())
+        {
+            return new Validation("within is supported by document queries, not shape filters", Code);
+        }
+
         var canonical = Emit(Normalize(filter)).Bytes;
         if (canonical.Length > MaxWhereBytes)
         {

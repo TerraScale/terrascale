@@ -91,6 +91,8 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
             async () => (CachedQuery?)await read().ConfigureAwait(false),
             result => result.Page.Rows.Sum(row => Size(row.Document) + DocumentOverhead
                 + row.Keys.Sum(value => value is string text ? Chars(text) : sizeof(long)))
+                + (result.Page.Groups?.Sum(group => DocumentOverhead + (sizeof(double) * group.Values.Count)
+                    + group.Key.Sum(key => sizeof(long) + (key.Value is string text ? Chars(text) : sizeof(long)))) ?? 0)
                 + TenantSize(database) + Chars(key.Collection) + Chars(key.Query), Copy).ConfigureAwait(false))!;
     }
 
@@ -119,7 +121,12 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
             ["after"] = query.After is { } after ? new JsonArray(
                 JsonValue.Create(after.Id), new JsonArray([.. after.Keys.Select(Scalar)])) : null,
             ["near"] = query.Near is { } near
-                ? new JsonArray(Path(near.Path), JsonValue.Create(near.Euclidean), new JsonArray([.. near.Vector.Select(value => (JsonNode?)JsonValue.Create(value))]))
+                ? new JsonArray(Path(near.Path), JsonValue.Create(near.Euclidean), new JsonArray([.. near.Vector.Select(value => (JsonNode?)JsonValue.Create(value))]),
+                    near.Point is { } point ? new JsonArray(JsonValue.Create(point.Lat), JsonValue.Create(point.Lon)) : null)
+                : null,
+            ["aggregate"] = query.Aggregate is { } aggregate
+                ? new JsonArray(new JsonArray([.. aggregate.GroupBy.Select(path => (JsonNode?)Path(path))]),
+                    new JsonArray([.. aggregate.Values.Select(value => (JsonNode?)new JsonArray(JsonValue.Create(value.Op), Path(value.Path)))]))
                 : null,
             ["limit"] = query.Limit,
             ["maxBytes"] = query.MaxBytes,
@@ -155,6 +162,8 @@ internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
         PrefixFilter prefix => new JsonArray(JsonValue.Create("prefix"), Path(prefix.Path), JsonValue.Create(prefix.Prefix)),
         ContainsFilter contains => new JsonArray(JsonValue.Create("contains"), Path(contains.Path), Value(contains.Value)),
         SearchFilter search => new JsonArray(JsonValue.Create("search"), Path(search.Path), JsonValue.Create(search.Terms)),
+        WithinFilter within => new JsonArray(JsonValue.Create("within"), Path(within.Path), JsonValue.Create(within.South), JsonValue.Create(within.West),
+            JsonValue.Create(within.North), JsonValue.Create(within.East), JsonValue.Create(within.Center?.Lat), JsonValue.Create(within.Center?.Lon), JsonValue.Create(within.Meters)),
         _ => throw new ArgumentOutOfRangeException(nameof(filter)),
     };
 

@@ -103,6 +103,9 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
         // Outside a near query no statement names it; a stray call sorts last, as a document without the vector does.
         connection.CreateFunction<object?, double>("tb_near",
             document => _near is { } near ? near(document) : double.PositiveInfinity, isDeterministic: false);
+        // tb_geo_meters(lat, lon, centerLat, centerLon) of a within filter; +Infinity unless all four are numbers.
+        connection.CreateFunction("tb_geo_meters", arguments => arguments.Length == 4
+            ? GeoDistance.Meters(arguments[0], arguments[1], arguments[2], arguments[3]) : double.PositiveInfinity, isDeterministic: true);
     }
 
     /// <summary>

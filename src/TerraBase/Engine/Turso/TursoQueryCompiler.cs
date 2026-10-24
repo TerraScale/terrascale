@@ -154,6 +154,32 @@ internal sealed class TursoQueryCompiler(
         """;
     }
 
+    /// <summary>
+    /// Columns: per grouping path its type rank (missing as null) and scalar or JSON text value, the group's count, then
+    /// each summary. One extra group beyond the limit tells that the aggregate has too many groups.
+    /// </summary>
+    public string CompileAggregate(DocumentQuery query, bool observe = false)
+    {
+        var aggregate = query.Aggregate!;
+        var keys = aggregate.GroupBy.Select(path => (Rank: path.IsId ? "5" : $"CASE coalesce({Type(path)}, 'null') {RankCases}",
+            Value: path.IsId ? "id" : $"CASE WHEN {Type(path)} IN ('integer', 'real', 'text', 'array', 'object') THEN {Extract(path)} END")).ToList();
+        var values = aggregate.Values.Select(value =>
+            $"{(value.Op == "sum" ? "total" : value.Op)}(CASE WHEN {Type(value.Path)} IN ('integer', 'real') THEN {Extract(value.Path)} END)");
+        var columns = string.Join(", ", keys.SelectMany((key, i) => (string[])[$"{key.Rank} AS g{i}r", $"{key.Value} AS g{i}v"])
+            .Append("count(*)").Concat(values));
+        var where = $"{(observe ? "tb_query_scan(id) AND " : "")}{rows.Live} AND {ScanGuardedFilter(query.Filter)}";
+        if (keys.Count == 0)
+        {
+            return $"SELECT {columns} FROM {From} WHERE {where};";
+        }
+
+        var order = string.Join(", ", keys.Select((_, i) => $"g{i}r, g{i}v"));
+        return $"""
+            SELECT {columns} FROM {From} WHERE {where}
+            GROUP BY {string.Join(", ", keys.Select(key => $"{key.Rank}, {key.Value}"))} ORDER BY {order} LIMIT {Parameter((long)query.Limit + 1)};
+            """;
+    }
+
     /// <summary>Sort admission considers the trusted readable set, before any submitted filter or cursor.</summary>
     public string CompileSortAdmission(DocumentFilter? filter, bool observe = false) => $"""
         SELECT octet_length({rows.Json}) FROM {From}
@@ -208,10 +234,42 @@ internal sealed class TursoQueryCompiler(
         PrefixFilter prefix => Prefix(prefix),
         ContainsFilter contains => Contains(contains),
         SearchFilter search => Search(search),
+        WithinFilter within => Within(within),
         _ => throw new ArgumentOutOfRangeException(nameof(filter), filter.GetType().Name, "unknown filter"),
     };
 
     private string Search(SearchFilter search) => $"tb_search_match({searches![search].ToString(CultureInfo.InvariantCulture)}, id)";
+
+    // Plain ranges on lat and lon an expression index can seek; tb_geo_meters (GeoDistance) then trims the box to the circle.
+    private string Within(WithinFilter within)
+    {
+        DocumentPath Member(string name)
+        {
+            return new([.. within.Path.Segments!, name]);
+        }
+
+        var (lat, lon) = (Member("lat"), Member("lon"));
+        var terms = new List<string>
+        {
+            $"coalesce({Type(lat)} IN ('integer', 'real'), 0)", $"coalesce({Type(lon)} IN ('integer', 'real'), 0)",
+            $"{Extract(lat)} >= {Parameter(within.South)}", $"{Extract(lat)} <= {Parameter(within.North)}",
+        };
+        if (within.West <= within.East)
+        {
+            terms.Add($"{Extract(lon)} >= {Parameter(within.West)} AND {Extract(lon)} <= {Parameter(within.East)}");
+        }
+        else
+        {
+            terms.Add($"({Extract(lon)} >= {Parameter(within.West)} OR {Extract(lon)} <= {Parameter(within.East)})");
+        }
+
+        if (within.Center is { } center)
+        {
+            terms.Add($"tb_geo_meters({Extract(lat)}, {Extract(lon)}, {Parameter(center.Lat)}, {Parameter(center.Lon)}) <= {Parameter(within.Meters)}");
+        }
+
+        return $"({string.Join(" AND ", terms)})";
+    }
 
     private static string Score() => "tb_search_score(id)";
 

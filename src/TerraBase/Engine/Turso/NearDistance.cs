@@ -32,7 +32,8 @@ internal sealed class NearDistance(NearSort near)
         try
         {
             var reader = new Utf8JsonReader(json);
-            return Seek(ref reader) ? Distance(ref reader) : double.PositiveInfinity;
+            return !Seek(ref reader) ? double.PositiveInfinity
+                : near.Point is { } point ? Geo(ref reader, point) : Distance(ref reader);
         }
         catch (Exception error) when (error is JsonException or FormatException)
         {
@@ -72,6 +73,31 @@ internal sealed class NearDistance(NearSort near)
         }
 
         return true;
+    }
+
+    // The first numeric lat and lon members of the object at the path.
+    private static double Geo(ref Utf8JsonReader reader, GeoPoint point)
+    {
+        if (reader.TokenType != JsonTokenType.StartObject)
+        {
+            return double.PositiveInfinity;
+        }
+
+        object? lat = null, lon = null;
+        while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+        {
+            var isLat = reader.ValueTextEquals("lat"u8);
+            var isLon = reader.ValueTextEquals("lon"u8);
+            reader.Read();
+            if (reader.TokenType == JsonTokenType.Number && ((isLat && lat is null) || (isLon && lon is null)))
+            {
+                (isLat ? ref lat : ref lon) = reader.GetDouble();
+            }
+
+            reader.Skip();
+        }
+
+        return GeoDistance.Meters(lat, lon, point.Lat, point.Lon);
     }
 
     private double Distance(ref Utf8JsonReader reader)

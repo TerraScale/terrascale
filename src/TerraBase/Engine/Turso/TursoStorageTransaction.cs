@@ -633,6 +633,15 @@ internal sealed partial class TursoStorageTransaction(
     private QueryPage ReadQuery(DocumentQuery query, QueryObservation? observation, CancellationToken cancellationToken)
     {
         using var searches = PrepareSearch(query.Collection, query.Filter, cancellationToken);
+        if (query.Aggregate is not null)
+        {
+            using var grouped = Uncached(query.Collection);
+            grouped.CommandText = new TursoQueryCompiler(grouped.Parameters, Rows(query.Collection), searches.Ordinals, searches.Candidates)
+                .CompileAggregate(query, observation is not null);
+            _queryBudget!.Charge(grouped.CommandText);
+            return ReadGroups(query, grouped, cancellationToken);
+        }
+
         if (query.Sort.Count > 0 && (!query.Sort[0].Path.IsId || query.Sort[0].Score))
         {
             CheckSortBudget(query.Collection, query.MaxBytes, cancellationToken, observation, searches.Candidates, query.Filter);
@@ -656,6 +665,39 @@ internal sealed partial class TursoStorageTransaction(
         {
             session.Near(null);
         }
+    }
+
+    private QueryPage ReadGroups(DocumentQuery query, SqliteCommand command, CancellationToken cancellationToken)
+    {
+        var aggregate = query.Aggregate!;
+        var keys = aggregate.GroupBy.Count;
+        var groups = new List<QueryGroup>();
+        CountRead("query");
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (groups.Count == query.Limit)
+            {
+                throw new QueryValidationException($"the aggregate has more than {query.Limit} groups: narrow the filter or raise limit (at most 1000)");
+            }
+
+            var key = new (long Rank, object? Value)[keys];
+            for (var i = 0; i < keys; i++)
+            {
+                key[i] = (reader.GetInt64(2 * i), reader.IsDBNull((2 * i) + 1) ? null : reader.GetValue((2 * i) + 1));
+            }
+
+            var values = new double?[aggregate.Values.Count];
+            for (var i = 0; i < values.Length; i++)
+            {
+                values[i] = reader.IsDBNull((2 * keys) + 1 + i) ? null : reader.GetDouble((2 * keys) + 1 + i);
+            }
+
+            groups.Add(new QueryGroup(key, reader.GetInt64(2 * keys), values));
+        }
+
+        return new QueryPage([], HasMore: false, groups);
     }
 
     private QueryPage ReadRows(DocumentQuery query, SqliteCommand command, CancellationToken cancellationToken)
