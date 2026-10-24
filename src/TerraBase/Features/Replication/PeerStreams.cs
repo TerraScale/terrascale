@@ -959,7 +959,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
 
             // A large batch may go through the object store, and then only up to its chunk's end (LogChunks).
-            (groups, var envelope, var chunk) = await _chunks.BatchAsync(link.Peer.Name, link.Chunks, database, incarnation, from, groups, cancellationToken)
+            (groups, var envelope, var chunk) = await _chunks.BatchAsync(link.Peer.Name, link.Chunks, database, incarnation, cursor.Acked ?? from, from, groups, cancellationToken)
                 .ConfigureAwait(false);
             var last = groups[^1].ChangeId;
             await stream.ReserveAsync().ConfigureAwait(false);
