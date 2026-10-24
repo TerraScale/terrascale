@@ -71,7 +71,7 @@ export function tokenize(code: string, lang: Lang): Token[] {
 }
 
 export const CODE_SAMPLES: Record<Lang, string> = {
-  typescript: `// Server-side: TERRASCALE_ACCESS_TOKEN is a 15-minute token exchanged from
+  typescript: `// Server-side: TERRASCALE_ACCESS_TOKEN is a 60-second token exchanged from
 // your dashboard API key. Keep both out of browser bundles.
 // Supply a resolver and trusted origins from server configuration.
 // The override skips discovery.
@@ -133,7 +133,7 @@ async function createAndQueryCustomers(
   csharp: `using System.Net.Http.Headers;
 using System.Net.Http.Json;
 
-// Server-side: TERRASCALE_ACCESS_TOKEN is a 15-minute token exchanged from
+// Server-side: TERRASCALE_ACCESS_TOKEN is a 60-second token exchanged from
 // your dashboard API key; the key itself as Bearer answers 401.
 // Supply a resolver and trusted origins from server configuration.
 // The override skips discovery.
