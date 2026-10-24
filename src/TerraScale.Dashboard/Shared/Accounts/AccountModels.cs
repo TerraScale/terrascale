@@ -62,6 +62,8 @@ public sealed class OrganizationRecord
     // until ts-auth lists them. Every change goes through the document's compare-and-set.
     public Dictionary<string, InvitationReservation> InvitationReservations { get; set; } = [];
     [JsonIgnore] public DateTimeOffset CreatedAt { get; set; }
+    // ts-auth refused this view: the organization requires two-factor and the caller has not enrolled.
+    [JsonIgnore] public bool MfaRequired { get; set; }
     public bool ContainsMember(string userId) => Status == "active" && !Archived &&
         Members.TryGetValue(userId, out var member) && member.Status == "active";
     // The platform organization is read-only in the dashboard whatever ts-auth grants: every write gate reads this.

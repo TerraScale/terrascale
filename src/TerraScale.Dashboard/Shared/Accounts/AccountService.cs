@@ -142,8 +142,10 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         // The organization this view selects also needs its members and ownership transfer; they load with its projects.
         var accessFor = organizationId ?? (projectId is null ? account.ActiveOrganizationId : null);
         var prefetched = new System.Collections.Concurrent.ConcurrentDictionary<string, OrganizationAccess>(StringComparer.Ordinal);
-        async Task HydrateSelectedAsync(OrganizationRecord org) =>
-            ApplyAccess(org, session, prefetched.TryGetValue(org.Id, out var access) ? access : await FetchAccessAsync(session, org.Id, cancellationToken));
+        async Task HydrateSelectedAsync(OrganizationRecord org)
+        {
+            if (!org.MfaRequired) ApplyAccess(org, session, prefetched.TryGetValue(org.Id, out var access) ? access : await FetchAccessAsync(session, org.Id, cancellationToken));
+        }
         // A project collaborator has no organization role (role null) and no organization view.
         var loaded = await Task.WhenAll(lives.Where(live => live.Role is { Length: > 0 } && TerraScaleIds.IsValid(live.Id)).Select(async live =>
         {
@@ -154,7 +156,12 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             var stored = OrganizationStateAsync(live, cancellationToken);
             var projects = platform.ListProjectsAsync(session, live.Id, cancellationToken);
             var org = await stored;
-            Hydrate(org, live, await projects, session);
+            // ts-auth refuses an organization that requires two-factor to a caller without it; the
+            // organization stays listed, keeps its stored projects and is blocked when selected.
+            IReadOnlyList<TerraScaleAuthPlatformProject>? listed = null;
+            try { listed = await projects; }
+            catch (AccountAccessException error) when (error.Code == TsAuthGateway.MfaRequiredCode) { org.MfaRequired = true; }
+            Hydrate(org, live, listed, session);
             await plans.PublishAsync(org, cancellationToken);
             if (platformOrg)
             {
@@ -163,7 +170,12 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
                 catch (Exception error) when (error is HttpRequestException or AccountAccessException or JsonException or KeyNotFoundException or InvalidOperationException) { }
             }
             if (!org.ContainsMember(session.UserId)) return null;
-            if (access is not null) prefetched[org.Id] = await access;
+            if (access is not null)
+            {
+                try { prefetched[org.Id] = await access; }
+                // ts-auth refuses the blocked organization's members too; nothing of it is shown.
+                catch (AccountAccessException) when (org.MfaRequired) { }
+            }
             return org;
         }));
         var organizations = loaded.OfType<OrganizationRecord>().ToList();
@@ -226,12 +238,13 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
     }
 
     // ts-auth's name, the caller's role and the project list replace the stored projection in this view.
-    private static void Hydrate(OrganizationRecord org, TerraScaleAuthPlatformOrganization live, IReadOnlyList<TerraScaleAuthPlatformProject> projects, SessionRecord session)
+    private static void Hydrate(OrganizationRecord org, TerraScaleAuthPlatformOrganization live, IReadOnlyList<TerraScaleAuthPlatformProject>? projects, SessionRecord session)
     {
         org.Name = live.Name;
         org.Slug = Slug(live.Name);
         org.CreatedAt = live.CreatedAt;
         Member(org, session, live.Role!);
+        if (projects is null) return;
         var saved = org.Projects;
         org.Projects = new();
         foreach (var remote in projects.Where(project => project.OrganizationId == live.Id && TerraScaleIds.IsValid(project.Id)))

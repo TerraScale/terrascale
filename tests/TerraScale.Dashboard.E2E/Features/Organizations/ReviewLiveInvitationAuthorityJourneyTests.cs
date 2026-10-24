@@ -283,6 +283,8 @@ public sealed class ReviewLiveInvitationAuthorityJourneyTests
             var admin = self.Role is "owner" or "admin";
             switch (parts[2..], method)
             {
+                case ([], "GET"):
+                    return Json(Wire(organization, caller.UserId));
                 case ([], "PATCH"):
                     if (!admin) return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs admin.");
                     organization.Name = Field("name");

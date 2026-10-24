@@ -8,7 +8,7 @@ using TerraScale.Dashboard.Platform.Mcp;
 namespace TerraScale.Dashboard.Features.Profile;
 
 [McpServerToolType]
-public sealed class ProfileMcpTools(IHttpContextAccessor http, AccountService accounts, AccessTokens tokens)
+public sealed class ProfileMcpTools(IHttpContextAccessor http, AccountService accounts, AccessTokens tokens, ITsAuthMfa mfa)
 {
     [McpServerTool(Name = "get_profile", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read your profile and interface language.")]
     public async Task<DashboardMcpProfile> Profile(string? organizationId = null, string? projectId = null)
@@ -28,7 +28,7 @@ public sealed class ProfileMcpTools(IHttpContextAccessor http, AccountService ac
         return new(context.UserId, context.Account.Id, context.Account.Name, context.Account.Email, context.Account.Phone,
             context.Account.Locale, context.Account.ActiveOrganizationId, context.Account.ActiveProjectId,
             context.Organization?.Id ?? "", context.Project?.Id ?? "", context.Organization?.Name ?? "", context.Role,
-            permissions, null, null, await tokens.ListAsync(context, Cancellation));
+            permissions, (await mfa.GetAccountMfaAsync(context.Session, Cancellation))?.Enabled, null, await tokens.ListAsync(context, Cancellation));
     }
 
     [McpServerTool(Name = "update_profile", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Update your display name and optional phone number.")]
@@ -60,7 +60,7 @@ public sealed class ProfileMcpTools(IHttpContextAccessor http, AccountService ac
 public sealed record DashboardMcpProfile(string UserId, string AccountId, string Name, string Email, string Phone, string Locale,
     string ActiveOrganizationId, string ActiveProjectId, string OrganizationId, string ProjectId, string OrganizationName,
     string Role, IReadOnlyList<string> Permissions,
-    [property: Description("Real MFA status is unavailable from the current owning provider contract; null does not mean disabled.")]
+    [property: Description("Whether two-factor authentication is on for your account, as ts-auth reports it; null when ts-auth did not report it, which does not mean disabled.")]
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     bool? MfaEnabled,
     [property: Description("Real passkey records are unavailable from the current owning provider contract; null does not mean no passkeys.")]

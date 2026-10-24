@@ -11,7 +11,8 @@ public static class AccountEndpoints
     {
         endpoints.MapGet("/api/v1/auth/me", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            // Who is signed in stays readable while the selected organization requires two-factor.
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
             if (context is null) return Results.Unauthorized();
             return Results.Json(new AccountIdentityResponse(context.UserId, context.Account.Id,
                 context.Account.Name, context.Account.Email, context.Account.Phone, context.Account.Locale,

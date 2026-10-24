@@ -93,10 +93,15 @@ sealed class OwnershipSdkProtocol(TestWorkspace workspace, Func<string, (string 
             case (["invitations", "decline"], "POST"):
                 await workspace.DeclineInvitationAsync(session, Token(Field("token")), token);
                 return Results.NoContent();
+            // A ts-auth without two-factor routes: the dashboard reports the status as unknown.
+            case (["account", "mfa"], "GET"):
+                return Error(404, "not_found");
         }
         if (parts is not ["organizations", var organization, ..] || !TerraScaleIds.IsValid(organization)) return Unknown(method, parts);
         switch (parts[2..], method)
         {
+            case ([], "GET"):
+                return Json((await workspace.ListOrganizationsAsync(session, token)).Single(item => item.Id == organization));
             case ([], "PATCH"):
                 await workspace.RenameOrganizationAsync(session, organization, Name(Field("name")), token);
                 return Json((await workspace.ListOrganizationsAsync(session, token)).Single(item => item.Id == organization));
