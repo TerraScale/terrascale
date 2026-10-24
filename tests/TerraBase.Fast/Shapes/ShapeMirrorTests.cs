@@ -230,6 +230,33 @@ public sealed class ShapeMirrorTests
     }
 
     [Test]
+    public async Task On_an_R2_bucket_Cloudflare_analytics_become_CDN_request_counters_window_after_window()
+    {
+        // Disposed after the server, which stops querying first.
+        using var cloudflare = new FakeCloudflare { Analytics = [("hit", 990), ("miss", 10), ("dynamic", 3)] };
+        await using var harness = await Harness.StartAsync(cloudflare: cloudflare);
+        var server = harness.Server;
+
+        harness.Time.Advance(ShapeCdnAnalytics.Step);
+        await cloudflare.QueriedAsync(1, harness.Cancellation);
+        await TerraBaseTestServer.EventuallyAsync(async _ =>
+            await server.MetricAsync("terrabase_shape_cdn_requests_total", "cache_status=\"hit\"", harness.Cancellation) == 990);
+        await Assert.That(await server.MetricAsync("terrabase_shape_cdn_requests_total", "cache_status=\"miss\"", harness.Cancellation)).IsEqualTo(10);
+        await Assert.That(await server.MetricAsync("terrabase_shape_cdn_requests_total", "cache_status=\"other\"", harness.Cancellation)).IsEqualTo(3)
+            .Because("any status Cloudflare neither served from cache nor read from the bucket is other, a bounded label");
+
+        harness.Time.Advance(ShapeCdnAnalytics.Step);
+        await cloudflare.QueriedAsync(2, harness.Cancellation);
+        await TerraBaseTestServer.EventuallyAsync(async _ =>
+            await server.MetricAsync("terrabase_shape_cdn_requests_total", "cache_status=\"hit\"", harness.Cancellation) == 1980);
+        var windows = cloudflare.Windows.ToArray();
+        await Assert.That(windows.All(window => window.Host == $"shapes-{FakeS3.Bucket}.terrascale.tech")).IsTrue();
+        await Assert.That(windows[1].Start).IsEqualTo(windows[0].End).Because("windows are half-open and adjacent, so no request is counted twice");
+        await Assert.That(DateTimeOffset.Parse(windows[1].End, CultureInfo.InvariantCulture)).IsLessThanOrEqualTo(harness.Time.GetUtcNow() - ShapeCdnAnalytics.Delay)
+            .Because("a window is read only once Cloudflare has had time to ingest it");
+    }
+
+    [Test]
     public async Task The_manifest_route_answers_at_most_eight_private_objects_in_one_contiguous_chain()
     {
         await using var harness = await Harness.StartAsync();
@@ -645,6 +672,8 @@ public sealed class ShapeMirrorTests
         public ShapeSnapshots Snapshots { get; }
 
         public IShapeMirror Mirror => _api.Server.Services.GetRequiredService<IShapeMirror>();
+
+        public TerraBaseTestServer Server => _api.Server;
 
         public int PendingMirrorCompletions => _mirrored.CurrentCount;
 

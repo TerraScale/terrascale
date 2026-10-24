@@ -29,7 +29,9 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
     internal const string HttpClientName = "cloudflare-api";
 
     /// <summary>The <c>terrascale.tech</c> zone, which serves every <c>shapes-&lt;bucket&gt;</c> host (<see cref="ShapeObjectStore.Cdn"/>).</summary>
-    internal static readonly Uri PurgeUri = new("https://api.cloudflare.com/client/v4/zones/4cc466e19478c116fae7dc445a6d0911/purge_cache");
+    internal const string Zone = "4cc466e19478c116fae7dc445a6d0911";
+
+    internal static readonly Uri PurgeUri = new($"https://api.cloudflare.com/client/v4/zones/{Zone}/purge_cache");
 
     // A URL is under 200 bytes (fixed host, handle and SHA-256 name), so 4096 of them also bound the queue to under 1 MiB.
     private const int QueueItems = 4096;
