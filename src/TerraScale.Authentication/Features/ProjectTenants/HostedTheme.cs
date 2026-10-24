@@ -24,6 +24,9 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 public sealed record HostedTheme(string? Name = null, string? LogoUrl = null, string? ThemeColor = null, bool Passcode = true, bool Password = true, bool SignUp = true,
     int? TitleSize = null, string? DefaultTheme = null, IReadOnlyList<FooterLinkBody>? FooterLinks = null, string? BackgroundColor = null, string? TextColor = null)
 {
+    /// <summary>The configured social sign-in providers, in <see cref="SocialProviders.Names"/> order.</summary>
+    public IReadOnlyList<string> Providers { get; init; } = [];
+
     internal const string ItemKey = "ts-auth:theme";
 
     /// <summary>The platform's pages.</summary>
@@ -46,7 +49,10 @@ public static class HostedThemes
             var project = (await services.GetRequiredService<AuthStore>().GetAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, tenant, context.RequestAborted))
                 ?.Document.Deserialize(PlatformJson.Default.ProjectRecord);
             context.Items[HostedTheme.ItemKey] = new HostedTheme(settings.Name ?? project?.Name, settings.LogoUrl, settings.ThemeColor, settings.Passcode, settings.Password, settings.SignUp,
-                settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor);
+                settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor)
+            {
+                Providers = [.. SocialProviders.Names.Where(name => settings.Provider(name) is not null)],
+            };
         }
 
         await next(context);

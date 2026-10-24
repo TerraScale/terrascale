@@ -123,6 +123,13 @@ public static class App
         }).ConfigurePrimaryHttpMessageHandler(PublicAddresses.Handler);
         builder.Services.AddSingleton<SsoConnections>();
         builder.Services.AddSingleton<SsoSignIn>();
+        builder.Services.AddHttpClient(SocialSignIn.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(10);
+            client.MaxResponseContentBufferSize = 1024 * 1024;
+        }).ConfigurePrimaryHttpMessageHandler(PublicAddresses.Handler);
+        builder.Services.AddSingleton<SocialSignIn>();
+        builder.Services.AddSingleton<SocialFlow>();
         builder.Services.AddHostedService<SessionPruner>();
         // Ready means this regional copy takes writes.
         builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredService<TerraBaseDatabase>()));
