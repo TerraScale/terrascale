@@ -109,6 +109,7 @@ public sealed class StripeAuditJourneyTests(DashboardRootFixture fixture)
     [Arguments("duplicate-webhooks", "webhook_endpoint")]
     [Arguments("wrong-webhook", "webhook_endpoint")]
     [Arguments("unsafe-default-portal", "portal_payment_and_invoices")]
+    [Arguments("portal-tax-fields", "portal_payment_and_invoices")]
     public async Task ActualStripeResponsesRejectForeignModeAndUnsafeConfigurations(string fault, string failedCheck)
     {
         await using var scenario = new StripeAuditScenario(fixture.Root, fault: fault);

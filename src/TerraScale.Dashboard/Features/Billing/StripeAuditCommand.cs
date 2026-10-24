@@ -87,7 +87,7 @@ public sealed class StripeAuditCommand
                 portals.Add(portal);
             checks["portal_payment_and_invoices"] = portals.Any(portal => portal.IsDefault && portal.Active && portal.Livemode == live &&
                 portal.Features?.PaymentMethodUpdate?.Enabled == true && portal.Features.InvoiceHistory?.Enabled == true &&
-                portal.Features.SubscriptionCancel?.Enabled == true && portal.Features.SubscriptionUpdate?.Enabled != true);
+                portal.Features.SubscriptionCancel?.Enabled == true && portal.Features.SubscriptionUpdate?.Enabled != true && StripeSetupCommand.BillingCustomerUpdates(portal));
 
             var statusCounts = new Dictionary<string, int>(StringComparer.Ordinal);
             var currentCustomerCounts = new Dictionary<string, int>(StringComparer.Ordinal);

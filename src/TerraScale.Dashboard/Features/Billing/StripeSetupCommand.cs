@@ -129,7 +129,8 @@ public sealed class StripeSetupCommand
         await foreach (var configuration in client.V1.BillingPortal.Configurations.ListAutoPagingAsync(new() { Limit = 100 }, cancellationToken: cancellationToken))
             if (configuration.IsDefault) portal = configuration;
         if (portal is not null && portal.Active && portal.Features?.PaymentMethodUpdate?.Enabled == true && portal.Features.InvoiceHistory?.Enabled == true &&
-            portal.Features.SubscriptionCancel?.Enabled == true && portal.Features.SubscriptionUpdate?.Enabled != true)
+            portal.Features.SubscriptionCancel?.Enabled == true && portal.Features.SubscriptionUpdate?.Enabled != true &&
+            BillingCustomerUpdates(portal))
             return;
         // Customers change plans in the dashboard, so the portal never offers subscription updates.
         var features = new PortalFeatures
@@ -137,6 +138,7 @@ public sealed class StripeSetupCommand
             PaymentMethodUpdate = new() { Enabled = true },
             InvoiceHistory = new() { Enabled = true },
             SubscriptionCancel = new() { Enabled = true, Mode = "at_period_end" },
+            CustomerUpdate = new() { Enabled = true, AllowedUpdates = ["name", "address", "tax_id"] },
             SubscriptionUpdate = new() { Enabled = false }
         };
         if (portal is null)
@@ -154,4 +156,7 @@ public sealed class StripeSetupCommand
             changes.Add("portal_updated");
         }
     }
+
+    internal static bool BillingCustomerUpdates(PortalConfiguration portal) => portal.Features?.CustomerUpdate is { Enabled: true } customer &&
+        new[] { "name", "address", "tax_id" }.All(field => customer.AllowedUpdates?.Contains(field, StringComparer.Ordinal) == true);
 }

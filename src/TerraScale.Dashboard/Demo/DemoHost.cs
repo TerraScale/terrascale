@@ -910,9 +910,9 @@ sealed class TestStripeTransport : HttpMessageHandler
         {
             var customerId = path["/v1/customers/".Length..];
             var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
-            if (!customerOrganizations.TryGetValue(customerId, out var organizationId) || query.GetValueOrDefault("expand[0]") != "invoice_settings.default_payment_method")
+            if (!customerOrganizations.TryGetValue(customerId, out var organizationId) || query.GetValueOrDefault("expand[0]").ToString() is not ("invoice_settings.default_payment_method" or "tax_ids"))
                 throw new HttpRequestException("The Stripe fixture card read must target an existing scoped customer with the official expansion.");
-            value = new { id = customerId, @object = "customer", metadata = new { organization_id = organizationId }, invoice_settings = new { default_payment_method = (object?)null } };
+            value = new { id = customerId, @object = "customer", metadata = new { organization_id = organizationId }, invoice_settings = new { default_payment_method = (object?)null }, tax_ids = new { @object = "list", has_more = false, data = Array.Empty<object>() } };
         }
         else if (request.Method == HttpMethod.Get && path == "/v1/prices")
             value = new { @object = "list", has_more = false, data = PlanCatalog.Plans.Where(item => item.PriceCents > 0).Select(item => Price(item, item.CheckoutInterval)).ToArray() };

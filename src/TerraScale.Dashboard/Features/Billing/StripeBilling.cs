@@ -106,6 +106,10 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
             SuccessUrl = Origin + "/billing/checkout/return?session_id={CHECKOUT_SESSION_ID}",
             CancelUrl = Origin + returnPath + (returnPath.Contains('?') ? "&" : "?") + "payment=canceled&plan=" + Uri.EscapeDataString(plan.Key),
             Mode = plan.PriceCents == 0 ? "setup" : "subscription",
+            AutomaticTax = new() { Enabled = true },
+            BillingAddressCollection = "required",
+            TaxIdCollection = new() { Enabled = true },
+            CustomerUpdate = new() { Address = "auto", Name = "auto" },
             ExpiresAt = binding.StartedAt.UtcDateTime.AddHours(1)
         };
         if (plan.PriceCents > 0)

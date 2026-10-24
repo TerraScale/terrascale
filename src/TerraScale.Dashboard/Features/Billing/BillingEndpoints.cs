@@ -42,6 +42,7 @@ public static class BillingEndpoints
         var changesRead = BillingPlanPresentation.ForAsync(page, billing, query, now, cancellationToken);
         var paymentMethodRead = billing.PaymentMethodAsync(shell.Context, cancellationToken);
         var invoicesRead = billing.InvoicesAsync(shell.Context, cancellationToken);
+        var detailsRead = billing.DetailsAsync(shell.Context, cancellationToken);
         var overageRead = page.Binding is { Kind: "stripe", SubscriptionId.Length: > 0 } subscribed && PlanCatalog.For(shell.Context.Organization) is { PriceCents: > 0 }
             ? billing.OperationUnitOverageAsync(subscribed, now, cancellationToken) : Task.FromResult(0L);
         BillingCard? paymentMethod = null;
@@ -62,8 +63,16 @@ public static class BillingEndpoints
                                       error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         { }
         var changes = await changesRead;
+        BillingDetails? details = null;
+        var detailsUnavailable = false;
+        try { details = await detailsRead; }
+        catch (Exception error) when (error is HttpRequestException or IOException or StripeException ||
+            error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        { detailsUnavailable = true; }
         return page with
         {
+            Details = details,
+            DetailsUnavailable = detailsUnavailable,
             OverageUnits = overage,
             PlanChanges = changes,
             PaymentMethod = paymentMethod,
