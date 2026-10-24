@@ -72,7 +72,10 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                 // Retain the key in place: a crash's old or new file must open with the same durable sidecar.
                 // Unlike a separate database copy, a healthy rewrite is not a data-key rotation.
                 var connectionString = new global::Turso.Data.Sqlite.SqliteConnectionStringBuilder(
-                    await store.ConnectionStringAsync(Io, cancellationToken).ConfigureAwait(false)) { DataSource = scratch }.ToString();
+                    await store.ConnectionStringAsync(Io, cancellationToken).ConfigureAwait(false))
+                {
+                    DataSource = scratch,
+                }.ToString();
                 var target = await TursoDatabaseStore.InitializeAsync(key.Database, scratch, Io, _pragmas, connectionString, cancellationToken).ConfigureAwait(false);
                 try
                 {
