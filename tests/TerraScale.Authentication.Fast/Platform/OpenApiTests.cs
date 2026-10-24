@@ -140,13 +140,20 @@ public sealed partial class OpenApiTests
             root = root.Parent;
         }
 
+        List<string> contractFiles = ["account-providers.openapi.yaml"];
+
         // The YAML is read line by line in the layout this repository writes; a line this cannot place fails the test
         // rather than being skipped, so no published operation goes unchecked.
         var contract = new Dictionary<(string Path, string Method, string Id), SortedSet<string>>();
         var security = new Dictionary<(string Path, string Method, string Id), SortedSet<string>>();
         var operationIds = 0;
         var planned = new HashSet<(string Path, string Method, string Id)>();
-        foreach (var file in new[] { "platform-api.openapi.yaml", "scoped-end-user-tokens.openapi.yaml", "account-providers.openapi.yaml" })
+        foreach (var file in new[] { "platform-api.openapi.yaml", "scoped-end-user-tokens.openapi.yaml" })
+        {
+            contractFiles.Add(file);
+        }
+
+        foreach (var file in contractFiles)
         {
             string? path = null, method = null;
             SortedSet<string>? statuses = null;
