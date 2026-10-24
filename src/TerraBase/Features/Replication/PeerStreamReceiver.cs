@@ -49,6 +49,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private readonly IMemoryBudget _memory;
     private readonly ReplicationTimings _timings;
     private readonly IUsageMeter _usage;
+    private readonly LogChunks _chunks;
     private int _refilling;
 
     // A test observes a replacement while its predecessor's cancelled repair is still ending.
@@ -58,10 +59,11 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
     public PeerStreamReceiver(
         IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime,
-        ILogger<PeerStreamReceiver> logger, IMemoryBudget memory, Lazy<ICatalogGate> catalogGate, IReplicaCopyFaults faults, ReplicationTimings timings, IUsageMeter usage)
+        ILogger<PeerStreamReceiver> logger, IMemoryBudget memory, Lazy<ICatalogGate> catalogGate, IReplicaCopyFaults faults, ReplicationTimings timings, IUsageMeter usage, LogChunks chunks)
     {
         _timings = timings;
         _usage = usage;
+        _chunks = chunks;
         _catalogGate = catalogGate;
         _memory = memory;
         _logger = logger;
@@ -179,7 +181,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             cut = _cut.TryRemove(origin, out var carried) ? carried : [];
             // An already-ended predecessor can satisfy WaitAsync after this stream was cancelled.
             stream.Token.ThrowIfCancellationRequested();
-            await responseStream.WriteAsync(new AckFrame { Welcome = new Welcome { Node = _self.Id.Value, Protocol = ReplicationProtocol.Version } }, stream.Token).ConfigureAwait(false);
+            await responseStream.WriteAsync(new AckFrame { Welcome = new Welcome { Node = _self.Id.Value, Protocol = ReplicationProtocol.Version, Chunks = _chunks.Reads } }, stream.Token).ConfigureAwait(false);
             reading = requestStream.MoveNext(stream.Token);
             while (true)
             {
@@ -548,6 +550,22 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
         _ = _timings.Record(ReplicationTimings.ReceiveWait, received);
 
+        var envelope = batch.Groups;
+        if (batch.Chunk is { } chunk)
+        {
+            try
+            {
+                envelope = await _chunks.FetchAsync(chunk, cancellationToken).ConfigureAwait(false);
+            }
+            catch (InvalidDataException error)
+            {
+                // The sender sends this machine's batches inline for a while, this one included.
+                _logger.ZLogWarning(error, $"A log chunk of database {database.DatabaseId:@Database} from machine {origin.Value:@Origin} in {region:@Region} could not be read; its batch is refused");
+                refused.Ack.ChunkUnread = true;
+                return refused;
+            }
+        }
+
         List<OriginGroup> groups;
         try
         {
@@ -556,7 +574,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 throw new InvalidDataException("a stream's batches of one database have growing change ids");
             }
 
-            groups = ChangeGroups.Decode(database, batch.Groups, batch.LastChangeId);
+            groups = ChangeGroups.Decode(database, envelope, batch.LastChangeId);
             if (previous.Incarnation == incarnation && groups[0].ChangeId <= (long)previous.ChangeId)
             {
                 throw new InvalidDataException("a stream's groups of one database have growing change ids");
@@ -646,8 +664,10 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     }
 
     // The wire bytes, then the decompressed, parsed and decoded groups of the size the envelope declares (Decode refuses more).
-    private static long BatchBytes(Batch batch) =>
-        batch.Groups.Length + (3L * Math.Min(ApplicationEnvelope.DecodedLength(batch.Groups.Span), ReplicationProtocol.MaxApplicationBytes));
+    // A chunk's sealed and opened bytes take the place of the wire bytes.
+    private static long BatchBytes(Batch batch) => batch.Chunk is { } chunk
+        ? (2L * Math.Min(chunk.Length, (uint)ReplicationProtocol.MaxMessageBytes)) + (3L * Math.Min(chunk.Decoded, (uint)ReplicationProtocol.MaxApplicationBytes))
+        : batch.Groups.Length + (3L * Math.Min(ApplicationEnvelope.DecodedLength(batch.Groups.Span), ReplicationProtocol.MaxApplicationBytes));
 
     private async Task CancelPreviousAsync(CancellationTokenSource stop, Task ended)
     {
