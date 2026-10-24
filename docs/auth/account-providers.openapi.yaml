@@ -1,0 +1,97 @@
+openapi: 3.1.0
+info:
+  title: TerraScale account sign-in providers API
+  version: v1
+  description: Supplement to platform-api.openapi.yaml for linked sign-in providers.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://auth.terrascale.tech
+security:
+  - platformUser: []
+tags:
+  - name: Account
+    description: The signed-in platform account's linked sign-in providers.
+paths:
+  /v1/terrascale/account/providers:
+    get:
+      operationId: account_linked_providers
+      tags: [Account]
+      summary: List my linked sign-in providers
+      description: Requires a live platform sign-in token. Returns names only, without provider subjects or credentials.
+      responses:
+        '200':
+          description: Linked provider names.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [providers]
+                properties:
+                  providers:
+                    type: array
+                    uniqueItems: true
+                    items:
+                      type: string
+                      enum: [github, google]
+        '401': { $ref: './platform-api.openapi.yaml#/components/responses/Unauthorized' }
+        '503': { $ref: './platform-api.openapi.yaml#/components/responses/Unavailable' }
+  /v1/terrascale/account/providers/{provider}:
+    delete:
+      operationId: account_unlink_provider
+      tags: [Account]
+      summary: Unlink my sign-in provider
+      description: |
+        Requires a live platform sign-in token and a fresh email sign-in code for the same account.
+        Success revokes every previous session and token; sign in again using email-code recovery.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          description: Provider to unlink.
+          schema:
+            type: string
+            enum: [github, google]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+                  description: A current sign-in code sent to the account's verified email.
+      responses:
+        '204':
+          description: Provider unlinked and all previous sessions and tokens revoked.
+        '400': { $ref: './platform-api.openapi.yaml#/components/responses/BadRequest' }
+        '401': { $ref: './platform-api.openapi.yaml#/components/responses/Unauthorized' }
+        '429':
+          description: Sign-in code or IP budget exhausted.
+          headers:
+            Retry-After:
+              description: Minimum delay in whole seconds before retrying.
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+                    const: rate_limited
+                  error_description:
+                    type: [string, 'null']
+        '503': { $ref: './platform-api.openapi.yaml#/components/responses/Unavailable' }
+components:
+  securitySchemes:
+    platformUser:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Live platform sign-in access token with completed active MFA; cookies are not accepted.
