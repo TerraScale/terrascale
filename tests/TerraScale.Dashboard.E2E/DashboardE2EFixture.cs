@@ -45,6 +45,8 @@ public sealed class DashboardE2EFixture : IAsyncInitializer, IAsyncDisposable
     { BaseAddress = replica ? ReplicaOrigin : Origin, Timeout = TimeSpan.FromSeconds(30) };
 
     // Test admission permits more projects than Free allows; it does not simulate a paid checkout.
+    public T Service<T>() where T : notnull => first!.Services.GetRequiredService<T>();
+
     public async Task PlanAsync(string organizationId, string planId)
     {
         var state = first!.Services.GetRequiredService<IDashboardState>();
