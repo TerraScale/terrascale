@@ -60,7 +60,8 @@ pub use errors::{Error, Result, SqlError};
 pub use ids::{is_valid_name, ulid_for, DocumentId, Version};
 pub use management::{DatabasePlacement, ManagementPage};
 pub use query::{
-    Count, Filter, Metric, Near, Order, Pages, Path, Query, QueryPage, Scalar, SortKey,
+    Aggregate, Area, Count, Filter, GeoNear, Group, Metric, Near, Order, Pages, Path, Query,
+    QueryPage, Scalar, SortKey,
 };
 pub use shapes::{Shape, ShapeChange, ShapeDocument, ShapeOp, ShapeState, ShapeUpdate};
 pub use sql::{SqlCheck, SqlIndexSuggestion, SqlResult, SqlRow};
