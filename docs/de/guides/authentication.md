@@ -42,6 +42,18 @@ A key limited to one database works only for that database. **Read and write** k
 
 Changes to a key's or a project's allowlist apply within 60 seconds. Keep the allowlist of a server's egress addresses current, since a changed address stops working until the list includes it.
 
+## Two-factor authentication
+
+Protect your TerraScale account with an authenticator app (TOTP), such as 1Password, Google Authenticator or Authy.
+
+1. Open **Profile → Security** in the dashboard and choose **Set up two-factor**, or go to `https://auth.terrascale.tech/ui/terrascale/security`. If you signed in more than 15 minutes ago, sign in again first.
+2. Scan the QR code with your app, or type the key shown under it, then enter the six-digit code the app shows.
+3. Save the eight recovery codes. They are shown only once, and each one signs you in once if you lose your authenticator.
+
+Turning two-factor on or off signs you out of every other browser and the CLI. From then on, every sign-in asks for the app's code after your email code or password. To turn it off, enter a current code or an unused recovery code on the same page.
+
+**Require two-factor for an organization.** An organization owner can turn on **Require two-factor for members** in the organization's settings, after turning on two-factor for their own account. Members without two-factor are sent to set it up and cannot open the organization in the dashboard or create API keys there until they do. Existing API keys keep working. The organization's audit log records the policy change and each member's two-factor changes and recovery code sign-ins.
+
 ## Server applications
 
 Keep credentials in the application platform's secret store. Read them only on the server. Use a project/database scope and the minimum document permissions: reads need `documents:read`; writes need `documents:write`.
