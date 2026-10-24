@@ -1165,6 +1165,22 @@ internal sealed partial class TursoDatabaseStore(
         return loaded.GetValueOrDefault(name);
     }
 
+    /// <summary>
+    /// The committed row of a collection from the names readers already loaded, without a query: false while they are not
+    /// loaded. Only for a write transaction that changed no collection: every commit that does forgets the names.
+    /// </summary>
+    internal bool TryKnownCollection(string name, out CollectionInfo? collection)
+    {
+        if (_collections is { } known)
+        {
+            collection = known.GetValueOrDefault(name);
+            return true;
+        }
+
+        collection = null;
+        return false;
+    }
+
     /// <summary>Called by a commit that created or dropped a collection.</summary>
     internal void ForgetCollections()
     {
