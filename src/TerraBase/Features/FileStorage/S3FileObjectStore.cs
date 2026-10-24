@@ -17,14 +17,22 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
     public S3FileObjectStore(TerraBaseOptions options, TimeProvider time, IHostEnvironment environment)
     {
         _time = time;
-        if (options.Backup is not { } settings) return;
+        if (options.Backup is not { } settings)
+        {
+            return;
+        }
         // Existing OCI Vault delivery supplies the object-store identity. No customer or operator setting is added.
         var r2 = settings.Endpoint.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase);
         if (!r2 && settings.Endpoint.Host != "fly.storage.tigris.dev")
+        {
             throw new TerraBaseConfigurationException("app files require R2 or the Tigris integration-test store");
+        }
         // Do not disrupt existing backups when app-file R2 credentials have not reached this node yet.
         // App-file operations fail closed; production never sends customer files to Tigris.
-        if (!r2 && !environment.IsDevelopment()) return;
+        if (!r2 && !environment.IsDevelopment())
+        {
+            return;
+        }
         _testBucket = r2 ? null : settings.Bucket;
         _client = new AmazonS3Client(new BasicAWSCredentials(settings.AccessKeyId, settings.SecretKey), new AmazonS3Config
         {
@@ -87,7 +95,10 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
         try
         {
             using var response = await Client.GetObjectAsync(new GetObjectRequest { BucketName = Bucket(region), Key = key }, cancellationToken).ConfigureAwait(false);
-            if (response.ContentLength != file.Size) return false;
+            if (response.ContentLength != file.Size)
+            {
+                return false;
+            }
             // Verify bytes rather than trusting caller-supplied object metadata or an opaque multipart ETag.
             var hash = await SHA256.HashDataAsync(response.ResponseStream, cancellationToken).ConfigureAwait(false);
             return Convert.ToBase64String(hash) == file.Sha256;

@@ -27,9 +27,14 @@ internal static class FileStorageRoute
     public static async ValueTask<IResult> RunAsync(HttpContext context, Func<ValueTask<FileStorageResult>> operation, int success)
     {
         context.Response.Headers.CacheControl = "no-store";
-        if (ProjectAccess.Current is not { DatabaseName: null }) return ErrorResponse.From(new Forbidden("an unrestricted project token is required"));
+        if (ProjectAccess.Current is not { DatabaseName: null })
+        {
+            return ErrorResponse.From(new Forbidden("an unrestricted project token is required"));
+        }
         if (context.Request.Query.Keys.Any(key => key != "after") || After(context) is { } after && !EntityIds.IsValid(after))
+        {
             return ErrorResponse.From(new Validation("only after (a canonical ULID) is accepted"));
+        }
         return await operation().ConfigureAwait(false) switch
         {
             FileBucket bucket => TypedResults.Json(bucket, statusCode: success),

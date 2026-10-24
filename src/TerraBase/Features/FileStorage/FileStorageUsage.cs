@@ -29,13 +29,19 @@ internal sealed class FileStorageUsage(IStorageEngine engine) : IFileStorageUsag
         bool more;
         do
         {
-            var page = await transaction.ListCollectionsAsync(after, 100, cancellationToken).ConfigureAwait(false);
-            more = page.HasMore;
-            foreach (var collection in page.Collections)
+            var (collections, hasMore) = await transaction.ListCollectionsAsync(after, 100, cancellationToken).ConfigureAwait(false);
+            more = hasMore;
+            foreach (var collection in collections)
             {
-                if (++visited > 10_000) throw new QueryCapacityException("file storage accounting exceeded its collection budget");
+                if (++visited > 10_000)
+                {
+                    throw new QueryCapacityException("file storage accounting exceeded its collection budget");
+                }
                 after = collection.Name;
-                if (!collection.Name.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                if (!collection.Name.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    continue;
+                }
                 string? fileAfter = null;
                 DocumentPage files;
                 do
@@ -43,7 +49,10 @@ internal sealed class FileStorageUsage(IStorageEngine engine) : IFileStorageUsag
                     files = await transaction.ListAsync(collection.Name, fileAfter, 100, 1024 * 1024, cancellationToken).ConfigureAwait(false);
                     foreach (var saved in files.Documents)
                     {
-                        if (++visited > 100_000) throw new QueryCapacityException("file storage accounting exceeded its object budget");
+                        if (++visited > 100_000)
+                        {
+                            throw new QueryCapacityException("file storage accounting exceeded its object budget");
+                        }
                         var file = Primitives.EntityPayload.Read(saved, TerraBaseJsonContext.Default.FileObject)!;
                         total = checked(total + file.Size);
                         fileAfter = saved.Id;
