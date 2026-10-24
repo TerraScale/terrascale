@@ -11,6 +11,18 @@ title: Backups and restore
 
 TerraBase backs up every database continuously and on a schedule. A restore never overwrites: it always creates a new database in the same project, with `branchedFrom` set to the source database's id. The source database is unchanged.
 
+## In the dashboard and over MCP
+
+Open a database and choose **Backups**. The page lists the database's backups, newest first, with the current schedule and retention. Owners and admins can **Back up now**, save the full-backup schedule and retention, and restore any listed backup into a new database. The dashboard [MCP server](/de/guides/mcp) offers the same actions as `list_backups`, `create_backup`, `set_backup_policy` and `restore_backup`.
+
+A new database has no backups until its first one runs: either **Back up now**, or the next time its schedule names (by default 02:00 UTC). Incremental schedules aren't offered; leave that field empty. Full backups plus point-in-time restore cover recovery.
+
+A restore always creates a new database, so it counts toward your plan's database limit (see [limits](/de/limits)). On Free, which allows one database, a restore needs a plan with room for a second one.
+
+Deleting a database also deletes its backups: they expire with it and their files are removed. Restore anything you need before you delete it.
+
+## Over the HTTP API
+
 The published `@terrascale/sdk@0.0.3` does not wrap these routes yet. The examples use `curl` against the HTTP API.
 
 ## Before you start
