@@ -3,7 +3,7 @@
 <main class="ts-login"><div class="ts-login-column"><div class="ts-login-panel"><div class="ts-login-stack">
     <h1 class="ts-auth-title">Deletion in progress</h1>
     <p class="ts-auth-subtitle" role="status">Waiting for deletion to be confirmed. This page will continue automatically. You do not need to submit another deletion request.</p>
-    <form method="post" action="@Model.Action" data-init="setTimeout(() => el.requestSubmit(), 2000)">
+    <form method="post" action="@Model.Action" data-init="@($"setTimeout(() => el.requestSubmit(), {Model.DelayMilliseconds})")">
         @foreach (var field in Model.Form)
         {
             @foreach (var value in field.Value)

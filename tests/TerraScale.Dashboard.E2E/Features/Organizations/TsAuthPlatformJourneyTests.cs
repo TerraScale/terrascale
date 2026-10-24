@@ -416,12 +416,15 @@ public sealed class TsAuthPlatformJourneyTests
             await Assert.That(platform.Producer.ReceiptAppearsIn(html)).IsFalse();
         }
         var key = AccountService.AccountStorageKey(owner.Subject);
-        foreach (var status in new[] { HttpStatusCode.Accepted, HttpStatusCode.Unauthorized, HttpStatusCode.NotFound, HttpStatusCode.Conflict })
+        foreach (var status in new[] { HttpStatusCode.Accepted, HttpStatusCode.Unauthorized, HttpStatusCode.NotFound, HttpStatusCode.Conflict, HttpStatusCode.ServiceUnavailable })
         {
             platform.Producer.DeletionStatus = status;
             using var pending = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/delete/continue", new() { ["_csrf"] = csrf });
             await Assert.That(pending.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            await Assert.That(pending.Headers.Location!.OriginalString).IsEqualTo("/account-deletion");
+            await Assert.That(pending.Headers.Location!.OriginalString.StartsWith("/account-deletion", StringComparison.Ordinal)).IsTrue();
+            using var retryPage = await client.GetAsync(pending.Headers.Location);
+            await Assert.That(retryPage.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
+            await Assert.That(await retryPage.Content.ReadAsStringAsync()).Contains("requestSubmit()");
             await Assert.That(await platform.StoredAsync(AccountService.AccountsCollection, key)).IsTrue();
             await Assert.That(await platform.StoredAsync(AccountService.OrganizationsCollection, personal)).IsTrue();
         }

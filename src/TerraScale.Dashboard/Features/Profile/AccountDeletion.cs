@@ -68,8 +68,8 @@ public static class AccountDeletion
             confirmed = true;
             return await CompleteAsync(http, sessions, platform, state, tokens, operation);
         }
-        catch (AccountAccessException) when (confirmed) { return HttpRedirects.SeeOther("/account-deletion"); }
-        catch (Exception error) when (persisted && Transient(error, http)) { return HttpRedirects.SeeOther("/account-deletion"); }
+        catch (AccountAccessException) when (confirmed) { return Retry(http); }
+        catch (Exception error) when (persisted && Transient(error, http)) { return Retry(http); }
         catch (AccountAccessException error)
         {
             if (error.StatusCode == 409 && await ReadOperationAsync(http, state, identity) is { } refused)
@@ -113,16 +113,28 @@ public static class AccountDeletion
         }
         catch (AccountAccessException error)
         {
-            if (!requesting && error.Code != "deletion_refused") return HttpRedirects.SeeOther("/account-deletion");
+            if (!requesting && error.Code != "deletion_refused") return Retry(http);
             if (error.Code == "deletion_refused") { await DropAsync(state, Operations, Key(http), http.RequestAborted); http.Response.Cookies.Delete(Cookie); }
             return Results.Text(error.Message + " Dashboard records have been retained. Return to your profile to resolve the issue.", statusCode: error.StatusCode);
         }
-        catch (Exception error) when (Transient(error, http)) { return HttpRedirects.SeeOther("/account-deletion"); }
+        catch (Exception error) when (Transient(error, http)) { return Retry(http); }
     }
 
-    public static async Task<IResult> ProgressAsync(HttpContext http, IDashboardState state, IDashboardIdentity identity) =>
-        await ReadOperationAsync(http, state, identity) is null ? Results.Unauthorized() : DeletionProgress.Create(http,
-            new FormCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues> { ["_csrf"] = Csrf.Token(http) }), "/api/v1/dashboard/profile/delete/continue");
+    public static async Task<IResult> ProgressAsync(HttpContext http, IDashboardState state, IDashboardIdentity identity)
+    {
+        if (await ReadOperationAsync(http, state, identity) is null) return Results.Unauthorized();
+        _ = int.TryParse(http.Request.Query["retry"], out var attempt);
+        attempt = Math.Clamp(attempt, 0, 5);
+        return DeletionProgress.Create(http, new FormCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
+        { ["_csrf"] = Csrf.Token(http), ["_retry"] = attempt.ToString(System.Globalization.CultureInfo.InvariantCulture) }),
+            "/api/v1/dashboard/profile/delete/continue", Math.Min(30000, 2000 << attempt));
+    }
+
+    private static IResult Retry(HttpContext http)
+    {
+        _ = int.TryParse(http.Request.Form["_retry"], out var attempt);
+        return HttpRedirects.SeeOther("/account-deletion?retry=" + Math.Min(5, Math.Clamp(attempt, 0, 5) + 1));
+    }
 
     private static async Task<IResult> CompleteAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, Operation operation)
     {
