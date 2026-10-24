@@ -89,6 +89,9 @@ public sealed class TerraBaseDashboardState(IHttpClientFactory http, IHostEnviro
     public async Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken) =>
         await Database().DeleteDocumentAsync(collection, DocumentId(collection, id), TerraBasePrecondition.Matches(version), cancellationToken);
 
+    public async Task DeleteListedAsync(string collection, TerraBaseDocument document, CancellationToken cancellationToken) =>
+        await Database().DeleteDocumentAsync(collection, document.Id, TerraBasePrecondition.Matches(document.Version), cancellationToken);
+
     // TerraBase document ids are ULIDs. Callers key state by natural names (hashes, emails, Stripe ids, ULIDs), so
     // every key becomes a name-based ULID: the first 16 bytes of SHA-256 over "collection\0key". Nothing reads it back.
     public static string DocumentId(string collection, string key) =>

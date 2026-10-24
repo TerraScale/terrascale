@@ -1,6 +1,8 @@
 using System.Net.Http.Headers;
+using System.Reflection;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
@@ -12,6 +14,37 @@ namespace TerraScale.Dashboard.Platform.Mcp;
 public static class DashboardMcp
 {
     internal const string ContextKey = "TerraScale.Dashboard/mcp-context";
+
+    // Only immutable tool metadata is shared. Each invocation constructs its target
+    // from that request's services; no host, principal or tool instance is retained.
+    private static readonly Lazy<McpServerTool[]> CachedTools = new(CreateTools, LazyThreadSafetyMode.ExecutionAndPublication);
+
+    private static McpServerTool[] CreateTools()
+    {
+        Type[] toolTypes =
+        [
+            typeof(DashboardMcpTools),
+            typeof(TerraScale.Dashboard.Features.Databases.DatabaseMcpTools),
+            typeof(TerraScale.Dashboard.Features.Data.DataMcpTools),
+            typeof(TerraScale.Dashboard.Features.ApiKeys.ApiKeyMcpTools),
+            typeof(TerraScale.Dashboard.Features.Backups.BackupMcpTools),
+            typeof(TerraScale.Dashboard.Features.Home.HomeMcpTools),
+            typeof(TerraScale.Dashboard.Features.Notifications.NotificationMcpTools),
+            typeof(TerraScale.Dashboard.Features.Profile.ProfileMcpTools),
+            typeof(TerraScale.Dashboard.Features.Usage.UsageMcpTools),
+            typeof(TerraScale.Dashboard.Features.Settings.SettingsMcpTools),
+            typeof(TerraScale.Dashboard.Features.Billing.BillingMcpTools),
+            typeof(TerraScale.Dashboard.Features.Onboarding.OnboardingMcpTools),
+            typeof(TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationMcpTools),
+            typeof(TerraScale.Dashboard.Features.Organizations.OrganizationMcpTools),
+            typeof(TerraScale.Dashboard.Features.QuerySubscriptions.QuerySubscriptionMcpTools),
+        ];
+        return toolTypes.SelectMany(toolType => toolType.GetMethods()
+            .Where(method => method.IsDefined(typeof(McpServerToolAttribute)))
+            .Select(method => McpServerTool.Create(method, request => ActivatorUtilities.CreateInstance(
+                request.Services ?? throw new InvalidOperationException("MCP request services are unavailable."), toolType), options: null)))
+            .ToArray();
+    }
 
     public static void AddDashboardMcp(this IServiceCollection services)
     {
@@ -42,21 +75,7 @@ public static class DashboardMcp
                     return Failure("The billing provider could not complete the request. Return to billing to reconcile before trying again.");
                 }
             }))
-            .WithTools<DashboardMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.Databases.DatabaseMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.Data.DataMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.ApiKeys.ApiKeyMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.Backups.BackupMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.Home.HomeMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.Notifications.NotificationMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.Profile.ProfileMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.Usage.UsageMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.Settings.SettingsMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.Billing.BillingMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.Onboarding.OnboardingMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.Organizations.OrganizationMcpTools>()
-            .WithTools<TerraScale.Dashboard.Features.QuerySubscriptions.QuerySubscriptionMcpTools>();
+            .WithTools(CachedTools.Value);
     }
 
     private static CallToolResult Failure(string message) => new() { IsError = true, Content = [new TextContentBlock { Text = message }] };

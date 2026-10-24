@@ -39,7 +39,9 @@ public sealed class OrganizationLifecycleService(IDashboardState state, AccountS
             current.DeletionRequested = true;
             current.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "organization.deletion_requested", current.Name, "organization", time.GetUtcNow()));
         }, cancellationToken);
-        await billing.EndSubscriptionAsync(org.Id, cancellationToken);
+        // The fresh owner, exact name and persisted deletion mark authorize
+        // recovery even when an interrupted Checkout never published its ID.
+        await billing.EndSubscriptionAsync(org.Id, cancellationToken, authorizedDeletionPreflight: true);
         // ts-auth refuses an organization that still has projects; a 404 is a delete an interrupted request already made.
         foreach (var projectId in org.Projects.Keys)
         {
@@ -93,6 +95,7 @@ public sealed class OrganizationLifecycleService(IDashboardState state, AccountS
             if (!org.CanManage(context.UserId)) throw new AccountAccessException("Organization management is required.");
             org.Projects.Remove(projectId);
             org.PendingProjectDeletions.Remove(projectId);
+            org.DeletedProjectIds.Add(projectId);
             org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "project.deleted", project.Name, "project", time.GetUtcNow()));
         }, cancellationToken);
         await accounts.UpdateAccountAsync(context.Session, account =>

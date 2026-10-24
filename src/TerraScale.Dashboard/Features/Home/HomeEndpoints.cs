@@ -18,7 +18,7 @@ public static class HomeEndpoints
     public static IServiceCollection AddHomeFeatures(this IServiceCollection services) => services.AddSingleton<IHomeMeasurements, TerraBaseHomeMeasurements>();
     public static IEndpointRouteBuilder MapHome(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IHomeMeasurements measurements) =>
+        endpoints.MapGet("/", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts, IHomeMeasurements measurements) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountRequest.LoginRedirect(http);

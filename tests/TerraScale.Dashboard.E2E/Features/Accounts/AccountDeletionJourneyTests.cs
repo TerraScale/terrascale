@@ -74,10 +74,10 @@ public sealed class AccountDeletionJourneyTests
             await Assert.That(deleted.Headers.Location!.OriginalString).IsEqualTo("/account-deleted");
         }
         var key = AccountService.AccountStorageKey(UserId);
-        await Assert.That(await scenario.ExistsAsync(AccountService.AccountsCollection, key)).IsFalse();
-        await Assert.That(await scenario.ExistsAsync(AccountService.IdentitiesCollection, key)).IsFalse();
+        await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.AccountsCollection, key, default))!)).IsTrue();
+        await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.IdentitiesCollection, key, default))!)).IsTrue();
         await Assert.That(await scenario.ExistsAsync(AccessTokens.Collection, key)).IsFalse();
-        await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsCollection, personal)).IsFalse();
+        await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.OrganizationsCollection, personal, default))!)).IsTrue();
         await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsCollection, shared)).IsTrue().Because("shared organizations keep their data");
         await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
         await Assert.That(scenario.Environment.Workspace.Organizations[shared].Members.ContainsKey(UserId)).IsFalse();
@@ -125,7 +125,7 @@ public sealed class AccountDeletionJourneyTests
         await Assert.That(stripe.Mutations(binding.CustomerId).Count(path => path == "DELETE /v1/subscriptions/" + binding.SubscriptionId)).IsEqualTo(1);
         await Assert.That(await scenario.ExistsAsync(StripeBilling.Collection, personal)).IsFalse();
         await Assert.That(await scenario.ExistsAsync(StripeBilling.CustomersCollection, binding.CustomerId)).IsFalse();
-        await Assert.That(await scenario.ExistsAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(userId))).IsFalse();
+        await Assert.That(AccountService.IsDeletionFence((await scenario.Environment.State.GetAsync(AccountService.AccountsCollection, AccountService.AccountStorageKey(userId), default))!)).IsTrue();
         await Assert.That(scenario.Environment.Workspace.Organizations.ContainsKey(personal)).IsFalse();
     }
 

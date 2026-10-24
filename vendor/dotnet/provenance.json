@@ -1,16 +1,16 @@
 {
   "package": "TerraScale.DotNet",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "repository": "https://github.com/TerraScale/ts-dotnet",
-  "sourceRevision": "7a70b21055c3607e3d77fa07fec3ef3ce27e2a8b",
-  "sourceTree": "99a07b6debe02cfbb5be490623a97be30533b58d",
-  "sourceArchiveSha256": "58620ca2397ddb26567ee1ef3426826449929bdfea8e62dd6163fc5376da5f39",
-  "file": "TerraScale.DotNet.0.0.10.nupkg",
-  "sourceDateEpoch": 1792866237,
-  "sha256": "ce17d3bde8fd9f1b3a5637e7e7c422f75f68ea67131efe8bce0334840b174eca",
+  "sourceRevision": "03881aa74a52683112180a5035d7b5ced8d65032",
+  "sourceTree": "1e2185a26d2c29a905fd2362ce35012779696e6c",
+  "sourceArchiveSha256": "1e1998d764a10538756aea2377bf9711dbc64d523f378a129693e9c1ce000c8d",
+  "file": "TerraScale.DotNet.0.0.11.nupkg",
+  "sourceDateEpoch": 1792866750,
+  "sha256": "7af0755f448575aef8d29724e17c50f021d72527253d11c396c53945571966e6",
   "assemblySha256ByFramework": {
-    "net10.0": "454d3e53f30292a2eacd48d94a009c51cea08286a09b7bc61f0318c45d73d04e",
-    "net11.0": "3248ed2bdd319001fa16e4c5f35d173f9f2d0873eeda44de3d73d7b558f64b39"
+    "net10.0": "fe96282939443280982a32d6a630d47da7b45636876b88670e41cf018bbee558",
+    "net11.0": "0bde32e4808ddafe43c2c9a1d3479ce9d5422b08f4f3c7f35c477b9d7da7403f"
   },
   "contractSha256ByPath": {
     "contracts/auth/README.md": "80e740190ca57e07e3f68d3d61b637c60c6e0084843b2a3076b6485b354dc022",
@@ -108,5 +108,5 @@
     "contracts/terrabase/sql-execute.md": "5021f06f547328e42f4ee72f0b91ec308cf7b029acb6b86d2e071281fe347761"
   },
   "sdk": "11.0.100-rc.1.26425.128",
-  "qualification": "Two clean locked builds produced identical package bytes; installed-package HTTP fake consumer passed on net10.0 and net11.0. Locally built, not published or live-service qualified."
+  "qualification": "Two clean locked builds produced identical package bytes; installed-package HTTP fake consumer passed on net10.0 and net11.0. Locally built, not published or live-service qualified. Additional installed-package deletion outbox list/ACK consumer passed on net10.0 and net11.0."
 }

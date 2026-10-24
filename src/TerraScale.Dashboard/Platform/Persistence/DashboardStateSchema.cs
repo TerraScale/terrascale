@@ -11,6 +11,8 @@ public static class DashboardStateSchema
     {
         "sessions",
         "account_deletions",
+        "dashboard_deletion_cleanup",
+        "dashboard_account_enrollments",
         "auth_credentials",
         "session_indexes",
         "auth-flows",

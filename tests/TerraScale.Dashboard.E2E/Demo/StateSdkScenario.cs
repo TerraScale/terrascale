@@ -98,7 +98,9 @@ public sealed class StateSdkScenario : IAsyncDisposable
         return await StartHostsAsync();
     }
 
-    private WebApplication Host() => environment.CreateTestHost(root, 0, "http://127.0.0.1", builder =>
+    private WebApplication Host() => environment.CreateTestHost(root, 0, "http://127.0.0.1", builder => ConfigureState(builder));
+
+    internal void ConfigureState(WebApplicationBuilder builder, Func<IHttpClientFactory, IHttpClientFactory>? decorate = null)
     {
         var previousIdentity = (IDashboardIdentity)builder.Services.Last(service => service.ServiceType == typeof(IDashboardIdentity)).ImplementationInstance!;
         identity ??= new(previousIdentity, protocol);
@@ -113,9 +115,13 @@ public sealed class StateSdkScenario : IAsyncDisposable
             lock (transports) transports.Add(stateTransport);
             return stateTransport;
         });
-        builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(services => new StateFactory(transport, services.GetRequiredService<IHttpMessageHandlerFactory>())));
+        builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(services =>
+        {
+            var factory = new StateFactory(transport, services.GetRequiredService<IHttpMessageHandlerFactory>());
+            return decorate is null ? factory : decorate(factory);
+        }));
         builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState, TerraBaseDashboardState>());
-    });
+    }
 
     // Gives the only stored organization an active paid plan, as a reconciled checkout does, and returns its id.
     public async Task<string> UpgradeOnlyOrganizationAsync(string planId)

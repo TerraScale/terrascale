@@ -25,7 +25,7 @@ public static class NotificationEndpoints
 {
     public static IEndpointRouteBuilder MapNotifications(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/notifications", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
+        endpoints.MapGet("/notifications", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountRequest.LoginRedirect(http);

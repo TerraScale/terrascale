@@ -9,7 +9,10 @@ public sealed partial class StripeBilling
     // no refund. A failure keeps the account; a retry reads Stripe before canceling again.
     public async Task CancelForAccountDeletionAsync(string orgId, string orgName, CancellationToken cancellationToken)
     {
-        try { await EndSubscriptionAsync(orgId, cancellationToken); }
+        // The caller verified consent and sole ownership. Fence publication and
+        // resolve an interrupted reservation before persisting the auth operation.
+        // Provider failures retain the deleting binding and its exact references.
+        try { await EndSubscriptionAsync(orgId, cancellationToken, authorizedDeletionPreflight: true); }
         catch (Exception error) when (error is StripeException or HttpRequestException or IOException ||
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {

@@ -29,6 +29,10 @@ public sealed class AccountRecord
 // subject digest; this public identity survives source-state migration.
 public sealed record AccountIdentityBinding(string UserId, string AccountId);
 
+// No profile or identity data survives; the erasure marker prevents create-only
+// writers with an already-loaded session from resurrecting these private keys.
+public sealed record DeletionFence(string ErasureId);
+
 // Dashboard-owned state of a ts-auth organization, keyed by its ts-auth ID. The
 // [JsonIgnore] members are ts-auth's: AccountService fills them from ts-auth on
 // every read and before every write, and they are never stored.
@@ -64,6 +68,8 @@ public sealed class OrganizationRecord
     // until ts-auth lists them. Every change goes through the document's compare-and-set.
     public Dictionary<string, InvitationReservation> InvitationReservations { get; set; } = [];
     public Dictionary<string, string> PendingProjectDeletions { get; set; } = [];
+    // Terminal project IDs contain no names or settings and must survive stale auth snapshots.
+    public HashSet<string> DeletedProjectIds { get; set; } = [];
     [JsonIgnore] public DateTimeOffset CreatedAt { get; set; }
     // ts-auth refused this view: the organization requires two-factor and the caller has not enrolled.
     [JsonIgnore] public bool MfaRequired { get; set; }

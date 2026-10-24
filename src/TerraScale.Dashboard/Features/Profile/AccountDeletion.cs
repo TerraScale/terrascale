@@ -19,6 +19,7 @@ public static class AccountDeletion
     private const string Operations = "account_deletions";
     private const string Cookie = "ts-dashboard-deletion";
     private sealed record Operation(SessionRecord Session, string[] Organizations, string Receipt);
+    private sealed record Envelope(string Key, string UserId, SealedSession Payload);
 
     public static async Task<IResult> DeleteAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity)
     {
@@ -147,12 +148,10 @@ public static class AccountDeletion
                 StripeBilling.ReadBinding(document, orgId).CustomerId is { Length: > 0 } customer)
                 await DropAsync(state, StripeBilling.CustomersCollection, customer, cancellationToken);
             await DropAsync(state, StripeBilling.Collection, orgId, cancellationToken);
-            await DropAsync(state, AccountService.OrganizationsCollection, orgId, cancellationToken);
+            await AccountService.FenceOrganizationDeletionAsync(state, orgId, AccountService.NewId(), cancellationToken);
         }
+        await AccountService.FenceDeletionAsync(state, operation.Session.UserId, AccountService.NewId(), cancellationToken);
         await tokens.ForgetAllAsync(operation.Session.UserId, cancellationToken);
-        var key = AccountService.AccountStorageKey(operation.Session.UserId);
-        await DropAsync(state, AccountService.AccountsCollection, key, cancellationToken);
-        await DropAsync(state, AccountService.IdentitiesCollection, key, cancellationToken);
         await sessions.RevokeUserAsync(operation.Session.UserId, cancellationToken);
         await sessions.EndAsync(http);
         await DropAsync(state, Operations, Key(http), cancellationToken);
@@ -178,7 +177,8 @@ public static class AccountDeletion
         var tag = new byte[16];
         using var aes = new AesGcm(Convert.FromBase64String((await identity.ReadAsync(http.RequestAborted)).SessionEncryptionKey), 16);
         aes.Encrypt(nonce, bytes, ciphertext, tag, Encoding.UTF8.GetBytes(Operations + key));
-        await state.PutAsync(Operations, key, JsonSerializer.SerializeToElement(new SealedSession(Convert.ToBase64String(nonce), Convert.ToBase64String(ciphertext), Convert.ToBase64String(tag))), TerraBasePrecondition.Absent, http.RequestAborted);
+        await state.PutAsync(Operations, key, JsonSerializer.SerializeToElement(new Envelope(key, operation.Session.UserId,
+            new SealedSession(Convert.ToBase64String(nonce), Convert.ToBase64String(ciphertext), Convert.ToBase64String(tag)))), TerraBasePrecondition.Absent, http.RequestAborted);
         http.Response.Cookies.Append(Cookie, http.Request.Cookies[Cookie] ?? http.Request.Cookies["ts-dashboard-session"]!,
             new CookieOptions { HttpOnly = true, Secure = http.Request.IsHttps, SameSite = SameSiteMode.Strict, Path = "/" });
     }
@@ -191,12 +191,42 @@ public static class AccountDeletion
         var document = await state.GetAsync(Operations, key, http.RequestAborted);
         if (document is null) return null;
         if (document.State != "value") throw new IOException("Deletion operation has a causal conflict.");
-        var sealedValue = document.Document.Deserialize<SealedSession>() ?? throw new IOException("Deletion operation is invalid.");
+        var envelope = document.Document.Deserialize<Envelope>() ?? throw new IOException("Deletion operation is invalid.");
+        if (envelope.Key != key) throw new IOException("Deletion operation identity is invalid.");
+        return await OpenAsync(envelope, identity, http.RequestAborted);
+    }
+
+    public static async Task CleanOperationsAsync(IDashboardState state, IDashboardIdentity identity, string subject, CancellationToken cancellationToken)
+    {
+        foreach (var document in await state.ListAsync(Operations, cancellationToken))
+        {
+            var envelope = AccountService.Read<Envelope>(document);
+            if (envelope.UserId != subject) continue;
+            var operation = await OpenAsync(envelope, identity, cancellationToken);
+            if (operation.Session.UserId != subject) throw new IOException("Deletion operation ownership changed.");
+            var current = await state.GetAsync(Operations, envelope.Key, cancellationToken);
+            if (current is null) continue;
+            if (current.Document.GetRawText() != document.Document.GetRawText()) throw new IOException("Deletion operation changed concurrently.");
+            await state.DeleteAsync(Operations, envelope.Key, current.Version, cancellationToken);
+        }
+    }
+
+    private static async Task<Operation> OpenAsync(Envelope envelope, IDashboardIdentity identity, CancellationToken cancellationToken)
+    {
+        if (envelope.Key is not { Length: 64 } || !envelope.Key.All(char.IsAsciiHexDigitLower) || envelope.Payload is null)
+            throw new IOException("Deletion operation scope is invalid.");
+        var sealedValue = envelope.Payload;
         var ciphertext = Convert.FromBase64String(sealedValue.Ciphertext);
         var plaintext = new byte[ciphertext.Length];
-        using var aes = new AesGcm(Convert.FromBase64String((await identity.ReadAsync(http.RequestAborted)).SessionEncryptionKey), 16);
-        aes.Decrypt(Convert.FromBase64String(sealedValue.Nonce), ciphertext, Convert.FromBase64String(sealedValue.Tag), plaintext, Encoding.UTF8.GetBytes(Operations + key));
-        return JsonSerializer.Deserialize<Operation>(plaintext) ?? throw new IOException("Deletion operation is invalid.");
+        try
+        {
+            using var aes = new AesGcm(Convert.FromBase64String((await identity.ReadAsync(cancellationToken)).SessionEncryptionKey), 16);
+            aes.Decrypt(Convert.FromBase64String(sealedValue.Nonce), ciphertext, Convert.FromBase64String(sealedValue.Tag), plaintext, Encoding.UTF8.GetBytes(Operations + envelope.Key));
+            var operation = JsonSerializer.Deserialize<Operation>(plaintext) ?? throw new IOException("Deletion operation is invalid.");
+            if (operation.Session is null || operation.Session.UserId != envelope.UserId) throw new IOException("Deletion operation ownership is invalid.");
+            return operation;
+        }
+        finally { CryptographicOperations.ZeroMemory(plaintext); }
     }
 
     private static async Task DropAsync(IDashboardState state, string collection, string id, CancellationToken cancellationToken)

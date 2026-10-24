@@ -32,9 +32,9 @@ public static class ProfileEndpoints
 {
     public static IEndpointRouteBuilder MapProfile(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/account-deleted", (HttpContext http) =>
+        endpoints.MapGet("/account-deleted", IResult (HttpContext http) =>
             AccountDeletedView.Create(new("Account deleted", DocumentModel.NonceFor(http))));
-        endpoints.MapGet("/profile", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens, ITsAuthMfa mfa, ITsAuthProviders providers) =>
+        endpoints.MapGet("/profile", async Task<IResult> (HttpContext http, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens, ITsAuthMfa mfa, ITsAuthProviders providers) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
             if (context is null) return AccountRequest.LoginRedirect(http);

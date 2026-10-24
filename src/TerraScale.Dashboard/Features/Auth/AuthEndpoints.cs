@@ -25,6 +25,8 @@ public static class AuthEndpoints
         services.AddSingleton<IProjectAccessTokens>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<ITsAuthPlatform>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<ITsAuthProjects>(provider => provider.GetRequiredService<TsAuthGateway>());
+        services.AddSingleton<ITsAuthDeletions>(provider => provider.GetRequiredService<TsAuthGateway>());
+        services.AddHostedService<DeletionReconciler>();
     }
 
     public static void MapAuth(this WebApplication app)

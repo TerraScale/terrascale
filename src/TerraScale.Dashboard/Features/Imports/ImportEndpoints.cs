@@ -71,7 +71,7 @@ public static class ImportEndpoints
             }
             catch (Exception error) when (KnownFailure(http, error)) { return Failure(error); }
         });
-        endpoints.MapGet("/imports/{database}", async (HttpContext http, string database, DashboardSessions sessions, AccountService accounts, ImportService imports) =>
+        endpoints.MapGet("/imports/{database}", async Task<IResult> (HttpContext http, string database, DashboardSessions sessions, AccountService accounts, ImportService imports) =>
         {
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountEndpoints.LoginRedirect(http);
@@ -93,7 +93,7 @@ public static class ImportEndpoints
         foreach (var operation in new[] { "options", "start", "cancel", "resume" })
         {
             var action = operation;
-            endpoints.MapPost("/api/v1/dashboard/imports/{database}/" + action, async (HttpContext http, string database, DashboardSessions sessions, AccountService accounts, ImportService imports) =>
+            endpoints.MapPost("/api/v1/dashboard/imports/{database}/" + action, async Task<IResult> (HttpContext http, string database, DashboardSessions sessions, AccountService accounts, ImportService imports) =>
             {
                 var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
                 if (context is null) return Results.Unauthorized();

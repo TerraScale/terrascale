@@ -74,12 +74,15 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
         var stored = new StoredToken(token, Hash(secret), credential);
         // The index alone cannot authenticate: the account's CAS-protected
         // token set must still contain the token on every request.
+        await AccountEnrollment.RememberAsync(state, userId, IndexCollection, stored.SecretHash, cancellationToken);
+        await AccountEnrollment.RememberAsync(state, userId, Collection, AccountService.AccountId(userId), cancellationToken);
         await state.PutAsync(IndexCollection, stored.SecretHash, JsonSerializer.SerializeToElement(new TokenOwner(userId, token.Id)), TerraBasePrecondition.Absent, cancellationToken);
         await UpdateAsync(userId, set =>
         {
             if (set.Tokens.Count(item => item.RevokedAt is null && item.Token.ExpiresAt > time.GetUtcNow()) >= 25) throw new AccountAccessException("You can have up to 25 live personal access tokens.", 409);
             set.Tokens.Add(stored);
         }, cancellationToken);
+        await AccountEnrollment.ThrowIfErasedAsync(state, userId, cancellationToken);
         return new(token, secret);
     }
 
@@ -120,9 +123,13 @@ public sealed class AccessTokens(IDashboardState state, DashboardSessions sessio
         var set = await ReadAsync(userId, cancellationToken);
         foreach (var token in set.Tokens)
         {
-            await sessions.DeleteCredentialAsync(token.CredentialId, cancellationToken);
+            await sessions.DeleteCredentialAsync(token.CredentialId, userId, cancellationToken);
             if (await state.GetAsync(IndexCollection, token.SecretHash, cancellationToken) is { } index)
+            {
+                if (index.Id != token.SecretHash || AccountService.Read<TokenOwner>(index) != new TokenOwner(userId, token.Token.Id))
+                    throw new IOException("Access token index ownership changed.");
                 await state.DeleteAsync(IndexCollection, token.SecretHash, index.Version, cancellationToken);
+            }
         }
         await state.DeleteAsync(Collection, id, document.Version, cancellationToken);
     }

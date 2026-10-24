@@ -47,7 +47,11 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
             throw new OnboardingValidationException("Choose a valid checkout return path.");
         var client = await ClientAsync(cancellationToken);
         var existing = await ReadAsync(org.Id, cancellationToken);
-        if (existing is not null) RequireStripe(existing);
+        if (existing is not null)
+        {
+            RequireStripe(existing);
+            if (existing.State == "deleting") throw new IOException("Billing deletion is pending.");
+        }
         if (existing?.SubscriptionId is { Length: > 0 })
         {
             await RefreshAsync(org.Id, cancellationToken);
@@ -217,18 +221,61 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
     }
 
     // Organization deletion ends the organization's Stripe subscription now, without proration.
-    // The caller has checked the live owner role; a subscription that already ended is left alone.
-    internal async Task EndSubscriptionAsync(string orgId, CancellationToken cancellationToken)
+    // A live owner preflight or a completed auth deletion proof authorizes the scope.
+    internal async Task<BillingBinding?> EndSubscriptionAsync(string orgId, CancellationToken cancellationToken, bool completedDeletion = false, bool authorizedDeletionPreflight = false)
     {
-        var binding = await ReadAsync(orgId, cancellationToken);
-        if (binding is not { Kind: "stripe", SubscriptionId.Length: > 0 }) return;
+        var document = await state.GetAsync(Collection, orgId, cancellationToken);
+        if (document is null || AccountService.IsDeletionFence(document)) return null;
+        var binding = ReadBinding(document, orgId);
+        if (binding.Kind != "stripe") return binding;
+        var terminalDeletion = completedDeletion || authorizedDeletionPreflight;
+        if (terminalDeletion)
+            binding = await UpdateAsync(orgId, current => current.State = "deleting", cancellationToken, allowDeletion: true);
+        // Creation may have reached Stripe before the Checkout ID's CAS write.
+        // Its durable reservation cannot certify absence of a subscription.
+        if (binding.CheckoutId.Length == 0 && binding.SubscriptionId.Length == 0 && !terminalDeletion)
+            throw new IOException("Checkout creation has not been reconciled.");
+        if (terminalDeletion) await EndCustomersForDeletionAsync(orgId, binding.CustomerId.Length == 0 ? [] : [binding.CustomerId], cancellationToken);
         var client = await ClientAsync(cancellationToken);
-        var subscription = await client.V1.Subscriptions.GetAsync(binding.SubscriptionId, cancellationToken: cancellationToken);
-        if (subscription.Id != binding.SubscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId)
-            throw new IOException("Subscription ownership does not match.");
-        if (subscription.Status is not ("canceled" or "incomplete_expired"))
-            await client.V1.Subscriptions.CancelAsync(subscription.Id, new(), Idempotent("delete-organization-" + subscription.Id), cancellationToken);
-        await UpdateAsync(orgId, current => { if (current.SubscriptionId == subscription.Id) { current.Status = "canceled"; current.PaymentValidated = false; current.RenewalAt = null; } }, cancellationToken);
+        var subscriptions = new HashSet<string>(StringComparer.Ordinal);
+        if (binding.SubscriptionId.Length > 0) subscriptions.Add(binding.SubscriptionId);
+        if (binding.CheckoutId.Length > 0)
+        {
+            // The webhook/browser return may not have persisted a completed
+            // Checkout's subscription yet. Keep its binding until it is terminal.
+            var checkout = await client.V1.Checkout.Sessions.GetAsync(binding.CheckoutId, cancellationToken: cancellationToken);
+            ValidateCheckout(binding, checkout);
+            if (checkout.Status == "open")
+            {
+                checkout = await client.V1.Checkout.Sessions.ExpireAsync(checkout.Id, new(), Idempotent("delete-checkout-" + checkout.Id), cancellationToken);
+                ValidateCheckout(binding, checkout);
+            }
+            if (checkout.Status == "complete" && checkout.Mode == "subscription")
+            {
+                if (checkout.SubscriptionId is not { Length: > 0 }) throw new IOException("Completed checkout subscription is unavailable.");
+                subscriptions.Add(checkout.SubscriptionId);
+            }
+            else if (checkout.Status != "expired" && !(checkout.Status == "complete" && checkout.Mode == "setup"))
+                throw new IOException("Checkout cancellation is incomplete.");
+        }
+        foreach (var subscriptionId in subscriptions)
+        {
+            var subscription = await client.V1.Subscriptions.GetAsync(subscriptionId, cancellationToken: cancellationToken);
+            if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId)
+                throw new IOException("Subscription ownership does not match.");
+            if (subscription.Status is not ("canceled" or "incomplete_expired"))
+            {
+                subscription = await client.V1.Subscriptions.CancelAsync(subscription.Id, new(), Idempotent("delete-organization-" + subscription.Id), cancellationToken);
+                if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId || subscription.Status is not ("canceled" or "incomplete_expired"))
+                    throw new IOException("Subscription cancellation is incomplete.");
+            }
+        }
+        return await UpdateAsync(orgId, current =>
+        {
+            if (current.RequestId != binding.RequestId || current.CheckoutId != binding.CheckoutId || current.SubscriptionId != binding.SubscriptionId)
+                throw new IOException("Billing deletion scope changed.");
+            current.Status = "canceled"; current.PaymentValidated = false; current.RenewalAt = null;
+        }, cancellationToken, allowDeletion: terminalDeletion);
     }
 
     private async Task<bool> RefreshAsync(string orgId, CancellationToken cancellationToken)
@@ -239,6 +286,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
             if (billingDocument is null) return false;
             var binding = ReadBinding(billingDocument, orgId);
             RequireStripe(binding);
+            if (binding.State == "deleting") return false;
             if (binding.CheckoutId.Length == 0 && binding.SubscriptionId.Length == 0) return false;
             var client = await ClientAsync(cancellationToken);
             // Capture both versions before Stripe reads. A conflict in either
@@ -375,6 +423,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         catch (TerraBasePreconditionFailedException) { }
         var existing = await ReadAsync(orgId, cancellationToken) ?? throw new IOException("Billing reservation did not persist.");
         RequireStripe(existing);
+        if (existing.State == "deleting") throw new IOException("Billing deletion is pending.");
         var endedSubscription = existing.SubscriptionId.Length > 0 && existing.Status is "canceled" or "incomplete_expired";
         if (!endedSubscription && existing.StartedAt.AddHours(1) > time.GetUtcNow())
         {
@@ -431,13 +480,14 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         if (binding.Kind != "stripe") throw new AccountAccessException("Internal billing reports usage without Stripe charges.");
     }
 
-    private async Task<BillingBinding> UpdateAsync(string orgId, Action<BillingBinding> update, CancellationToken cancellationToken)
+    private async Task<BillingBinding> UpdateAsync(string orgId, Action<BillingBinding> update, CancellationToken cancellationToken, bool allowDeletion = false)
     {
         for (var attempt = 0; attempt < 4; attempt++)
         {
             var document = await state.GetAsync(Collection, orgId, cancellationToken) ?? throw new IOException("Billing state is unavailable.");
             var binding = ReadBinding(document, orgId);
             RequireStripe(binding);
+            if (binding.State == "deleting" && !allowDeletion) throw new IOException("Billing deletion is pending.");
             update(binding);
             try { await state.PutAsync(Collection, orgId, JsonSerializer.SerializeToElement(binding), TerraBasePrecondition.Matches(document.Version), cancellationToken); return binding; }
             catch (TerraBasePreconditionFailedException) when (attempt < 3) { }

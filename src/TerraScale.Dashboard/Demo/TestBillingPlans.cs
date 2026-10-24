@@ -126,6 +126,17 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
                 if (republishedPrices.TryGetValue(price!["id"]!.GetValue<string>(), out var replacement)) { price["id"] = replacement; observedPublishedPrices.TryAdd(replacement, 0); }
             return Json(listing);
         }
+        if (request.Method == HttpMethod.Get && path is "/v1/checkout/sessions" or "/v1/subscriptions")
+        {
+            using var response = await vendor.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var listing = JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))!;
+            var replacements = path == "/v1/checkout/sessions" ? expiredCheckouts : subscriptions;
+            var rows = listing["data"]!.AsArray();
+            for (var index = 0; index < rows.Count; index++)
+                if (replacements.TryGetValue(rows[index]!["id"]!.GetValue<string>(), out var current)) rows[index] = current.DeepClone();
+            return Json(listing);
+        }
         var isSubscription = path.StartsWith("/v1/subscriptions/", StringComparison.Ordinal);
         var isSchedule = path.StartsWith("/v1/subscription_schedules", StringComparison.Ordinal);
         var isExpire = request.Method == HttpMethod.Post && path.StartsWith("/v1/checkout/sessions/", StringComparison.Ordinal) && path.EndsWith("/expire", StringComparison.Ordinal);
