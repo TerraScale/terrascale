@@ -29,6 +29,7 @@ public static class ReplicationExtensions
         builder.Services.AddSingleton<ICatalogFreshness, CatalogFreshness>();
         builder.Services.AddSingleton<RemoteAckWaiter>();
         builder.Services.AddSingleton<LogChunks>();
+        builder.Services.AddHostedService(provider => provider.GetRequiredService<LogChunks>());
         builder.Services.AddSingleton<PeerStreams>();
         builder.Services.AddSingleton<IReplicationStatus>(provider => provider.GetRequiredService<PeerStreams>());
         // Decision 0013: a machine of a cell (it has a member directory, as the membership does) confirms writes remotely.
