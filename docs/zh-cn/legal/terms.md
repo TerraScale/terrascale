@@ -9,7 +9,7 @@ title: Terms of Service
 
 # Terms of Service
 
-**Effective date:** 2026-10-23
+**Effective date:** 2026-10-24
 
 These Terms of Service ("Terms") govern your use of the TerraScale website, dashboard, APIs, SDKs and hosted database service (the "Service"), provided by TerraScale ("TerraScale", "we", "us"). By creating an account, accepting these Terms in the dashboard or using the Service, you agree to them. If you use the Service for an organization, you confirm you can bind that organization, and "you" means the organization.
 
@@ -40,10 +40,10 @@ We may suspend access that threatens the Service, other customers or third parti
 ## 4. Plans and billing
 
 - Approved subscription prices, allowances and usage rates are listed on the [pricing page](/zh-cn/pricing). Prices are in USD and exclude taxes, which you pay where applicable.
-- Starter is billed $30 yearly only ($2.50/month equivalent); Pro is $20/month and Team is $50/month. Enterprise is $999/month support plus usage through sales, without self-service purchase during Public Alpha. Confirm enrollment and payment availability before purchase.
+- Starter is billed $30 yearly only ($2.50/month equivalent); Pro is $20/month and Team is $50/month. Paid plans are purchased through checkout in the dashboard. Enterprise is $999/month support plus usage through sales, without self-service purchase.
 - No trials or annual Pro/Team discounts are offered.
 - Subscription-change timing, proration and refunds follow the agreed enrollment terms and applicable law. Confirm the available subscription-change workflow before purchase.
-- Free has no automatic overages. Paid plans include allowances followed by pay-as-you-go usage. Allowances and overage rates are approved; usage charges are not yet collected. Reaching an allowance alone does not authorize deletion.
+- Free has no automatic overages: new writes stop at its operation allowance. Paid plans include monthly allowances followed by pay-as-you-go usage: operation units over the allowance are added to your next subscription invoice at the overage rate on the [pricing page](/zh-cn/pricing) (yearly Starter subscriptions are invoiced for them monthly). Storage and client egress over the allowance are not billed yet. Reaching an allowance alone does not authorize deletion.
 - If payment fails, we follow the grace period and notice steps on the [pricing page](/zh-cn/pricing) before any data becomes eligible for deletion.
 
 ## 5. Public Alpha
