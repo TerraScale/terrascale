@@ -260,9 +260,12 @@ class AsyncCollection:
 
     async def query(self, filter: dict[str, Any] | None = None, *, sort: Sequence[dict[str, Any]] | None = None,
               project: Sequence[str] | None = None, limit: int | None = None, cursor: str | None = None,
-              count: bool = False) -> models.Page:
-        """One page of matches; follow ``next_cursor`` or use :meth:`pages`/:meth:`items`."""
-        return await self._c._send(_spec.query_documents(*self._p, filter, sort, project, limit, cursor, count))
+              count: bool = False, aggregate: dict[str, Any] | None = None) -> models.Page:
+        """One page of matches; follow ``next_cursor`` or use :meth:`pages`/:meth:`items`.
+
+        ``aggregate`` (see :func:`terrascale.query.aggregate`) answers ``groups`` instead of items.
+        """
+        return await self._c._send(_spec.query_documents(*self._p, filter, sort, project, limit, cursor, count, aggregate))
 
     async def pages(self, filter: dict[str, Any] | None = None, *, sort: Sequence[dict[str, Any]] | None = None,
                     project: Sequence[str] | None = None, limit: int | None = None) -> AsyncIterator[models.Page]:

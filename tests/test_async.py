@@ -25,6 +25,8 @@ async def test_async_end_to_end(ats: AsyncTerraScale, fake: Fake) -> None:
     pages = [p async for p in todos.pages(q.gte("/n", 10), limit=3)]
     assert [len(p.items) for p in pages] == [3, 1]
     assert len([d async for d in todos.items(limit=2)]) == 5
+    groups = (await todos.query(q.gte("/n", 10), aggregate=q.aggregate(sum=["/n"]))).groups
+    assert groups is not None and groups[0].count == 4 and groups[0].sum == {"/n": 46.0}
 
     await todos.set_ttl("/expiresAt")
     assert await todos.get_ttl() == "/expiresAt"

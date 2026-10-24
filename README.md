@@ -60,8 +60,10 @@ async with AsyncTerraScale() as ts:
 | Client | `TerraScale(api_key=, project=, token=, base_url=)`, `database(name)`, `list_databases()`, `create_database(name, home_region=, replica_regions=, all_regions=)` |
 | Database | `info()`, `update(home_region=, replica_regions=, all_regions=)`, `delete()`, `branch(name)`, `create_collection(name)`, `list_collections()`, `collection(name)` |
 | Documents | `get`, `create`, `put`, `patch(merge=\|ops=)`, `delete`, `list` |
-| Queries | `query(filter, sort=, project=, limit=, cursor=, count=)`, `pages(...)`, `items(...)` |
+| Queries | `query(filter, sort=, project=, limit=, cursor=, count=, aggregate=)`, `pages(...)`, `items(...)` |
 | Vector | `search(path, vector, limit=, metric="cosine"\|"l2")` or `sort=[q.near(...)]` |
+| Geo | `q.within_radius(path, lat, lon, meters)`, `q.within_box(path, south, west, north, east)`, `sort=[q.geo_near(path, lat, lon)]` |
+| Aggregates | `query(filter, aggregate=q.aggregate(group_by, sum=, avg=, min=, max=), limit=)` answers `page.groups` |
 | TTL | `get_ttl()`, `set_ttl("/expiresAt")`, `delete_ttl()` |
 | SQL | `sql(select)`, `check_sql`, `explain_sql`, `execute(sql, args)`, `batch([...])` |
 | Transactions | `with db.transaction() as tx: tx.create/put/patch/delete/assert_/assert_absent/assert_count` |
@@ -74,6 +76,16 @@ async with AsyncTerraScale() as ts:
 `gt`, `gte`, `in_`, `nin`, `exists`, `prefix`, `contains`; paths are JSON Pointers
 (`"/title"`) or `q.ID_PATH`. Sort with `q.asc`/`q.desc`. Patch ops: `q.set_`,
 `q.unset`, `q.append`, `q.inc`, `q.add`, `q.remove`.
+
+**Geo**: points are `{"lat": ..., "lon": ...}` objects (WGS 84 degrees).
+`q.within_radius`/`q.within_box` are ordinary filters (a box with `west > east`
+crosses the antimeridian). `q.geo_near` must be the only sort key: one page of
+at most 100 documents, nearest first, each with `distance` in meters.
+
+**Aggregates**: `q.aggregate(["/status"], sum=["/amount"])` groups by 0-4 paths;
+each `terrascale.Group` has `key` (one value per path), `count`, and `sum`/`avg`/
+`min`/`max` dicts keyed by pointer. `limit` bounds the groups; aggregates take no
+`sort`, `project`, `cursor` or `count`.
 
 **Regions**: `create_database("eu", home_region="fra", replica_regions=["gru"])`,
 `db.update(all_regions=True)`. Remove replica regions before `delete()`.

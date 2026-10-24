@@ -30,7 +30,7 @@ from .errors import (
     UniqueViolationError,
 )
 from .ids import is_valid_id, new_id, validate_id
-from .models import Document, Page, SQLResult, SQLStatementResult, TransactionResult, WriteResult
+from .models import Document, Group, Page, SQLResult, SQLStatementResult, TransactionResult, WriteResult
 
 __all__ = [
     "__version__",
@@ -47,6 +47,7 @@ __all__ = [
     "AsyncAPIKeyTokenSource",
     "Document",
     "Page",
+    "Group",
     "WriteResult",
     "SQLResult",
     "SQLStatementResult",

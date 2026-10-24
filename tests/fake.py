@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import re
 from typing import Any
 from urllib.parse import unquote, unquote_plus
@@ -219,13 +220,20 @@ class Fake:
         f = body.get("filter")
         if f:
             entries = [e for e in entries if _match(f, e[0], e[1][1])]
+        if "aggregate" in body:
+            return httpx.Response(200, json={"items": [], "next_cursor": None, "groups": _groups(body["aggregate"], entries)})
         sort = body.get("sort") or []
         if sort and "near" in sort[0]:
             near = sort[0]["near"]
             key = near["path"].lstrip("/")
             scored = []
             for doc_id, (v, d) in entries:
-                dist = sum((a - b) ** 2 for a, b in zip(d.get(key, []), near["vector"], strict=False)) ** 0.5
+                if "lat" in near:
+                    dist = _meters(d.get(key), near["lat"], near["lon"])
+                    if dist is None:
+                        continue
+                else:
+                    dist = sum((a - b) ** 2 for a, b in zip(d.get(key, []), near["vector"], strict=False)) ** 0.5
                 scored.append({"id": doc_id, "version": v, "state": "value", "document": d, "distance": dist})
             scored.sort(key=lambda x: x["distance"])
             return httpx.Response(200, json={"items": scored[: body.get("limit", 10)], "next_cursor": None})
@@ -300,4 +308,37 @@ def _match(f: dict[str, Any], doc_id: str, doc: dict[str, Any]) -> bool:
         return isinstance(actual, str) and actual.startswith(value)
     if op == "contains":
         return isinstance(actual, list) and value in actual
+    if op == "within":
+        if "meters" in value:
+            dist = _meters(actual, value["lat"], value["lon"])
+            return dist is not None and dist <= value["meters"]
+        if not isinstance(actual, dict) or not value["south"] <= actual["lat"] <= value["north"]:
+            return False
+        west, east, lon = value["west"], value["east"], actual["lon"]
+        return bool(west <= lon <= east if west <= east else lon >= west or lon <= east)
     raise AssertionError(op)
+
+
+def _meters(point: Any, lat: float, lon: float) -> float | None:
+    if not isinstance(point, dict) or not {"lat", "lon"} <= point.keys():
+        return None
+    p1, p2 = math.radians(point["lat"]), math.radians(lat)
+    h = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon - point["lon"]) / 2) ** 2
+    return 2 * 6371008.8 * math.asin(math.sqrt(h))
+
+
+def _groups(agg: dict[str, Any], entries: list[tuple[str, tuple[str, dict[str, Any]]]]) -> list[dict[str, Any]]:
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for doc_id, (_, d) in entries:
+        key = [doc_id if p == "$id" else d.get(p.lstrip("/")) for p in agg.get("group_by", [])]
+        buckets.setdefault(json.dumps(key), []).append(d)
+    groups = []
+    for key, docs in sorted(buckets.items()):
+        g: dict[str, Any] = {"key": json.loads(key), "count": str(len(docs))}
+        for name, fold in (("sum", sum), ("avg", lambda xs: sum(xs) / len(xs)), ("min", min), ("max", max)):
+            if name in agg:
+                nums = {p: [d[p.lstrip("/")] for d in docs if isinstance(d.get(p.lstrip("/")), (int, float))]
+                        for p in agg[name]}
+                g[name] = {p: fold(xs) if xs else (0 if name == "sum" else None) for p, xs in nums.items()}
+        groups.append(g)
+    return groups

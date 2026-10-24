@@ -30,9 +30,13 @@ __all__ = [
     "exists",
     "prefix",
     "contains",
+    "within_radius",
+    "within_box",
     "asc",
     "desc",
     "near",
+    "geo_near",
+    "aggregate",
     "set_",
     "unset",
     "append",
@@ -47,6 +51,7 @@ ID_PATH = "$id"
 Filter = dict[str, Any]
 SortKey = dict[str, Any]
 PatchOp = dict[str, Any]
+Aggregate = dict[str, Any]
 
 
 def _path(path: str) -> str:
@@ -137,6 +142,26 @@ def exists(path: str) -> Filter:
     return {"exists": _path(path)}
 
 
+def _degrees(name: str, value: float, bound: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or abs(value) > bound:
+        raise ValueError(f"{name} must be a finite number of degrees in [-{bound:g}, {bound:g}]")
+    return value
+
+
+def within_radius(path: str, lat: float, lon: float, meters: float) -> Filter:
+    """Match ``{"lat", "lon"}`` points at path at most ``meters`` (0-20000000) away (haversine, WGS 84)."""
+    if isinstance(meters, bool) or not isinstance(meters, (int, float)) or not 0 <= meters <= 20_000_000:
+        raise ValueError("within meters must be a number in [0, 20000000]")
+    return {"within": [_path(path), {"lat": _degrees("lat", lat, 90), "lon": _degrees("lon", lon, 180), "meters": meters}]}
+
+
+def within_box(path: str, south: float, west: float, north: float, east: float) -> Filter:
+    """Match ``{"lat", "lon"}`` points at path inside a box; ``west > east`` crosses the antimeridian."""
+    box = {"south": _degrees("south", south, 90), "west": _degrees("west", west, 180),
+           "north": _degrees("north", north, 90), "east": _degrees("east", east, 180)}
+    return {"within": [_path(path), box]}
+
+
 def asc(path: str) -> SortKey:
     return {"path": _path(path), "order": "asc"}
 
@@ -160,6 +185,40 @@ def near(path: str, vector: Sequence[float], metric: str = "cosine") -> SortKey:
     if metric == "cosine" and all(v == 0 for v in vector):
         raise ValueError("cosine near vector must not be all zeros")
     return {"near": {"path": _path(path), "vector": list(vector), "metric": metric}}
+
+
+def geo_near(path: str, lat: float, lon: float) -> SortKey:
+    """Sort by meters from the point, nearest first, over ``{"lat", "lon"}`` points at path.
+
+    Like :func:`near` it must be the only sort key, with ``limit`` <= 100 and no
+    cursor; each returned document carries ``distance`` in meters.
+    """
+    return {"near": {"path": _path(path), "lat": _degrees("lat", lat, 90), "lon": _degrees("lon", lon, 180)}}
+
+
+def aggregate(group_by: Sequence[str] = (), *, sum: Sequence[str] = (), avg: Sequence[str] = (),
+              min: Sequence[str] = (), max: Sequence[str] = ()) -> Aggregate:
+    """Group the matches by 0-4 paths and fold numbers at JSON Pointers (at most 16 in total).
+
+    Pass it as ``query(filter, aggregate=...)``; the page then has ``groups``
+    and no items. Aggregates take no sort, project, cursor or count, and
+    ``limit`` bounds the number of groups.
+    """
+    if len(group_by) > 4:
+        raise ValueError("aggregate group_by takes at most 4 paths")
+    body: Aggregate = {}
+    if group_by:
+        body["group_by"] = [_path(p) for p in group_by]
+    total = 0
+    for name, paths in (("sum", sum), ("avg", avg), ("min", min), ("max", max)):
+        if paths:
+            if len(set(paths)) != len(paths) or ID_PATH in paths:
+                raise ValueError(f"aggregate {name} takes distinct JSON Pointers")
+            body[name] = [_path(p) for p in paths]
+            total += len(paths)
+    if total > 16:
+        raise ValueError("aggregate takes at most 16 sum/avg/min/max paths in total")
+    return body
 
 
 def set_(path: str, value: Any) -> PatchOp:
