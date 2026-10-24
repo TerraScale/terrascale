@@ -29,7 +29,7 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
     private static readonly string[] ReadScopes = ["documents:read"];
 
     [Test]
-    public async Task Active_totp_refuses_hosted_password_code_and_existing_email_sign_up()
+    public async Task Active_totp_sends_hosted_password_code_and_existing_email_sign_up_to_the_second_factor()
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         await using var oidc = await StartAsync(clock);
@@ -37,19 +37,20 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         var active = await ActivateAsync(oidc.Server, user, clock);
 
         using var password = await PasswordAsync(oidc, user.Email, Password);
-        await RefusedAsync(password, HttpStatusCode.Unauthorized);
-        using var unknown = await PasswordAsync(oidc, "unknown@example.test", Password);
-        await Assert.That(unknown.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(await OidcHarness.PageAsync(password, user.Email)).IsEqualTo(await OidcHarness.PageAsync(unknown, "unknown@example.test"));
+        await SecondFactorStepAsync(password);
+        using (var wrong = await PasswordAsync(oidc, user.Email, "a wrong password"))
+        {
+            await RefusedAsync(wrong, HttpStatusCode.Unauthorized);
+        }
 
         using (var code = await CodeSignInAsync(oidc, user.Email))
         {
-            await RefusedAsync(code, HttpStatusCode.Unauthorized);
+            await SecondFactorStepAsync(code);
         }
 
         clock.UtcNow += HostedAuth.MailCooldown;
         using var signUp = await ExistingSignUpAsync(oidc, user.Email);
-        await RefusedAsync(signUp, HttpStatusCode.Unauthorized);
+        await SecondFactorStepAsync(signUp);
         await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.SessionCollection)).Items.Count).IsEqualTo(0);
         await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.OidcTokenCollection)).Items.Count).IsEqualTo(0);
         var current = (await oidc.Server.App.Services.GetRequiredService<Users>().GetAsync(user.InstanceId, user.Id))!;
@@ -180,7 +181,7 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         await Assert.That(after.Document.GetRawText()).IsEqualTo(before.Document.GetRawText());
         await Assert.That(after.Document.GetProperty("enabled").GetBoolean()).IsTrue();
         using var password = await PasswordAsync(oidc, user.Email, newPassword);
-        await RefusedAsync(password, HttpStatusCode.Unauthorized);
+        await SecondFactorStepAsync(password);
     }
 
     [Test]
@@ -562,6 +563,13 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
 
         await Assert.That(await OidcHarness.ErrorAsync(refresh))
             .IsEqualTo(grantStatus == HttpStatusCode.ServiceUnavailable ? "temporarily_unavailable" : "invalid_grant");
+    }
+
+    /// <summary>The primary credential was right: the page asks for the second factor and opens no session yet.</summary>
+    private static async Task SecondFactorStepAsync(HttpResponseMessage response)
+    {
+        await RefusedAsync(response, HttpStatusCode.OK);
+        await Assert.That(await response.Content.ReadAsStringAsync()).Contains("name=\"challenge\"");
     }
 
     private static async Task RefusedAsync(HttpResponseMessage response, HttpStatusCode status)

@@ -56,7 +56,8 @@ public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IO
 
         // The sign-in and token entry reads run alongside the factor read and the user read that follows it: two storage
         // round trips instead of five.
-        var userRead = mfa.PrimaryUserAsync(OidcIssuer.InstanceId, userId, Claim(claims, OidcIssuer.EpochClaim), Claim(claims, OidcIssuer.StateClaim), cancellationToken);
+        var userRead = mfa.PrimaryUserAsync(OidcIssuer.InstanceId, userId, Claim(claims, OidcIssuer.EpochClaim), Claim(claims, OidcIssuer.StateClaim),
+            Claim(claims, OidcIssuer.MfaClaim) is not null, cancellationToken);
         var liveRead = this.LiveAsync(claims, userId, cancellationToken);
         await Task.WhenAll(userRead, liveRead).ConfigureAwait(false);
         return await liveRead.ConfigureAwait(false) is { } entry && await userRead.ConfigureAwait(false) is { } user

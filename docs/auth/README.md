@@ -79,9 +79,9 @@ verified; see [the ingress checklist](csharp-port.md#trusted-proxy-ingress).
 The internal TOTP and recovery-code credential layer, atomic authorization
 composition, and primary-only authentication guards (TS-707), deployment
 prerequisite, and remaining dashboard MFA slices are documented in
-[`docs/auth/mfa.md`](mfa.md). Active MFA accounts are refused by existing user
-sign-in and online authorization paths; public enrollment and MFA sign-in
-endpoints are not served yet.
+[`docs/auth/mfa.md`](mfa.md). Hosted authenticator enrolment, the second-factor
+sign-in step and the organization "require two-factor" policy are in
+[`docs/auth/mfa-sign-in.md`](mfa-sign-in.md).
 
 ## Target feature inventory
 

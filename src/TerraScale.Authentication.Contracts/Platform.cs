@@ -9,7 +9,8 @@ namespace TerraScale.Authentication.Contracts;
 /// <param name="Owners">Members with the owner role; every owner change writes it, so the last owner is never lost.</param>
 /// <param name="Projects">Its projects; every project creation and deletion writes it.</param>
 /// <param name="Transfer">The pending ownership transfer, if any.</param>
-public sealed record OrganizationRecord(string Id, string InstanceId, string Name, string CreatedBy, DateTimeOffset CreatedAt, int Owners, int Projects, OwnershipTransferRecord? Transfer = null);
+/// <param name="RequireMfa">Whether members must have an active second factor to reach the organization.</param>
+public sealed record OrganizationRecord(string Id, string InstanceId, string Name, string CreatedBy, DateTimeOffset CreatedAt, int Owners, int Projects, OwnershipTransferRecord? Transfer = null, bool RequireMfa = false);
 
 /// <summary>An offer of an organization's ownership to one of its members, confirmed by that member.</summary>
 /// <param name="FromUserId">The owner who offered it; it lapses once that user stops being an owner.</param>
