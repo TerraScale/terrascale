@@ -139,6 +139,7 @@ pub enum Filter {
     Contains(Path, Scalar),
     /// The `{lat, lon}` point at the path lies within the area.
     Within(Path, Area),
+    Search(Path, String),
     /// A filter given as raw JSON grammar, sent unchanged.
     Raw(Box<RawValue>),
 }
@@ -251,6 +252,13 @@ impl Filter {
         )
     }
 
+    /// Full-text terms on a field with a text index. `$id` is not searchable.
+    /// Native Tantivy syntax; 1–4096 UTF-8 bytes, without NUL.
+    #[must_use]
+    pub fn search(path: impl Into<Path>, terms: impl Into<String>) -> Self {
+        Self::Search(path.into(), terms.into())
+    }
+
     /// Parses a filter written in the query-v1 JSON grammar. Only JSON
     /// syntax and object shape are checked locally; the server validates the
     /// grammar.
@@ -282,6 +290,15 @@ impl Filter {
                 c.iter().try_for_each(|f| f.validate_at(depth + 1))
             }
             Self::Not(f) => f.validate_at(depth + 1),
+            Self::Search(_, terms)
+                if terms.is_empty() || terms.len() > 4096 || terms.contains('\0') =>
+            {
+                bad("search terms need 1-4096 UTF-8 bytes and no NUL")
+            }
+            Self::Search(p, _) => match p {
+                Path::Pointer(p) if p.starts_with('/') => Ok(()),
+                _ => bad("search needs a document field pointer"),
+            },
             Self::Lt(_, Scalar::Null)
             | Self::Lte(_, Scalar::Null)
             | Self::Gt(_, Scalar::Null)
@@ -291,6 +308,35 @@ impl Filter {
             }
             Self::Within(_, a) => a.validate(),
             _ => Ok(()),
+        }
+    }
+
+    fn search_count(&self) -> usize {
+        match self {
+            Self::Search(_, _) => 1,
+            Self::And(children) | Self::Or(children) => {
+                children.iter().map(Self::search_count).sum()
+            }
+            Self::Not(child) => child.search_count(),
+            Self::Raw(raw) => {
+                fn search_count(value: &serde_json::Value) -> usize {
+                    usize::from(value.get("search").is_some())
+                        + ["and", "or"]
+                            .iter()
+                            .map(|op| {
+                                value
+                                    .get(op)
+                                    .and_then(serde_json::Value::as_array)
+                                    .map_or(0, |children| {
+                                        children.iter().map(search_count).sum::<usize>()
+                                    })
+                            })
+                            .sum::<usize>()
+                        + value.get("not").map_or(0, search_count)
+                }
+                serde_json::from_str(raw.get()).map_or(0, |value| search_count(&value))
+            }
+            _ => 0,
         }
     }
 }
@@ -328,6 +374,7 @@ impl Serialize for Filter {
             Self::Prefix(p, v) => m.serialize_entry("prefix", &Pair(p, v))?,
             Self::Contains(p, v) => m.serialize_entry("contains", &Pair(p, v))?,
             Self::Within(p, a) => m.serialize_entry("within", &Pair(p, a))?,
+            Self::Search(p, v) => m.serialize_entry("search", &Pair(p, v))?,
             Self::Raw(_) => unreachable!(),
         }
         m.end()
@@ -388,6 +435,12 @@ pub struct SortKey {
 }
 
 impl SortKey {
+    /// Relevance descending; the only sort key, requiring exactly one search predicate.
+    #[must_use]
+    pub fn score() -> Self {
+        Self::desc("$score")
+    }
+
     /// Ascending.
     #[must_use]
     pub fn asc(path: impl Into<Path>) -> Self {
@@ -661,6 +714,16 @@ impl Query {
         if self.sort.len() > 4 {
             return Err(Error::InvalidInput("sort has at most 4 keys".into()));
         }
+        let searches = self.filter.as_ref().map_or(0, Filter::search_count);
+        for key in &self.sort {
+            if matches!(&key.path, Path::Pointer(p) if p == "$score")
+                && (key.order != Order::Desc || self.sort.len() != 1 || searches != 1)
+            {
+                return Err(Error::InvalidInput(
+                    "$score must be descending, the only sort key, with exactly one search predicate".into(),
+                ));
+            }
+        }
         if self.project.len() > 64 {
             return Err(Error::InvalidInput("project has at most 64 paths".into()));
         }
@@ -683,6 +746,9 @@ impl Query {
         }
         let bad = |m: &str| Err(Error::InvalidInput(format!("near: {m}")));
         if self.near.is_some() || self.geo_near.is_some() {
+            if searches != 0 {
+                return bad("search cannot combine with near");
+            }
             if !self.sort.is_empty()
                 || self.cursor.is_some()
                 || (self.near.is_some() && self.geo_near.is_some())

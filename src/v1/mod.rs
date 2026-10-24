@@ -69,6 +69,7 @@ pub use sql_exec::{
     Sql, SqlColumn, SqlStatement, SqlStatementResult, SqlValue, MAX_SQL_BYTES, MAX_SQL_STATEMENTS,
 };
 pub use system::HealthResponse;
+pub use tooling::{Index, IndexKind, IndexRequest};
 pub use tx::{CountBounds, OpResult, Tx, TxResult, MAX_ASSERT_COUNT_OPS, MAX_TX_OPS};
 pub use types::{opt_u64_string, u64_string, Durability, Number};
 pub use webhooks::{
