@@ -182,7 +182,8 @@ if errors.As(err, &apiErr) {
 ```
 
 Queries use filter constructors (`And`, `Or`, `Not`, `Eq`, `Ne`, `Lt`, `Lte`,
-`Gt`, `Gte`, `In`, `Nin`, `Exists`, `Prefix`, `Contains`), paths as JSON
+`Gt`, `Gte`, `In`, `Nin`, `Exists`, `Prefix`, `Contains`, `WithinRadius`,
+`WithinBox`), paths as JSON
 Pointers or `tb.IDPath`, and page with keyset cursors:
 
 ```go
@@ -198,6 +199,30 @@ each returned `Document.Distance` holds the distance:
 
 ```go
 res, err := docs.Query(ctx, tb.Query{Sort: []tb.SortKey{tb.Near("/embedding", vec, tb.Cosine)}, Limit: 10})
+```
+
+Geo points are `{"lat": …, "lon": …}` objects (WGS 84 degrees).
+`tb.WithinRadius(path, lat, lon, meters)` and
+`tb.WithinBox(path, south, west, north, east)` are ordinary filters (a box with
+`west > east` crosses the antimeridian). `tb.NearPoint(path, lat, lon)` sorts
+by meters, nearest first, under the same rules as `Near`; `Distance` holds the
+meters:
+
+```go
+res, err := shops.Query(ctx, tb.Query{Filter: tb.WithinRadius("/loc", -23.55, -46.63, 1000),
+	Sort: []tb.SortKey{tb.NearPoint("/loc", -23.55, -46.63)}, Limit: 20})
+```
+
+`Query.Aggregate` groups matches by 0-4 paths and returns `QueryResult.Groups`
+(empty `Items`, no cursor). It takes no `Sort`, `Project`, `Cursor` or `Count`;
+`Limit` bounds the groups and more groups fail the query. Each `Group` has a
+`Key` (one JSON value per path), a `Count`, and `Sum`/`Avg`/`Min`/`Max` maps
+from pointer to `*float64` (nil when the group has no numbers):
+
+```go
+res, err := orders.Query(ctx, tb.Query{Filter: tb.Gte("/created", 1761264000000),
+	Aggregate: &tb.Aggregate{GroupBy: []string{"/status"}, Sum: []string{"/amount"}, Avg: []string{"/amount"}}})
+for _, g := range res.Groups { fmt.Println(string(g.Key[0]), g.Count, *g.Sum["/amount"]) }
 ```
 
 `Collection.SetTTL(ctx, "/expiresAt")`, `TTL` and `DeleteTTL` manage document

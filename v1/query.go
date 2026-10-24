@@ -21,7 +21,8 @@ type Path interface{ ~string }
 func pathValue[P Path](p P) any { return any(p) }
 
 // Filter is a query-v1 filter expression, built with And, Or, Not, Eq, Ne,
-// Lt, Lte, Gt, Gte, In, Nin, Exists, Prefix and Contains. The zero Filter
+// Lt, Lte, Gt, Gte, In, Nin, Exists, Prefix, Contains, WithinRadius and
+// WithinBox. The zero Filter
 // matches everything and is omitted from requests.
 type Filter struct {
 	node map[string]any
@@ -136,6 +137,45 @@ func Exists[P Path](path P) Filter {
 	return Filter{node: map[string]any{"exists": pathValue(path)}}
 }
 
+func finite(vs ...float64) bool {
+	for _, v := range vs {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return false
+		}
+	}
+	return true
+}
+
+func pointErr(op string, lat, lon float64) error {
+	if !finite(lat, lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180 {
+		return fmt.Errorf("terrabase: %s needs latitude -90 to 90 and longitude -180 to 180", op)
+	}
+	return nil
+}
+
+// WithinRadius matches {"lat","lon"} points at path at most meters (0 to
+// 20000000) from lat, lon by haversine distance. Documents without a numeric
+// point do not match.
+func WithinRadius[P Path](path P, lat, lon, meters float64) Filter {
+	err := pointErr("within", lat, lon)
+	if !finite(meters) || meters < 0 || meters > 20_000_000 {
+		err = errors.New("terrabase: within needs 0-20000000 meters")
+	}
+	circle := map[string]float64{"lat": lat, "lon": lon, "meters": meters}
+	return Filter{node: map[string]any{"within": []any{pathValue(path), circle}}, err: err}
+}
+
+// WithinBox matches {"lat","lon"} points at path inside the box. west > east
+// crosses the antimeridian.
+func WithinBox[P Path](path P, south, west, north, east float64) Filter {
+	err := errors.Join(pointErr("within", south, west), pointErr("within", north, east))
+	if err == nil && south > north {
+		err = errors.New("terrabase: within box south is above north")
+	}
+	box := map[string]float64{"south": south, "west": west, "north": north, "east": east}
+	return Filter{node: map[string]any{"within": []any{pathValue(path), box}}, err: err}
+}
+
 // SortKey is one sort key.
 type SortKey struct {
 	path any
@@ -146,8 +186,10 @@ type SortKey struct {
 
 type near struct {
 	Path   any       `json:"path"`
-	Vector []float32 `json:"vector"`
+	Vector []float32 `json:"vector,omitempty"`
 	Metric Metric    `json:"metric,omitempty"`
+	Lat    *float64  `json:"lat,omitempty"`
+	Lon    *float64  `json:"lon,omitempty"`
 }
 
 // Metric is a vector distance metric for Near.
@@ -180,6 +222,14 @@ func Near[P Path](path P, vector []float32, metric Metric) SortKey {
 		k.err = errors.New("terrabase: cosine near vector must not be all zeros")
 	}
 	return k
+}
+
+// NearPoint sorts by meters between lat, lon and the {"lat","lon"} point at
+// path, nearest first; documents without a point are skipped. Like Near, it
+// must be the only sort key, with Limit 0-100, no Cursor, and each item a
+// Distance in meters.
+func NearPoint[P Path](path P, lat, lon float64) SortKey {
+	return SortKey{path: pathValue(path), near: &near{Path: pathValue(path), Lat: &lat, Lon: &lon}, err: pointErr("near", lat, lon)}
 }
 
 // Asc sorts by path ascending.
@@ -220,6 +270,35 @@ type Query struct {
 	Cursor string `json:"cursor,omitempty"`
 	// Count requests the total match count; ignored when Cursor is set.
 	Count bool `json:"count,omitzero"`
+	// Aggregate groups the matches into QueryResult.Groups instead of
+	// returning items. It takes no Sort, Project, Cursor or Count; Limit
+	// bounds the groups, and more groups fail the query.
+	Aggregate *Aggregate `json:"aggregate,omitempty"`
+}
+
+// Aggregate groups matches by up to 4 paths (JSON Pointers or IDPath) and
+// computes per-group numeric aggregates over distinct JSON Pointers, at most
+// 16 aggregate paths in total. Without GroupBy there is one group.
+type Aggregate struct {
+	GroupBy []string `json:"group_by,omitempty"`
+	Sum     []string `json:"sum,omitempty"`
+	Avg     []string `json:"avg,omitempty"`
+	Min     []string `json:"min,omitempty"`
+	Max     []string `json:"max,omitempty"`
+}
+
+// Group is one aggregate group, in group-key sort order.
+type Group struct {
+	// Key holds one JSON value per GroupBy path; missing members are null.
+	Key []json.RawMessage `json:"key"`
+	// Count is the group's matching documents.
+	Count Uint64 `json:"count"`
+	// Sum, Avg, Min and Max map each requested pointer to its result. They
+	// consider numbers only: without numbers Sum is 0 and the others nil.
+	Sum map[string]*float64 `json:"sum,omitempty"`
+	Avg map[string]*float64 `json:"avg,omitempty"`
+	Min map[string]*float64 `json:"min,omitempty"`
+	Max map[string]*float64 `json:"max,omitempty"`
 }
 
 // Count is a match count; Value is a lower bound when Exact is false.
@@ -236,6 +315,8 @@ type QueryResult struct {
 	NextCursor string `json:"-"`
 	// Count is set when Query.Count was requested.
 	Count *Count `json:"count,omitempty"`
+	// Groups is set when Query.Aggregate was requested; Items is then empty.
+	Groups []Group `json:"groups,omitempty"`
 }
 
 // Query runs one page of q against the collection.
@@ -243,6 +324,14 @@ func (col *Collection) Query(ctx context.Context, q Query) (*QueryResult, error)
 	for _, k := range q.Sort {
 		if k.near != nil && (len(q.Sort) > 1 || q.Limit > 100 || q.Cursor != "") {
 			return nil, errors.New("terrabase: near must be the only sort key, with Limit <= 100 and no Cursor")
+		}
+	}
+	if a := q.Aggregate; a != nil {
+		if len(q.Sort) > 0 || len(q.Project) > 0 || q.Cursor != "" || q.Count {
+			return nil, errors.New("terrabase: aggregate takes no Sort, Project, Cursor or Count")
+		}
+		if len(a.GroupBy) > 4 {
+			return nil, errors.New("terrabase: aggregate groups by at most 4 paths")
 		}
 	}
 	p, err := col.path("query")
