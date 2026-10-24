@@ -113,6 +113,8 @@ public sealed class DemoEnvironment
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(imports)));
             builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
             builder.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(TimeProvider.System));
+            // Scenarios run plan reconciliation on demand, so its timer never races their billing assertions.
+            builder.Services.Remove(builder.Services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(PlanReconciler)));
             builder.Logging.ClearProviders();
             builder.Logging.AddConsole().SetMinimumLevel(LogLevel.Warning);
             configureScenario?.Invoke(builder);
@@ -291,6 +293,8 @@ sealed class TestState : IDashboardState
     public Task InitializeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public Task CheckReadyAsync(CancellationToken cancellationToken) => ReadyError is null ? Task.CompletedTask : Task.FromException(ReadyError);
     public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) => Task.FromResult(Items.GetValueOrDefault(collection + "/" + id));
+    public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<TerraBaseDocument>>(Items.Where(item => item.Key.StartsWith(collection + "/", StringComparison.Ordinal)).Select(item => item.Value).ToArray());
     public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken)
     {
         if (BeforeWriteAsync is { } before) await before(collection, id);

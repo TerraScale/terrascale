@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet;
 
@@ -116,6 +117,23 @@ public sealed class StateSdkScenario : IAsyncDisposable
         builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState, TerraBaseDashboardState>());
     });
 
+    // Gives the only stored organization an active paid plan, as a reconciled checkout does, and returns its id.
+    public async Task<string> UpgradeOnlyOrganizationAsync(string planId)
+    {
+        var state = first!.Services.GetRequiredService<IDashboardState>();
+        var document = (await state.ListAsync(AccountService.OrganizationsCollection, default)).Single();
+        var organization = AccountService.Read<OrganizationRecord>(document);
+        var stored = await state.GetAsync(AccountService.OrganizationsCollection, organization.Id, default) ?? throw new IOException("The organization is unavailable.");
+        organization.PlanId = planId;
+        organization.BillingStatus = "active";
+        await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization),
+            TerraScale.DotNet.TerraBase.TerraBasePrecondition.Matches(stored.Version), default);
+        return organization.Id;
+    }
+
+    // One pass of the production reconciler (test hosts run it on demand, never on its timer).
+    public Task ReconcilePlansAsync() => ActivatorUtilities.CreateInstance<PlanReconciler>(first!.Services).RunOnceAsync(default);
+
     // Sends through the running host's credentialed state client to a destination other than the state listener.
     public async Task<string?> SendStateClientElsewhereAsync(Uri destination)
     {
@@ -213,6 +231,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
         private readonly TerraScaleIdGenerator ids = new();
         private readonly Dictionary<string, Collection> collections = new(StringComparer.Ordinal);
         private readonly ConcurrentQueue<string> failures = new();
+        private readonly Dictionary<string, string> organizationPlans = new(StringComparer.Ordinal);
         private TaskCompletionSource? collectionGate;
         private TaskCompletionSource? documentGate;
         private int pausedCreates;
@@ -250,13 +269,21 @@ public sealed class StateSdkScenario : IAsyncDisposable
                 Interlocked.Increment(ref privateRequests);
                 if (Mode == "forbidden" && http.Request.Method != "GET") return Error(403, "forbidden");
                 var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-                // TerraBasePlanSync publishes each project's plan on the same private listener.
-                if (parts is ["admin", "projects", var planProject, "plan"])
+                // TerraBasePlanSync publishes each organization's plan on the same private listener, and each project's while
+                // TerraBase may not serve the organization route yet.
+                if (parts is ["admin", "organizations" or "projects", var planOwner, "plan"])
                 {
                     using var plan = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
                     var tier = plan.RootElement.TryGetProperty("plan", out var value) ? value.GetString() : null;
-                    Require(http.Request.Method == "PUT" && TerraScaleIds.IsValid(planProject) && tier is "hobby" or "starter" or "pro" or "enterprise",
-                        "A plan publish is a PUT of a known plan for a canonical project id.");
+                    Require(http.Request.Method == "PUT" && TerraScaleIds.IsValid(planOwner) && tier is "hobby" or "starter" or "pro" or "team" or "enterprise",
+                        "A plan publish is a PUT of a known plan for a canonical organization or project id.");
+                    if (parts[1] == "organizations")
+                        lock (gate)
+                        {
+                            // Like TerraBase, an organization without storage keeps the default Hobby without a record.
+                            if (tier == "hobby" && !organizationPlans.ContainsKey(planOwner)) return Error(404, "not_found");
+                            organizationPlans[planOwner] = tier!;
+                        }
                     return Results.Json(new { plan = tier });
                 }
                 Require(parts.Length >= 5 && parts[0] == "v1" && parts[1] == "projects" && parts[2] == Project &&
@@ -273,6 +300,11 @@ public sealed class StateSdkScenario : IAsyncDisposable
                     lock (gate) return collections.TryGetValue(parts[6], out var collection)
                         ? Results.Json(CollectionBody(parts[6], collection)) : Error(404, "unknown_collection");
                 }
+                if (parts.Length == 8 && parts[7] == "documents" && http.Request.Method == "GET")
+                    lock (gate) return collections.TryGetValue(parts[6], out var listed)
+                        ? Results.Json(new { items = listed.Documents.Where(entry => !entry.Value.Deleted).OrderBy(entry => entry.Key, StringComparer.Ordinal)
+                            .Select(entry => new { id = entry.Key, version = entry.Value.Version, state = "value", document = entry.Value.Value }).ToArray(), next_cursor = (string?)null })
+                        : Error(404, "unknown_collection");
                 Require(parts.Length == 9 && parts[7] == "documents" && parts[8] == "by-key" && http.Request.Query.Keys.SequenceEqual(new[] { "id" }),
                     "The official state SDK must use the genuine by-key point route and one opaque id parameter.");
                 var id = http.Request.Query["id"].ToString();
@@ -354,6 +386,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
                     case "pause-account-writes": pausedWrites = 0; documentGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
                     case "release-account-writes": documentGate?.TrySetResult(); documentGate = null; break;
                     case "drop-collection": collections.Remove(body.GetProperty("name").GetString()!); break;
+                    case "wipe-plans": organizationPlans.Clear(); break;
                     default: return Results.BadRequest();
                 }
             }
@@ -376,6 +409,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
                 privateRequests,
                 redirectTargetRequests,
                 failures = failures.ToArray(),
+                organizationPlans = organizationPlans.ToDictionary(),
                 collections = collections.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => new
                 { name = item.Key, id = item.Value.Id, createdAt = item.Value.CreatedAt, documents = item.Value.Documents.Count(entry => !entry.Value.Deleted) }).ToArray(),
                 documentDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', collections.OrderBy(item => item.Key, StringComparer.Ordinal)

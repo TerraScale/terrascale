@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Billing;
 public static class BillingEndpoints
 {
     public static IServiceCollection AddBillingFeatures(this IServiceCollection services) =>
-        services.AddSingleton<StripeBilling>().AddSingleton<InternalBillingService>();
+        services.AddSingleton<StripeBilling>().AddSingleton<InternalBillingService>().AddHostedService<PlanReconciler>();
 
     public static async Task<BillingPage> LoadAsync(ShellModel shell, StripeBilling billing, SpendingService spending,
         IQueryCollection query, DateTimeOffset now, CancellationToken cancellationToken, InternalBillingService internalBilling)

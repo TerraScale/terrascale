@@ -50,6 +50,7 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
         }
         return document;
     }
+    public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken cancellationToken) => state.ListAsync(collection, cancellationToken);
     public Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken) => state.DeleteAsync(collection, id, version, cancellationToken);
 
     public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken)

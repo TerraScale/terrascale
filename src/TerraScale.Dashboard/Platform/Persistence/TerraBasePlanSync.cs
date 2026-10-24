@@ -4,65 +4,85 @@ using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Shared.Accounts;
 using TerraScale.Dashboard.Shared.Databases;
+using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Platform.Persistence;
 
-// TerraBase enforces each project's monthly operation allowance from the plan the platform publishes for the
-// storage organization the project enrolled (PUT /admin/projects/{project}/plan on its private listener). The
-// dashboard owns plans, so it publishes the organization's entitled plan to every project it knows.
-// shortcut: a project whose first database is created outside the dashboard gets the plan on the organization's
-// next dashboard view or billing change (TerraBase answers 404 until a database enrolls it); push from ts-auth
-// project events once the dashboard receives them.
+// TerraBase enforces each organization's monthly operation and database allowances from the plan the platform publishes
+// for its storage organization, whose id is the ts-auth organization id (PUT /admin/organizations/{organization}/plan on
+// its private listener). The dashboard owns plans, so it publishes every organization's entitled plan: on each dashboard
+// view and billing change, and from PlanReconciler every 30 seconds, so a wipe, a missed write or an enrollment after
+// the last change converges within a minute. TerraBase keeps a paid plan published before the first database.
 public sealed class TerraBasePlanSync(IHttpClientFactory http, IHostEnvironment environment, TimeProvider time, ILogger<TerraBasePlanSync> logger)
 {
-    // Re-publish after this long so a TerraBase reset or a missed write converges without a restart.
-    private static readonly TimeSpan Fresh = TimeSpan.FromMinutes(10);
+    // Views skip a publish this recent; the reconciler always publishes.
+    private static readonly TimeSpan Fresh = TimeSpan.FromSeconds(30);
     private readonly Uri origin = TerraBaseDashboardState.Origin(environment);
     private readonly ConcurrentDictionary<string, (string Plan, DateTimeOffset At)> published = new(StringComparer.Ordinal);
 
-    // TerraBase plan tiers by monthly 4 KiB operation units (https://terrascale.tech/pricing.json): hobby 100K, starter 1M, pro 100M.
-    // An unpaid organization (billing_required) keeps Hobby, so no allowance is granted before payment.
+    // TerraBase's tiers carry the published catalog's allowances (https://terrascale.tech/pricing.json), so an organization
+    // gets the smallest catalog plan covering its operation and database allowances; an internal policy above every
+    // catalog plan is enterprise. An unpaid organization (billing_required) keeps Hobby, so no allowance precedes payment.
     public static string PlanFor(OrganizationRecord organization)
     {
         if (organization.BillingStatus != "active") return "hobby";
-        return PlanCatalog.Limits(organization).MonthlyOperations switch
-        {
-            <= 100_000 => "hobby",
-            <= 1_000_000 => "starter",
-            <= 100_000_000 => "pro",
-            _ => "enterprise",
-        };
+        var operations = PlanCatalog.Limits(organization).MonthlyOperations;
+        var databases = PlanCatalog.ResourceLimits(organization).Databases;
+        var plan = PlanCatalog.Plans.OrderBy(plan => plan.Allowances.MonthlyOperations)
+            .FirstOrDefault(plan => operations <= plan.Allowances.MonthlyOperations && databases <= plan.Resources.Databases);
+        return plan is null ? "enterprise" : plan.Key == "free" ? "hobby" : plan.Key;
     }
 
-    public async Task PublishAsync(OrganizationRecord organization, CancellationToken cancellationToken)
+    public Task PublishAsync(OrganizationRecord organization, CancellationToken cancellationToken) => PublishAsync(organization, false, cancellationToken);
+
+    internal async Task PublishAsync(OrganizationRecord organization, bool reconcile, CancellationToken cancellationToken)
     {
-        if (PlatformDatabases.IsPlatform(organization.Id)) return;
+        if (PlatformDatabases.IsPlatform(organization.Id) || !TerraScaleIds.IsValid(organization.Id)) return;
         string plan;
         // An invalid internal billing policy fails the billing pages themselves; publishing waits for a valid one.
         try { plan = PlanFor(organization); }
         catch (IOException) { return; }
         var now = time.GetUtcNow();
-        foreach (var project in organization.Projects.Keys)
+        if (!reconcile && published.TryGetValue(organization.Id, out var last) && last.Plan == plan && now - last.At < Fresh) return;
+        try
         {
-            if (published.TryGetValue(project, out var last) && last.Plan == plan && now - last.At < Fresh) continue;
-            try
+            using var response = await PutAsync($"admin/organizations/{organization.Id}/plan", plan, cancellationToken);
+            // 404 is Hobby for an organization TerraBase has no storage for yet: Hobby is its default.
+            if (response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NotFound && plan == "hobby" && organization.Projects.Count == 0)
             {
-                // The private listener speaks only HTTP/2 without TLS, so the request needs prior knowledge, as the SDK sends it.
-                using var request = new HttpRequestMessage(HttpMethod.Put, new Uri(origin, $"admin/projects/{project}/plan"))
-                {
-                    Version = HttpVersion.Version20,
-                    VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-                    Content = JsonContent.Create(new PlanBody(plan), PlanSyncJson.Default.PlanBody),
-                };
-                using var response = await http.CreateClient(TerraBaseDashboardState.ClientName).SendAsync(request, cancellationToken);
-                if (response.IsSuccessStatusCode) published[project] = (plan, now);
-                else if (response.StatusCode != HttpStatusCode.NotFound)
-                    logger.LogWarning("TerraBase refused plan {Plan} for project {Project}: {Status}", plan, project, (int)response.StatusCode);
+                published[organization.Id] = (plan, now);
+                return;
             }
-            // The page or webhook that triggered this still succeeds; the next view or change publishes again.
-            catch (HttpRequestException error) { logger.LogWarning("TerraBase plan publish failed for project {Project} ({ErrorType})", project, error.GetType().Name); }
-            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { logger.LogWarning("TerraBase plan publish timed out for project {Project}", project); }
+            if (response.StatusCode != HttpStatusCode.NotFound)
+            {
+                logger.LogWarning("TerraBase refused plan {Plan} for organization {Organization}: {Status}", plan, organization.Id, (int)response.StatusCode);
+                return;
+            }
+            // shortcut: a TerraBase without the organization route answers 404; publish to each enrolled project as before
+            // until every region serves it.
+            var enrolled = true;
+            foreach (var project in organization.Projects.Keys)
+            {
+                using var fallback = await PutAsync($"admin/projects/{project}/plan", plan, cancellationToken);
+                enrolled &= fallback.IsSuccessStatusCode || fallback.StatusCode == HttpStatusCode.NotFound;
+            }
+            if (enrolled) published[organization.Id] = (plan, now);
         }
+        // The page, webhook or reconciler pass that triggered this still succeeds; the next one publishes again.
+        catch (HttpRequestException error) { logger.LogWarning("TerraBase plan publish failed for organization {Organization} ({ErrorType})", organization.Id, error.GetType().Name); }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { logger.LogWarning("TerraBase plan publish timed out for organization {Organization}", organization.Id); }
+    }
+
+    private async Task<HttpResponseMessage> PutAsync(string path, string plan, CancellationToken cancellationToken)
+    {
+        // The private listener speaks only HTTP/2 without TLS, so the request needs prior knowledge, as the SDK sends it.
+        using var request = new HttpRequestMessage(HttpMethod.Put, new Uri(origin, path))
+        {
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+            Content = JsonContent.Create(new PlanBody(plan), PlanSyncJson.Default.PlanBody),
+        };
+        return await http.CreateClient(TerraBaseDashboardState.ClientName).SendAsync(request, cancellationToken);
     }
 }
 
