@@ -3,6 +3,7 @@ using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Logs;
 
@@ -10,7 +11,7 @@ public sealed record DatabaseLogEntry(string Id, DateTimeOffset Time, string Reg
     int Status, double LatencyMs, long Operations, bool IsQuery);
 public sealed record DatabaseLogBatch(string DatabaseId, IReadOnlyList<DatabaseLogEntry> Items, bool Truncated, bool RecordingLimited);
 
-public sealed class DatabaseLogBackend(IHttpClientFactory factory, IProjectAccessTokens tokens, IDatabaseBackend databases)
+public sealed class DatabaseLogBackend(IHttpClientFactory factory, IProjectAccessTokens tokens, IDatabaseBackend databases, TimeProvider time)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     { RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true };
@@ -38,6 +39,35 @@ public sealed class DatabaseLogBackend(IHttpClientFactory factory, IProjectAcces
         var batch = document.RootElement.Deserialize<DatabaseLogBatch>(Json) ?? throw new JsonException("Request logs are missing.");
         Validate(batch, databaseId, status);
         return batch;
+    }
+
+    public async Task<IReadOnlyList<TerraBaseQueryShape>> ReadQueryShapesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
+    {
+        if (PlatformDatabases.IsPlatform(scope.OrganizationId)) throw PlatformDatabases.ReadOnly();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(5));
+        var database = (await databases.ListAsync(scope, home, deadline.Token)).SingleOrDefault(item => item.Id == databaseId)
+            ?? throw new AccountAccessException("Database is unavailable.", 404);
+        var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
+        var access = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, ["databases:read"], deadline.Token);
+        using var http = factory.CreateClient("platform");
+        var sdk = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
+        {
+            BaseAddress = home.Api,
+            Region = home.Id,
+            RequestTimeout = TimeSpan.FromSeconds(5),
+            AccessTokenProvider = _ => ValueTask.FromResult(access)
+        });
+        var shapes = await sdk.Database(scope.ProjectId, database.Name).ListQueryShapesAsync(deadline.Token);
+        if (shapes.Items is null || shapes.Items.Any(item => item is null || string.IsNullOrEmpty(item.Collection) || string.IsNullOrEmpty(item.Shape) ||
+            item.Queries < 0 || item.RowsScanned < 0 || item.LastSeenAt == default ||
+            !double.IsFinite(item.TotalLatencyMs) || item.TotalLatencyMs < 0 || !double.IsFinite(item.MaxLatencyMs) || item.MaxLatencyMs < 0 ||
+            item.P95LatencyMs is { } p95 && (!double.IsFinite(p95) || p95 < 0)))
+            throw new JsonException("Query shapes returned invalid measurements.");
+        var now = time.GetUtcNow();
+        return shapes.Items.Where(item => item.LastSeenAt >= now.AddHours(-24) && item.LastSeenAt <= now)
+            .OrderByDescending(item => item.P95LatencyMs ?? item.MaxLatencyMs)
+            .ThenBy(item => item.Collection, StringComparer.Ordinal).ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
     }
 
     internal static void Validate(DatabaseLogBatch batch, string databaseId, string status)
