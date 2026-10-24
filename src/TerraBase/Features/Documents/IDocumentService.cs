@@ -178,12 +178,13 @@ public interface IDocumentService
         TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken);
 
     /// <summary>
-    /// <see cref="WriteAsync"/> for a client write attempt (decision 0013a): on a cell, a write with a put, patch or delete
-    /// is admitted before it executes and answered only once another placed region confirmed its commit, or as outcome
-    /// unknown. Assertions only answer <c>unchanged</c> without a wait.
+    /// <see cref="WriteAsync"/> for a client write attempt: answered after this region's durable commit (decision 0013e). With
+    /// <paramref name="waitForRemote"/> (decision 0013a), on a cell, a write with a put, patch or delete is admitted before it
+    /// executes and answered only once another placed region confirmed its commit, or as outcome unknown. Assertions only
+    /// answer <c>unchanged</c> without a wait.
     /// </summary>
     ValueTask<WriteOutcome> WriteConfirmedAsync(
-        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken);
+        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool waitForRemote, CancellationToken cancellationToken);
 
     /// <summary>
     /// Applies one operation in a write transaction the caller owns and commits, with the refusals of

@@ -108,6 +108,60 @@ public sealed class RemoteAckTests
     }
 
     [Test]
+    [Arguments(null)]
+    [Arguments("local_durable")]
+    public async Task A_write_answers_after_its_local_commit_while_the_peer_ack_is_held_and_still_replicates(string? header)
+    {
+        await using var pair = await Pair.StartAsync();
+        var id = EntityIds.New().ToString();
+        using var held = pair.PeerAck.Hold(id);
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, pair.Document(id)) { Content = JsonContent.Create(new { n = 1 }) };
+            if (header is not null)
+            {
+                request.Headers.Add("TB-Durability", header);
+            }
+
+            using var response = await pair.LocalClient.SendAsync(request, pair.Token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString())
+                .IsEqualTo("local_durable");
+            await Assert.That(held.Release.Task.IsCompleted).IsFalse().Because("the peer ack is still held");
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+        }
+
+        await TerraBaseTestServer.EventuallyAsync(async _ =>
+        {
+            using var peer = await pair.PeerClient.GetAsync(pair.Document(id), pair.Token);
+            return peer.StatusCode == HttpStatusCode.OK;
+        }, timeout: TimeSpan.FromSeconds(30));
+    }
+
+    [Test]
+    public async Task A_local_transaction_answers_local_durable_and_an_unknown_durability_is_refused()
+    {
+        await using var pair = await Pair.StartAsync();
+        var id = EntityIds.New().ToString();
+        using (var response = await pair.LocalClient.PostAsJsonAsync(new Uri($"{pair.DatabasePath}/transactions", UriKind.Relative),
+            new { ops = new object[] { new { op = "put", collection = Collection, id, document = new { n = 1 } } } }, pair.Token))
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString()).IsEqualTo("local_durable");
+        }
+
+        using var invalid = new HttpRequestMessage(HttpMethod.Put, pair.Document(EntityIds.New().ToString())) { Content = JsonContent.Create(new { n = 1 }) };
+        invalid.Headers.Add("TB-Durability", "eventual");
+        using var refused = await pair.LocalClient.SendAsync(invalid, pair.Token);
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That((await refused.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("error").GetProperty("message").GetString())
+            .Contains("TB-Durability");
+    }
+
+    [Test]
     public async Task A_held_ack_answers_unknown_at_the_bound_and_the_commit_keeps_replicating()
     {
         await using var pair = await Pair.StartAsync();
@@ -1559,6 +1613,9 @@ public sealed class RemoteAckTests
 
         public HttpClient PeerClient { get; private set; } = null!;
 
+        // The origin without TB-Durability: writes answer after the local commit.
+        public HttpClient LocalClient { get; private set; } = null!;
+
         public CancellationToken Token => _deadline.Token;
 
         public string DatabasePath => _tenant!.Path("db");
@@ -1714,7 +1771,11 @@ public sealed class RemoteAckTests
                 pair._peer = await pair.StartMachineAsync(peerRegion, pair.PeerAck);
                 pair._tenant = await ReplicationTenant.CreateAsync(pair._origin.Server, ["db"], pair.Token, ["sjc"]);
                 await pair._tenant.BindAsync(pair._peer.Server);
-                pair.Client = pair._origin.DataClient(await pair._tenant.KeyAsync(pair._origin.Server, ["documents:read", "documents:write"], pair.Token));
+                var key = await pair._tenant.KeyAsync(pair._origin.Server, ["documents:read", "documents:write"], pair.Token);
+                pair.LocalClient = pair._origin.DataClient(key);
+                pair.Client = pair._origin.DataClient(key);
+                // These tests cover the opt-in remote-durable answer (decision 0013a); the default is local_durable (0013e).
+                pair.Client.DefaultRequestHeaders.Add("TB-Durability", "remote_durable");
                 pair.PeerClient = pair._peer.DataClient(await pair._tenant.KeyAsync(pair._peer.Server, ["documents:read", "documents:write"], pair.Token));
                 using var collection = await pair.Client.PostAsJsonAsync(new Uri($"{pair.DatabasePath}/collections", UriKind.Relative), new { name = "items" }, pair.Token);
                 await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -1785,6 +1846,7 @@ public sealed class RemoteAckTests
             PeerAck.Release();
             Client?.Dispose();
             PeerClient?.Dispose();
+            LocalClient?.Dispose();
             if (_peer is not null)
             {
                 await _peer.DisposeAsync();
