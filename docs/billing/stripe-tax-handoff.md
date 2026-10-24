@@ -1,6 +1,6 @@
 # Live Stripe Tax activation handoff
 
-TS-954 is implemented and proved against Stripe **test mode** first. No live seller identity, tax registration or credential is invented or installed by this work.
+TS-954 must be proved against Stripe **test mode** before live activation. The implementation and HTTP fixture checks do not establish finalized invoice/PDF compliance; the real test proof is blocked on the account eligibility described below. No live seller identity, tax registration or credential is invented or installed by this work.
 
 ## One user step before live tax invoices
 
