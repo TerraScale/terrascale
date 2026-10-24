@@ -8,7 +8,7 @@ const period = record({ from: text, to: text, granularity: text, reads: numeric,
 const series = list(record({ start: text, reads: numeric, writes: numeric }));
 const databaseUsage = record({ databaseId: requireId, storageBytes: numeric, logicalBytes: numeric, collections: numeric,
   documents: numeric, reads: numeric, writes: numeric, period, series });
-const projectUsage = record({ projectId: requireId, databases: numeric, storageBytes: numeric, logicalBytes: numeric,
+const projectUsage = record({ projectId: requireId, databases: numeric, storageBytes: numeric, logicalBytes: numeric, fileBytes: numeric,
   documents: numeric, reads: numeric, writes: numeric, period, series, items: list(databaseUsage) });
 const bandwidth = record({ bytesSent: numeric, bytesReceived: numeric });
 const directedBandwidth = list(record({ sourceRegion: text, destinationRegion: text, kind: text, bytesSent: numeric, bytesReceived: numeric }));

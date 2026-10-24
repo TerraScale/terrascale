@@ -1,0 +1,146 @@
+{
+  "producerRevision": "1c94fe262795ea87f55248989e04f5b93f2f40bf",
+  "routes": [
+    {
+      "operation": "createFileBucket",
+      "method": "POST",
+      "pathTemplate": "/v1/projects/{project}/buckets",
+      "permission": "documents:write",
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "successStatuses": [
+        201
+      ],
+      "responseMediaType": "application/json",
+      "idempotencyKey": "none",
+      "replaySafe": false,
+      "contract": "docs/file-buckets.md",
+      "contractText": []
+    },
+    {
+      "operation": "listFileBuckets",
+      "method": "GET",
+      "pathTemplate": "/v1/projects/{project}/buckets",
+      "permission": "documents:read",
+      "requestMediaTypes": [],
+      "successStatuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "idempotencyKey": "none",
+      "replaySafe": true,
+      "contract": "docs/file-buckets.md",
+      "contractText": []
+    },
+    {
+      "operation": "setFileBucketRules",
+      "method": "PUT",
+      "pathTemplate": "/v1/projects/{project}/buckets/{bucket}/rules",
+      "permission": "documents:write",
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "successStatuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "idempotencyKey": "none",
+      "replaySafe": false,
+      "contract": "docs/file-buckets.md",
+      "contractText": []
+    },
+    {
+      "operation": "deleteFileBucket",
+      "method": "DELETE",
+      "pathTemplate": "/v1/projects/{project}/buckets/{bucket}",
+      "permission": "documents:write",
+      "requestMediaTypes": [],
+      "successStatuses": [
+        204
+      ],
+      "responseMediaType": "",
+      "idempotencyKey": "none",
+      "replaySafe": false,
+      "contract": "docs/file-buckets.md",
+      "contractText": []
+    },
+    {
+      "operation": "createFileUpload",
+      "method": "POST",
+      "pathTemplate": "/v1/projects/{project}/buckets/{bucket}/files/upload",
+      "permission": "documents:write",
+      "requestMediaTypes": [
+        "application/json"
+      ],
+      "successStatuses": [
+        201
+      ],
+      "responseMediaType": "application/json",
+      "idempotencyKey": "none",
+      "replaySafe": false,
+      "contract": "docs/file-buckets.md",
+      "contractText": []
+    },
+    {
+      "operation": "completeFileUpload",
+      "method": "POST",
+      "pathTemplate": "/v1/projects/{project}/buckets/{bucket}/files/{file}/complete",
+      "permission": "documents:write",
+      "requestMediaTypes": [],
+      "successStatuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "idempotencyKey": "none",
+      "replaySafe": false,
+      "contract": "docs/file-buckets.md",
+      "contractText": []
+    },
+    {
+      "operation": "listBucketFiles",
+      "method": "GET",
+      "pathTemplate": "/v1/projects/{project}/buckets/{bucket}/files",
+      "permission": "documents:read",
+      "requestMediaTypes": [],
+      "successStatuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "idempotencyKey": "none",
+      "replaySafe": true,
+      "contract": "docs/file-buckets.md",
+      "contractText": []
+    },
+    {
+      "operation": "createFileDownload",
+      "method": "POST",
+      "pathTemplate": "/v1/projects/{project}/buckets/{bucket}/files/{file}/download",
+      "permission": "documents:read",
+      "requestMediaTypes": [],
+      "successStatuses": [
+        200
+      ],
+      "responseMediaType": "application/json",
+      "idempotencyKey": "none",
+      "replaySafe": false,
+      "contract": "docs/file-buckets.md",
+      "contractText": []
+    },
+    {
+      "operation": "deleteBucketFile",
+      "method": "DELETE",
+      "pathTemplate": "/v1/projects/{project}/buckets/{bucket}/files/{file}",
+      "permission": "documents:write",
+      "requestMediaTypes": [],
+      "successStatuses": [
+        204
+      ],
+      "responseMediaType": "",
+      "idempotencyKey": "none",
+      "replaySafe": false,
+      "contract": "docs/file-buckets.md",
+      "contractText": []
+    }
+  ]
+}

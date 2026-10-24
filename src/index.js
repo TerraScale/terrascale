@@ -161,3 +161,13 @@ export { createTerraBaseSystemClient, V1Health, V1Platform } from "./v1/system.j
 /** @typedef {import("./v1/shape-manifest.js").V1ShapeManifestRequest} V1ShapeManifestRequest */
 /** @typedef {import("./v1/shape-reader.js").V1ShapeKeyRequest} V1ShapeKeyRequest */
 /** @typedef {import("./v1/shape-reader.js").V1ShapeKey} V1ShapeKey */
+
+export { V1FileStorage, V1FileBucket } from "./v1/file-storage.js";
+/** @typedef {import("./v1/file-storage.js").FileAccessPolicy} FileAccessPolicy */
+/** @typedef {import("./v1/file-storage.js").FileAccessRules} FileAccessRules */
+/** @typedef {import("./v1/file-storage.js").FileBucketInfo} FileBucketInfo */
+/** @typedef {import("./v1/file-storage.js").StoredFile} StoredFile */
+/** @typedef {import("./v1/file-storage.js").SignedFileUrl} SignedFileUrl */
+/** @typedef {import("./v1/file-storage.js").FileUploadRequest} FileUploadRequest */
+/** @typedef {import("./v1/file-storage.js").FileUploadOptions} FileUploadOptions */
+/** @typedef {import("./v1/file-storage.js").FileListOptions} FileListOptions */

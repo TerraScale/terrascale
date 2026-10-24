@@ -1,3 +1,4 @@
+import { V1FileStorage } from "./file-storage.js";
 // The TerraBase v1 client: documents, transactions, queries and shapes over
 // the project-scoped C# Documents API (decision 0004 and shape-reads.md).
 import {
@@ -1003,6 +1004,8 @@ export class V1Database {
  * privately; it is never serialized, logged or forwarded to redirects.
  */
 export class TerraBaseV1Client {
+  /** @type {V1FileStorage} */
+  #storage;
   /** @type {V1Health} */
   #health;
   /** @type {V1Platform} */
@@ -1022,6 +1025,7 @@ export class TerraBaseV1Client {
   constructor(config) {
     requireId(config.project);
     this.#transport = new V1Transport(config);
+    this.#storage = new V1FileStorage(this.#transport, config.fetch ?? globalThis.fetch.bind(globalThis));
     this.#databases = new V1Databases(this.#transport);
     this.#savedQueries = new V1SavedQueries(this.#transport);
     this.#metrics = new V1ProjectUsageClient(this.#transport);
@@ -1041,6 +1045,8 @@ export class TerraBaseV1Client {
 
   /** @returns {V1Databases} Project-scoped database catalog. */
   get databases() { return this.#databases; }
+  /** @returns {V1FileStorage} Project file buckets. */
+  get storage() { return this.#storage; }
   /** @returns {V1SavedQueries} */
   get savedQueries() { return this.#savedQueries; }
   /** @returns {V1ProjectUsageClient} */
