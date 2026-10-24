@@ -15,8 +15,8 @@ using TerraScale.DotNet;
 namespace TerraScale.Authentication.Features.Mfa;
 
 /// <summary>
-/// Internal TOTP and recovery credentials. Callers must authenticate and reauthenticate before enrollment or disabling.
-/// No HTTP flow exposes credential changes until server-verified MFA sign-in lands. Every proof and credential change is conditional
+/// TOTP and recovery credentials. Callers must authenticate and reauthenticate before enrollment or disabling; the hosted
+/// security pages (<c>/ui/{slug}/security</c>) do both. Every proof and credential change is conditional
 /// on both the credential version and the user's authentication epoch in the same TerraBase transaction.
 /// Proof expiry is checked before the transaction; an acknowledged commit always reports its successful outcome.
 /// </summary>
@@ -25,27 +25,83 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
     private static readonly TimeSpan EnrollmentLifetime = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan RecoveryLifetime = TimeSpan.FromDays(365);
     private static readonly TimeSpan AttemptWindow = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan ChallengeLifetime = TimeSpan.FromMinutes(5);
     private const int RecoveryCount = 8;
 
     /// <summary>
-    /// Whether the current account can authenticate with only its primary credential. Active factors are refused
-    /// until a server-verified MFA sign-in flow exists; invalid or unavailable factor state fails closed.
+    /// Whether the current account can authenticate with only its primary credential: never with an active factor.
+    /// Invalid or unavailable factor state fails closed.
     /// </summary>
     public async Task<bool> AllowsPrimaryAuthenticationAsync(UserRecord caller, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        return await this.PrimaryUserAsync(caller.InstanceId, caller.Id, caller.AuthEpoch.ToString(CultureInfo.InvariantCulture), caller.AuthStamp, cancellationToken)
+        return await this.PrimaryUserAsync(caller.InstanceId, caller.Id, caller.AuthEpoch.ToString(CultureInfo.InvariantCulture), caller.AuthStamp, false, cancellationToken)
             .ConfigureAwait(false) is not null;
+    }
+
+    /// <summary>Whether the account has an active factor, and how many recovery codes remain; corrupt state fails closed with 503.</summary>
+    public async Task<(bool Enabled, int RecoveryCodes)> StatusAsync(string instanceId, string userId, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await this.ReadAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is { Record.Enabled: true } current
+                ? (true, current.Record.RecoveryExpiresAt > clock.GetUtcNow() ? current.Record.RecoveryHashes.Count : 0)
+                : (false, 0);
+        }
+        catch (Exception error) when (error is HttpRequestException or TimeoutException)
+        {
+            throw ApiException.Unavailable(error);
+        }
+    }
+
+    /// <summary>
+    /// A sealed, five-minute second-factor challenge for a user whose primary credential was just verified. It names the
+    /// user's authentication state and proof lineage, so a sign-out everywhere, reset or factor change voids it; each
+    /// attempt still needs an unused TOTP step or recovery code and charges the MFA attempt budget. Null when the user's
+    /// authentication state changed since <paramref name="user"/> was read.
+    /// </summary>
+    public async Task<string?> ChallengeAsync(UserRecord user, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        if (await this.CurrentUserAsync(user, cancellationToken).ConfigureAwait(false) is null)
+        {
+            return null;
+        }
+
+        var challenge = new MfaChallenge(user.Id, user.AuthEpoch, user.AuthStamp, clock.GetUtcNow() + ChallengeLifetime, user.AuthenticationBindings);
+        return SecretBox.Seal(options.MasterKey, JsonSerializer.SerializeToUtf8Bytes(challenge, MfaJson.Default.MfaChallenge), "mfa-challenge:" + user.InstanceId);
+    }
+
+    /// <summary>The user a live <see cref="Challenge"/> names, with its proof lineage, or null for anything else.</summary>
+    public async Task<UserRecord?> ChallengedUserAsync(string instanceId, string? sealedChallenge, CancellationToken cancellationToken = default)
+    {
+        MfaChallenge? challenge;
+        try
+        {
+            challenge = sealedChallenge is { Length: > 0 and <= 4096 }
+                ? JsonSerializer.Deserialize(SecretBox.Open(options.MasterKey, sealedChallenge, "mfa-challenge:" + instanceId), MfaJson.Default.MfaChallenge)
+                : null;
+        }
+        catch (Exception error) when (error is CryptographicException or JsonException or FormatException)
+        {
+            return null;
+        }
+
+        return challenge is not null && challenge.ExpiresAt > clock.GetUtcNow() && TerraScaleIds.IsValid(challenge.UserId)
+            && await users.GetAsync(instanceId, challenge.UserId, cancellationToken).ConfigureAwait(false) is { Disabled: false } user
+            && user.AuthEpoch == challenge.AuthEpoch && user.AuthStamp == challenge.AuthStamp
+                ? user with { AuthenticationBindings = challenge.Bindings }
+                : null;
     }
 
     /// <summary>
     /// The user as TerraBase holds it now, when it still has the authentication epoch <paramref name="authEpoch"/> and
-    /// state <paramref name="authStamp"/> (a token's claims) and may authenticate with only its primary credential;
-    /// otherwise null. The user is read after its factor, never before or alongside it, so an activation or a sign-out
+    /// state <paramref name="authStamp"/> (a token's claims) and either has no active factor or <paramref name="multiFactor"/>
+    /// says the token's sign-in proved it; otherwise null. The result's <see cref="UserRecord.MultiFactor"/> carries that proof. The user is read after its factor, never before or alongside it, so an activation or a sign-out
     /// everywhere that lands during the factor read is seen. One user read replaces a caller's own read before this
     /// check. Invalid or unavailable factor state fails closed with 503.
     /// </summary>
-    public async Task<UserRecord?> PrimaryUserAsync(string instanceId, string userId, string? authEpoch, string? authStamp, CancellationToken cancellationToken = default)
+    public async Task<UserRecord?> PrimaryUserAsync(string instanceId, string userId, string? authEpoch, string? authStamp, bool multiFactor, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         ArgumentNullException.ThrowIfNull(userId);
@@ -56,10 +112,11 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
 
         try
         {
-            return (await this.ReadAsync(instanceId, userId, cancellationToken).ConfigureAwait(false))?.Record.Enabled != true
+            var enabled = (await this.ReadAsync(instanceId, userId, cancellationToken).ConfigureAwait(false))?.Record.Enabled == true;
+            return (!enabled || multiFactor)
                 && await users.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is { User: var user }
                 && user.AuthEpoch.ToString(CultureInfo.InvariantCulture) == authEpoch && user.AuthStamp == authStamp
-                    ? user
+                    ? user with { MultiFactor = enabled }
                     : null;
         }
         catch (Exception error) when (error is HttpRequestException or TimeoutException)
@@ -324,10 +381,14 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
     private static string Context(string instanceId, string userId) => "totp:" + AuthStore.NaturalKeyId(instanceId, AuthStore.MfaCollection, userId);
 }
 
+/// <summary>The sealed contents of a sign-in's second-factor challenge.</summary>
+internal sealed record MfaChallenge(string UserId, long AuthEpoch, string? AuthStamp, DateTimeOffset ExpiresAt, IReadOnlyList<CredentialBinding> Bindings);
+
 /// <summary>A trusted caller's validated, expiring authorization transition, committed with the MFA change.</summary>
 internal sealed record MfaAuthorization(StoreOperation Operation, DateTimeOffset ExpiresAt);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     RespectRequiredConstructorParameters = true)]
 [JsonSerializable(typeof(TotpCredentialRecord))]
+[JsonSerializable(typeof(MfaChallenge))]
 internal sealed partial class MfaJson : JsonSerializerContext;

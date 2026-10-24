@@ -4,6 +4,7 @@ using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Ui;
@@ -19,7 +20,8 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// <param name="Next">The page to resume: an authorization request, <c>/{slug}/oauth/authorize?…</c>, or the device page.</param>
 /// <param name="Password">The account password (password sign-in, sign-up and reset only).</param>
 /// <param name="PendingToken">The pending sign-up's token (sign-up verification only).</param>
-public sealed record SignInForm(string? Email, string? Code, string? Next, string? Password = null, string? PendingToken = null);
+/// <param name="Challenge">The sealed second-factor challenge (second-factor step only).</param>
+public sealed record SignInForm(string? Email, string? Code, string? Next, string? Password = null, string? PendingToken = null, string? Challenge = null);
 
 /// <summary><c>GET /ui/{slug}/sign-in</c>: asks for the email address to send a sign-in code to.</summary>
 public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
@@ -100,7 +102,7 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
 /// <c>POST /ui/{slug}/sign-in/verify</c>: redeems the code, opens a fresh session and sets the session cookie, then
 /// resumes the authorization request.
 /// </summary>
-public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions sessions, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions sessions, TotpCredentials mfa, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -109,7 +111,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         Name("ui_sign_in_verify_code");
         Summary("Sign in with an emailed code");
         Description("Same-origin form post. A code works once, for 10 minutes, and dies after 5 wrong guesses. Hosted sign-in pages share 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
-            + " Active MFA users receive the same generic credential refusal without a session cookie; corrupt or unavailable MFA state fails closed.");
+            + " An account with an active authenticator app gets the second-factor step (no session cookie yet); corrupt or unavailable MFA state fails closed.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -144,7 +146,13 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
             return SignInFlow.Limited(this.HttpContext, SignInStep.Code, wait, address, next);
         }
 
-        if (await passcodes.VerifyAsync(SignInFlow.Tenant(this.HttpContext), address, form.Code ?? string.Empty, cancellationToken) is not { } session)
+        var user = await passcodes.RedeemAsync(SignInFlow.Tenant(this.HttpContext), address, form.Code ?? string.Empty, PasscodePurpose.SignIn, cancellationToken);
+        if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user, next, cancellationToken) is { } step)
+        {
+            return step;
+        }
+
+        if (user is null || await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
         {
             AuthMetrics.SignIn("hosted_code", "refused");
             return SignInFlow.WrongCode(this.HttpContext, SignInStep.Code, address, next);
@@ -159,7 +167,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
 /// <c>POST /ui/{slug}/sign-in/password</c>: without a password, shows the password step for the address; with one,
 /// checks it, opens a fresh session and resumes like the code sign-in.
 /// </summary>
-public sealed class PasswordSignInEndpoint(Sessions sessions, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mfa, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -167,7 +175,7 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, HostedAuth hosted,
         Post("/ui/{slug}/sign-in/password");
         Name("ui_sign_in_password");
         Summary("Sign in with a password");
-        Description("Same-origin form post. A post without password shows the password step. With email and password it charges the password budgets: 30 calls per IP per minute and 10 attempts per normalized email per 15 minutes, including unknown emails; exhaustion answers 429 with Retry-After and queues one best-effort lockout email notice per real account. A wrong email or password, an account without a password and an active MFA user all answer the same 401 page. Success sets the tsauth_session cookie and continues to next.");
+        Description("Same-origin form post. A post without password shows the password step. With email and password it charges the password budgets: 30 calls per IP per minute and 10 attempts per normalized email per 15 minutes, including unknown emails; exhaustion answers 429 with Retry-After and queues one best-effort lockout email notice per real account. A wrong email or password and an account without a password answer the same 401 page. A right password of an account with an active authenticator app gets the second-factor step. Success sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
@@ -206,6 +214,11 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, HostedAuth hosted,
         {
             AuthMetrics.SignIn("hosted_password", "rate_limited");
             return SignInFlow.Limited(this.HttpContext, SignInStep.Password, retry, address, next);
+        }
+
+        if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user, next, cancellationToken) is { } step)
+        {
+            return step;
         }
 
         if (user is null || await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
@@ -295,7 +308,7 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
 /// <c>POST /ui/{slug}/sign-up/verify</c>: redeems the emailed code. A sign-up code with its pending token creates the
 /// account; a sign-in code (the address already had one) signs that account in. Either way a session opens.
 /// </summary>
-public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions, HostedAuth hosted, AuthOptions options, ILogger<VerifySignUpEndpoint> logger) : EndpointWithoutRequest<IResult>
+public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions, TotpCredentials mfa, HostedAuth hosted, AuthOptions options, ILogger<VerifySignUpEndpoint> logger) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -340,6 +353,11 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
         {
             logger.ZLogInformation($"Audit: hosted sign-up created user {created.Id:@UserId}");
             user = created;
+        }
+
+        if (user is not null && await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, user, next, cancellationToken) is { } step)
+        {
+            return step;
         }
 
         if (user is null || await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
@@ -481,6 +499,23 @@ internal static class SignInFlow
     public static string Ip(HttpContext context) =>
         HostedAuth.Subject(context.Connection.RemoteIpAddress?.ToString()) ?? throw ApiException.Unavailable();
 
+    /// <summary>
+    /// The second-factor step for a user whose primary credential was just verified and who has an active authenticator
+    /// app, or null to open a session directly (which still refuses an active factor or stale authentication).
+    /// </summary>
+    public static async Task<IResult?> SecondFactorAsync(HttpContext context, TotpCredentials mfa, UserRecord user, string? next, CancellationToken cancellationToken)
+    {
+        // The user is read after the factor, so an activation or sign-out everywhere meanwhile yields no challenge.
+        if (!(await mfa.StatusAsync(user.InstanceId, user.Id, cancellationToken)).Enabled
+            || await mfa.ChallengeAsync(user, cancellationToken) is not { } challenge)
+        {
+            return null;
+        }
+
+        AuthMetrics.SignIn("hosted_mfa", "challenged");
+        return SignInPageModel.Render(context, new SignInPageModel(SignInStep.Mfa, Tenant(context), user.Email, next) { Challenge = challenge });
+    }
+
     /// <summary>A primary-only session for <paramref name="user"/>, or null when MFA or a newer epoch refuses one.</summary>
     public static async Task<IssuedSession?> OpenSessionAsync(Sessions sessions, UserRecord user, CancellationToken cancellationToken)
     {
@@ -530,13 +565,17 @@ internal static class SignInFlow
     /// <summary>The device page, which a sign-in may resume.</summary>
     public static string DevicePath => $"/ui/{OidcIssuer.Slug}/device";
 
+    /// <summary>The tenant's security page, which a sign-in may resume.</summary>
+    public static string SecurityPath(string tenant) => $"/ui/{tenant}/security";
+
     /// <summary>
-    /// Only the page's own issuer's authorization endpoint, or for the platform its device page, may be resumed, as a
+    /// Only the page's own issuer's authorization endpoint or security page, or for the platform its device page, may be resumed, as a
     /// same-origin path.
     /// </summary>
     public static string? SafeNext(HttpContext context, string? next) =>
         next is not null && Tenancy.Resolved(context) is { } tenant
             && (next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)
+                || next == SecurityPath(tenant)
                 || !Tenancy.IsProject(tenant) && (next == DevicePath || next.StartsWith(DevicePath + "?", StringComparison.Ordinal)))
             && next.Length <= 4096
             && !next.Any(character => character is '\\' or '#' || char.IsControl(character) || char.IsWhiteSpace(character))
@@ -556,7 +595,7 @@ internal static class SignInFlow
         }
 
         var form = await context.Request.ReadFormAsync(cancellationToken);
-        return new SignInForm(form["email"], form["code"], form["next"], form["password"], form["pending_token"]);
+        return new SignInForm(form["email"], form["code"], form["next"], form["password"], form["pending_token"], form["challenge"]);
     }
 
     /// <summary>

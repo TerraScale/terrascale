@@ -102,6 +102,7 @@ public static partial class OpenApiSetup
         ["Admin"] = "Hosted administrator portal and its bundled assets.",
         ["OAuth"] = "OpenID Connect provider for the issuer {public origin}/{slug} (authorization code with S256 PKCE, rotating refresh tokens).",
         ["Sign-in"] = "Hosted email passcode sign-in pages.",
+        ["Security"] = "Hosted account security pages: authenticator (TOTP) enrolment, recovery codes and removal.",
         ["Email"] = "Email branding, copy, previews, test sends and version history, for the ts-dashboard client (HTTP Basic).",
         ["Organizations"] = "Organizations of the terrascale tenant (TS-598). The caller is a signed-in platform user.",
         ["Members"] = "Organization members and their organization roles (viewer, member, admin, owner).",

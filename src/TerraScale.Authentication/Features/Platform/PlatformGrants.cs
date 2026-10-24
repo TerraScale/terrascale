@@ -111,7 +111,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             || rawAuthenticationTime is not (int or long)
             || !long.TryParse(subject.GetClaim(Claims.AuthenticationTime), NumberStyles.None, CultureInfo.InvariantCulture, out var authenticatedAt)
             || authenticatedAt > clock.GetUtcNow().Add(AuthenticationTimeClockSkew).ToUnixTimeSeconds()
-            || await mfa.PrimaryUserAsync(PlatformDirectory.Instance, userId, subject.GetClaim(OidcIssuer.EpochClaim), subject.GetClaim(OidcIssuer.StateClaim), cancellationToken) is not { } user)
+            || await mfa.PrimaryUserAsync(PlatformDirectory.Instance, userId, subject.GetClaim(OidcIssuer.EpochClaim), subject.GetClaim(OidcIssuer.StateClaim),
+                subject.GetClaim(OidcIssuer.MfaClaim) is not null, cancellationToken) is not { } user)
         {
             return OidcResults.Forbid(Errors.InvalidGrant, "The subject token is not a live sign-in token of this client.");
         }
@@ -133,6 +134,10 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         {
             allowed = [];
         }
+        catch (ApiException error) when (error.Code == PlatformDirectory.MfaRequiredCode)
+        {
+            return OidcResults.Forbid(Errors.AccessDenied, "mfa_required: the organization requires two-factor authentication; enrol at /ui/terrascale/security.");
+        }
 
         if (allowed.Count == 0)
         {
@@ -146,7 +151,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             return OidcResults.Forbid(Errors.InvalidScope, "A requested scope exceeds the user's role.");
         }
 
-        if (!await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken) || expires <= clock.GetUtcNow())
+        if (!user.MultiFactor && !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken) || expires <= clock.GetUtcNow())
         {
             return OidcResults.Forbid(Errors.InvalidGrant, "The subject token is not a live sign-in token of this client.");
         }

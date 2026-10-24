@@ -57,8 +57,27 @@ break;
 case SignInStep.NotFound:
 <p class="sub">The page you opened doesn't exist. Check the link, or sign in again.</p>
 break;
+case SignInStep.Mfa:
+<p class="sub">Enter the code from your authenticator app for <strong>@Model.Email</strong>.</p>
+break;
+case SignInStep.Security:
+<p class="sub">Protect <strong>@Model.Account</strong> with an authenticator app. Sign-ins then ask for its code after your email code or password.</p>
+break;
+case SignInStep.TotpSetup:
+<p class="sub">Scan this QR code with an authenticator app such as 1Password, Google Authenticator or Authy, then enter the six-digit code it shows.</p>
+break;
+case SignInStep.RecoveryCodes:
+<p class="sub">Two-factor authentication is on. Each recovery code signs you in once if you lose your authenticator. They are shown only now.</p>
+break;
+case SignInStep.Reauthenticate:
+<p class="sub">Changing two-factor authentication needs a sign-in from the last 15 minutes.</p>
+break;
 }
 </div>
+@if (Model.Notice is { } notice)
+{
+<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>@notice</p></div>
+}
 @if (Model.Error is { } error)
 {
 <div class="alert" data-state="@(Model.Limited ? "limited" : "error")" role="alert"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#@(Model.Limited ? "i-clock" : "i-circle-alert")"></use></svg><div>@if (Model.ErrorTitle is { } errorTitle)
@@ -237,6 +256,72 @@ case SignInStep.DeviceConfirm:
 break;
 case SignInStep.DeviceApproved:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>Device approved.</p></div>
+break;
+case SignInStep.Mfa:
+<form method="post" action="/ui/@Model.Slug/sign-in/mfa">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="email" value="@Model.Email">
+<input type="hidden" name="challenge" value="@Model.Challenge">
+<div class="field">
+<label for="mfa-code">Authentication code</label>
+<input id="mfa-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required autofocus>
+<span class="hint">Lost your authenticator? Enter one of your recovery codes instead.</span>
+</div>
+<button type="submit">Verify and sign in</button>
+</form>
+<div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Start over</a></div>
+break;
+case SignInStep.Security:
+<dl class="facts">
+<div><dt>Account</dt><dd>@Model.Account</dd></div>
+<div><dt>Two-factor authentication</dt><dd>@(Model.MfaEnabled ? "On (authenticator app)" : "Off")</dd></div>
+@if (Model.MfaEnabled)
+{
+<div><dt>Recovery codes left</dt><dd>@Model.RecoveryRemaining</dd></div>
+}
+</dl>
+@if (Model.MfaEnabled)
+{
+<form method="post" action="/ui/@Model.Slug/security/totp/disable">
+<div class="field">
+<label for="disable-code">Code to turn off two-factor</label>
+<input id="disable-code" class="code" name="code" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="······" required>
+<span class="hint">Your authenticator's current code or an unused recovery code. Every session signs out.</span>
+</div>
+<button type="submit" class="secondary">Turn off two-factor authentication</button>
+</form>
+}
+else
+{
+<form method="post" action="/ui/@Model.Slug/security/totp">
+<button type="submit"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-key-round"></use></svg>Set up an authenticator app</button>
+</form>
+}
+break;
+case SignInStep.TotpSetup:
+<img src="@Model.QrCode" alt="QR code to add TerraScale to your authenticator app" width="240" height="240">
+<p class="hint">Can't scan it? Enter this key: <code>@Model.Secret</code></p>
+<form method="post" action="/ui/@Model.Slug/security/totp/confirm">
+<div class="field">
+<label for="totp-code">Code from the app</label>
+<input id="totp-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="······" required autofocus>
+<span class="hint">Turning it on signs you out everywhere else.</span>
+</div>
+<button type="submit">Turn on two-factor authentication</button>
+</form>
+<div class="row"><a href="/ui/@Model.Slug/security"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Cancel</a></div>
+break;
+case SignInStep.RecoveryCodes:
+<ul class="facts" aria-label="Recovery codes">
+@foreach (var recovery in Model.RecoveryCodes)
+{
+<li><code>@recovery</code></li>
+}
+</ul>
+<a class="btn" href="/ui/@Model.Slug/security">I saved them<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+break;
+case SignInStep.Reauthenticate:
+<a class="btn" href="@Model.Link("sign-in")">Sign in<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
 break;
 case SignInStep.DeviceDenied:
 <div class="alert" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-x"></use></svg><p>Device denied.</p></div>

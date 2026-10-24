@@ -25,6 +25,10 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     /// <summary>Proof lineage for this authentication attempt; never written back to the account.</summary>
     [JsonIgnore]
     public IReadOnlyList<CredentialBinding> AuthenticationBindings { get; init; } = [];
+
+    /// <summary>Whether this authentication attempt proved the account's second factor; never written back to the account.</summary>
+    [JsonIgnore]
+    public bool MultiFactor { get; init; }
 }
 
 /// <summary>A browser session (collection <c>sessions</c>). Only the SHA-256 of its bearer token is stored.</summary>
@@ -42,6 +46,9 @@ public sealed record SessionRecord(string InstanceId, string UserId, string Toke
 
     /// <summary>Every one-use ancestor must still name this branch as its winner.</summary>
     public IReadOnlyList<CredentialBinding> Bindings { get; init; } = [];
+
+    /// <summary>Whether the sign-in that opened this session proved the account's second factor.</summary>
+    public bool Mfa { get; init; }
 }
 
 /// <summary>
