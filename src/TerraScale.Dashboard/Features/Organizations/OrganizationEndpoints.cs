@@ -5,6 +5,7 @@ using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Organizations.Audit;
 using TerraScale.Dashboard.Features.Organizations.Invitations;
 using TerraScale.Dashboard.Features.Organizations.Members;
+using TerraScale.Dashboard.Features.Organizations.Sso;
 using TerraScale.Dashboard.Features.Organizations.Wizard;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Shared.UI;
@@ -14,13 +15,14 @@ namespace TerraScale.Dashboard.Features.Organizations;
 public sealed partial record OrganizationPage(ShellModel Shell, string Tab, IReadOnlyList<string> Regions, string Error = "", bool OpenCreateProject = false, bool OpenCreateOrganization = false,
     OrganizationAccessView? Access = null, string InvitationLink = "", OrganizationFilters? Filters = null, string WizardStep = "", bool PaymentCanceled = false,
     BillingPage? Billing = null, string ProjectDraftName = "", IReadOnlyList<string>? ProjectDraftRegions = null,
-    string ProjectDraftPrimaryRegion = "", string ProjectDraftBackupRegion = "", string Status = "", bool? RequireMfa = null);
+    string ProjectDraftPrimaryRegion = "", string ProjectDraftBackupRegion = "", string Status = "", bool? RequireMfa = null, OrganizationSsoView? Sso = null);
 
 public static class OrganizationEndpoints
 {
     public static IServiceCollection AddOrganizationFeatures(this IServiceCollection services) => services
         .AddSingleton<IOrganizationAccess, TsOrganizationAccess>()
         .AddSingleton<InvitationService>()
+        .AddSingleton<OrganizationSsoService>()
         .AddSingleton<OrganizationLifecycleService>()
         .AddSingleton<OrganizationOperations>();
     public static IEndpointRouteBuilder MapOrganizations(this IEndpointRouteBuilder endpoints)
@@ -124,21 +126,22 @@ public static class OrganizationEndpoints
         endpoints.MapOrganizationWizard();
         endpoints.MapInvitations();
         endpoints.MapOrganizationAudit();
+        endpoints.MapOrganizationSso();
         return endpoints;
     }
 
-    private static async Task<RazorSlice> PageAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", int status = 200, string? tab = null)
+    internal static async Task<RazorSlice> PageAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", int status = 200, string? tab = null)
     {
-        var page = await PageModelAsync(http, context, placement, error);
-        var slice = OrganizationView.Create(tab is null ? page : page with { Tab = tab });
+        var page = await PageModelAsync(http, context, placement, error, tab);
+        var slice = OrganizationView.Create(page);
         slice.StatusCode = status;
         return slice;
     }
 
-    private static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "")
+    private static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", string? tabOverride = null)
     {
-        var tab = http.Request.Query["newProject"] == "1" ? "projects" : http.Request.Query["tab"].ToString();
-        if (tab is not ("projects" or "members" or "invitations" or "audit" or "billing" or "danger")) tab = "organization";
+        var tab = tabOverride ?? (http.Request.Query["newProject"] == "1" ? "projects" : http.Request.Query["tab"].ToString());
+        if (tab is not ("projects" or "members" or "invitations" or "audit" or "sso" or "billing" or "danger")) tab = "organization";
         var regionsRead = tab == "projects" || http.Request.Query["newOrganization"] == "project" || http.Request.Query["newProject"] == "1"
             ? placement.RegionsAsync(http.RequestAborted) : null;
         // The projects and billing tabs render no members, invitations, audit events or ownership transfer.
@@ -160,7 +163,8 @@ public static class OrganizationEndpoints
             ? await http.RequestServices.GetRequiredService<ITsAuthMfa>().GetRequireMfaAsync(context.Session, owned.Id, http.RequestAborted) : null;
         return new(ShellModel.For(http, context, "Organization"), tab, regions, error,
             http.Request.Query["newProject"] == "1", wizard.Length > 0, access, Filters: OrganizationFilters.For(http), WizardStep: wizard, PaymentCanceled: http.Request.Query["payment"] == "canceled",
-            Status: http.Request.Query["deleted"] == "1" ? "Organization deleted." : "", RequireMfa: requireMfa);
+            Status: http.Request.Query["deleted"] == "1" ? "Organization deleted." : "", RequireMfa: requireMfa,
+            Sso: tab == "sso" && context.CanManage ? await http.RequestServices.GetRequiredService<OrganizationSsoService>().ReadAsync(context, http.RequestAborted) : null);
     }
 
     private static async Task<IResult> AccessMutationAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement, string operation, string? id = null)
