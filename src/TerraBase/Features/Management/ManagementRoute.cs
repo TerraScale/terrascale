@@ -77,7 +77,7 @@ internal static class ManagementRoute
     {
         foreach (var (name, value) in context.Request.RouteValues)
         {
-            if (name is not ("index" or "collection" or "databaseName" or "recommendation")
+            if (name is not ("index" or "collection" or "databaseName" or "recommendation" or "function")
                 && !EntityIds.IsValid(value as string))
             {
                 return new Validation(name + " must be a canonical uppercase ULID");

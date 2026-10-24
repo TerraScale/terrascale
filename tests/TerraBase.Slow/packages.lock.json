@@ -50,6 +50,11 @@
           "TUnit.Engine": "1.73.19"
         }
       },
+      "Acornima": {
+        "type": "Transitive",
+        "resolved": "1.7.0",
+        "contentHash": "a2I4O4qkuAdB0oSaGz6/k0n/bXxMbGcLBra5dNTTVSLmTwM7uORA8ebpOrNMmDfFWOMwvuaRL6gPprRV4HTV0w=="
+      },
       "AWSSDK.Core": {
         "type": "Transitive",
         "resolved": "4.0.102.8",
@@ -615,6 +620,7 @@
           "Google.Protobuf": "[3.36.2, )",
           "Grpc.AspNetCore": "[2.84.0, )",
           "Grpc.Net.Client": "[2.84.0, )",
+          "Jint": "[4.17.0, )",
           "JsonSchema.Net": "[8.0.5, )",
           "Microsoft.AspNetCore.OpenApi": "[11.0.0-rc.1.26425.128, )",
           "Microsoft.IdentityModel.Protocols.OpenIdConnect": "[8.23.0, )",
@@ -766,6 +772,15 @@
         "requested": "[2.84.0, )",
         "resolved": "2.84.0",
         "contentHash": "SarjdfpQYU/mmdu/fWgSW8kEHQ54jiyG2+I4THu9eubtAud+QJf+1iJdGtoKTJ/ZRaI0qAG+7ttsK2WUTao2OQ=="
+      },
+      "Jint": {
+        "type": "CentralTransitive",
+        "requested": "[4.17.0, )",
+        "resolved": "4.17.0",
+        "contentHash": "9jdpLQQYsWTjOn2THpiR8zRJ34ksV6ofW0gJvZxJW/fIGK+A+TkpWonhuuLDRwqLDjP+9WsxYt2MEge6lWjk2A==",
+        "dependencies": {
+          "Acornima": "1.7.0"
+        }
       },
       "JsonSchema.Net": {
         "type": "CentralTransitive",
