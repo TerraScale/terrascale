@@ -62,6 +62,6 @@
     private bool Active(string url) => url == "/" ? Model.ReturnUrl == "/" || Model.ReturnUrl.StartsWith("/?") : Model.ReturnUrl.StartsWith(url, StringComparison.Ordinal);
     private sealed record Item(string Label, string Url, string Icon);
     private sealed record Group(string Label, Item[] Items);
-    private static readonly Group[] Navigation = [new("", [new("Overview", "/", "layout-dashboard")]), new("Build", [new("Databases", "/databases", "database")]), new("Secure", [new("API keys", "/api-keys", "key-round"), new("Authentication", "/auth", "fingerprint")]), new("Manage", [new("Analytics", "/analytics", "line-chart"), new("Usage", "/usage", "chart-column-big"), new("Organization", "/organization", "building2")])];
+    private static readonly Group[] Navigation = [new("", [new("Overview", "/", "layout-dashboard")]), new("Build", [new("Databases", "/databases", "database"), new("Files", "/storage", "database")]), new("Secure", [new("API keys", "/api-keys", "key-round"), new("Authentication", "/auth", "fingerprint")]), new("Manage", [new("Analytics", "/analytics", "line-chart"), new("Usage", "/usage", "chart-column-big"), new("Organization", "/organization", "building2")])];
     private static string PageLabels => string.Join(",", Navigation.SelectMany(group => group.Items).Select(item => $"'{item.Label.ToLowerInvariant()}'"));
 }

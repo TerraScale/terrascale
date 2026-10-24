@@ -1,0 +1,13 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.FileStorage.FileRulesFormModel>
+<div class="ts-field"><label class="ts-label" for="@(Model.Prefix)-owner">Owner field</label><input class="ts-input" id="@(Model.Prefix)-owner" name="owner" value="@Model.Rules.Owner" placeholder="/userId" readonly="@Model.Existing" /><p class="ts-hint">JSON Pointer into file metadata. End-user uploads must name their own signed subject. The pointer stays fixed after creation.</p></div>
+<fieldset class="ts-field ts-stack-sm"><legend class="ts-label">Read permissions</legend>
+    <label><input type="checkbox" name="readOwner" value="1" checked="@Model.Rules.Read.Owner" /> File owner</label>
+    <label><input type="checkbox" name="readPublic" value="1" checked="@Model.Rules.Read.Public" /> All authenticated end users</label>
+    <label class="ts-label" for="@(Model.Prefix)-read-roles">Read roles</label><input class="ts-input" id="@(Model.Prefix)-read-roles" name="readRoles" value="@string.Join(", ", Model.Rules.Read.Roles)" placeholder="editor, reviewer" />
+</fieldset>
+<fieldset class="ts-field ts-stack-sm"><legend class="ts-label">Write permissions</legend>
+    <label><input type="checkbox" name="writeOwner" value="1" checked="@Model.Rules.Write.Owner" /> File owner</label>
+    <label><input type="checkbox" name="writePublic" value="1" checked="@Model.Rules.Write.Public" /> All authenticated end users</label>
+    <label class="ts-label" for="@(Model.Prefix)-write-roles">Write roles</label><input class="ts-input" id="@(Model.Prefix)-write-roles" name="writeRoles" value="@string.Join(", ", Model.Rules.Write.Roles)" placeholder="editor" />
+</fieldset>
+<p class="ts-hint">Roles are case-sensitive trusted ts-auth roles, separated by commas. A missing grant denies access. Public grants require sign-in.</p>
