@@ -9,32 +9,49 @@ namespace TerraBase.Slow.Management;
 public sealed class ScanBudgetTests
 {
     [Test]
-    public async Task Counts_statistics_schema_and_usage_share_the_query_work_budget()
+    public async Task Maintained_counts_and_usage_succeed_while_schema_scans_exhaust_the_query_budget()
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         await ManagementApi.CreateCollectionAsync(data, database, "probe");
-        // More than five million VM instructions even for the narrowest count scan. The setup writes only the
-        // isolated database; all budget failures and the probes are exercised through real listeners.
+        // Enough rows to exhaust a counting scan's work/scan budget. Since #531, collection lists and usage read
+        // maintained counts instead. Direct fixture writes must populate those counts as PutRow would.
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 1100000)
             INSERT INTO "items" (id, doc) SELECT printf('00000000-0000-7000-8000-%012x', n), '{"n":1}' FROM rows;
             INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2) SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM "items";
+            INSERT INTO _tb_collection_stats (collection, documents, bytes) SELECT 'items', count(*), sum(octet_length(doc)) FROM "items";
             """);
+        using var collections = await api.Client.GetAsync(ManagementApi.Uri($"{database.Path}/collections"));
+        await Assert.That(collections.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var listed = await collections.Content.ReadFromJsonAsync<JsonElement>();
+        var items = listed.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("name").GetString() == "items");
+        var probe = listed.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("name").GetString() == "probe");
+        await Assert.That(listed.GetProperty("items").GetArrayLength()).IsEqualTo(2);
+        await Assert.That(items.GetProperty("documents").GetInt64()).IsEqualTo(1_100_000);
+        await Assert.That(items.GetProperty("bytes").GetInt64()).IsEqualTo(7_700_000);
+        await Assert.That(probe.GetProperty("documents").GetInt64()).IsEqualTo(0);
+        await Assert.That(probe.GetProperty("bytes").GetInt64()).IsEqualTo(0);
+
         foreach (var path in new[]
         {
-            $"{database.Path}/collections",
-            $"{database.Path}/collections/items/schema",
             $"{database.Path}/usage",
             $"{database.ProjectPath}/usage",
         })
         {
             using var response = await api.Client.GetAsync(ManagementApi.Uri(path));
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest).Because(path);
-            await AssertNoProgressHandlerLeftAsync(data, database, path);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(path);
+            var usage = await response.Content.ReadFromJsonAsync<JsonElement>();
+            await Assert.That(usage.GetProperty("documents").GetInt64()).IsEqualTo(1_100_000).Because(path);
+            await Assert.That(usage.GetProperty("logicalBytes").GetInt64()).IsEqualTo(7_700_000).Because(path);
         }
+
+        var schemaPath = $"{database.Path}/collections/items/schema";
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(ManagementApi.Uri(schemaPath)),
+            HttpStatusCode.BadRequest, "invalid_query", "schema too expensive");
+        await AssertWriteAfterRejectionAsync(data, database, schemaPath);
     }
 
     [Test]
@@ -59,10 +76,8 @@ public sealed class ScanBudgetTests
         await ErrorAssert.ErrorAsync(more, HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
     }
 
-    // Requests run one at a time here, so the next one on this database takes the pooled session the rejected one
-    // returned. A write installs no progress handler of its own and runs far more than the 1000 Turso instructions
-    // between handler calls, so a handler left behind, whose budget is spent, would interrupt it.
-    private static async Task AssertNoProgressHandlerLeftAsync(HttpClient data, ManagedDatabaseRef database, string rejected)
+    // Follow the rejected scan with a write through the real listener to verify the database remains usable.
+    private static async Task AssertWriteAfterRejectionAsync(HttpClient data, ManagedDatabaseRef database, string rejected)
     {
         var ops = Enumerable.Range(0, 50)
             .Select(_ => new { op = "put", collection = "probe", id = EntityIds.New().ToString(), document = new { n = 1 } })
