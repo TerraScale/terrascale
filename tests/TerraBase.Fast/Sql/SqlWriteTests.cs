@@ -183,4 +183,21 @@ public sealed class SqlWriteTests
         await Assert.That(SqlApi.Error(tooMany)).IsEqualTo((HttpStatusCode.RequestEntityTooLarge, "sql_too_large", "SQLITE_TOOBIG", 0));
         await Assert.That(await RowsAsync(api, "SELECT count(*) FROM logs")).IsEqualTo("[[0]]");
     }
+
+    [Test]
+    public async Task Literals_with_doubled_quotes_round_trip()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api, "CREATE TABLE q (id INTEGER PRIMARY KEY, v TEXT)");
+
+        var results = await SqlApi.OkAsync(api,
+            "INSERT INTO q VALUES (1, 'it''''s'), (2, ''''''), (3, 'a''b''''c')",
+            "SELECT v FROM q ORDER BY id",
+            "SELECT '''it''''s''' AS v",
+            "SELECT count(*) FROM q WHERE v = 'it''''s'");
+
+        await Assert.That(string.Join("|", results[1].GetProperty("rows").EnumerateArray().Select(row => row[0].GetString()))).IsEqualTo("it''s|''|a'b''c");
+        await Assert.That(results[2].GetProperty("rows")[0][0].GetString()).IsEqualTo("'it''s'");
+        await Assert.That(results[3].GetProperty("rows")[0][0].GetInt64()).IsEqualTo(1);
+    }
 }

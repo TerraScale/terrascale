@@ -254,12 +254,11 @@ internal static class SqlCatalog
         return $"CREATE TABLE {name} ({string.Join(", ", columns)}{key})";
     }
 
-    // A value as an SQL literal. Quotes and NUL are joined in with char(): SqlParserCS renders '' inside a literal as a
-    // single quote, so a doubled quote would not survive the rendered statement.
+    // A value as an SQL literal; NUL cannot appear in a '…' literal, so it is joined in with char(0).
     private static string Literal(SqlValue value) => value.Kind switch
     {
         SqlValueKind.Integer => value.Integer.ToString(CultureInfo.InvariantCulture),
-        SqlValueKind.Text => "'" + value.Text!.Replace("'", "' || char(39) || '", StringComparison.Ordinal).Replace("\0", "' || char(0) || '", StringComparison.Ordinal) + "'",
+        SqlValueKind.Text => "'" + value.Text!.Replace("'", "''", StringComparison.Ordinal).Replace("\0", "' || char(0) || '", StringComparison.Ordinal) + "'",
         _ => "NULL",
     };
 }

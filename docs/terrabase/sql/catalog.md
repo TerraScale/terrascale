@@ -22,4 +22,6 @@ Schema tools read SQLite's catalog back: drizzle-kit (`push`, `pull`, `studio`),
   render-back check and the engine see an ordinary CTE. `pragma_x(e) AS p` in an inner join or a comma join becomes
   `pragma_x AS p … WHERE p.arg = (e)`, SQLite's hidden `arg` column; a pragma function in an outer join is refused.
 - `[name]` quotes are read as `"name"` when the name holds no quote character, as backticks are.
-- Text values join quotes in with `char(39)`: SqlParserCS renders a doubled quote inside a literal as one quote.
+- A `'…'` literal holding two adjacent quotes is rewritten to quote-free pieces joined with `char(39)` before the
+  statement is rendered (`SqlGuard`): SqlParserCS escapes a quote only when the next character is not a quote, so
+  `'it''''s'` (the value `it''s`) used to read back as `it's`.
