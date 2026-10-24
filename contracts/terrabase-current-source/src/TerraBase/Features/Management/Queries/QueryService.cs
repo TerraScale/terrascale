@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Text;
 using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -63,8 +64,8 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
                 },
                 new SqlResultBody(0, false, []),
                 cancellationToken).ConfigureAwait(false);
-            // One read per run the engine answered, as a data API query page.
-            usage.RecordRead(database);
+            // One read per run the engine answered, as a data API query page; each row bills its value's started 4 KiB.
+            usage.RecordRead(database, rows.Rows.Sum(row => OperationUnits.Of(Encoding.UTF8.GetByteCount(row.Value.GetRawText()))));
             return rows;
         }
         catch (QueryCapacityException)
@@ -250,7 +251,7 @@ internal sealed class QueryService(IStorageEngine engine, SystemCatalog catalog,
 
     // Rows are projected as the engine streams them, so the output budget (not stored sizes) decides truncation, and only
     // one stored document is held besides the rows kept. The engine bounds the work: past it the run fails with a
-    // QueryCapacityException, also while SQLite is still scanning or sorting before the first row.
+    // QueryCapacityException, also while Turso is still scanning or sorting before the first row.
     private static async ValueTask<SqlResultBody> RowsAsync(
         IStorageTransaction transaction, SqlStatement statement, QueryObservation observation, CancellationToken cancellationToken)
     {

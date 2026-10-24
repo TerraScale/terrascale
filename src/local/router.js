@@ -1,4 +1,4 @@
-import { generateId } from "../ids.js";
+import { generateId, isValidId } from "../ids.js";
 import {
   createHash,
   createHmac,
@@ -171,7 +171,7 @@ export class TerraScaleLocalRouter {
         );
         if (match === null) return problemResponse(404, "unknown_route");
         const collection = requireDatabaseId(match[1]);
-        const document = requireDatabaseId(match[2]);
+        const document = documentId(match[2]);
         return await this.#store.exclusive(() => {
           this.#binding(collection);
           return jsonResponse(this.#point(collection, document));
@@ -754,6 +754,15 @@ function transactionKey(raw) {
 }
 /**
  * @param {unknown} value
+ * @returns {string}
+ */
+function documentId(value) {
+  if (!isValidId(value)) throw new NativeLocalError(400, "invalid_document_id");
+  return value;
+}
+
+/**
+ * @param {unknown} value
  * @returns {readonly DatabaseField[]}
  */
 function decodeFields(value) {
@@ -815,7 +824,7 @@ function decodeCommit(raw) {
         collection: requireDatabaseId(write.collection),
         schema_generation: decimal(write.schema_generation),
         schema_digest: text(write.schema_digest),
-        document: requireDatabaseId(write.document),
+        document: documentId(write.document),
         condition: /** @type {DatabaseCondition} */ (parsedCondition),
         observed: write.observed.map((rawObserved) => {
           const observed = object(rawObserved);

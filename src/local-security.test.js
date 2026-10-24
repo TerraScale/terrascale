@@ -102,3 +102,31 @@ test.skipIf(!localSqliteUnitTestsAllowed)(
     }
   },
 );
+
+test.skipIf(!localSqliteUnitTestsAllowed)(
+  "local router rejects non-ULID document ids with invalid_document_id",
+  async () => {
+    const fixture = await localFixture();
+    const store = new TerraScaleSqliteStore(
+      join(fixture.directory, "document-ids.sqlite"),
+    );
+    try {
+      const router = new TerraScaleLocalRouter(store, fixture.runtime.scope, {
+        authentication: "permissive",
+      });
+      const scope = fixture.runtime.scope;
+      const response = await router.handle(
+        new Request(
+          `http://127.0.0.1/v1/tenants/${scope.tenant}/databases/${scope.database}/shards/${scope.shard}/collections/${fixture.collection}/documents/a%2Fb`,
+        ),
+      );
+      assert.equal(response.status, 400);
+      assert.deepEqual(await response.json(), {
+        error: { code: "invalid_document_id" },
+      });
+    } finally {
+      store.close();
+      await fixture.close();
+    }
+  },
+);

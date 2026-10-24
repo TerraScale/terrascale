@@ -8,13 +8,16 @@ namespace TerraBase.Features.Documents;
 /// <param name="Version">Version, also sent as the <c>ETag</c> of point responses.</param>
 /// <param name="State">Always <c>value</c>: a single-writer database never holds conflicting siblings.</param>
 /// <param name="Document">The stored JSON object, or its projection.</param>
-public sealed record DocumentBody(string Id, string Version, string State, JsonElement Document);
+/// <param name="Distance">Distance to the query vector, for a near sort.</param>
+public sealed record DocumentBody(
+    string Id, string Version, string State, JsonElement Document,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] double? Distance = null);
 
 /// <summary>Result of a document write.</summary>
 /// <param name="Id">Document id.</param>
 /// <param name="Version">The new version; for a delete, the tombstone's.</param>
 /// <param name="Offset">The database commit offset of the write, a decimal string.</param>
-/// <param name="Durability">Always <c>local_durable</c>.</param>
+/// <param name="Durability"><c>remote_durable</c> once another placed region confirmed the write, <c>local_durable</c> on a single-machine cell, <c>unchanged</c> for assertions only (decision 0013a).</param>
 /// <param name="Document">After a PATCH, the stored document, with counters as integers and sets as sorted arrays.</param>
 public sealed record WriteBody(
     string Id, string Version, string Offset, string Durability,
@@ -24,6 +27,12 @@ public sealed record WriteBody(
 /// <param name="Value">Decimal count; a lower bound when not exact.</param>
 /// <param name="Exact">Whether every match was counted (at most 100000).</param>
 public sealed record CountBody(string Value, bool Exact);
+
+/// <summary>One line of a database export.</summary>
+/// <param name="Collection">Collection name.</param>
+/// <param name="Id">Document id.</param>
+/// <param name="Document">The stored document.</param>
+public sealed record ExportLineBody(string Collection, string Id, JsonElement Document);
 
 /// <summary>One page of documents.</summary>
 /// <param name="Items">Documents in query order.</param>
@@ -49,10 +58,19 @@ public sealed record CollectionPageBody(IReadOnlyList<CollectionBody> Items, [pr
 /// <param name="Name">Collection name: <c>^[a-z][a-z0-9_-]{0,62}$</c>.</param>
 public sealed record CreateCollectionRequest(string? Name);
 
-/// <summary>One sort key of a query.</summary>
+/// <summary>One sort key of a query: a path, or a vector similarity order alone.</summary>
 /// <param name="Path">JSON Pointer or <c>$id</c>.</param>
 /// <param name="Order"><c>asc</c> (default) or <c>desc</c>.</param>
-public sealed record QuerySortRequest(JsonElement Path, string? Order);
+/// <param name="Near">Nearest documents first, by distance to a query vector; the only sort key.</param>
+public sealed record QuerySortRequest(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] JsonElement Path, string? Order,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] QueryNearRequest? Near = null);
+
+/// <summary>A vector similarity order (brute force).</summary>
+/// <param name="Path">JSON Pointer of the embedding, a numeric array of the same length.</param>
+/// <param name="Vector">1 to 4096 numbers.</param>
+/// <param name="Metric"><c>cosine</c> (default) or <c>l2</c>.</param>
+public sealed record QueryNearRequest(JsonElement Path, IReadOnlyList<double>? Vector, string? Metric);
 
 /// <summary>A query (query v1). Every member is optional.</summary>
 /// <param name="Filter">Filter grammar: <c>and</c>, <c>or</c>, <c>not</c>, <c>eq</c>, <c>ne</c>, <c>lt</c>, <c>lte</c>, <c>gt</c>, <c>gte</c>, <c>in</c>, <c>nin</c>, <c>exists</c>, <c>prefix</c>, <c>contains</c>.</param>
@@ -128,6 +146,6 @@ public sealed record TransactionResultBody(
 
 /// <summary>Result of a transaction.</summary>
 /// <param name="Offset">The database commit offset, a decimal string.</param>
-/// <param name="Durability">Always <c>local_durable</c>.</param>
+/// <param name="Durability"><c>remote_durable</c> once another placed region confirmed the write, <c>local_durable</c> on a single-machine cell, <c>unchanged</c> for assertions only (decision 0013a).</param>
 /// <param name="Results">One result per operation, in order.</param>
 public sealed record TransactionBody(string Offset, string Durability, IReadOnlyList<TransactionResultBody> Results);

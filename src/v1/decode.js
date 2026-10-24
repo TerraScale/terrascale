@@ -1,5 +1,5 @@
 // Typed decoding of TerraBase v1 response bodies.
-import { parseU64, requireDocumentId, requireVersion } from "./ids.js";
+import { parseU64, requireDocumentId, requireStoredId, requireVersion } from "./ids.js";
 import { isJsonObject } from "./json.js";
 /** @import { JsonObject, JsonValue } from "./json.js" */
 
@@ -14,6 +14,7 @@ import { isJsonObject } from "./json.js";
  * @property {JsonObject} document
  * @property {readonly JsonValue[]} [siblings] Live versions and tombstones on a causal conflict.
  * @property {number} [distance] Distance to the query vector, or meters to a geo `near` point; present only on `near` query results.
+ * @property {number} [score] Full-text relevance score on results sorted by `$score`.
  */
 
 /**
@@ -100,7 +101,7 @@ export function durability(value) {
  */
 export function decodeDocument(value) {
   const raw = object(value, "document");
-  const id = requireDocumentId(raw.id);
+  const id = requireStoredId(raw.id);
   const version = requireVersion(raw.version);
   const state = string(raw.state, "document state");
   const document = documentObject(raw.document);

@@ -197,7 +197,7 @@ describe("shape-crypto fixture provenance", () => {
   test("the vendored fixture is byte-identical to the recorded upstream file", async () => {
     expect(shapeVectorDigest()).toBe(source.sha256);
     expect((await readFile(new URL("./fixtures/shape-vectors.json", import.meta.url))).byteLength).toBe(source.bytes);
-    expect(source.commit).toBe("993927ce7ecf8f9b889d24d4d1d21ec96eaf9416");
+    expect(source.commit).toBe("0d2582d1d6cc73972b49f6b6089b6f9ed0848da9");
     expect(source.path).toBe("docs/terrabase/shape-vectors.json");
   });
 });

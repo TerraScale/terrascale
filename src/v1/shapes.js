@@ -1,7 +1,7 @@
 // Current C# GET collection/shape contract (docs/shape-reads.md).
 import { array, boolean, documentObject, malformed, object, string, u64 } from "./decode.js";
 import { requireFilter } from "./filter.js";
-import { parseU64, requireDocumentId, requireVersion } from "./ids.js";
+import { parseU64, requireStoredId, requireVersion } from "./ids.js";
 import { stringifyExactJson } from "./json.js";
 /**
  * @import { JsonObject, JsonValue } from "./json.js"
@@ -56,7 +56,7 @@ export function requireShapeOffset(value) {
       const bytes = Uint8Array.from(atob(encoded.replace(/-/gu, "+").replace(/_/gu, "/")), c => c.charCodeAt(0));
       const id = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
       const canonical = btoa(String.fromCharCode(...new TextEncoder().encode(id))).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
-      if (canonical === encoded) { requireDocumentId(id); return value; }
+      if (canonical === encoded) { requireStoredId(id); return value; }
     } catch { /* Invalid base64url or UTF-8. */ }
   }
   throw new TypeError("A shape offset is -1, a signed-64-bit decimal log position, or snap.<head>.<canonical-base64url-id>.");
@@ -108,7 +108,7 @@ export function decodeShapePage(value, headers) {
       const change = object(value, "shape change");
       return Object.freeze({ offset: u64(change.offset, "shape change offset"), ops: Object.freeze(array(change.ops, "shape operations").map(value => {
         const op = object(value, "shape operation");
-        const id = requireDocumentId(op.id);
+        const id = requireStoredId(op.id);
         if (op.op === "delete") return Object.freeze({ op: /** @type {const} */ ("delete"), id });
         if (op.op !== "upsert") malformed("shape operation kind");
         return Object.freeze({ op: /** @type {const} */ ("upsert"), id, version: requireVersion(op.version), document: documentObject(op.document) });

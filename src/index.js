@@ -42,6 +42,7 @@ export { ExactDecimal } from "./v1/json.js";
 /** @typedef {import("./v1/terrabase-v1.js").V1GeoNearSortKey} V1GeoNearSortKey */
 /** @typedef {import("./v1/terrabase-v1.js").V1Aggregate} V1Aggregate */
 /** @typedef {import("./v1/terrabase-v1.js").V1Group} V1Group */
+/** @typedef {import("./v1/terrabase-v1.js").V1ScoreSortKey} V1ScoreSortKey */
 /** @typedef {import("./v1/terrabase-v1.js").V1Query} V1Query */
 /** @typedef {import("./v1/terrabase-v1.js").V1Count} V1Count */
 /** @typedef {import("./v1/terrabase-v1.js").V1QueryPage} V1QueryPage */
@@ -111,6 +112,7 @@ export { V1DatabaseSchemaClient } from "./v1/database-schema.js";
 
 export { V1Indexes } from "./v1/indexes.js";
 /** @typedef {import("./v1/indexes.js").V1Index} V1Index */
+/** @typedef {import("./v1/indexes.js").V1IndexKind} V1IndexKind */
 /** @typedef {import("./v1/indexes.js").V1IndexList} V1IndexList */
 /** @typedef {import("./v1/indexes.js").V1AutoIndexPolicy} V1AutoIndexPolicy */
 /** @typedef {import("./v1/indexes.js").V1IndexRecommendations} V1IndexRecommendations */

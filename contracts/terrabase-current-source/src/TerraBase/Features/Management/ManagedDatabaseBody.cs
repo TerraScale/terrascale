@@ -8,14 +8,16 @@ namespace TerraBase.Features.Management;
 /// <param name="CreatedAt">Creation time.</param>
 /// <param name="Region">The region that answered.</param>
 /// <param name="HomeRegion">The region the database is created and managed in.</param>
-/// <param name="ReplicaRegions">The other regions that hold a full copy and serve it too.</param>
+/// <param name="ReplicaRegions">The other regions that hold a full copy and serve it too; empty when <paramref name="AllRegions"/>.</param>
+/// <param name="AllRegions">Every serving region holds a full copy, including regions that join later.</param>
 public sealed record ManagedDatabaseBody(
-    string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt, string Region, string HomeRegion, IReadOnlyList<string> ReplicaRegions)
+    string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt, string Region, string HomeRegion, IReadOnlyList<string> ReplicaRegions,
+    bool AllRegions)
 {
     /// <summary>Adds the serving node's region to a catalog database.</summary>
     public static ManagedDatabaseBody From(ManagedDatabase database, string region)
     {
         ArgumentNullException.ThrowIfNull(database);
-        return new(database.Id, database.ProjectId, database.Name, database.BranchedFrom, database.CreatedAt, region, database.Home(region), database.Replicas);
+        return new(database.Id, database.ProjectId, database.Name, database.BranchedFrom, database.CreatedAt, region, database.Home(region), database.Replicas, database.AllRegions);
     }
 }

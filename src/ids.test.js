@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { generateId, isValidId, requireId } from "./ids.js";
 import { decodeDocument, decodeWrite } from "./v1/decode.js";
-import { requireDocumentId, requireProject } from "./v1/ids.js";
+import { requireDocumentId, requireProject, requireStoredId } from "./v1/ids.js";
 import { decodeShapePage, requireShapeOffset } from "./v1/shapes.js";
 import { createTerraBaseClient } from "./index.js";
 import { requireDeadLetterId, validateTsAuthIds } from "./ts-auth-ids.js";
@@ -37,7 +37,7 @@ test("only canonical 128-bit ULIDs pass every entity ID boundary", () => {
   }
 });
 
-test("document response keys enforce bounds and valid UTF-8 rather than entity ULIDs", () => {
+test("document boundaries reject malformed IDs", () => {
   const version = "opaque-version";
   for (const value of [undefined, null, 1, "", "\u0000", "\u0085", "\ud800", "\udc00", "a".repeat(257)]) {
     expect(() => requireDocumentId(value)).toThrow(TypeError);
@@ -219,4 +219,22 @@ test("dead-letter selectors contain exactly two canonical ULID entity references
     expect(() => validateTsAuthIds([{ id: invalid, endpoint_id: id, event_id: event }], "tsauth.webhooks.deadLetter")).toThrow(TypeError);
   }
   expect(() => validateTsAuthIds([{ id: selector }], "tsauth.users.list")).toThrow(TypeError);
+});
+
+test("document inputs require ULIDs while stored SQL IDs remain readable", async () => {
+  const version = "opaque-version";
+  const stored = "a/b+é";
+  expect(() => requireDocumentId(stored)).toThrow(TypeError);
+  expect(requireStoredId(stored)).toBe(stored);
+  expect(decodeDocument({ id: stored, version, state: "value", document: {} }).id).toBe(stored);
+  expect(() => decodeWrite({ status: 201, headers: new Headers(), value: { id: stored, version, offset: "1", durability: "local_durable" } })).toThrow(TypeError);
+  let requests = 0;
+  const client = createTerraBaseClient({ project: id, token: `tb_${"a".repeat(43)}`, baseUrl: "https://fixture.invalid", fetch: async () => {
+    requests++;
+    throw new Error("invalid document ID reached HTTP");
+  } });
+  const collection = client.database("app").collection("notes");
+  await expect(collection.get(stored)).rejects.toThrow(TypeError);
+  await expect(collection.put(stored, {})).rejects.toThrow(TypeError);
+  expect(requests).toBe(0);
 });

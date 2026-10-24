@@ -1,15 +1,14 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
-using System.Web;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Net.Http.Headers;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -40,22 +39,17 @@ internal static class DocumentRoute
     /// <summary>Base route of one collection's documents.</summary>
     public const string Collection = Collections + "/{collection}/documents";
 
-    /// <summary>Point operations carry the raw document key in one query parameter.</summary>
+    /// <summary>Point operations carry the document's ULID in one query parameter.</summary>
     public const string Document = Collection + "/by-key";
 
-    private static readonly UTF8Encoding KeyEncoding = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+    /// <summary>The durability barrier and retry semantics shared by single-document mutations.</summary>
+    public const string WriteDurabilityDescription = "Mutations in a cell wait up to 10 seconds for another placed region's durable acknowledgement and answer remote_durable; a cell of one answers local_durable. Before execution, 503 remote_region_unavailable or confirmation_busy carries Retry-After. An ambiguous commit or missing acknowledgement answers 503 write_outcome_unknown with region and machine, without Retry-After; never replay it automatically.";
 
     /// <summary>Largest request body of any other route.</summary>
     public const int MaxRequestBytes = 4 * 1024 * 1024;
 
     /// <summary>Bounds the JSON one page materializes; a page always holds at least one document.</summary>
     public const long MaxPageBytes = 8 * 1024 * 1024;
-
-    /// <summary>
-    /// The contract's durability label for a write committed to the local SQLite file. It names the commit
-    /// path only; durability is not qualified yet (docs/decisions/0004-document-api-v1.md).
-    /// </summary>
-    public const string Durability = "local_durable";
 
     public const string JsonMediaType = "application/json";
 
@@ -114,8 +108,7 @@ internal static class DocumentRoute
                 };
             }
 
-            context.Features.Set(database);
-            return database;
+            return await AdmitCopyAsync(context, database, cancellationToken).ConfigureAwait(false);
         }
 
         var key = ApiKey.Of(context);
@@ -127,6 +120,20 @@ internal static class DocumentRoute
                 Unavailable error => error,
                 TenantContext or NotFound => UnknownDatabase,
             };
+        }
+
+        return await AdmitCopyAsync(context, tenant, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<TenantResult> AdmitCopyAsync(HttpContext context, TenantContext tenant, CancellationToken cancellationToken)
+    {
+        var faults = context.RequestServices.GetRequiredService<IReplicaCopyFaults>();
+        var storage = context.RequestServices.GetRequiredService<IRebuildStorage>();
+        var incarnation = await storage.IncarnationAsync(tenant, cancellationToken).ConfigureAwait(false);
+        if (await faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false)
+            || incarnation is { } pin && await faults.RefusedAsync(tenant, pin, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ReplicaCopyFaultedException("this database copy is awaiting certified recovery");
         }
 
         context.Features.Set(tenant);
@@ -159,10 +166,10 @@ internal static class DocumentRoute
             },
         };
 
-    /// <summary>Decodes one UTF-8 query key exactly once, without path normalization or replacement characters.</summary>
+    /// <summary>The route's single <c>id</c> query parameter, taken verbatim: a ULID needs no query encoding.</summary>
     public static Valid<string> CheckDocumentParameter(HttpContext context)
     {
-        string? encoded = null;
+        string? id = null;
         foreach (var parameter in new QueryStringEnumerable(context.Request.QueryString.Value))
         {
             if (!parameter.EncodedName.Span.SequenceEqual("id"))
@@ -170,53 +177,30 @@ internal static class DocumentRoute
                 continue;
             }
 
-            if (encoded is not null)
+            if (id is not null)
             {
                 return new Validation("id is required exactly once");
             }
 
-            // A UTF-16 character needs at most three UTF-8 bytes, each query-encoded as three ASCII characters.
-            if (parameter.EncodedValue.Length > 256 * 9)
-            {
-                return new Validation("id must be 1 to 256 characters without control characters");
-            }
-
-            encoded = parameter.EncodedValue.ToString();
+            id = parameter.EncodedValue.ToString();
         }
 
-        if (string.IsNullOrEmpty(encoded))
-        {
-            return new Validation("id is required exactly once and must be non-empty");
-        }
-
-        for (var i = 0; i < encoded.Length; i++)
-        {
-            if (encoded[i] > 127 || (encoded[i] == '%' &&
-                (i + 2 >= encoded.Length || !Uri.IsHexDigit(encoded[i + 1]) || !Uri.IsHexDigit(encoded[i + 2]))))
-            {
-                return new Validation("id must use valid UTF-8 query encoding");
-            }
-
-            if (encoded[i] == '%')
-            {
-                i += 2;
-            }
-        }
-
-        try
-        {
-            return CheckDocumentId(KeyEncoding.GetString(HttpUtility.UrlDecodeToBytes(encoded)!));
-        }
-        catch (DecoderFallbackException)
-        {
-            return new Validation("id must use valid UTF-8 query encoding");
-        }
+        return id is null ? new Validation("id is required exactly once") : CheckDocumentId(id);
     }
 
     /// <summary>
-    /// A caller-supplied document key, or the length or character rule it breaks.
+    /// A document id, or the rule it breaks: exactly the canonical form, so one document has exactly one id.
     /// </summary>
     public static Valid<string> CheckDocumentId(string? id) =>
+        EntityIds.IsValid(id)
+            ? id
+            : new Validation("id must be a canonical ULID: 26 uppercase Crockford base32 characters", "invalid_document_id");
+
+    /// <summary>
+    /// A stored document id carried back in a cursor: a ULID, or a SQL table's primary key value (1 to 256 characters
+    /// without control characters), which the Documents API never accepts as input.
+    /// </summary>
+    public static Valid<string> CheckStoredId(string? id) =>
         id is { Length: > 0 and <= 256 } && !id.Any(char.IsControl)
             ? id
             : new Validation("id must be 1 to 256 characters without control characters");
@@ -263,7 +247,7 @@ internal static class DocumentRoute
     public static async ValueTask<IResult> WriteAsync(
         HttpContext context, IDocumentService documents, DocumentKey key, DocumentOperation operation, Func<WriteBody, bool, IResult> answer,
         CancellationToken cancellationToken) =>
-        await documents.WriteAsync(key.Database, [operation], indexErrors: false, cancellationToken).ConfigureAwait(false) switch
+        await documents.WriteConfirmedAsync(key.Database, [operation], indexErrors: false, cancellationToken).ConfigureAwait(false) switch
         {
             DocumentRejected rejected => ErrorResponse.From(rejected.Error),
             WriteResult written => Written(context, key, written, answer),
@@ -274,7 +258,7 @@ internal static class DocumentRoute
         var result = written.Results[0];
         var version = result.ETag!;
         ETags.Set(context, version);
-        return answer(new WriteBody(key.Id, version, Decimal(written.Offset), Durability, Json(result.Document)), result.Created);
+        return answer(new WriteBody(key.Id, version, Decimal(written.Offset), written.Durability, Json(result.Document)), result.Created);
     }
 
     /// <summary>A stored document as a response value, or null when the operation returns none.</summary>
@@ -292,8 +276,8 @@ internal static class DocumentRoute
     public static string Decimal(long value) => value.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// Reads a bounded JSON body of one of <paramref name="mediaTypes"/> whose strings are valid text; a body that
-    /// breaks either rule fails with <paramref name="code"/> (413 for size).
+    /// Reads a bounded JSON body of one of <paramref name="mediaTypes"/> (any Content-Type, or none, when empty) whose
+    /// strings are valid text; a body that breaks either rule fails with <paramref name="code"/> (413 for size).
     /// </summary>
     public static async ValueTask<BodyResult> CheckBodyAsync(
         HttpContext context, int maxBytes, string code, CancellationToken cancellationToken, params string[] mediaTypes)
@@ -303,8 +287,8 @@ internal static class DocumentRoute
             return new UnsupportedMediaType("Content-Encoding is not accepted");
         }
 
-        if (!MediaTypeHeaderValue.TryParse(context.Request.ContentType, out var contentType)
-            || !mediaTypes.Contains(contentType.MediaType.Value, StringComparer.OrdinalIgnoreCase))
+        if (mediaTypes.Length > 0 && (!MediaTypeHeaderValue.TryParse(context.Request.ContentType, out var contentType)
+            || !mediaTypes.Contains(contentType.MediaType.Value, StringComparer.OrdinalIgnoreCase)))
         {
             return new UnsupportedMediaType($"Content-Type must be {string.Join(" or ", mediaTypes)}");
         }

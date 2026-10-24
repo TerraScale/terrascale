@@ -24,20 +24,20 @@ test("unscoped system client supports anonymous probes without a project or cred
   expect((await client.health.liveness()).httpStatus).toBe(200);
   expect(requests).toEqual([["https://fixture.invalid/healthz", null]]);
 });
-test("platform explore preserves read-only routes, redacted documents and raw document keys", async () => {
-  const doc = { id: "a/b+é", version: "tbv1-1", state: "value", document: { password: "[redacted]" } };
+test("platform explore preserves read-only routes, redacted documents and canonical document IDs", async () => {
+  const doc = { id: "01ARZ3NDEKTSV4RRFFQ69G5FA3", version: "tbv1-1", state: "value", document: { password: "[redacted]" } };
   const replies = [{ items: [{ name: "ts-auth", id: entity, homeRegion: "gru", replicaRegions: ["fra"], allRegions: false }] },
     { items: [{ id: entity, name: "users", created_at: "1" }], next_cursor: null }, { items: [doc], next_cursor: "opaque+cursor" }, doc];
   const { client, requests } = await fixture((_r, response) => json(response, replies[requests.length - 1]));
   expect(await client.platform.databases()).toEqual(replies[0]);
   expect((await client.platform.collections("ts-auth")).items[0]?.name).toBe("users");
   expect((await client.platform.documents("ts-auth", "users", { limit: 2, cursor: "opaque+cursor" })).nextCursor).toBe("opaque+cursor");
-  expect(await client.platform.document("ts-auth", "users", "a/b+é")).toEqual(doc);
+  expect(await client.platform.document("ts-auth", "users", "01ARZ3NDEKTSV4RRFFQ69G5FA3")).toEqual(doc);
   expect(requests.map(r => [r.method, r.url.pathname])).toEqual([
     ["GET", "/v1/platform/databases"], ["GET", "/v1/platform/databases/ts-auth/collections"],
     ["GET", "/v1/platform/databases/ts-auth/collections/users/documents"], ["GET", "/v1/platform/databases/ts-auth/collections/users/documents/by-key"],
   ]);
-  expect(requests[3]?.url.searchParams.get("id")).toBe("a/b+é");
+  expect(requests[3]?.url.searchParams.get("id")).toBe("01ARZ3NDEKTSV4RRFFQ69G5FA3");
   for (const r of requests) expect(r.headers.authorization).toBe(`Bearer ${token}`);
 });
 test.each([401, 403, 404])("platform refuses status %i without alternate routes or retries", async code => {
