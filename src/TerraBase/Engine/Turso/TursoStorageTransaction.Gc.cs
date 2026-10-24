@@ -267,7 +267,7 @@ internal sealed partial class TursoStorageTransaction
         }
 
         DropTable(collection);
-        Command(TursoStatements.DropCollection, collection).ExecuteNonQuery();
+        DropCollectionRow(collection);
         DropUniqueCollection(collection, local: false);
         ChangedReaderState = true;
     }

@@ -255,6 +255,39 @@ public sealed class StorageTransactionTests
         await Assert.That(await again.GetAsync("items", "a", CancellationToken.None)).IsNull();
     }
 
+    // The node-local intent journal is never replicated or backed up: recording and retiring intents captures nothing, while
+    // the tenant database's own write is captured.
+    [Test]
+    public async Task Write_intents_capture_no_changes_and_the_tenant_write_is_captured()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var (engine, store) = await OpenAsync(server);
+        await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            _ = await writer.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
+            _ = await writer.CommitAsync(CancellationToken.None);
+        }
+
+        static Task<long> CapturedAsync(TursoDatabaseStore target)
+        {
+            return target.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT count(*) FROM sqlite_schema WHERE name = 'turso_cdc';";
+                if ((long)command.ExecuteScalar()! == 0)
+                {
+                    return 0L;
+                }
+
+                command.CommandText = "SELECT count(*) FROM turso_cdc;";
+                return (long)command.ExecuteScalar()!;
+            }, "a test counting captured changes", CancellationToken.None);
+        }
+
+        await Assert.That(await CapturedAsync(((TursoStorageEngine)engine).IntentStore!)).IsEqualTo(0L);
+        await Assert.That(await CapturedAsync(store)).IsGreaterThan(0L);
+    }
+
     [Test]
     public async Task A_shut_down_engine_opens_no_database()
     {
@@ -327,6 +360,42 @@ public sealed class StorageTransactionTests
         }
     }
 
+    // Each commit's marker names its own final CDC row, whether the marker statement is kept from an earlier transaction or
+    // read fresh after this transaction's DDL (a collection created by the put).
+    [Test]
+    public async Task Each_commit_marker_names_the_last_cdc_commit_row_across_commits_and_collection_creation()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var (_, store) = await OpenAsync(server);
+        Task<long> LastCommitRowAsync()
+        {
+            return store.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT max(change_id) FROM turso_cdc WHERE change_type = 2;";
+                return (long)command.ExecuteScalar()!;
+            }, "a test reading the change log", CancellationToken.None);
+        }
+
+        var markers = new List<long>();
+        foreach (var collection in new[] { "items", "items", "created", "items", "created" })
+        {
+            CommitResult commit;
+            await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+            {
+                _ = await writer.PutAsync(collection, EntityIds.New().ToString(), Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
+                commit = await writer.CommitAsync(CancellationToken.None);
+            }
+
+            await Assert.That(commit.Marker).IsNotNull();
+            await Assert.That(commit.Marker!.Value.Incarnation).IsEqualTo(store.Incarnation);
+            await Assert.That(commit.Marker.Value.ChangeId).IsEqualTo(await LastCommitRowAsync());
+            markers.Add(commit.Marker.Value.ChangeId);
+        }
+
+        await Assert.That(markers.Zip(markers.Skip(1)).All(pair => pair.First < pair.Second)).IsTrue();
+    }
+
     // The feed sequence and the commit offset are read and set under the writer: each feed row takes the next number, a
     // rolled-back savepoint gives its number back, each commit takes one offset, and an exhausted sequence refuses the write.
     [Test]
@@ -395,6 +464,42 @@ public sealed class StorageTransactionTests
         await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         await Assert.That(await reader.GetVersionAsync("items", "d", CancellationToken.None)).IsNull();
         await Assert.That(await ReadAsync("SELECT value FROM commit_offset WHERE id = 1;")).IsEqualTo((startOffset + 2).ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    // A write transaction remembers the collections it found until it drops one or rolls back to a savepoint: a collection
+    // the rolled-back write created, or one the transaction dropped, is looked up again and created anew by the next put.
+    [Test]
+    public async Task A_write_transaction_looks_up_again_a_collection_it_rolled_back_or_dropped()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var (_, store) = await OpenAsync(server);
+        var body = Encoding.UTF8.GetBytes("""{"n":1}""");
+        await using (var seed = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            _ = await seed.PutAsync("kept", "c", body, CancellationToken.None);
+            _ = await seed.CommitAsync(CancellationToken.None);
+        }
+
+        await using (var writer = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            writer.Savepoint();
+            _ = await writer.PutAsync("fresh", "a", body, CancellationToken.None);
+            await writer.FlushStatesAsync();
+            await writer.RollbackToSavepointAsync();
+            await Assert.That(await writer.GetAsync("fresh", "a", CancellationToken.None)).IsNull();
+            _ = await writer.PutAsync("fresh", "b", body, CancellationToken.None);
+            await Assert.That(await writer.GetAsync("kept", "c", CancellationToken.None)).IsNotNull();
+            await Assert.That(await writer.DropCollectionAsync("kept", CancellationToken.None)).IsTrue();
+            await Assert.That(await writer.GetAsync("kept", "c", CancellationToken.None)).IsNull();
+            _ = await writer.PutAsync("kept", "d", body, CancellationToken.None);
+            _ = await writer.CommitAsync(CancellationToken.None);
+        }
+
+        await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        await Assert.That(await reader.GetAsync("fresh", "a", CancellationToken.None)).IsNull();
+        await Assert.That(await reader.GetAsync("fresh", "b", CancellationToken.None)).IsNotNull();
+        await Assert.That(await reader.GetAsync("kept", "c", CancellationToken.None)).IsNull();
+        await Assert.That(await reader.GetAsync("kept", "d", CancellationToken.None)).IsNotNull();
     }
 
     [Test]
