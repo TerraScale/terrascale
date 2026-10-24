@@ -77,7 +77,20 @@ internal static class TursoStatements
         FROM {0} d WHERE d.id > $after AND tb_qos_scan(octet_length(d.doc)) ORDER BY d.id LIMIT $limit;
         """;
 
-    public const string ClientCollectionStats = "SELECT count(*), coalesce(sum(octet_length(doc)), 0) FROM {0};";
+    // Each collection's live documents and their bytes, kept by PutRow; a collection without a row has none.
+    public const string ClientCollectionStats = """
+        SELECT c.name, coalesce(s.documents, 0), coalesce(s.bytes, 0) FROM collections c
+        LEFT JOIN _tb_collection_stats s ON s.collection = c.name ORDER BY c.name;
+        """;
+
+    public const string ClientStoredBytes = "SELECT coalesce(sum(bytes), 0) FROM _tb_collection_stats;";
+
+    public const string AddCollectionStats = """
+        INSERT INTO _tb_collection_stats (collection, documents, bytes) VALUES ($collection, $documents, $bytes)
+        ON CONFLICT (collection) DO UPDATE SET documents = documents + excluded.documents, bytes = bytes + excluded.bytes;
+        """;
+
+    public const string DropCollectionStats = "DELETE FROM _tb_collection_stats WHERE collection = $collection;";
 
     public const string ClientConflictBytes = "SELECT coalesce(sum(octet_length(body)), 0) FROM _tb_unique_conflicts;";
 
@@ -107,6 +120,8 @@ internal static class TursoStatements
     public const string InsertRow = "INSERT INTO {0} (id, doc) VALUES ($id, $body);";
 
     public const string DeleteRow = "DELETE FROM {0} WHERE id = $id;";
+
+    public const string RowBytes = "SELECT octet_length(doc) FROM {0} WHERE id = $id;";
 
     public const string UpdateState = """
         UPDATE _tb_state SET state = $state, stamp = $stamp, origin = $origin, live = $live, h1 = $h1, h2 = $h2
@@ -227,11 +242,15 @@ internal static class TursoStatements
         [nameof(ClientListFirst)] = ClientListFirst,
         [nameof(ClientListAfter)] = ClientListAfter,
         [nameof(ClientCollectionStats)] = ClientCollectionStats,
+        [nameof(ClientStoredBytes)] = ClientStoredBytes,
+        [nameof(AddCollectionStats)] = AddCollectionStats,
+        [nameof(DropCollectionStats)] = DropCollectionStats,
         [nameof(ClientConflictBytes)] = ClientConflictBytes,
         [nameof(ClientCollectionNames)] = ClientCollectionNames,
         [nameof(UpdateRow)] = UpdateRow,
         [nameof(InsertRow)] = InsertRow,
         [nameof(DeleteRow)] = DeleteRow,
+        [nameof(RowBytes)] = RowBytes,
         [nameof(UpdateState)] = UpdateState,
         [nameof(InsertState)] = InsertState,
         [nameof(UpdateApplied)] = UpdateApplied,

@@ -30,36 +30,33 @@ internal sealed partial class TursoStorageTransaction
             return (long)command.ExecuteScalar()!;
         }, cancellationToken), cancellationToken);
 
+    // A client database reads its counts from _tb_collection_stats, one row per collection whatever its size, so only the
+    // query's time budget can refuse it; the system database still counts its documents table under the scan budget.
     public ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken) =>
         RunAsync(() => WithQueryBudget<IReadOnlyList<CollectionStats>>(() =>
         {
-            var collections = new List<CollectionStats>();
             if (!store.IsSystem)
             {
-                foreach (var name in CollectionNames(cancellationToken))
-                {
-                    using var stats = Uncached(name);
-                    stats.CommandText = string.Format(CultureInfo.InvariantCulture,
-                        "SELECT count(*), coalesce(sum(octet_length(doc)), 0) FROM {0} WHERE tb_qos_scan(octet_length(doc));", Table(name));
-                    using var row = stats.ExecuteReader();
-                    row.Read();
-                    collections.Add(new CollectionStats(name, row.GetInt64(0), row.GetInt64(1)));
-                }
-
-                return collections;
+                return ReadCollectionStats(Command(TursoStatements.ClientCollectionStats), cancellationToken);
             }
 
             using var command = PlainCommand(TursoStatements.ListCollectionStats.Replace(
                 "documents.body IS NOT NULL", "documents.body IS NOT NULL AND tb_qos_scan(octet_length(documents.body))", StringComparison.Ordinal));
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                collections.Add(new CollectionStats(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2)));
-            }
-
-            return collections;
+            return ReadCollectionStats(command, cancellationToken);
         }, cancellationToken), cancellationToken);
+
+    private static List<CollectionStats> ReadCollectionStats(SqliteCommand command, CancellationToken cancellationToken)
+    {
+        var collections = new List<CollectionStats>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            collections.Add(new CollectionStats(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2)));
+        }
+
+        return collections;
+    }
 
     public IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken, QueryObservation? observation = null) =>
         ReadBudgetedAsync(() => QueryCommand(query, explain: false, observation is not null), query, observation, cancellationToken);

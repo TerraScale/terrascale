@@ -118,15 +118,8 @@ internal sealed partial class TursoStorageTransaction(
             }
 
             // Hidden uniqueness losers are kept aside, out of their collections' tables.
-            var bytes = (long)Command(TursoStatements.ClientConflictBytes).ExecuteScalar()!;
-            foreach (var name in CollectionNames(cancellationToken))
-            {
-                using var reader = TableCommand(TursoStatements.ClientCollectionStats, name).ExecuteReader();
-                reader.Read();
-                bytes += reader.GetInt64(1);
-            }
-
-            return bytes;
+            return (long)Command(TursoStatements.ClientConflictBytes).ExecuteScalar()!
+                + (long)Command(TursoStatements.ClientStoredBytes).ExecuteScalar()!;
         }, cancellationToken);
 
     // Worker-only: query readers fetch bodies after their id/key page has admitted the row.
@@ -1218,6 +1211,7 @@ internal sealed partial class TursoStorageTransaction(
 
         RemoveMerkleStates(name);
         Command(TursoStatements.DropStates, name).ExecuteNonQuery();
+        Command(TursoStatements.DropCollectionStats, name).ExecuteNonQuery();
         foreach (var key in _pending.Keys.Where(key => key.Collection == name).ToList())
         {
             _pending.Remove(key);
