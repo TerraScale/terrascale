@@ -64,6 +64,7 @@ else
     {
         @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationMembers, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))
     }
+    else if (Model.Tab == "sso") { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Sso.OrganizationSsoSection, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model)) }
     else if (Model.Tab == "audit") { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Audit.OrganizationAuditView, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model)) }
     else if (Model.Tab == "danger")
     {
