@@ -33,8 +33,14 @@ public sealed record TerraBaseSavedQuery(string Id, string Name, string Sql, Dat
 /// <param name="MaxLatencyMs">Maximum latency in milliseconds.</param>
 /// <param name="RowsScanned">Total rows scanned.</param>
 /// <param name="LastSeenAt">Latest observation.</param>
+/// <param name="LatencyBuckets">
+/// Observed queries per power-of-two millisecond bucket: bucket 0 is under 1 ms, bucket i (1 to 18) under 2^i ms, bucket 19 the rest.
+/// Null for statistics recorded before buckets existed.
+/// </param>
+/// <param name="P95LatencyMs">Upper bound of the bucket holding the 95th percentile, at most <paramref name="MaxLatencyMs"/>; null without buckets.</param>
 public sealed record TerraBaseQueryShape(string Id, string Collection, string Shape, long Queries,
-    double TotalLatencyMs, double MaxLatencyMs, long RowsScanned, DateTimeOffset LastSeenAt);
+    double TotalLatencyMs, double MaxLatencyMs, long RowsScanned, DateTimeOffset LastSeenAt,
+    IReadOnlyList<long>? LatencyBuckets = null, double? P95LatencyMs = null);
 
 /// <summary>At most 128 shapes, ordered by query count, collection and shape id.</summary>
 /// <param name="Items">Observed shapes.</param>

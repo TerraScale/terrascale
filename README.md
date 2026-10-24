@@ -206,6 +206,21 @@ TerraBaseDocumentPage totals = await database.QueryAsync("orders", new TerraBase
 }, cancellationToken);
 ```
 
+`TerraBaseQuery.Explain = true` runs the query as usual (bypassing the result cache) and fills the page's `Explain`:
+the engine `Plan` steps, the `Indexes` used, `FullScan`, `RowsScanned`, `WorkUnits`, `ElapsedMs` and, on a full scan,
+`SuggestedIndex` (the `fields` of an index to create). `ListQueryShapesAsync` items carry `LatencyBuckets` (20
+power-of-two millisecond buckets) and `P95LatencyMs`; both are null for statistics recorded before buckets existed.
+The list is cumulative per shape, so filter on `LastSeenAt` for a recent window.
+
+```csharp
+TerraBaseDocumentPage explained = await database.QueryAsync("items", new TerraBaseQuery
+{
+    Filter = JsonDocument.Parse("""{"eq":["/status","open"]}""").RootElement,
+    Explain = true,
+}, cancellationToken);
+IReadOnlyList<string>? fields = explained.Explain!.SuggestedIndex; // ["status"] on a full scan
+```
+
 ```csharp
 // Use the ts-orch NetBird service address; the caller configures the required peer credential on httpClient.
 // Qualify this pinned-contract example against the OCI server before use.

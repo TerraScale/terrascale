@@ -51,7 +51,7 @@ public sealed class TerraBaseQueryParityTests
         {
             calls.Add((request.RequestUri!.AbsolutePath, request.Content is null ? null : await request.Content.ReadAsStringAsync(token)));
             return TerraBaseIntegrationFixture.Json(request.Method == HttpMethod.Get
-                ? """{"items":[{"id":"sha256-shape","collection":"items","shape":"SELECT * FROM items WHERE title = ?","queries":9007199254740993,"totalLatencyMs":2.5,"maxLatencyMs":1.5,"rowsScanned":9007199254740994,"lastSeenAt":"2026-10-22T00:00:00Z"}]}"""
+                ? """{"items":[{"id":"sha256-shape","collection":"items","shape":"SELECT * FROM items WHERE title = ?","queries":9007199254740993,"totalLatencyMs":2.5,"maxLatencyMs":1.5,"rowsScanned":9007199254740994,"lastSeenAt":"2026-10-22T00:00:00Z"},{"id":"sha256-p95","collection":"items","shape":"SELECT * FROM items","queries":20,"totalLatencyMs":60,"maxLatencyMs":7.5,"rowsScanned":40,"lastSeenAt":"2026-10-23T00:00:00Z","latencyBuckets":[0,10,9,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"p95LatencyMs":4}]}"""
                 : calls.Count == 2 ? """{"ok":false,"error":"invalid SQL","collection":null,"hasLimit":false,"plan":[],"indexes":[],"suggestions":[]}""" : Plan);
         });
         using var http = new HttpClient(handler);
@@ -63,8 +63,13 @@ public sealed class TerraBaseQueryParityTests
         await Assert.That(plan.Suggestions.Single().Field).IsEqualTo("title");
         await Assert.That(invalid.Ok).IsFalse();
         await Assert.That(invalid.Collection).IsNull();
-        await Assert.That(shapes.Items.Single().Queries).IsEqualTo(9007199254740993L);
-        await Assert.That(shapes.Items.Single().RowsScanned).IsEqualTo(9007199254740994L);
+        await Assert.That(shapes.Items[0].Queries).IsEqualTo(9007199254740993L);
+        await Assert.That(shapes.Items[0].RowsScanned).IsEqualTo(9007199254740994L);
+        await Assert.That(shapes.Items[0].LatencyBuckets).IsNull();
+        await Assert.That(shapes.Items[0].P95LatencyMs).IsNull();
+        await Assert.That(shapes.Items[1].LatencyBuckets!.Count).IsEqualTo(20);
+        await Assert.That(shapes.Items[1].LatencyBuckets![2]).IsEqualTo(9);
+        await Assert.That(shapes.Items[1].P95LatencyMs).IsEqualTo(4);
         await Assert.That(calls[0].Path).EndsWith("/databases/app/sql/explain");
         await Assert.That(calls[1].Path).EndsWith("/databases/app/sql/check");
         await Assert.That(calls[2].Path).EndsWith("/databases/app/query-shapes");
