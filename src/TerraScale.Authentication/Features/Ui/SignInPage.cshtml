@@ -67,6 +67,19 @@ break;
 <div class="alert" data-state="@(Model.Limited ? "limited" : "error")" role="alert"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#@(Model.Limited ? "i-clock" : "i-circle-alert")"></use></svg><div>@if (Model.ErrorTitle is { } errorTitle)
 {<strong>@errorTitle</strong>}<p>@error</p></div></div>
 }
+@if (Model.Step is SignInStep.Email or SignInStep.SignUp && Model.Theme.Providers is { Count: > 0 } providers)
+{
+<div class="actions" aria-label="Social sign-in">
+@foreach (var provider in providers)
+{
+<form method="post" action="/ui/@Model.Slug/social/@provider">
+<input type="hidden" name="next" value="@Model.Next">
+<button class="secondary" type="submit">Continue with @TerraScale.Authentication.Features.ProjectTenants.SocialProviders.Label(provider)</button>
+</form>
+}
+</div>
+<p class="alt">or continue with email</p>
+}
 @switch (Model.Step)
 {
 case SignInStep.Email:

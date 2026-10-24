@@ -22,6 +22,9 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     /// <summary>A disabled user cannot sign in; disabling advances the epoch, which ends its sessions and tokens.</summary>
     public bool Disabled { get; init; }
 
+    /// <summary>Verified external identities linked to this account; provider subjects never serve as user ids.</summary>
+    public IReadOnlyList<LinkedProvider> LinkedProviders { get; init; } = [];
+
     /// <summary>Proof lineage for this authentication attempt; never written back to the account.</summary>
     [JsonIgnore]
     public IReadOnlyList<CredentialBinding> AuthenticationBindings { get; init; } = [];
@@ -108,3 +111,9 @@ public sealed record PasscodeRecord(
 /// <param name="Key">The consumed credential's issuance identifier.</param>
 /// <param name="OwnerId">The request branch that must win the replicated claim.</param>
 public sealed record CredentialBinding(string Kind, string Key, string OwnerId);
+
+/// <summary>A provider identity, scoped to the tenant and its OAuth client.</summary>
+/// <param name="Provider">Provider name.</param>
+/// <param name="ClientId">OAuth client that verified this subject.</param>
+/// <param name="Subject">Stable provider subject.</param>
+public sealed record LinkedProvider(string Provider, string ClientId, string Subject);

@@ -123,6 +123,9 @@ public static class App
         }).ConfigurePrimaryHttpMessageHandler(PublicAddresses.Handler);
         builder.Services.AddSingleton<SsoConnections>();
         builder.Services.AddSingleton<SsoSignIn>();
+        builder.Services.AddSingleton<Features.Social.SocialSignIn>();
+        builder.Services.AddHttpClient(Features.Social.SocialSignIn.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(10))
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         builder.Services.AddHostedService<SessionPruner>();
         // Ready means this regional copy takes writes.
         builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredService<TerraBaseDatabase>()));

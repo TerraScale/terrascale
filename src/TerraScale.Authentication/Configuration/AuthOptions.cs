@@ -33,6 +33,8 @@ public sealed partial record AuthOptions
         "dashboard-post-logout-redirect-uris",
         "access-token-audiences",
         "service-clients",
+        "github-oauth",
+        "google-oauth",
         "terrabase-url",
         "environment");
 
@@ -67,6 +69,9 @@ public sealed partial record AuthOptions
 
     /// <summary>Cloudflare Email Sending account and token; without them email is logged, not delivered.</summary>
     public CloudflareEmailOptions? CloudflareEmail { get; init; }
+
+    /// <summary>Platform OAuth clients, supplied as JSON credentials from OCI Vault; absent credentials hide the button.</summary>
+    public IReadOnlyList<Features.ProjectTenants.SocialProviderRecord> SocialClients { get; init; } = [];
 
     /// <summary>GlitchTip/Sentry DSN. Error reporting is off when unset.</summary>
     public string? SentryDsn { get; init; }
@@ -236,8 +241,34 @@ public sealed partial record AuthOptions
             TerraBaseUrl = Optional("terrabase-url") is { } terraBaseUrl ? ParseOrigin("terrabase-url", terraBaseUrl) : null,
             Development = development,
         };
+        options = options with { SocialClients = ParseSocialClients(options, Optional("github-oauth"), Optional("google-oauth")) };
         options.EnforceProductionGuards();
         return options;
+    }
+
+    private static List<Features.ProjectTenants.SocialProviderRecord> ParseSocialClients(AuthOptions options, string? github, string? google)
+    {
+        var clients = new List<Features.ProjectTenants.SocialProviderRecord>();
+        foreach (var (provider, raw) in new[] { ("github", github), ("google", google) })
+        {
+            if (raw is null)
+            {
+                continue;
+            }
+
+            try
+            {
+                using var document = System.Text.Json.JsonDocument.Parse(raw);
+                clients.Add(Features.ProjectTenants.SocialProviders.Seal(options, OidcIssuer.InstanceId, provider, null,
+                    document.RootElement.GetProperty("client_id").GetString(), document.RootElement.GetProperty("client_secret").GetString(), null, null, null));
+            }
+            catch (Exception error) when (error is System.Text.Json.JsonException or InvalidOperationException or KeyNotFoundException or Contracts.ApiException)
+            {
+                throw Invalid($"TS_AUTH_{provider.ToUpperInvariant()}_OAUTH must contain valid client_id and client_secret JSON credentials");
+            }
+        }
+
+        return clients;
     }
 
     private static IReadOnlyList<IPAddress> ParseTrustedProxies(string? value)
