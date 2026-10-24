@@ -77,7 +77,6 @@ const usage = `usage: ts [-project <name or id>] [-org <name or id>] <command>
   import <db> <format> <file>             import a postgres_plain, sqlite or
                                           ndjson file into a new database
   import status | cancel <db>             print or cancel the database's import
-  sql <db> <query>                        run a read-only SQL query
   functions deploy <db> <file.js | dir>   deploy or replace a JavaScript function
                                           (a dir deploys its index.js); flags:
                                           -name <name> (default: file or dir
@@ -89,6 +88,17 @@ const usage = `usage: ts [-project <name or id>] [-org <name or id>] <command>
   functions logs <db> <name>              print recent invocations as JSON
                                           lines, newest first; -limit 1..100
   functions delete <db> <name>            delete a function and its logs
+  sql <db> <query>                        run a read-only SQL query on collections
+  exec <db> <statement>                   run one relational SQL statement in its
+                                          own transaction; rows print as JSON lines
+  migrate new <name>                      add the next migrations/NNNN_<name>.sql
+  migrate up | status <db>                apply pending migrations in order, each
+                                          in one transaction recorded in the
+                                          ts_migrations table, or list them
+  migrate diff <db> [<base>]              print the tables, collections and indexes
+                                          a database adds, drops or changes
+                                          against base, by default the database
+                                          it branched from
   keys list                               list the project's API keys
   keys create <name> [<db>]               create a read/write API key, shown once;
                                           set its lifetime and networks with
@@ -98,6 +108,8 @@ const usage = `usage: ts [-project <name or id>] [-org <name or id>] <command>
   keys revoke <id>                        revoke an API key
 
 Sign-in is stored in the user config directory (terrascale/cli.json, mode 0600).
+With TERRASCALE_API_KEY set, database commands act as that API key instead,
+in its project or the -project <id> of an organization key, such as in CI.
 Exit status: 0 success, 1 failure, 2 invalid arguments.
 `
 
@@ -161,6 +173,11 @@ var commands = map[string][]int{
 	"functions invoke":  {2},
 	"functions logs":    {2},
 	"functions delete":  {2},
+	"exec":              {2},
+	"migrate new":       {1},
+	"migrate up":        {1},
+	"migrate status":    {1},
+	"migrate diff":      {1, 2},
 	"keys list":         {0},
 	"keys create":       {1, 2},
 	"keys revoke":       {1},
@@ -203,8 +220,21 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if !slices.Contains(commands[name], len(operands)) {
 		return errUsage
 	}
-	if name == "completion" {
+	switch name {
+	case "completion":
 		return completion(operands[0], out)
+	case "migrate new":
+		return newMigration(operands[0], out)
+	}
+	if key := os.Getenv("TERRASCALE_API_KEY"); key != "" {
+		if strings.HasPrefix(name, "auth ") || strings.HasPrefix(name, "keys ") || strings.HasPrefix(name, "projects") || name == "whoami" {
+			return fmt.Errorf("%s needs ts auth login without TERRASCALE_API_KEY", name)
+		}
+		s, err := openKey(ctx, key, *project)
+		if err != nil {
+			return err
+		}
+		return s.dispatch(ctx, name, fn, operands, out)
 	}
 	var keyReq tsauth.APIKeyRequest
 	if name == "keys create" {
@@ -246,11 +276,16 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if strings.HasPrefix(name, "functions ") {
-		return functions(ctx, s.tb.Database(s.project, operands[0]), name, fn, operands[1:], out)
-	}
 	if name == "keys create" {
 		return createKey(ctx, s, keyReq, out)
+	}
+	return s.dispatch(ctx, name, fn, operands, out)
+}
+
+// dispatch runs a project command.
+func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, operands []string, out io.Writer) error {
+	if strings.HasPrefix(name, "functions ") {
+		return functions(ctx, s.tb.Database(s.project, operands[0]), name, fn, operands[1:], out)
 	}
 	return s.run(ctx, name, operands, out)
 }
@@ -441,13 +476,44 @@ func whoami(ctx context.Context, u *tsauth.User, token string, out io.Writer) er
 		Sub   string `json:"sub"`
 		Email string `json:"email"`
 	}
-	if parts := strings.Split(token, "."); len(parts) == 3 {
-		if payload, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
-			_ = json.Unmarshal(payload, &claims)
-		}
-	}
+	decodeClaims(token, &claims)
 	_, err := fmt.Fprintln(out, cmp.Or(claims.Email, claims.Sub, "signed in"))
 	return err
+}
+
+// decodeClaims reads a JWT's payload into v without verifying it: callers
+// only label output or route requests with it; the server checks the token.
+func decodeClaims(token string, v any) {
+	if parts := strings.Split(token, "."); len(parts) == 3 {
+		if payload, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
+			_ = json.Unmarshal(payload, v)
+		}
+	}
+}
+
+// openKey opens the project an API key acts in: its own, or project for an
+// organization key.
+func openKey(ctx context.Context, key, project string) (*session, error) {
+	tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: key, Project: project})
+	if err != nil {
+		return nil, fmt.Errorf("TERRASCALE_API_KEY: %w", err)
+	}
+	token, err := tokens.Token(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("TERRASCALE_API_KEY: %w", err)
+	}
+	var claims struct {
+		ProjectID string `json:"project_id"`
+	}
+	decodeClaims(token, &claims)
+	if project = cmp.Or(project, claims.ProjectID); project == "" {
+		return nil, errors.New("TERRASCALE_API_KEY is an organization key: pass -project <id>")
+	}
+	tb, err := v1.New(v1.Config{TokenSource: tokens})
+	if err != nil {
+		return nil, err
+	}
+	return &session{tb: tb, project: project}, nil
 }
 
 // session is the signed-in user's TerraBase client for one project.
@@ -635,6 +701,28 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 		return nil
 	case "db changes":
 		return tailChanges(ctx, db, args[1:], out)
+	case "exec":
+		res, err := db.ExecuteSQL(ctx, args[1])
+		if err != nil {
+			return err
+		}
+		if len(res.Columns) == 0 {
+			fmt.Fprintf(out, "%d rows affected\n", res.RowsAffected)
+			return nil
+		}
+		enc := json.NewEncoder(out)
+		for _, row := range res.Maps() {
+			if err := enc.Encode(row); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "migrate up":
+		return migrateUp(ctx, db, out)
+	case "migrate status":
+		return migrateStatus(ctx, db, out)
+	case "migrate diff":
+		return s.migrateDiff(ctx, args[0], strings.Join(args[1:], ""), out)
 	case "usage":
 		var u *v1.Usage
 		var err error

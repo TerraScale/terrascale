@@ -565,6 +565,9 @@ ts functions deploy app ./report -cron '0 * * * *'   # deploys report/index.js a
 ts functions invoke app hello -data '{"n":1}' && ts functions logs app hello -limit 10
 ts functions list app && ts functions delete app hello
 ts db branch app app-preview
+ts migrate new create_orders       # writes migrations/0001_create_orders.sql
+ts migrate up app-preview && ts migrate diff app-preview
+ts migrate up app && ts migrate status app
 ts db list
 ts db delete app-preview
 ts auth logout
@@ -576,6 +579,12 @@ Functions (`Database.DeployFunction`, `Functions`, `InvokeFunction`,
 `FunctionLogs`, `FunctionDeliveries`, `DeleteFunction`) follow TerraBase's
 functions contract: JavaScript `handler(event)` deployed per database, run on
 `invoke`, collection changes or a UTC cron schedule.
+With `TERRASCALE_API_KEY` set (CI), database commands act as that API key in
+its project instead of the stored sign-in. `ts migrate up` applies each
+pending `migrations/NNNN_<name>.sql` file in one transaction together with its
+row in the database's `ts_migrations` table, and refuses applied files that
+changed. `ts exec` runs one relational SQL statement, such as reading the
+tables migrations create.
 Invalid arguments exit with status 2, other failures with 1.
 
 ## Checks
