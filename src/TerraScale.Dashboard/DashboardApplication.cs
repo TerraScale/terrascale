@@ -49,6 +49,7 @@ public static class DashboardApplication
         builder.Services.AddSingleton<DashboardSessions>();
         builder.Services.AddAccountFeatures();
         builder.Services.AddAllowanceNotifications();
+        builder.Services.AddAlerts();
         builder.Services.AddAuth();
         builder.Services.AddDatabaseFeatures();
         builder.Services.AddImportFeatures();
@@ -204,6 +205,7 @@ public static class DashboardApplication
         app.MapProfile();
         app.MapProfileAccessTokens();
         app.MapNotifications();
+        app.MapAlerts();
         app.MapOrganizations();
         app.MapBilling();
         app.MapBillingPlanChanges();
