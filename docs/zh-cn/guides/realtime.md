@@ -75,7 +75,7 @@ The feed keeps changes for 7 days. A cursor older than 7 days, or one that canno
 
 ## Follow the feed in JavaScript
 
-The SDK has no changes-feed helper. This plain `fetch` loop runs in Node.js 24 or newer and in browsers. A browser `EventSource` cannot send an `Authorization` header, so use `fetch`.
+The SDK's `db.changes({ cursor, collections })` returns the feed as an async iterator. This plain `fetch` loop runs in Node.js 24 or newer and in browsers. A browser `EventSource` cannot send an `Authorization` header, so use `fetch`.
 
 ```js
 const base = `https://api.terrascale.tech/v1/projects/${project}/databases/${database}`
@@ -158,5 +158,30 @@ To resume on another server without a handle, send `offset=-1` and the last `cur
 | `503` | `shape_too_large`, `unavailable` | Keep your state and retry with backoff. |
 
 `GET …/shape/manifest` and `GET …/shape/keys` serve encrypted, presigned copies of the same shape bodies. They are optional: reading every offset from `GET …/shape` gives the same result.
+
+## Live queries in JavaScript
+
+`collection.subscribeShape()` in `@terrascale/sdk` 0.0.7 or newer runs the shape protocol for you. `state` maps each matching document id to `{ version, document }`. `upToDate` is `true` once the server confirms the latest commit.
+
+```js
+import { createTerraBaseClient, indexedDbShapeReplica, v1Filter } from '@terrascale/sdk'
+
+const client = createTerraBaseClient({ project, baseUrl: 'https://api.terrascale.tech', token: () => getAccessToken() })
+const posts = client.database('app').collection('posts')
+const live = posts.subscribeShape({ where: v1Filter.eq('/status', 'active') }, {
+  replica: indexedDbShapeReplica(`${userId}/posts/active`), // optional
+  onUpdate: (s) => render([...s.state.values()].map((d) => d.document), s.upToDate),
+})
+// live.close() stops it. live.done rejects on an error that stops it.
+```
+
+- **Network drop:** the subscription keeps its documents and retries the same position with backoff, up to 30 seconds apart.
+- **Token renewal:** pass `token` as a function. Each long-poll asks it for the current token, so renew the token before it expires. A `401` or `403` stops the subscription and rejects `done`.
+- **`must_refetch`:** the subscription discards its documents, loads a fresh snapshot and calls `onUpdate`.
+- **Read replica:** with `replica`, the last saved documents appear at once on the next start, with `upToDate` `false`, and stay readable while offline. `indexedDbShapeReplica(key)` stores them in browser IndexedDB. For React Native, pass your own `{ load, save }` that stores a string. Use one key per signed-in user and shape, and clear it on sign-out.
+
+Writes always go to the server. Write with `collection.put()` or `create()` while online; the subscription then delivers the change. There is no offline write queue.
+
+In browsers, the subscription follows the `307` bootstrap redirect itself and uses `fetch`, so it needs no server proxy.
 
 </div>
