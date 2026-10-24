@@ -677,7 +677,9 @@ internal sealed partial class TursoStorageTransaction(
 
         // Compiled per request so every new filter shape does not grow the session's command cache.
         using var command = Uncached(query.Collection);
-        command.CommandText = new TursoQueryCompiler(command.Parameters, Rows(query.Collection), searches.Ordinals, searches.Candidates).Compile(query, observation is not null);
+        // A vector index narrows a near query to the candidates it reranks exactly.
+        var candidates = searches.Candidates ?? VectorCandidates(query, cancellationToken);
+        command.CommandText = new TursoQueryCompiler(command.Parameters, Rows(query.Collection), searches.Ordinals, candidates).Compile(query, observation is not null);
         _queryBudget!.Charge(command.CommandText);
         if (query.Near is not { } near)
         {

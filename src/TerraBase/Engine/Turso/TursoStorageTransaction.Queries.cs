@@ -126,6 +126,7 @@ internal sealed partial class TursoStorageTransaction
         if (!store.IsSystem)
         {
             indexes.AddRange(ReadTextIndexes(cancellationToken));
+            indexes.AddRange(ReadVectorIndexes());
         }
 
         // The schema table has no name index; sort here instead of a temporary B-tree.
@@ -153,7 +154,7 @@ internal sealed partial class TursoStorageTransaction
     // Worker-only, inside a mutation.
     private bool CreateIndex(IndexDefinition index, CancellationToken cancellationToken)
     {
-        if (!IndexName().IsMatch(index.Name) || !DatabaseName.TryParse(index.Collection, out _) || index.Fields.Count is < 1 or > 4 || index.Kind is not ("btree" or "text"))
+        if (!IndexName().IsMatch(index.Name) || !DatabaseName.TryParse(index.Collection, out _) || index.Fields.Count is < 1 or > 4 || index.Kind is not ("btree" or "text" or "vector"))
         {
             throw new ArgumentException("invalid index definition", nameof(index));
         }
@@ -176,6 +177,13 @@ internal sealed partial class TursoStorageTransaction
             {
                 return false;
             }
+        }
+
+        if (index.Kind == "vector")
+        {
+            CreateVectorIndex(index);
+            _statisticsChanged = true;
+            return true;
         }
 
         if (index.Kind == "text")
@@ -243,6 +251,12 @@ internal sealed partial class TursoStorageTransaction
             return true;
         }
 
+        if (!store.IsSystem && ReadVectorIndexes().Exists(index => index.Name == name))
+        {
+            DropVectorIndex(name);
+            return true;
+        }
+
         var command = PlainCommand($"DROP INDEX \"{IndexPrefix}{name}\";");
         using (command)
         {
@@ -277,6 +291,11 @@ internal sealed partial class TursoStorageTransaction
             }
 
             writer.WriteEndArray();
+            if (index.Kind == "vector")
+            {
+                writer.WriteNumber("dimensions", index.Dimensions);
+            }
+
             writer.WriteEndObject();
         }
 
@@ -287,7 +306,7 @@ internal sealed partial class TursoStorageTransaction
     {
         var command = session.Command(TursoStatements.IndexExists, transaction);
         command.Parameters.AddWithValue("$name", IndexPrefix + name);
-        return command.ExecuteScalar() is not null || (!store.IsSystem && TextIndexExists(name));
+        return command.ExecuteScalar() is not null || (!store.IsSystem && (TextIndexExists(name) || ReadVectorIndexes().Exists(index => index.Name == name)));
     }
 
     // Recovers a definition from the CREATE INDEX statement CreateIndexAsync wrote.

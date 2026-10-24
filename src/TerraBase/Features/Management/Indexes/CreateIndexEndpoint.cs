@@ -18,7 +18,7 @@ public sealed class CreateIndexEndpoint(IManagementService management, IIndexSer
         Post(ProjectApiRoute.Indexes);
         Name("createIndex");
         Summary("Builds a secondary index");
-        Description("collection: a collection name. kind: btree (default) or text (native full-text search over string values). fields: 1 to 4 distinct dotted member paths (not _id or _rev, which the primary key already orders). name (optional): a lowercase letter, then lowercase letters, digits or _, at most 63 characters; derived from the collection and fields when omitted. The index is built before the response." + " " + ProjectApiRoute.IdentityDescription);
+        Description("collection: a collection name. kind: btree (default), text (native full-text search over string values) or vector (approximate nearest-neighbour search for near sorts over one numeric-array field; dimensions: its length, 1 to 4096). fields: 1 to 4 distinct dotted member paths (not _id or _rev, which the primary key already orders). name (optional): a lowercase letter, then lowercase letters, digits or _, at most 63 characters; derived from the collection and fields when omitted. A btree or text index is built before the response; a vector index over existing documents answers state building and adds them in the background, while near queries scan, then lists as active." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Indexes");
         Produces<IndexBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -82,14 +82,19 @@ public sealed class CreateIndexEndpoint(IManagementService management, IIndexSer
         }
 
         var kind = request.Kind ?? "btree";
-        if (kind is not ("btree" or "text"))
+        if (kind is not ("btree" or "text" or "vector"))
         {
-            return new Validation("kind must be btree or text");
+            return new Validation("kind must be btree, text or vector");
+        }
+
+        if (kind == "vector" ? fields.Count != 1 || request.Dimensions is not (>= 1 and <= 4096) : request.Dimensions is not null)
+        {
+            return new Validation("a vector index has one field and dimensions 1 to 4096; other kinds take no dimensions");
         }
 
         var name = request.Name ?? IndexService.DefaultName(collection.Value, fields, kind);
         return IndexService.IsValidName(name)
-            ? new IndexDefinition(name, collection.Value, fields, kind)
+            ? new IndexDefinition(name, collection.Value, fields, kind, request.Dimensions ?? 0)
             : new Validation("name must be a lowercase letter, then lowercase letters, digits or _, at most 63 characters");
     }
 }

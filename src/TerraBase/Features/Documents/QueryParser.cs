@@ -36,7 +36,7 @@ internal static class QueryParser
     private const int MaxChildren = 64;
     private const int MaxValues = 256;
     private const int MaxSortKeys = 4;
-    private const int MaxNearLimit = 100;
+    private const int MaxNearLimit = 1000;
     private const int MaxAggregateValues = 16;
     private const int MaxNearDimensions = 4096;
     private const int MaxProjection = 64;
@@ -164,7 +164,7 @@ internal static class QueryParser
 
         if (request.Cursor is not null || request.Limit is > MaxNearLimit)
         {
-            throw Invalid("near returns one page of at most 100 documents, without a cursor");
+            throw Invalid("near returns one page of at most 1000 documents, without a cursor");
         }
 
         if (near.Lat is not null || near.Lon is not null)
