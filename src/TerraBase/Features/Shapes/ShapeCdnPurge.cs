@@ -1,7 +1,7 @@
 using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using TerraBase.Hosting;
@@ -23,7 +23,8 @@ internal interface IShapeCdnPurge
 }
 
 /// <summary>Batches queued URLs into Cloudflare purge requests, retrying throttled and failed ones a bounded number of times.</summary>
-internal sealed class ShapeCdnPurge : BackgroundService, IShapeCdnPurge
+internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, TimeProvider time, IMeterFactory meters, ILogger<ShapeCdnPurge> logger)
+    : BackgroundService, IShapeCdnPurge
 {
     internal const string HttpClientName = "cloudflare-api";
 
@@ -38,21 +39,8 @@ internal sealed class ShapeCdnPurge : BackgroundService, IShapeCdnPurge
     private static readonly TimeSpan FirstRetry = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan MaxRetry = TimeSpan.FromMinutes(1);
     private readonly Channel<string> _queue = Channel.CreateBounded<string>(new BoundedChannelOptions(QueueItems) { SingleReader = true });
-    private readonly IHttpClientFactory _http;
-    private readonly string? _token;
-    private readonly TimeProvider _time;
-    private readonly ILogger<ShapeCdnPurge> _logger;
-    private readonly Counter<long> _purges;
-
-    public ShapeCdnPurge(IHttpClientFactory http, string? token, TimeProvider time, IMeterFactory meters, ILogger<ShapeCdnPurge> logger)
-    {
-        _http = http;
-        _token = token;
-        _time = time;
-        _logger = logger;
-        _purges = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.shape.cdn.purges",
-            description: "Shape CDN URLs by purge outcome: purged, failed (Cloudflare refused or kept failing) or dropped (queue full).");
-    }
+    private readonly Counter<long> _purges = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.shape.cdn.purges",
+        description: "Shape CDN URLs by purge outcome: purged, failed (Cloudflare refused or kept failing) or dropped (queue full).");
 
     public bool Queue(string url)
     {
@@ -83,7 +71,7 @@ internal sealed class ShapeCdnPurge : BackgroundService, IShapeCdnPurge
 
     private async Task<bool> PurgeAsync(List<string> urls, CancellationToken cancellationToken)
     {
-        var client = _http.CreateClient(HttpClientName);
+        var client = http.CreateClient(HttpClientName);
         var wait = FirstRetry;
         for (var attempt = 1; ; attempt++)
         {
@@ -95,7 +83,7 @@ internal sealed class ShapeCdnPurge : BackgroundService, IShapeCdnPurge
                 {
                     Content = JsonContent.Create(new ShapeCdnPurgeRequest(urls), ShapeCdnPurgeJsonContext.Default.ShapeCdnPurgeRequest),
                 };
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
                 status = response.StatusCode;
                 retryAfter = response.Headers.RetryAfter?.Delta;
@@ -107,17 +95,17 @@ internal sealed class ShapeCdnPurge : BackgroundService, IShapeCdnPurge
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
             {
-                _logger.ZLogWarning(error, $"Shape CDN purge request failed");
+                logger.ZLogWarning(error, $"Shape CDN purge request failed");
             }
 
             // A refusal other than throttling (bad token, unknown zone) does not improve by retrying.
             if (attempt == Attempts || status is { } code && (int)code is >= 400 and < 500 && code != HttpStatusCode.TooManyRequests)
             {
-                _logger.ZLogWarning($"Shape CDN purge gave up on {urls.Count} URLs after {attempt} attempts (last status {(status is null ? 0 : (int)status)})");
+                logger.ZLogWarning($"Shape CDN purge gave up on {urls.Count} URLs after {attempt} attempts (last status {(status is null ? 0 : (int)status)})");
                 return false;
             }
 
-            await Task.Delay(retryAfter is { } after && after > wait ? after : wait, _time, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(retryAfter is { } after && after > wait ? after : wait, time, cancellationToken).ConfigureAwait(false);
             wait = TimeSpan.FromTicks(Math.Min(wait.Ticks * 2, MaxRetry.Ticks));
         }
     }

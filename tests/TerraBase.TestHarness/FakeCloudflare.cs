@@ -10,7 +10,7 @@ namespace TerraBase.Testing;
 /// The Cloudflare purge API behind the shape CDN (ShapeCdnPurge), routed in place of api.cloudflare.com: it checks the
 /// bearer token and zone, records every purged URL and answers success.
 /// </summary>
-public sealed class FakeCloudflare
+public sealed class FakeCloudflare : IDisposable
 {
     /// <summary>The API token a server configured by <see cref="FakeS3"/> with <c>R2 = true</c> sends.</summary>
     public const string Token = "test-cloudflare-token";
@@ -21,6 +21,8 @@ public sealed class FakeCloudflare
 
     /// <summary>Every URL purged so far, in request order.</summary>
     public IReadOnlyCollection<string> Purged => _purged;
+
+    public void Dispose() => _requests.Dispose();
 
     /// <summary>Routes the server's Cloudflare API client to this fake.</summary>
     public void Route(IServiceCollection services) =>

@@ -196,7 +196,8 @@ public sealed class ShapeMirrorTests
     [Test]
     public async Task On_an_R2_bucket_objects_are_linked_by_CDN_path_and_a_trimmed_object_is_purged_from_the_CDN()
     {
-        var cloudflare = new FakeCloudflare();
+        // Disposed after the server, which stops sending purges first.
+        using var cloudflare = new FakeCloudflare();
         await using var harness = await Harness.StartAsync(cloudflare: cloudflare);
         var start = await harness.Db.HeadAsync();
         for (var commit = 0; commit < 3; commit++)
