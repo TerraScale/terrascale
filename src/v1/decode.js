@@ -13,7 +13,7 @@ import { isJsonObject } from "./json.js";
  * @property {"value" | "conflict" | (string & {})} state
  * @property {JsonObject} document
  * @property {readonly JsonValue[]} [siblings] Live versions and tombstones on a causal conflict.
- * @property {number} [distance] Distance to the query vector; present only on `near` query results.
+ * @property {number} [distance] Distance to the query vector, or meters to a geo `near` point; present only on `near` query results.
  */
 
 /**

@@ -150,6 +150,32 @@ const { items } = await docs.query({
 });
 ```
 
+Geo points are `{ lat, lon }` objects (WGS 84 degrees). `v1Filter.withinRadius`
+matches points within `meters` (haversine), `v1Filter.withinBox` points in a box
+(`west > east` crosses the antimeridian); both nest under `and`, `or` and `not`
+but shape filters reject them. A geo `near` sort orders by meters from a point,
+with the same one-page, at-most-100 rule as the vector `near`:
+
+```js
+const nearby = await places.query({
+  filter: v1Filter.withinRadius("/loc", { lat: -23.55, lon: -46.63, meters: 1000 }),
+  sort: [{ near: { path: "/loc", lat: -23.55, lon: -46.63 } }], limit: 10,
+}); // each item carries distance in meters
+```
+
+`aggregate` answers `groups` instead of items. `groupBy` takes 0-4 paths;
+`sum`, `avg`, `min` and `max` take at most 16 JSON Pointers in total and
+consider numbers only (`sum` is 0 and the others null without any). `count`
+is a decimal string. It takes no `sort`, `project`, `cursor` or `count`, and
+`limit` bounds the groups (more answer 400 `invalid_query`):
+
+```js
+const { groups } = await orders.query({
+  filter: v1Filter.gte("/created", 1761264000000),
+  aggregate: { groupBy: ["/status"], sum: ["/amount"], avg: ["/amount"] }, limit: 100,
+}); // [{ key: ["paid"], count: "250", sum: { "/amount": 12500.5 }, avg: { "/amount": 50.002 } }]
+```
+
 A collection TTL deletes documents whose member holds a past RFC 3339 UTC time.
 An hourly home-region sweep does the delete, up to about an hour late; until
 then expired documents stay readable.

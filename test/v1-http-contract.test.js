@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { afterEach, describe, expect, test } from "vitest";
-import { createTerraBaseV1Client, ExactDecimal, TerraBaseV1Error, V1ForbiddenScopeError, V1InvalidKeyError } from "../src/index.js";
+import { createTerraBaseV1Client, ExactDecimal, TerraBaseV1Error, v1Filter, V1ForbiddenScopeError, V1InvalidKeyError } from "../src/index.js";
 
 // These loopback fixtures verify SDK wire/decoder behavior, not producer qualification.
 const project = "01ARZ3NDEKTSV4RRFFQ69G5FA1";
@@ -335,6 +335,49 @@ describe("collection TTL", () => {
   });
 });
 
+describe("aggregate queries", () => {
+  test("sends group_by and summaries and decodes typed groups", async () => {
+    const { db, requests } = await fixture((_request, response) => response.writeHead(200, { "content-type": "application/json" })
+      .end('{"items":[],"next_cursor":null,"groups":[{"key":["paid"],"count":"250","sum":{"/amount":12500.5},"avg":{"/amount":50.002},"min":{"/amount":1},"max":{"/amount":null}}]}'));
+    const page = await db.collection("orders").query({
+      filter: v1Filter.gte("/created", 1761264000000),
+      aggregate: { groupBy: ["/status"], sum: ["/amount"], avg: ["/amount"], min: ["/amount"], max: ["/amount"] }, limit: 100,
+    });
+    expect(requests[0]?.body).toBe('{"filter":{"gte":["/created",1761264000000]},"limit":100,"aggregate":{"group_by":["/status"],"sum":["/amount"],"avg":["/amount"],"min":["/amount"],"max":["/amount"]}}');
+    expect(page.items).toEqual([]);
+    expect(page.groups).toEqual([{ key: ["paid"], count: "250", sum: { "/amount": 12500.5 }, avg: { "/amount": 50.002 }, min: { "/amount": 1 }, max: { "/amount": null } }]);
+  });
+
+  test("a document query has no groups and a single group needs no group_by", async () => {
+    const { db, requests } = await fixture((_request, response) => json(response, { items: [], next_cursor: null, groups: [{ key: [], count: "3" }] }));
+    expect((await db.collection("orders").query({ aggregate: {} })).groups).toEqual([{ key: [], count: "3" }]);
+    expect(requests[0]?.body).toBe('{"aggregate":{}}');
+    const plain = await fixture((_request, response) => json(response, { items: [], next_cursor: null }));
+    expect((await plain.db.collection("orders").query({})).groups).toBeUndefined();
+  });
+
+  test.each([
+    { aggregate: {}, sort: [{ path: "/a" }] },
+    { aggregate: {}, project: ["/a"] },
+    { aggregate: {}, cursor: "next" },
+    { aggregate: {}, count: true },
+    { aggregate: { groupBy: ["/a", "/b", "/c", "/d", "/e"] } },
+    { aggregate: { sum: ["/a", "/a"] } },
+    { aggregate: { sum: ["$id"] } },
+    { aggregate: { sum: Array.from({ length: 9 }, (_, i) => `/s${i}`), avg: Array.from({ length: 8 }, (_, i) => `/a${i}`) } },
+    { aggregate: { count: ["/a"] } },
+  ])("rejects invalid aggregate %j before HTTP", async query => {
+    const { db, requests } = await fixture((_request, response) => json(response, { items: [], next_cursor: null }));
+    await expect(db.collection("docs").query(/** @type {any} */ (query))).rejects.toThrow(TypeError);
+    expect(requests).toHaveLength(0);
+  });
+
+  test("rejects a malformed group", async () => {
+    const { db } = await fixture((_request, response) => json(response, { items: [], next_cursor: null, groups: [{ key: [], count: "1", sum: { "/a": "x" } }] }));
+    await expect(db.collection("docs").query({ aggregate: { sum: ["/a"] } })).rejects.toThrow(/malformed/u);
+  });
+});
+
 describe("vector near sort", () => {
   test("sends the exact near query and decodes distance", async () => {
     const { db, requests } = await fixture((_request, response) => response.writeHead(200, { "content-type": "application/json" })
@@ -361,6 +404,29 @@ describe("vector near sort", () => {
     { sort: [{ near: { path: "/e", vector: [0, 0] } }] },
     { sort: [{ near: { path: "/e", vector: [1], metric: "dot" } }] },
   ])("rejects invalid near query %j before HTTP", async query => {
+    const { db, requests } = await fixture((_request, response) => json(response, { items: [], next_cursor: null }));
+    await expect(db.collection("docs").query(/** @type {any} */ (query))).rejects.toThrow(TypeError);
+    expect(requests).toHaveLength(0);
+  });
+
+  test("sends a geo near sort and decodes meters as distance", async () => {
+    const { db, requests } = await fixture((_request, response) => response.writeHead(200, { "content-type": "application/json" })
+      .end(`{"items":[${JSON.stringify(document("a")).slice(0, -1)},"distance":812.5}],"next_cursor":null}`));
+    const page = await db.collection("places").query({
+      filter: v1Filter.withinRadius("/loc", { lat: -23.55, lon: -46.63, meters: 1000 }),
+      sort: [{ near: { path: "/loc", lat: -23.55, lon: -46.63 } }], limit: 5,
+    });
+    expect(requests[0]?.body).toBe('{"filter":{"within":["/loc",{"lat":-23.55,"lon":-46.63,"meters":1000}]},"sort":[{"near":{"path":"/loc","lat":-23.55,"lon":-46.63}}],"limit":5}');
+    expect(page.items[0]).toEqual({ ...document("a"), distance: 812.5 });
+  });
+
+  test.each([
+    { sort: [{ near: { path: "/loc", lat: 91, lon: 0 } }] },
+    { sort: [{ near: { path: "/loc", lat: 0 } }] },
+    { sort: [{ near: { path: "$id", lat: 0, lon: 0 } }] },
+    { sort: [{ near: { path: "/loc", lat: 0, lon: 0, vector: [1] } }] },
+    { sort: [{ near: { path: "/loc", lat: 0, lon: 0 } }], limit: 101 },
+  ])("rejects invalid geo near query %j before HTTP", async query => {
     const { db, requests } = await fixture((_request, response) => json(response, { items: [], next_cursor: null }));
     await expect(db.collection("docs").query(/** @type {any} */ (query))).rejects.toThrow(TypeError);
     expect(requests).toHaveLength(0);

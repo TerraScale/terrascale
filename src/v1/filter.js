@@ -24,7 +24,16 @@ import { ExactDecimal } from "./json.js";
  *   | { readonly nin: readonly [V1Path, readonly V1Scalar[]] }
  *   | { readonly exists: V1Path }
  *   | { readonly prefix: readonly [V1Path, string] }
- *   | { readonly contains: readonly [V1Path, V1Scalar] }} V1Filter
+ *   | { readonly contains: readonly [V1Path, V1Scalar] }
+ *   | { readonly within: readonly [string, V1GeoCircle | V1GeoBox] }} V1Filter
+ */
+/**
+ * Points within `meters` (more than 0, at most 20000000) of a WGS 84 point, by haversine distance.
+ * @typedef {{ readonly lat: number; readonly lon: number; readonly meters: number }} V1GeoCircle
+ */
+/**
+ * Points in a latitude/longitude box; `west > east` crosses the antimeridian.
+ * @typedef {{ readonly south: number; readonly west: number; readonly north: number; readonly east: number }} V1GeoBox
  */
 
 /**
@@ -92,6 +101,46 @@ function scalars(op, values) {
   return Object.freeze(values.map(requireScalar));
 }
 
+/**
+ * @param {unknown} lat
+ * @param {unknown} lon
+ * @returns {void}
+ */
+export function requireGeoPoint(lat, lon) {
+  if (typeof lat !== "number" || typeof lon !== "number" || !(lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180))
+    throw new TypeError("lat is -90 to 90 and lon is -180 to 180.");
+}
+
+/**
+ * @param {unknown} area
+ * @returns {V1GeoCircle | V1GeoBox}
+ */
+function geoArea(area) {
+  if (typeof area !== "object" || area === null || Array.isArray(area)) throw new TypeError("within takes a circle or box object.");
+  const keys = Object.keys(area).sort().join();
+  const a = /** @type {Record<string, unknown>} */ (area);
+  if (keys === "east,north,south,west") {
+    requireGeoPoint(a.south, a.west);
+    requireGeoPoint(a.north, a.east);
+    if (/** @type {number} */ (a.south) > /** @type {number} */ (a.north)) throw new TypeError("A within box has south <= north.");
+    return Object.freeze({ south: /** @type {number} */ (a.south), west: /** @type {number} */ (a.west), north: /** @type {number} */ (a.north), east: /** @type {number} */ (a.east) });
+  }
+  if (keys !== "lat,lon,meters" || typeof a.meters !== "number" || !(a.meters > 0 && a.meters <= 20_000_000))
+    throw new TypeError("within takes {lat, lon, meters (0 to 20000000)} or {south, west, north, east}.");
+  requireGeoPoint(a.lat, a.lon);
+  return Object.freeze({ lat: /** @type {number} */ (a.lat), lon: /** @type {number} */ (a.lon), meters: a.meters });
+}
+
+/**
+ * @param {V1Path} path
+ * @param {unknown} area
+ * @returns {V1Filter}
+ */
+function within(path, area) {
+  if (requirePath(path) === "$id") throw new TypeError("within takes a JSON Pointer.");
+  return Object.freeze({ within: Object.freeze(/** @type {const} */ ([path, geoArea(area)])) });
+}
+
 const binaryOperators = new Set(["eq", "ne", "lt", "lte", "gt", "gte", "contains"]);
 
 /**
@@ -119,6 +168,10 @@ export function requireFilter(filter) {
       for (const child of args) visit(child, depth + 1);
     } else if (op === "not") visit(args, depth + 1);
     else if (op === "exists") requirePath(/** @type {V1Path} */ (args));
+    else if (op === "within") {
+      if (!Array.isArray(args) || args.length !== 2) throw new TypeError("within takes [path, area].");
+      within(args[0], args[1]);
+    }
     else if (binaryOperators.has(op) || op === "prefix" || op === "in" || op === "nin") {
       if (!Array.isArray(args) || args.length !== 2) throw new TypeError(`${op} takes [path, value].`);
       requirePath(args[0]);
@@ -227,4 +280,18 @@ export const v1Filter = Object.freeze({
    * @returns {V1Filter}
    */
   contains: (path, value) => Object.freeze({ contains: Object.freeze(/** @type {const} */ ([requirePath(path), requireScalar(value)])) }),
+  /**
+   * The `{lat, lon}` object at `path` lies within `meters` of the center (haversine, WGS 84 mean radius).
+   * @param {string} path JSON Pointer of a `{lat, lon}` point.
+   * @param {V1GeoCircle} circle `meters` is more than 0, at most 20000000.
+   * @returns {V1Filter}
+   */
+  withinRadius: (path, circle) => within(path, { lat: circle?.lat, lon: circle?.lon, meters: circle?.meters }),
+  /**
+   * The `{lat, lon}` object at `path` lies in the box; `west > east` crosses the antimeridian.
+   * @param {string} path JSON Pointer of a `{lat, lon}` point.
+   * @param {V1GeoBox} box
+   * @returns {V1Filter}
+   */
+  withinBox: (path, box) => within(path, { south: box?.south, west: box?.west, north: box?.north, east: box?.east }),
 });
