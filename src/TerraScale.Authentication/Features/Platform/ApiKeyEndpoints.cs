@@ -107,7 +107,7 @@ public sealed class RevokeOrganizationApiKeyEndpoint(ApiKeys keys, PlatformAuthe
     public override void Configure()
     {
         Delete($"{Organization}/api-keys/{{key}}");
-        this.Document("revoke_organization_api_key", "Revoke an organization API key", "Needs admin. No token is issued for it afterwards; tokens already issued expire within 5 minutes.", "API keys", null, StatusCodes.Status204NoContent, null);
+        this.Document("revoke_organization_api_key", "Revoke an organization API key", "Needs admin. No token is issued for it afterwards; tokens already issued expire within 60 seconds.", "API keys", null, StatusCodes.Status204NoContent, null);
     }
 
     /// <inheritdoc />
@@ -177,7 +177,7 @@ public sealed class RevokeProjectApiKeyEndpoint(ApiKeys keys, PlatformAuthentica
     public override void Configure()
     {
         Delete($"{Project}/api-keys/{{key}}");
-        this.Document("revoke_project_api_key", "Revoke a project API key", "Needs the project's member role. No token is issued for it afterwards; tokens already issued expire within 5 minutes.", "API keys", null, StatusCodes.Status204NoContent, null);
+        this.Document("revoke_project_api_key", "Revoke a project API key", "Needs the project's member role. No token is issued for it afterwards; tokens already issued expire within 60 seconds.", "API keys", null, StatusCodes.Status204NoContent, null);
     }
 
     /// <inheritdoc />

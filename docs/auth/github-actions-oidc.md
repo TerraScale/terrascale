@@ -48,7 +48,7 @@ its own tokens. The parameter names follow RFC 8693.
   organization, project, `run_id`, `run_attempt`, `sha`, `jti` and scopes.
 
 The issued token's `sub` is `github-actions:1414527764:<run_id>`. It carries `org_id` and `project_id` (the binding's),
-`scope`, and the configured `TS_AUTH_ACCESS_TOKEN_AUDIENCES`. It lives 15 minutes and comes with no refresh token.
+`scope`, and the configured `TS_AUTH_ACCESS_TOKEN_AUDIENCES`. It lives 60 seconds and comes with no refresh token.
 
 ## Activation (user-run, after approval), revocation
 
@@ -57,7 +57,7 @@ The issued token's `sub` is `github-actions:1414527764:<run_id>`. It carries `or
   the client's properties. They are not platform directory records: no user is a member and no API reaches them, which
   keeps the project isolated. TerraBase enrolls the project on the first database create (below).
 - Running it again prints `already bound; nothing changed` with the same ids.
-- `ts-auth unbind-github-actions-e2e` deletes the client. Tokens already issued expire within 15 minutes.
+- `ts-auth unbind-github-actions-e2e` deletes the client. Tokens already issued expire within 60 seconds.
 - Both commands log `Audit: operator command …`.
 
 ## TerraBase trust and bootstrap
@@ -84,6 +84,6 @@ The credential exchange:
    `PATCH …/databases/ci-e2e` at the home region and checked again; a wrong home cannot change, so the step fails naming
    the project, the database and its placement (never a body). It is kept between runs; each test creates and deletes
    its own collection (and any database it creates) in the project;
-A token lives 15 minutes, so each step builds first (`make terrabase-build`, then `make -o terrabase-build terrabase-e2e`)
+A token lives 60 seconds, so each step builds first (`make terrabase-build`, then `make -o terrabase-build terrabase-e2e`)
 and mints its own after the build; a step running longer fails with 401 rather than reusing anything. The script's
 self-check (`scripts/e2e/ci-oidc-credential-test.sh`, a fake curl: no request leaves the runner) runs in the `test` job.
