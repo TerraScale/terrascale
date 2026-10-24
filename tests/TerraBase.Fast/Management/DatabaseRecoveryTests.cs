@@ -156,8 +156,7 @@ public sealed class DatabaseRecoveryTests
             var storage = new TenantContext(state.Organization, PlanTier.Hobby, state.Project, target);
             if (interruption == "delete.finalized")
             {
-                await Assert.That(await engine.CreateDatabaseAsync(storage, CancellationToken.None)).IsTrue();
-                await Assert.That(await engine.DeleteDatabaseAsync(storage, CancellationToken.None)).IsTrue();
+                await Assert.That(async () => { _ = await engine.CreateDatabaseAsync(storage, CancellationToken.None); }).Throws<IOException>();
                 await state.AssertFilesGoneAsync(target);
             }
             else
@@ -203,8 +202,7 @@ public sealed class DatabaseRecoveryTests
             {
                 var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
                 var storage = new TenantContext(state.Organization, PlanTier.Hobby, state.Project, target);
-                await Assert.That(await engine.CreateDatabaseAsync(storage, CancellationToken.None)).IsTrue();
-                await Assert.That(await engine.DeleteDatabaseAsync(storage, CancellationToken.None)).IsTrue();
+                await Assert.That(async () => { _ = await engine.CreateDatabaseAsync(storage, CancellationToken.None); }).Throws<IOException>();
                 await state.AssertFilesGoneAsync(target);
             }
 
@@ -416,8 +414,7 @@ public sealed class DatabaseRecoveryTests
             await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
             await state.AssertFilesGoneAsync(target);
             await state.AssertUnregisteredAsync(api, owner, target);
-            await Assert.That(await engine.CreateDatabaseAsync(storage, CancellationToken.None)).IsTrue();
-            await Assert.That(await engine.DeleteDatabaseAsync(storage, CancellationToken.None)).IsTrue();
+            await Assert.That(async () => { _ = await engine.CreateDatabaseAsync(storage, CancellationToken.None); }).Throws<IOException>();
             await state.AssertFilesGoneAsync(target);
         }
 
@@ -516,11 +513,18 @@ public sealed class DatabaseRecoveryTests
             await state.AssertUnregisteredAsync(api, owner, target);
             await state.AssertPreservedAsync(api, owner);
             var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
-            await Assert.That(await engine.CreateDatabaseAsync(storage, CancellationToken.None)).IsTrue();
-            await Assert.That(await engine.DeleteDatabaseAsync(storage, CancellationToken.None)).IsTrue();
-            await state.AssertFilesGoneAsync(target);
-            await Assert.That(await engine.CopyDatabaseAsync(storage with { DatabaseId = state.Source }, storage, CancellationToken.None)).IsTrue();
-            await Assert.That(await engine.DeleteDatabaseAsync(storage, CancellationToken.None)).IsTrue();
+            if (route == "cancelled-create")
+            {
+                await Assert.That(await engine.CreateDatabaseAsync(storage, CancellationToken.None)).IsTrue();
+                await Assert.That(await engine.DeleteDatabaseAsync(storage, CancellationToken.None)).IsTrue();
+                await Assert.That(await engine.CopyDatabaseAsync(storage with { DatabaseId = state.Source }, storage, CancellationToken.None)).IsTrue();
+                await Assert.That(await engine.DeleteDatabaseAsync(storage, CancellationToken.None)).IsTrue();
+            }
+            else
+            {
+                await Assert.That(async () => { _ = await engine.CreateDatabaseAsync(storage, CancellationToken.None); }).Throws<IOException>();
+                await Assert.That(async () => { _ = await engine.CopyDatabaseAsync(storage with { DatabaseId = state.Source }, storage, CancellationToken.None); }).Throws<IOException>();
+            }
             await state.AssertFilesGoneAsync(target);
 
             armed = false;
@@ -1484,6 +1488,7 @@ public sealed class DatabaseRecoveryTests
         await using (var provider = services.BuildServiceProvider())
         {
             var engine = provider.GetRequiredService<IStorageEngine>();
+            _ = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
             await Assert.That(await engine.CreateDatabaseAsync(
                 new TenantContext(state.Organization, PlanTier.Hobby, state.Project, target), CancellationToken.None)).IsTrue();
         }

@@ -186,6 +186,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             return await inner.CreateDatabaseWithIntentAsync(database, source, recordIntent, cancellationToken);
         }
 
+        public ValueTask<bool> VerifyDatabaseErasureAsync(TenantContext database, CancellationToken cancellationToken) =>
+            inner.VerifyDatabaseErasureAsync(database, cancellationToken);
+
         public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null)
         {
             if (hook.BeforeDelete is { } beforeDelete)
@@ -358,6 +361,10 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
             inner.ReadFeedMetadataAsync(cursor, collections, maxEvents, maxBytes, cancellationToken);
         public ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken) => inner.GetFeedHeadAsync(cancellationToken);
+
+        public ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetAppliedAsync(CancellationToken cancellationToken) => inner.GetAppliedAsync(cancellationToken);
+
+        public ValueTask<bool> HoldsHistoryAtOrBelowAsync(Hlc cut, CancellationToken cancellationToken) => inner.HoldsHistoryAtOrBelowAsync(cut, cancellationToken);
         public ValueTask<int> TrimFeedAsync(Hlc before, int limit, CancellationToken cancellationToken) => inner.TrimFeedAsync(before, limit, cancellationToken);
         public async ValueTask<DocumentPage> ListAsync(string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken)
         {

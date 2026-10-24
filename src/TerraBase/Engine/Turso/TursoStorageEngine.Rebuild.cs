@@ -55,6 +55,7 @@ internal sealed partial class TursoStorageEngine : IRebuildStorage
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            await ThrowIfPurgeFencedAsync(key.Database, cancellationToken).ConfigureAwait(false);
             RejectDatabaseLinks(sidePath);
             if (!_stores.TryGetValue(key, out var store) || store.Incarnation != faultedIncarnation || _initializing.ContainsKey(key)
                 || _pendingIntents.Contains(key) || File.Exists(sidePath))
@@ -109,6 +110,7 @@ internal sealed partial class TursoStorageEngine : IRebuildStorage
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            await ThrowIfPurgeFencedAsync(key.Database, cancellationToken).ConfigureAwait(false);
             // Under the creation lock, which a deletion holds while its files go: a deleted database (its side copy gone with
             // it) or one a lifecycle operation owns is never published again.
             if (_pendingIntents.Contains(key) || !File.Exists(sidePath))
@@ -166,63 +168,38 @@ internal sealed partial class TursoStorageEngine : IRebuildStorage
     public async ValueTask<string> CopyForSalvageAsync(string sidePath, CancellationToken cancellationToken)
     {
         var working = sidePath + ".salvage";
-        Io.Admit();
-        try
+        return await RunSalvageAsync(sidePath, operation =>
         {
-            return await Io.RunAsync(() =>
+            _checkpoint("rebuild.salvage_copy", operation.Database);
+            // The retained side copy is only read by copies, never opened in place.
+            DeleteFiles(working);
+            RejectLink(sidePath);
+            File.Copy(sidePath, working, overwrite: false);
+            foreach (var sidecar in Sidecars.Where(sidecar => File.Exists(sidePath + sidecar)))
             {
-                // The retained side copy is only ever read by these copies, never opened: an open could recover or index
-                // its log in place.
-                DeleteFiles(working);
-                RejectLink(sidePath);
-                File.Copy(sidePath, working, overwrite: false);
-                foreach (var sidecar in Sidecars.Where(sidecar => File.Exists(sidePath + sidecar)))
-                {
-                    RejectLink(sidePath + sidecar);
-                    File.Copy(sidePath + sidecar, working + sidecar, overwrite: false);
-                }
+                RejectLink(sidePath + sidecar);
+                File.Copy(sidePath + sidecar, working + sidecar, overwrite: false);
+            }
 
-                return working;
-            }, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            Io.Release();
-        }
+            return working;
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<IReadOnlyList<SideRow>> MeasureSideAsync(
-        string workingPath, string afterCollection, string afterId, int maxRows, long maxBytes, CancellationToken cancellationToken)
-    {
-        Io.Admit();
-        try
-        {
-            return await Io.RunAsync(() => MeasureSide(workingPath, afterCollection, afterId, maxRows, maxBytes, cancellationToken), cancellationToken)
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            Io.Release();
-        }
-    }
+        string workingPath, string afterCollection, string afterId, int maxRows, long maxBytes, CancellationToken cancellationToken) =>
+        await ReadSalvageAsync(workingPath,
+            connection => MeasureSide(connection, afterCollection, afterId, maxRows, maxBytes, cancellationToken), cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<IReadOnlyList<RepairState>> ReadSideAsync(string workingPath, IReadOnlyList<SideRow> rows, CancellationToken cancellationToken)
     {
-        Io.Admit();
-        try
+        var (states, skipped) = await ReadSalvageAsync(workingPath,
+            connection => ReadSide(connection, rows, cancellationToken), cancellationToken).ConfigureAwait(false);
+        if (skipped > 0)
         {
-            var (states, skipped) = await Io.RunAsync(() => ReadSide(workingPath, rows, cancellationToken), cancellationToken).ConfigureAwait(false);
-            if (skipped > 0)
-            {
-                _logger.ZLogWarning($"A rebuild's salvage skipped {skipped:@Count} side-copy states that do not verify against their stored digests");
-            }
+            _logger.ZLogWarning($"A rebuild's salvage skipped {skipped:@Count} side-copy states that do not verify against their stored digests");
+        }
 
-            return states;
-        }
-        finally
-        {
-            Io.Release();
-        }
+        return states;
     }
 
     public async ValueTask DiscardWorkingCopyAsync(string workingPath, CancellationToken cancellationToken)
@@ -332,9 +309,8 @@ internal sealed partial class TursoStorageEngine : IRebuildStorage
 
     // Worker-only: the next rows of a private working copy with the bytes of their stored states and documents, read
     // without reading either.
-    private static List<SideRow> MeasureSide(string workingPath, string afterCollection, string afterId, int maxRows, long maxBytes, CancellationToken cancellationToken)
+    private static List<SideRow> MeasureSide(SqliteConnection connection, string afterCollection, string afterId, int maxRows, long maxBytes, CancellationToken cancellationToken)
     {
-        using var connection = Working(workingPath);
         if (afterCollection.Length == 0 && afterId.Length == 0)
         {
             VerifySideCoverage(connection, cancellationToken);
@@ -454,9 +430,8 @@ internal sealed partial class TursoStorageEngine : IRebuildStorage
 
     // Worker-only: the measured rows' states that verify against their stored digests, and how many did not (the class doc
     // of ReplicaRebuild: only verified states join the rebuild).
-    private static (List<RepairState> States, int Skipped) ReadSide(string workingPath, IReadOnlyList<SideRow> rows, CancellationToken cancellationToken)
+    private static (List<RepairState> States, int Skipped) ReadSide(SqliteConnection connection, IReadOnlyList<SideRow> rows, CancellationToken cancellationToken)
     {
-        using var connection = Working(workingPath);
         using var snapshot = connection.BeginTransaction(deferred: true);
         List<RepairState> states = [];
         var skipped = 0;
@@ -530,7 +505,7 @@ internal sealed partial class TursoStorageEngine : IRebuildStorage
     }
 
     // An unpooled connection on a private working copy (never on the retained side copy).
-    private static SqliteConnection Working(string workingPath)
+    private static SqliteConnection Working(string workingPath, SalvageOperation operation)
     {
         var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = workingPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString());
         try
@@ -540,7 +515,15 @@ internal sealed partial class TursoStorageEngine : IRebuildStorage
         }
         catch
         {
-            connection.Dispose();
+            try
+            {
+                connection.Dispose();
+            }
+            catch
+            {
+                operation.CloseFailed = true;
+                throw;
+            }
             throw;
         }
     }

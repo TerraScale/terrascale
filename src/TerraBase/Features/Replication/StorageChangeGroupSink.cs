@@ -1,6 +1,8 @@
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
+using TerraBase.Features.Webhooks;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -12,7 +14,8 @@ namespace TerraBase.Features.Replication;
 /// whole groups per transaction, at most one transaction's worth of documents each, every transaction synced to disk
 /// before the next, so an ack means the groups survive a power loss here.
 /// </summary>
-internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirectory tenants, DatabaseLifecycleCheckpoint checkpoint, ReplicationTimings timings) : IChangeGroupSink
+internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirectory tenants, DatabaseLifecycleCheckpoint checkpoint,
+    IWebhookReplicaAdmission webhooks, ReplicationTimings timings, IClosureCancellation cancellations) : IChangeGroupSink
 {
     public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken, ApplyProgress? progress = null)
     {
@@ -40,15 +43,36 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             progress?.Attach(transaction);
             await transaction.RequireAppliedAsync(origin, expected, cancellationToken).ConfigureAwait(false);
             step = timings.Record(ReplicationTimings.ReceiveBegin, step);
+            List<(string, string, DocumentState, EntryVersion)>? deferred = null;
+            HashSet<(string Collection, string Id)> closureChanges = [];
+            List<(string Id, DocumentState State, EntryVersion At)> closureJobs = [];
             for (; next < end; next++)
             {
                 foreach (var delta in groups[next].Deltas)
                 {
-                    _ = await transaction.JoinAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, origin), cancellationToken).ConfigureAwait(false);
+                    var at = new EntryVersion(delta.Stamp, origin);
+                    TrackClosure(delta.Collection, delta.Id, closureChanges);
+                    if (database != ChangeGroups.System && delta.Collection == ClosureCancellation.Jobs)
+                    {
+                        closureJobs.Add((delta.Id, delta.State, at));
+                    }
+                    else if (database == ChangeGroups.System && webhooks.Decides(delta.Collection))
+                    {
+                        (deferred ??= []).Add((delta.Collection, delta.Id, delta.State, at));
+                    }
+                    else
+                    {
+                        _ = await transaction.JoinAsync(delta.Collection, delta.Id, delta.State, at, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    // A refused state still counts as applied: the origin's stream moves on and never resends it.
                     applied = applied.Value < delta.Stamp.Value ? delta.Stamp : applied;
                 }
             }
 
+            _ = await JoinAdmittedAsync(transaction, deferred, cancellationToken).ConfigureAwait(false);
+            _ = await JoinClosureJobsAsync(transaction, closureJobs, cancellationToken).ConfigureAwait(false);
+            await cancellations.ObserveAsync(transaction, closureChanges, cancellationToken).ConfigureAwait(false);
             await transaction.RecordAppliedAsync(origin, applied, cancellationToken).ConfigureAwait(false);
             step = timings.Record(ReplicationTimings.ReceiveJoin, step);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -103,14 +127,72 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
                 return null;
             }
 
+            List<(string, string, DocumentState, EntryVersion)>? deferred = null;
+            HashSet<(string Collection, string Id)> closureChanges = [];
+            List<(string Id, DocumentState State, EntryVersion At)> closureJobs = [];
             foreach (var state in chunk.Where(state => state.State.MaxStamp.Value != 0))
             {
                 // Origin 0: a repair (section 9), so the tailer never ships it and it moves no origin's applied stamp.
-                changed += await transaction.JoinAsync(state.Collection, state.Id, state.State, new EntryVersion(state.State.MaxStamp, default), cancellationToken)
-                    .ConfigureAwait(false) ? 1 : 0;
+                var at = new EntryVersion(state.State.MaxStamp, default);
+                TrackClosure(state.Collection, state.Id, closureChanges);
+                if (database != ChangeGroups.System && state.Collection == ClosureCancellation.Jobs)
+                {
+                    closureJobs.Add((state.Id, state.State, at));
+                }
+                else if (database == ChangeGroups.System && webhooks.Decides(state.Collection))
+                {
+                    (deferred ??= []).Add((state.Collection, state.Id, state.State, at));
+                }
+                else
+                {
+                    changed += await transaction.JoinAsync(state.Collection, state.Id, state.State, at, cancellationToken).ConfigureAwait(false) ? 1 : 0;
+                }
             }
 
+            changed += await JoinAdmittedAsync(transaction, deferred, cancellationToken).ConfigureAwait(false);
+            changed += await JoinClosureJobsAsync(transaction, closureJobs, cancellationToken).ConfigureAwait(false);
+            await cancellations.ObserveAsync(transaction, closureChanges, cancellationToken).ConfigureAwait(false);
+
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return changed;
+    }
+
+    private async ValueTask<int> JoinClosureJobsAsync(IStorageTransaction transaction,
+        List<(string Id, DocumentState State, EntryVersion At)> jobs, CancellationToken cancellationToken)
+    {
+        var changed = 0;
+        foreach (var (id, state, at) in jobs)
+        {
+            if (await cancellations.AdmitAsync(transaction, state, cancellationToken).ConfigureAwait(false))
+            {
+                changed += await transaction.JoinAsync(ClosureCancellation.Jobs, id, state, at, cancellationToken).ConfigureAwait(false) ? 1 : 0;
+            }
+        }
+
+        return changed;
+    }
+
+    private static void TrackClosure(string collection, string id, HashSet<(string Collection, string Id)> changes)
+    {
+        if (collection is ClosureCancellation.Jobs or ClosureCancellation.Fences or ClosureCancellation.Commits)
+        {
+            changes.Add((collection, id));
+        }
+    }
+
+    // Joins are commutative per key, so webhook state joins last: deletion authority in the same transaction dominates it.
+    private async ValueTask<int> JoinAdmittedAsync(IStorageTransaction transaction, List<(string Collection, string Id, DocumentState State, EntryVersion At)>? deferred,
+        CancellationToken cancellationToken)
+    {
+        var changed = 0;
+        foreach (var (collection, id, state, at) in deferred ?? [])
+        {
+            if (await webhooks.AdmitAsync(transaction, collection, id, state, cancellationToken).ConfigureAwait(false))
+            {
+                changed += await transaction.JoinAsync(collection, id, state, at, cancellationToken).ConfigureAwait(false) ? 1 : 0;
+            }
         }
 
         return changed;

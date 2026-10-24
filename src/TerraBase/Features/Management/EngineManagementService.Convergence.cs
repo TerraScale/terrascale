@@ -15,6 +15,9 @@ internal sealed partial class EngineManagementService
             return;
         }
 
+        await ConvergePurgesAsync(cancellationToken).ConfigureAwait(false);
+        await ConvergeClosuresAsync(cancellationToken).ConfigureAwait(false);
+
         // A failed file deletion may have removed the main file already; its durable intent remains discoverable.
         string? after = null;
         while (true)
@@ -72,6 +75,11 @@ internal sealed partial class EngineManagementService
         var (projectId, databaseId) = (database.ProjectId!, database.DatabaseId!);
         var (deleted, found, named, rivalWins) = await ReadAsync<(bool Deleted, ManagedDatabase? Record, string? Named, bool RivalWins)>(async transaction =>
         {
+            if (await HasDeletionAuthorityAsync(transaction, database, cancellationToken).ConfigureAwait(false))
+            {
+                return (true, null, null, false);
+            }
+
             var version = await transaction.GetVersionAsync(Databases(projectId), databaseId, cancellationToken).ConfigureAwait(false);
             if (version is not { Deleted: false })
             {
@@ -107,7 +115,7 @@ internal sealed partial class EngineManagementService
     {
         // Missing rows can describe an unfinished creation or an unknown file; neither authorizes deletion.
         var deleted = await ReadAsync<bool>(async transaction =>
-            await transaction.GetVersionAsync(Databases(database.ProjectId!), database.DatabaseId!, cancellationToken).ConfigureAwait(false) is { Deleted: true },
+            await HasDeletionAuthorityAsync(transaction, database, cancellationToken).ConfigureAwait(false),
             static _ => false, cancellationToken).ConfigureAwait(false);
         if (!deleted)
         {
@@ -129,7 +137,7 @@ internal sealed partial class EngineManagementService
 
         async ValueTask<bool> PrepareAsync(IStorageTransaction transaction, CancellationToken token)
         {
-            if (await transaction.GetVersionAsync(Databases(database.ProjectId!), database.DatabaseId!, token).ConfigureAwait(false) is not { Deleted: true })
+            if (!await HasDeletionAuthorityAsync(transaction, database, token).ConfigureAwait(false))
             {
                 return false;
             }

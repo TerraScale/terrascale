@@ -118,7 +118,8 @@ internal sealed class RebuildLedger(TursoStorageEngine engine, ILogger logger, I
         {
             // The empty incarnation asks about the node alone, before a source could read the system database's own.
             return FailedClosed is not null
-                || (incarnation != Ulid.Empty && (await SystemAsync(cancellationToken).ConfigureAwait(false)).Incarnation != incarnation);
+                || (incarnation != Ulid.Empty && await SystemAsync(cancellationToken).ConfigureAwait(false) is var system
+                    && system.Incarnation != incarnation && !system.IsHealthyPredecessor(incarnation));
         }
 
         if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not TursoDatabaseStore store)
@@ -127,7 +128,8 @@ internal sealed class RebuildLedger(TursoStorageEngine engine, ILogger logger, I
         }
 
         await SettleAsync(store, cancellationToken).ConfigureAwait(false);
-        return store.Incarnation != incarnation || Refusal(store) is not null;
+        // A pin a healthy rewrite replaced still names the same logical state (TS-873); faults, rebuilds and failing closed refuse.
+        return store.Incarnation != incarnation && !store.IsHealthyPredecessor(incarnation) || Refusal(store) is not null;
     }
 
     public async ValueTask RecordAsync(TenantContext database, Ulid incarnation, string reason, CancellationToken cancellationToken)

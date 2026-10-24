@@ -126,7 +126,7 @@ Organization roles, from least to most privileged: `viewer`, `member`,
 | Delete the organization | organization `owner`; `409 not_empty` while it has projects |
 | Change a member's role, remove a member | organization `admin`; `owner` when the member is or becomes an owner |
 | Leave | any organization member or collaborator |
-| Delete your own account (`DELETE /v1/terrascale/account`) | signed in; `409 last_owner` while the last owner of an organization with other members |
+| Delete your own account (`DELETE /v1/terrascale/account`) | signed in; `204` when deleted, `202` while a project closure is pending (it finishes in the background); `409 last_owner` while the last owner of an organization with other members, `409 not_empty`, `closure_conflict` or `binding_conflict` when TerraBase refuses one of its projects (see [project closure](project-closure.md)) |
 | Invite to the organization | organization `admin`; `owner` to invite an owner |
 | Invite to a project | project `admin` |
 | List and revoke invitations | organization `admin`; project `admin` for its project's invitations |
@@ -134,7 +134,7 @@ Organization roles, from least to most privileged: `viewer`, `member`,
 | Create a project | organization `member`; the creator becomes the project's explicit `admin` |
 | List projects | every project for organization members; granted projects for collaborators |
 | Read a project, list its members | project `viewer` |
-| Rename or delete a project | project `admin` |
+| Rename or delete a project | project `admin`; delete answers `204` when removed, `202` while TerraBase's closure is pending, `409 not_empty`, `closure_conflict` or `binding_conflict` when TerraBase refuses ([project closure](project-closure.md)) |
 | Grant, change or remove a project member | project `admin`; a new grant needs an organization member (`404` otherwise: invite anyone else) |
 | Project API keys | project `member` |
 | Organization API keys | organization `admin` |
@@ -190,7 +190,8 @@ that does not exist. A member whose role is too low gets `403 forbidden_role`.
 Errors use the `{"error":{"code","message"}}` envelope: `400 invalid_request`,
 `401 unauthorized`, `403 forbidden_role` or `email_mismatch`, `404 not_found`,
 `409` `name_taken`, `not_empty`, `last_owner`, `already_member`,
-`invitation_pending`, `invitation_expired`, `not_pending` or `rotation_pending`, and
+`invitation_pending`, `invitation_expired`, `not_pending`, `rotation_pending`,
+`closure_conflict` or `binding_conflict`, and
 `503 temporarily_unavailable`. Messages never echo input.
 
 ## 5. API keys
@@ -414,7 +415,7 @@ tokens expire:
   `invitation.revoked`, `invitation.accepted`, `invitation.declined`,
   `ownership.transfer_started`, `ownership.transfer_confirmed`,
   `ownership.transfer_cancelled`, `project.created`, `project.renamed`,
-  `project.deleted`, `project_member.role_set`, `project_member.removed`,
+  `project.closure_requested`, `project.deleted`, `project_member.role_set`, `project_member.removed`,
   `api_key.created`, `api_key.rotated`, `api_key.revoked`,
   `project.suspended`, `project.unsuspended`. Deleting an
   organization deletes its events.
@@ -459,8 +460,13 @@ without a signed-in user.
 
 - **TerraBase** owns databases, collections, documents, backups, indexes,
   schema and usage. ts-auth never calls TerraBase for users. Deleting a project
-  does not delete its databases: the platform deletes them first. After the
-  project is gone, no token reaches them.
+  does not delete its databases: the platform deletes them first. ts-auth removes
+  a project (or an account's sole-owner projects) only after TerraBase accepted
+  its permanent closure fence in every region, through ts-auth's own peer
+  transport ([project closure](../terrabase/project-closure.md)); until then the
+  request answers 202 and finishes in the background, and while TerraBase holds
+  the project's databases it answers 409 `not_empty`. After the project is gone,
+  no token reaches them.
 - **ts-dashboard** owns plans, subscriptions, billing and spending caps, and UI
   preferences such as a user's current organization. It reads identity through
   this API and suspends a project through section 8.1.

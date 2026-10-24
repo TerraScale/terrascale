@@ -9,6 +9,9 @@ internal sealed partial class TursoDatabaseStore
     private readonly SemaphoreSlim _operations = new(1, 1);
     private int _activeOperations;
 
+    // Completed when the last operation carrying a write intent ends; guarded by _operations.
+    private TaskCompletionSource? _operationsEnded;
+
     /// <summary>
     /// Starts a storage operation. With <paramref name="intent"/> (anything that can write or sync the file) the first active
     /// one records the write intent. A read-only transaction (<c>query_only</c>) passes false: it cannot leave unsynced pages
@@ -59,7 +62,13 @@ internal sealed partial class TursoDatabaseStore
                 NoteCopyFault("a storage operation did not finish cleanup");
                 await RecordCopyFaultAsync(CopyFault!).ConfigureAwait(false);
             }
-            if (intent && --_activeOperations == 0 && CopyFault is null && Ledger!.FailedClosed is null)
+            if (intent && --_activeOperations == 0)
+            {
+                _operationsEnded?.TrySetResult();
+                _operationsEnded = null;
+            }
+
+            if (intent && _activeOperations == 0 && CopyFault is null && Ledger!.FailedClosed is null)
             {
                 if (admitted)
                 {

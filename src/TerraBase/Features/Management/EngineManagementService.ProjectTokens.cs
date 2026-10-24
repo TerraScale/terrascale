@@ -69,7 +69,8 @@ internal sealed partial class EngineManagementService : IProjectCatalog
                 return await IsProjectBoundAsync(transaction, projectId, existing, cancellationToken).ConfigureAwait(false) ? existing : ManagementErrors.NotFound;
             }
 
-            if (await transaction.GetVersionAsync(ProjectOrganizations, projectId, cancellationToken).ConfigureAwait(false) is not null)
+            if (await transaction.GetVersionAsync(ProjectOrganizations, projectId, cancellationToken).ConfigureAwait(false) is not null
+                || await IsProjectClosedAsync(transaction, projectId, cancellationToken).ConfigureAwait(false))
             {
                 return ManagementErrors.NotFound;
             }

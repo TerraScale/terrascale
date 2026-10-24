@@ -1,10 +1,13 @@
 using System.Buffers.Text;
+using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
@@ -25,17 +28,29 @@ public static class WebhooksExtensions
     public static IServiceCollection AddTerraBaseWebhooks(this IServiceCollection services) =>
         services.AddTerraBaseWebhookTransport().AddSingleton<WebhookService>()
             .AddSingleton<IWebhooks>(provider => provider.GetRequiredService<WebhookService>())
+            .AddSingleton<IWebhookErasure>(provider => provider.GetRequiredService<WebhookService>())
+            .AddSingleton<WebhookReplicaAdmission>()
+            .AddSingleton<IWebhookReplicaAdmission>(provider => provider.GetRequiredService<WebhookReplicaAdmission>())
             .AddHostedService(provider => provider.GetRequiredService<WebhookService>());
 }
 
 internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalog, IWebhookTransport transport,
     TerraBaseOptions options, TimeProvider time, IMemoryBudget memory, IMeterFactory meters, ILogger<WebhookService> logger,
-    ICatalogGuard guard, ICatalogGate gate) : BackgroundService, IWebhooks
+    ICatalogGuard guard, ICatalogGate gate, WebhookReplicaAdmission admission) : BackgroundService, IWebhooks, IWebhookErasure
 {
     private const string Dispatches = "webhook_dispatch";
     private const int MaxBodyBytes = 512 * 1024;
     private const long WorkBytes = 4 * 1024 * 1024;
     private string? _after;
+    // In-flight sends by owner-held token: erasure cancels them and waits for the owner's own cleanup, never disposes them.
+    private readonly ConcurrentDictionary<CancellationTokenSource, TenantContext> _sends = new();
+    private const int ErasePages = 4;
+    private readonly SemaphoreSlim _erasing = new(1, 1);
+    // A restart drops these cursors, so a pass restarts from the beginning; certification never trusts a partial pass.
+    private readonly ConcurrentDictionary<string, (string? After, long Conflicts)> _erasures = new(StringComparer.Ordinal);
+    // The conflict generation each database's last complete pass certified; Certifies compares it under the receipt's writer.
+    private readonly ConcurrentDictionary<string, long> _certified = new(StringComparer.Ordinal);
+    private TaskCompletionSource _passed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Counter<long> _attempts = meters.Create(Telemetry.MeterName)
         .CreateCounter<long>("terrabase.webhooks.attempts", "{attempt}", "Webhook attempts by bounded outcome category.");
     private readonly Counter<long> _gaps = meters.Create(Telemetry.MeterName)
@@ -208,6 +223,10 @@ internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalo
                     // Never log exception objects: transport/storage errors may contain a URL or secret-bearing document.
                     logger.ZLogWarning($"Webhook dispatch pass failed; persisted work will retry");
                 }
+                finally
+                {
+                    Interlocked.Exchange(ref _passed, new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
+                }
             }
             while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
         }
@@ -226,19 +245,53 @@ internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalo
 
         // Empty dispatch scans consume no buffer budget; retain admission only for rows actually read.
         using var pageMemory = new QosContext.ResultMemory(memory);
-        var dispatches = await catalog.ReadUncheckedAsync<WebhookDispatch[]>(async transaction =>
+        var (dispatches, purged) = await catalog.ReadUncheckedAsync<(WebhookDispatch[], WebhookDispatch[])>(async transaction =>
         {
             using var scope = QosContext.EnterFlight(ChangeGroups.System, pageMemory);
             if (await guard.CheckReadAsync(transaction, cancellationToken).ConfigureAwait(false) is not Done)
             {
-                return [];
+                return ([], []);
             }
 
             var page = await transaction.ListAsync(Dispatches, _after, 32, 64 * 1024, cancellationToken).ConfigureAwait(false);
             _after = page.HasMore && page.Documents.Count > 0 ? page.Documents[^1].Id : null;
-            return [.. page.Documents.Select(document => EntityPayload.Read(document, TerraBaseJsonContext.Default.WebhookDispatch)!)
-                .Where(dispatch => dispatch.Machine == options.MachineId)];
+            List<WebhookDispatch> owned = [], purged = [];
+            foreach (var document in page.Documents)
+            {
+                // A replicated row without a readable tenant can name no scope: skip it, never fail the page for its neighbors.
+                if (WebhookReplicaAdmission.TenantOf(document.Json.Span) is not (not null, not null, not null) || Read(document) is not { } dispatch)
+                {
+                    continue;
+                }
+
+                // Every node sweeps purged scopes, so an offline owner cannot retain them; mismatched authority holds the row untouched.
+                switch (await AuthorityAsync(transaction, dispatch.Tenant, cancellationToken).ConfigureAwait(false))
+                {
+                    case true:
+                        purged.Add(dispatch);
+                        break;
+                    case null when dispatch.Machine == options.MachineId:
+                        owned.Add(dispatch);
+                        break;
+                }
+            }
+
+            return ([.. owned], [.. purged]);
         }, cancellationToken).ConfigureAwait(false);
+        foreach (var group in purged.GroupBy(dispatch => dispatch.Tenant.DatabaseId))
+        {
+            var database = group.First().Tenant;
+            CancelSends(database);
+            try
+            {
+                _ = await PurgeAsync(database, [.. group.Select(dispatch => dispatch.Id)], cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                logger.ZLogWarning($"Webhook erasure sweep failed; persisted work will retry");
+            }
+        }
+
         await Parallel.ForEachAsync(dispatches, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
             async (dispatch, token) =>
             {
@@ -304,12 +357,26 @@ internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalo
                 NextAttemptAt = now + TimeSpan.FromSeconds(10) + RetryDelay(attempts)
             }
         };
-        if (!await UpdateDeliveryAsync(hook, started, complete: false, cancellationToken).ConfigureAwait(false))
+        WebhookAttempt result;
+        using (var send = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
-            return;
+            // Track before the start write: that write refuses a purged scope, so erasure either sees this send or prevents it.
+            _sends[send] = hook.Tenant;
+            try
+            {
+                if (!await UpdateDeliveryAsync(hook, started, complete: false, send.Token).ConfigureAwait(false))
+                {
+                    return;
+                }
+
+                result = await transport.SendAsync(hook.Url, hook.Secret, delivery.Id, delivery.Body, now, send.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                _sends.TryRemove(send, out _);
+            }
         }
 
-        var result = await transport.SendAsync(hook.Url, hook.Secret, delivery.Id, delivery.Body, now, cancellationToken).ConfigureAwait(false);
         var success = result.HttpStatus is >= 200 and <= 299 && result.ErrorCode is null;
         _attempts.Add(1, new KeyValuePair<string, object?>("outcome", result.ErrorCode ?? "success"));
         var finished = started with
@@ -379,7 +446,8 @@ internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalo
         return await catalog.WriteDurableAsync<WebhookRecord?>(async transaction =>
         {
             if (await GetAsync(transaction, hook.Tenant, hook.Collection, hook.Id, cancellationToken).ConfigureAwait(false) is not { } current
-                || current.Cursor != hook.Cursor || current.Pending is not null)
+                || current.Cursor != hook.Cursor || current.Pending is not null
+                || await DatabasePurge.IsDeletedAsync(transaction, hook.Tenant.DatabaseId!, cancellationToken).ConfigureAwait(false))
             {
                 return null;
             }
@@ -409,7 +477,7 @@ internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalo
         catalog.WriteDurableAsync<WebhookRecord?>(async transaction =>
         {
             var current = await GetAsync(transaction, hook.Tenant, hook.Collection, hook.Id, cancellationToken).ConfigureAwait(false);
-            if (current is null)
+            if (current is null || await DatabasePurge.IsDeletedAsync(transaction, hook.Tenant.DatabaseId!, cancellationToken).ConfigureAwait(false))
             {
                 return null;
             }
@@ -427,7 +495,7 @@ internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalo
         catalog.WriteDurableAsync(async transaction =>
         {
             var current = await GetAsync(transaction, hook.Tenant, hook.Collection, hook.Id, cancellationToken).ConfigureAwait(false);
-            if (current?.Pending != delivery.Id)
+            if (current?.Pending != delivery.Id || await DatabasePurge.IsDeletedAsync(transaction, hook.Tenant.DatabaseId!, cancellationToken).ConfigureAwait(false))
             {
                 return false;
             }
@@ -440,6 +508,191 @@ internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalo
 
             return true;
         }, static _ => false, cancellationToken);
+
+    /// <summary>Completes when the dispatch pass running now, or else the next one, has finished every send it started.</summary>
+    internal Task NextPassAsync() => Volatile.Read(ref _passed).Task;
+
+    /// <inheritdoc />
+    public async ValueTask<bool> EraseAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        using var reserved = memory.TryReserve(MemoryLane.Bulk, WorkBytes, database);
+        if (reserved is null)
+        {
+            return false;
+        }
+
+        CancelSends(database);
+        // One erasure at a time keeps each database's resumable cursor consistent; every call does bounded work.
+        await _erasing.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var id = database.DatabaseId!;
+            _certified.TryRemove(id, out _);
+            // A conflicting dispatch admitted since the pass began may sit behind its cursor: start the pass again.
+            var (after, conflicts) = _erasures.TryGetValue(id, out var resumed) && resumed.Conflicts == admission.Conflicts(id) ? resumed : (null, 0);
+            if (after is null)
+            {
+                // Snapshot under the writer: a replicated conflict counted but not yet committed has committed by now, so the scan sees it.
+                if (await PurgeAsync(database, [], cancellationToken).ConfigureAwait(false) is not { } snapshot)
+                {
+                    return false;
+                }
+
+                conflicts = snapshot;
+            }
+
+            for (var page = 0; page < ErasePages; page++)
+            {
+                if (await ScanAsync(database, after, cancellationToken).ConfigureAwait(false) is not (var ids, var next)
+                    || ids.Length > 0 && await PurgeAsync(database, ids, cancellationToken).ConfigureAwait(false) is null)
+                {
+                    _erasures.TryRemove(id, out _);
+                    return false;
+                }
+
+                if (next is null)
+                {
+                    // The pass reached the end with every matching row deleted; certify only once local state and sends are gone.
+                    _erasures.TryRemove(id, out _);
+                    var erased = await PurgeAsync(database, [], cancellationToken).ConfigureAwait(false) == conflicts
+                        && await catalog.ReadAsync(async transaction =>
+                            await AuthorityAsync(transaction, database, cancellationToken).ConfigureAwait(false) is true
+                            && !await transaction.HasCollectionStateAsync(Prefix(database), prefix: true, cancellationToken).ConfigureAwait(false),
+                            static _ => false, cancellationToken).ConfigureAwait(false)
+                        && !_sends.Values.Any(tenant => tenant.DatabaseId == id);
+                    if (erased)
+                    {
+                        _certified[id] = conflicts;
+                    }
+
+                    return erased;
+                }
+
+                after = next;
+            }
+
+            _erasures[id] = (after, conflicts);
+            return false;
+        }
+        finally
+        {
+            _erasing.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public bool Certifies(TenantContext database) =>
+        _certified.TryGetValue(database.DatabaseId!, out var conflicts) && conflicts == admission.Conflicts(database.DatabaseId!);
+
+    // shortcut: dispatch rows are keyed by webhook, so a pass walks the global collection ErasePages pages per call; index by database if it grows large.
+    private async ValueTask<(string[] Ids, string? Next)?> ScanAsync(TenantContext database, string? after, CancellationToken cancellationToken)
+    {
+        var page = await catalog.ReadAsync<DocumentPage?>(async transaction =>
+            await AuthorityAsync(transaction, database, cancellationToken).ConfigureAwait(false) is true
+                ? await transaction.ListAsync(Dispatches, after, 256, 1024 * 1024, cancellationToken).ConfigureAwait(false)
+                : null, static _ => null, cancellationToken).ConfigureAwait(false);
+        if (page is null)
+        {
+            return null;
+        }
+
+        List<string> ids = [];
+        var named = Encoding.UTF8.GetBytes(database.DatabaseId!);
+        foreach (var document in page.Documents)
+        {
+            // A row stored with the reserved wrapper field reads back unwrapped, hiding its tenant: never certify around it.
+            if (document.Json.Span.IndexOf(named) >= 0 && !WebhookReplicaAdmission.IsWholeObject(document.Json.Span))
+            {
+                return null;
+            }
+
+            // Read only the tenant's ids, so one malformed row cannot stop every later erasure.
+            var (organization, project, owner) = WebhookReplicaAdmission.TenantOf(document.Json.Span);
+            if (owner != database.DatabaseId)
+            {
+                continue;
+            }
+
+            // A claim without an organization or project is the purged scope, as admission treats it; another named scope is a conflict.
+            if (!Claims(database, organization, project))
+            {
+                return null;
+            }
+
+            ids.Add(document.Id);
+        }
+
+        return ([.. ids], page.HasMore && page.Documents.Count > 0 ? page.Documents[^1].Id : null);
+    }
+
+    // Returns the conflict generation read under the writer, or null when refused.
+    private ValueTask<long?> PurgeAsync(TenantContext database, string[] ids, CancellationToken cancellationToken) =>
+        catalog.WriteDurableAsync<long?>(async transaction =>
+        {
+            if (await AuthorityAsync(transaction, database, cancellationToken).ConfigureAwait(false) is not true)
+            {
+                return null;
+            }
+
+            foreach (var id in ids)
+            {
+                if (await transaction.GetAsync(Dispatches, id, cancellationToken).ConfigureAwait(false) is { Deleted: false } document
+                    && WebhookReplicaAdmission.TenantOf(document.Json.Span) is var (organization, project, owner)
+                    && owner == database.DatabaseId && Claims(database, organization, project))
+                {
+                    await transaction.DeleteAsync(Dispatches, id, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            // Registrations, cursors and delivery bodies are node-local purges, like the database's own prefix cleanup.
+            await transaction.DeleteCollectionsAsync(Prefix(database), cancellationToken).ConfigureAwait(false);
+            return admission.Conflicts(database.DatabaseId!);
+        }, static _ => null, cancellationToken);
+
+    /// <summary>True for a matching permanent purge, false for a conflicting or unreadable one, null while the database is not purged.</summary>
+    private static async ValueTask<bool?> AuthorityAsync(IStorageTransaction transaction, TenantContext database, CancellationToken cancellationToken) =>
+        await WebhookReplicaAdmission.PurgeAsync(transaction, database.DatabaseId!, cancellationToken).ConfigureAwait(false) switch
+        {
+            null => null,
+            (true, var purged) => DatabasePurge.SameDatabase(purged!, database),
+            _ => false,
+        };
+
+    private void CancelSends(TenantContext database)
+    {
+        foreach (var (send, tenant) in _sends)
+        {
+            if (DatabasePurge.SameDatabase(tenant, database))
+            {
+                try
+                {
+                    send.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // The owner already finished and released this send.
+                }
+            }
+        }
+    }
+
+    // Admission refuses a claim missing its organization or project as the purged scope, so erasure deletes it the same way.
+    private static bool Claims(TenantContext database, string? organization, string? project) =>
+        organization is null || project is null || organization == database.OrganizationId && project == database.ProjectId;
+
+    private static WebhookDispatch? Read(StoredDocument document)
+    {
+        try
+        {
+            return WebhookReplicaAdmission.IsObject(document)
+                && EntityPayload.Read(document, TerraBaseJsonContext.Default.WebhookDispatch) is { Tenant.DatabaseId: not null, Id: not null } dispatch ? dispatch : null;
+        }
+        catch (Exception error) when (error is JsonException or InvalidOperationException or NotSupportedException or ArgumentException)
+        {
+            // ArgumentException: a repeated nested key, which the canonical wire decoder accepts.
+            return null;
+        }
+    }
 
     private static TimeSpan RetryDelay(long attempts) => TimeSpan.FromSeconds(Math.Min(3600, Math.Pow(2, Math.Min(attempts - 1, 12))));
 
@@ -454,6 +707,7 @@ internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalo
     private static string Deliveries(TenantContext tenant, string id) => SystemCatalog.DatabaseState(tenant.DatabaseId!) + "webhook_deliveries/" + id;
     private static readonly Unavailable Busy = new("webhook storage is temporarily unavailable");
 
+    private static string Prefix(TenantContext tenant) => SystemCatalog.DatabaseState(tenant.DatabaseId!) + "webhook";
     private static string States(TenantContext tenant) => SystemCatalog.DatabaseState(tenant.DatabaseId!) + "webhook_state";
 
     private static async ValueTask<WebhookRecord?> GetAsync(IStorageTransaction transaction, TenantContext tenant, string collection, string id,
@@ -477,4 +731,216 @@ internal sealed class WebhookService(IStorageEngine engine, SystemCatalog catalo
 
     private static ValueTask PutDeliveryAsync(IStorageTransaction transaction, WebhookRecord hook, WebhookDeliveryRecord delivery, CancellationToken cancellationToken) =>
         SystemCatalog.PutAsync(transaction, Deliveries(hook.Tenant, hook.Id), delivery.Id, delivery, TerraBaseJsonContext.Default.WebhookDeliveryRecord, cancellationToken);
+}
+
+internal sealed class WebhookReplicaAdmission(IMeterFactory meters) : IWebhookReplicaAdmission
+{
+    private const string Dispatches = "webhook_dispatch";
+    private readonly ConcurrentDictionary<string, long> _conflicts = new(StringComparer.Ordinal);
+    private readonly Counter<long> _refused = meters.Create(Telemetry.MeterName)
+        .CreateCounter<long>("terrabase.webhooks.replica_refused", "{state}", "Replicated webhook states refused under permanent deletion authority.");
+    private readonly Counter<long> _conflicting = meters.Create(Telemetry.MeterName)
+        .CreateCounter<long>("terrabase.webhooks.replica_conflicts", "{state}", "Replicated webhook dispatches kept because their scope conflicts with a permanent deletion.");
+
+    public bool Decides(string collection) => collection == Dispatches || DatabaseOf(collection) is not null;
+
+    /// <summary>How many conflicting dispatches this process admitted for the database; erasure certifies one value of it.</summary>
+    public long Conflicts(string databaseId) => _conflicts.GetValueOrDefault(databaseId);
+
+    public async ValueTask<bool> AdmitAsync(IStorageTransaction transaction, string collection, string id, DocumentState state, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(transaction);
+        ArgumentNullException.ThrowIfNull(state);
+        if (DatabaseOf(collection) is { } owner)
+        {
+            // The prefix is the database's own namespace: refuse all of it under valid authority, without reading the body.
+            return await PurgeAsync(transaction, owner, cancellationToken).ConfigureAwait(false) is not (true, _) || Refuse();
+        }
+
+        if (state.Materialize() is not { } body)
+        {
+            // A deletion carries no payload; joining it keeps the CRDT tombstone and its collection floor.
+            return true;
+        }
+
+        // The reserved scalar-wrapper field, which local writes refuse, would hide this row's tenant when read back.
+        if (state.Fields.ContainsKey("\0"))
+        {
+            return Refuse();
+        }
+
+        // Dispatches are whole puts, so a delta names its tenant; fall back to the local row's.
+        var tenant = TenantOf(body);
+        if (tenant.DatabaseId is null && await transaction.GetAsync(Dispatches, id, cancellationToken).ConfigureAwait(false) is { Deleted: false } local)
+        {
+            tenant = TenantOf(local.Json.Span);
+        }
+
+        if (tenant.DatabaseId is not { } database || await PurgeAsync(transaction, database, cancellationToken).ConfigureAwait(false) is not (true, var purged))
+        {
+            return true;
+        }
+
+        if (tenant.OrganizationId is null || tenant.ProjectId is null
+            || tenant.OrganizationId == purged!.OrganizationId && tenant.ProjectId == purged.ProjectId)
+        {
+            // The purged scope, or a malformed claim on it.
+            return Refuse();
+        }
+
+        // Another scope's row is kept, never discarded; erasure certifies nothing for this database while it exists.
+        _conflicts.AddOrUpdate(database, 1, static (_, count) => count + 1);
+        _conflicting.Add(1);
+        return true;
+    }
+
+    /// <summary>
+    /// The permanent purge of <paramref name="databaseId"/>: null when absent, (false, null) when unreadable or of another
+    /// format, which no node treats as authority, otherwise (true, its database).
+    /// </summary>
+    internal static async ValueTask<(bool Valid, TenantContext? Database)?> PurgeAsync(IStorageTransaction transaction, string databaseId, CancellationToken cancellationToken)
+    {
+        if (await transaction.GetAsync(DatabasePurge.Collection, databaseId, cancellationToken).ConfigureAwait(false) is not { Deleted: false } document)
+        {
+            return null;
+        }
+
+        // A replicated scalar ({"\u0000": value}) reads back unwrapped and is no record.
+        if (!IsObject(document))
+        {
+            return (false, null);
+        }
+
+        try
+        {
+            return EntityPayload.Read(document, TerraBaseJsonContext.Default.DatabasePurgeRecord) is { FormatVersion: 1 } purge
+                && purge.Database?.DatabaseId == databaseId && purge.Database.OrganizationId is not null && purge.Database.ProjectId is not null
+                ? (true, purge.Database)
+                : (false, null);
+        }
+        catch (Exception error) when (error is JsonException or NotSupportedException or InvalidOperationException or ArgumentException)
+        {
+            // ArgumentException: a repeated nested key, which the canonical wire decoder accepts.
+            return (false, null);
+        }
+    }
+
+    /// <summary>
+    /// The string ids of a stored dispatch's tenant, matched case-insensitively like the typed reader; each null when
+    /// missing, malformed or not decodable (an unpaired surrogate). Never throws, and reads past undecodable tokens.
+    /// </summary>
+    internal static (string? OrganizationId, string? ProjectId, string? DatabaseId) TenantOf(ReadOnlySpan<byte> body)
+    {
+        // The decoder bounds each field value to MaxStoredDepth; a set element and the root object add one level each.
+        var reader = new Utf8JsonReader(body, new JsonReaderOptions { MaxDepth = DocumentJson.MaxStoredDepth + 2 });
+        string? organization = null, project = null, database = null;
+        try
+        {
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+            {
+                return default;
+            }
+
+            var found = false;
+            while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+            {
+                var tenant = string.Equals(Text(ref reader), "tenant", StringComparison.OrdinalIgnoreCase);
+                if (!reader.Read())
+                {
+                    break;
+                }
+
+                if (!tenant || reader.TokenType != JsonTokenType.StartObject)
+                {
+                    reader.Skip();
+                    continue;
+                }
+
+                // The last tenant wins, as in the typed reader.
+                found = true;
+                organization = project = database = null;
+                while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+                {
+                    var name = Text(ref reader);
+                    if (!reader.Read())
+                    {
+                        break;
+                    }
+
+                    var value = reader.TokenType == JsonTokenType.String ? Text(ref reader) : null;
+                    reader.Skip();
+                    if (string.Equals(name, "organizationId", StringComparison.OrdinalIgnoreCase))
+                    {
+                        organization = value;
+                    }
+                    else if (string.Equals(name, "projectId", StringComparison.OrdinalIgnoreCase))
+                    {
+                        project = value;
+                    }
+                    else if (string.Equals(name, "databaseId", StringComparison.OrdinalIgnoreCase))
+                    {
+                        database = value;
+                    }
+                }
+            }
+
+            return found ? (organization, project, database) : default;
+        }
+        catch (JsonException)
+        {
+            // A malformed body still yields the ids read before the fault.
+        }
+
+        return (organization, project, database);
+    }
+
+    internal static bool IsObject(StoredDocument document) => document.Json.Span.TrimStart(" \t\r\n"u8) is [(byte)'{', ..];
+
+    // Exactly one JSON object and nothing after it: an unwrapped reserved-field row can start with an object and continue.
+    internal static bool IsWholeObject(ReadOnlySpan<byte> body)
+    {
+        var reader = new Utf8JsonReader(body, new JsonReaderOptions { MaxDepth = DocumentJson.MaxStoredDepth + 2 });
+        try
+        {
+            return reader.Read() && reader.TokenType == JsonTokenType.StartObject && reader.TrySkip() && !reader.Read();
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string? Text(ref Utf8JsonReader reader)
+    {
+        try
+        {
+            return reader.GetString();
+        }
+        catch (InvalidOperationException)
+        {
+            // An escaped unpaired surrogate does not decode to a string; it names nothing.
+            return null;
+        }
+    }
+
+    private bool Refuse()
+    {
+        _refused.Add(1);
+        return false;
+    }
+
+    // databases/<id>/webhooks/<collection>, databases/<id>/webhook_state and databases/<id>/webhook_deliveries/<hook>.
+    private static string? DatabaseOf(string collection)
+    {
+        const string Prefix = "databases/";
+        if (!collection.StartsWith(Prefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var slash = collection.IndexOf('/', Prefix.Length);
+        return slash > Prefix.Length && collection.AsSpan(slash + 1).StartsWith("webhook", StringComparison.Ordinal)
+            ? collection[Prefix.Length..slash]
+            : null;
+    }
 }

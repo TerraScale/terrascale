@@ -1,0 +1,15 @@
+# Regional account cancellation
+
+An account refusal before removals began now cancels its **generation** through an all-holder barrier in the auth database. A local conditional delete is insufficient: another region can defer the same intent while replication is delayed and its newer write can revive it.
+
+The internal peer-only `PUT /admin/projects/{project}/databases/{database}/closure-cancellations/{generation}` accepts `{ "version": 1, "targetId": "<intent document id>" }`. The SDK sends this over the database's existing peer connection. No account address or natural-key hash is stored in SYSTEM. The auth file retains cancellation records and holder receipts in `closure_cancellations`, and irreversible commit marks in `closure_commits`.
+
+1. The requester records the catalog holder list, including retired holders. Every retry also requires current holders. Every holder acknowledges the generation fence under its local database writer. Uncommitted local deferrals and the first irreversible commit must assert that this fence is absent in their own writing transaction.
+2. The first irreversible commit also stores a durable generation mark in the same transaction. A later full-document regional deferral cannot erase that evidence. If any holder reports such a mark, the result is `committed`; the job remains and cancellation never reports success.
+3. Only after every holder acknowledged without a commit mark does the requester publish the cancellation decision. Every holder removes only the matching generation and acknowledges that removal. The response is `cancelled` only after all these acknowledgements. Both streaming apply and anti-entropy repair reject late states of cancelled generations before joining them. A later creation uses a different random generation. Once the result is final, the request drops its subject-derived target address; permanent records contain only the random generation and infrastructure receipts.
+
+Missing holders keep the result at `pending`. Account refusal returns 503 while the barrier is pending, so it cannot claim that background deletion stopped before the remote fence exists. It returns the original 409 only after successful cancellation, or when irreversible work had already begun (which retains the existing pause contract). The normal worker resumes a pending cancellation rather than beginning removals. No holder eviction, tombstone horizon change or roots-only override is involved.
+
+The cancellation marks are durable across ordinary restarts. This protocol does not claim protection against restoring an older auth catalog; restored authority is tracked separately by TS-750. It does not change the epoch-stalled history erasure exception in TS-875.
+
+Regression coverage uses two real regional TerraBase processes with delayed peer links. It exercises remote deferral after the first fence, a competing irreversible commit, and a later generation at the same account address. A successful cancellation must leave the old intent absent in both regions and reject stale deferral and commit attempts.

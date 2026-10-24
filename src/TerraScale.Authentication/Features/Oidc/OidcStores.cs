@@ -464,7 +464,7 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
     public async ValueTask DeleteAsync(OidcToken token, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(token);
-        if (!await store.CompareAndDeleteAsync(Collection, this.Tenant, token.Id!, token.Version!, cancellationToken).ConfigureAwait(false))
+        if (!await store.DeleteWithClaimsAsync(Collection, this.Tenant, token.Id!, token.Version!, token.Id!, cancellationToken).ConfigureAwait(false))
         {
             throw new OpenIddictExceptions.ConcurrencyException("The token was changed by another request.");
         }

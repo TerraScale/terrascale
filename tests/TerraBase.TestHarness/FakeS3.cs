@@ -20,7 +20,7 @@ namespace TerraBase.Testing;
 /// serves both through message handlers that replace the server's transports (no socket), and counts the master key's
 /// data key generations and unwraps.
 /// </summary>
-public sealed class FakeS3
+public sealed partial class FakeS3
 {
     public const string Bucket = "backup-test";
     public const string CustomerBucket = "customer-backup";
@@ -190,6 +190,9 @@ public sealed class FakeS3
     /// <summary>Refuses snapshot takes with 403 while true.</summary>
     public bool RejectSnapshots { get; set; }
 
+    /// <summary>Refuses snapshot expiry with 403 while true.</summary>
+    public bool RejectSnapshotDeletes { get; set; }
+
     /// <summary>The platform bucket's Tigris snapshots, oldest first.</summary>
     public IReadOnlyList<(string Version, DateTimeOffset At)> Snapshots
     {
@@ -338,7 +341,7 @@ public sealed class FakeS3
         var (bucket, key) = slash < 0 ? (path, "") : (path[..slash], path[(slash + 1)..]);
         var customer = uri.GetLeftPart(UriPartial.Authority) == CustomerEndpoint;
         var objects = customer ? _customerObjects : _objects;
-        if (bucket != (customer ? CustomerBucket : Bucket))
+        if (bucket != (customer ? CustomerBucket : Bucket) && !IsPurgeBucket(customer, bucket))
         {
             return S3Error(HttpStatusCode.NotFound, "NoSuchBucket");
         }
@@ -357,9 +360,19 @@ public sealed class FakeS3
 
         ObjectRequested?.Invoke(customer, request.Method, key);
 
+        if (await DeletePurgeVersionAsync(request, customer, key, cancellationToken) is { } versionDeleted)
+        {
+            return versionDeleted;
+        }
+
+        if (key.Length == 0 && request.Method == HttpMethod.Get && uri.Query.TrimStart('?').Split('&').Any(part => part is "versions" or "versions="))
+        {
+            return PurgeVersions(customer, bucket, System.Web.HttpUtility.ParseQueryString(uri.Query));
+        }
+
         if (key.Length == 0 && request.Method == HttpMethod.Get && uri.Query.TrimStart('?').Split('&').Any(part => part is "uploads" or "uploads="))
         {
-            return ListUploads(customer, bucket, System.Web.HttpUtility.ParseQueryString(uri.Query));
+            return PurgeUploads(customer, bucket, System.Web.HttpUtility.ParseQueryString(uri.Query));
         }
 
         if (key.Length == 0 && request.Method == HttpMethod.Get)
@@ -838,6 +851,11 @@ public sealed class FakeS3
 
             if (request.Method == HttpMethod.Delete && version is not null)
             {
+                if (RejectSnapshotDeletes)
+                {
+                    return S3Error(HttpStatusCode.Forbidden, "AccessDenied");
+                }
+
                 return _snapshots.RemoveAll(item => item.Version == version) == 1
                     ? new HttpResponseMessage(HttpStatusCode.NoContent) { Content = new ByteArrayContent([]) }
                     : S3Error(HttpStatusCode.NotFound, "NoSuchVersion");

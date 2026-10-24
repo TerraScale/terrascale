@@ -183,7 +183,7 @@ public sealed class DeleteOrganizationEndpoint(PlatformDirectory platform, Platf
     public override void Configure()
     {
         Delete(Organization);
-        this.Document("delete_organization", "Delete an organization", "Needs the owner role. 409 not_empty while it has projects. Deletes its members.", "Organizations", null, StatusCodes.Status204NoContent, null, conflict: true);
+        this.Document("delete_organization", "Delete an organization", "Needs the owner role. 409 not_empty while it has projects. Logically removes the auth organization and durably retries its remaining auth records. This response does not certify physical erasure or other services' data.", "Organizations", null, StatusCodes.Status204NoContent, null, conflict: true);
     }
 
     /// <inheritdoc />
@@ -280,15 +280,13 @@ public sealed class DeleteAccountEndpoint(AccountDeletion accounts, PlatformAuth
     public override void Configure()
     {
         Delete("/v1/terrascale/account");
-        this.Document("delete_account", "Delete your account", "Deletes the caller's account, sessions, tokens and MFA, and frees its email. Organizations where the caller is the only member are deleted with their projects; the others are left. 409 last_owner, deleting nothing, while the caller is the last owner of an organization with other members.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true, roleChecked: false, scoped: false);
+        this.Document("delete_account", "Delete your account", "Logically deletes the caller's auth account, immediately revokes auth access, frees its email and durably retries remaining auth cleanup. This response does not certify physical erasure, backups or deletion of other services' data. Organizations where the caller is the only member are deleted with their projects, each project only after TerraBase accepted its closure; the others are left. 202 while a project closure is pending: the account stays until it finishes in the background, and repeating the request resumes it. A 409 (last_owner, not_empty, closure_conflict, binding_conflict) before anything was removed ends the request: the account, its memberships and organizations stay, but project closures it already started are not rolled back (TerraBase fences are permanent) and finish on their own. Once removals began, a 409 only pauses the deletion until its cause is resolved.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true, roleChecked: false, scoped: false);
+        Produces(StatusCodes.Status202Accepted);
     }
 
     /// <inheritdoc />
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
-    {
-        await accounts.DeleteAsync(caller, cancellationToken);
-        return Results.NoContent();
-    }
+    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) =>
+        await accounts.DeleteAsync(caller, cancellationToken) ? Results.NoContent() : Results.Accepted();
 }
 
 /// <summary><c>POST /v1/terrascale/organizations/{organization}/projects</c>.</summary>
@@ -368,21 +366,19 @@ public sealed class RenameProjectEndpoint(PlatformDirectory platform, PlatformAu
 }
 
 /// <summary><c>DELETE /v1/terrascale/organizations/{organization}/projects/{project}</c>.</summary>
-public sealed class DeleteProjectEndpoint(PlatformDirectory platform, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
+public sealed class DeleteProjectEndpoint(Closures closures, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
     /// <inheritdoc />
     public override void Configure()
     {
         Delete(Project);
-        this.Document("delete_project", "Delete a project", "Needs the project's admin role. Deletes its project roles, API keys and pending invitations. TerraBase databases are not deleted: the platform deletes them first.", "Projects", null, StatusCodes.Status204NoContent, null);
+        this.Document("delete_project", "Delete a project", "Needs the project's admin role. Commits a closure intent, then asks TerraBase to fence the project permanently; the auth project is removed (204) only after every TerraBase region confirmed it empty, then its project roles, API keys and all invitation statuses are durably retried. 202 while TerraBase has not confirmed: the project refuses new roles, API keys and invitations and the closure finishes in the background; repeating the request resumes it. 409 not_empty, closure_conflict or binding_conflict, changing nothing, when TerraBase refuses; once TerraBase showed the fence, a later refusal keeps the closure pending instead. This does not certify physical erasure.", "Projects", null, StatusCodes.Status204NoContent, null, conflict: true);
+        Produces(StatusCodes.Status202Accepted);
     }
 
     /// <inheritdoc />
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
-    {
-        await platform.DeleteProjectAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), cancellationToken);
-        return Results.NoContent();
-    }
+    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) =>
+        await closures.DeleteProjectAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), cancellationToken) ? Results.NoContent() : Results.Accepted();
 }
 
 /// <summary><c>GET /v1/terrascale/organizations/{organization}/projects/{project}/members</c>.</summary>

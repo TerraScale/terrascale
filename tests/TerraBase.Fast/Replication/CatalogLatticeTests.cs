@@ -202,6 +202,50 @@ public sealed class CatalogLatticeTests
         await Assert.That(File.Exists(sjc.FileOf(lost with { DatabaseId = winner }))).IsTrue();
     }
 
+    // docs/terrabase/project-closure.md: a fence written in one region is not acceptance. A database another region
+    // registered before the fence reached it keeps the closure pending, and survives, until its own deletion.
+    [Test]
+    public async Task A_project_closure_is_accepted_only_once_every_holder_confirmed_the_project_empty_under_the_fence()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await Until(async () => (await region.IdsAsync(CatalogGate.Members)).Length == 2)).IsTrue().Because(region.Name);
+        }
+
+        var (organization, project, database, closure) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        var members = await cluster.SeparateAsync();
+        // sjc registers a database of the project before any fence reaches it: a creation racing the closure.
+        await sjc.SeedDatabaseAsync(new TenantContext(organization, PlanTier.Hobby, project, database), "raced");
+        await Assert.That(await CloseAsync(gru, project, closure)).IsEqualTo(HttpStatusCode.Accepted);
+        cluster.Rejoin(members);
+
+        // sjc confirms under the fence that it holds a database: still pending, and the database stays.
+        await Assert.That(await sjc.UntilAsync("project_closures", project, json => json is not null)).IsTrue();
+        var receipts = $"project_closure_receipts/{project}";
+        await Assert.That(await Until(async () =>
+        {
+            var held = await gru.IdsAsync(receipts);
+            var bodies = await Task.WhenAll(held.Select(id => gru.ReadAsync(receipts, id)));
+            return held.Length == 2 && bodies.Any(json => json is not null && json.Contains("\"empty\":false", StringComparison.Ordinal));
+        })).IsTrue();
+        await Assert.That(await CloseAsync(gru, project, closure)).IsEqualTo(HttpStatusCode.Accepted);
+        await Assert.That(await sjc.ReadAsync($"projects/{project}/databases", database)).IsNotNull();
+
+        // Its customer deletes it in its home region; then every holder confirms the project empty and gru accepts.
+        await sjc.WriteAsync(async transaction => _ = await transaction.DeleteAsync($"projects/{project}/databases", database, CancellationToken.None));
+        await Assert.That(await Until(async () => await CloseAsync(gru, project, closure) == HttpStatusCode.OK)).IsTrue();
+        await Assert.That(await CloseAsync(sjc, project, closure)).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    private static async Task<HttpStatusCode> CloseAsync(Region region, string project, string closure)
+    {
+        using var response = await region.Api.Server.Client.PutAsJsonAsync(ManagementApi.Uri($"/admin/projects/{project}/closure"),
+            new { version = 1, closureId = closure, authorityOrganizationId = project });
+        return response.StatusCode;
+    }
+
     [Test]
     public async Task New_machines_opening_together_seed_the_platform_databases_once_and_identically()
     {
@@ -241,7 +285,7 @@ public sealed class CatalogLatticeTests
     }
 
     [Test]
-    public async Task A_cleanup_interrupted_after_its_file_is_deleted_retries_and_releases_its_reservation()
+    public async Task A_cleanup_interrupted_after_its_file_is_deleted_retries_and_preserves_permanent_deletion()
     {
         var clock = new FakeTimeProvider(TimeProvider.System.GetUtcNow());
         var fail = 1;
@@ -272,8 +316,8 @@ public sealed class CatalogLatticeTests
         {
             await Assert.That(await read.GetAsync("pending_database_cleanup", database.Id, CancellationToken.None)).IsNull();
         }
-        // A leftover in-memory ownership reservation would refuse this fixture-only recreation.
-        await Assert.That(await engine.CreateDatabaseAsync(tenant, CancellationToken.None)).IsTrue();
+        await Assert.That(await engine.VerifyDatabaseErasureAsync(tenant, CancellationToken.None)).IsTrue();
+        await Assert.That(async () => { _ = await engine.CreateDatabaseAsync(tenant, CancellationToken.None); }).Throws<IOException>();
     }
 
     [Test]

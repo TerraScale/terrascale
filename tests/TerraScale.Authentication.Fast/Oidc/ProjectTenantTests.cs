@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 using OpenIddict.Abstractions;
+using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Store;
@@ -106,6 +107,46 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         {
             using var response = await oidc.Client.GetAsync(path);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+    }
+
+    [Test]
+    public async Task Deleting_a_project_token_removes_its_reference_claim_and_preserves_the_platform_token()
+    {
+        var cancellationToken = TestContext.Current!.Execution.CancellationToken;
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var (_, ownerToken) = await oidc.SignInUserAsync(new Faker().Internet.Email().ToLowerInvariant());
+        var project = await oidc.CreateProjectAsync(ownerToken, await oidc.CreateOrganizationAsync(ownerToken), "Token deletion");
+        var services = oidc.Server.App.Services;
+        var accessor = services.GetRequiredService<IHttpContextAccessor>();
+        using var scope = services.CreateScope();
+        var tokens = scope.ServiceProvider.GetRequiredService<IOpenIddictTokenStore<OidcToken>>();
+        var store = scope.ServiceProvider.GetRequiredService<AuthStore>();
+        var reference = AuthStore.NewId();
+        var platformToken = new OidcToken { ReferenceId = reference };
+        var projectToken = new OidcToken { ReferenceId = reference };
+        var previousContext = accessor.HttpContext;
+        try
+        {
+            accessor.HttpContext = null;
+            await tokens.CreateAsync(platformToken, cancellationToken);
+            var context = new DefaultHttpContext();
+            context.Items[Tenancy.ItemKey] = project;
+            accessor.HttpContext = context;
+            await tokens.CreateAsync(projectToken, cancellationToken);
+            await Assert.That(await store.FindUniqueOwnerAsync(project, "oidc_token_reference", reference, cancellationToken)).IsEqualTo(projectToken.Id);
+
+            await tokens.DeleteAsync(projectToken, cancellationToken);
+
+            await Assert.That(await tokens.FindByIdAsync(projectToken.Id!, cancellationToken)).IsNull();
+            await Assert.That(await store.FindUniqueOwnerAsync(project, "oidc_token_reference", reference, cancellationToken)).IsNull();
+            accessor.HttpContext = null;
+            await Assert.That(await tokens.FindByIdAsync(platformToken.Id!, cancellationToken)).IsNotNull();
+            await Assert.That(await store.FindUniqueOwnerAsync(OidcIssuer.InstanceId, "oidc_token_reference", reference, cancellationToken)).IsEqualTo(platformToken.Id);
+        }
+        finally
+        {
+            accessor.HttpContext = previousContext;
         }
     }
 

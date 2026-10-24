@@ -24,6 +24,9 @@ public static class App
     /// <summary>OpenAPI document title; clients key on it.</summary>
     public const string ApiTitle = "TerraScale Auth API";
 
+    /// <summary>Service key for peer-only management calls to the regional TerraBase endpoint.</summary>
+    public const string StorageAuthority = "terrabase-authority";
+
     /// <summary>
     /// The trusted regional storage endpoint, required outside Development. Reads and writes use this copy without
     /// remote fallback; replicated winner claims reconcile concurrent conditional credentials.
@@ -93,6 +96,14 @@ public static class App
         builder.Services.AddSingleton<TotpCredentials>();
         builder.Services.AddSingleton<PlatformDirectory>();
         builder.Services.AddSingleton<AccountDeletion>();
+        // Shared-history erasure and project closure reach TerraBase through the regional peer transport, acting as no user.
+        builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) => new TerraBaseManagementClient(services.GetRequiredService<HttpClient>(),
+            new TerraBaseManagementClientOptions { BaseAddress = TerraBaseOrigin(options) }));
+        builder.Services.AddSingleton<Closures>();
+        builder.Services.AddSingleton<ClosureWorker>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<ClosureWorker>());
+        builder.Services.AddSingleton<DeletionCleanup>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<DeletionCleanup>());
         builder.Services.AddSingleton<PlatformBootstrap>();
         builder.Services.AddSingleton<PlatformAuthentication>();
         builder.Services.AddSingleton<ApiKeys>();

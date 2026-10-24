@@ -23,11 +23,19 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
     // (evicted, discarded, or idle when its store or the pool closed). After StopAsync, the last of them to go
     // completes the stop; until then the engine keeps its data directory.
     private readonly HashSet<TursoSession> _rented = [];
+    private readonly Dictionary<TursoSession, TursoDatabaseStore> _owners = [];
+    private readonly Dictionary<TursoDatabaseStore, int> _openByStore = [];
     private int _opening;
     private int _closing;
     private bool _stopped;
     private TaskCompletionSource? _closed;
     private List<Exception>? _stopFailures;
+
+    // A healthy rewrite's stores: they rent, open and pool nothing until resumed, and their drain completes once no native
+    // handle of theirs is left. Failed native closes stay counted per store and refuse every drain.
+    private readonly Dictionary<TursoDatabaseStore, TaskCompletionSource> _paused = [];
+    private readonly Dictionary<TursoDatabaseStore, TaskCompletionSource> _drains = [];
+    private readonly Dictionary<TursoDatabaseStore, int> _failedCloses = [];
 
     /// <summary>The engine-wide bound on idle sessions.</summary>
     public int MaxIdle => maxIdle;
@@ -65,6 +73,63 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
         }
     }
 
+    internal bool HasOpenHandles(string path)
+    {
+        lock (_gate)
+        {
+            return _openByStore.Keys.Any(store => string.Equals(store.FilePath, path, StringComparison.Ordinal));
+        }
+    }
+
+    internal void OpenExternal(TursoDatabaseStore store)
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_stopped || store.Closed, store);
+            ThrowIfPaused(store);
+            Opened(store);
+        }
+    }
+
+    internal void CloseExternal(TursoDatabaseStore store)
+    {
+        lock (_gate)
+        {
+            Closed(store);
+        }
+    }
+
+    private void Opened(TursoDatabaseStore store) => _openByStore[store] = _openByStore.GetValueOrDefault(store) + 1;
+
+    private void Closed(TursoDatabaseStore store, Exception? failure = null)
+    {
+        if (failure is not null)
+        {
+            // Failed native closure remains an outstanding handle until process restart.
+            _failedCloses[store] = _failedCloses.GetValueOrDefault(store) + 1;
+            if (_drains.Remove(store, out var refused))
+            {
+                // Never drains now: wake the waiter to refuse.
+                refused.TrySetResult();
+            }
+
+            return;
+        }
+
+        if (_openByStore[store] == 1)
+        {
+            _openByStore.Remove(store);
+            if (_drains.Remove(store, out var drained))
+            {
+                drained.TrySetResult();
+            }
+        }
+        else
+        {
+            _openByStore[store]--;
+        }
+    }
+
     /// <summary>
     /// Takes the most recently pooled idle session of <paramref name="store"/>, or <see langword="null"/>
     /// when it has none; the caller then opens one and passes it to <see cref="Adopt"/>, or calls
@@ -75,6 +140,7 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_stopped || store.Closed, store);
+            ThrowIfPaused(store);
             for (var node = _idle.Last; node is not null; node = node.Previous)
             {
                 if (node.Value.Store == store)
@@ -86,6 +152,7 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
             }
 
             _opening++;
+            Opened(store);
             return null;
         }
     }
@@ -99,7 +166,9 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_stopped || store.Closed, store);
+            ThrowIfPaused(store);
             _opening++;
+            Opened(store);
         }
     }
 
@@ -115,6 +184,7 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
             {
                 _opening--;
                 _rented.Add(session);
+                _owners.Add(session, store);
                 return session;
             }
         }
@@ -131,14 +201,22 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
         }
         finally
         {
-            Update(() => _opening--, failure);
+            Update(() =>
+            {
+                _opening--;
+                Closed(store, failure);
+            }, failure);
         }
 
         throw new ObjectDisposedException(store.GetType().FullName);
     }
 
     /// <summary>Ends an opening that <see cref="Rent"/> started and that produced no session.</summary>
-    public void OpenFailed() => Update(() => _opening--);
+    public void OpenFailed(TursoDatabaseStore store) => Update(() =>
+    {
+        _opening--;
+        Closed(store);
+    });
 
     /// <summary>
     /// Returns an untouched session without eviction or connection disposal. On failure the caller still owns it.
@@ -148,7 +226,7 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
     {
         lock (_gate)
         {
-            if (_stopped || store.Closed || _idle.Count >= maxIdle || CountOf(store) >= maxIdlePerDatabase)
+            if (_stopped || store.Closed || _paused.ContainsKey(store) || _idle.Count >= maxIdle || CountOf(store) >= maxIdlePerDatabase)
             {
                 return false;
             }
@@ -167,7 +245,7 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
         lock (_gate)
         {
             _rented.Remove(session);
-            if (!_stopped && !store.Closed && CountOf(store) < maxIdlePerDatabase)
+            if (!_stopped && !store.Closed && !_paused.ContainsKey(store) && CountOf(store) < maxIdlePerDatabase)
             {
                 _idle.AddLast((store, session));
                 pooled = true;
@@ -246,10 +324,94 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
     /// <summary>Closes <paramref name="store"/>: its idle sessions are closed and it rents and pools no more.</summary>
     public void Close(TursoDatabaseStore store)
     {
-        var closing = new List<TursoSession>();
         lock (_gate)
         {
             store.Closed = true;
+        }
+
+        CloseIdle(store);
+    }
+
+    /// <summary>
+    /// Pauses <paramref name="store"/> for a healthy rewrite and closes its idle sessions: renters wait for
+    /// <see cref="Resume"/>, external readers are refused, and returned sessions close instead of pooling.
+    /// </summary>
+    public void Pause(TursoDatabaseStore store)
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_stopped || store.Closed, store);
+            _paused.Add(store, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        }
+
+        CloseIdle(store);
+    }
+
+    /// <summary>Ends <see cref="Pause"/>: waiting renters retry.</summary>
+    public void Resume(TursoDatabaseStore store)
+    {
+        TaskCompletionSource? paused;
+        lock (_gate)
+        {
+            _ = _paused.Remove(store, out paused);
+        }
+
+        paused?.TrySetResult();
+    }
+
+    /// <summary>Native closes of <paramref name="store"/>'s connections that failed in this process: they may still be open.</summary>
+    public int FailedClosesOf(TursoDatabaseStore store)
+    {
+        lock (_gate)
+        {
+            return _failedCloses.GetValueOrDefault(store);
+        }
+    }
+
+    /// <summary>Counts a failed native close of a connection <paramref name="store"/>'s owner opened outside the pool.</summary>
+    public void RecordFailedClose(TursoDatabaseStore store)
+    {
+        lock (_gate)
+        {
+            _failedCloses[store] = _failedCloses.GetValueOrDefault(store) + 1;
+        }
+    }
+
+    /// <summary>
+    /// Completes once no connection of <paramref name="store"/> is open, opening or closing, external readers included, or
+    /// early when one of its native closes fails (<see cref="FailedClosesOf"/>).
+    /// </summary>
+    public Task DrainedAsync(TursoDatabaseStore store)
+    {
+        lock (_gate)
+        {
+            if (!_openByStore.ContainsKey(store))
+            {
+                return Task.CompletedTask;
+            }
+
+            if (!_drains.TryGetValue(store, out var drained))
+            {
+                _drains[store] = drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
+            return drained.Task;
+        }
+    }
+
+    private void ThrowIfPaused(TursoDatabaseStore store)
+    {
+        if (_paused.TryGetValue(store, out var paused))
+        {
+            throw new StorePausedException(paused.Task);
+        }
+    }
+
+    private void CloseIdle(TursoDatabaseStore store)
+    {
+        var closing = new List<TursoSession>();
+        lock (_gate)
+        {
             for (var node = _idle.First; node is not null;)
             {
                 var next = node.Next;
@@ -307,7 +469,13 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
         }
         finally
         {
-            Update(() => _closing--, failure);
+            Update(() =>
+            {
+                _closing--;
+                var owner = _owners[session];
+                _owners.Remove(session);
+                Closed(owner, failure);
+            }, failure);
         }
     }
 
@@ -356,4 +524,10 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
 
         return count;
     }
+}
+
+/// <summary>A healthy rewrite paused the store; retry once <see cref="Resumed"/> completes.</summary>
+internal sealed class StorePausedException(Task resumed) : Exception("the database is being rewritten")
+{
+    public Task Resumed { get; } = resumed;
 }

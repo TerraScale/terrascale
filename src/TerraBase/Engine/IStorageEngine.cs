@@ -125,6 +125,9 @@ public interface IStorageEngine : IAsyncDisposable
     /// </param>
     ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null);
 
+    /// <summary>Whether scoped database artifacts and all process-owned native handles are absent after deletion.</summary>
+    ValueTask<bool> VerifyDatabaseErasureAsync(TenantContext database, CancellationToken cancellationToken);
+
     /// <summary>
     /// Streams files and directory-shaped database artifacts, excluding exact root system and ownership files and without
     /// following links. Directory artifacts and files outside the recognized tenant layout have a null

@@ -184,6 +184,19 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask RequireAppliedAsync(ReplicaId origin, Hlc expected, CancellationToken cancellationToken);
 
     /// <summary>
+    /// <c>_tb_peers.applied</c> per origin: every change of that origin at or below its stamp is joined here (origins mint in
+    /// commit order). This machine's own origin is absent: its own commits are local. Read under the writer for write
+    /// transactions, so a cut taken with a write in the same transaction is ordered with it (TS-873 history erasure).
+    /// </summary>
+    ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetAppliedAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Whether a deleted document's state or a change feed event at or below <paramref name="cut"/> is still stored: ids that
+    /// tombstone collection and feed retention have not yet removed (TS-873 identifier residue).
+    /// </summary>
+    ValueTask<bool> HoldsHistoryAtOrBelowAsync(Hlc cut, CancellationToken cancellationToken);
+
+    /// <summary>
     /// A client database's changes feed after <paramref name="cursor"/> (docs/terrabase/multi-region-replication.md section
     /// 14): per origin, the events with a stamp above the cursor's. Without a cursor, every origin from the start of
     /// retention. With one, an origin the cursor lacks starts at its first event, and the page is

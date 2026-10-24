@@ -110,10 +110,19 @@ public sealed class Users(AuthStore store, TimeProvider clock)
                 return;
             }
 
-            List<StoreOperation> operations = [AuthStore.Delete(AuthStore.UserCollection, instanceId, userId, current.Version)];
+            List<StoreOperation> operations =
+            [
+                AuthStore.Delete(AuthStore.UserCollection, instanceId, userId, current.Version),
+                DeletionJob.Enqueue(instanceId, "account", userId, clock),
+            ];
             if (await store.FindUniqueAsync(instanceId, EmailKind, current.User.Email, cancellationToken).ConfigureAwait(false) is { } claim && claim.OwnerId == userId)
             {
                 operations.Add(AuthStore.Release(instanceId, EmailKind, current.User.Email, claim.Version));
+            }
+
+            if (await store.GetAsync(AuthStore.PasscodeCollection, instanceId, Passcodes.SignUpKey + current.User.Email, cancellationToken).ConfigureAwait(false) is { } pending)
+            {
+                operations.Add(AuthStore.Delete(AuthStore.PasscodeCollection, instanceId, Passcodes.SignUpKey + current.User.Email, pending.Version));
             }
 
             if (await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null)

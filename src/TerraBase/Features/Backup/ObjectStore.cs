@@ -48,7 +48,7 @@ internal interface IObjectStore
 /// An S3-compatible bucket through the AWS SDK, configured for S3-compatible stores such as Tigris: path-style
 /// addressing, its own signing region, and checksums only where S3 requires them (not every store accepts the newer defaults).
 /// </summary>
-internal sealed class S3ObjectStore : IObjectStore, IDisposable
+internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
 {
     /// <summary>The named <see cref="HttpClient"/> every request goes through.</summary>
     public const string HttpClientName = "backup-s3";

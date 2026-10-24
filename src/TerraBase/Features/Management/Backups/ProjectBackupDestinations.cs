@@ -104,8 +104,20 @@ internal sealed class ProjectBackupDestinations(
                 };
             }
 
+            // A closing project takes no destination (or its credentials) once this transaction sees its fence.
+            if (await ProjectClosure.IsClosedAsync(transaction, projectId, cancellationToken).ConfigureAwait(false))
+            {
+                return ManagementErrors.NotFound;
+            }
+
             // Decide inside the write: another region may have supplied a destination while the bucket was probed.
-            replaced = await transaction.GetAsync(Collection(projectId), Current, cancellationToken).ConfigureAwait(false) is not null;
+            var previous = await GetAsync(transaction, Collection(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
+            replaced = previous is not null;
+            if (previous is not null)
+            {
+                await BackupDestinationHistory.SaveAsync(transaction, projectId, previous, cancellationToken).ConfigureAwait(false);
+            }
+            await BackupDestinationHistory.SaveAsync(transaction, projectId, record, cancellationToken).ConfigureAwait(false);
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, Collection(projectId), Current, record, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
             return record.Destination;
@@ -130,9 +142,10 @@ internal sealed class ProjectBackupDestinations(
                 };
             }
 
-            // The customer's bucket keeps its objects; only the sealed credentials leave TerraBase.
-            if (await GetAsync(transaction, Collection(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false) is not null)
+            // Keep sealed cleanup authority outside authorization state until owed deletion is verified.
+            if (await GetAsync(transaction, Collection(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false) is { } previous)
             {
+                await BackupDestinationHistory.SaveAsync(transaction, projectId, previous, cancellationToken).ConfigureAwait(false);
                 await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
                 await transaction.DeleteAsync(Collection(projectId), Current, cancellationToken).ConfigureAwait(false);
             }
