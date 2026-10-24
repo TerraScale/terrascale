@@ -13,6 +13,7 @@ namespace TerraScale.DotNet.TerraBase;
 public static class TerraBaseFilter
 {
     private const double MaxMeters = 20_000_000;
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     /// <summary>
     /// <c>{"within":[path,{"lat","lon","meters"}]}</c>: points at most <paramref name="meters"/> from the center, by haversine
@@ -90,8 +91,6 @@ public static class TerraBaseFilter
         using var document = JsonDocument.Parse(buffer.WrittenMemory);
         return document.RootElement.Clone();
     }
-
-    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     /// <summary>Searches the text at a document member's RFC 6901 JSON Pointer, excluding the $id pseudo-path.</summary>
     /// <param name="path">A JSON Pointer of 1–16 segments.</param>

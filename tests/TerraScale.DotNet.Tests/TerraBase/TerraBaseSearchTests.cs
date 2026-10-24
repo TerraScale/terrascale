@@ -75,6 +75,30 @@ public sealed class TerraBaseSearchTests
     }
 
     [Test]
+    public async Task Search_composes_with_geo_filters_but_rejects_geo_near_before_HTTP()
+    {
+        var bodies = new List<string>();
+        using var handler = new TerraBaseTestHandler(async (request, token) =>
+        {
+            bodies.Add(await request.Content!.ReadAsStringAsync(token));
+            return TerraBaseIntegrationFixture.Json("""{"items":[],"next_cursor":null}""");
+        });
+        using var http = new HttpClient(handler);
+        var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
+        var search = TerraBaseFilter.Search("/title", "database");
+        var radius = TerraBaseFilter.WithinRadius("/loc", 0, 0, 1000);
+        var box = TerraBaseFilter.WithinBox("/loc", -1, -1, 1, 1);
+        using var combined = JsonDocument.Parse("{\"and\":[" + search.GetRawText() + "," + radius.GetRawText() + "," + box.GetRawText() + "]}");
+        await db.QueryAsync("articles", new() { Filter = combined.RootElement, Sort = [TerraBaseSort.Score] });
+        await Assert.That(bodies[0]).IsEqualTo("""{"filter":{"and":[{"search":["/title","database"]},{"within":["/loc",{"lat":0,"lon":0,"meters":1000}]},{"within":["/loc",{"south":-1,"west":-1,"north":1,"east":1}]}]},"sort":[{"path":"$score","order":"desc"}]}""");
+        await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("articles", new()
+        {
+            Filter = combined.RootElement, Sort = [TerraBaseSort.NearPoint("/loc", 0, 0)],
+        }));
+        await Assert.That(bodies.Count).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task Missing_text_index_preserves_invalid_query_and_sends_once()
     {
         var calls = 0;
