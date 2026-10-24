@@ -297,6 +297,8 @@ internal sealed partial class FaultSoakCluster : IAsyncDisposable
         _clients.Add(node.Client);
         node.Management = new HttpClient { BaseAddress = new Uri(listeners["client"]!.GetValue<string>()) };
         node.Management.DefaultRequestHeaders.Authorization = new("Bearer", listeners["projectToken"]!.GetValue<string>());
+        // The soak qualifies the multi-region guarantee: writes ask for another region's durable ack (decision 0013e).
+        node.Management.DefaultRequestHeaders.Add("TB-Durability", "remote_durable");
         node.Authority = listeners["authority"]!.GetValue<string>();
         _clients.Add(node.Management);
     }
