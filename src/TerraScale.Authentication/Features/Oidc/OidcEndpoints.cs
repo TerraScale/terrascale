@@ -58,7 +58,7 @@ public sealed class DiscoveryEndpoint : EndpointWithoutRequest<IResult>
         Get("/{slug}/.well-known/openid-configuration");
         Name("oidc_discovery");
         Summary("OpenID Provider metadata");
-        Description("OpenID Connect Discovery 1.0 metadata for the issuer {public origin}/{slug}: terrascale, or an existing project's id. Other slugs answer 404. A project tenant's OAuth endpoints answer 404 until it has clients and users.");
+        Description("OpenID Connect Discovery 1.0 metadata for the issuer {public origin}/{slug}: terrascale, or an existing project's id. Other slugs answer 404. A project tenant serves the authorization code flow for its own clients and end users, without device, client-credentials or token-exchange grants.");
         Tags("OAuth");
         Produces<Dictionary<string, object>>();
         Produces<OAuthErrorBody>(StatusCodes.Status404NotFound);
@@ -127,10 +127,12 @@ public sealed class AuthorizeEndpoint(Sessions sessions, TimeProvider clock, Aut
             }
         }
 
+        var tenant = Tenancy.Current(this.HttpContext);
+        var cookie = Tenancy.SessionCookie(tenant);
         (SessionRecord Session, UserRecord User)? live;
         try
         {
-            live = await sessions.ResolveAsync(OidcIssuer.InstanceId, this.HttpContext.Request.Cookies[SecuritySchemes.SessionCookieName], cancellationToken);
+            live = await sessions.ResolveAsync(tenant, this.HttpContext.Request.Cookies[cookie], cancellationToken);
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
@@ -145,12 +147,12 @@ public sealed class AuthorizeEndpoint(Sessions sessions, TimeProvider clock, Aut
                 return OidcResults.Forbid(Errors.LoginRequired, CredentialLineage.ConflictNotice);
             }
 
-            var resume = $"/{OidcIssuer.Slug}/oauth/authorize{this.HttpContext.Request.QueryString}";
-            var notice = this.HttpContext.Request.Cookies.ContainsKey(SecuritySchemes.SessionCookieName) ? "&notice=credential_changed" : string.Empty;
-            return Results.Redirect($"/ui/{OidcIssuer.Slug}/sign-in?next={Uri.EscapeDataString(resume)}{notice}");
+            var resume = $"/{tenant}/oauth/authorize{this.HttpContext.Request.QueryString}";
+            var notice = this.HttpContext.Request.Cookies.ContainsKey(cookie) ? "&notice=credential_changed" : string.Empty;
+            return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(resume)}{notice}");
         }
 
-        return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcIssuer.SignInAudiences(options));
+        return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId));
     }
 }
 
@@ -202,6 +204,13 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
             return Results.NotFound();
         }
 
+        var tenant = Tenancy.Current(this.HttpContext);
+        if (Tenancy.IsProject(tenant) && !request.IsAuthorizationCodeGrantType() && !request.IsRefreshTokenGrantType())
+        {
+            // A project's end users sign in to its own applications; machine, device and platform grants are the platform's.
+            return OidcResults.Forbid(Errors.UnsupportedGrantType, "A project issuer grants only authorization_code and refresh_token.");
+        }
+
         if (request.IsClientCredentialsGrantType())
         {
             var application = await applications.FindByClientIdAsync(request.ClientId!, cancellationToken);
@@ -240,14 +249,15 @@ public sealed class TokenEndpoint(TotpCredentials mfa, PlatformGrants platform, 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal
             ?? throw new InvalidOperationException("OpenIddict passed a token request without a principal.");
         var user = principal.GetClaim(Claims.Subject) is { } subject
-            ? await mfa.PrimaryUserAsync(OidcIssuer.InstanceId, subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim), cancellationToken)
+            ? await mfa.PrimaryUserAsync(tenant, subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim), cancellationToken)
             : null;
         if (user is null || !long.TryParse(principal.GetClaim(Claims.AuthenticationTime), System.Globalization.CultureInfo.InvariantCulture, out var authenticatedAt))
         {
             return OidcResults.Forbid(Errors.InvalidGrant, "The user is no longer signed in.");
         }
 
-        return OidcResults.SignIn(user with { AuthenticationBindings = CredentialLineage.Read(principal) }, DateTimeOffset.FromUnixTimeSeconds(authenticatedAt), principal.GetScopes(), OidcIssuer.SignInAudiences(options));
+        return OidcResults.SignIn(user with { AuthenticationBindings = CredentialLineage.Read(principal) }, DateTimeOffset.FromUnixTimeSeconds(authenticatedAt), principal.GetScopes(),
+            OidcResults.Audiences(tenant, options, request.ClientId ?? principal.GetPresenters().FirstOrDefault()));
     }
 }
 
@@ -291,7 +301,7 @@ public sealed class UserInfoEndpoint(TotpCredentials mfa) : EndpointWithoutReque
 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal;
         if (principal?.GetClaim(Claims.Subject) is not { } subject
-            || await mfa.PrimaryUserAsync(OidcIssuer.InstanceId, subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim), cancellationToken) is not { } user)
+            || await mfa.PrimaryUserAsync(Tenancy.Current(this.HttpContext), subject, principal.GetClaim(OidcIssuer.EpochClaim), principal.GetClaim(OidcIssuer.StateClaim), cancellationToken) is not { } user)
         {
             return Results.Challenge(OidcResults.Error(Errors.InvalidToken, "The access token no longer identifies a user."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }
@@ -351,14 +361,15 @@ public sealed class LogoutEndpoint(Sessions sessions) : EndpointWithoutRequest<I
             return Results.NotFound();
         }
 
-        await sessions.RevokeAsync(OidcIssuer.InstanceId, this.HttpContext.Request.Cookies[SecuritySchemes.SessionCookieName], cancellationToken);
-        BrowserSecurity.DeleteSessionCookie(this.HttpContext.Response);
+        var tenant = Tenancy.Current(this.HttpContext);
+        await sessions.RevokeAsync(tenant, this.HttpContext.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
+        BrowserSecurity.DeleteSessionCookie(this.HttpContext.Response, tenant);
         // OpenIddict has validated post_logout_redirect_uri against the client's registration before this runs. The page
         // navigates there itself, so the user sees that the sign-out happened.
         var returnTo = request.PostLogoutRedirectUri is { } uri
             ? (string.IsNullOrEmpty(request.State) ? uri : Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(uri, Parameters.State, request.State))
             : null;
-        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignedOut, OidcIssuer.Slug) { ReturnTo = returnTo });
+        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignedOut, tenant) { ReturnTo = returnTo });
     }
 }
 
@@ -376,6 +387,15 @@ internal static class OidcResults
 
     public static IResult Forbid(string error, string description) =>
         Results.Forbid(Error(error, description), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
+
+    /// <summary>
+    /// The audiences of a sign-in access token: the platform's (<see cref="OidcIssuer.SignInAudiences"/>), or for a
+    /// project tenant only the client it was issued to, so no TerraScale API accepts it (project-tenant-management.md).
+    /// </summary>
+    public static IReadOnlyList<string> Audiences(string tenant, AuthOptions options, string? clientId) =>
+        !Tenancy.IsProject(tenant) ? OidcIssuer.SignInAudiences(options)
+        : clientId is { Length: > 0 } ? [clientId]
+        : throw new InvalidOperationException("A project sign-in has no client.");
 
     /// <summary>The access-token claim naming a platform role.</summary>
     public const string PlatformRoleClaim = "platform_role";

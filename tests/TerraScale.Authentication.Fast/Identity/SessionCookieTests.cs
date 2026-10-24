@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Tests;
@@ -107,7 +108,7 @@ public sealed class SessionCookieTests(TerraBaseFixture fixture)
                     }
 
                     await sessions.RevokeAsync(Instance, context.Request.Cookies[SecuritySchemes.SessionCookieName]);
-                    BrowserSecurity.SetSessionCookie(context.Response, issued.Token);
+                    BrowserSecurity.SetSessionCookie(context.Response, issued.Token, OidcIssuer.InstanceId);
                     return Results.NoContent();
                 });
                 app.MapGet("/__test/session", async (HttpContext context, Sessions sessions) =>
@@ -121,13 +122,13 @@ public sealed class SessionCookieTests(TerraBaseFixture fixture)
                         return Results.Unauthorized();
                     }
 
-                    BrowserSecurity.SetSessionCookie(context.Response, rotated.Token);
+                    BrowserSecurity.SetSessionCookie(context.Response, rotated.Token, OidcIssuer.InstanceId);
                     return Results.NoContent();
                 });
                 app.MapPost("/__test/sign-out", async (HttpContext context, Sessions sessions) =>
                 {
                     await sessions.RevokeAsync(Instance, context.Request.Cookies[SecuritySchemes.SessionCookieName]);
-                    BrowserSecurity.DeleteSessionCookie(context.Response);
+                    BrowserSecurity.DeleteSessionCookie(context.Response, OidcIssuer.InstanceId);
                     return Results.NoContent();
                 });
             });

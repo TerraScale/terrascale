@@ -24,7 +24,7 @@ public sealed class RenderLocalErrorPage<TContext> : IOpenIddictServerHandler<TC
             return;
         }
 
-        var page = new SignInPageModel(SignInStep.Rejected, OidcIssuer.Slug, Error: response.ErrorDescription, Detail: error);
+        var page = new SignInPageModel(SignInStep.Rejected, Tenancy.Current(http), Error: response.ErrorDescription, Detail: error);
         await SignInPageModel.Render(http, page, http.Response.StatusCode).ExecuteAsync(http).ConfigureAwait(false);
         context.HandleRequest();
     }

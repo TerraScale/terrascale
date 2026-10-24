@@ -192,6 +192,7 @@ public static class App
             app.UseForwardedHeaders();
             TokenRateLimitMiddleware.UseClientGuard(app);
         }
+        app.UseTenancy();
         // OpenIddict answers discovery, JWKS and protocol errors here and validates passthrough requests first.
         app.UseAuthentication();
         app.MapTerraScaleEndpoints();
