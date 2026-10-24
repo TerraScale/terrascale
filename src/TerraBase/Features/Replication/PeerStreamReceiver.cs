@@ -165,11 +165,15 @@ internal sealed partial class PeerStreamReceiver : V1.Replication.ReplicationBas
         var working = new List<(Task<AckFrame?> Done, ApplyProgress Progress, V1.Database Wire, ulong ChangeId)>();
         // Batches and frontiers in arrival order. A database's frames run one after another, so they also complete in this order.
         var answers = new List<(TenantContext Database, Ulid Incarnation, Task<AckFrame?> Done, long Received)>();
+        // Client databases a batch of this stream applied: their registration is already committed here.
+        HashSet<TenantContext> registered = [];
         // A client database's batch or refill also follows the catalog's frame in progress: the sender lists the system
-        // database first, and a database it registers is refused until that registration commits.
+        // database first, and a database it registers is refused until that registration commits. Once one of its batches
+        // applied, later ones need no catalog frame (TS-974: they queued behind every catalog apply of a busy origin).
         Task Catalog(TenantContext database)
         {
-            return database != ChangeGroups.System && applying.TryGetValue(ChangeGroups.System, out var system) ? system.Done : Task.CompletedTask;
+            return database != ChangeGroups.System && !registered.Contains(database) && applying.TryGetValue(ChangeGroups.System, out var system)
+                ? system.Done : Task.CompletedTask;
         }
 
         Task After(TenantContext database)
@@ -259,6 +263,10 @@ internal sealed partial class PeerStreamReceiver : V1.Replication.ReplicationBas
                     }
 
                     var response = await answer.Done.ConfigureAwait(false);
+                    if (answer.Database != ChangeGroups.System && response?.Ack is { Refused: false })
+                    {
+                        _ = registered.Add(answer.Database);
+                    }
                     if (answer.Incarnation != default && chains.TryGetValue(answer.Database, out var chain) && chain.Incarnation == answer.Incarnation)
                     {
                         chain.Pending--;

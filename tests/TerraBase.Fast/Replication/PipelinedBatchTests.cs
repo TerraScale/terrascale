@@ -274,6 +274,26 @@ public sealed class PipelinedBatchTests
     }
 
     [Test]
+    public async Task A_database_whose_batch_applied_on_the_stream_does_not_wait_for_a_catalog_frame_in_progress()
+    {
+        var gate = new ApplyGate();
+        await using var receiver = await Receiver.StartAsync(gate);
+        var (call, sender, docs) = (receiver.Call, receiver.Sender, receiver.Docs);
+        await call.RequestStream.WriteAsync(Batch(sender, after: 0, last: 1, receiver.Origin, docs[0]));
+        await Assert.That(string.Join(", ", (await AcksAsync(call, 1, receiver.Deadline)).Select(ack => (ack.ChangeId, ack.Refused)))).IsEqualTo("(1, False)");
+
+        // A catalog frame whose apply is held: before TS-974, every later client batch on the stream waited for it.
+        gate.Hold(ChangeGroups.System);
+        await call.RequestStream.WriteAsync(Batch(ChangeGroups.Wire(ChangeGroups.System, Ulid.NewUlid()), after: 0, last: 1, receiver.Origin, EntityIds.New().ToString()));
+        await gate.Entered.Task.WaitAsync(receiver.Deadline);
+        await call.RequestStream.WriteAsync(Batch(sender, after: 1, last: 2, receiver.Origin, docs[1]));
+        await Assert.That(string.Join(", ", (await AcksAsync(call, 1, receiver.Deadline)).Select(ack => (ack.ChangeId, ack.Refused)))).IsEqualTo("(2, False)")
+            .Because("the database's registration committed before its first batch applied");
+        await receiver.AssertStoredAsync(docs[..2], stored: true);
+        gate.Release();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task A_refusal_or_fault_of_a_joined_transaction_acknowledges_none_of_its_batches(bool afterCommit)
