@@ -1,8 +1,12 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Shared.UI;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Profile;
 
@@ -11,14 +15,22 @@ namespace TerraScale.Dashboard.Features.Profile;
 // Paid plans of those organizations end immediately in Stripe, without a refund.
 public static class AccountDeletion
 {
-    public static async Task<IResult> DeleteAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, StripeBilling billing)
+    private const string Operations = "account_deletions";
+    private const string Cookie = "ts-dashboard-deletion";
+    private sealed record Operation(SessionRecord Session, string[] Organizations, string Receipt);
+
+    public static async Task<IResult> DeleteAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity)
     {
-        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-        if (context is null) return Results.Unauthorized();
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
+        if (await ReadOperationAsync(http, state, identity) is { } pending)
+            return await AdvanceAsync(http, sessions, platform, state, tokens, pending);
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (context is null) return Results.Unauthorized();
         var cancellationToken = http.RequestAborted;
         List<OrganizationRecord> sole = [];
+        var persisted = false;
+        var confirmed = false;
         try
         {
             var typed = form["email"].ToString().Trim();
@@ -41,37 +53,139 @@ public static class AccountDeletion
             }
             // Shared organizations keep their subscriptions; only organizations deleted with the account are canceled.
             foreach (var org in sole) await billing.CancelForAccountDeletionAsync(org.Id, org.Name, cancellationToken);
+            var operation = new Operation(context.Session, sole.Select(org => org.Id).ToArray(),
+                Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32)));
+            await WriteOperationAsync(http, state, identity, operation);
+            persisted = true;
             try
             {
-                if (!await platform.DeleteAccountAsync(context.Session, cancellationToken))
-                    throw new AccountAccessException("Account deletion is still in progress. Try again shortly; your dashboard records will stay until deletion is confirmed.", 409, "deletion_pending");
+                if (!await platform.DeleteAccountAsync(context.Session, operation.Receipt, cancellationToken))
+                    return HttpRedirects.SeeOther("/account-deletion");
             }
             catch (AccountAccessException error) when (error.Code == "last_owner")
             { throw new AccountAccessException("Transfer ownership of your shared organizations before deleting your account.", 409); }
             // Dashboard records go only after ts-auth confirms; a 401/404 can mean an expired token or a ts-auth without the route.
+            confirmed = true;
+            return await CompleteAsync(http, sessions, platform, state, tokens, operation);
         }
+        catch (AccountAccessException) when (confirmed) { return HttpRedirects.SeeOther("/account-deletion"); }
+        catch (Exception error) when (persisted && Transient(error, http)) { return HttpRedirects.SeeOther("/account-deletion"); }
         catch (AccountAccessException error)
         {
+            if (error.StatusCode == 409 && await ReadOperationAsync(http, state, identity) is { } refused)
+            {
+                try { _ = await platform.AccountDeletionCompletedAsync(refused.Receipt, cancellationToken); }
+                catch (AccountAccessException status) when (status.Code == "deletion_refused")
+                { await DropAsync(state, Operations, Key(http), cancellationToken); http.Response.Cookies.Delete(Cookie); }
+            }
             var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "danger", Error: error.Message,
                 Tokens: await tokens.ListAsync(context, cancellationToken), Sessions: await sessions.ListAsync(http, context.Session)));
             view.StatusCode = error.StatusCode;
             return view;
         }
-        foreach (var orgId in sole.Select(org => org.Id))
+    }
+
+    public static async Task<IResult> ContinueAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, IDashboardIdentity identity)
+    {
+        var form = await http.Request.ReadFormAsync(http.RequestAborted);
+        if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
+        return await ReadOperationAsync(http, state, identity) is { } operation
+            ? await AdvanceAsync(http, sessions, platform, state, tokens, operation) : Results.Unauthorized();
+    }
+
+    private static async Task<IResult> AdvanceAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, Operation operation)
+    {
+        var requesting = false;
+        try
         {
+            bool completed;
+            try { completed = await platform.AccountDeletionCompletedAsync(operation.Receipt, http.RequestAborted); }
+            // The original request might have stopped after persisting its scope but before ts-auth received it.
+            catch (AccountAccessException error) when (error.StatusCode == 404)
+            {
+                requesting = true;
+                var renewed = await sessions.ReadAsync(http);
+                if (renewed is not null && renewed.UserId != operation.Session.UserId) throw new AccountAccessException("Sign in to the account that requested deletion.", 403);
+                completed = await platform.DeleteAccountAsync(renewed ?? operation.Session, operation.Receipt, http.RequestAborted);
+            }
+            requesting = false;
+            return completed ? await CompleteAsync(http, sessions, platform, state, tokens, operation) : HttpRedirects.SeeOther("/account-deletion");
+        }
+        catch (AccountAccessException error)
+        {
+            if (!requesting && error.Code != "deletion_refused") return HttpRedirects.SeeOther("/account-deletion");
+            if (error.Code == "deletion_refused") { await DropAsync(state, Operations, Key(http), http.RequestAborted); http.Response.Cookies.Delete(Cookie); }
+            return Results.Text(error.Message + " Dashboard records have been retained. Return to your profile to resolve the issue.", statusCode: error.StatusCode);
+        }
+        catch (Exception error) when (Transient(error, http)) { return HttpRedirects.SeeOther("/account-deletion"); }
+    }
+
+    public static async Task<IResult> ProgressAsync(HttpContext http, IDashboardState state, IDashboardIdentity identity) =>
+        await ReadOperationAsync(http, state, identity) is null ? Results.Unauthorized() : DeletionProgress.Create(http,
+            new FormCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues> { ["_csrf"] = Csrf.Token(http) }), "/api/v1/dashboard/profile/delete/continue");
+
+    private static async Task<IResult> CompleteAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDashboardState state, AccessTokens tokens, Operation operation)
+    {
+        var cancellationToken = http.RequestAborted;
+        foreach (var orgId in operation.Organizations)
+        {
+            // A sole organization can become shared before ts-auth fences it. Only its own deletion proof permits cleanup.
+            try { if (!await platform.AccountDeletionOrganizationCompletedAsync(operation.Receipt, orgId, cancellationToken)) continue; }
+            catch (AccountAccessException error) when (error.StatusCode == 404) { continue; }
             if (await state.GetAsync(StripeBilling.Collection, orgId, cancellationToken) is { } document &&
                 StripeBilling.ReadBinding(document, orgId).CustomerId is { Length: > 0 } customer)
                 await DropAsync(state, StripeBilling.CustomersCollection, customer, cancellationToken);
             await DropAsync(state, StripeBilling.Collection, orgId, cancellationToken);
             await DropAsync(state, AccountService.OrganizationsCollection, orgId, cancellationToken);
         }
-        await tokens.ForgetAllAsync(context.UserId, cancellationToken);
-        var key = AccountService.AccountStorageKey(context.UserId);
+        await tokens.ForgetAllAsync(operation.Session.UserId, cancellationToken);
+        var key = AccountService.AccountStorageKey(operation.Session.UserId);
         await DropAsync(state, AccountService.AccountsCollection, key, cancellationToken);
         await DropAsync(state, AccountService.IdentitiesCollection, key, cancellationToken);
-        await sessions.RevokeUserAsync(context.UserId, cancellationToken);
+        await sessions.RevokeUserAsync(operation.Session.UserId, cancellationToken);
         await sessions.EndAsync(http);
-        return HttpRedirects.SeeOther("/login");
+        await DropAsync(state, Operations, Key(http), cancellationToken);
+        http.Response.Cookies.Delete(Cookie);
+        return HttpRedirects.SeeOther("/account-deleted");
+    }
+
+    // Possession of the original opaque dashboard cookie continues only this previously authorized operation.
+    // It never authenticates a user or grants access to any other dashboard resource.
+    private static string Key(HttpContext http)
+    {
+        var cookie = http.Request.Cookies[Cookie] ?? http.Request.Cookies["ts-dashboard-session"];
+        if (cookie is not { Length: 64 } || !cookie.All(char.IsAsciiHexDigitLower)) throw new AccountAccessException("Sign in to request deletion.", 401);
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(cookie)));
+    }
+
+    private static async Task WriteOperationAsync(HttpContext http, IDashboardState state, IDashboardIdentity identity, Operation operation)
+    {
+        var key = Key(http);
+        var nonce = RandomNumberGenerator.GetBytes(12);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(operation);
+        var ciphertext = new byte[bytes.Length];
+        var tag = new byte[16];
+        using var aes = new AesGcm(Convert.FromBase64String((await identity.ReadAsync(http.RequestAborted)).SessionEncryptionKey), 16);
+        aes.Encrypt(nonce, bytes, ciphertext, tag, Encoding.UTF8.GetBytes(Operations + key));
+        await state.PutAsync(Operations, key, JsonSerializer.SerializeToElement(new SealedSession(Convert.ToBase64String(nonce), Convert.ToBase64String(ciphertext), Convert.ToBase64String(tag))), TerraBasePrecondition.Absent, http.RequestAborted);
+        http.Response.Cookies.Append(Cookie, http.Request.Cookies[Cookie] ?? http.Request.Cookies["ts-dashboard-session"]!,
+            new CookieOptions { HttpOnly = true, Secure = http.Request.IsHttps, SameSite = SameSiteMode.Strict, Path = "/" });
+    }
+
+    private static async Task<Operation?> ReadOperationAsync(HttpContext http, IDashboardState state, IDashboardIdentity identity)
+    {
+        var cookie = http.Request.Cookies[Cookie] ?? http.Request.Cookies["ts-dashboard-session"];
+        if (cookie is not { Length: 64 } || !cookie.All(char.IsAsciiHexDigitLower)) return null;
+        var key = Key(http);
+        var document = await state.GetAsync(Operations, key, http.RequestAborted);
+        if (document is null) return null;
+        if (document.State != "value") throw new IOException("Deletion operation has a causal conflict.");
+        var sealedValue = document.Document.Deserialize<SealedSession>() ?? throw new IOException("Deletion operation is invalid.");
+        var ciphertext = Convert.FromBase64String(sealedValue.Ciphertext);
+        var plaintext = new byte[ciphertext.Length];
+        using var aes = new AesGcm(Convert.FromBase64String((await identity.ReadAsync(http.RequestAborted)).SessionEncryptionKey), 16);
+        aes.Decrypt(Convert.FromBase64String(sealedValue.Nonce), ciphertext, Convert.FromBase64String(sealedValue.Tag), plaintext, Encoding.UTF8.GetBytes(Operations + key));
+        return JsonSerializer.Deserialize<Operation>(plaintext) ?? throw new IOException("Deletion operation is invalid.");
     }
 
     private static async Task DropAsync(IDashboardState state, string collection, string id, CancellationToken cancellationToken)
@@ -79,4 +193,7 @@ public static class AccountDeletion
         if (await state.GetAsync(collection, id, cancellationToken) is { } document)
             await state.DeleteAsync(collection, id, document.Version, cancellationToken);
     }
+
+    private static bool Transient(Exception error, HttpContext http) => error is HttpRequestException or IOException or TimeoutException ||
+        error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested;
 }

@@ -40,7 +40,9 @@ public interface ITsAuthPlatform
     Task<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
     // Deletes the caller's user, sessions, tokens, memberships and the organizations only they belong to.
     // ts-auth refuses with last_owner while the caller is the last owner of an organization with other members.
-    Task<bool> DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken);
+    Task<bool> DeleteAccountAsync(SessionRecord session, string receipt, CancellationToken cancellationToken);
+    Task<bool> AccountDeletionCompletedAsync(string receipt, CancellationToken cancellationToken);
+    Task<bool> AccountDeletionOrganizationCompletedAsync(string receipt, string organizationId, CancellationToken cancellationToken);
 }
 
 // The official ts-dotnet platform client, called with the user's own sign-in token.
@@ -146,8 +148,14 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
     public Task<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
         PagesAsync(after => Client().Platform.ListAuditEventsAsync(Bearer(session), Id(organizationId), 100, after, cancellationToken));
 
-    public Task<bool> DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken) =>
-        PlatformAsync(() => Client().Platform.DeleteAccountAsync(Bearer(session), cancellationToken));
+    public Task<bool> DeleteAccountAsync(SessionRecord session, string receipt, CancellationToken cancellationToken) =>
+        PlatformAsync(() => Client().Platform.DeleteAccountAsync(Bearer(session), receipt, cancellationToken));
+
+    public Task<bool> AccountDeletionCompletedAsync(string receipt, CancellationToken cancellationToken) =>
+        PlatformAsync(() => Client().Platform.AccountDeletionCompletedAsync(receipt, cancellationToken));
+
+    public Task<bool> AccountDeletionOrganizationCompletedAsync(string receipt, string organizationId, CancellationToken cancellationToken) =>
+        PlatformAsync(() => Client().Platform.AccountDeletionOrganizationCompletedAsync(receipt, Id(organizationId), cancellationToken));
 
     private static string Bearer(SessionRecord session) =>
         string.IsNullOrWhiteSpace(session.AccessToken) ? throw new AccountAccessException("Sign in again to continue.", 401) : session.AccessToken;
@@ -191,6 +199,7 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
         "last_owner" => "The organization needs another owner first.",
         "closure_conflict" => "Deletion is paused because a project closure could not be confirmed. Resolve the project conflict and try again.",
         "binding_conflict" => "Deletion is paused because a project ownership binding could not be verified. Resolve the project conflict and try again.",
+        "deletion_refused" => "Deletion could not finish. Resolve the organization or project conflict before requesting deletion again.",
         "not_empty" => "Delete the organization's projects first.",
         "invitation_pending" => "This email already has a pending invitation.",
         "already_member" => "This email is already an active member.",

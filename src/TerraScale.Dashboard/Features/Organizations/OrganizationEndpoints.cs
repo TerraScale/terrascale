@@ -223,6 +223,10 @@ public static class OrganizationEndpoints
             return HttpRedirects.SeeOther(WorkspaceUrl.For(context,
                 operation == "delete-project" ? "/organization?tab=projects" : operation == "delete" ? "/organization?deleted=1" : "/organization", replace: true));
         }
+        catch (AccountAccessException error) when (error.Code == "deletion_pending")
+        { return DeletionProgress.Create(http, form, http.Request.Path + "?organizationId=" + Uri.EscapeDataString(context.Organization!.Id)); }
+        catch (Exception error) when (operation != "leave" && (error is HttpRequestException or IOException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested))
+        { return DeletionProgress.Create(http, form, http.Request.Path + "?organizationId=" + Uri.EscapeDataString(context.Organization!.Id)); }
         catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode, operation == "delete-project" ? "projects" : "danger"); }
     }
 

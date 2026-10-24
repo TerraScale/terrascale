@@ -652,7 +652,9 @@ sealed class TestWorkspace : ITsAuthPlatform
         }
     }
     // ts-auth DELETE /v1/terrascale/account: refuses last_owner of a shared organization, deletes sole-member organizations, leaves the rest.
-    public Task<bool> DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken)
+    public Task<bool> AccountDeletionOrganizationCompletedAsync(string receipt, string organizationId, CancellationToken cancellationToken) => Task.FromResult(!Organizations.ContainsKey(organizationId));
+    public Task<bool> AccountDeletionCompletedAsync(string receipt, CancellationToken cancellationToken) => throw new AccountAccessException("Receipt is unavailable.", 404);
+    public Task<bool> DeleteAccountAsync(SessionRecord session, string receipt, CancellationToken cancellationToken)
     {
         lock (Gate)
         {

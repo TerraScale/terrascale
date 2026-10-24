@@ -47,7 +47,7 @@ public sealed class AccountDeletionJourneyTests
         using (var deleted = await scenario.DeleteAsync("  USER@example.com "))
         {
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            await Assert.That(deleted.Headers.Location!.OriginalString).IsEqualTo("/login");
+            await Assert.That(deleted.Headers.Location!.OriginalString).IsEqualTo("/account-deleted");
         }
         var key = AccountService.AccountStorageKey(UserId);
         await Assert.That(await scenario.ExistsAsync(AccountService.AccountsCollection, key)).IsFalse();
@@ -59,6 +59,9 @@ public sealed class AccountDeletionJourneyTests
         await Assert.That(scenario.Environment.Workspace.Organizations[shared].Members.ContainsKey(UserId)).IsFalse();
         using var session = await scenario.Client.GetAsync("/__test/session");
         await Assert.That(session.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        using var completion = await scenario.Client.GetAsync("/account-deleted");
+        await Assert.That(completion.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await completion.Content.ReadAsStringAsync()).Contains("Account deleted").And.Contains("you have been signed out");
     }
 
     [Test]
@@ -92,7 +95,7 @@ public sealed class AccountDeletionJourneyTests
         using (var deleted = await scenario.DeleteAsync(email))
         {
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            await Assert.That(deleted.Headers.Location!.OriginalString).IsEqualTo("/login");
+            await Assert.That(deleted.Headers.Location!.OriginalString).IsEqualTo("/account-deleted");
         }
         await Assert.That(stripe.SubscriptionStatus(binding.SubscriptionId)).IsEqualTo("canceled");
         await Assert.That(stripe.Mutations(binding.CustomerId).Count(path => path == "DELETE /v1/subscriptions/" + binding.SubscriptionId)).IsEqualTo(1);
