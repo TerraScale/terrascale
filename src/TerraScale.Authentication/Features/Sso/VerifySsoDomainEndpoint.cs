@@ -10,7 +10,7 @@ public sealed class VerifySsoDomainEndpoint(SsoConnections connections, Platform
     public override void Configure()
     {
         Post(Connection + "/verify");
-        this.Document("verify_sso_domain", "Verify the SSO connection's domain", "Needs the owner role. Looks up the TXT record named in verification; 409 domain_unverified until it carries the value. Once verified, no other organization can take the domain.", "Single sign-on", null, StatusCodes.Status200OK, typeof(SsoConnectionBody), conflict: true);
+        this.Document("verify_sso_domain", "Verify the SSO connection's domain", "Needs the owner role. Looks up the TXT record named in verification; 409 domain_unverified until it carries the value. Once verified, no other organization can take the domain, and every account of the domain signs in through the identity provider, except the organization's owners, who keep email-code and password sign-in.", "Single sign-on", null, StatusCodes.Status200OK, typeof(SsoConnectionBody), conflict: true);
     }
 
     /// <inheritdoc />

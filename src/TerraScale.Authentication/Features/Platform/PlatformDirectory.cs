@@ -1042,6 +1042,10 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
         this.GetAsync(AuthStore.OrganizationCollection, organizationId, PlatformJson.Default.OrganizationRecord,
             organization => organization.InstanceId == Instance && organization.Id == organizationId, cancellationToken);
 
+    /// <summary>The user's organization role, or null when it is no member (a collaborator has none either).</summary>
+    internal async Task<string?> RoleAsync(string organizationId, string userId, CancellationToken cancellationToken) =>
+        (await this.MembershipAsync(organizationId, userId, cancellationToken).ConfigureAwait(false))?.Value.Role;
+
     internal Task<Versioned<ProjectRecord>?> ProjectAsync(string projectId, CancellationToken cancellationToken) =>
         this.GetAsync(AuthStore.ProjectCollection, projectId, PlatformJson.Default.ProjectRecord,
             project => project.InstanceId == Instance && project.Id == projectId, cancellationToken);

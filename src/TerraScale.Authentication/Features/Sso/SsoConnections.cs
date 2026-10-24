@@ -222,7 +222,7 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
         try
         {
             var configuration = await this.Discovery(issuer).GetConfigurationAsync(cancellationToken).ConfigureAwait(false);
-            return configuration.Issuer == issuer && configuration.AuthorizationEndpoint is { Length: > 0 } && configuration.TokenEndpoint is { Length: > 0 } ? configuration : null;
+            return configuration.Issuer == issuer && Https(configuration.AuthorizationEndpoint) && Https(configuration.TokenEndpoint) ? configuration : null;
         }
         catch (InvalidOperationException)
         {
@@ -230,6 +230,8 @@ public sealed partial class SsoConnections(AuthStore store, PlatformDirectory pl
             return null;
         }
     }
+
+    private static bool Https(string? endpoint) => Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps;
 
     // Asks the resolver for the TXT record; any failure reads as not published.
     private async Task<bool> PublishedAsync(SsoConnectionRecord connection, CancellationToken cancellationToken)
