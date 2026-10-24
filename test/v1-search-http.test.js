@@ -19,6 +19,16 @@ test("search builders and raw filters preserve paths, score order and result sco
   expect(JSON.parse(requests[1]?.body ?? "")).toEqual({ ...query, cursor: "opaque-score-cursor" });
   await articles.query({ filter: { search: ["/title", "database"] }, sort: [{ path: "$score", order: "desc" }] });
   expect(JSON.parse(requests[2]?.body ?? "").filter).toEqual(v1Filter.search("/title", "database"));
+  const geoFilter = v1Filter.and(
+    filter,
+    v1Filter.withinRadius("/loc", { lat: 0, lon: 0, meters: 1000 }),
+    v1Filter.withinBox("/loc", { south: -1, west: -1, north: 1, east: 1 }),
+  );
+  await articles.query({ filter: geoFilter, sort: [{ path: "$score", order: "desc" }] });
+  expect(JSON.parse(requests[3]?.body ?? "")).toEqual({
+    filter: { and: [filter, { within: ["/loc", { lat: 0, lon: 0, meters: 1000 }] }, { within: ["/loc", { south: -1, west: -1, north: 1, east: 1 }] }] },
+    sort: [{ path: "$score", order: "desc" }],
+  });
 });
 
 test("invalid search filters and score sorts fail before HTTP", async () => {
@@ -37,6 +47,7 @@ test("invalid search filters and score sorts fail before HTTP", async () => {
     { filter: v1Filter.search("/title", "database"), sort: [{ path: "$score", order: "desc" }, { path: "$id" }] },
     { filter: v1Filter.and(v1Filter.search("/title", "a"), v1Filter.search("/body", "b")), sort: [{ path: "$score", order: "desc" }] },
     { filter: v1Filter.search("/title", "database"), sort: [{ near: { path: "/embedding", vector: [1] } }] }, { sort: [{ path: "$score", order: "desc" }] },
+    { filter: v1Filter.search("/title", "database"), sort: [{ near: { path: "/loc", lat: 0, lon: 0 } }] },
     { filter: v1Filter.search("/title", "database"), sort: [{ path: "$score", order: "asc" }] },
     { filter: v1Filter.search("/title", "database"), sort: [{ path: "$score" }] },
   ]) await expect(articles.query(/** @type {any} */ (query))).rejects.toThrow(TypeError);
