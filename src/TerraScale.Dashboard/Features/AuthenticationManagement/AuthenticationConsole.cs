@@ -29,10 +29,12 @@ public static partial class AuthenticationConsole
         endpoints.MapPost("/api/v1/auth-management/{**path}", async (HttpContext http, string path, DashboardSessions sessions, AccountService accounts, ITsAuthProjects projects) =>
         {
             var parts = path.Split('/');
-            var key = parts[0] == "settings" ? "sign-in" : parts[0];
+            var key = parts[0] switch { "settings" => "sign-in", "providers" => "social", var first => first };
             var known = parts switch
             {
                 ["settings" or "branding" or "clients"] => true,
+                ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
+                ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
                 ["users", _, "disable" or "enable" or "delete"] or ["sessions", _, "revoke"] or ["clients", _, "delete"] => true,
                 _ => false
             };
@@ -53,6 +55,10 @@ public static partial class AuthenticationConsole
                     case ["branding"]:
                         await projects.UpdateSettingsAsync(session, project, new(Branding: Branding(form["name"], form["logo_url"], form["theme_color"])), cancel);
                         break;
+                    case ["providers", var provider]:
+                        await projects.SetProviderAsync(session, project, provider, Provider(provider, form["client_id"], form["client_secret"], form["issuer"], form["team_id"], form["key_id"]), cancel);
+                        break;
+                    case ["providers", var provider, _]: await projects.DeleteProviderAsync(session, project, provider, cancel); break;
                     case ["clients"]:
                         var created = await projects.CreateClientAsync(session, project, NewClient(form["name"], form["type"], form["redirect_uris"].ToString().Split('\n')), cancel);
                         return await PageAsync(http, context, projects, "clients", created: created);
@@ -86,6 +92,29 @@ public static partial class AuthenticationConsole
         if (color is not null && !Color().IsMatch(color)) throw new AccountAccessException("The theme color must look like #2158e8.", 422);
         return new(title, logo, color);
     }
+
+    // A blank secret keeps the stored one; ts-auth requires it the first time. Never log the update.
+    public static TerraScaleAuthProjectProviderUpdate Provider(string provider, string? clientId, string? clientSecret, string? issuer, string? teamId, string? keyId)
+    {
+        string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        var (id, secret, url, team, key) = (Clean(clientId), Clean(clientSecret), Clean(issuer), Clean(teamId)?.ToUpperInvariant(), Clean(keyId)?.ToUpperInvariant());
+        if (AuthenticationProvider.Find(provider) is not { } known) throw new AccountAccessException("Choose google, github, apple or oidc.", 422);
+        if (id is null or { Length: > 256 }) throw new AccountAccessException($"Enter the {known.ClientIdLabel.ToLowerInvariant()} of up to 256 characters.", 422);
+        if (secret is { Length: > 8192 }) throw new AccountAccessException("The client secret is too long.", 422);
+        if (provider == "apple" && !(AppleId().IsMatch(team ?? "") && AppleId().IsMatch(key ?? "")))
+            throw new AccountAccessException("The Apple team ID and key ID are 10 letters or digits.", 422);
+        if (provider == "oidc" && !(Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps && uri.Query.Length == 0 && uri.Fragment.Length == 0))
+            throw new AccountAccessException("The issuer must be an https URL without a query.", 422);
+        return provider switch
+        {
+            "apple" => new(id, secret, TeamId: team, KeyId: key),
+            "oidc" => new(id, secret, Issuer: url),
+            _ => new(id, secret)
+        };
+    }
+
+    [GeneratedRegex("^[A-Z0-9]{10}$")]
+    private static partial Regex AppleId();
 
     public static TerraScaleAuthProjectCreateOAuthClient NewClient(string? name, string? type, IEnumerable<string> redirectUris)
     {
@@ -159,7 +188,25 @@ public sealed record AuthenticationSection(string Key, string Title, string Desc
         new("users", "Users", "People who signed up to your application. Disabling a user ends every session.", "Users", "Users"),
         new("sessions", "Sessions", "Live end-user sessions. Revoking one signs that sign-in out.", "Monitor", "Users"),
         new("sign-in", "Sign-in methods", "How end users sign in on the hosted pages, and whether they can sign up.", "LockKeyhole", "Sign-in"),
+        new("social", "Social sign-in", "Continue with Google, GitHub, Apple or another OpenID Connect provider on the hosted pages.", "Fingerprint", "Sign-in"),
         new("clients", "OAuth applications", "Applications that sign users in through the authorization code flow with PKCE.", "Boxes", "Developers"),
         new("branding", "Branding", "Name, logo and color of the hosted sign-in pages.", "Wand2", "Customize")
+    ];
+}
+
+// The social sign-in providers ts-auth supports, in its order, with where the customer creates the OAuth client.
+public sealed record AuthenticationProvider(string Key, string Name, string ClientIdLabel, string ConsoleName, string ConsoleUrl, string Help)
+{
+    public static AuthenticationProvider? Find(string key) => All.FirstOrDefault(provider => provider.Key == key);
+    public static readonly AuthenticationProvider[] All =
+    [
+        new("google", "Google", "Client ID", "Google Cloud console credentials", "https://console.cloud.google.com/apis/credentials",
+            "Create an OAuth client ID of type Web application and add the callback URL as an authorized redirect URI."),
+        new("github", "GitHub", "Client ID", "GitHub Developer settings, OAuth Apps", "https://github.com/settings/developers",
+            "Register a new OAuth App and set the callback URL as its authorization callback URL."),
+        new("apple", "Apple", "Services ID", "Apple Developer Certificates, IDs & Profiles", "https://developer.apple.com/account/resources/identifiers/list/serviceId",
+            "Create a Services ID with Sign in with Apple and the callback URL as a return URL, then a Sign in with Apple key. Paste the .p8 key below."),
+        new("oidc", "OpenID Connect", "Client ID", "", "",
+            "Any OpenID Connect provider, such as Auth0, Keycloak or another TerraScale project. Register the callback URL as a redirect URI.")
     ];
 }

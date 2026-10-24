@@ -20,6 +20,8 @@ sealed class TestAuthentication : ITsAuthProjects
         public readonly List<TerraScaleAuthProjectUser> Users = [];
         public readonly List<TerraScaleAuthProjectSession> Sessions = [];
         public readonly List<TerraScaleAuthProjectOAuthClient> Clients = [];
+        // Configured providers; the stand-in keeps no secrets, like ts-auth never returns them.
+        public readonly Dictionary<string, TerraScaleAuthProjectProviderUpdate> Providers = new(StringComparer.Ordinal);
     }
 
     private Tenant For(string projectId) => tenants.GetOrAdd(projectId, _ =>
@@ -48,7 +50,30 @@ sealed class TestAuthentication : ITsAuthProjects
         var tenant = For(projectId);
         return Task.FromResult(Locked(tenant, () => new TerraScaleAuthProjectSettings(projectId, "https://auth.terrascale.tech/" + projectId,
             "https://auth.terrascale.tech/" + projectId + "/.well-known/openid-configuration", "https://auth.terrascale.tech/ui/" + projectId + "/sign-in",
-            tenant.Methods, tenant.Branding, new(tenant.Users.Count, tenant.Clients.Count), [])));
+            tenant.Methods, tenant.Branding, new(tenant.Users.Count, tenant.Clients.Count),
+            new[] { "google", "github", "apple", "oidc" }.Select(key => tenant.Providers.TryGetValue(key, out var set)
+                ? new TerraScaleAuthProjectProvider(key, true, set.ClientId, set.Issuer, set.TeamId, set.KeyId, Callback(projectId, key))
+                : new TerraScaleAuthProjectProvider(key, false, null, null, null, null, Callback(projectId, key))).ToArray())));
+    }
+
+    private static string Callback(string projectId, string provider) => $"https://auth.terrascale.tech/ui/{projectId}/social/{provider}/callback";
+
+    public Task<TerraScaleAuthProjectSettings> SetProviderAsync(SessionRecord session, string projectId, string provider, TerraScaleAuthProjectProviderUpdate update, CancellationToken cancellationToken)
+    {
+        var tenant = For(projectId);
+        Locked(tenant, () =>
+        {
+            if (update.ClientSecret is null && !tenant.Providers.ContainsKey(provider)) throw new AccountAccessException("ts-auth rejected these values. Check them and try again.", 422, "invalid_request");
+            return tenant.Providers[provider] = update with { ClientSecret = null };
+        });
+        return GetSettingsAsync(session, projectId, cancellationToken);
+    }
+
+    public Task<TerraScaleAuthProjectSettings> DeleteProviderAsync(SessionRecord session, string projectId, string provider, CancellationToken cancellationToken)
+    {
+        var tenant = For(projectId);
+        Locked(tenant, () => tenant.Providers.Remove(provider));
+        return GetSettingsAsync(session, projectId, cancellationToken);
     }
 
     public Task<TerraScaleAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TerraScaleAuthProjectSettingsUpdate update, CancellationToken cancellationToken)

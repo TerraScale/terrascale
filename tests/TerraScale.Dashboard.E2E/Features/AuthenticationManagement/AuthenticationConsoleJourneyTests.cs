@@ -12,7 +12,7 @@ namespace TerraScale.Dashboard.E2E.Features.AuthenticationManagement;
 [ClassDataSource<DashboardRootFixture>]
 public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixture)
 {
-    private static readonly string[] Sections = ["overview", "users", "sessions", "sign-in", "clients", "branding"];
+    private static readonly string[] Sections = ["overview", "users", "sessions", "sign-in", "social", "clients", "branding"];
     private static readonly string[] Removed = ["organizations", "memberships", "invitations", "domains", "connections", "mfa", "directories",
         "templates", "keys", "webhooks", "emails", "audit", "danger", "quickstart"];
 
@@ -96,6 +96,25 @@ public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixtu
         Check((await Post(browser, "branding", csrf, ("name", name), ("logo_url", "https://" + faker.Internet.DomainName() + "/logo.svg"), ("theme_color", color.ToUpperInvariant()))).StatusCode == HttpStatusCode.SeeOther, "Saving branding redirects back");
         var branding = await Page(browser, "/auth/branding");
         Check(branding.Contains($"value=\"{color.ToLowerInvariant()}\"") && branding.Contains(WebUtility.HtmlEncode(name)), "Branding is saved with a normalized color");
+
+        var social = await Page(browser, "/auth/social");
+        Check(Regex.Matches(social, "<li class=\"ts-idp-setting\" id=\"auth-provider-(google|github|apple|oidc)\"").Count == 4 && !social.Contains(">Configured<") &&
+            social.Contains($"https://auth.terrascale.tech/ui/{project}/social/apple/callback"), "Every provider lists as not configured with its callback URL");
+        var (clientId, providerSecret) = (faker.Random.Number(100000, 999999) + ".apps.googleusercontent.com", "GOCSPX-" + faker.Random.AlphaNumeric(24));
+        using (var noSecret = await Post(browser, "providers/google", csrf, ("client_id", clientId)))
+            Check(noSecret.StatusCode == HttpStatusCode.UnprocessableEntity, "The first configuration needs a client secret");
+        Check((await Post(browser, "providers/google", csrf, ("client_id", clientId), ("client_secret", providerSecret))).StatusCode == HttpStatusCode.SeeOther, "Configuring Google redirects back");
+        Check((await Post(browser, "providers/google", csrf, ("client_id", clientId + "x"), ("client_secret", " "))).StatusCode == HttpStatusCode.SeeOther, "A blank secret keeps the stored one");
+        using (var badApple = await Post(browser, "providers/apple", csrf, ("client_id", "app.example.web"), ("team_id", "SHORT"), ("key_id", "ABCDE12345"), ("client_secret", "-----BEGIN PRIVATE KEY-----")))
+            Check(badApple.StatusCode == HttpStatusCode.UnprocessableEntity && (await badApple.Content.ReadAsStringAsync()).Contains("The Apple team ID and key ID are 10 letters or digits."), "Apple IDs are 10 characters");
+        using (var badIssuer = await Post(browser, "providers/oidc", csrf, ("client_id", "web"), ("client_secret", providerSecret), ("issuer", "http://id.example.com")))
+            Check(badIssuer.StatusCode == HttpStatusCode.UnprocessableEntity && (await badIssuer.Content.ReadAsStringAsync()).Contains("The issuer must be an https URL"), "An OpenID Connect issuer is https");
+        using (var unknown = await Post(browser, "providers/facebook", csrf, ("client_id", "web")))
+            Check(unknown.StatusCode == HttpStatusCode.NotFound, "Unknown providers answer 404");
+        var configured = await Page(browser, "/auth/social");
+        Check(configured.Contains($"<code>{clientId}x</code>") && configured.Contains(">Configured<") && !configured.Contains(providerSecret), "Google shows its client ID and never the secret");
+        Check((await Post(browser, "providers/google/delete", csrf)).StatusCode == HttpStatusCode.SeeOther, "Removing a provider redirects back");
+        Check(!(await Page(browser, "/auth/social")).Contains(">Configured<"), "The removed provider is not configured");
     }
 
     [Test]
@@ -111,7 +130,7 @@ public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixtu
         var tools = (await HttpJourney.McpAsync(replica, secret, "tools/list", new { })).GetProperty("result").GetProperty("tools").EnumerateArray()
             .Select(tool => tool.GetProperty("name").GetString()!).Where(name => name.StartsWith("auth_", StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray();
         Check(tools.SequenceEqual(["auth_create_client", "auth_delete_client", "auth_delete_user", "auth_get_overview", "auth_list_clients", "auth_list_sessions",
-            "auth_list_users", "auth_revoke_session", "auth_set_user_disabled", "auth_update_settings"]), "The MCP inventory holds only working project authentication tools");
+            "auth_list_users", "auth_remove_provider", "auth_revoke_session", "auth_set_provider", "auth_set_user_disabled", "auth_update_settings"]), "The MCP inventory holds only working project authentication tools");
 
         var overview = await Tool(replica, secret, "auth_get_overview", new { });
         Check(overview.GetProperty("issuer").GetString()!.StartsWith("https://auth.terrascale.tech/", StringComparison.Ordinal) &&
@@ -126,6 +145,12 @@ public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixtu
             settings.GetProperty("branding").GetProperty("theme_color").GetString() == "#00aa55" && settings.GetProperty("branding").GetProperty("name").GetString() == "Northwind",
             "Omitted settings keep their values");
         Error(await Call(replica, secret, "auth_update_settings", new { passcode = false, password = false }), "Keep email passcode or password sign-in on.");
+        var providerSecret = "oidc-" + Guid.NewGuid().ToString("N");
+        var withOidc = await Tool(replica, secret, "auth_set_provider", new { provider = "oidc", clientId = "dashboard", clientSecret = providerSecret, issuer = "https://id.example.com/" });
+        Check(withOidc.GetProperty("providers")[3] is var oidc && oidc.GetProperty("configured").GetBoolean() && oidc.GetProperty("issuer").GetString() == "https://id.example.com/" &&
+            !withOidc.GetRawText().Contains(providerSecret, StringComparison.Ordinal), "An owner configures an OpenID Connect provider; the secret is never returned");
+        Error(await Call(replica, secret, "auth_set_provider", new { provider = "apple", clientId = "app.example.web", clientSecret = "key", teamId = "1", keyId = "2" }), "The Apple team ID and key ID are 10 letters or digits.");
+        Check(!(await Tool(replica, secret, "auth_remove_provider", new { provider = "oidc" })).GetProperty("providers")[3].GetProperty("configured").GetBoolean(), "An owner removes the provider");
 
         await Control(producer, "member");
         Check((await Tool(replica, secret, "auth_list_clients", new { })).GetProperty("clients").GetArrayLength() == 2, "A member reads applications");

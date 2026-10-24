@@ -11,7 +11,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement;
 public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountService accounts, ITsAuthProjects projects)
 {
     [McpServerTool(Name = "auth_get_overview", Title = "Get project authentication", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true),
-     Description("Read a project's ts-auth issuer, discovery and hosted sign-in URLs, sign-in methods, branding and user and OAuth application counts.")]
+     Description("Read a project's ts-auth issuer, discovery and hosted sign-in URLs, sign-in methods, branding, social sign-in providers with their callback URLs, and user and OAuth application counts.")]
     public async Task<TerraScaleAuthProjectSettings> Overview(string? organizationId = null, string? projectId = null)
     {
         var context = await Fresh(organizationId, projectId, false);
@@ -98,6 +98,25 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
         var branding = name is null && logoUrl is null && themeColor is null ? null
             : AuthenticationConsole.Branding(name ?? current.Branding.Name, logoUrl ?? current.Branding.LogoUrl, themeColor ?? current.Branding.ThemeColor);
         return await projects.UpdateSettingsAsync(context.Session, context.Project!.Id, new(methods, branding), Cancellation);
+    }
+
+    [McpServerTool(Name = "auth_set_provider", Title = "Configure a social sign-in provider", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
+     Description("Configure or update social sign-in: provider is google, github, apple or oidc. All take clientId (Apple: the Services ID) and clientSecret (Apple: the .p8 private key text), which is required the first time and kept when omitted. Apple also takes 10-character teamId and keyId; oidc takes an https issuer. Register the provider's callback_url from auth_get_overview at the provider. The secret is never returned. Requires an owner or admin.")]
+    public async Task<TerraScaleAuthProjectSettings> SetProvider(string provider, string clientId, string? clientSecret = null, string? issuer = null, string? teamId = null,
+        string? keyId = null, string? organizationId = null, string? projectId = null)
+    {
+        var context = await Fresh(organizationId, projectId, true);
+        var update = AuthenticationConsole.Provider(provider, clientId, clientSecret, issuer, teamId, keyId);
+        return await projects.SetProviderAsync(context.Session, context.Project!.Id, provider, update, Cancellation);
+    }
+
+    [McpServerTool(Name = "auth_remove_provider", Title = "Remove a social sign-in provider", UseStructuredContent = true, Destructive = true, OpenWorld = false, Idempotent = true),
+     Description("Remove a social sign-in provider (google, github, apple or oidc) and its stored secret. Requires an owner or admin.")]
+    public async Task<TerraScaleAuthProjectSettings> RemoveProvider(string provider, string? organizationId = null, string? projectId = null)
+    {
+        var context = await Fresh(organizationId, projectId, true);
+        if (AuthenticationProvider.Find(provider) is null) throw new AccountAccessException("Choose google, github, apple or oidc.", 422);
+        return await projects.DeleteProviderAsync(context.Session, context.Project!.Id, provider, Cancellation);
     }
 
     private async Task<AccountContext> Fresh(string? organizationId, string? projectId, bool manage)
