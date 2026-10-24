@@ -70,17 +70,16 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
     }
 
     /// <summary>Signs one session out. True once the session is revoked, including when it already was; false once pruned.</summary>
-    public async Task<bool> RevokeAsync(string instanceId, string? token, CancellationToken cancellationToken = default)
-    {
-        if (token is not { Length: > 0 and <= MaxTokenLength })
-        {
-            return false;
-        }
+    public async Task<bool> RevokeAsync(string instanceId, string? token, CancellationToken cancellationToken = default) =>
+        token is { Length: > 0 and <= MaxTokenLength } && await this.RevokeStoredAsync(instanceId, Tokens.Sha256Hex(token), cancellationToken).ConfigureAwait(false);
 
+    /// <summary>Signs out the session stored under <paramref name="tokenHash"/>; as <see cref="RevokeAsync"/>.</summary>
+    public async Task<bool> RevokeStoredAsync(string instanceId, string tokenHash, CancellationToken cancellationToken = default)
+    {
         // Stored sessions are only ever rewritten to revoke them, so a lost write means another revocation won.
         for (var round = 0; round < 2; round++)
         {
-            var document = await store.GetAsync(AuthStore.SessionCollection, instanceId, Tokens.Sha256Hex(token), cancellationToken).ConfigureAwait(false);
+            var document = await store.GetAsync(AuthStore.SessionCollection, instanceId, tokenHash, cancellationToken).ConfigureAwait(false);
             var session = document?.Document.Deserialize(IdentityJson.Default.SessionRecord);
             if (session is null || session.InstanceId != instanceId)
             {
@@ -177,7 +176,9 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
                 new JsonObject { ["eq"] = new JsonArray("/instanceId", user.InstanceId) },
                 new JsonObject { ["eq"] = new JsonArray("/id", user.Id) },
                 new JsonObject { ["eq"] = new JsonArray("/authEpoch", user.AuthEpoch) },
-                new JsonObject { ["eq"] = new JsonArray("/authStamp", user.AuthStamp) }),
+                new JsonObject { ["eq"] = new JsonArray("/authStamp", user.AuthStamp) },
+                // A disabled account opens no session.
+                new JsonObject { ["ne"] = new JsonArray("/disabled", true) }),
         };
         using var filter = JsonDocument.Parse(epoch.ToJsonString());
         // Activation, reset and global revocation must not race a primary-only session into storage.
@@ -207,7 +208,7 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
 
         var user = await users.GetAsync(instanceId, session.UserId, cancellationToken).ConfigureAwait(false);
         // A lookup that completes after expiry authorizes nothing.
-        return user is not null && user.AuthEpoch == session.AuthEpoch && user.AuthStamp == session.AuthStamp
+        return user is not null && !user.Disabled && user.AuthEpoch == session.AuthEpoch && user.AuthStamp == session.AuthStamp
             && await store.AreCredentialsCurrentAsync(instanceId, session.Bindings, cancellationToken).ConfigureAwait(false)
             && await totp.AllowsPrimaryAuthenticationAsync(user, cancellationToken).ConfigureAwait(false)
             && session.ExpiresAt > clock.GetUtcNow() ? (session, document!.Version, user with { AuthenticationBindings = session.Bindings }) : null;

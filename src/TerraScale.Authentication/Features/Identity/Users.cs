@@ -98,6 +98,34 @@ public sealed class Users(AuthStore store, TimeProvider clock)
     }
 
     /// <summary>
+    /// Disables or enables the account. Either change advances the epoch, so disabling ends every session and token at
+    /// once; <see cref="Sessions"/> refuses to open or resolve a session of a disabled account. Null when it is gone.
+    /// </summary>
+    public async Task<UserRecord?> SetDisabledAsync(string instanceId, string userId, bool disabled, CancellationToken cancellationToken = default)
+    {
+        for (var round = 0; round < 3; round++)
+        {
+            if (await this.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current)
+            {
+                return null;
+            }
+
+            if (current.User.Disabled == disabled)
+            {
+                return current.User;
+            }
+
+            var updated = current.User with { Disabled = disabled, AuthEpoch = checked(current.User.AuthEpoch + 1), AuthStamp = AuthStore.NewId() };
+            if (await store.CompareAndPutAsync(AuthStore.UserCollection, instanceId, userId, JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version, cancellationToken).ConfigureAwait(false))
+            {
+                return BindAuthenticationState(updated);
+            }
+        }
+
+        throw ApiException.Unavailable();
+    }
+
+    /// <summary>
     /// Deletes the account and releases its email in one transaction, so the address can sign up again. Every check
     /// reads the user, so its sessions and tokens stop working at once.
     /// </summary>
