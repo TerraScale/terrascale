@@ -8,7 +8,9 @@ admission, validation, metering and durability. It is always on.
 - Listener: port `7464` (`wire-port` exists only so tests and a second service on a shared host can move it, like
   `postgres-port`). Plaintext on the node, behind the platform edge, which terminates TLS, as the PostgreSQL listener.
   ts-orch must route the port before clients outside the mesh can use it.
-- Server: `src/TerraBase/Features/Wire/WireConnectionHandler.cs`. Test client: `tests/TerraBase.TestHarness/WireClient.cs`.
+- Server: `src/TerraBase/Features/Wire/WireListener.cs` (its own sockets, not Kestrel's transport: a frame is handled where
+  its receive completes and an answer is sent by the request that completes it) and `WireConnectionHandler.cs`. Test
+  client: `tests/TerraBase.TestHarness/WireClient.cs`.
 
 ## Frames
 
