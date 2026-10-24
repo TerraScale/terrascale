@@ -17,6 +17,21 @@ service Replication {
   // compares a peer's digests with its own and joins the states of every bucket that differs, as repairs (origin 0).
   rpc Digest(DigestRequest) returns (DigestReply);
   rpc ReadBucket(BucketRequest) returns (stream StatePage);
+  // One read transaction for all states and its applied vector. Only the terminal frame certifies coverage; callers
+  // must durably join every state before importing that vector. No digest equality substitutes for reading the states.
+  rpc ReadSnapshot(DigestRequest) returns (stream SnapshotPage);
+}
+
+message SnapshotPage {
+  StatePage page = 1;
+  repeated SnapshotCut applied = 2;
+  bool complete = 3;
+  fixed64 collected_before = 4;
+}
+
+message SnapshotCut {
+  fixed64 replica = 1;
+  fixed64 stamp = 2;
 }
 
 // A receiver ignores a frame of a kind it does not know (a newer sender's): a sender sends a new kind only to a receiver

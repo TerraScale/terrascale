@@ -418,8 +418,8 @@ internal sealed partial class TursoStorageTransaction
     /// <summary>
     /// Raises <paramref name="peer"/>'s acknowledged change id of <paramref name="incarnation"/>, or sets it to 0 (a new or
     /// stale row, or one of another incarnation), so its unshipped rows stay, and marks it heard from at
-    /// <paramref name="now"/>; uncaptured: the tailer's own bookkeeping. Drops the rows of the peer's older
-    /// epochs. Then deletes what <see cref="Retention"/> allows, continuous backup's <paramref name="backupAnchor"/> included.
+    /// <paramref name="now"/>; uncaptured: the tailer's own bookkeeping. Retires outgoing cursors of older
+    /// epochs while retaining their durable received prefixes. Then deletes what <see cref="Retention"/> allows, continuous backup's <paramref name="backupAnchor"/> included.
     /// Returns the CDC rows left, and the smallest change id a peer heard from in the last 24 h acknowledged (null when there is none);
     /// null, with nothing written, when the file is no longer <paramref name="incarnation"/>.
     /// </summary>
@@ -460,9 +460,9 @@ internal sealed partial class TursoStorageTransaction
                 insert.ExecuteNonQuery();
             }
 
-            // The peer's older epochs (ReplicaId: it restarted uncleanly) never ack again: their rows go, so they do not hold
-            // retention and the tail lag for 24 h. Same region and member, lower epoch: the ids just below the peer's.
-            var retire = Command("DELETE FROM _tb_peers WHERE node >= $machine AND node < $node;");
+            // Older epochs never ack again. Retire their sending cursor, but preserve received coverage: an erasure can
+            // recover that epoch only by importing a peer snapshot which durably holds this applied prefix.
+            var retire = Command("UPDATE _tb_peers SET acked = 0, stable = 0, seen = 0, incarnation = '' WHERE node >= $machine AND node < $node;");
             retire.Parameters.AddWithValue("$machine", unchecked((long)(peer.Value & ~(ulong)ushort.MaxValue)));
             retire.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
             retire.ExecuteNonQuery();

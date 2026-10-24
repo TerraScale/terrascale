@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
@@ -90,6 +91,8 @@ public sealed partial class ShapeResumeTests
 
         public FakeMemberStore Members { get; } = new();
 
+        public FakeS3 Bucket { get; } = new();
+
         public string User { get; } = EntityIds.New().ToString();
 
         public TenantContext Database { get; } = new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
@@ -146,7 +149,6 @@ public sealed partial class ShapeResumeTests
     {
         private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-shape-resume-").FullName;
         private readonly string _name = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
-        private readonly FakeS3 _s3 = new();
         private ManagementApi? _api;
         private HttpClient? _data;
 
@@ -157,13 +159,13 @@ public sealed partial class ShapeResumeTests
             var first = !File.Exists(Path.Combine(_directory, "_system.db"));
             _api = await ManagementApi.StartAsync(settings =>
             {
-                _s3.Configure(settings);
+                cell.Bucket.Configure(settings);
                 settings["region"] = region;
                 settings["node-name"] = _name;
                 settings["data-directory"] = _directory;
             }, services =>
             {
-                _s3.Route(services);
+                cell.Bucket.Route(services);
                 ManualBackupHosting.Configure(services);
                 services.AddSingleton<IMemberDirectory>(cell.Members);
             }, userId: cell.User);
@@ -180,7 +182,24 @@ public sealed partial class ShapeResumeTests
         // Anchors the catalog first: a restart while another region is down opens its catalog gate on a majority only with it.
         public async Task StopAsync()
         {
-            await Assert.That(await _api!.Server.Services.GetRequiredService<ICatalogGate>().TryAnchorAsync(TestContext.Current!.Execution.CancellationToken)).IsTrue();
+            var token = TestContext.Current!.Execution.CancellationToken;
+            await Assert.That(await _api!.Server.Services.GetRequiredService<ICatalogGate>().TryAnchorAsync(token)).IsTrue();
+            // fra stays online throughout both failovers. Before removing a witness's source, prove fra received its
+            // final SYSTEM prefix; observing tenant durability or the local anchor write alone cannot prove that.
+            var source = await _api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+            long cut;
+            await using (var read = await source.BeginTransactionAsync(write: false, token))
+            {
+                cut = (await read.GetVersionAsync(CatalogGate.Revocations, _name, token))!.Value.Version;
+            }
+            var origin = _api.Server.Services.GetRequiredService<LocalReplica>().Id;
+            await TerraBaseTestServer.EventuallyAsync(async cancellationToken =>
+            {
+                var destination = await cell.Fra._api!.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(cancellationToken);
+                await using var read = await destination.BeginTransactionAsync(write: false, cancellationToken);
+                var applied = await read.GetAppliedAsync(cancellationToken);
+                return applied.TryGetValue(origin, out var held) && held.Value >= unchecked((ulong)cut);
+            }, timeout: TimeSpan.FromSeconds(30));
             await CloseAsync();
         }
 

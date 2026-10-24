@@ -373,7 +373,7 @@ internal sealed class AntiEntropy : BackgroundService
 
     // A page from a peer, checked: decoding is a trust boundary, as for change groups. It must name the source incarnation
     // the read is pinned to.
-    private static List<RepairState> Decode(TenantContext database, StatePage page, Ulid source)
+    internal static List<RepairState> Decode(TenantContext database, StatePage page, Ulid source)
     {
         if (ChangeGroups.Incarnation(new V1.Database { Incarnation = page.Incarnation }) != source)
         {

@@ -369,6 +369,11 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         cancellationToken = stop?.Token ?? cancellationToken;
         // Leave room for metadata after sixfold XML expansion of 1024-byte keys within the customer 2 MiB limit.
         var request = new ListObjectsV2Request { BucketName = _bucket, Prefix = prefix, StartAfter = startAfter, MaxKeys = _customer ? 250 : 1000 };
+        if (!_customer && prefix.StartsWith("catalog-anchor/", StringComparison.Ordinal))
+        {
+            request = Tigris(request, "X-Tigris-Consistent", "true");
+        }
+
         var previous = startAfter;
         while (true)
         {

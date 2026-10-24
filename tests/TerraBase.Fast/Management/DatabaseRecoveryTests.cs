@@ -1291,7 +1291,7 @@ public sealed class DatabaseRecoveryTests
     }
 
     [Test]
-    public async Task An_intent_conflicting_with_a_registered_database_refuses_startup_without_deleting_data()
+    public async Task An_intent_naming_a_different_database_than_its_key_refuses_startup_without_deleting_data()
     {
         await using var state = new RecoveryData();
         await using (var api = await state.StartAsync())
@@ -1299,7 +1299,9 @@ public sealed class DatabaseRecoveryTests
             await state.SeedAsync(api);
             var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
             await using var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None);
-            var storage = new TenantContext(state.Organization, PlanTier.Hobby, state.Project, state.Source);
+            // A valid shared creation intent beside a registration is preserved (CatalogCleanupRaceTests).
+            // Metadata naming a different database from its key remains corrupt and must never authorize cleanup.
+            var storage = new TenantContext(state.Organization, PlanTier.Hobby, state.Project, state.Neighbor);
             await transaction.PutAsync("pending_database_cleanup", state.Source,
                 JsonSerializer.SerializeToUtf8Bytes(storage, TerraBaseJsonContext.Default.TenantContext), CancellationToken.None);
             await transaction.CommitAsync(CancellationToken.None);

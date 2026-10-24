@@ -73,6 +73,8 @@ public static class EngineExtensions
         services.AddSingleton<FaultAwareReplicaSource>();
         services.AddSingleton<IChangeGroupSource>(provider => provider.GetRequiredService<FaultAwareReplicaSource>());
         services.AddSingleton<IReplicaStates>(provider => provider.GetRequiredService<FaultAwareReplicaSource>());
+        services.AddSingleton<IReplicaSnapshotImporter, TursoReplicaSnapshotImporter>();
+        services.AddSingleton<IReplicaSnapshotSource>(provider => provider.GetRequiredService<FaultAwareReplicaSource>());
         services.AddHostedService(provider => provider.GetRequiredService<TursoChangeGroupSource>());
         // The changes feed's 7-day retention.
         services.AddSingleton(provider => new FeedRetention(provider.GetRequiredService<TursoStorageEngine>(), provider.GetRequiredService<ILogger<FeedRetention>>()));

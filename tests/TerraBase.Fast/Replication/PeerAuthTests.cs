@@ -80,6 +80,8 @@ public sealed class PeerAuthTests
                 .IsEqualTo(StatusCode.Unauthenticated).Because($"{name} Digest");
             await Assert.That(await StatusOf(async () => await ReadBucketFirstPageAsync(client, invalid)))
                 .IsEqualTo(StatusCode.Unauthenticated).Because($"{name} ReadBucket");
+            await Assert.That(await StatusOf(async () => await ReadSnapshotFirstPageAsync(client, invalid)))
+                .IsEqualTo(StatusCode.Unauthenticated).Because($"{name} ReadSnapshot");
         }
     }
 
@@ -108,6 +110,7 @@ public sealed class PeerAuthTests
         await Assert.That(await StatusOf(async () => _ = await client.DigestAsync(new DigestRequest { Database = invalid }, cancellationToken: Token)))
             .IsEqualTo(StatusCode.InvalidArgument);
         await Assert.That(await StatusOf(async () => await ReadBucketFirstPageAsync(client, invalid))).IsEqualTo(StatusCode.InvalidArgument);
+        await Assert.That(await StatusOf(async () => await ReadSnapshotFirstPageAsync(client, invalid))).IsEqualTo(StatusCode.InvalidArgument);
     }
 
     [Test]
@@ -432,6 +435,12 @@ public sealed class PeerAuthTests
     private static async Task ReadBucketFirstPageAsync(ReplicationRpc.ReplicationClient client, WireDatabase invalid)
     {
         using var call = client.ReadBucket(new BucketRequest { Database = invalid, Buckets = { 9999u } }, cancellationToken: Token);
+        _ = await call.ResponseStream.MoveNext(Token);
+    }
+
+    private static async Task ReadSnapshotFirstPageAsync(ReplicationRpc.ReplicationClient client, WireDatabase invalid)
+    {
+        using var call = client.ReadSnapshot(new DigestRequest { Database = invalid }, cancellationToken: Token);
         _ = await call.ResponseStream.MoveNext(Token);
     }
 

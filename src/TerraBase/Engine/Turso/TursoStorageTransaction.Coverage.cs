@@ -34,6 +34,16 @@ internal sealed partial class TursoStorageTransaction
             return applied;
         }, cancellationToken);
 
+    // Only this process's current epoch: a snapshot holds every local commit through a retained local row's stamp.
+    // This says nothing about this member's old epochs, whose acknowledged tail may have been lost in a crash.
+    internal ValueTask<Hlc> GetLocalSnapshotCutAsync(ReplicaId self, CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            var command = Command("SELECT coalesce(max(stamp), 0) FROM _tb_state WHERE origin = $origin;");
+            command.Parameters.AddWithValue("$origin", unchecked((long)self.Value));
+            return new Hlc(unchecked((ulong)(long)command.ExecuteScalar()!));
+        }, cancellationToken);
+
     public ValueTask<bool> HoldsHistoryAtOrBelowAsync(Hlc cut, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {

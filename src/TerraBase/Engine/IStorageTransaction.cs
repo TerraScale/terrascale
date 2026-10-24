@@ -177,6 +177,9 @@ public interface IStorageTransaction : IAsyncDisposable
     /// </summary>
     ValueTask<bool> JoinAsync(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken);
 
+    /// <summary>Joins a certified source baseline, including retained survivors below the local collected-state floor.</summary>
+    ValueTask<bool> JoinBaselineAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken);
+
     /// <summary>Records in <c>_tb_peers</c> that every change of <paramref name="origin"/> up to <paramref name="applied"/> it streamed was joined here.</summary>
     ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken);
 

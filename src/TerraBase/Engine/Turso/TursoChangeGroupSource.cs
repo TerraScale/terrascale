@@ -15,7 +15,7 @@ namespace TerraBase.Engine.Turso;
 /// on demand from each database file's <c>turso_cdc</c>, which is the outbox. A group is one Turso transaction's state rows
 /// of this machine's own writes; joined rows carry their origin and are never shipped back.
 /// </summary>
-internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSource, IReplicaStates
+internal sealed partial class TursoChangeGroupSource : BackgroundService, IChangeGroupSource, IReplicaStates, IReplicaSnapshotSource
 {
     // Per database file (incarnation), its ranges (from, to] of change ids proven to hold no local group, disjoint and with
     // adjacent or overlapping ranges merged: a read from inside one starts at its end (a replica that mostly joins remote

@@ -860,6 +860,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             var live = !_stopped && at - file.DrilledAt >= DrillInterval
                 ? await _engine.ChecksumAsync(snapshot, cancellationToken).ConfigureAwait(false)
                 : null;
+            await StoreGenerationProofAsync(file, generation, key, captured, cancellationToken).ConfigureAwait(false);
             await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
             // What committed after the pin waits for the next read; until then lag counts from the pin.
             (file.Generation, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince, file.Behind) =

@@ -52,14 +52,16 @@ internal sealed record HistoryErasureRecord(
 /// <c>residue</c>: the auth file was rewritten again once no tombstone or feed event at or below that cut remained.
 /// <c>retired</c>: after ts-auth retired the fence, the auth file was rewritten once its tombstones and feed events at or below
 /// <paramref name="RetireCut"/> were gone. <paramref name="PreviousReplicas"/> are this machine's older replica epochs (it restarted
-/// uncleanly since it first marked): their writes cannot be proven covered, so the erasure stalls for the operator.
+/// uncleanly since it first marked): they stay pending until a peer snapshot proves their original auth and SYSTEM cuts.
+/// Every holder re-fences for the same current replica view before a new settlement. Missing proof remains fail-closed.
 /// </summary>
 internal sealed record HistoryErasureReceipt(
     string ErasureId, string MachineId, ulong Replica, string Phase, ulong AuthMark, string AuthIncarnation,
     OriginCut[] AuthApplied, OriginCut[] SystemApplied, DateTimeOffset MarkedAt,
     string? FinalId = null, HistoryRewrite? Auth = null, HistoryRewrite? System = null, DateTimeOffset? RewrittenAt = null,
     HistoryRewrite? Residue = null, DateTimeOffset? ResidueAt = null, ulong[]? PreviousReplicas = null,
-    ulong RetireCut = 0, HistoryRewrite? Retired = null, DateTimeOffset? RetiredAt = null, int FormatVersion = 1);
+    ulong RetireCut = 0, HistoryRewrite? Retired = null, DateTimeOffset? RetiredAt = null, int FormatVersion = 1,
+    OriginCut[]? PreviousAuth = null, OriginCut[]? PreviousSystem = null, string? RecoveryAfter = null, ulong[]? RecutReplicas = null);
 
 /// <summary>
 /// The incarnations this machine's own successful rewrites (or markers) left in place, recorded per file as each succeeds;

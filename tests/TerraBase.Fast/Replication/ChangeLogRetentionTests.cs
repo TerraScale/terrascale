@@ -43,6 +43,13 @@ public sealed class ChangeLogRetentionTests
 
         // Past the 60 s every commit is held for, well inside the 24 h a silent peer holds rows.
         var now = DateTimeOffset.UtcNow.AddMinutes(2);
+        var old = ReplicaId.Of(2, 7, 0);
+        var received = new Hlc(1234);
+        await using (var transaction = await store.BeginDurableTransactionAsync(CancellationToken.None))
+        {
+            await transaction.RecordAppliedAsync(old, received, CancellationToken.None);
+            _ = await transaction.CommitAsync(CancellationToken.None);
+        }
         await Assert.That(await AckAsync(store, ReplicaId.Of(2, 7, 0), c0, now)).IsEqualTo(c0);
         await Assert.That(await AckAsync(store, ReplicaId.Of(2, 8, 0), c1, now)).IsEqualTo(c0);
         await Assert.That(await AckAsync(store, ReplicaId.Of(3, 7, 0), c1, now)).IsEqualTo(c0);
@@ -54,6 +61,9 @@ public sealed class ChangeLogRetentionTests
         await Assert.That(await AckAsync(store, ReplicaId.Of(2, 8, 0), c2, now)).IsEqualTo(c1);
         await Assert.That(await AckAsync(store, ReplicaId.Of(3, 7, 0), c2, now)).IsEqualTo(c2);
         await Assert.That(await OldestAsync(store)).IsEqualTo(c2);
+        await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        await Assert.That((await read.GetAppliedAsync(CancellationToken.None))[old]).IsEqualTo(received)
+            .Because("a new outgoing ACK must not erase the old epoch's durable received-prefix witness");
     }
 
     // Records the peer's ack as an acknowledgement on the stream does, at `now`; the floor every live peer acked.

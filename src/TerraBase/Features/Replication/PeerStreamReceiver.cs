@@ -29,7 +29,7 @@ namespace TerraBase.Features.Replication;
 /// bytes and one transaction's deltas, and each still gets its own ack, in order, once that transaction and its stable read
 /// succeeded; a refusal of the transaction refuses them all.
 /// </summary>
-internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
+internal sealed partial class PeerStreamReceiver : V1.Replication.ReplicationBase
 {
     private const int MaxRefills = 4;
     // Databases with a batch or frontier in progress per stream: room for the sender's 32 outstanding batches, plus as many

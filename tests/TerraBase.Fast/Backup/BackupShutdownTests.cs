@@ -428,7 +428,11 @@ public sealed class BackupShutdownTests
             await Assert.That(backup.Status.Files).IsEmpty();
             await Assert.That(Directory.EnumerateFiles(Path.Combine(directory, ".backup"))).IsEmpty();
             await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
-            await Assert.That(s3.CustomerObjects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
+            // The authenticated lineage certificate is published before the snapshot. A cancelled snapshot can leave
+            // that metadata behind, but no customer snapshot or WAL bytes may reach the destination.
+            var remaining = s3.CustomerObjects.Keys.Where(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal)).ToArray();
+            await Assert.That(remaining.Length).IsEqualTo(1);
+            await Assert.That(remaining[0].StartsWith(File(customer) + "/generations/", StringComparison.Ordinal)).IsTrue();
             await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
