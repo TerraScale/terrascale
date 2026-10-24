@@ -83,6 +83,13 @@ public sealed class VectorIndexTests
             await Assert.That(string.Join(",", result.Ids)).IsEqualTo(string.Join(",", Nearest(vectors, query, 10)));
         }
 
+        // A write between two reads of the same index: the second read sees it.
+        var probe = Vector();
+        var moved = vectors.Keys.Last();
+        await WriteAsync([Put(moved, 0, vectors[moved] = [.. probe])]);
+        var first = await api.QueryAsync(new { sort = new[] { new { near = new { path = "/embedding", vector = probe } } }, limit = 1 });
+        await Assert.That(first.Ids).IsEquivalentTo([moved]);
+
         using (var dropped = await owner.DeleteAsync(ManagementApi.Uri($"{indexes}/embeddings")))
         {
             await Assert.That(dropped.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
