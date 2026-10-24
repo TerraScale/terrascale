@@ -95,6 +95,32 @@ Webhook signatures are verified with the endpoint secret in the OCI Vault-delive
 machine identity. Delivery failures remain visible to Stripe for retry. Confirm
 successful delivery attempts in Stripe Workbench when validating an endpoint.
 
+## Operation-unit overage
+
+Paid plans (Starter, Pro, Team) pay for operation units above their monthly
+allowance at the published rate (`metering.overageRates.operationUnitsPerMillionUsd`
+in `pricing.json`, $5 per million). Free stops at its allowance and is never
+charged. `UsageOverageReporter` runs at startup and then hourly. It reads every
+organization's operation units for the current UTC month from TerraBase's
+`/v1/usage/allowances` feed and, for each organization with an active, trialing
+or past-due Stripe subscription, makes its invoice items for that month add up to
+`max(0, units - allowance)`.
+
+The items are ordinary invoice items attached to the subscription, so they go on
+its next invoice. The subscription keeps its single plan item. Each item has the
+metadata `terrascale_kind=operation_unit_overage`, `terrascale_month=yyyy-MM`
+and `terrascale_org=<organization id>`, a quantity in operation units and a
+`unit_amount_decimal` of 0.0005 cents. Items that are already invoiced are
+final. One pending item holds the rest of the month: the reporter creates it
+with an idempotency key, updates its quantity, and deletes it when nothing
+remains to bill. Invoiced quantities never go down. Stripe holds the record, so
+the dashboard stores no overage state. The billing page shows "Usage this
+period" from the same items.
+
+Units used after the last hourly run of a month are never billed, which favors
+the customer. Annual subscriptions (Starter) collect pending overage items at
+their next renewal invoice.
+
 ## Internal billing
 
 Internal billing is a separate report-only usage and spending-cap feature. It

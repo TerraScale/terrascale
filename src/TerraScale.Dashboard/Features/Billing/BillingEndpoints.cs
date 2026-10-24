@@ -15,7 +15,8 @@ namespace TerraScale.Dashboard.Features.Billing;
 public static class BillingEndpoints
 {
     public static IServiceCollection AddBillingFeatures(this IServiceCollection services) =>
-        services.AddSingleton<StripeBilling>().AddSingleton<InternalBillingService>().AddHostedService<PlanReconciler>();
+        services.AddSingleton<StripeBilling>().AddSingleton<InternalBillingService>().AddHostedService<PlanReconciler>()
+            .AddSingleton<UsageOverageReporter>().AddHostedService<UsageOverageWorker>();
 
     public static async Task<BillingPage> LoadAsync(ShellModel shell, StripeBilling billing, SpendingService spending,
         IQueryCollection query, DateTimeOffset now, CancellationToken cancellationToken, InternalBillingService internalBilling)
@@ -41,6 +42,8 @@ public static class BillingEndpoints
         var changesRead = BillingPlanPresentation.ForAsync(page, billing, query, now, cancellationToken);
         var paymentMethodRead = billing.PaymentMethodAsync(shell.Context, cancellationToken);
         var invoicesRead = billing.InvoicesAsync(shell.Context, cancellationToken);
+        var overageRead = page.Binding is { Kind: "stripe", SubscriptionId.Length: > 0 } subscribed && PlanCatalog.For(shell.Context.Organization) is { PriceCents: > 0 }
+            ? billing.OperationUnitOverageAsync(subscribed, now, cancellationToken) : Task.FromResult(0L);
         BillingCard? paymentMethod = null;
         var paymentMethodUnavailable = false;
         try { paymentMethod = await paymentMethodRead; }
@@ -53,9 +56,15 @@ public static class BillingEndpoints
         catch (Exception error) when (error is HttpRequestException or IOException or StripeException ||
                                       error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         { errorMessage = "Payment history could not be loaded. Apply the filters to retry."; }
+        long? overage = null;
+        try { overage = await overageRead; }
+        catch (Exception error) when (error is HttpRequestException or IOException or StripeException ||
+                                      error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        { }
         var changes = await changesRead;
         return page with
         {
+            OverageUnits = overage,
             PlanChanges = changes,
             PaymentMethod = paymentMethod,
             PaymentMethodUnavailable = paymentMethodUnavailable,

@@ -22,6 +22,7 @@
     @if (HttpContext!.Request.Query["payment"] == "blocked") { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-title">Checkout did not open</p><p class="ts-alert-body">Finish or cancel the pending checkout first. If this organization already has a subscription, change its plan below or in Manage payment.</p></div> }
     <section class="ts-card" id="billing-summary" aria-labelledby="billing-summary-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="billing-summary-title">Current plan</h2><p class="ts-card-description">@(Model.InternalBill is not null ? "Internal reporting only. No Stripe charges; spending caps never suspend services." : awaiting || plan is null ? org.Name + " has no active plan." : free ? plan.Name + " plan. No subscription or payment method is required; no Stripe charges." : org.Name + " is billed on this plan.")</p></div>@if (Model.InternalBill is not null) { <span class="ts-badge ts-badge-info">Internal</span> }</header><div class="ts-card-body">
         <div class="ts-billing-current"><div class="ts-billing-plan"><span class="ts-billing-plan-icon" aria-hidden="true">@Icons.Render("CreditCard", 20)</span><span class="ts-billing-plan-name">@planName</span><span class="ts-badge @statusClass"><span class="ts-dot" aria-hidden="true"></span>@status</span></div><dl class="ts-billing-facts"><div><dt>Billing interval</dt><dd>@(effectiveInterval is "monthly" ? "Monthly" : effectiveInterval is "annual" ? "Annual" : "Not applicable")</dd></div><div><dt>Renewal</dt><dd>@(binding?.RenewalAt?.UtcDateTime.ToString("MMMM d, yyyy", CultureInfo.InvariantCulture) ?? "Not scheduled")</dd></div><div><dt>Payment method</dt><dd>@(Model.PaymentMethodUnavailable ? "Not reported" : Model.PaymentMethod?.Label ?? (org.PaymentMethodValidated ? "On file" : "Not set"))</dd></div></dl></div>
+        @if (Model.InternalBill is null && !awaiting && plan is not null && (free || subscribed)) { <p class="ts-meta" id="billing-usage">@UsageThisPeriod(plan, plan.PriceCents == 0 ? null : Model.OverageUnits ?? -1)</p> }
         @if (Model.PaymentMethodUnavailable) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">Payment method could not be loaded. Reload billing to retry.</p></div> }
         @if (awaiting) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-title">Choose a plan</p><p class="ts-alert-body">Projects and databases can’t be created in @org.Name until a plan is active.</p></div> }
     </div></section>
@@ -46,11 +47,20 @@
                 else if (freeCandidate) { <p class="ts-meta">@(current ? "Current plan" : org.Kind != "personal" ? "Available for Personal workspaces only." : "Free is available at renewal for subscribed Personal workspaces.")</p> }
             </article>
         }</div>
-        <p class="ts-meta">Usage charges are not yet collected; utilization remains unavailable without authoritative meters.</p>
     </section>
     }
 </section>
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.Plans.BillingPlanActions, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.Invoices.BillingHistoryView, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
 </div>
-@functions { private static string Money(long cents) => "$" + (cents / 100m).ToString("F2", CultureInfo.InvariantCulture); }
+@functions {
+    private static string Money(long cents) => "$" + (cents / 100m).ToString("F2", CultureInfo.InvariantCulture);
+    // overage is null for Free and negative when Stripe could not be read.
+    private static string UsageThisPeriod(BillingPlan plan, long? overage) => overage switch
+    {
+        null => string.Create(CultureInfo.InvariantCulture, $"{plan.Name} stops at its {plan.Allowances.MonthlyOperations:N0} operation units a month, with no usage charges."),
+        < 0 => "Usage this period could not be loaded from Stripe. Reload billing to retry.",
+        0 => string.Create(CultureInfo.InvariantCulture, $"Usage this period: $0.00 so far, within {plan.Name}'s {plan.Allowances.MonthlyOperations:N0} included operation units. Units above them cost {OperationUnitOverage.Rate}."),
+        { } units => string.Create(CultureInfo.InvariantCulture, $"Usage this period: {OperationUnitOverage.Amount(units)} so far, for {units:N0} operation units over {plan.Name}'s {plan.Allowances.MonthlyOperations:N0} included units, at {OperationUnitOverage.Rate}. Billed on your next invoice.")
+    };
+}
