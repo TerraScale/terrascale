@@ -388,7 +388,7 @@ public sealed class HistoryErasureTests
         var input = JsonSerializer.Deserialize<CrashInput>(await File.ReadAllTextAsync(path))!;
         using var meter = new Meter("erasure-crash-fixture");
         await using var engine = new TursoStorageEngine(input.Directory, 1, 64, 64 * 1024 * 1024, meter,
-            NullLogger<TursoStorageEngine>.Instance, TimeSpan.FromSeconds(5), replicaOwner: input.Machine);
+            NullLogger<TursoStorageEngine>.Instance, new TestMasterKey(), TimeSpan.FromSeconds(5), replicaOwner: input.Machine);
         var origin = engine.ReplicaId;
         var stamp = engine.Member.Clock.Tick();
         using var body = JsonDocument.Parse("{\"oldEpochTail\":true}");
