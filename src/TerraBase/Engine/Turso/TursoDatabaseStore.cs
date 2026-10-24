@@ -937,7 +937,8 @@ internal sealed partial class TursoDatabaseStore(
                         continue;
                     }
 
-                    transaction.Savepoint();
+                    // A batch of one write needs no SQL savepoint: undoing it is not committing.
+                    transaction.Savepoint(statements: batch.Count > 1);
                     var keeps = false;
                     Exception? failure = null;
                     try

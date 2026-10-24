@@ -192,6 +192,27 @@ public sealed class GroupCommitTests
         }
     }
 
+    // A write alone in its batch runs without an SQL savepoint: when it is refused after its statements ran, nothing of it
+    // commits, and the next lone write commits normally.
+    [Test]
+    public async Task A_lone_write_refused_after_its_statements_ran_leaves_nothing_and_the_next_write_commits()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var existing = DocumentApi.NewId();
+        var original = await api.PutAsync(existing, new { n = 0 });
+        var refusedId = DocumentApi.NewId();
+        var refused = await api.TransactAsync(
+            new { op = "put", collection = DocumentApi.Collection, id = refusedId, document = new { n = 1 } },
+            new { op = "assert", collection = DocumentApi.Collection, id = existing, filter = new { eq = new object[] { "/n", 99 } } });
+        await Assert.That(refused.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        await Assert.That((await api.GetAsync(refusedId)).Status).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That((await api.GetAsync(existing)).ETag).IsEqualTo(original.ETag);
+
+        var next = DocumentApi.NewId();
+        await Assert.That((await api.PutAsync(next, new { n = 3 })).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await api.GetAsync(next)).Status).IsEqualTo(HttpStatusCode.OK);
+    }
+
     // A batch's storage calls run back to back on the database's write thread: each call resumes the batch on that thread,
     // so a write queues about one call there (its BEGIN) instead of one per storage call, two thread hops each.
     [Test]

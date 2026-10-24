@@ -1455,15 +1455,23 @@ internal sealed partial class TursoStorageTransaction(
     private bool _savepointPending;
     private bool _releasePending;
 
+    // The open savepoint runs no statement: the batch holds one write, and undoing it means not committing at all.
+    private bool _savepointInMemory;
+
     /// <summary>Whether the current request added client state rows since its savepoint, after flushing them.</summary>
     internal bool SavepointHasChanges => _savepoint is { } saved && _captured > saved.Captured;
 
-    /// <summary>Starts the savepoint one queued write of a group commit runs in. Runs no statement yet.</summary>
-    internal void Savepoint()
+    /// <summary>
+    /// Starts the savepoint one queued write of a group commit runs in. Runs no statement yet; without
+    /// <paramref name="statements"/> (a batch of one write) it never runs one, and undoing it leaves a transaction that
+    /// cannot commit.
+    /// </summary>
+    internal void Savepoint(bool statements = true)
     {
         ThrowIfReadOnly();
         _savepoint = (_changeBytes, _captured, _writes, _writtenBytes, _offset, ChangedReaderState);
-        _savepointPending = true;
+        _savepointPending = statements;
+        _savepointInMemory = !statements;
         LimitsReached = false;
     }
 
@@ -1471,7 +1479,11 @@ internal sealed partial class TursoStorageTransaction(
     internal void ReleaseSavepoint()
     {
         _ = _savepoint ?? throw new InvalidOperationException("no savepoint is open");
-        if (_savepointPending)
+        if (_savepointInMemory)
+        {
+            _savepointInMemory = false;
+        }
+        else if (_savepointPending)
         {
             // The write ran no statement: there is nothing to release.
             _savepointPending = false;
@@ -1488,6 +1500,15 @@ internal sealed partial class TursoStorageTransaction(
     internal ValueTask RollbackToSavepointAsync()
     {
         var saved = _savepoint ?? throw new InvalidOperationException("no savepoint is open");
+        if (_savepointInMemory)
+        {
+            // Nothing marked where the write began: its statements stay in the transaction, which must not commit.
+            _savepointInMemory = false;
+            Restore(saved);
+            _faulted = true;
+            return ValueTask.CompletedTask;
+        }
+
         if (_savepointPending)
         {
             // The write ran no statement: only its in-memory state rolls back.
