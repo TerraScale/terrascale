@@ -37,6 +37,13 @@ internal static class SqlCatalog
         ["pragma_foreign_key_list"] = [.. ForeignKeyList, "arg"],
     };
 
+    /// <summary>
+    /// The name a read uses for catalog relation <paramref name="relation"/>: no SQL table can have it (a leading <c>_</c> is
+    /// reserved), and no table of the database file has it, so an unresolved reference fails instead of reaching SQLite's
+    /// own schema table or pragma.
+    /// </summary>
+    public static string CteName(string relation) => "_tb_catalog_" + relation;
+
     /// <summary>The pragmas a FROM item calls as table-valued functions.</summary>
     public static bool IsPragmaFunction(string name) => name.StartsWith("pragma_", StringComparison.Ordinal) && Relations.ContainsKey(name);
 
@@ -77,7 +84,7 @@ internal static class SqlCatalog
         for (var i = 0; i < relations.Count; i++)
         {
             var columns = Relations[relations[i]];
-            text.Append(i == 0 ? "" : ", ").Append(relations[i]).Append('(').AppendJoin(", ", columns.Select(column => '"' + column + '"')).Append(") AS (");
+            text.Append(i == 0 ? "" : ", ").Append(CteName(relations[i])).Append('(').AppendJoin(", ", columns.Select(column => '"' + column + '"')).Append(") AS (");
             var rows = Rows(relations[i], tables);
             if (rows.Count == 0)
             {

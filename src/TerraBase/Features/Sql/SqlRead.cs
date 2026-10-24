@@ -74,6 +74,13 @@ internal static class SqlRead
                     name = (tokens[i] is Colon ? ":" : "@") + word.Value;
                     i++;
                     break;
+                // SqlParserCS has no infix GLOB: a GLOB b is read as a SIMILAR TO b, which SqlGuard renders as glob(b, a).
+                // SQLite has no SIMILAR TO, so a written one is refused and every SIMILAR TO is a GLOB.
+                case Word { QuoteStyle: null, Value: var glob } when glob.Equals("GLOB", StringComparison.OrdinalIgnoreCase) && Next(tokens, i) is not LeftParen:
+                    text.Append("SIMILAR TO");
+                    continue;
+                case Word { QuoteStyle: null, Value: var similar } when similar.Equals("SIMILAR", StringComparison.OrdinalIgnoreCase):
+                    throw new FormatException("SIMILAR TO is not supported; use GLOB or LIKE");
                 // SQLite's default schema: main.t and main.t.c are t and t.c (Prisma qualifies every name).
                 case Word { Value: var schema } when schema.Equals("main", StringComparison.OrdinalIgnoreCase)
                     && i + 2 < tokens.Count && tokens[i + 1] is Period && tokens[i + 2] is Word && (i == 0 || tokens[i - 1] is not Period):
@@ -127,6 +134,20 @@ internal static class SqlRead
         return (text.ToString(), names);
     }
 
+    // The next token that is not whitespace, or null.
+    private static Token? Next(IList<Token> tokens, int i)
+    {
+        for (var next = i + 1; next < tokens.Count; next++)
+        {
+            if (tokens[next] is not Whitespace)
+            {
+                return tokens[next];
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>Validates a query: table references, functions and top-level clauses.</summary>
     public static ReadSql Read(Query query)
     {
@@ -146,10 +167,56 @@ internal static class SqlRead
         ((IElement)query).Visit(validator);
         var ctes = query.With?.CteTables.Select(cte => cte.Alias.Name.Value.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal) ?? [];
         var tables = validator.Tables.Where(table => !ctes.Contains(table)).Distinct(StringComparer.Ordinal).ToList();
+        Rename(query, [with(ReferenceEqualityComparer.Instance)]);
         return new ReadSql(query, [.. tables.Where(table => !SqlCatalog.Relations.ContainsKey(table))])
         {
             Catalog = [.. tables.Where(SqlCatalog.Relations.ContainsKey)],
         };
+    }
+
+    // Every reference to a catalog relation, at any depth (subqueries in expressions included), names its CTE
+    // (SqlCatalog.CteName) and keeps the name it was written with as its alias. SQLite resolves sqlite_master and the
+    // pragma tables in a nested scope before a CTE of the same name, so the written name would read the database file's
+    // own schema. Set in place, as SqlGuard does, on the freshly parsed tree.
+    private static void Rename(object node, HashSet<object> seen)
+    {
+        if (!seen.Add(node))
+        {
+            return;
+        }
+
+        foreach (var property in node.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+        {
+            if (property.GetIndexParameters().Length > 0 || property.PropertyType.IsValueType || property.PropertyType == typeof(string))
+            {
+                continue;
+            }
+
+            switch (property.GetValue(node))
+            {
+                case TableFactor.Table { Args: null, Name.Values: [var name] } table when SqlCatalog.Relations.ContainsKey(name.Value.ToLowerInvariant()) && property.CanWrite:
+                    // Both names are a lowercase letter or _, then letters, digits or _ (catalog names, or an alias the tree parsed).
+                    var alias = table.Alias?.ToSql() ?? name.Value.ToLowerInvariant();
+                    property.SetValue(node, new Parser().ParseSql($"SELECT 1 FROM {SqlCatalog.CteName(name.Value.ToLowerInvariant())} AS {alias}", new SQLiteDialect())
+                        is [Statement.Select { Query.Body: SetExpression.SelectExpression { Select.From: [{ Relation: { } renamed }] } }]
+                        ? renamed
+                        : throw new FormatException("a catalog reference does not render"));
+                    break;
+                case System.Collections.IList list:
+                    foreach (var item in list)
+                    {
+                        if (item is not null && item.GetType().Namespace?.StartsWith("SqlParser", StringComparison.Ordinal) == true)
+                        {
+                            Rename(item, seen);
+                        }
+                    }
+
+                    break;
+                case { } child when child.GetType().Namespace?.StartsWith("SqlParser", StringComparison.Ordinal) == true:
+                    Rename(child, seen);
+                    break;
+            }
+        }
     }
 
     // SQLite's table-valued pragmas filter on their hidden arg column: FROM … pragma_x(e) AS p becomes FROM … pragma_x AS p
@@ -357,7 +424,12 @@ internal static class SqlRead
                     throw new FormatException("table-valued functions and table options are not supported");
                 case TableFactor.Derived { SubQuery.With: not null }:
                     throw new FormatException("WITH is supported only at the start of a statement");
-                case TableFactor.Derived or TableFactor.NestedJoin:
+                // The visitor does not enter a FROM subquery: its tables, functions and literals are validated here, or
+                // the statement would read the database file's own tables.
+                case TableFactor.Derived { SubQuery: var subquery }:
+                    ((IElement)subquery).Visit(this);
+                    break;
+                case TableFactor.NestedJoin:
                     break;
                 default:
                     throw new FormatException("this kind of FROM item is not supported");
