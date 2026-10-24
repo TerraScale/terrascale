@@ -14,6 +14,8 @@ public sealed class TerraScaleAuthProjectsContractTests
     [Test]
     [Arguments("get_settings")]
     [Arguments("update_settings")]
+    [Arguments("set_provider")]
+    [Arguments("delete_provider")]
     [Arguments("list_users")]
     [Arguments("get_user")]
     [Arguments("disable_user")]
@@ -43,6 +45,8 @@ public sealed class TerraScaleAuthProjectsContractTests
         {
             "get_settings" => projects.GetSettingsAsync(Token, project),
             "update_settings" => projects.UpdateSettingsAsync(Token, project, JsonSerializer.Deserialize(requestJson!, json.TerraScaleAuthProjectSettingsUpdate)!),
+            "set_provider" => projects.SetProviderAsync(Token, project, "google", JsonSerializer.Deserialize(requestJson!, json.TerraScaleAuthProjectProviderUpdate)!),
+            "delete_provider" => projects.DeleteProviderAsync(Token, project, "google"),
             "list_users" => projects.ListUsersAsync(Token, project, query: "synthetic@example", limit: 2, after: "opaque+/cursor="),
             "get_user" => projects.GetUserAsync(Token, project, user),
             "disable_user" => projects.DisableUserAsync(Token, project, user),
@@ -87,7 +91,7 @@ public sealed class TerraScaleAuthProjectsContractTests
         var project = new TerraScaleIdGenerator().NewId();
         using var handler = new CaptureHandler(HttpStatusCode.OK, $$$"""
             {"project_id":"{{{project}}}","issuer":"i","discovery_url":"d","sign_in_url":"s","methods":{"passcode":true,"password":true,"sign_up":true},
-            "branding":{"name":null,"logo_url":null,"theme_color":null},"counts":{"users":0,"clients":0}}
+            "branding":{"name":null,"logo_url":null,"theme_color":null},"counts":{"users":0,"clients":0},"providers":[]}
             """);
         using var http = new HttpClient(handler);
         var settings = await Client(http).Projects.UpdateSettingsAsync(Token, project, new(Branding: new(null, null, null)));

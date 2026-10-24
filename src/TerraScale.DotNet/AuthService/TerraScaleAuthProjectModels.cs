@@ -28,7 +28,33 @@ public sealed record TerraScaleAuthProjectSettings(
     [property: JsonPropertyName("sign_in_url")] string SignInUrl,
     [property: JsonPropertyName("methods")] TerraScaleAuthProjectMethods Methods,
     [property: JsonPropertyName("branding")] TerraScaleAuthProjectBranding Branding,
-    [property: JsonPropertyName("counts")] TerraScaleAuthProjectCounts Counts);
+    [property: JsonPropertyName("counts")] TerraScaleAuthProjectCounts Counts,
+    [property: JsonPropertyName("providers")] IReadOnlyList<TerraScaleAuthProjectProvider> Providers);
+
+/// <summary>A social sign-in provider of a project tenant: <c>google</c>, <c>github</c>, <c>apple</c> or <c>oidc</c>.
+/// Unconfigured providers have null ClientId, Issuer, TeamId and KeyId. CallbackUrl is the redirect URL to register at
+/// the provider. The client secret is never returned.</summary>
+public sealed record TerraScaleAuthProjectProvider(
+    [property: JsonPropertyName("provider")] string Provider,
+    [property: JsonPropertyName("configured")] bool Configured,
+    [property: JsonPropertyName("client_id")] string? ClientId,
+    [property: JsonPropertyName("issuer")] string? Issuer,
+    [property: JsonPropertyName("team_id")] string? TeamId,
+    [property: JsonPropertyName("key_id")] string? KeyId,
+    [property: JsonPropertyName("callback_url")] string CallbackUrl);
+
+/// <summary>PUT /providers/{provider} body. ClientSecret is required the first time; null keeps the stored secret.
+/// Apple takes TeamId, KeyId and the .p8 private key as ClientSecret; oidc takes an https Issuer.</summary>
+public sealed record TerraScaleAuthProjectProviderUpdate(
+    [property: JsonPropertyName("client_id")] string ClientId,
+    [property: JsonPropertyName("client_secret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null,
+    [property: JsonPropertyName("issuer"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Issuer = null,
+    [property: JsonPropertyName("team_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TeamId = null,
+    [property: JsonPropertyName("key_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? KeyId = null)
+{
+    /// <inheritdoc />
+    public override string ToString() => "TerraScaleAuthProjectProviderUpdate { sensitive fields redacted }";
+}
 
 /// <summary>PUT /settings body. A null part is omitted from the request and stays unchanged.</summary>
 public sealed record TerraScaleAuthProjectSettingsUpdate(
