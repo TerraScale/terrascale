@@ -33,11 +33,15 @@
             }
         </div>
     </section>
-    <section class="ts-card" aria-labelledby="slow-queries-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="slow-queries-title">Slow queries</h2><p class="ts-card-description">Query requests taking at least 100 ms in the same recent window and status filter. Query text and values are never recorded.</p></div></header><div class="ts-card-body">
-        @if (Model.Error.Length > 0) { <p class="ts-meta">Slow query requests are unavailable until request logs load.</p> }
-        else if (Model.SlowQueries.Count == 0) { <p class="ts-empty">No slow query requests match this filter in the recent window.</p> }
-        else { <div class="ts-table-wrap"><table class="ts-table"><caption class="ts-sr-only">Slow query requests for @Model.Database.Name</caption><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Route</th><th scope="col">Status</th><th scope="col">Latency</th></tr></thead><tbody>
-            @foreach (var log in Model.SlowQueries) { <tr><td>@log.Time.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</td><td><code>@log.Method @log.Route</code></td><td>@log.Status</td><td>@log.LatencyMs.ToString("0.##", CultureInfo.InvariantCulture) ms</td></tr> }
+    <section class="ts-card" aria-labelledby="slow-queries-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="slow-queries-title">Slow queries</h2><p class="ts-card-description">Query shapes last seen in the last 24 hours, slowest p95 first (maximum latency when p95 is unavailable). Best-effort cumulative statistics; counts may include earlier queries. Independent of the HTTP status filter.</p></div></header><div class="ts-card-body">
+        <p class="ts-meta">Run the query with &quot;explain&quot;: true to see its plan and a suggested index.</p>
+        @if (Model.QueryShapesError.Length > 0) { <p class="ts-meta" role="status">@Model.QueryShapesError</p> }
+        else if (Model.QueryShapes is not { Count: > 0 }) { <p class="ts-empty">No query shapes seen in the last 24 hours.</p> }
+        else { <div class="ts-table-wrap"><table class="ts-table"><caption class="ts-sr-only">Slow query shapes for @Model.Database.Name</caption><thead><tr><th scope="col">Collection</th><th scope="col">Shape</th><th scope="col">Queries</th><th scope="col">p95 ms</th><th scope="col">Avg ms</th><th scope="col">Rows scanned per query</th><th scope="col">Last seen (UTC)</th></tr></thead><tbody>
+            @foreach (var shape in Model.QueryShapes)
+            {
+                <tr><td>@shape.Collection</td><td><code title="@shape.Shape">@(shape.Shape.Length > 100 ? shape.Shape[..100] + "…" : shape.Shape)</code></td><td>@shape.Queries.ToString("N0", CultureInfo.InvariantCulture)</td><td>@(shape.P95LatencyMs?.ToString("0.##", CultureInfo.InvariantCulture) ?? "—")</td><td>@(shape.Queries > 0 ? (shape.TotalLatencyMs / shape.Queries).ToString("0.##", CultureInfo.InvariantCulture) : "—")</td><td>@(shape.Queries > 0 ? ((double)shape.RowsScanned / shape.Queries).ToString("0.##", CultureInfo.InvariantCulture) : "—")</td><td><time datetime="@shape.LastSeenAt.ToString("O", CultureInfo.InvariantCulture)">@shape.LastSeenAt.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</time></td></tr>
+            }
         </tbody></table></div> }
     </div></section>
     <section class="ts-card" id="log-drain" aria-labelledby="log-drain-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="log-drain-title">Project log drain</h2><p class="ts-card-description">Sends every database's request logs in this project to an OpenTelemetry (OTLP/HTTP JSON) logs endpoint about every 15 seconds, starting when the drain is saved. Each check reads the latest 100 requests per database, so heavier traffic or a failing endpoint leaves gaps; late requests from other regions can be skipped.</p></div></header><div class="ts-card-body ts-stack">

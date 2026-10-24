@@ -10,13 +10,48 @@ namespace TerraScale.Dashboard.E2E.Features.Databases;
 public sealed class DatabaseLogJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
-    public async Task Logs_show_failures_filter_status_and_keep_slow_queries_distinct_from_backend_errors()
+    public async Task Logs_filter_requests_and_show_recent_query_shapes_with_independent_failures()
     {
         var databaseId = "";
         var mode = "records";
         var requests = new ConcurrentQueue<string>();
+        var shapeRequests = new ConcurrentQueue<(string Path, string Token, string Pin)>();
+        var shapeMode = "records";
+        var longShape = "SELECT * FROM widgets WHERE " + new string('x', 120) + " = ? <script>alert(1)</script>";
+        var seen = DateTimeOffset.UtcNow.AddMinutes(-1);
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
         {
+            if (databaseId.Length > 0 && http.Request.Path.Value!.EndsWith("/query-shapes", StringComparison.Ordinal))
+            {
+                shapeRequests.Enqueue((http.Request.Path + http.Request.QueryString, http.Request.Headers.Authorization.ToString(),
+                    http.Request.Headers["X-TerraScale-Region-Pin"].ToString()));
+                if (shapeMode == "unavailable") return Task.FromResult<IResult?>(Results.StatusCode(503));
+                if (shapeMode == "malformed") return Task.FromResult<IResult?>(Results.Text("{broken", "application/json"));
+                Dictionary<string, object?> Shape(string collection, long queries, double total, double maximum, double? p95, DateTimeOffset lastSeen) => new()
+                {
+                    ["id"] = new string('a', 64),
+                    ["collection"] = collection,
+                    ["shape"] = longShape,
+                    ["queries"] = queries,
+                    ["totalLatencyMs"] = total,
+                    ["maxLatencyMs"] = maximum,
+                    ["rowsScanned"] = 21,
+                    ["lastSeenAt"] = lastSeen,
+                    ["p95LatencyMs"] = p95,
+                    ["latencyBuckets"] = p95 is null ? null : new long[] { 0, 1, 1 }
+                };
+                var legacy = Shape("legacy", 2, 11, 300, null, seen);
+                legacy.Remove("p95LatencyMs"); legacy.Remove("latencyBuckets");
+                var shapeItems = new[]
+                {
+                    Shape("popular", 100, 1234, 900, 100, seen), legacy,
+                    Shape("slowest", 2, 25, 800, 400, seen),
+                    Shape("null-p95", 0, 0, 200, null, seen),
+                    Shape("stale", 1, 9999, 9999, 9999, seen.AddHours(-25)),
+                    Shape("future", 1, 9999, 9999, 9999, seen.AddHours(1))
+                };
+                return Task.FromResult<IResult?>(Results.Json(new { items = shapeMode == "empty" ? [] : shapeItems }));
+            }
             if (databaseId.Length == 0 || !http.Request.Path.Value!.EndsWith("/logs", StringComparison.Ordinal))
                 return Task.FromResult<IResult?>(null);
             requests.Enqueue(http.Request.Path + http.Request.QueryString);
@@ -59,12 +94,26 @@ public sealed class DatabaseLogJourneyTests(DashboardRootFixture fixture)
         await Assert.That(all).Contains("aria-current=\"page\"><span>Logs</span>");
         await Assert.That(all).Contains("Only the latest 100 recorded requests are searched by this filter.");
         var slow = all[all.IndexOf("id=\"slow-queries-title\"", StringComparison.Ordinal)..];
-        await Assert.That(slow).Contains("POST /v1/projects/{project}/databases/{database}/sql");
-        await Assert.That(slow).DoesNotContain("/query</code>");
-        await Assert.That(slow).DoesNotContain("GET /v1/");
+        await Assert.That(slow).Contains("Run the query with \"explain\": true to see its plan and a suggested index.");
+        await Assert.That(slow).Contains("title=\"" + longShape + "\"");
+        await Assert.That(slow).Contains(longShape[..100] + "…</code>");
+        await Assert.That(slow).Contains("<td>2</td><td>—</td><td>5.5</td><td>10.5</td>");
+        await Assert.That(slow).Contains("<td>0</td><td>—</td><td>—</td><td>—</td>");
+        await Assert.That(slow.IndexOf("slowest</td>", StringComparison.Ordinal) < slow.IndexOf("legacy</td>", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(slow.IndexOf("legacy</td>", StringComparison.Ordinal) < slow.IndexOf("null-p95</td>", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(slow.IndexOf("null-p95</td>", StringComparison.Ordinal) < slow.IndexOf("popular</td>", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(slow).DoesNotContain("stale</td>");
+        await Assert.That(slow).DoesNotContain("future</td>");
+        var shapeRequest = shapeRequests.Last();
+        await Assert.That(shapeRequest.Path).EndsWith("/databases/logged-app/query-shapes");
+        await Assert.That(shapeRequest.Token).StartsWith("Bearer ");
+        await Assert.That(shapeRequest.Pin).IsEqualTo("gru");
+        using (var encoded = await client.GetAsync(path))
+            await Assert.That(await encoded.Content.ReadAsStringAsync()).DoesNotContain("<script>alert(1)</script>");
         var filtered = await PageAsync(path + "?status=5xx", HttpStatusCode.OK);
         await Assert.That(filtered).Contains("500</span>");
         await Assert.That(filtered).DoesNotContain("200</span>");
+        await Assert.That(filtered).Contains("slowest</td>");
         await Assert.That(requests.Last()).EndsWith("/databases/logged-app/logs?status=5xx");
 
         mode = "limited";
@@ -79,10 +128,24 @@ public sealed class DatabaseLogJourneyTests(DashboardRootFixture fixture)
             var unavailable = await PageAsync(path, HttpStatusCode.ServiceUnavailable);
             await Assert.That(unavailable).Contains("Request logs are unavailable.");
             await Assert.That(unavailable).DoesNotContain("No recorded requests match this filter");
+            await Assert.That(unavailable).Contains("slowest</td>");
+        }
+        mode = "records";
+        shapeMode = "empty";
+        await Assert.That(await PageAsync(path, HttpStatusCode.OK)).Contains("No query shapes seen in the last 24 hours.");
+        foreach (var failed in new[] { "unavailable", "malformed" })
+        {
+            shapeMode = failed;
+            var unavailable = await PageAsync(path, HttpStatusCode.OK);
+            await Assert.That(unavailable).Contains("Slow queries are unavailable.");
+            await Assert.That(unavailable).Contains("500</span>");
+            await Assert.That(unavailable).DoesNotContain("No query shapes seen");
         }
         var count = requests.Count;
+        var shapeCount = shapeRequests.Count;
         await Assert.That(await PageAsync(path + "?status=invalid", HttpStatusCode.BadRequest)).Contains("Choose a valid status filter.");
         await Assert.That(requests.Count).IsEqualTo(count);
+        await Assert.That(shapeRequests.Count).IsEqualTo(shapeCount);
 
         async Task<string> PageAsync(string url, HttpStatusCode expected)
         {

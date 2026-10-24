@@ -48,7 +48,7 @@ sealed class TestAuthentication : ITsAuthProjects
         var tenant = For(projectId);
         return Task.FromResult(Locked(tenant, () => new TerraScaleAuthProjectSettings(projectId, "https://auth.terrascale.tech/" + projectId,
             "https://auth.terrascale.tech/" + projectId + "/.well-known/openid-configuration", "https://auth.terrascale.tech/ui/" + projectId + "/sign-in",
-            tenant.Methods, tenant.Branding, new(tenant.Users.Count, tenant.Clients.Count))));
+            tenant.Methods, tenant.Branding, new(tenant.Users.Count, tenant.Clients.Count), [])));
     }
 
     public Task<TerraScaleAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TerraScaleAuthProjectSettingsUpdate update, CancellationToken cancellationToken)
