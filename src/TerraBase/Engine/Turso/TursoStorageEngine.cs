@@ -918,14 +918,16 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     {
         // Unlocked fast check; OpenStoreAsync checks lifecycle state again under the lock.
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
-        var (key, path) = Place(database);
         // An open store keeps its file handles, so only an opening checks the path for links (as the system database's):
-        // this runs several times per request, and the checks are seven readlink calls.
-        if (_stores.TryGetValue(key, out var open))
+        // this runs several times per request, and the checks are seven readlink calls. Its file's presence is an lstat, done
+        // at most once a second per store and again after any of TerraBase's own file operations (_fileEpoch); its path is
+        // built only for an opening.
+        if (_stores.TryGetValue(Key(database), out var open))
         {
-            return File.Exists(path) ? open : null;
+            return open.FilePresent(Volatile.Read(ref _fileEpoch)) ? open : null;
         }
 
+        var (key, path) = Place(database);
         RejectDatabaseLinks(path);
         return File.Exists(path) ? await OpenStoreAsync(key, path, cancellationToken).ConfigureAwait(false) : null;
     }
@@ -1371,9 +1373,14 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     // The database's key and file path, without checking the path for links.
     private ((string Organization, string Project, string Database) Key, string Path) Place(TenantContext database)
     {
-        ArgumentNullException.ThrowIfNull(database);
-        (string Organization, string Project, string Database) key = (Id(database.OrganizationId), Id(database.ProjectId), Id(database.DatabaseId));
+        var key = Key(database);
         return (key, Path.Combine(_dataDirectory, key.Organization, key.Project, key.Database + FileExtension));
+    }
+
+    private static (string Organization, string Project, string Database) Key(TenantContext database)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        return (Id(database.OrganizationId), Id(database.ProjectId), Id(database.DatabaseId));
     }
 
     private string LocateSystem()
@@ -1643,6 +1650,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     }
 
     // Count semaphore waiters toward storage-queue, and release admission even if waiting is cancelled.
+    // Moves on entering and leaving _creation, under which TerraBase creates, deletes, swaps and purges database files.
+    private long _fileEpoch;
+
     private async ValueTask EnterCreationAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1650,6 +1660,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         try
         {
             await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+            // Every create, delete, swap and purge runs under _creation: a file seen before it is looked up again.
+            Interlocked.Increment(ref _fileEpoch);
         }
         catch
         {
@@ -1662,6 +1674,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     {
         TaskCompletionSource[] released = _awaitingRelease.Count == 0 ? [] : [.. _awaitingRelease];
         _awaitingRelease.Clear();
+        Interlocked.Increment(ref _fileEpoch);
         _creation.Release();
         Io.Release();
         foreach (var initialization in released)

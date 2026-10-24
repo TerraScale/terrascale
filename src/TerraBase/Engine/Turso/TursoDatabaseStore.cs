@@ -729,6 +729,33 @@ internal sealed partial class TursoDatabaseStore(
     /// <summary>The database file.</summary>
     internal string FilePath => path;
 
+    // When the file was last seen in place (Environment.TickCount64), and the engine's file epoch then.
+    private long _fileSeenAt;
+    private long _fileSeenEpoch = -1;
+
+    /// <summary>
+    /// Whether the database file is still in place. An open store keeps its handles, so the path is looked up (an lstat) at
+    /// most once a second, and again whenever TerraBase's own file operations ran since (<paramref name="epoch"/> moved): only
+    /// a deletion outside TerraBase can go unseen, for at most a second.
+    /// </summary>
+    internal bool FilePresent(long epoch)
+    {
+        var now = Environment.TickCount64;
+        if (Volatile.Read(ref _fileSeenEpoch) == epoch && now - Volatile.Read(ref _fileSeenAt) < 1000)
+        {
+            return true;
+        }
+
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        Volatile.Write(ref _fileSeenAt, now);
+        Volatile.Write(ref _fileSeenEpoch, epoch);
+        return true;
+    }
+
     private long _backupAnchor = -1;
 
     /// <summary>
