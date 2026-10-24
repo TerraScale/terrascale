@@ -11,7 +11,8 @@ namespace TerraBase.Fast.Replication;
 /// TS-982: a catalog peer that is still heard from but never acknowledges held every SYSTEM change-log row. The joined rows
 /// were small, so the 1 GiB far-behind cut never fired, and the log reached 1.3 GB within hours (2 million rows) while every
 /// retention pass stalled the writer. Simulated minutes of catalog churn here (each one ages the log by two minutes, as
-/// retention reads time) show the log staying bounded with such a peer, long before the 24 h age cap could act.
+/// retention reads time) show the log staying bounded with such a peer, long before the 24 h age cap could act, and also
+/// with a continuous-backup anchor that stopped moving: every retention delete stays below that anchor.
 /// </summary>
 public sealed class LaggingPeerRetentionTests
 {
@@ -24,8 +25,11 @@ public sealed class LaggingPeerRetentionTests
     // TursoStorageTransaction.MaxBehindRows: past this many change ids behind, a peer stops holding rows.
     private const long MaxBehindRows = 1L << 20;
 
+    // A backup tap that cannot read (its anchor stuck at the start) pins the log the same way, with or without the peer's lag.
     [Test]
-    public async Task A_lagging_catalog_peer_never_lets_the_system_change_log_grow_past_the_cut()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_lagging_catalog_peer_never_lets_the_system_change_log_grow_past_the_cut(bool backupStuck)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var server = await TerraBaseTestServer.StartAsync();
@@ -64,7 +68,7 @@ public sealed class LaggingPeerRetentionTests
             _ = await RunAsync(system, $"UPDATE turso_cdc SET change_time = change_time - 120 WHERE change_id > {aged};", token);
             aged = await ScalarAsync(system, "SELECT max(change_id) FROM turso_cdc;", token);
             _ = await RunAsync(system, $"UPDATE _tb_peers SET seen = {Now()} WHERE node = {peer};", token);
-            system.BackupAnchor = null;
+            system.BackupAnchor = backupStuck ? probe : null;
             await groups.TrimAsync(system, token);
 
             var rows = await ScalarAsync(system, "SELECT count(*) FROM turso_cdc;", token);

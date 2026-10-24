@@ -331,7 +331,8 @@ internal sealed partial class TursoStorageTransaction
     /// a peer more than <see cref="MaxBehindRows"/> change ids behind, or of <paramref name="farBehind"/>
     /// (<see cref="FarBehindAsync"/>: its unacknowledged CDC rows pass 1 GiB), stops
     /// holding them (its <c>seen</c> goes to 0 until it is heard from again, and it refills when it returns), then what
-    /// <see cref="Retention"/> allows is deleted. Returns the CDC rows left, and the
+    /// <see cref="Retention"/> allows is deleted, below <paramref name="backupAnchor"/> unless it too is more than
+    /// <see cref="MaxBehindRows"/> change ids behind. Returns the CDC rows left, and the
     /// smallest acknowledged id of a peer still holding rows, each raise as the range it proved to hold no local group, and
     /// the oldest change id kept.
     /// </summary>
@@ -403,7 +404,10 @@ internal sealed partial class TursoStorageTransaction
             }
 
             var delete = Command(Retention);
-            delete.Parameters.AddWithValue("$below", backupAnchor ?? long.MaxValue);
+            // The backup anchor and the shape frontier hold rows too, but no further back than a peer may: a backup tap that
+            // cannot read (or ship) pinned SYSTEM's whole log, whatever its peers acknowledged (TS-982). Its next read finds
+            // the rows gone, a hole, and its backup starts a new generation from a snapshot.
+            delete.Parameters.AddWithValue("$below", backupAnchor is { } below && newest - below <= MaxBehindRows ? below : long.MaxValue);
             delete.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
             delete.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             delete.ExecuteNonQuery();
