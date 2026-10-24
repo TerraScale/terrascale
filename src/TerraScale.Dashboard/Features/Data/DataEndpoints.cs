@@ -230,8 +230,10 @@ public static class DataEndpoints
             else if (section == "sql")
             {
                 queries = await saved.ListAsync(context, id, http.RequestAborted);
-                if (sql.Length == 0 && submittedForm is null) sql = queries.FirstOrDefault(query => query.Id == http.Request.Query["savedQueryId"])?.Sql ?? (collection.Length == 0 ? "" : "SELECT * FROM " + collection + " LIMIT 20");
-                catalog = await data.CatalogAsync(context, id, collections, http.RequestAborted);
+                // SQL runs on the database's SQL tables; document collections are not visible to /sql/execute,
+                // so the editor neither prefills nor suggests collection names.
+                if (sql.Length == 0 && submittedForm is null) sql = queries.FirstOrDefault(query => query.Id == http.Request.Query["savedQueryId"])?.Sql ?? "";
+                catalog = await data.CatalogAsync(context, id, [], http.RequestAborted);
             }
             // A collection exists once it holds a document; until then there is no schema to infer.
             else if (section == "schema" && collections.Any(item => item.Name == collection)) schema = JsonSerializer.Serialize(await data.SchemaAsync(context, id, collection, http.RequestAborted), new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
