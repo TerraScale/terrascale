@@ -11,7 +11,8 @@ using TerraScale.DotNet.TerraBase;
 namespace TerraScale.Dashboard.Features.Profile;
 
 // ts-auth deletes the user, its sessions, tokens, memberships and the organizations only
-// the user belongs to; the dashboard then drops its own records for the same scope.
+// the user belongs to, including project/database erasure; the dashboard then drops
+// its own records for the scope confirmed by ts-auth.
 // Paid plans of those organizations end immediately in Stripe, without a refund.
 public static class AccountDeletion
 {
@@ -47,8 +48,6 @@ public static class AccountDeletion
                         throw new AccountAccessException("Transfer ownership of your shared organizations before deleting your account.", 409);
                     continue;
                 }
-                if (org.Projects.Values.Any(project => project.Databases.Count > 0))
-                    throw new AccountAccessException($"Delete your databases in {org.Name} before deleting your account.", 409);
                 sole.Add(org);
             }
             // Shared organizations keep their subscriptions; only organizations deleted with the account are canceled.

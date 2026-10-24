@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.DotNet;
@@ -33,15 +34,38 @@ public sealed class AccountDeletionJourneyTests
     }
 
     [Test]
-    public async Task ConfirmedDeletionRemovesUserSoleOrganizationsTokensAndSession()
+    public async Task ConfirmedDeletionWithPopulatedDatabaseDelegatesToAuthAndKeepsSharedOrganizations()
     {
         await using var scenario = await Scenario.StartAsync();
         var personal = scenario.PersonalOrganizationId();
         var shared = scenario.AddOrganization("Shared company", owner: "other-user", member: UserId);
+        var csrf = await HttpJourney.CsrfAsync(scenario.Client, "/databases");
+        using var database = await HttpJourney.PostFormAsync(scenario.Client, "/api/v1/dashboard/databases", new()
+        { ["_csrf"] = csrf, ["name"] = "account-data", ["region"] = "GRU" });
+        await Assert.That(database.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        using var created = JsonDocument.Parse(await database.Content.ReadAsStringAsync());
+        var databaseId = created.RootElement.GetProperty("id").GetString()!;
+        using (var collection = await HttpJourney.PostFormAsync(scenario.Client, "/api/v1/dashboard/data/collections", new()
+        { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["name"] = "items" }))
+            await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        using (var document = await HttpJourney.PostFormAsync(scenario.Client, "/api/v1/dashboard/data/documents", new()
+        { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["collection"] = "items", ["operation"] = "create", ["document"] = "{\"value\":1}" }))
+            await Assert.That(document.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using (var documents = JsonDocument.Parse(await scenario.Client.GetStringAsync("/api/v1/dashboard/data/documents?databaseId=" + databaseId + "&collection=items")))
+            await Assert.That(documents.RootElement.GetArrayLength()).IsEqualTo(1);
+        // This journey verifies dashboard delegation; ts-auth/TerraBase qualify physical erasure.
         await HttpJourney.CreatePatAsync(scenario.Client);
-        // The first read stores the shared organization's projection.
+        // The shared organization's projection must survive deletion.
         using (var page = await scenario.Client.GetAsync("/profile?tab=danger"))
-            await Assert.That(await page.Content.ReadAsStringAsync()).Contains("Delete account");
+        {
+            var consent = await page.Content.ReadAsStringAsync();
+            await Assert.That(consent).Contains("projects, databases and data are automatically erased from all replicas")
+                .And.Contains("Retained backups may remain until their retention period expires.")
+                .And.Contains("without a refund").And.Contains("Shared organizations keep their data and plans");
+            await Assert.That(consent).DoesNotContain("Delete your databases first");
+        }
+        var personalProjection = await scenario.Environment.State.GetAsync(AccountService.OrganizationsCollection, personal, default);
+        await Assert.That(personalProjection!.Document.Deserialize<OrganizationRecord>()!.Projects.Values.Any(project => project.Databases.ContainsKey(databaseId))).IsTrue();
         await Assert.That(await scenario.ExistsAsync(AccountService.OrganizationsCollection, shared)).IsTrue();
 
         using (var deleted = await scenario.DeleteAsync("  USER@example.com "))
