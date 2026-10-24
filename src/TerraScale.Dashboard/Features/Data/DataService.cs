@@ -98,7 +98,10 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
             if (current.State != "value" || string.IsNullOrWhiteSpace(current.Version)) throw new IOException("The document has no unambiguous current version.");
             version = current.Version;
         }
-        return await documents.WriteAsync(scope, home, database.Name, collection, operation, id, document, version, cancellationToken);
+        try { return await documents.WriteAsync(scope, home, database.Name, collection, operation, id, document, version, cancellationToken); }
+        // A create carries no version, so TerraBase's create-only precondition failing means the ID is taken.
+        catch (HttpRequestException error) when (operation == "create" && error.StatusCode is System.Net.HttpStatusCode.Conflict or System.Net.HttpStatusCode.PreconditionFailed)
+        { throw new AccountAccessException("A document with this ID already exists. Choose another ID or omit it to generate one.", 409); }
     }
 
     public async Task<TerraBaseDocument> GetAsync(AccountContext context, string databaseId, string collection, string id, CancellationToken cancellationToken)
