@@ -15,6 +15,52 @@ namespace TerraBase.Fast.Backup;
 public sealed class CatalogRestoreSafetyTests
 {
     private static readonly string[] ReadScopes = ["documents:read"];
+
+    [Test]
+    public async Task A_closed_gate_reports_an_external_anchor_read_in_progress_and_clears_it_on_cancellation()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var bucket = new FakeS3();
+        await using var machine = new Machine("gru", bucket, new FakeMemberStore());
+        await machine.StartAsync();
+        await Assert.That(machine.Gate.IsOpen).IsTrue();
+        await machine.StopAsync();
+
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        bucket.BeforeList = async (prefix, cancellationToken) =>
+        {
+            if (prefix == "catalog-anchor/")
+            {
+                entered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+        };
+        // The initial verification has a bounded start budget; the fake clock prevents a concurrent background pass.
+        await machine.StartAsync();
+        entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var verify = ((CatalogGate)machine.Gate).VerifyAsync(stop.Token);
+        try
+        {
+            await entered.Task.WaitAsync(token);
+            await Assert.That(machine.Gate.IsOpen).IsFalse();
+            await Assert.That(machine.Gate.Waiting.Contains("listing external catalog revocation anchors")).IsTrue();
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            try
+            {
+                _ = await verify;
+            }
+            catch (Exception) when (stop.IsCancellationRequested)
+            {
+            }
+        }
+        await Assert.That(machine.Gate.IsOpen).IsFalse();
+        await Assert.That(machine.Gate.Waiting.Contains("listing external catalog revocation anchors")).IsFalse();
+    }
+
     [Test]
     [Arguments(0)]
     [Arguments(1)]

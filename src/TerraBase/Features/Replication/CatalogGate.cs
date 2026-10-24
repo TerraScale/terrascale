@@ -151,7 +151,7 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
 
     public bool Trusted => _open || (_restored == false && !_anchorMissing);
 
-    public IReadOnlyList<string> Waiting => Pending;
+    public IReadOnlyList<string> Waiting => _revocationStage is { } stage ? Pending.Add(stage) : Pending;
 
     public async Task<string?> DigestAsync(CancellationToken cancellationToken) =>
         _engine.SystemDatabaseExists && await _states.DigestAsync(ChangeGroups.System, expected: null, cancellationToken).ConfigureAwait(false) is { } digest
