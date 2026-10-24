@@ -42,8 +42,11 @@ internal static class DocumentRoute
     /// <summary>Point operations carry the document's ULID in one query parameter.</summary>
     public const string Document = Collection + "/by-key";
 
+    /// <summary>The request header that makes a mutation wait for another placed region's durable acknowledgement.</summary>
+    public const string DurabilityHeader = "TB-Durability";
+
     /// <summary>The durability barrier and retry semantics shared by single-document mutations.</summary>
-    public const string WriteDurabilityDescription = "Mutations in a cell wait up to 10 seconds for another placed region's durable acknowledgement and answer remote_durable; a cell of one answers local_durable. Before execution, 503 remote_region_unavailable or confirmation_busy carries Retry-After; a database placed in its home region alone answers 409 placement_needs_two_regions until a placement update adds a region. An ambiguous commit or missing acknowledgement answers 503 write_outcome_unknown with region and machine, without Retry-After; never replay it automatically.";
+    public const string WriteDurabilityDescription = "Mutations answer local_durable once this region's commit is synced to disk; replication to the other placed regions continues in the background. With the header TB-Durability: remote_durable, a mutation in a cell also waits up to 10 seconds for another placed region's durable acknowledgement and answers remote_durable (a cell of one answers local_durable); only then, before execution, 503 remote_region_unavailable or confirmation_busy carries Retry-After, and an ambiguous commit or missing acknowledgement answers 503 write_outcome_unknown with region and machine, without Retry-After; never replay it automatically. Any other TB-Durability value answers 400. A database placed in its home region alone answers 409 placement_needs_two_regions on either path until a placement update adds a region.";
 
     /// <summary>Largest request body of any other route.</summary>
     public const int MaxRequestBytes = 4 * 1024 * 1024;
@@ -240,6 +243,15 @@ internal static class DocumentRoute
             ? new Validation("Idempotency-Key is not supported yet")
             : new Done();
 
+    /// <summary>Whether a mutation waits for another region (<c>TB-Durability: remote_durable</c>); absent or <c>local_durable</c> does not.</summary>
+    public static Valid<bool> CheckDurability(HttpContext context) =>
+        context.Request.Headers[DurabilityHeader].ToString() switch
+        {
+            "" or WriteResult.LocalDurable => false,
+            WriteResult.RemoteDurable => true,
+            _ => new Validation($"{DurabilityHeader} must be {WriteResult.LocalDurable} or {WriteResult.RemoteDurable}"),
+        };
+
     /// <summary>
     /// Applies one write and answers it: <paramref name="answer"/> gets the response body and whether the write created
     /// the document, with the new version as the ETag; a refused write is its error response.
@@ -247,10 +259,15 @@ internal static class DocumentRoute
     public static async ValueTask<IResult> WriteAsync(
         HttpContext context, IDocumentService documents, DocumentKey key, DocumentOperation operation, Func<WriteBody, bool, IResult> answer,
         CancellationToken cancellationToken) =>
-        await documents.WriteConfirmedAsync(key.Database, [operation], indexErrors: false, cancellationToken).ConfigureAwait(false) switch
+        CheckDurability(context) switch
         {
-            DocumentRejected rejected => ErrorResponse.From(rejected.Error),
-            WriteResult written => Written(context, key, written, answer),
+            Validation error => ErrorResponse.From(error),
+            bool waitForRemote => await documents.WriteConfirmedAsync(key.Database, [operation], indexErrors: false, waitForRemote, cancellationToken)
+                .ConfigureAwait(false) switch
+            {
+                DocumentRejected rejected => ErrorResponse.From(rejected.Error),
+                WriteResult written => Written(context, key, written, answer),
+            },
         };
 
     private static IResult Written(HttpContext context, DocumentKey key, WriteResult written, Func<WriteBody, bool, IResult> answer)

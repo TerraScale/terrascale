@@ -449,7 +449,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         (await CommitAsync(database, operations, indexErrors, cancellationToken).ConfigureAwait(false)).Outcome;
 
     public async ValueTask<WriteOutcome> WriteConfirmedAsync(
-        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
+        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool waitForRemote, CancellationToken cancellationToken)
     {
         if (!operations.Any(operation => operation is PutOperation or PatchOperation or DeleteOperation))
         {
@@ -461,16 +461,23 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             };
         }
 
-        // Admitted before it executes: a refusal here means this attempt executed nothing. A cell of one admits every write.
+        // Admitted before it executes: a refusal here means this attempt executed nothing. A cell of one admits every write. A
+        // database left in its home region alone takes no writes on either path; only a write that waits for another region is
+        // refused while none can confirm it, and only it keeps a waiter slot (0013e).
         var admission = await durability.AdmitAsync(database, cancellationToken).ConfigureAwait(false);
-        if (admission is not RemoteLease lease)
+        RemoteLease? lease = null;
+        switch (admission)
         {
-            return admission switch
-            {
-                Unavailable error => new DocumentRejected(error),
-                Conflict error => new DocumentRejected(error),
-                RemoteLease => throw new UnreachableException(),
-            };
+            case Conflict error:
+                return new DocumentRejected(error);
+            case Unavailable error when waitForRemote:
+                return new DocumentRejected(error);
+            case RemoteLease admitted when waitForRemote:
+                lease = admitted;
+                break;
+            case RemoteLease admitted:
+                admitted.Dispose();
+                break;
         }
 
         using (lease)
@@ -478,7 +485,8 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             try
             {
                 var (outcome, marker) = await CommitAsync(database, operations, indexErrors, cancellationToken).ConfigureAwait(false);
-                if (outcome is not WriteResult written || !durability.Confirms)
+                // Without the wait, the answer follows this region's FULL commit; replication continues in the background (0013e).
+                if (outcome is not WriteResult written || !waitForRemote || !durability.Confirms)
                 {
                     return outcome;
                 }

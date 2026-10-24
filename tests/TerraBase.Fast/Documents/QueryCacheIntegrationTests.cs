@@ -369,10 +369,10 @@ public sealed class QueryCacheIntegrationTests
         }
 
         public ValueTask<WriteOutcome> WriteConfirmedAsync(
-            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
+            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool waitForRemote, CancellationToken cancellationToken)
         {
             Writes++;
-            return inner.WriteConfirmedAsync(database, operations, indexErrors, cancellationToken);
+            return inner.WriteConfirmedAsync(database, operations, indexErrors, waitForRemote, cancellationToken);
         }
 
         public IAsyncEnumerable<ExportRow> ExportAsync(TenantContext database, string? afterCollection, string? afterId, CancellationToken cancellationToken) =>

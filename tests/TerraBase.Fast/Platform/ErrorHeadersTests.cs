@@ -84,8 +84,8 @@ public sealed class ErrorHeadersTests
             inner.WriteAsync(database, operations, indexErrors, cancellationToken);
 
         public ValueTask<WriteOutcome> WriteConfirmedAsync(
-            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken) =>
-            inner.WriteConfirmedAsync(database, operations, indexErrors, cancellationToken);
+            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool waitForRemote, CancellationToken cancellationToken) =>
+            inner.WriteConfirmedAsync(database, operations, indexErrors, waitForRemote, cancellationToken);
 
         public IAsyncEnumerable<ExportRow> ExportAsync(TenantContext database, string? afterCollection, string? afterId, CancellationToken cancellationToken) =>
             inner.ExportAsync(database, afterCollection, afterId, cancellationToken);

@@ -100,6 +100,10 @@ public sealed class Cluster : IAsyncDisposable
     /// <summary>Whether this is a revision-pinned ts-orch run (<c>TERRABASE_E2E_ORCH_REVISION</c>): acceptance evidence.</summary>
     public static bool LivePinned => Live && Environment.GetEnvironmentVariable(RevisionVariable) is { Length: > 0 };
 
+    // The cluster qualifies the multi-region guarantee: its region clients ask every write to wait for another region's
+    // durable ack (TB-Durability, decision 0013e), as every write did before that default changed.
+    private static void AskRemoteDurable(HttpClient client) => client.DefaultRequestHeaders.Add("TB-Durability", "remote_durable");
+
     /// <summary>The running region's borrowed edge client, owned by the cluster; do not dispose it.</summary>
     public HttpClient this[string region] => _local is not null
         ? _local.Client(region)
@@ -369,7 +373,7 @@ public sealed class Cluster : IAsyncDisposable
 
         HttpClient Client(string edge, string? served = null)
         {
-            return new HttpClient(new RegionPin(edge, served)
+            var client = new HttpClient(new RegionPin(edge, served)
             {
                 InnerHandler = new LocalEdge(edge, target => nodes.TryGetValue(target, out var node)
                     ? node
@@ -379,6 +383,8 @@ public sealed class Cluster : IAsyncDisposable
                 BaseAddress = new Uri("http://orch.invalid/"),
                 Timeout = Timeout.InfiniteTimeSpan,
             };
+            AskRemoteDurable(client);
+            return client;
         }
 
         void DisposeClients()
@@ -884,6 +890,7 @@ public sealed class Cluster : IAsyncDisposable
             });
             node.Project = api.WithToken(node.Token);
             node.Edge = new HttpClient(Proxy(node.Region)) { BaseAddress = new Uri("http://local.invalid/"), Timeout = Timeout.InfiniteTimeSpan };
+            AskRemoteDurable(node.Edge);
         }
 
         // With alreadyHeld, a 409 naming ids or names already taken counts as done: the catalog brought them.

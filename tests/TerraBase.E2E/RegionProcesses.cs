@@ -141,6 +141,7 @@ internal sealed class RegionProcesses : IAsyncDisposable
         var secret = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("secret").GetString();
         var client = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }) { BaseAddress = _regions[region].ClientAddress };
         client.DefaultRequestHeaders.Authorization = new("Bearer", secret);
+        client.DefaultRequestHeaders.Add("TB-Durability", "remote_durable");
         return client;
     }
 
@@ -287,6 +288,8 @@ internal sealed class RegionProcesses : IAsyncDisposable
             DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
             Timeout = TimeSpan.FromSeconds(30),
         };
+        // These processes qualify the multi-region guarantee: writes ask for another region's durable ack (decision 0013e).
+        node.Client.DefaultRequestHeaders.Add("TB-Durability", "remote_durable");
     }
 
     private async Task RegisterAsync(Region node, string owner, string[] replicas)

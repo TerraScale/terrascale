@@ -412,6 +412,7 @@ public sealed partial class A6LocalRebuildE2ETests
             _key ??= await Api.Server.IssueAsync(pair.Database.OrganizationId,
                 ["documents:read", "documents:write"], token);
             _data = Api.DataClient(_key);
+            _data.DefaultRequestHeaders.Add("TB-Durability", "remote_durable");
         }
 
         public async Task StopAsync()
