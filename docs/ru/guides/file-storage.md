@@ -11,7 +11,7 @@ description: Store project files with signed transfers, owner and role permissio
 # File storage
 
 ::: warning Release prerequisite
-The file API and SDK methods described here are under review. Their API and SDK releases must be deployed before these examples work. Live upload, download and authorization proof is still pending.
+The file API is being rolled out. These examples use `@terrascale/sdk` 0.0.8 or later and require the file API to be available for your project. Live upload, download and authorization verification is pending.
 :::
 
 Projects store files in buckets. Each bucket has the same owner, read and write rules as a document collection. Your server creates the bucket; signed-in end users upload and download files when its rules allow them. There are no object-store credentials to configure in your application.
