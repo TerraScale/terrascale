@@ -50,9 +50,9 @@
       },
       "TerraScale.DotNet": {
         "type": "Direct",
-        "requested": "[0.0.8, )",
-        "resolved": "0.0.8",
-        "contentHash": "VmVen4cPQ7GMw35lKjrc3Q4VJCP9Efq0xfdMUXVAZCByObIW7THtFs9lgFtyJIMkmyXTjKNX5v/wxf8WJ0X4hw==",
+        "requested": "[0.0.9, )",
+        "resolved": "0.0.9",
+        "contentHash": "t+Q1F9xJD8AbchbtIkRRhhvza8veg6D8BfHPlRy0jAZ0/APRsfgI5Bx4Ws4IMk9gu8X85jHP+L6GCatW9Sr3Aw==",
         "dependencies": {
           "NUlid": "1.7.3"
         }

@@ -32,7 +32,7 @@ public static partial class AuthenticationConsole
             var key = parts[0] switch { "settings" => "sign-in", "providers" => "social", var first => first };
             var known = parts switch
             {
-                ["settings" or "branding" or "clients"] => true,
+                ["settings" or "branding" or "configuration" or "clients"] or ["danger", "users" or "sessions" or "clients"] => true,
                 ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
                 ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
                 ["users", _, "disable" or "enable" or "delete"] or ["sessions", _, "revoke"] or ["clients", _, "delete"] => true,
@@ -53,7 +53,18 @@ public static partial class AuthenticationConsole
                         await projects.UpdateSettingsAsync(session, project, new(Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up"] == "on")), cancel);
                         break;
                     case ["branding"]:
-                        await projects.UpdateSettingsAsync(session, project, new(Branding: Branding(form["name"], form["logo_url"], form["theme_color"])), cancel);
+                        await projects.UpdateSettingsAsync(session, project, new(Branding: HostedBranding(form)), cancel);
+                        break;
+                    case ["configuration"]:
+                        await projects.UpdateSettingsAsync(session, project, new(Configuration: Configuration(form["redirect_urls"], form["session_lifetime_seconds"])), cancel);
+                        break;
+                    case ["danger", var family]:
+                        if (form["confirmation"] != context.Project.Name) throw new AccountAccessException("Type the project name exactly to confirm.", 422);
+                        var record = form["record_id"].ToString();
+                        if (record.Length == 0) throw new AccountAccessException("Choose a record to remove.", 422);
+                        if (family == "users") await projects.DeleteUserAsync(session, project, record, cancel);
+                        else if (family == "sessions") await projects.RevokeSessionAsync(session, project, record, cancel);
+                        else await projects.DeleteClientAsync(session, project, record, cancel);
                         break;
                     case ["providers", var provider]:
                         await projects.SetProviderAsync(session, project, provider, Provider(provider, form["client_id"], form["client_secret"], form["issuer"], form["team_id"], form["key_id"]), cancel);
@@ -72,7 +83,7 @@ public static partial class AuthenticationConsole
             {
                 return await PageAsync(http, context, projects, key, error is AccountAccessException access ? access.Message : Unreachable, error is AccountAccessException { StatusCode: var code } ? code : 503);
             }
-            return HttpRedirects.SeeOther("/auth/" + key);
+            return HttpRedirects.SeeOther("/auth/" + key + "?saved=1");
         });
         return endpoints;
     }
@@ -86,8 +97,8 @@ public static partial class AuthenticationConsole
     {
         string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         var (title, logo, color) = (Clean(name), Clean(logoUrl), Clean(themeColor)?.ToLowerInvariant());
-        if (title is { Length: > 64 }) throw new AccountAccessException("Use a name of up to 64 characters.", 422);
-        if (logo is not null && !(Uri.TryCreate(logo, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps))
+        if (title is { Length: > 64 } || title?.Any(char.IsControl) == true) throw new AccountAccessException("Use a name of up to 64 characters.", 422);
+        if (logo is not null && !HttpsUrl(logo))
             throw new AccountAccessException("The logo must be an https URL.", 422);
         if (color is not null && !Color().IsMatch(color)) throw new AccountAccessException("The theme color must look like #2158e8.", 422);
         return new(title, logo, color);
@@ -143,14 +154,24 @@ public static partial class AuthenticationConsole
         TerraScaleAuthProjectOAuthClient? created = null)
     {
         var section = AuthenticationSection.Find(key)!;
+        if (key == "branding") http.Items["auth-branding"] = true;
         var query = http.Request.Query;
         var page = new AuthenticationPage(ShellModel.For(http, context, key == "overview" ? "Authentication" : "Authentication · " + section.Title), section,
-            query["q"].ToString(), query["after"].ToString(), query["user"].ToString(), error, created);
+            query["q"].ToString(), query["after"].ToString(), query["user"].ToString(), error, created)
+        { Draft = status >= 400 && http.Request.HasFormContentType ? await http.Request.ReadFormAsync(http.RequestAborted) : null, Saved = query["saved"] == "1" };
         var (session, project, cancel) = (context.Session, context.Project!.Id, http.RequestAborted);
         try
         {
             switch (key)
             {
+                case "danger":
+                    page = page with
+                    {
+                        Users = (await projects.ListUsersAsync(session, project, null, Value(page.After), cancel)).Items,
+                        Sessions = (await projects.ListSessionsAsync(session, project, null, Value(page.After), cancel)).Items,
+                        Clients = await projects.ListClientsAsync(session, project, cancel)
+                    };
+                    break;
                 case "users": var users = await projects.ListUsersAsync(session, project, Value(page.Search), Value(page.After), cancel); page = page with { Users = users.Items, Next = users.Next }; break;
                 case "sessions": var live = await projects.ListSessionsAsync(session, project, Value(page.User), Value(page.After), cancel); page = page with { Sessions = live.Items, Next = live.Next }; break;
                 case "clients": page = page with { Clients = await projects.ListClientsAsync(session, project, cancel) }; break;
@@ -176,6 +197,8 @@ public sealed record AuthenticationPage(ShellModel Shell, AuthenticationSection 
     public IReadOnlyList<TerraScaleAuthProjectSession>? Sessions { get; init; }
     public IReadOnlyList<TerraScaleAuthProjectOAuthClient>? Clients { get; init; }
     public string? Next { get; init; }
+    public IFormCollection? Draft { get; init; }
+    public bool Saved { get; init; }
     public string Heading => Section.Key == "overview" ? "Authentication" : "Authentication: " + Section.Title;
 }
 
@@ -189,8 +212,10 @@ public sealed record AuthenticationSection(string Key, string Title, string Desc
         new("sessions", "Sessions", "Live end-user sessions. Revoking one signs that sign-in out.", "Monitor", "Users"),
         new("sign-in", "Sign-in methods", "How end users sign in on the hosted pages, and whether they can sign up.", "LockKeyhole", "Sign-in"),
         new("social", "Social sign-in", "Continue with Google, GitHub, Apple or another OpenID Connect provider on the hosted pages.", "Fingerprint", "Sign-in"),
+        new("configuration", "Configuration", "Exact redirect policy and lifetime of end-user sessions.", "Settings", "Sign-in"),
         new("clients", "OAuth applications", "Applications that sign users in through the authorization code flow with PKCE.", "Boxes", "Developers"),
-        new("branding", "Branding", "Name, logo and color of the hosted sign-in pages.", "Wand2", "Customize")
+        new("branding", "Branding", "How sign-in, sign-up and password reset look to your users.", "Wand2", "Customize"),
+        new("danger", "Danger zone", "Revoke sessions and permanently remove end users or OAuth applications.", "TriangleAlert", "Danger")
     ];
 }
 

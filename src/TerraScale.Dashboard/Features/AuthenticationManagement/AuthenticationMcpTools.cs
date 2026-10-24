@@ -95,8 +95,9 @@ public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountSer
         var current = await projects.GetSettingsAsync(context.Session, context.Project!.Id, Cancellation);
         var methods = passcode is null && password is null && signUp is null ? null
             : AuthenticationConsole.Methods(passcode ?? current.Methods.Passcode, password ?? current.Methods.Password, signUp ?? current.Methods.SignUp);
+        var validated = AuthenticationConsole.Branding(name ?? current.Branding.Name, logoUrl ?? current.Branding.LogoUrl, themeColor ?? current.Branding.ThemeColor);
         var branding = name is null && logoUrl is null && themeColor is null ? null
-            : AuthenticationConsole.Branding(name ?? current.Branding.Name, logoUrl ?? current.Branding.LogoUrl, themeColor ?? current.Branding.ThemeColor);
+            : current.Branding with { Name = validated.Name, LogoUrl = validated.LogoUrl, ThemeColor = validated.ThemeColor };
         return await projects.UpdateSettingsAsync(context.Session, context.Project!.Id, new(methods, branding), Cancellation);
     }
 

@@ -12,9 +12,9 @@ namespace TerraScale.Dashboard.E2E.Features.AuthenticationManagement;
 [ClassDataSource<DashboardRootFixture>]
 public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixture)
 {
-    private static readonly string[] Sections = ["overview", "users", "sessions", "sign-in", "social", "clients", "branding"];
+    private static readonly string[] Sections = ["overview", "users", "sessions", "sign-in", "social", "configuration", "clients", "branding", "danger"];
     private static readonly string[] Removed = ["organizations", "memberships", "invitations", "domains", "connections", "mfa", "directories",
-        "templates", "keys", "webhooks", "emails", "audit", "danger", "quickstart"];
+        "templates", "keys", "webhooks", "emails", "audit", "quickstart"];
 
     [Test]
     public async Task OwnerManagesUsersSessionsApplicationsAndSignInOfTheCurrentProject()
@@ -117,6 +117,66 @@ public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixtu
         Check(!(await Page(browser, "/auth/social")).Contains(">Configured<"), "The removed provider is not configured");
     }
 
+
+    [Test]
+    public async Task HostedSettingsValidatePersistAndStayWithinTheSelectedProject()
+    {
+        await using var scenario = await ReferenceScenario.StartAsync(fixture.Root);
+        using var browser = scenario.CreateClient();
+        var persona = scenario.Personas.Seeded;
+        using var login = await HttpJourney.LoginAsync(browser, persona.Email, persona.Password);
+        Check(login.Headers.Location?.OriginalString.StartsWith("/organizations/choose?returnTo=", StringComparison.Ordinal) == true, "Multi-organization dashboard sign-in opens the picker");
+        using var chooser = scenario.CreateClient();
+        const string pickerReturn = "/organizations/choose?returnTo=%2Fauth%2Fbranding";
+        using var direct = await HttpJourney.LoginAsync(chooser, persona.Email, persona.Password, returnTo: pickerReturn);
+        Check(direct.Headers.Location?.OriginalString == pickerReturn, "A direct picker sign-in does not wrap or loop its return path");
+        var initial = await Page(browser, "/auth/branding");
+        var csrf = Csrf(initial);
+        var name = "Brand " + new Faker().Random.AlphaNumeric(10);
+        using var saved = await Post(browser, "branding", csrf, ("name", name), ("logo_url", "https://assets.example.com/logo.svg"),
+            ("theme_color", "#2158e8"), ("title_size", "32"), ("default_theme", "dark"), ("background_color", "#151515"),
+            ("text_color", "#f2f2f2"), ("footer_links", "Privacy | https://example.com/privacy\nTerms | https://example.com/terms"));
+        Check(saved.StatusCode == HttpStatusCode.SeeOther, "The complete branding object is accepted");
+        var branding = await Page(browser, "/auth/branding");
+        Check(branding.Contains(name) && branding.Contains("value=\"32\"") && branding.Contains("https://example.com/privacy") &&
+            branding.Contains("data-brand-mode=\"dark\"") && branding.Contains("referrerpolicy=\"no-referrer\""), "The editor reads persisted fields and provides a private visual preview");
+        foreach (var fields in new[] { new[] { ("title_size", "41") }, [("default_theme", "auto")], [("footer_links", "Help | javascript:alert(1)")], [("background_color", "red")] })
+        {
+            using var invalid = await Post(browser, "branding", csrf, fields);
+            Check(invalid.StatusCode == HttpStatusCode.UnprocessableEntity, "Invalid branding is refused before it is saved");
+        }
+        foreach (var url in new[] { "https://example.com/#fragment", "https://user:password@example.com/callback", "http://example.com/callback", "https://*.example.com/callback" })
+        {
+            using var invalid = await Post(browser, "configuration", csrf, ("redirect_urls", url), ("session_lifetime_seconds", "600"));
+            Check(invalid.StatusCode == HttpStatusCode.UnprocessableEntity, "The redirect policy refuses unsafe or inexact URLs");
+        }
+        using (var shortSession = await Post(browser, "configuration", csrf, ("session_lifetime_seconds", "299")))
+            Check(shortSession.StatusCode == HttpStatusCode.UnprocessableEntity, "Sessions have the API's minimum lifetime");
+        using (var config = await Post(browser, "configuration", csrf, ("redirect_urls", "https://example.com/callback?source=app\nhttp://[::1]:3000/callback"), ("session_lifetime_seconds", "600")))
+            Check(config.StatusCode == HttpStatusCode.SeeOther, "Exact HTTPS and loopback redirects are accepted");
+        var configuration = await Page(browser, "/auth/configuration");
+        Check(configuration.Contains("http://[::1]:3000/callback") && configuration.Contains("value=\"600\""), "The configuration persists");
+        using (var forged = await HttpJourney.PostFormAsync(browser, "/api/v1/auth-management/configuration", new() { ["session_lifetime_seconds"] = "900" }))
+            Check(forged.StatusCode == HttpStatusCode.Forbidden, "Configuration requires CSRF");
+        var danger = await Page(browser, "/auth/danger");
+        var id = Regex.Match(danger, "name=\"record_id\" required><option value=\"\">Choose a record</option><option value=\"([^\"]+)\"").Groups[1].Value;
+        Check(id.Length == 26, "The final danger tab offers real records");
+        using (var refused = await Post(browser, "danger/sessions", csrf, ("record_id", id), ("confirmation", "wrong name")))
+            Check(refused.StatusCode == HttpStatusCode.UnprocessableEntity, "Destruction requires the exact project name");
+        using var identity = await browser.GetFromJsonAsync<JsonDocument>("/api/v1/auth/me");
+        var activeOrganization = identity!.RootElement.GetProperty("organizationId").GetString();
+        var projectName = WebUtility.HtmlDecode(Regex.Match(initial, "data-project-name=\"([^\"]+)\"").Groups[1].Value);
+        using (var revoked = await Post(browser, "danger/sessions", csrf, ("record_id", id), ("confirmation", projectName)))
+            Check(revoked.StatusCode == HttpStatusCode.SeeOther, "Confirmed destruction calls the existing session API");
+        Check(!Ids(await Page(browser, "/auth/sessions"), "sessions", "revoke").Contains(id), "The confirmed session is gone");
+        var picker = await Page(browser, "/organizations/choose");
+        var orgs = Regex.Matches(picker, "name=\"organizationId\" value=\"([^\"]+)\"").Select(match => match.Groups[1].Value).ToArray();
+        Check(orgs.Length > 1, "The picker lists the authenticated user's actual memberships");
+        using var switchOrg = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/switch-organization", new() { ["_csrf"] = Csrf(picker), ["organizationId"] = orgs.First(id => id != activeOrganization), ["returnUrl"] = "/auth/branding" });
+        Check(switchOrg.StatusCode == HttpStatusCode.SeeOther, "Selection uses the existing authorized POST");
+        Check(!(await Page(browser, switchOrg.Headers.Location!.OriginalString)).Contains(name), "Another project's settings never inherit this project's branding");
+    }
+
     [Test]
     public async Task McpToolsCallProjectAuthenticationWithTheCallersRole()
     {
@@ -153,6 +213,11 @@ public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixtu
         Check(!(await Tool(replica, secret, "auth_remove_provider", new { provider = "oidc" })).GetProperty("providers")[3].GetProperty("configured").GetBoolean(), "An owner removes the provider");
 
         await Control(producer, "member");
+        var readOnly = await Page(browser, "/auth/configuration");
+        using (var refused = await Post(browser, "configuration", Csrf(readOnly), ("session_lifetime_seconds", "600")))
+            Check(refused.StatusCode == HttpStatusCode.Forbidden, "A read-only member cannot change configuration");
+        using (var refused = await Post(browser, "branding", Csrf(readOnly), ("name", "Forbidden")))
+            Check(refused.StatusCode == HttpStatusCode.Forbidden, "A read-only member cannot change branding");
         Check((await Tool(replica, secret, "auth_list_clients", new { })).GetProperty("clients").GetArrayLength() == 2, "A member reads applications");
         Error(await Call(replica, secret, "auth_delete_client", new { clientId = created.GetProperty("client_id").GetString() }), "Organization management is required.");
         await Control(producer, "");

@@ -23,7 +23,14 @@ public static class BrowserAudit
         var landed = await page.GotoAsync(new Uri(origin, "/login?returnTo=" + Uri.EscapeDataString(returnTo)).ToString());
         if (new Uri(page.Url).AbsolutePath != "/__test/oidc") return landed;
         var account = "&email=" + Uri.EscapeDataString(email) + "&password=" + Uri.EscapeDataString(password) + (signUp ? "&signup=1" : "");
-        return await page.GotoAsync(page.Url + account);
+        var completed = await page.GotoAsync(page.Url + account);
+        // Complete the authenticated organization choice as an ordinary browser user does.
+        if (new Uri(page.Url).AbsolutePath == "/organizations/choose")
+        {
+            await page.Locator(".ts-org-picker-option[aria-current=true]").ClickAsync();
+            await page.WaitForLoadStateAsync();
+        }
+        return completed;
     }
 
     private static readonly AxeRunOptions Wcag22AA = new()

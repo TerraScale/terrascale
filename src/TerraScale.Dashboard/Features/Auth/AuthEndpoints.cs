@@ -30,6 +30,7 @@ public static class AuthEndpoints
     {
         app.MapMethods("/login", ["GET", "HEAD"], StartAsync);
         app.MapGet("/login/callback", CompleteAsync);
+        app.MapGet("/organizations/choose", OrganizationPicker.PageAsync);
         app.MapPost("/api/v1/auth/logout", (Delegate)LogoutAsync);
     }
 
@@ -83,7 +84,12 @@ public static class AuthEndpoints
             var account = await EnsureAccountAsync(context, session);
             await sessions.StartAsync(context, session);
             await RecordSignInAsync(context, session, account);
-            return HttpRedirects.SeeOther(flow.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : flow.ReturnTo);
+            var target = flow.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : flow.ReturnTo;
+            // API/CLI/MCP continuations retain their exact redirects. Organization choice is dashboard navigation.
+            if (!target.StartsWith("/api/", StringComparison.Ordinal) && !target.StartsWith("/onboarding", StringComparison.Ordinal) && !target.StartsWith("/organizations/choose", StringComparison.Ordinal) &&
+                (await context.RequestServices.GetRequiredService<AccountService>().GetContextAsync(session, context.RequestAborted)).Organizations.Count > 1)
+                return HttpRedirects.SeeOther("/organizations/choose?returnTo=" + Uri.EscapeDataString(target));
+            return HttpRedirects.SeeOther(target);
         }
         catch (SignInRejectedException)
         { return Failure(context, flow.ReturnTo, "ts-auth could not confirm this sign-in. Sign in again.", 401); }

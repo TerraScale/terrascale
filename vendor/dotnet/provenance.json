@@ -1,16 +1,16 @@
 {
   "package": "TerraScale.DotNet",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "repository": "https://github.com/TerraScale/ts-dotnet",
-  "sourceRevision": "c0cf10216c64844c688f4b889a870d7bec6fe101",
-  "sourceTree": "6d734bae3565a21b1290e8acf6cd96a6678672db",
-  "sourceArchiveSha256": "3b3452416a790cd3032a0c61cc97a09bf4efecfed603297967980fe1ee017e7d",
-  "file": "TerraScale.DotNet.0.0.8.nupkg",
-  "sourceDateEpoch": 1792848544,
-  "sha256": "16e7352dae7678d1022d2470495ffb5e24b29089bb63a88b6e85d8af147ca0c5",
+  "sourceRevision": "1c5d6b7564e2699adb45361c4701d42f3ede90c3",
+  "sourceTree": "cfa9f1166d15de600df4a984f0e4038e6e8cf5e2",
+  "sourceArchiveSha256": "f51aba2880581b761cc4625171711edc4b7fe6a5692848326426aa3b6a036237",
+  "file": "TerraScale.DotNet.0.0.9.nupkg",
+  "sourceDateEpoch": 1792849123,
+  "sha256": "58118d2219132cf46f68f9bbf1af5c167ec6994addf25dd4ed3dc381c074a7e7",
   "assemblySha256ByFramework": {
-    "net10.0": "01ebecf4a6cbe542401924ac8ec8c041965ca9cb433c1d5acd20dddf6174361b",
-    "net11.0": "0e9b8cea4c3fdfdda98dd231ffc6b4320e618c734b994b34bf4d7ee063df9362"
+    "net10.0": "f637f95be7b2a587fc6c955be44afc92fa2ab972d48a6d33ec7d2f2228fce76a",
+    "net11.0": "e658b2e63a2b794daf42f2f45ab4137b4fe9b25063bc18640460defffc0ea169"
   },
   "contractSha256ByPath": {
     "contracts/auth/README.md": "80e740190ca57e07e3f68d3d61b637c60c6e0084843b2a3076b6485b354dc022",
@@ -20,6 +20,8 @@
     "contracts/auth/fixtures/platform-headless.json": "bbe3f58d22f1a605c7b3c5c0a1d0385ceff920ffaf1d808502bfc64ac5a4f18d",
     "contracts/auth/fixtures/project-invitation.json": "bc83c3fe34812f639426f383ac5d2cb9a58e7645ee5fec7f59d637910af80919",
     "contracts/auth/fixtures/project-tenant.json": "235b120027cdc330dcbcbfbacee1c95f9f14c3bcee539c58dc4eb0727109cb1a",
+    "contracts/auth/hosted-settings-provenance.json": "cf09d1cdf5319217719fcae63cc258afd9e71cccbaca40173a2a1a1cca0fe5e5",
+    "contracts/auth/hosted-settings.md": "a4c7b8182aa2d8347cd70dbc93900338d376de58151a9f1a3e5264ac4ffebbc1",
     "contracts/auth/provenance.json": "a8a0fd62159d94dd007aaa210db11bbdd60cbd6ee9d6ea872f52b6e13ab68a3c",
     "contracts/auth/routes.json": "41d45eb9a144f822bd9a539c3e0e781350292ac70dae0ddfb57de5f058ffd148",
     "contracts/auth/security.json": "51f44122a54934e5b9b890ff43c43f26224b7dde5f0272bf927772c620f7313f",

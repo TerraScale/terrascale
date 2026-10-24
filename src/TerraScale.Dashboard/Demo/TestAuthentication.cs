@@ -16,6 +16,7 @@ sealed class TestAuthentication : ITsAuthProjects
     private sealed class Tenant
     {
         public TerraScaleAuthProjectMethods Methods = new(true, true, true);
+        public TerraScaleAuthProjectConfiguration Configuration = new([], 1209600);
         public TerraScaleAuthProjectBranding Branding = new("Northwind", null, "#2158e8");
         public readonly List<TerraScaleAuthProjectUser> Users = [];
         public readonly List<TerraScaleAuthProjectSession> Sessions = [];
@@ -53,7 +54,7 @@ sealed class TestAuthentication : ITsAuthProjects
             tenant.Methods, tenant.Branding, new(tenant.Users.Count, tenant.Clients.Count),
             new[] { "google", "github", "apple", "oidc" }.Select(key => tenant.Providers.TryGetValue(key, out var set)
                 ? new TerraScaleAuthProjectProvider(key, true, set.ClientId, set.Issuer, set.TeamId, set.KeyId, Callback(projectId, key))
-                : new TerraScaleAuthProjectProvider(key, false, null, null, null, null, Callback(projectId, key))).ToArray())));
+                : new TerraScaleAuthProjectProvider(key, false, null, null, null, null, Callback(projectId, key))).ToArray(), tenant.Configuration)));
     }
 
     private static string Callback(string projectId, string provider) => $"https://auth.terrascale.tech/ui/{projectId}/social/{provider}/callback";
@@ -84,6 +85,7 @@ sealed class TestAuthentication : ITsAuthProjects
             if (update.Methods is { Passcode: false, Password: false }) throw new AccountAccessException("ts-auth rejected these values. Check them and try again.", 422, "invalid_request");
             tenant.Methods = update.Methods ?? tenant.Methods;
             tenant.Branding = update.Branding ?? tenant.Branding;
+            tenant.Configuration = update.Configuration ?? tenant.Configuration;
             return true;
         });
         return GetSettingsAsync(session, projectId, cancellationToken);

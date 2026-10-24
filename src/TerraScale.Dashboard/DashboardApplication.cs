@@ -100,8 +100,8 @@ public static class DashboardApplication
             // form-action covers the redirects that follow forms: sign-out to ts-auth, checkout and portal to Stripe,
             // and an MCP consent's return to the client's registered redirect URI.
             string Policy() =>
-                $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; {styles}; " +
-                "img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self' https://auth.terrascale.tech https://checkout.stripe.com https://billing.stripe.com" +
+                $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; {(context.Items.ContainsKey("auth-branding") ? $"style-src 'self' 'nonce-{nonce}'" : styles)}; " +
+                $"img-src 'self' data:{(context.Items.ContainsKey("auth-branding") ? " https:" : "")}; font-src 'self'; connect-src 'self'; form-action 'self' https://auth.terrascale.tech https://checkout.stripe.com https://billing.stripe.com" +
                 (context.Items[Platform.Mcp.McpOAuth.FormActionKey] is string client ? " " + client : "") + "; base-uri 'none'; frame-ancestors 'none'";
             context.Response.OnStarting(() =>
             {

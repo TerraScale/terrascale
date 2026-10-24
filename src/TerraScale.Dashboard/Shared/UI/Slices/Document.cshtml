@@ -2,11 +2,11 @@
 @inject AssetUrls Assets
 @inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnvironment
 <!DOCTYPE html>
-<html lang="en" data-theme="dark" data-nonce="@Model.Nonce">
+<html lang="en" data-theme="@Model.Theme" data-nonce="@Model.Nonce">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="@(Model.Theme == "system" ? "light dark" : Model.Theme)" />
     <meta name="theme-color" content="#151515" />
     <title>@Model.Title · TerraScale</title>
     <link rel="icon" type="image/svg+xml" href="@Assets.Url("brand/logo-icon-blue.svg")" />
