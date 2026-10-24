@@ -40,7 +40,7 @@ function titleOf(localePrefix: string, link: string): string {
 
 const GROUPS = [
   { header: 'quickstart', items: ['/getting-started/', '/getting-started/javascript', '/getting-started/csharp', '/getting-started/go', '/getting-started/python'] },
-  { header: 'sdks', items: ['/guides/sdks', '/guides/authentication', '/guides/queries', '/guides/sql-http', '/guides/postgres-clients', '/guides/libsql-clients', '/guides/errors'] },
+  { header: 'sdks', items: ['/guides/sdks', '/guides/authentication', '/guides/end-user-authentication', '/guides/queries', '/guides/sql-http', '/guides/postgres-clients', '/guides/libsql-clients', '/guides/errors'] },
   { header: 'guides', items: ['/guides/dashboard', '/guides/mcp', '/guides/indexes', '/guides/schema-validation', '/guides/ttl', '/guides/vector-search', '/guides/transactions', '/guides/realtime', '/guides/backups-and-restore', '/guides/export', '/guides/branches', '/guides/import', '/guides/import-postgresql', '/guides/import-turso', '/guides/import-ndjson', ZERO_CONFIGURATION_ROUTE] },
   { header: 'concepts', items: ['/concepts/replication', '/concepts/sync', '/concepts/sql'] },
   { header: 'pricingLimits', items: ['/pricing/', '/limits', '/legal/sla', '/legal/data-deletion', '/changelog'] },
