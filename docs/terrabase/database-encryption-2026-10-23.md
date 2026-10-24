@@ -75,10 +75,10 @@ and that operational procedure require their own authorization.
 
 ## Format cutover and evidence
 
-The authorized batch 5 cutover reserves format 16 for PR #469 and uses
-`StorageFormat.Version` 17 for this branch's CI. PR #469 must merge first;
-afterward this branch must rebase and take the then-current main version
-plus one before queueing.
+PR #469 merged at format 16. The authorized batch 5 encryption cutover is
+rebased onto it and uses `StorageFormat.Version` 17 (main + 1). Fresh CI
+and another check of main's actual format are required before queueing;
+see [the access-rule rebase record](encryption-access-rebase-2026-10-24.md).
 The deployment owner wipes and re-bootstraps the serving data after merge; this PR does not perform
 that reset. Existing plaintext data cannot be opened by the new binary.
 There is no migration or compatibility shim.
