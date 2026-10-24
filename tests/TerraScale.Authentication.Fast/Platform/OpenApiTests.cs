@@ -132,7 +132,7 @@ public sealed partial class OpenApiTests
     [Test]
     public async Task Served_platform_operations_match_the_published_contract()
     {
-        // The platform contract and end-user token supplement must cover every served platform operation,
+        // The platform contract and its supplements must cover every served platform operation,
         // including its exact security alternatives, response codes, path, method and operationId.
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !File.Exists(Path.Combine(root.FullName, "TerraScale.slnx")))
@@ -146,7 +146,7 @@ public sealed partial class OpenApiTests
         var security = new Dictionary<(string Path, string Method, string Id), SortedSet<string>>();
         var operationIds = 0;
         var planned = new HashSet<(string Path, string Method, string Id)>();
-        foreach (var file in new[] { "platform-api.openapi.yaml", "scoped-end-user-tokens.openapi.yaml" })
+        foreach (var file in new[] { "platform-api.openapi.yaml", "scoped-end-user-tokens.openapi.yaml", "account-providers.openapi.yaml" })
         {
             string? path = null, method = null;
             SortedSet<string>? statuses = null;
