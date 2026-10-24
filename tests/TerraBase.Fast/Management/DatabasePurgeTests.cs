@@ -340,9 +340,10 @@ public sealed class DatabasePurgeTests
         {
             _s3.Configure(settings);
             settings["data-directory"] = _directory;
-            settings["backup-retention-days"] = "hobby=9,pro=12,enterprise=33";
         }, services =>
         {
+            ((BackupSettings)services.Single(service => service.ServiceType == typeof(BackupSettings)).ImplementationInstance!).RetentionDays =
+                new Dictionary<PlanTier, int> { [PlanTier.Hobby] = 9, [PlanTier.Starter] = 3, [PlanTier.Pro] = 12, [PlanTier.Team] = 14, [PlanTier.Enterprise] = 33 };
             _s3.Route(services);
             ManualBackupHosting.Configure(services);
             var convergence = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService) && descriptor.ImplementationType == typeof(CatalogConvergence));

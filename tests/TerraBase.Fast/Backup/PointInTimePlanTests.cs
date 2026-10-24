@@ -187,7 +187,7 @@ public sealed class PointInTimePlanTests
         }
 
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(route, new { pointInTime = time.GetUtcNow().AddTicks(1) }), HttpStatusCode.BadRequest, "invalid_request",
-            "pointInTime must lie between the restore window's earliest and latest times");
+            string.Create(CultureInfo.InvariantCulture, $"pointInTime must lie between the restore window's earliest and latest times: {earliest:O} to {latest:O}"));
 
         using var missing = await outsider.PostAsJsonAsync(route, new { });
         using var invalid = await outsider.PostAsJsonAsync(route, new { pointInTime = time.GetUtcNow().AddDays(1) });

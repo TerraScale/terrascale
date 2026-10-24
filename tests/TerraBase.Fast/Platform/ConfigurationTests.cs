@@ -99,30 +99,20 @@ public sealed class ConfigurationTests
     }
 
     [Test]
-    public async Task Backup_retention_defaults_to_one_seven_and_thirty_days_and_takes_plan_overrides()
+    public async Task Backup_retention_matches_plan_entitlements_and_refuses_process_overrides()
     {
         var s3 = new FakeS3();
         var values = new Dictionary<string, string>();
         s3.Configure(values);
         var defaults = TerraBaseOptions.FromValues(values).Backup!.RetentionDays;
-        values["backup-retention-days"] = "pro=14, enterprise=90";
-        var overridden = TerraBaseOptions.FromValues(values).Backup!.RetentionDays;
-        values["backup-retention-days"] = "free=1";
-        var unknownPlan = await Assert.That(() => TerraBaseOptions.FromValues(values)).Throws<TerraBaseConfigurationException>();
-        values["backup-retention-days"] = "hobby=0";
-        var zero = await Assert.That(() => TerraBaseOptions.FromValues(values)).Throws<TerraBaseConfigurationException>();
-        var withoutBackup = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["backup-retention-days"] = "hobby=2" }))
-            .Throws<TerraBaseConfigurationException>();
-
         await Assert.That(defaults[PlanTier.Hobby]).IsEqualTo(1);
+        await Assert.That(defaults[PlanTier.Starter]).IsEqualTo(3);
         await Assert.That(defaults[PlanTier.Pro]).IsEqualTo(7);
+        await Assert.That(defaults[PlanTier.Team]).IsEqualTo(14);
         await Assert.That(defaults[PlanTier.Enterprise]).IsEqualTo(30);
-        await Assert.That(overridden[PlanTier.Hobby]).IsEqualTo(1);
-        await Assert.That(overridden[PlanTier.Pro]).IsEqualTo(14);
-        await Assert.That(overridden[PlanTier.Enterprise]).IsEqualTo(90);
-        await Assert.That(unknownPlan!.Message).Contains("backup-retention-days");
-        await Assert.That(zero!.Message).Contains("backup-retention-days");
-        await Assert.That(withoutBackup!.Message).Contains("backup-endpoint");
+        values["backup-retention-days"] = "hobby=7,pro=7,enterprise=7";
+        var removed = await Assert.That(() => TerraBaseOptions.FromValues(values)).Throws<TerraBaseConfigurationException>();
+        await Assert.That(removed!.Message).Contains("unknown setting 'backup-retention-days'");
     }
 
     [Test]

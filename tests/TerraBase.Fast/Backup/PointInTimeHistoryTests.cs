@@ -406,10 +406,12 @@ public sealed class PointInTimeHistoryTests
         // The plan answers each time as the restore does.
         await host.RefusedAsync(s1.At.AddMilliseconds(500), cancellationToken);
         await host.PlanRefusedAsync(s1.At.AddMilliseconds(500), HttpStatusCode.Conflict, Code, Message, cancellationToken);
+        var outside = string.Create(CultureInfo.InvariantCulture,
+            $"pointInTime must lie between the restore window's earliest and latest times: {host.SnapshotAt:O} to {s1.At:O}");
         foreach (var at in new[] { host.Time.GetUtcNow().AddSeconds(1), host.Time.GetUtcNow().AddYears(-1) })
         {
-            await host.RefusedAsync(at, HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times", cancellationToken);
-            await host.PlanRefusedAsync(at, HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times", cancellationToken);
+            await host.RefusedAsync(at, HttpStatusCode.BadRequest, "invalid_request", outside, cancellationToken);
+            await host.PlanRefusedAsync(at, HttpStatusCode.BadRequest, "invalid_request", outside, cancellationToken);
         }
 
         // The daily snapshot ships; then the generation's first snapshot is deleted: s1's time is no longer held.

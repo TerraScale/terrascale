@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
@@ -320,10 +321,11 @@ public sealed class HistoryErasureBackupTests
         {
             S3.Configure(settings);
             settings["data-directory"] = Directory;
-            // SYSTEM uses the longest plan retention, so every plan must share this fixture's one-day window.
-            settings["backup-retention-days"] = string.Join(",", Enum.GetValues<PlanTier>().Select(plan => $"{plan.ToString().ToLowerInvariant()}=1"));
         }, services =>
         {
+            // SYSTEM uses the longest plan retention; shorten only this fixture's in-process backup policy.
+            ((BackupSettings)services.Single(service => service.ServiceType == typeof(BackupSettings)).ImplementationInstance!).RetentionDays =
+                Enum.GetValues<PlanTier>().ToDictionary(plan => plan, _ => 1);
             S3.Route(services);
             ManualBackupHosting.Configure(services);
             // Only the test runs erasure passes.

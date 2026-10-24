@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Globalization;
 using TerraBase.Tenancy;
 
@@ -12,7 +13,7 @@ namespace TerraBase.Configuration;
 public sealed class BackupSettings
 {
     /// <summary>Every backup setting.</summary>
-    internal static string[] Keys => [.. Required, "backup-retention-days", "backup-key-rotation-days", "cloudflare-api-token"];
+    internal static string[] Keys => [.. Required, "backup-key-rotation-days", "cloudflare-api-token"];
 
     // Required together; the rest are optional.
     private static readonly string[] Required =
@@ -56,12 +57,17 @@ public sealed class BackupSettings
     public int KeyRotationDays { get; init; } = 90;
 
     /// <summary>
-    /// Days each plan keeps backups (<c>backup-retention-days</c>, default <c>hobby=1,starter=3,pro=7,team=14,enterprise=30</c>): a database
-    /// restores to any time in that window. Plans move to ts-dashboard (TS-599); this stays the fallback.
+    /// Days each plan keeps backups: <c>hobby=1,starter=3,pro=7,team=14,enterprise=30</c>, matching the published entitlements.
+    /// Only integration fixtures may replace these values; process settings cannot change a plan's restore window.
     /// </summary>
-    public IReadOnlyDictionary<PlanTier, int> RetentionDays { get; init; } = DefaultRetentionDays;
-
-    private static readonly Dictionary<PlanTier, int> DefaultRetentionDays = new() { [PlanTier.Hobby] = 1, [PlanTier.Starter] = 3, [PlanTier.Pro] = 7, [PlanTier.Team] = 14, [PlanTier.Enterprise] = 30 };
+    public IReadOnlyDictionary<PlanTier, int> RetentionDays { get; internal set; } = new Dictionary<PlanTier, int>
+    {
+        [PlanTier.Hobby] = 1,
+        [PlanTier.Starter] = 3,
+        [PlanTier.Pro] = 7,
+        [PlanTier.Team] = 14,
+        [PlanTier.Enterprise] = 30,
+    }.ToFrozenDictionary();
 
     /// <summary>Names the bucket only: the credentials stay out of logs.</summary>
     public override string ToString() => $"backup to {Bucket}";
@@ -100,7 +106,6 @@ public sealed class BackupSettings
             MasterKey = ParseMasterKey(values["master-key"]),
             CloudflareApiToken = r2 ? Token(values, "cloudflare-api-token") : null,
             KeyRotationDays = values.TryGetValue("backup-key-rotation-days", out var rotation) ? ParseKeyRotation(rotation) : 90,
-            RetentionDays = values.TryGetValue("backup-retention-days", out var retention) ? ParseRetention(retention) : DefaultRetentionDays,
         };
     }
 
@@ -108,25 +113,6 @@ public sealed class BackupSettings
         int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var days) && days is >= 1 and <= 3650
             ? days
             : throw new TerraBaseConfigurationException("backup-key-rotation-days must be an integer from 1 to 3650");
-
-    // plan=days pairs, each 1 to 3650; plans not named keep their default.
-    private static Dictionary<PlanTier, int> ParseRetention(string value)
-    {
-        var days = new Dictionary<PlanTier, int>(DefaultRetentionDays);
-        foreach (var entry in value.Split(',', StringSplitOptions.TrimEntries))
-        {
-            var parts = entry.Split('=', 2);
-            PlanTier? plan = parts[0] switch { "hobby" => PlanTier.Hobby, "starter" => PlanTier.Starter, "pro" => PlanTier.Pro, "team" => PlanTier.Team, "enterprise" => PlanTier.Enterprise, _ => null };
-            if (parts.Length != 2 || plan is null || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var count) || count is < 1 or > 3650)
-            {
-                throw new TerraBaseConfigurationException("backup-retention-days must be comma-separated plan=days pairs (hobby, starter, pro, team, enterprise; 1 to 3650 days)");
-            }
-
-            days[plan.Value] = count;
-        }
-
-        return days;
-    }
 
     private static Uri Https(IReadOnlyDictionary<string, string> values, string key) =>
         Uri.TryCreate(values[key], UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps && uri.UserInfo.Length == 0
