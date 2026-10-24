@@ -10,7 +10,6 @@ using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
-using TerraBase.Tenancy;
 
 namespace TerraBase.Features.FileStorage;
 
@@ -20,6 +19,8 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
 {
     private static readonly Forbidden Denied = new("the bucket rules deny this operation", "access_denied");
     private static readonly NotFound Missing = new("the bucket or file does not exist");
+    private static readonly Action<ILogger, Exception?> CleanupIncomplete = LoggerMessage.Define(
+        LogLevel.Warning, new EventId(1, "FileCleanupIncomplete"), "File storage cleanup could not finish; it will retry");
     private static readonly Unavailable Busy = new("file storage is unavailable; retry");
     private string? _collectionAfter;
     private string? _fileAfter;
@@ -37,8 +38,14 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         SystemCatalog.PutAsync(transaction, Files(bucket), file.Id, file, TerraBaseJsonContext.Default.FileObject, token);
     private static bool Allowed(FileBucket bucket, FileObject file, bool write)
     {
-        if (Access.DatabaseName is not null) return false;
-        if (!Access.IsEndUser) return true;
+        if (Access.DatabaseName is not null)
+        {
+            return false;
+        }
+        if (!Access.IsEndUser)
+        {
+            return true;
+        }
         var policy = write ? bucket.Rules.Write : bucket.Rules.Read;
         return CollectionRuleAccess.CollectionWide(policy, Access)
             || policy?.Owner == true && bucket.Rules.Subject(JsonSerializer.SerializeToUtf8Bytes(file.Metadata, TerraBaseJsonContext.Default.JsonElement)) == Access.Actor;
@@ -46,17 +53,34 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
 
     public ValueTask<FileStorageResult> CreateBucketAsync(CreateFileBucketRequest request, CancellationToken cancellationToken)
     {
-        if (!Admin) return ValueTask.FromResult<FileStorageResult>(Denied);
+        if (!Admin)
+        {
+            return ValueTask.FromResult<FileStorageResult>(Denied);
+        }
         if (!DatabaseName.TryParse(request.Name, out _) || request.Rules is null)
+        {
             return ValueTask.FromResult<FileStorageResult>(new Validation("name must be a lowercase name of at most 63 characters; rules are required"));
-        if (request.Rules.Check() is { } invalid) return ValueTask.FromResult<FileStorageResult>(invalid);
+        }
+        if (request.Rules.Check() is { } invalid)
+        {
+            return ValueTask.FromResult<FileStorageResult>(invalid);
+        }
         return catalog.WriteAsync<FileStorageResult>(async transaction =>
         {
-            if (await ProjectClosure.IsClosedAsync(transaction, Access.ProjectId, cancellationToken).ConfigureAwait(false)) return Missing;
+            if (await ProjectClosure.IsClosedAsync(transaction, Access.ProjectId, cancellationToken).ConfigureAwait(false))
+            {
+                return Missing;
+            }
             // A bounded number of buckets also bounds usage scans and project cleanup.
             var page = await SystemCatalog.ListAsync(transaction, Buckets, null, 100, TerraBaseJsonContext.Default.FileBucket, b => b.Id, cancellationToken).ConfigureAwait(false);
-            if (page.Items.Count >= 100) return new Conflict("a project may have at most 100 buckets");
-            if (page.Items.Any(b => b.Name == request.Name)) return new Conflict("a bucket with that name already exists");
+            if (page.Items.Count >= 100)
+            {
+                return new Conflict("a project may have at most 100 buckets");
+            }
+            if (page.Items.Any(b => b.Name == request.Name))
+            {
+                return new Conflict("a bucket with that name already exists");
+            }
             var bucket = new FileBucket(EntityIds.New().ToString(), request.Name!, options.Region, request.Rules);
             await SystemCatalog.PutAsync(transaction, Buckets, bucket.Id, bucket, TerraBaseJsonContext.Default.FileBucket, cancellationToken).ConfigureAwait(false);
             return bucket;
@@ -72,14 +96,29 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
 
     public ValueTask<FileStorageResult> SetRulesAsync(string bucket, FileBucketRulesRequest request, CancellationToken cancellationToken)
     {
-        if (!Admin) return ValueTask.FromResult<FileStorageResult>(Denied);
-        if (request.Rules is null) return ValueTask.FromResult<FileStorageResult>(new Validation("rules are required"));
-        if (request.Rules.Check() is { } invalid) return ValueTask.FromResult<FileStorageResult>(invalid);
+        if (!Admin)
+        {
+            return ValueTask.FromResult<FileStorageResult>(Denied);
+        }
+        if (request.Rules is null)
+        {
+            return ValueTask.FromResult<FileStorageResult>(new Validation("rules are required"));
+        }
+        if (request.Rules.Check() is { } invalid)
+        {
+            return ValueTask.FromResult<FileStorageResult>(invalid);
+        }
         return catalog.WriteAsync<FileStorageResult>(async transaction =>
         {
-            if (await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false) is not { } saved) return Missing;
+            if (await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false) is not { } saved)
+            {
+                return Missing;
+            }
             // Changing the owner pointer would transfer existing identities; recreate an empty bucket instead.
-            if (saved.Rules.Owner != request.Rules.Owner) return new Conflict("the owner pointer is immutable");
+            if (saved.Rules.Owner != request.Rules.Owner)
+            {
+                return new Conflict("the owner pointer is immutable");
+            }
             saved = saved with { Rules = request.Rules };
             await SystemCatalog.PutAsync(transaction, Buckets, bucket, saved, TerraBaseJsonContext.Default.FileBucket, cancellationToken).ConfigureAwait(false);
             return saved;
@@ -89,9 +128,14 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
     public ValueTask<FileStorageResult> DeleteBucketAsync(string bucket, CancellationToken cancellationToken) =>
         !Admin ? ValueTask.FromResult<FileStorageResult>(Denied) : catalog.WriteAsync<FileStorageResult>(async transaction =>
         {
-            if (await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false) is null) return Missing;
+            if (await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false) is null)
+            {
+                return Missing;
+            }
             if (await SystemCatalog.AnyAsync(transaction, Files(bucket), cancellationToken).ConfigureAwait(false))
+            {
                 return new Conflict("delete the files and wait for upload cleanup before deleting the bucket");
+            }
             await transaction.DeleteAsync(Buckets, bucket, cancellationToken).ConfigureAwait(false);
             return new Done();
         }, static error => error, cancellationToken);
@@ -102,7 +146,9 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             || request.ContentType is not { Length: > 0 and <= 128 } || request.ContentType.Any(c => char.IsControl(c) || char.IsWhiteSpace(c))
             || request.Size is < 1 or > 100 * 1024 * 1024 || request.Metadata.ValueKind != JsonValueKind.Object
             || request.Metadata.GetRawText().Length > 16 * 1024 || !Checksum(request.Sha256))
+        {
             return new Validation("provide name, contentType, size (1–104857600), base64 SHA-256 and object metadata (at most 16 KiB)");
+        }
         var file = new FileObject(EntityIds.New().ToString(), request.Name, request.ContentType, request.Size, request.Sha256!, request.Metadata.Clone(), "pending", time.GetUtcNow().AddMinutes(5));
         // Check permission before the commercial scan and again in the committing transaction.
         var authorized = await catalog.ReadAsync<FileStorageResult>(async transaction =>
@@ -110,21 +156,39 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             var saved = await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false);
             return saved is null ? Missing : CanCreate(saved, file) ? saved : Denied;
         }, static error => error, cancellationToken).ConfigureAwait(false);
-        if (authorized is not FileBucket definition) return authorized;
+        if (authorized is not FileBucket definition)
+        {
+            return authorized;
+        }
         FileSignedUrl signed;
         try { signed = await objects.UploadAsync(definition.Region, Key(bucket, file.Id), file, cancellationToken).ConfigureAwait(false); }
         catch (Exception error) when (StoreFailure(error)) { return Busy; }
         var admission = await quota.EnterOrganizationsAsync([Access.OrganizationId], cancellationToken).ConfigureAwait(false);
-        if (admission is Unavailable unavailable) return unavailable;
+        if (admission is Unavailable unavailable)
+        {
+            return unavailable;
+        }
         using var lease = admission switch { StorageQuotaGroupLease accepted => accepted, Unavailable => throw new InvalidOperationException() };
         var checkedQuota = await lease.CheckAsync(Access.OrganizationId, file.Size, cancellationToken).ConfigureAwait(false);
-        if (checkedQuota is QuotaExceeded exceeded) return exceeded;
-        if (checkedQuota is Unavailable refused) return refused;
+        if (checkedQuota is QuotaExceeded exceeded)
+        {
+            return exceeded;
+        }
+        if (checkedQuota is Unavailable refused)
+        {
+            return refused;
+        }
         var savedResult = await catalog.WriteAsync<FileStorageResult>(async transaction =>
         {
             var current = await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false);
-            if (current is null || await ProjectClosure.IsClosedAsync(transaction, Access.ProjectId, cancellationToken).ConfigureAwait(false)) return Missing;
-            if (!CanCreate(current, file)) return Denied;
+            if (current is null || await ProjectClosure.IsClosedAsync(transaction, Access.ProjectId, cancellationToken).ConfigureAwait(false))
+            {
+                return Missing;
+            }
+            if (!CanCreate(current, file))
+            {
+                return Denied;
+            }
             await SaveAsync(transaction, bucket, file, cancellationToken).ConfigureAwait(false);
             return signed;
         }, static error => error, cancellationToken).ConfigureAwait(false);
@@ -138,24 +202,47 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
     public async ValueTask<FileStorageResult> CompleteUploadAsync(string bucket, string file, CancellationToken cancellationToken)
     {
         var found = await ReadFileAsync(bucket, file, write: true, cancellationToken).ConfigureAwait(false);
-        if (found is not FileObject saved) return found;
-        if (saved.Status == "ready") return saved;
-        if (saved.UploadExpiresAt <= time.GetUtcNow()) return new Conflict("the upload reservation expired");
+        if (found is not FileObject saved)
+        {
+            return found;
+        }
+        if (saved.Status == "ready")
+        {
+            return saved;
+        }
+        if (saved.UploadExpiresAt <= time.GetUtcNow())
+        {
+            return new Conflict("the upload reservation expired");
+        }
         var definition = await catalog.ReadAsync<FileBucket?>(transaction => BucketAsync(transaction, bucket, cancellationToken), static _ => null, cancellationToken).ConfigureAwait(false);
-        if (definition is null) return Missing;
+        if (definition is null)
+        {
+            return Missing;
+        }
         try
         {
             if (!await objects.VerifyAsync(definition.Region, Key(bucket, file), saved, cancellationToken).ConfigureAwait(false))
+            {
                 return new Conflict("the uploaded file does not match the reserved size and checksum");
+            }
         }
         catch (Exception error) when (StoreFailure(error)) { return Busy; }
         return await catalog.WriteAsync<FileStorageResult>(async transaction =>
         {
             var currentBucket = await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false);
             var current = await FileAsync(transaction, bucket, file, cancellationToken).ConfigureAwait(false);
-            if (currentBucket is null || current is null || current.Status == "deleted") return Missing;
-            if (!Allowed(currentBucket, current, write: true)) return Denied;
-            if (current.Status == "pending" && current.UploadExpiresAt <= time.GetUtcNow()) return new Conflict("the upload reservation expired");
+            if (currentBucket is null || current is null || current.Status == "deleted")
+            {
+                return Missing;
+            }
+            if (!Allowed(currentBucket, current, write: true))
+            {
+                return Denied;
+            }
+            if (current.Status == "pending" && current.UploadExpiresAt <= time.GetUtcNow())
+            {
+                return new Conflict("the upload reservation expired");
+            }
             var ready = current with { Status = "ready" };
             await SaveAsync(transaction, bucket, ready, cancellationToken).ConfigureAwait(false);
             return ready;
@@ -165,8 +252,14 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
     public ValueTask<FileStorageResult> ListFilesAsync(string bucket, string? after, CancellationToken cancellationToken) =>
         catalog.ReadAsync<FileStorageResult>(async transaction =>
         {
-            if (await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false) is not { } definition) return Missing;
-            if (Access.DatabaseName is not null || Access.IsEndUser && !CollectionRuleAccess.Granted(definition.Rules, Access, write: false)) return Denied;
+            if (await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false) is not { } definition)
+            {
+                return Missing;
+            }
+            if (Access.DatabaseName is not null || Access.IsEndUser && !CollectionRuleAccess.Granted(definition.Rules, Access, write: false))
+            {
+                return Denied;
+            }
             DocumentFilter filter = new CompareFilter(new DocumentPath(["status"]), Comparison.Equal, new ScalarValue(ScalarKind.Text, "ready"));
             if (Access.IsEndUser && !CollectionRuleAccess.CollectionWide(definition.Rules.Read, Access))
             {
@@ -182,17 +275,29 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         catalog.ReadAsync<FileStorageResult>(async transaction =>
         {
             if (await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false) is not { } definition
-                || await FileAsync(transaction, bucket, file, cancellationToken).ConfigureAwait(false) is not { } saved || saved.Status == "deleted") return Missing;
+                || await FileAsync(transaction, bucket, file, cancellationToken).ConfigureAwait(false) is not { } saved || saved.Status == "deleted")
+            {
+                return Missing;
+            }
             return Allowed(definition, saved, write) ? saved : Denied;
         }, static error => error, cancellationToken);
 
     public async ValueTask<FileStorageResult> DownloadAsync(string bucket, string file, CancellationToken cancellationToken)
     {
         var found = await ReadFileAsync(bucket, file, write: false, cancellationToken).ConfigureAwait(false);
-        if (found is not FileObject saved) return found;
-        if (saved.Status != "ready") return new Conflict("the upload is not complete");
+        if (found is not FileObject saved)
+        {
+            return found;
+        }
+        if (saved.Status != "ready")
+        {
+            return new Conflict("the upload is not complete");
+        }
         var definition = await catalog.ReadAsync<FileBucket?>(transaction => BucketAsync(transaction, bucket, cancellationToken), static _ => null, cancellationToken).ConfigureAwait(false);
-        if (definition is null) return Missing;
+        if (definition is null)
+        {
+            return Missing;
+        }
         try { return await objects.DownloadAsync(definition.Region, Key(bucket, file), saved, cancellationToken).ConfigureAwait(false); }
         catch (Exception error) when (StoreFailure(error)) { return Busy; }
     }
@@ -201,11 +306,23 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         catalog.WriteAsync<FileStorageResult>(async transaction =>
         {
             if (await BucketAsync(transaction, bucket, cancellationToken).ConfigureAwait(false) is not { } definition
-                || await FileAsync(transaction, bucket, file, cancellationToken).ConfigureAwait(false) is not { } saved) return Missing;
-            if (!Allowed(definition, saved, write: true)) return Denied;
-            if (saved.Status == "deleted") return new Done();
+                || await FileAsync(transaction, bucket, file, cancellationToken).ConfigureAwait(false) is not { } saved)
+            {
+                return Missing;
+            }
+            if (!Allowed(definition, saved, write: true))
+            {
+                return Denied;
+            }
+            if (saved.Status == "deleted")
+            {
+                return new Done();
+            }
             var after = time.GetUtcNow().AddMinutes(6);
-            if (saved.UploadExpiresAt > after) after = saved.UploadExpiresAt.AddMinutes(1);
+            if (saved.UploadExpiresAt > after)
+            {
+                after = saved.UploadExpiresAt.AddMinutes(1);
+            }
             await SaveAsync(transaction, bucket, saved with { Status = "deleted", DeleteAfter = after }, cancellationToken).ConfigureAwait(false);
             return new Done();
         }, static error => error, cancellationToken);
@@ -223,14 +340,17 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), time);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
-            if (!gate.IsOpen) continue;
+            if (!gate.IsOpen)
+            {
+                continue;
+            }
             try { await SweepAsync(stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (OperationCanceledException) { /* One bounded cleanup pass expired; retry on the next tick. */ }
             catch (Exception error) when (StoreFailure(error) || error is QueryCapacityException)
             {
                 // Object-store errors can contain signed URLs. Only a fixed outcome is logged.
-                logger.LogWarning("File storage cleanup could not finish; it will retry");
+                CleanupIncomplete(logger, null);
             }
         }
     }
@@ -244,10 +364,13 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         {
             var database = await engine.OpenSystemDatabaseAsync(token).ConfigureAwait(false);
             await using var read = await database.BeginTransactionAsync(write: false, token).ConfigureAwait(false);
-            var page = await read.ListCollectionsAsync(_collectionAfter, 50, token).ConfigureAwait(false);
-            var found = page.Collections.FirstOrDefault(c => c.Name.StartsWith(FileStorageUsage.Prefix, StringComparison.Ordinal));
-            _collectionAfter = found?.Name ?? (page.HasMore ? page.Collections[^1].Name : null);
-            if (found is null) return;
+            var (collections, hasMore) = await read.ListCollectionsAsync(_collectionAfter, 50, token).ConfigureAwait(false);
+            var found = collections.FirstOrDefault(c => c.Name.StartsWith(FileStorageUsage.Prefix, StringComparison.Ordinal));
+            _collectionAfter = found?.Name ?? (hasMore ? collections[^1].Name : null);
+            if (found is null)
+            {
+                return;
+            }
             _sweepCollection = found.Name;
             _fileAfter = null;
         }
@@ -255,26 +378,40 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         var parts = collection.Split('/');
         if (parts.Length != 4) { _sweepCollection = null; return; }
         var pageFiles = await catalog.ReadAsync<ManagementPage<FileObject>?>(
-            tx => SystemCatalog.ListAsync(tx, collection, _fileAfter, 50, TerraBaseJsonContext.Default.FileObject, f => f.Id, token), static _ => null, token).ConfigureAwait(false);
-        if (pageFiles is null) return;
+            async tx => await SystemCatalog.ListAsync(tx, collection, _fileAfter, 50, TerraBaseJsonContext.Default.FileObject, f => f.Id, token).ConfigureAwait(false), static _ => null, token).ConfigureAwait(false);
+        if (pageFiles is null)
+        {
+            return;
+        }
         var definition = await catalog.ReadAsync<FileBucket?>(
             tx => SystemCatalog.GetAsync(tx, FileStorageUsage.Buckets(parts[2]), parts[3], TerraBaseJsonContext.Default.FileBucket, token), static _ => null, token).ConfigureAwait(false);
-        if (definition is null) return; // Project deletion is fenced while buckets exist.
+        if (definition is null)
+        {
+            return;
+        } // Project deletion is fenced while buckets exist.
         foreach (var file in pageFiles.Items)
         {
             var now = time.GetUtcNow();
             if (file.Status == "ready" || file.Status == "pending" && file.UploadExpiresAt.AddMinutes(1) > now
-                || file.Status == "deleted" && file.DeleteAfter > now) continue;
+                || file.Status == "deleted" && file.DeleteAfter > now)
+            {
+                continue;
+            }
             await objects.DeleteAsync(definition.Region, FileStorageUsage.Key(parts[1], parts[2], parts[3], file.Id), token).ConfigureAwait(false);
             await catalog.WriteAsync<bool>(async tx =>
             {
                 var current = await SystemCatalog.GetAsync(tx, collection, file.Id, TerraBaseJsonContext.Default.FileObject, token).ConfigureAwait(false);
                 if (current is not null && current.Status == file.Status)
+                {
                     await tx.DeleteAsync(collection, file.Id, token).ConfigureAwait(false);
+                }
                 return true;
             }, static _ => false, token).ConfigureAwait(false);
         }
         _fileAfter = pageFiles.Next;
-        if (_fileAfter is null) _sweepCollection = null;
+        if (_fileAfter is null)
+        {
+            _sweepCollection = null;
+        }
     }
 }
