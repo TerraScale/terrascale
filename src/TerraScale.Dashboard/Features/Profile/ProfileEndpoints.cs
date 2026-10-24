@@ -1,5 +1,6 @@
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Profile;
@@ -49,7 +50,7 @@ public static class ProfileEndpoints
         endpoints.MapPost("/api/v1/dashboard/profile/delete", AccountDeletion.DeleteAsync);
         endpoints.MapGet("/account-deletion", AccountDeletion.ProgressAsync);
         endpoints.MapPost("/api/v1/dashboard/profile/delete/continue", (HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform,
-            TerraScale.Dashboard.Platform.Persistence.IDashboardState state, AccessTokens tokens, IDashboardIdentity identity) =>
+            IDashboardState state, AccessTokens tokens, IDashboardIdentity identity) =>
             AccountDeletion.ContinueAsync(http, sessions, platform, state, tokens, identity));
         return endpoints;
     }
