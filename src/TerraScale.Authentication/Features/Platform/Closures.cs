@@ -333,8 +333,15 @@ public sealed class ClosureWorker(Closures closures, PlatformDirectory directory
                 {
                     await this.RunOnceAsync(stoppingToken).ConfigureAwait(false);
                 }
-                catch (Exception) when (!stoppingToken.IsCancellationRequested)
+                catch (Exception error) when (error is not OutOfMemoryException)
                 {
+                    // Cancellation may arrive after the SDK selected a storage error. Pending intents stay durable;
+                    // that late failure must not fault the worker during host shutdown.
+                    if (stoppingToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
                     try
                     {
                         logger.ZLogWarning($"The closure retry pass failed; retrying at the next interval");
