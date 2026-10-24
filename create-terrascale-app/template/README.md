@@ -21,7 +21,7 @@ The app creates the `posts` collection on first use.
 ## How it works
 
 - `terrascale.ts` runs on the server only. It exchanges the API key for a
-  15-minute access token with the OAuth 2.0 client credentials grant, renews it
+  60-second access token with the OAuth 2.0 client credentials grant, renews it
   before expiry, and returns the `posts` collection from
   `createTerraBaseV1Client`.
 - `app/page.tsx` reads with `collection.query()` and writes with

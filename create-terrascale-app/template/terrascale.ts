@@ -27,7 +27,9 @@ async function accessToken(): Promise<string> {
   if (!response.ok || typeof body.access_token !== "string" || typeof body.expires_in !== "number") {
     throw new Error(`API key exchange failed (${response.status}). Check TERRASCALE_API_KEY.`);
   }
-  cached = { token: body.access_token, renewAt: Date.now() + Math.max(0, body.expires_in - 60) * 1000 };
+  // Renew 60 s before expiry, or halfway through a shorter lifetime (API key tokens last 60 s).
+  const renewIn = body.expires_in - Math.min(60, body.expires_in / 2);
+  cached = { token: body.access_token, renewAt: Date.now() + Math.max(0, renewIn) * 1000 };
   return cached.token;
 }
 

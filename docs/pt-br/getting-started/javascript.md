@@ -27,7 +27,7 @@ The package is available on [public npm registry](https://registry.npmjs.org/@te
 
 ## 2. Supply connection details
 
-Exchange your dashboard API key for a 15-minute access token, then set the project ID (dashboard **Organization** page, **Current project**), the database name and a collection name. The example creates the collection when it does not exist yet. It reads environment variables; it does not load an `.env` file.
+Exchange your dashboard API key for a 60-second access token (`expires_in: 60`), then set the project ID (dashboard **Organization** page, **Current project**), the database name and a collection name. The example creates the collection when it does not exist yet. It reads environment variables; it does not load an `.env` file.
 
 ```bash
 read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY  # paste the key, then press Enter

@@ -28,7 +28,7 @@ The project uses a package reference, with no SDK source dependency. A legacy `N
 
 ## 2. Supply connection details
 
-Create a database and an API key in the dashboard as described in [Getting started](/hi/getting-started/#create-an-account-a-database-and-an-api-key). Exchange the key for a 15-minute access token, then set the project ID (dashboard **Organization** page, **Current project**), the database name and a collection name. The app creates the collection when it does not exist yet. It reads environment variables; it does not load dotenv files.
+Create a database and an API key in the dashboard as described in [Getting started](/hi/getting-started/#create-an-account-a-database-and-an-api-key). Exchange the key for a 60-second access token (`expires_in: 60`), then set the project ID (dashboard **Organization** page, **Current project**), the database name and a collection name. The app creates the collection when it does not exist yet. It reads environment variables; it does not load dotenv files.
 
 ```bash
 read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY  # paste the key, then press Enter
