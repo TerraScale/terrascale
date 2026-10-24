@@ -1,5 +1,7 @@
 name: CI
 
+# Measure the current Docker baseline with all areas selected by this shared workflow.
+
 # One required check: "test". It passes when every Fast area job that ran passed.
 # - changes: which areas (libs, auth, terrabase) the event touched; libs and shared files touch every area. Pull
 #   requests compare with their base, merge-group checks with the queue base, pushes to main with the previous main.
