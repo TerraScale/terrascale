@@ -522,10 +522,10 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
         }
     }
 
-    // One retention pass over a database. Retention also runs without acks: a silent (24 h) or far-behind (1 GiB) peer stops
-    // holding rows even when no other peer acknowledges anything, and no ack holds a row past 24 h after it committed (a peer
-    // still heard from then refills); and acks rise over joined rows (Tail.cs), whose ranges are
-    // remembered as quiet.
+    // One retention pass over a database. Retention also runs without acks: a silent (24 h) or far-behind (2^20 change ids or
+    // 1 GiB) peer stops holding rows even when no other peer acknowledges anything, and no ack holds a row past 24 h after it
+    // committed (a peer still heard from then refills); and acks rise over joined rows (Tail.cs), whose ranges are remembered
+    // as quiet.
     internal async Task TrimAsync(TursoDatabaseStore store, CancellationToken cancellationToken)
     {
         long? floor;

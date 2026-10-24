@@ -328,7 +328,8 @@ internal sealed partial class TursoStorageTransaction
     /// hold no group of <paramref name="self"/> (joined remote writes and repairs, which are never shipped, so a peer has
     /// nothing there to acknowledge: a replica that only receives would otherwise keep every joined row), when every row
     /// past it is still here (after a cut the peer refills instead), over at most <see cref="QuietScanRows"/> rows a pass, then
-    /// a peer of <paramref name="farBehind"/> (<see cref="FarBehindAsync"/>: its unacknowledged CDC rows pass 1 GiB) stops
+    /// a peer more than <see cref="MaxBehindRows"/> change ids behind, or of <paramref name="farBehind"/>
+    /// (<see cref="FarBehindAsync"/>: its unacknowledged CDC rows pass 1 GiB), stops
     /// holding them (its <c>seen</c> goes to 0 until it is heard from again, and it refills when it returns), then what
     /// <see cref="Retention"/> allows is deleted. Returns the CDC rows left, and the
     /// smallest acknowledged id of a peer still holding rows, each raise as the range it proved to hold no local group, and
@@ -390,9 +391,10 @@ internal sealed partial class TursoStorageTransaction
                 }
             }
 
-            foreach (var (node, acked, _) in peers.Where(peer => farBehind.Contains(peer.Node) && newest - peer.Acked > FarBehindRows))
+            foreach (var (node, acked, _) in peers.Where(peer => newest - peer.Acked > MaxBehindRows
+                || farBehind.Contains(peer.Node) && newest - peer.Acked > FarBehindRows))
             {
-                // Still as far behind as it was measured (FarBehindAsync), unless an ack moved it meanwhile.
+                // Still as far behind as it was measured (FarBehindAsync) or counted, unless an ack moved it meanwhile.
                 var evict = Command("UPDATE _tb_peers SET seen = 0 WHERE node = $node AND (acked = $acked OR incarnation <> $incarnation);");
                 evict.Parameters.AddWithValue("$node", node);
                 evict.Parameters.AddWithValue("$acked", acked);
@@ -416,6 +418,11 @@ internal sealed partial class TursoStorageTransaction
     // A peer this far behind in rows has its backlog's bytes measured; past FarBehindBytes it stops holding rows.
     private const long FarBehindRows = 65_536;
     private const long FarBehindBytes = 1L << 30;
+
+    // Change ids a peer may lag behind the newest before it stops holding rows, whatever their bytes: small rows (SYSTEM's
+    // joined catalog writes) stayed under FarBehindBytes while the log reached 1.3 GB and the writer stalled (TS-982).
+    // Counted from ids, so it costs nothing under the writer; an ack of another incarnation counts as 0.
+    private const long MaxBehindRows = 1L << 20;
 
     // Rows one retention pass reads past an ack looking for a local group: a log of joined rows (SYSTEM receives every
     // region's catalog writes) is walked over several passes instead of in one, under the writer (TS-982).
