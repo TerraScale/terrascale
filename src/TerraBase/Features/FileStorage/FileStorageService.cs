@@ -83,6 +83,9 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             }
             var bucket = new FileBucket(EntityIds.New().ToString(), request.Name!, options.Region, request.Rules);
             await SystemCatalog.PutAsync(transaction, Buckets, bucket.Id, bucket, TerraBaseJsonContext.Default.FileBucket, cancellationToken).ConfigureAwait(false);
+            // System document writes do not implicitly register collections. Persist their identity so
+            // usage accounting and cleanup discover the same reservation collection on every replica.
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo(Files(bucket.Id), time.GetUtcNow().ToUnixTimeMilliseconds()), cancellationToken).ConfigureAwait(false);
             return bucket;
         }, static error => error, cancellationToken);
     }
@@ -136,6 +139,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             {
                 return new Conflict("delete the files and wait for upload cleanup before deleting the bucket");
             }
+            _ = await transaction.DropCollectionAsync(Files(bucket), cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(Buckets, bucket, cancellationToken).ConfigureAwait(false);
             return new Done();
         }, static error => error, cancellationToken);
@@ -387,8 +391,10 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
             tx => SystemCatalog.GetAsync(tx, FileStorageUsage.Buckets(parts[2]), parts[3], TerraBaseJsonContext.Default.FileBucket, token), static _ => null, token).ConfigureAwait(false);
         if (definition is null)
         {
+            // A concurrently deleted empty bucket must not pin subsequent cleanup passes.
+            _sweepCollection = null;
             return;
-        } // Project deletion is fenced while buckets exist.
+        }
         foreach (var file in pageFiles.Items)
         {
             var now = time.GetUtcNow();
