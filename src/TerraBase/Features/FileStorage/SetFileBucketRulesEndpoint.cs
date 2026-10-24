@@ -30,5 +30,5 @@ public sealed class SetFileBucketRulesEndpoint(IFileStorage files) : Endpoint<Fi
 
     /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(FileBucketRulesRequest request, CancellationToken cancellationToken) =>
-        FileStorageRoute.RunAsync(HttpContext, () => files.SetRulesAsync(FileStorageRoute.Bucket(HttpContext), request, cancellationToken), 200);
+        FileStorageRoute.RunAsync(HttpContext, () => files.SetRulesAsync(FileStorageRoute.BucketId(HttpContext), request, cancellationToken), 200);
 }

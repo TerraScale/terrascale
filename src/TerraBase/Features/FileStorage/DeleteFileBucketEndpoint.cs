@@ -29,5 +29,5 @@ public sealed class DeleteFileBucketEndpoint(IFileStorage files) : EndpointWitho
 
     /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        FileStorageRoute.RunAsync(HttpContext, () => files.DeleteBucketAsync(FileStorageRoute.Bucket(HttpContext), cancellationToken), 204);
+        FileStorageRoute.RunAsync(HttpContext, () => files.DeleteBucketAsync(FileStorageRoute.BucketId(HttpContext), cancellationToken), 204);
 }

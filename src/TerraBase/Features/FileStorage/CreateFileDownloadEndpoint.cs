@@ -29,5 +29,5 @@ public sealed class CreateFileDownloadEndpoint(IFileStorage files) : EndpointWit
 
     /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        FileStorageRoute.RunAsync(HttpContext, () => files.DownloadAsync(FileStorageRoute.Bucket(HttpContext), FileStorageRoute.File(HttpContext), cancellationToken), 200);
+        FileStorageRoute.RunAsync(HttpContext, () => files.DownloadAsync(FileStorageRoute.BucketId(HttpContext), FileStorageRoute.FileId(HttpContext), cancellationToken), 200);
 }
