@@ -55,12 +55,19 @@ public sealed class FileStorageTests
         var backups = new FakeS3();
         await using var api = await DocumentApi.StartAsync(backups.Configure, backups.Route, cancellationToken: token);
         await Assert.That((await api.SendAsync(HttpMethod.Get, api.Documents, cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.OK);
+        using var owner = api.Management.As(api.Tenant.User);
+        await api.Management.VerifyProjectBindingAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, owner);
+        using var project = api.Management.WithToken(api.Management.Issuer.Mint(api.Tenant.User, descriptor =>
+        {
+            descriptor.Claims["project_id"] = api.Tenant.ProjectId;
+            descriptor.Claims["scope"] = "documents:read documents:write";
+        }));
         var buckets = api.Project + "/buckets";
-        var created = await Send(api.Client, HttpMethod.Post, buckets,
+        var created = await Send(project, HttpMethod.Post, buckets,
             new { name = "files", rules = new CollectionAccessRules(null, new(false, true, []), new(false, true, [])) });
         await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
         var bucket = buckets + "/" + created.Json.GetProperty("id").GetString();
-        var upload = await Send(api.Client, HttpMethod.Post, bucket + "/files/upload",
+        var upload = await Send(project, HttpMethod.Post, bucket + "/files/upload",
             new { name = "one", contentType = "text/plain", size = 1, sha256 = Convert.ToBase64String(new byte[32]), metadata = new { } });
         await Assert.That(upload.Status).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         var used = await api.Server.Services.GetRequiredService<IFileStorageUsage>().BytesAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, token);
@@ -91,7 +98,6 @@ public sealed class FileStorageTests
             token.Claims["project_id"] = api.Database.Project;
             token.Claims["instance_id"] = api.Database.Project;
             token.Claims["roles"] = Array.Empty<string>();
-            token.Claims["scope"] = "documents:read documents:write";
         }));
         client.DefaultRequestHeaders.Add("X-Test-Actor", actor);
         return client;

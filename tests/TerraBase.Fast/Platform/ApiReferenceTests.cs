@@ -14,6 +14,8 @@ public sealed class ApiReferenceTests
     // an admin-listener operation appearing here is a leak.
     private const string Operations = """
         DELETE /v1/projects/{project}/backup-destination TsAuth(databases:write) deleteBackupDestination Backups
+        DELETE /v1/projects/{project}/buckets/{bucket} TsAuth(documents:write) deleteFileBucket File storage
+        DELETE /v1/projects/{project}/buckets/{bucket}/files/{file} TsAuth(documents:write) deleteBucketFile File storage
         DELETE /v1/projects/{project}/databases/{database} TsAuth(databases:write) deleteDatabase Databases
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection} TsAuth(documents:write) dropCollection Collections
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) deleteDocument Documents
@@ -33,6 +35,8 @@ public sealed class ApiReferenceTests
         GET /v1/platform/databases/{database}/collections/{collection}/documents/by-key TsAuth(platform_role=admin) getPlatformDocument Platform
         GET /v1/projects/{project}/analytics TsAuth(databases:read) getProjectAnalytics Analytics
         GET /v1/projects/{project}/backup-destination TsAuth(databases:read) getBackupDestination Backups
+        GET /v1/projects/{project}/buckets TsAuth(documents:read) listFileBuckets File storage
+        GET /v1/projects/{project}/buckets/{bucket}/files TsAuth(documents:read) listBucketFiles File storage
         GET /v1/projects/{project}/databases TsAuth(databases:read) listDatabases Databases
         GET /v1/projects/{project}/databases/{database} TsAuth(databases:read) getDatabase Databases
         GET /v1/projects/{project}/databases/{database}/analytics TsAuth(databases:read) getDatabaseAnalytics Analytics
@@ -75,6 +79,10 @@ public sealed class ApiReferenceTests
         PATCH /v1/projects/{project}/databases/{database} TsAuth(databases:write) updateDatabase Databases
         PATCH /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) patchDocument Documents
         PATCH /v1/projects/{project}/databases/{database}/import TsAuth(databases:write,documents:write) updateImport Imports
+        POST /v1/projects/{project}/buckets TsAuth(documents:write) createFileBucket File storage
+        POST /v1/projects/{project}/buckets/{bucket}/files/upload TsAuth(documents:write) createFileUpload File storage
+        POST /v1/projects/{project}/buckets/{bucket}/files/{file}/complete TsAuth(documents:write) completeFileUpload File storage
+        POST /v1/projects/{project}/buckets/{bucket}/files/{file}/download TsAuth(documents:read) createFileDownload File storage
         POST /v1/projects/{project}/databases TsAuth(databases:write) createDatabase Databases
         POST /v1/projects/{project}/databases/{database}/backups TsAuth(databases:write) createBackup Backups
         POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore TsAuth(databases:write) restoreBackup Backups
@@ -101,6 +109,7 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/transactions TsAuth(documents:write) runTransaction Transactions
         POST /v1/projects/{project}/saved-queries TsAuth(databases:write) createSavedQuery Queries
         PUT /v1/projects/{project}/backup-destination TsAuth(databases:write) setBackupDestination Backups
+        PUT /v1/projects/{project}/buckets/{bucket}/rules TsAuth(documents:write) setFileBucketRules File storage
         PUT /v1/projects/{project}/databases/{database}/auto-index/{collection} TsAuth(databases:write) setAutoIndexPolicy Indexes
         PUT /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:write) setBackupPolicy Backups
         PUT /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) putDocument Documents
