@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using Google.Protobuf;
 using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -24,6 +25,9 @@ namespace TerraBase.Features.Replication;
 /// and resumes from its last ack. A protocol 2 sender keeps up to <see cref="ReplicationProtocol.Window"/> batches of a database
 /// in flight, chained by <c>Batch.after</c>: each applies only after the one it follows applied, so an ack still covers every
 /// batch before it, and after a refusal the database's batches are refused until one follows the last applied batch again.
+/// The batch whose turn comes applies the ones queued behind it in the same durable transaction, up to one batch's groups and
+/// bytes and one transaction's deltas, and each still gets its own ack, in order, once that transaction and its stable read
+/// succeeded; a refusal of the transaction refuses them all.
 /// </summary>
 internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 {
@@ -156,18 +160,22 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         var refills = new Dictionary<(TenantContext Database, Ulid Incarnation), (Refill Frame, Task<int?> Done)>();
         HashSet<TenantContext> cut = [];
         // Per database, its newest batch or frontier in progress; the next one of the database runs after it.
-        var applying = new Dictionary<TenantContext, (Task<AckFrame?> Done, ApplyProgress? Progress)>();
+        var applying = new Dictionary<TenantContext, (Task<AckFrame?> Done, ApplyProgress? Progress, Queued? Batch)>();
         // Every batch in progress with its work, reported on heartbeats: a pipelined database has several, applied in turn.
         var working = new List<(Task<AckFrame?> Done, ApplyProgress Progress, V1.Database Wire, ulong ChangeId)>();
         // Batches and frontiers in arrival order. A database's frames run one after another, so they also complete in this order.
         var answers = new List<(TenantContext Database, Ulid Incarnation, Task<AckFrame?> Done, long Received)>();
         // A client database's batch or refill also follows the catalog's frame in progress: the sender lists the system
         // database first, and a database it registers is refused until that registration commits.
+        Task Catalog(TenantContext database)
+        {
+            return database != ChangeGroups.System && applying.TryGetValue(ChangeGroups.System, out var system) ? system.Done : Task.CompletedTask;
+        }
+
         Task After(TenantContext database)
         {
             Task own = applying.TryGetValue(database, out var pending) ? pending.Done : Task.CompletedTask;
-            Task catalog = database != ChangeGroups.System && applying.TryGetValue(ChangeGroups.System, out var system)
-                ? system.Done : Task.CompletedTask;
+            var catalog = Catalog(database);
             return own.IsCompletedSuccessfully ? catalog
                 : catalog.IsCompletedSuccessfully ? own
                 : Task.WhenAll(own, catalog);
@@ -366,7 +374,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     }
 
                     var recorded = FrontierAsync(at, origin, frontier, stream.Token);
-                    applying[at] = (recorded, null);
+                    applying[at] = (recorded, null, null);
                     answers.Add((at, default, recorded, _timings.Now));
                     continue;
                 }
@@ -424,8 +432,15 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 var previous = pipelined ? (incarnation, batch.After) : last.GetValueOrDefault(database);
                 var predecessor = pipelined && busy && pending.Progress is not null ? pending.Done : null;
                 var progress = new ApplyProgress();
-                var joined = ApplyAsync(After(database), predecessor, received, database, incarnation, previous, origin, batch, region, progress, stream.Token);
-                applying[database] = (joined, progress);
+                var queued = new Queued(batch, incarnation, received, _memory.TryReserve(MemoryLane.Replication, BatchBytes(batch), tenant: null), Catalog(database));
+                var joined = ApplyAsync(After(database), predecessor, queued, database, previous, origin, region, progress, stream.Token);
+                if (predecessor is not null && pending.Batch is { } before)
+                {
+                    // The batch it follows may still take it into its own transaction.
+                    before.Next = queued;
+                }
+
+                applying[database] = (joined, progress, queued);
                 working.Add((joined, progress, batch.Database, batch.LastChangeId));
                 answers.Add((database, incarnation, joined, received));
             }
@@ -605,23 +620,29 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         }
     }
 
-    // Reserves the batch's bytes before decoding it and holds them until it applied, not until its ack is written; a batch
-    // without them is refused and sent again.
+    // The batch's bytes were reserved when it arrived and are held until it applied, not until its ack is written; a batch
+    // without them is refused and sent again. One applied by the batch before it returns the answer that batch gave it.
     private async Task<AckFrame?> ApplyAsync(
-        Task before, Task<AckFrame?>? predecessor, long received, TenantContext database, Ulid incarnation, (Ulid Incarnation, ulong ChangeId) previous,
-        ReplicaId origin, Batch batch, string region, ApplyProgress progress, CancellationToken cancellationToken)
+        Task before, Task<AckFrame?>? predecessor, Queued queued, TenantContext database, (Ulid Incarnation, ulong ChangeId) previous,
+        ReplicaId origin, string region, ApplyProgress progress, CancellationToken cancellationToken)
     {
+        var batch = queued.Batch;
         var refused = new AckFrame { Ack = new Ack { Database = batch.Database, Refused = true } };
-        using var reservation = _memory.TryReserve(MemoryLane.Replication, BatchBytes(batch), tenant: null);
+        using var reservation = queued.Reservation;
         // Even a refusal follows its database's frontier; failed catalog work starts no dependent application.
         await before.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (queued.Answer is { } answered)
+        {
+            return answered;
+        }
+
         if (reservation is null || !before.IsCompletedSuccessfully
             || (predecessor is not null && (await predecessor.ConfigureAwait(false))?.Ack is not { Refused: false }))
         {
             return refused;
         }
 
-        _ = _timings.Record(ReplicationTimings.ReceiveWait, received);
+        _ = _timings.Record(ReplicationTimings.ReceiveWait, queued.Received);
 
         var envelope = batch.Groups;
         if (batch.Chunk is { } chunk)
@@ -639,19 +660,10 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             }
         }
 
-        List<OriginGroup> groups;
+        List<(Queued Batch, List<OriginGroup> Groups)> taken;
         try
         {
-            if (previous.Incarnation == incarnation && batch.LastChangeId <= previous.ChangeId)
-            {
-                throw new InvalidDataException("a stream's batches of one database have growing change ids");
-            }
-
-            groups = ChangeGroups.Decode(database, envelope, batch.LastChangeId);
-            if (previous.Incarnation == incarnation && groups[0].ChangeId <= (long)previous.ChangeId)
-            {
-                throw new InvalidDataException("a stream's groups of one database have growing change ids");
-            }
+            taken = [(queued, queued.Decoded ?? Decode(database, queued.Incarnation, batch, envelope, previous))];
         }
         catch (InvalidDataException error)
         {
@@ -662,11 +674,14 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             return refused;
         }
 
+        Take(taken, database);
+        var groups = taken.Count == 1 ? taken[0].Groups : [.. taken.SelectMany(item => item.Groups)];
         Hlc? applied;
         Hlc stableAt = default;
         try
         {
-            applied = await _sink.ApplyAsync(database, origin, groups, new Hlc(batch.Expect), cancellationToken, progress).ConfigureAwait(false);
+            // The highest coverage any of them expects, checked before any joins: at most stricter than one at a time.
+            applied = await _sink.ApplyAsync(database, origin, groups, new Hlc(taken.Max(item => item.Batch.Batch.Expect)), cancellationToken, progress).ConfigureAwait(false);
             if (applied is not null)
             {
                 var stable = _timings.Now;
@@ -677,7 +692,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         catch (ReceiverCoverageException)
         {
             refused.Ack.RefillRequired = true;
-            return refused;
+            return Refuse(taken, refused);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
@@ -690,19 +705,98 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             // A batch that fails to apply here (a stored state that no longer decodes, the disk) refuses its database
             // only: the sender sends it again later, and the other databases go on.
             _logger.ZLogError(error, $"A batch of database {database.DatabaseId:@Database} from machine {origin.Value:@Origin} in {region:@Region} could not be applied; it is refused");
-            return refused;
+            return Refuse(taken, refused);
         }
 
-        if (applied is not { } appliedAt)
+        if (applied is null)
         {
-            return refused;
+            return Refuse(taken, refused);
         }
 
-        Observe(database, batch, groups, region);
-        return new AckFrame
+        Observe(database, batch, taken[0].Groups, region);
+        foreach (var (follower, own) in taken.Skip(1))
         {
-            Ack = new Ack { Database = batch.Database, ChangeId = batch.LastChangeId, Applied = appliedAt.Value, Stable = stableAt.Value },
-        };
+            Observe(database, follower.Batch, own, region);
+            follower.Answer = Applied(follower.Batch, own, stableAt);
+        }
+
+        return Applied(batch, taken[0].Groups, stableAt);
+    }
+
+    // Takes the batches queued behind the first into its transaction, in their chain, while they were reserved and past the
+    // catalog frame they follow, decode, and keep the whole within one batch's groups and bytes and one transaction's deltas.
+    // The first one that does not fit stops it and applies on its own turn, with the groups decoded here.
+    private void Take(List<(Queued Batch, List<OriginGroup> Groups)> taken, TenantContext database)
+    {
+        var first = taken[0];
+        if (first.Batch.Batch.Chunk is not null)
+        {
+            return;
+        }
+
+        var (count, deltas, bytes) = (first.Groups.Count, first.Groups.Sum(group => group.Deltas.Count), (long)ApplicationEnvelope.DecodedLength(first.Batch.Batch.Groups.Span));
+        for (var next = first.Batch.Next; next is { Reservation: not null } && next.Incarnation == first.Batch.Incarnation && next.Catalog.IsCompletedSuccessfully && next.Batch.Chunk is null; next = next.Next)
+        {
+            bytes += ApplicationEnvelope.DecodedLength(next.Batch.Groups.Span);
+            if (bytes > ChangeGroups.MaxBatchBytes)
+            {
+                return;
+            }
+
+            try
+            {
+                next.Decoded ??= Decode(database, next.Incarnation, next.Batch, next.Batch.Groups, (next.Incarnation, next.Batch.After));
+            }
+            catch (InvalidDataException)
+            {
+                // Refused on its own turn, which logs and counts it.
+                return;
+            }
+
+            (count, deltas) = (count + next.Decoded.Count, deltas + next.Decoded.Sum(group => group.Deltas.Count));
+            if (count > ChangeGroups.MaxGroups || deltas > ChangeGroups.MaxDeltasOf(database))
+            {
+                return;
+            }
+
+            _ = _timings.Record(ReplicationTimings.ReceiveWait, next.Received);
+            taken.Add((next, next.Decoded));
+        }
+    }
+
+    // The batches taken behind the first are refused with it, as a refusal refuses every batch after it in its chain.
+    private static AckFrame Refuse(List<(Queued Batch, List<OriginGroup> Groups)> taken, AckFrame refused)
+    {
+        foreach (var (follower, _) in taken.Skip(1))
+        {
+            follower.Answer = new AckFrame { Ack = new Ack { Database = follower.Batch.Database, Refused = true } };
+        }
+
+        return refused;
+    }
+
+    private static AckFrame Applied(Batch batch, List<OriginGroup> groups, Hlc stable) => new()
+    {
+        Ack = new Ack
+        {
+            Database = batch.Database,
+            ChangeId = batch.LastChangeId,
+            Applied = groups.Max(group => group.Deltas.Max(delta => delta.Stamp.Value)),
+            Stable = stable.Value,
+        },
+    };
+
+    private static List<OriginGroup> Decode(TenantContext database, Ulid incarnation, Batch batch, ByteString envelope, (Ulid Incarnation, ulong ChangeId) previous)
+    {
+        if (previous.Incarnation == incarnation && batch.LastChangeId <= previous.ChangeId)
+        {
+            throw new InvalidDataException("a stream's batches of one database have growing change ids");
+        }
+
+        var groups = ChangeGroups.Decode(database, envelope, batch.LastChangeId);
+        return previous.Incarnation == incarnation && groups[0].ChangeId <= (long)previous.ChangeId
+            ? throw new InvalidDataException("a stream's groups of one database have growing change ids")
+            : groups;
     }
 
     // Null when the frontier is refused: no batch is in flight for it, so the report is suppressed instead of a refused ack.
@@ -809,6 +903,29 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         public int Pending { get; set; }
 
         public bool Broken { get; set; }
+    }
+
+    // A protocol 2 batch admitted on a stream, with the memory reserved for it on arrival and the catalog frame it follows.
+    private sealed class Queued(Batch batch, Ulid incarnation, long received, IMemoryReservation? reservation, Task catalog)
+    {
+        public Batch Batch { get; } = batch;
+
+        public Ulid Incarnation { get; } = incarnation;
+
+        public long Received { get; } = received;
+
+        public IMemoryReservation? Reservation { get; } = reservation;
+
+        public Task Catalog { get; } = catalog;
+
+        // The batch admitted after it in its chain: linked by the stream loop while this one may already be applying.
+        public Queued? Next { get => Volatile.Read(ref field); set => Volatile.Write(ref field, value); }
+
+        // Its groups, when the batch before it decoded them but could not take it.
+        public List<OriginGroup>? Decoded { get; set; }
+
+        // Its answer, when the batch before it applied it in its own transaction; read once that batch's answer is done.
+        public AckFrame? Answer { get; set; }
     }
 
     // A client database's applied batch also goes to its replication analytics, never to its billed operations: a batch

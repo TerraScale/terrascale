@@ -6,6 +6,7 @@ using Grpc.Core.Interceptors;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
+using TerraBase.Hosting;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
@@ -252,6 +253,122 @@ public sealed class PipelinedBatchTests
         await Assert.That(string.Join(", ", await AnswersAsync(call, 1, deadline.Token))).IsEqualTo("(1, False)");
     }
 
+    [Test]
+    public async Task Batches_queued_behind_an_apply_join_one_transaction_and_each_gets_its_own_ack_in_order()
+    {
+        var gate = new ApplyGate();
+        await using var receiver = await Receiver.StartAsync(gate);
+        var (call, sender, docs) = (receiver.Call, receiver.Sender, receiver.Docs);
+        var stamps = Enumerable.Range(0, 4).Select(index => new Hlc(((ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16) + (ulong)index)).ToArray();
+        await receiver.QueueBehindHeldAsync(Enumerable.Range(1, 3).Select(index => Batch(sender, after: (ulong)index, last: (ulong)index + 1, receiver.Origin, docs[index], stamps[index])));
+        gate.Release();
+
+        var acks = await AcksAsync(call, 4, receiver.Deadline);
+        await Assert.That(string.Join(", ", acks.Select(ack => (ack.ChangeId, ack.Refused)))).IsEqualTo("(1, False), (2, False), (3, False), (4, False)");
+        await Assert.That(string.Join(", ", acks.Skip(1).Select(ack => ack.Applied))).IsEqualTo(string.Join(", ", stamps[1..].Select(stamp => stamp.Value)))
+            .Because("each ack names its own batch's highest stamp");
+        await Assert.That(acks.Skip(1).Select(ack => ack.Stable).Distinct().Count()).IsEqualTo(1).Because("one stable read after their one commit");
+        await Assert.That(string.Join(", ", gate.Calls(receiver.Tenant).Select(applied => applied.Groups))).IsEqualTo("1, 3")
+            .Because("the three batches queued behind the held one apply in one transaction");
+        await receiver.AssertStoredAsync(docs[..4], stored: true);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_refusal_or_fault_of_a_joined_transaction_acknowledges_none_of_its_batches(bool afterCommit)
+    {
+        var gate = new ApplyGate();
+        var commits = 0;
+        Func<Task>? fault = null;
+        Task? recording = null;
+        await using var receiver = await Receiver.StartAsync(gate, services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
+        {
+            // The joined transaction committed: a fault of the copy (refused in memory at once) then refuses its stable read.
+            if (step == "replication.apply.committed" && Volatile.Read(ref fault) is { } armed && Interlocked.Increment(ref commits) == 2)
+            {
+                recording = armed();
+            }
+        }));
+        var (call, sender, docs) = (receiver.Call, receiver.Sender, receiver.Docs);
+        var faults = receiver.Api.Server.Services.GetRequiredService<IReplicaCopyFaults>();
+        // Opened before any fault; BEGIN DEFERRED takes no read snapshot yet.
+        await using var forensic = await (await receiver.StoreAsync()).BeginTransactionAsync(write: false, CancellationToken.None);
+        await receiver.QueueBehindHeldAsync(Enumerable.Range(1, 3).Select(index => Batch(sender, after: (ulong)index, last: (ulong)index + 1, receiver.Origin, docs[index])));
+        if (afterCommit)
+        {
+            var incarnation = (await receiver.StoreAsync()).Incarnation;
+            Volatile.Write(ref fault, () => faults.RecordAsync(receiver.Tenant, incarnation, "a test fault after the joined commit", CancellationToken.None).AsTask());
+        }
+        else
+        {
+            gate.FailOnce(docs[2]);
+        }
+
+        gate.Release();
+        await Assert.That(string.Join(", ", await AnswersAsync(call, 4, receiver.Deadline))).IsEqualTo("(1, False), (0, True), (0, True), (0, True)")
+            .Because("the batches behind the refused first one of the transaction are refused with it");
+        await Assert.That(string.Join(", ", gate.Calls(receiver.Tenant).Select(applied => applied.Groups))).IsEqualTo("1, 3");
+        foreach (var doc in docs[1..4])
+        {
+            await Assert.That(await forensic.GetAsync("items", doc, CancellationToken.None) is not null).IsEqualTo(afterCommit)
+                .Because("the faulted transaction committed, but none of its batches is acknowledged");
+        }
+
+        if (afterCommit)
+        {
+            await Assert.That(recording).IsNotNull();
+            await recording!.WaitAsync(receiver.Deadline);
+        }
+        else
+        {
+            // The chain restarts from the last ack.
+            foreach (var index in new[] { 1, 2, 3 })
+            {
+                await call.RequestStream.WriteAsync(Batch(sender, after: (ulong)index, last: (ulong)index + 1, receiver.Origin, docs[index]));
+            }
+
+            await Assert.That(string.Join(", ", await AnswersAsync(call, 3, receiver.Deadline))).IsEqualTo("(2, False), (3, False), (4, False)");
+            await receiver.AssertStoredAsync(docs[1..4], stored: true);
+        }
+    }
+
+    [Test]
+    [Arguments("groups")]
+    [Arguments("deltas")]
+    [Arguments("bytes")]
+    public async Task A_joined_transaction_holds_no_more_than_one_batch_of_groups_and_bytes_and_one_transaction_of_deltas(string bound)
+    {
+        var gate = new ApplyGate();
+        await using var receiver = await Receiver.StartAsync(gate);
+        var (call, sender) = (receiver.Call, receiver.Sender);
+        // Three batches of 400 groups, of one 400-delta group, or of one 750 KB document: two fit in one transaction, three do not.
+        var payload = JsonElement.Parse($$"""{"blob":"{{new string('x', bound == "bytes" ? 750_000 : 8)}}"}""");
+        var change = 1L;
+        await receiver.QueueBehindHeldAsync(Enumerable.Range(1, 3).Select(index =>
+        {
+            var after = (ulong)change;
+            OriginGroup[] groups = bound switch
+            {
+                "groups" => [.. Enumerable.Range(0, 400).Select(_ => Group(++change, 1, receiver.Origin, payload))],
+                "deltas" => [Group(++change, 400, receiver.Origin, payload)],
+                _ => [Group(++change, 1, receiver.Origin, payload)],
+            };
+            return new PushFrame { Batch = new Batch { Database = sender, After = after, LastChangeId = (ulong)change, Groups = ChangeGroups.Encode(groups) } };
+        }));
+        gate.Release();
+
+        var step = bound == "groups" ? 400 : 1;
+        await Assert.That(string.Join(", ", await AnswersAsync(call, 4, receiver.Deadline))).IsEqualTo($"(1, False), ({change - (2 * step)}, False), ({change - step}, False), ({change}, False)");
+        var calls = gate.Calls(receiver.Tenant);
+        await Assert.That(string.Join(", ", calls.Select(applied => bound == "deltas" ? applied.Deltas : applied.Groups))).IsEqualTo(bound switch
+        {
+            "groups" => "1, 800, 400",
+            "deltas" => "1, 800, 400",
+            _ => "1, 2, 1",
+        }).Because("the first batch that would cross the bound applies on its own turn");
+    }
+
     // Holds sjc's applies of the cluster's database, then writes three documents in three commits on gru: the first batch
     // waits in the receiver's apply. The collection is created and replicated first.
     private static async Task<string[]> HoldThreeWritesAsync(PeerStreamTests.Cluster cluster, ApplyGate gate)
@@ -281,11 +398,123 @@ public sealed class PipelinedBatchTests
         machine.Api.Server.Services.GetRequiredService<IReplicationStatus>().Snapshot().Peers.Where(peer => peer.Region == "sjc")
             .SelectMany(peer => peer.Databases).FirstOrDefault(status => status.DatabaseId == database.DatabaseId);
 
-    private static PushFrame Batch(Features.Replication.V1.Database database, ulong after, ulong last, ReplicaId origin, string id)
+    private static PushFrame Batch(Features.Replication.V1.Database database, ulong after, ulong last, ReplicaId origin, string id, Hlc? stamp = null)
     {
-        var at = new EntryVersion(new Hlc((ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16), origin);
+        var at = new EntryVersion(stamp ?? new Hlc((ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16), origin);
         OriginGroup[] groups = [new((long)last, [new ChangeDelta("items", id, at.Stamp, DocumentState.Bottom.Put(at, JsonElement.Parse("""{"n":1}""")).DeltaAt(at.Stamp))])];
         return new PushFrame { Batch = new Batch { Database = database, After = after, LastChangeId = last, Groups = ChangeGroups.Encode(groups) } };
+    }
+
+    // A group of `deltas` new documents, each with the payload.
+    private static OriginGroup Group(long changeId, int deltas, ReplicaId origin, JsonElement payload)
+    {
+        var at = new EntryVersion(new Hlc((ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16), origin);
+        return new(changeId, [.. Enumerable.Range(0, deltas).Select(_ => new ChangeDelta("items", EntityIds.New().ToString(), at.Stamp, DocumentState.Bottom.Put(at, payload).DeltaAt(at.Stamp)))]);
+    }
+
+    private static async Task<List<Ack>> AcksAsync(AsyncDuplexStreamingCall<PushFrame, AckFrame> call, int count, CancellationToken cancellationToken)
+    {
+        List<Ack> acks = [];
+        while (acks.Count < count && await call.ResponseStream.MoveNext(cancellationToken))
+        {
+            if (call.ResponseStream.Current.Ack is { } ack)
+            {
+                acks.Add(ack);
+            }
+        }
+
+        return acks;
+    }
+
+    // One node with a gated sink and a protocol 2 push stream into one of its databases, from a test origin.
+    private sealed class Receiver : IAsyncDisposable
+    {
+        private readonly CancellationTokenSource _deadline = new(TimeSpan.FromSeconds(60));
+        private readonly Grpc.Net.Client.GrpcChannel _channel;
+
+        private Receiver(ManagementApi api, TenantContext tenant, ApplyGate gate)
+        {
+            (Api, Tenant, Gate, Sender) = (api, tenant, gate, ChangeGroups.Wire(tenant, Ulid.NewUlid()));
+            _channel = PeerChannel.Create(api.Server.BaseAddress, PeerTls.Credential);
+            Call = new Features.Replication.V1.Replication.ReplicationClient(_channel).Push(cancellationToken: Deadline);
+        }
+
+        public ManagementApi Api { get; }
+
+        public TenantContext Tenant { get; }
+
+        public ApplyGate Gate { get; }
+
+        public ReplicaId Origin { get; } = ReplicaId.Of(1, 14, 0);
+
+        public Features.Replication.V1.Database Sender { get; }
+
+        public AsyncDuplexStreamingCall<PushFrame, AckFrame> Call { get; }
+
+        public string[] Docs { get; } = [.. Enumerable.Range(0, 4).Select(_ => EntityIds.New().ToString())];
+
+        public CancellationToken Deadline => _deadline.Token;
+
+        public static async Task<Receiver> StartAsync(ApplyGate gate, Action<IServiceCollection>? services = null)
+        {
+            var api = await ManagementApi.StartAsync(services: collection =>
+            {
+                services?.Invoke(collection);
+                collection.AddSingleton<IChangeGroupSink>(provider => new GatedSink(ActivatorUtilities.CreateInstance<StorageChangeGroupSink>(provider), gate));
+            });
+            var managed = await api.CreateManagedDatabaseAsync();
+            using (var data = await api.CreateClientAsync(managed.Organization, "documents:write", "documents:read"))
+            {
+                await ManagementApi.CreateCollectionAsync(data, managed, "items");
+            }
+
+            var tenant = await api.Server.Services.GetRequiredService<ITenantDirectory>().FindDatabaseAsync(managed.Organization, managed.Project, managed.Name, CancellationToken.None)
+                is TenantContext found ? found : throw new InvalidOperationException("the database is not registered");
+            var receiver = new Receiver(api, tenant, gate);
+            await receiver.Call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = receiver.Origin.Value, Region = "sjc", Protocol = 2 } });
+            await Assert.That(await receiver.Call.ResponseStream.MoveNext(receiver.Deadline)).IsTrue();
+            return receiver;
+        }
+
+        // Holds the first batch's apply, then sends the batches after it and waits until the stream admitted them: the
+        // heartbeat behind them is answered once the frames before it were read.
+        public async Task QueueBehindHeldAsync(IEnumerable<PushFrame> batches)
+        {
+            Gate.Hold(Tenant);
+            await Call.RequestStream.WriteAsync(Batch(Sender, after: 0, last: 1, Origin, Docs[0]));
+            await Gate.Entered.Task.WaitAsync(Deadline);
+            foreach (var batch in batches)
+            {
+                await Call.RequestStream.WriteAsync(batch);
+            }
+
+            await Call.RequestStream.WriteAsync(new PushFrame { Heartbeat = new Heartbeat() });
+            do
+            {
+                await Assert.That(await Call.ResponseStream.MoveNext(Deadline)).IsTrue();
+            }
+            while (Call.ResponseStream.Current.KindCase != AckFrame.KindOneofCase.None);
+        }
+
+        public async Task<IDatabaseStore> StoreAsync() =>
+            await Api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(Tenant, CancellationToken.None) ?? throw new InvalidOperationException("the database is missing");
+
+        public async Task AssertStoredAsync(IEnumerable<string> docs, bool stored)
+        {
+            await using var read = await (await StoreAsync()).BeginTransactionAsync(write: false, CancellationToken.None);
+            foreach (var doc in docs)
+            {
+                await Assert.That(await read.GetAsync("items", doc, CancellationToken.None) is not null).IsEqualTo(stored);
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            Call.Dispose();
+            _channel.Dispose();
+            _deadline.Dispose();
+            await Api.DisposeAsync();
+        }
     }
 
     private static ReadOnlyMemory<byte> Json(string json) => Encoding.UTF8.GetBytes(json);
@@ -318,6 +547,15 @@ public sealed class PipelinedBatchTests
 
         public bool Failed { get; private set; }
 
+        private readonly System.Collections.Concurrent.ConcurrentQueue<(string Database, int Groups, int Deltas)> _calls = new();
+
+        // The applies of the database, in order: groups and deltas each joined.
+        public List<(int Groups, int Deltas)> Calls(TenantContext database) =>
+            [.. _calls.Where(call => call.Database == database.DatabaseId).Select(call => (call.Groups, call.Deltas))];
+
+        public void Record(TenantContext database, IReadOnlyList<OriginGroup> groups) =>
+            _calls.Enqueue((database.DatabaseId ?? "", groups.Count, groups.Sum(group => group.Deltas.Count)));
+
         public void Release() => _release.TrySetResult();
 
         // The next apply holding this document fails, once.
@@ -349,6 +587,7 @@ public sealed class PipelinedBatchTests
             TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken, ApplyProgress? progress = null)
         {
             await gate.WaitAsync(database, cancellationToken);
+            gate.Record(database, groups);
             gate.ThrowIfFailing(groups);
             return await inner.ApplyAsync(database, origin, groups, expected, cancellationToken, progress);
         }
