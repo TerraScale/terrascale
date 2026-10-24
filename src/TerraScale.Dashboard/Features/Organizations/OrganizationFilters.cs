@@ -51,6 +51,11 @@ public sealed record OrganizationFilters(string Query = "", string Role = "all",
         "document.batch_upsert" => "Documents batch upserted",
         "database.deleted" => "Database deleted",
         "backup.restore_completed" => "Backup restore completed",
+        "organization.mfa_required" => "Two-factor required for members",
+        "organization.mfa_optional" => "Two-factor no longer required",
+        "member.mfa_enabled" => "Member turned on two-factor",
+        "member.mfa_disabled" => "Member turned off two-factor",
+        "member.mfa_recovery_code_used" => "Member used a recovery code",
         _ => Capitalize(string.Join(' ', item.Action.Replace('.', ' ').Replace('_', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries)))
     };
     private static string Capitalize(string value) => value.Length == 0 ? value : char.ToUpperInvariant(value[0]) + value[1..];

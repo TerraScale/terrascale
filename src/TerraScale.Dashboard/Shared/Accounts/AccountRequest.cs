@@ -2,11 +2,16 @@ namespace TerraScale.Dashboard.Shared.Accounts;
 
 public static class AccountRequest
 {
-    public static async Task<AccountContext?> RequireAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)
+    // organizationScoped is false only for account pages (profile), which stay open while the selected
+    // organization requires two-factor the caller has not set up; every other page is blocked.
+    public static async Task<AccountContext?> RequireAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, bool organizationScoped = true)
     {
         // The account context loads while ts-auth confirms the session; it is returned only for an active session.
         var read = await sessions.ReadWithAsync(http, async session =>
             await accounts.GetContextAsync(session, http.RequestAborted, Scope(http, "organizationId"), Scope(http, "projectId")));
+        if (organizationScoped && read?.Value is { Organization: { MfaRequired: true } blocked } context)
+            throw new TerraScale.Dashboard.Features.Auth.OrganizationMfaRequiredException(blocked.Name,
+                context.Organizations.Where(org => !org.MfaRequired).Select(org => (org.Id, org.Name)).ToArray());
         return read?.Value;
     }
 

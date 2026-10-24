@@ -127,6 +127,23 @@ public static class DashboardApplication
             {
                 await next(context);
             }
+            catch (Exception error) when (!context.Response.HasStarted &&
+                                          (error is OrganizationMfaRequiredException || error is AccountAccessException { Code: TsAuthGateway.MfaRequiredCode }))
+            {
+                // An organization that requires two-factor blocks a member without it with a page, never a failure.
+                var blocked = error as OrganizationMfaRequiredException;
+                var message = blocked?.Message ?? "This organization requires two-factor authentication.";
+                if (AcceptsJson(context))
+                {
+                    await Results.Problem(message, statusCode: StatusCodes.Status403Forbidden, extensions: new Dictionary<string, object?>
+                    { ["code"] = TsAuthGateway.MfaRequiredCode, ["manageUrl"] = TsAuthGateway.ManageMfaUrl }).ExecuteAsync(context);
+                    return;
+                }
+                var view = MfaRequiredView.Create(new(new DocumentModel("Two-factor required", nonce),
+                    blocked?.OrganizationName ?? "This organization", Csrf.Token(context), blocked?.Others ?? []));
+                view.StatusCode = StatusCodes.Status403Forbidden;
+                await ((IResult)view).ExecuteAsync(context);
+            }
             catch (AccountAccessException error)
             {
                 if (context.Response.HasStarted) throw;

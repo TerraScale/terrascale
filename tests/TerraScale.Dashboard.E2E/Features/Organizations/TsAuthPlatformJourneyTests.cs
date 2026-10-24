@@ -445,6 +445,68 @@ public sealed class TsAuthPlatformJourneyTests
         await Assert.That(platform.Producer.Failures).IsEmpty();
     }
 
+    [Test]
+    public async Task TwoFactorStatusPolicyAndEnforcementFollowTsAuth()
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var owner = platform.Principal("mfa-owner");
+        var member = platform.Principal("mfa-member");
+        using var ownerClient = platform.Client();
+        using var memberClient = platform.Client(replica: true);
+        using (var login = await HttpJourney.LoginAsync(ownerClient, owner.Email, owner.Password)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        using (var login = await HttpJourney.LoginAsync(memberClient, member.Email, member.Password)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var business = platform.Producer.AddOrganization("Secure company", owner.Subject, owner.Email);
+        platform.Producer.AddMember(business, member.Subject, member.Email, "member");
+        platform.Producer.AddAudit(business, owner.Subject, "organization.mfa_required", "mfa-audit-" + business);
+        await SelectAsync(ownerClient, business);
+
+        var security = await ownerClient.GetStringAsync("/profile?tab=security");
+        await Assert.That(security).Contains("Not enabled").And.Contains("Set up two-factor").And.Contains("https://auth.terrascale.tech/ui/terrascale/security");
+        var csrf = await HttpJourney.CsrfAsync(ownerClient, "/organization");
+        using (var refused = await HttpJourney.PostFormAsync(ownerClient, "/api/v1/dashboard/organization/mfa-policy", new() { ["_csrf"] = csrf, ["requireMfa"] = "true" }))
+        {
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            await Assert.That(await refused.Content.ReadAsStringAsync()).Contains("Turn on two-factor for your own account first.").And.Contains("Manage your own two-factor");
+        }
+        platform.Producer.Enroll(owner.Subject, 7);
+        security = await ownerClient.GetStringAsync("/profile?tab=security");
+        await Assert.That(security).Contains("Enabled").And.Contains("Manage two-factor").And.Contains(">7<");
+        using (var required = await HttpJourney.PostFormAsync(ownerClient, "/api/v1/dashboard/organization/mfa-policy", new() { ["_csrf"] = csrf, ["requireMfa"] = "true" }))
+            await Assert.That(required.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await Assert.That(platform.Producer.Bodies("PUT", "/v1/terrascale/organizations/" + business + "/mfa-policy")).IsEquivalentTo(new[] { "{\"require_mfa\":true}", "{\"require_mfa\":true}" }).Because("the refused and the accepted request");
+        await Assert.That(await ownerClient.GetStringAsync("/organization")).Contains("Stop requiring two-factor");
+        await Assert.That(await ownerClient.GetStringAsync("/organization?tab=audit")).Contains("Two-factor required for members");
+
+        // A member without two-factor still lists the organization, but every page of it is blocked; account pages stay open.
+        await SelectAsync(memberClient, business);
+        using (var blocked = await memberClient.GetAsync("/"))
+        {
+            await Assert.That(blocked.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+            await Assert.That(await blocked.Content.ReadAsStringAsync()).Contains("Secure company requires two-factor authentication").And.Contains("Set up two-factor");
+        }
+        using (var json = new HttpRequestMessage(HttpMethod.Get, "/api/v1/dashboard/context"))
+        {
+            json.Headers.Accept.ParseAdd("application/json");
+            using var refused = await memberClient.SendAsync(json);
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+            await Assert.That(await refused.Content.ReadAsStringAsync()).Contains("mfa_required");
+        }
+        await Assert.That(await memberClient.GetStringAsync("/profile?tab=security")).Contains("Not enabled");
+        await Assert.That((await Me(memberClient)).GetProperty("organizationId").GetString()).IsEqualTo(business).Because("account pages stay open while the organization is blocked");
+        platform.Producer.Enroll(member.Subject, 10);
+        using (var open = await memberClient.GetAsync("/organization")) await Assert.That(open.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(platform.Producer.Failures).IsEmpty();
+    }
+
+    // Selects an organization without opening it, which a blocked member cannot.
+    private static async Task SelectAsync(HttpClient client, string organizationId)
+    {
+        var csrf = await HttpJourney.CsrfAsync(client, "/profile");
+        using var switched = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-organization", new()
+        { ["_csrf"] = csrf, ["organizationId"] = organizationId, ["returnUrl"] = "/organization" });
+        await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+    }
+
     private static async Task<JsonElement> Me(HttpClient client) => JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me")).RootElement.Clone();
     private static async Task<JsonElement> Context(HttpClient client) => JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/context")).RootElement.Clone();
 
@@ -556,6 +618,7 @@ public sealed class TsAuthPlatformJourneyTests
         private readonly object gate = new();
         private readonly TerraScaleIdGenerator ids = new();
         private readonly List<Organization> organizations = [];
+        private readonly Dictionary<string, int> enrolled = [];
         private readonly ConcurrentQueue<(string Method, string Path, string User, string Body)> calls = new();
         private readonly ConcurrentQueue<string> failures = new();
         private (string Method, string Path, HttpStatusCode Status, string Code, string Message)? refusal;
@@ -583,6 +646,7 @@ public sealed class TsAuthPlatformJourneyTests
         { lock (gate) { var project = new Project(ids.NewId(), name, creator, DateTimeOffset.UtcNow); Find(organizationId)!.Projects.Add(project); return project.Id; } }
         public void AddMember(string organizationId, string userId, string email, string role) { lock (gate) Find(organizationId)!.Members[userId] = new(email, role, DateTimeOffset.UtcNow); }
         public void AddCollaborator(string organizationId, string userId) { lock (gate) Find(organizationId)!.Collaborators.Add(userId); }
+        public void Enroll(string userId, int recoveryCodes) { lock (gate) enrolled[userId] = recoveryCodes; }
         public void RemoveMember(string organizationId, string userId) { lock (gate) Find(organizationId)!.Members.Remove(userId); }
         public string? Role(string organizationId, string userId) { lock (gate) return Find(organizationId)!.Members.GetValueOrDefault(userId)?.Role; }
         public string InvitationId(string organizationId, string token) { lock (gate) return Find(organizationId)!.Invitations.Single(invitation => invitation.Token == token).Id; }
@@ -642,6 +706,8 @@ public sealed class TsAuthPlatformJourneyTests
                 organizations.Add(created);
                 return Json(Wire(created, caller.UserId), HttpStatusCode.Created);
             }
+            if (parts is ["account", "mfa"] && method == "GET")
+                return Json(new { enabled = enrolled.ContainsKey(caller.UserId), recovery_codes_remaining = enrolled.GetValueOrDefault(caller.UserId), manage_url = "https://auth.terrascale.tech/ui/terrascale/security" });
             if (parts is ["invitations", var action] && method == "POST")
             {
                 var (org, invitation) = organizations.SelectMany(item => item.Invitations.Select(invite => (item, invite)))
@@ -660,8 +726,18 @@ public sealed class TsAuthPlatformJourneyTests
             if (organization is null || !organization.Members.TryGetValue(caller.UserId, out var self))
                 return Error(HttpStatusCode.NotFound, "not_found", "Organization not found.");
             var admin = self.Role is "owner" or "admin";
+            if (organization.RequireMfa && !enrolled.ContainsKey(caller.UserId))
+                return Error(HttpStatusCode.Forbidden, "mfa_required", "This organization requires two-factor authentication.");
             switch (parts[2..], method)
             {
+                case ([], "GET"):
+                    return Json(Wire(organization, caller.UserId));
+                case (["mfa-policy"], "PUT"):
+                    if (self.Role != "owner") return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs owner.");
+                    var requireMfa = json!.RootElement.GetProperty("require_mfa").GetBoolean();
+                    if (requireMfa && !enrolled.ContainsKey(caller.UserId)) return Error(HttpStatusCode.Conflict, "mfa_not_enrolled", "Turn on two-factor first.");
+                    organization.RequireMfa = requireMfa;
+                    return Json(Wire(organization, caller.UserId));
                 case ([], "DELETE"):
                     if (self.Role != "owner") return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs owner.");
                     if (organization.Projects.Count > 0) return Error(HttpStatusCode.Conflict, "not_empty", "Delete the organization's projects first.");
@@ -750,7 +826,8 @@ public sealed class TsAuthPlatformJourneyTests
             name = org.Name,
             created_by = org.CreatedBy,
             created_at = org.CreatedAt,
-            role = org.Members.GetValueOrDefault(userId)?.Role
+            role = org.Members.GetValueOrDefault(userId)?.Role,
+            require_mfa = org.RequireMfa
         };
         // The creator holds project admin; otherwise the organization role implies the project role (owner → admin).
         private static object Wire(Organization org, Project project, string userId) => new
@@ -773,6 +850,7 @@ public sealed class TsAuthPlatformJourneyTests
         {
             public string Id { get; } = id;
             public string Name { get; set; } = "";
+            public bool RequireMfa { get; set; }
             public string CreatedBy { get; } = createdBy;
             public DateTimeOffset CreatedAt { get; } = createdAt;
             public Dictionary<string, Member> Members { get; } = [];

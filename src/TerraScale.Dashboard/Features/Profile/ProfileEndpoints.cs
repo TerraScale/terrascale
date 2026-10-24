@@ -4,7 +4,7 @@ using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Profile;
 
-public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", string Error = "", string Status = "", IReadOnlyList<ProfileToken>? Tokens = null, CreatedProfileToken? CreatedToken = null, IReadOnlyList<DashboardSessionInfo>? Sessions = null)
+public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", string Error = "", string Status = "", IReadOnlyList<ProfileToken>? Tokens = null, CreatedProfileToken? CreatedToken = null, IReadOnlyList<DashboardSessionInfo>? Sessions = null, AccountMfaStatus? Mfa = null)
 {
     public string? DraftName { get; init; }
     public string? DraftPhone { get; init; }
@@ -29,15 +29,16 @@ public static class ProfileEndpoints
 {
     public static IEndpointRouteBuilder MapProfile(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/profile", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens) =>
+        endpoints.MapGet("/profile", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens, ITsAuthMfa mfa) =>
         {
-            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
             if (context is null) return AccountRequest.LoginRedirect(http);
             var tab = http.Request.Query["tab"].ToString();
             if (tab is not ("security" or "sessions" or "access-tokens" or "danger")) tab = "profile";
             var list = tab is "access-tokens" or "danger" ? await tokens.ListAsync(context, http.RequestAborted) : null;
             var active = await sessions.ListAsync(http, context.Session);
-            return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Tokens: list, Sessions: active));
+            var status = tab == "security" ? await mfa.GetAccountMfaAsync(context.Session, http.RequestAborted) : null;
+            return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Tokens: list, Sessions: active, Mfa: status));
         });
         endpoints.MapPost("/api/v1/dashboard/profile", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
             await SaveAsync(http, sessions, accounts, false));
@@ -49,7 +50,7 @@ public static class ProfileEndpoints
 
     private static async Task<IResult> SaveAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, bool language)
     {
-        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
         if (context is null) return Results.Unauthorized();
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");

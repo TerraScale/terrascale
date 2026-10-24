@@ -1,5 +1,6 @@
 using RazorSlices;
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Organizations.Audit;
 using TerraScale.Dashboard.Features.Organizations.Invitations;
@@ -13,7 +14,7 @@ namespace TerraScale.Dashboard.Features.Organizations;
 public sealed partial record OrganizationPage(ShellModel Shell, string Tab, IReadOnlyList<string> Regions, string Error = "", bool OpenCreateProject = false, bool OpenCreateOrganization = false,
     OrganizationAccessView? Access = null, string InvitationLink = "", OrganizationFilters? Filters = null, string WizardStep = "", bool PaymentCanceled = false,
     BillingPage? Billing = null, string ProjectDraftName = "", IReadOnlyList<string>? ProjectDraftRegions = null,
-    string ProjectDraftPrimaryRegion = "", string ProjectDraftBackupRegion = "", string Status = "");
+    string ProjectDraftPrimaryRegion = "", string ProjectDraftBackupRegion = "", string Status = "", bool? RequireMfa = null);
 
 public static class OrganizationEndpoints
 {
@@ -100,6 +101,20 @@ public static class OrganizationEndpoints
             await AccessMutationAsync(http, sessions, accounts, access, placement, "role", id));
         endpoints.MapPost("/api/v1/access/members/{id}/revoke", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement, string id) =>
             await AccessMutationAsync(http, sessions, accounts, access, placement, "remove", id));
+        endpoints.MapPost("/api/v1/dashboard/organization/mfa-policy", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthMfa mfa, IWorkspacePlacement placement) =>
+        {
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null) return Results.Unauthorized();
+            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
+            try
+            {
+                var organization = context.Organization ?? throw new AccountAccessException("Select an organization.");
+                await mfa.SetRequireMfaAsync(context.Session, organization.Id, form["requireMfa"] == "true", http.RequestAborted);
+                return HttpRedirects.SeeOther("/organization");
+            }
+            catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode, "organization"); }
+        });
         endpoints.MapPost("/api/v1/dashboard/organization/leave", async (HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationLifecycleService lifecycle, IWorkspacePlacement placement) =>
             await LifecycleAsync(http, sessions, accounts, lifecycle, placement, "leave"));
         endpoints.MapPost("/api/v1/dashboard/organization/deletion", async (HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationLifecycleService lifecycle, IWorkspacePlacement placement) =>
@@ -140,9 +155,12 @@ public static class OrganizationEndpoints
             else wizard = "project";
         }
         if (error.Length == 0 && http.Request.Query["error"].ToString() is { Length: > 0 and <= 500 } queryError) error = queryError;
+        // Only an owner sets the two-factor policy; the card stays hidden while ts-auth does not report it.
+        var requireMfa = tab == "organization" && context.Role == "owner" && context.Organization is { } owned
+            ? await http.RequestServices.GetRequiredService<ITsAuthMfa>().GetRequireMfaAsync(context.Session, owned.Id, http.RequestAborted) : null;
         return new(ShellModel.For(http, context, "Organization"), tab, regions, error,
             http.Request.Query["newProject"] == "1", wizard.Length > 0, access, Filters: OrganizationFilters.For(http), WizardStep: wizard, PaymentCanceled: http.Request.Query["payment"] == "canceled",
-            Status: http.Request.Query["deleted"] == "1" ? "Organization deleted." : "");
+            Status: http.Request.Query["deleted"] == "1" ? "Organization deleted." : "", RequireMfa: requireMfa);
     }
 
     private static async Task<IResult> AccessMutationAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement, string operation, string? id = null)

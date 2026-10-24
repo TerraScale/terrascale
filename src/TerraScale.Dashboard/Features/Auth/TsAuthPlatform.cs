@@ -72,8 +72,17 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
     public Task RemoveMemberAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken) =>
         PlatformAsync(() => Client().Platform.RemoveMemberAsync(Bearer(session), Id(organizationId), Id(userId), cancellationToken));
 
-    public Task<IReadOnlyList<TerraScaleAuthPlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
-        PagesAsync(after => Client().Platform.ListProjectsAsync(Bearer(session), Id(organizationId), 100, after, cancellationToken));
+    public async Task<IReadOnlyList<TerraScaleAuthPlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    {
+        try { return await PagesAsync(after => Client().Platform.ListProjectsAsync(Bearer(session), Id(organizationId), 100, after, cancellationToken)); }
+        catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status403Forbidden && error.Code.Length == 0)
+        {
+            // ts-dotnet 0.0.6 omits codes it does not know, mfa_required among them; ts-auth's organization read names it.
+            if (await MfaRefusedAsync(session, organizationId, cancellationToken))
+                throw new AccountAccessException(Message(MfaRequiredCode, HttpStatusCode.Forbidden), StatusCodes.Status403Forbidden, MfaRequiredCode);
+            throw;
+        }
+    }
 
     public async Task<TerraScaleAuthPlatformProject> CreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken)
     {
@@ -187,6 +196,8 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
         "already_member" => "This email is already an active member.",
         "email_mismatch" => "Sign in with the invited email to answer this invitation.",
         "invitation_expired" or "not_pending" => "Invitation is unavailable.",
+        MfaRequiredCode => "This organization requires two-factor authentication. Turn it on for your account to continue.",
+        "mfa_not_enrolled" => "Turn on two-factor for your own account first.",
         _ => status switch
         {
             HttpStatusCode.Unauthorized => "Sign in again to continue.",
