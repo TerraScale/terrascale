@@ -110,7 +110,7 @@ public static class InvoiceHistory
             var elapsed = Math.Clamp((int)(now - start).TotalDays, 0, days);
             summary = summary with
             {
-                Period = start.UtcDateTime.ToString("MMM d", CultureInfo.InvariantCulture) + " – " + end.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture),
+                Period = start.UtcDateTime.ToString(start.UtcDateTime.Year == end.UtcDateTime.Year ? "MMM d" : "MMM d, yyyy", CultureInfo.InvariantCulture) + " – " + end.UtcDateTime.ToString("MMM d, yyyy", CultureInfo.InvariantCulture),
                 PeriodDetail = $"Day {elapsed} of {days}" + (current is null ? " · based on the subscription renewal date" : " · based on a recorded invoice period"),
                 HasPeriod = true,
                 PeriodPercent = Math.Clamp(Math.Max(elapsed > 0 ? 1 : 0, (int)Math.Round(elapsed * 100d / days, MidpointRounding.AwayFromZero)), 0, 100)
