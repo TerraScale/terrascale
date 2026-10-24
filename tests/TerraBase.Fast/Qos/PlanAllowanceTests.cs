@@ -10,7 +10,7 @@ namespace TerraBase.Fast.Qos;
 public sealed class PlanAllowanceTests
 {
     [Test]
-    public async Task Paid_plans_raise_the_allowance_and_hobby_restores_it()
+    public async Task Paid_plans_write_past_their_allowance_and_hobby_stops_at_it()
     {
         // The real plan allowances (pricing.json) scaled down 50,000 times: hobby 1, starter 5, team 100.
         await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<IOperationAllowance>(provider =>
@@ -19,11 +19,12 @@ public sealed class PlanAllowanceTests
         (await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Code).IsEqualTo("operation_allowance");
 
+        // Starter's 5 units are used up and its writes continue: ts-dashboard bills the units over the allowance.
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "starter");
-        (await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-
-        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "team");
-        (await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        for (var i = 0; i < 6; i++)
+        {
+            (await api.PutAsync(DocumentApi.NewId(), new { n = i })).Status.ShouldBe(HttpStatusCode.Created);
+        }
 
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "hobby");
         var refused = await api.PutAsync(DocumentApi.NewId(), new { n = 1 });

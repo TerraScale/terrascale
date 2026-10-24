@@ -10,9 +10,9 @@ namespace TerraBase.Features.Management.Usage;
 public readonly union OperationAllowanceCheck(Done, QuotaExceeded, Unavailable);
 
 /// <summary>
-/// The hard monthly operation allowance of an organization's plan (https://terrascale.tech/pricing.json): once its
+/// The hard monthly operation allowance of the hobby (Free) plan (https://terrascale.tech/pricing.json): once its
 /// operation units this UTC month, summed over every project, region and node, reach it, new puts and patches stop;
-/// reads and deletes remain available.
+/// reads and deletes remain available. Paid plans keep writing past their allowance; ts-dashboard bills the units over it.
 /// </summary>
 public interface IOperationAllowance
 {
@@ -50,7 +50,7 @@ internal sealed class OperationAllowance : IOperationAllowance
         }
 
         var limit = _limit(plan);
-        if (limit == long.MaxValue)
+        if (plan is not PlanTier.Hobby || limit == long.MaxValue)
         {
             return new Done();
         }

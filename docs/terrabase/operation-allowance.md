@@ -1,16 +1,18 @@
 # Monthly operation allowance
 
-Plans use hard allowances during Public Alpha ([pricing.json](https://terrascale.tech/pricing.json),
-`metering.allowances`): new billable work stops at the allowance, and reads, exports, deletion and
-usage reduction remain available.
+Every plan includes monthly operation units ([pricing.json](https://terrascale.tech/pricing.json),
+`metering.allowances`). Only hobby (the Free plan) stops there: new billable work stops at its
+allowance, and reads, exports, deletion and usage reduction remain available. Paid plans (starter,
+pro, team) keep writing past their allowance; ts-dashboard reads `GET /v1/usage/allowances` and
+bills the units over it on the Stripe subscription invoice. Enterprise has no allowance check.
 
-| Plan | Operation units per UTC month |
-|---|---|
-| hobby | 50,000 |
-| starter | 250,000 |
-| pro | 2,000,000 |
-| team | 5,000,000 |
-| enterprise | unlimited |
+| Plan | Operation units included per UTC month | At the allowance |
+|---|---|---|
+| hobby | 50,000 | new puts and patches stop |
+| starter | 250,000 | billed overage |
+| pro | 2,000,000 | billed overage |
+| team | 5,000,000 | billed overage |
+| enterprise | unlimited | — |
 
 Values live in `QosPolicy.MonthlyOperations` (`src/TerraBase/Features/Qos/QosPolicy.cs`).
 
@@ -58,8 +60,8 @@ month or runs past 30 seconds answers `503`, and the caller retries. Responses c
 
 ## Behavior
 
-- A write request that holds a put or patch is refused once the organization's units this month
-  reach the allowance: `429` with code `operation_allowance`, a message naming the plan and
+- On hobby, a write request that holds a put or patch is refused once the organization's units this
+  month reach the allowance: `429` with code `operation_allowance`, a message naming the plan and
   allowance, and the upgrade path (`https://dash.terrascale.tech/organization?tab=billing`).
   Nothing in the request runs.
 - Deletes, assertion-only transactions and reads still succeed. The month resets at 00:00 UTC on
@@ -72,5 +74,5 @@ month or runs past 30 seconds answers `503`, and the caller retries. Responses c
 
 - SQL wire writes bill one unit per logged change, not its size.
 
-Covered by `tests/TerraBase.Fast/Qos/OperationAllowanceTests.cs` and
+Covered by `tests/TerraBase.Fast/Qos/OperationAllowanceTests.cs`, `tests/TerraBase.Fast/Qos/PlanAllowanceTests.cs` and
 `tests/TerraBase.Fast/Replication/FreeReplicationUsageTests.cs`.
