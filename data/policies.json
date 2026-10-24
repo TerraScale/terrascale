@@ -1,61 +1,17 @@
 {
-  "$comment": "Docs-only limits and billing policies. Plan prices, allowances, and metering come from data/canonical/pricing.json (vendored from https://terrascale.tech/pricing.json); never restate them here. Draft; publication requires owner approval.",
+  "$comment": "Docs-only limits and billing policies. Plan prices, allowances, entitlements, and metering come from data/canonical/pricing.json (vendored from https://terrascale.tech/pricing.json); never restate them here.",
   "maxRegions": 3,
   "maxDocument": "1 MiB",
-  "engineLimits": {
-    "_note": "TerraBase enforces these safety tiers per organization, shared by all its projects, databases and API keys. Rate, concurrency and memory refusals return HTTP 429 with Retry-After. The engine tier names Hobby, Pro and Enterprise are implementation safety tiers, not the commercial Free, Starter, Pro, Team and Enterprise plans. No mapping between commercial plans and engine tiers is published. The Enterprise engine tier still observes document, page, batch and process safety bounds.",
-    "tiers": [
-      "Hobby",
-      "Pro",
-      "Enterprise"
-    ],
-    "rows": [
-      [
-        "Requests/s (burst)",
-        "50 (100)",
-        "500 (1,000)",
-        "No plan ceiling"
-      ],
-      [
-        "Concurrent HTTP requests",
-        "4",
-        "16",
-        "No plan ceiling"
-      ],
-      [
-        "Query execution time",
-        "1 s",
-        "5 s",
-        "No plan ceiling"
-      ],
-      [
-        "Candidate rows / JSON scanned per query",
-        "10,000 / 16 MiB",
-        "100,000 / 128 MiB",
-        "No plan ceiling"
-      ],
-      [
-        "Live document JSON storage",
-        "1 GiB",
-        "100 GiB",
-        "No plan ceiling"
-      ]
-    ]
-  },
-  "enterpriseNotes": "Enterprise requires contact with sales and is unavailable for self-service purchase during Public Alpha. Confirm availability and contract terms before enrollment; priority response, SOC 2, and contractual SLA benefits are not published launch promises.",
+  "entitlementsNote": "TerraBase enforces these entitlements per organization, shared by all its projects, databases and API keys. Free maps to the hobby engine tier; other plans map to the tier of the same name. Requests beyond the request-rate or concurrency entitlement receive HTTP 429 with Retry-After. The storage limit is a hard ceiling, distinct from the included storage allowance on the pricing page. \"No plan ceiling\" means the plan sets none; every plan still observes document, page, batch and process safety bounds. Support values are response targets, not an SLA.",
+  "enterpriseNotes": "Enterprise is arranged through sales and is not sold through checkout. SOC 2 and contractual SLA benefits are not published launch promises.",
   "sharedAllowances": "Databases and branches share their owning organization’s plan allowances. There is no additional branch allowance. Each 4 KiB written counts once, no matter how many regions hold the database; reads count in the region that serves them; replication between regions is free. Storage is decimal GB-region-month, averaged over time: 100 MB stored across three regions for a full month consumes 0.3 GB-region-month.",
   "billingPolicies": {
-    "Billing cycle": "Starter is billed yearly only; its monthly price is an equivalent, not a monthly purchase. Pro and Team are billed monthly. Enterprise support plus usage is arranged through sales. Operation-unit and client-egress allowances are monthly, including on Starter; they are not annual usage pools. Storage is averaged over time during the month. Usage charges are not yet collected. No trials or annual Pro/Team discounts are offered.",
-    "Subscription changes": "Confirm the available enrollment and subscription-change workflow before purchase. Published prices do not establish that checkout, proration, invoices or paid usage collection are available. A change of plan must preserve existing data; cancellation is not a deletion request.",
-    "Exhausted allowances": "Free has no automatic overages. Paid plans include allowances followed by pay-as-you-go usage at the approved rates above. Allowances and overage rates are approved; usage charges are not yet collected. Approved pricing does not establish current overage enforcement or payment collection. Reaching an allowance alone does not authorize deletion; account/database closure and retention deletion are separate workflows.",
+    "Billing cycle": "Starter is billed yearly only; its monthly price is an equivalent, not a monthly purchase. Pro and Team are billed monthly. Enterprise support plus usage is arranged through sales. Operation-unit and client-egress allowances are monthly, including on Starter; they are not annual usage pools. Storage is averaged over time during the month. Operation units over a paid allowance are added to the next subscription invoice. No trials or annual Pro/Team discounts are offered.",
+    "Subscription changes": "Starter, Pro and Team are bought and changed through checkout; Enterprise is arranged through sales. A change of plan must preserve existing data; cancellation is not a deletion request.",
+    "Exhausted allowances": "Free stops new writes at its operation allowance and has no overage charges. On paid plans, operation units over the allowance are added to the next subscription invoice at the overage rate; storage and client egress over the allowance are not billed yet. Reaching an allowance alone does not authorize deletion; account/database closure and retention deletion are separate workflows.",
     "Unpaid storage": "Proposed policy; confirm availability and enrollment terms. Storage without eligible allowance or payment coverage receives a 30-day grace period, advance dashboard and email notices, an exact visible deadline, and read/export access within safety limits. Deletion becomes eligible only while storage remains unpaid after the deadline and notice requirements are met. Retries do not reset the deadline. Restored eligible allowance or successful payment removes storage-related deletion eligibility. Exhausted operation units with covered storage do not start this period.",
     "Card eligibility": "Free does not require a payment card. Removing or losing a card does not by itself end Free eligibility or start a card-related deletion countdown. Paid subscriptions require the payment coverage agreed at enrollment.",
     "Deletion protection and completion": "Deletion protection is opt-in and disabled by default. An owner must explicitly disable it before customer deletion. Protection prevents automatic idle-Free deletion, but not idle pause or unpaid-storage deletion. Once authorized deletion is accepted, access is revoked immediately and further billable usage stops. Previously incurred charges remain payable; asynchronous physical cleanup must not create new usage charges. Deletion progress continues until retained copies are removed. Physical completion timing and final notices require verified retention behavior and owner approval."
   },
-  "enginePitrRetentionDays": {
-    "hobby": 1,
-    "pro": 7,
-    "enterprise": 30
-  },
-  "freeEligibility": "Free requires no payment card and has no automatic overages. No trial or first-paid-month promotion is offered by this catalog."
+  "freeEligibility": "Free requires no payment card and has no overage charges. No trial or first-paid-month promotion is offered by this catalog."
 }

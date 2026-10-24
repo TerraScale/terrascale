@@ -13,15 +13,18 @@ test('subscription table preserves annual-only Starter and nullable annual price
   assert.match(pricing, /No trials or annual Pro\/Team discounts/);
 });
 
-test('approved usage rates include client egress and storage time without claiming collection', () => {
+test('approved usage rates bill operation-unit overages and defer storage and egress', () => {
   assert.match(pricing, /\$5 per million/);
   assert.match(pricing, /\$0\.50 per GB-region-month/);
   assert.match(pricing, /\$0\.10 per decimal GB/);
   assert.match(pricing, /averaged over time during the month/);
   assert.match(pricing, /excluding replication traffic/);
-  assert.match(pricing, /Usage charges are not yet collected/);
   assert.match(pricing, /Approved subscription prices, allowances and usage rates/);
-  assert.match(pricing, /Approved pricing does not establish current overage enforcement or payment collection/);
+  assert.match(pricing, /operation units over the allowance are added to the next subscription invoice at the overage rate/);
+  assert.match(pricing, /Storage and client egress over the allowance are not billed yet/);
+  assert.match(pricing, /new writes stop at its operation allowance and there are no overage charges/);
+  assert.match(pricing, /\| Availability \| Sign up \| Checkout \| Checkout \| Checkout \| Contact sales \|/);
+  assert.doesNotMatch(pricing, /not yet collected|Confirm enrollment|confirm enrollment|self-service purchase|does not establish/);
   assert.match(pricing, /\| Storage \(GB-region-month\) \| 100 MB \| 1 GB \| 10 GB \| 25 GB \| 100 GB \|/);
   assert.match(pricing, /\| Operation units \/ month \| 50,000 \| 250,000 \| 2,000,000 \| 5,000,000 \| 10,000,000 \|/);
   assert.match(pricing, /\| Client egress \/ month \| 1 GB \| 5 GB \| 50 GB \| 100 GB \| 250 GB \|/);
@@ -29,12 +32,27 @@ test('approved usage rates include client egress and storage time without claimi
   assert.doesNotMatch(pricing, /Hobby|verified card|no paid overages|include.*30-day trial/);
 });
 
-test('existing engine safety tiers do not invent commercial PITR entitlements', () => {
-  assert.match(limits, /Hobby \| Pro \| Enterprise/);
-  assert.match(limits, /No mapping between commercial plans and engine tiers is published/);
-  assert.match(limits, /hobby 1 \/ pro 7 \/ enterprise 30/);
-  assert.doesNotMatch(pricing, /PITR retention/);
-  assert.doesNotMatch(limits, /Free 1 \/ Starter .*PITR/);
+test('limits publish per-plan entitlements from the catalog and the engine-tier mapping', () => {
+  const catalog = JSON.parse(read('data/canonical/pricing.json'));
+  assert.ok(catalog.plans.every((p) => p.entitlements && Object.keys(p.entitlements).length === 9));
+  assert.match(limits, /## Plan entitlements/);
+  assert.match(limits, /Free maps to the hobby engine tier; other plans map to the tier of the same name/);
+  assert.match(limits, /HTTP 429 with Retry-After/);
+  assert.match(limits, /\| Entitlement \(per organization\) \| Free \| Starter \| Pro \| Team \| Enterprise \|/);
+  assert.match(limits, /\| Requests\/s \(burst\) \| 50 \(100\) \| 200 \(400\) \| 500 \(1,000\) \| 500 \(1,000\) \| No plan ceiling \|/);
+  assert.match(limits, /\| Storage limit \| 100 MB \| 5 GB \| 100 GB \| 100 GB \| No plan ceiling \|/);
+  assert.match(limits, /\| Point-in-time recovery window \| 1 day \| 3 days \| 7 days \| 14 days \| 30 days \|/);
+  assert.match(limits, /\| Support response target \| Community \| 2 business days \| 1 business day \| 8 hours \| Custom \|/);
+  assert.match(limits, /response targets, not an SLA/);
+  assert.doesNotMatch(limits, /undefined|null|NaN|No mapping|mapping is published|Hobby \| Pro \| Enterprise|not yet collected/);
+  const support = read('docs/legal/support.md');
+  for (const p of catalog.plans) assert.match(support, new RegExp(`\\| ${p.name} \\| ${p.entitlements.support}`));
+  assert.match(support, /support@terrascale\.tech/);
+  assert.match(support, /not a service-level agreement/);
+  assert.doesNotMatch(support, /Draft|noindex|not yet in effect|response deadline/);
+  assert.doesNotMatch(read('docs/pricing/index.md'), /no mapping is published/);
+  assert.match(read('docs/guides/backups-and-restore.md'), /\/limits#plan-entitlements/);
+  assert.doesNotMatch(read('data/policies.json'), /Draft/);
 });
 
 test('operation units count writes once and exclude regional replication', () => {
@@ -52,11 +70,13 @@ test('shared organization allowances never multiply writes by selected regions',
   assert.ok(pricing.includes(policies.sharedAllowances));
 });
 
-test('pricing overview, usage accounting and terms publish approved pricing with collection caveats', () => {
-  for (const path of ['docs/pricing/index.md', 'docs/concepts/pricing-philosophy.md', 'docs/legal/terms.md']) {
+test('pricing overview and usage accounting publish the overage rule', () => {
+  for (const path of ['docs/pricing/index.md', 'docs/concepts/pricing-philosophy.md']) {
     const copy = read(path);
     assert.match(copy, /approved/i, path);
-    assert.match(copy, /usage charges are not yet collected/i, path);
+    assert.match(copy, /added to the next subscription invoice at the overage rate/, path);
+    assert.match(copy, /storage and client egress over the allowance are not billed yet/, path);
+    assert.doesNotMatch(copy, /not yet collected/i, path);
     assert.doesNotMatch(copy, /proposed allowances|proposed rates|pending review|propose included/i, path);
   }
 });

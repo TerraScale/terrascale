@@ -9,7 +9,7 @@ title: Pricing and limits
 
 # Pricing and limits
 
-The [pricing sheet](/ru/pricing) and [limits](/ru/limits) are generated from the public [pricing catalog](https://terrascale.tech/pricing.json) and documentation policy. Subscription prices, allowances and usage rates are approved. Free requires no card; Starter is $30/year only ($2.50/month equivalent), Pro $20/month, Team $50/month, and Enterprise $999/month support plus usage through sales. Paid plans include allowances then pay-as-you-go; usage charges are not yet collected.
+The [pricing sheet](/ru/pricing) and [limits](/ru/limits) are generated from the public [pricing catalog](https://terrascale.tech/pricing.json) and documentation policy. Subscription prices, allowances and usage rates are approved. Free requires no card; Starter is $30/year only ($2.50/month equivalent), Pro $20/month, Team $50/month, and Enterprise $999/month support plus usage through sales. Operation units over a paid plan's allowance are added to the next subscription invoice at the overage rate; storage and client egress over the allowance are not billed yet. Free stops new writes at its operation allowance and has no overage charges.
 
 ## Operation units and storage
 
@@ -23,6 +23,6 @@ See the generated [pricing sheet](/ru/pricing) for plan amounts, eligibility, bi
 
 ## API limits
 
-The [limits page](/ru/limits) lists document, query and engine safety tiers. These tiers are distinct from commercial plans; no mapping is published. See [SDK reference](/ru/guides/sdks) and [replication](/ru/concepts/replication) for SDK features and durability.
+The [limits page](/ru/limits) lists document and query limits and per-plan entitlements. Free maps to the hobby engine tier; other plans map to the tier of the same name. The per-plan request rates, storage limit, PITR window, backup retention and support response targets are in [plan entitlements](/ru/limits#plan-entitlements). See [SDK reference](/ru/guides/sdks) and [replication](/ru/concepts/replication) for SDK features and durability.
 
 </div>

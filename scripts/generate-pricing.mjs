@@ -42,9 +42,8 @@ const pricingMd = `${header}
 > **Approved subscription prices, allowances and usage rates.** Prices come from the catalog at
 > [terrascale.tech/pricing.json](https://terrascale.tech/pricing.json); the
 > [pricing page](https://terrascale.tech/pricing) renders the same catalog.
-> All prices are in ${catalog.currency}. Allowances and overage rates are approved.
-> Usage charges are not yet collected. Confirm enrollment and service availability before purchase;
-> a published price does not establish that checkout or billing is available.
+> All prices are in ${catalog.currency}. Free needs only sign-up; Starter, Pro and Team are bought through
+> checkout; Enterprise is arranged through sales.
 
 ## How usage is metered
 
@@ -57,7 +56,7 @@ const pricingMd = `${header}
 
 ${table("")}
 ${row("Subscription", subscription)}
-${row("Availability", (p) => p.available ? "Public Alpha; confirm enrollment" : "Contact sales; no self-service purchase")}
+${row("Availability", (p) => !p.available ? "Contact sales" : p.priceMonthlyUsd === 0 ? "Sign up" : "Checkout")}
 ${row("Projects", (p) => limit(p.limits.projects))}
 ${row("Databases", (p) => limit(p.limits.databases))}
 ${row("Members", (p) => limit(p.limits.members))}
@@ -68,19 +67,21 @@ ${row("Regions per database", () => `up to ${policy.maxRegions}`)}
 
 Launch regions: ${regionList}.
 
+Request rates, concurrency, query timeout, storage limit, point-in-time recovery, backup
+retention and support response targets per plan are in [plan entitlements](./limits.md#plan-entitlements).
+
 No trials or annual Pro/Team discounts are offered.
 
 ## Pay-as-you-go rates
 
-Paid plans include the allowances above, then pay-as-you-go usage at the approved rates:
+Paid plans include the allowances above. Operation units over the allowance are added to the next
+subscription invoice at the rate below. Storage and client egress over the allowance are not billed yet.
 
 | Meter | Rate (USD) |
 | --- | --- |
 | Operation units | ${usd(metering.overageRates.operationUnitsPerMillionUsd)} per million |
 | Storage | ${usd(metering.overageRates.storageGbRegionMonthUsd)} per GB-region-month |
 | Client egress | ${usd(metering.overageRates.clientEgressGbUsd)} per decimal GB |
-
-These allowances and rates are approved. Usage charges are not yet collected.
 
 **Shared organization allowances.** ${policy.sharedAllowances}
 
@@ -93,7 +94,8 @@ ${Object.entries(policy.billingPolicies).map(([title, body]) => `## ${title}\n\n
 See also: [Limits](./limits.md).
 `;
 
-const e = policy.engineLimits;
+const ceiling = (value, format = number) => (value === null ? "No plan ceiling" : format(value));
+const days = (n) => `${n} ${n === 1 ? "day" : "days"}`;
 
 const limitsMd = `${header}
 # Limits
@@ -107,21 +109,22 @@ or its scan budget, so an empty page can still have a continuation cursor.
 Follow cursors until exhaustion; see [queries and pagination](/guides/queries).
 The [change stream](/guides/realtime) keeps events for 7 days.
 
-## Engine safety tiers
+## Plan entitlements
 
-${e._note}
+${policy.entitlementsNote}
 
-| Engine limit (per organization) | ${e.tiers.join(" | ")} |
-| --- | ${e.tiers.map(() => "---").join(" | ")} |
-${e.rows.map((r) => `| ${r.join(" | ")} |`).join("\n")}
+${table("Entitlement (per organization)")}
+${row("Requests/s (burst)", (p) => `${ceiling(p.entitlements.requestsPerSecond)} (${ceiling(p.entitlements.burstRequests)})`.replace("No plan ceiling (No plan ceiling)", "No plan ceiling"))}
+${row("Concurrent HTTP requests", (p) => ceiling(p.entitlements.concurrentRequests))}
+${row("Query execution time", (p) => ceiling(p.entitlements.queryTimeoutSeconds, (n) => `${n} s`))}
+${row("Storage limit", (p) => ceiling(p.entitlements.storageLimitGb, storage))}
+${row("Point-in-time recovery window", (p) => days(p.entitlements.pitrDays))}
+${row("Backup retention", (p) => days(p.entitlements.backupRetentionDays))}
+${row("Regions per database", (p) => number(p.entitlements.regionsPerDatabase))}
+${row("Support response target", (p) => p.entitlements.support)}
+${row("Databases", (p) => limit(p.limits.databases))}
 
-## Plan policies
-
-The existing engine PITR defaults (days) are ${Object.entries(policy.enginePitrRetentionDays).map(([id, days]) => `${id} ${days}`).join(" / ")}. These engine defaults do not publish PITR entitlements for the commercial plans. No commercial plan-to-engine-tier mapping is published.
-
-Databases per org: ${plans.map((p) => `${p.name} ${limit(p.limits.databases)}`).join(" / ")}.
-
-Subscription prices, allowances and metering are on the [pricing page](./pricing.md). Usage charges are not yet collected.
+Subscription prices, allowances and metering are on the [pricing page](./pricing.md).
 `;
 
 if (check) {
