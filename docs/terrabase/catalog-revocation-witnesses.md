@@ -10,6 +10,8 @@ A missing prefix can be recovered by importing every state and the vector from a
 
 The original per-machine incarnation/head check remains in force, including on a locally restored revocation origin. It is not bypassed by a majority or an imported vector. Every serving gate must hold the external revocation cuts before opening; an offline machine can be omitted from the pull quorum only when its external witness is already covered.
 
+A machine seeded without its own anchor still needs the existing trusted-peer admission before creating one. This never skips another machine's external witness.
+
 The outer encrypted anchor format remains version 1. The additive `revocations: 1` evidence is understood by this build. Anchors written by older builds require pulls from every known holder before a new gate may open; the first upgraded anchor publishes a causal witness. Unknown evidence versions, malformed/oversized objects, missing existing anchors, and unverifiable origins fail closed. During rollout, old software does not provide the new cross-machine guarantee; complete the server rollout before accepting restore proof.
 
 The Fast regressions include the one-restored-origin/two-uninformed-peer case that opened on the previous gate, mixed and all-restored catalogs, a current-origin control that converges, revoked-key denial, and stale catalog access after database deletion. Tenant-state tombstones and collected-state floors remain required independently; this gate does not authorize replay of an old tenant file or discard deletion evidence. The snapshot regression also refuses a source's collected absence when the destination still holds an unproven live row.

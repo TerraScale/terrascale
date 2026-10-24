@@ -167,7 +167,10 @@ internal sealed partial class EngineManagementService
                 return await ClearDatabaseCleanupAsync(storage, erasureVerified: false, cancellationToken, intent).ConfigureAwait(false);
             }
 
-            throw new InvalidOperationException("a database cleanup intent conflicts with the catalog");
+            // A peer can publish its creation intent before another peer's registration reaches this snapshot.
+            // Preserve both the live copy and the shared intent. Neither a cleanup nor an absence receipt is justified;
+            // startup's bounded retry and background convergence revisit it after authoritative deletion arrives.
+            return new Done();
         }
 
         var authority = await ReadAsync<RecordedDeletion>(async transaction =>

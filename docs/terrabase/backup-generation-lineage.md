@@ -10,4 +10,4 @@ This changes only generation admission. Noncurrent versions, delete markers, inc
 
 New native snapshots return their pinned incarnation and offset to continuous backup. Engines or older generations without that evidence retain the timestamp path. A later file replacement without a matching receipt does not inherit a certificate from another incarnation. Generation metadata is protected with the same project/system backup key and object-key binding as the snapshot.
 
-Retention removes an expired certificate only after complete snapshot and WAL inventories show no remaining object of its generation. Retention locks or malformed inventories preserve it.
+Retention removes an expired certificate only after complete snapshot and WAL inventories show no remaining object of its generation. Retention locks or malformed inventories preserve it. Cancellation before the initial snapshot upload can leave only the certificate; it contains no snapshot or WAL payload and expires through the same retention check.

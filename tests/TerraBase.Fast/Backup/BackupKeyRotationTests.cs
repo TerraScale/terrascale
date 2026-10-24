@@ -462,7 +462,7 @@ public sealed class BackupKeyRotationTests
 
             // A frozen clock cannot trigger the retry when startup finishes closed. Complete the real trusted-peer pass
             // before expecting backup work, including when discovery becomes available only after startup.
-            await Assert.That(await gate.VerifyAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken)).IsTrue();
+            await Assert.That(await gate.VerifyAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken)).IsTrue().Because(string.Join(", ", gate.Waiting));
             await peer.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var newest = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal) && key != oldKey);
             var newRequests = s3.ObserveKey(newest);

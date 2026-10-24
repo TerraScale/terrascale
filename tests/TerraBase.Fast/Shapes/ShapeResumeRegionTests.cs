@@ -90,6 +90,8 @@ public sealed partial class ShapeResumeTests
 
         public FakeMemberStore Members { get; } = new();
 
+        public FakeS3 Bucket { get; } = new();
+
         public string User { get; } = EntityIds.New().ToString();
 
         public TenantContext Database { get; } = new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
@@ -146,7 +148,6 @@ public sealed partial class ShapeResumeTests
     {
         private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-shape-resume-").FullName;
         private readonly string _name = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
-        private readonly FakeS3 _s3 = new();
         private ManagementApi? _api;
         private HttpClient? _data;
 
@@ -157,13 +158,13 @@ public sealed partial class ShapeResumeTests
             var first = !File.Exists(Path.Combine(_directory, "_system.db"));
             _api = await ManagementApi.StartAsync(settings =>
             {
-                _s3.Configure(settings);
+                cell.Bucket.Configure(settings);
                 settings["region"] = region;
                 settings["node-name"] = _name;
                 settings["data-directory"] = _directory;
             }, services =>
             {
-                _s3.Route(services);
+                cell.Bucket.Route(services);
                 ManualBackupHosting.Configure(services);
                 services.AddSingleton<IMemberDirectory>(cell.Members);
             }, userId: cell.User);

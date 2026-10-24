@@ -108,7 +108,9 @@ internal sealed partial class CatalogGate
 
                     cuts.Add(ReadRevocation(root));
                 }, cancellationToken).ConfigureAwait(false);
-                if (!found && !_fresh)
+                // A seeded machine has no own anchor yet and still needs the existing all-holder admission below.
+                // Every other known machine's external witness must be readable; no missing witness grants coverage.
+                if (!found && !_fresh && name != _options.MachineId)
                 {
                     throw new InvalidDataException("a catalog anchor is missing");
                 }
@@ -142,10 +144,10 @@ internal sealed partial class CatalogGate
             Pending = [.. Pending, "external revocations not covered"];
             return false;
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
             // Provider/key failures may contain credentials. Classify without logging their text.
-            Pending = [.. Pending, "external revocations unreadable"];
+            Pending = [.. Pending, $"external revocations unreadable ({error.GetType().Name})"];
             return false;
         }
     }

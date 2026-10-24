@@ -36,7 +36,10 @@ public sealed class CatalogGateRestartTests
             await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(machine.Gate.IsOpen), timeout: TimeSpan.FromSeconds(30));
         }
 
-        // fra is down too when anotherDown: gru then opens from gru and sjc, a majority its anchor allows.
+        // An offline holder may be omitted only after its last external witness has actual received-prefix coverage.
+        // Merely observing its open gate races the first marker's delivery; sjc will remain available to prove the cut.
+        await fra.AnchorOnAsync(sjc, token);
+        // fra is down too when anotherDown: gru then opens from gru and sjc, a majority plus that covered witness.
         if (anotherDown)
         {
             await fra.StopAsync();
@@ -66,6 +69,25 @@ public sealed class CatalogGateRestartTests
         public ManagementApi Api => _api ?? throw new InvalidOperationException($"{region} is stopped");
 
         public ICatalogGate Gate => Api.Server.Services.GetRequiredService<ICatalogGate>();
+
+        public async Task AnchorOnAsync(Machine receiver, CancellationToken token)
+        {
+            await Assert.That(await Gate.TryAnchorAsync(token)).IsTrue();
+            var source = await Api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+            long cut;
+            await using (var read = await source.BeginTransactionAsync(write: false, token))
+            {
+                cut = (await read.GetVersionAsync(CatalogGate.Revocations, _name, token))!.Value.Version;
+            }
+            var origin = Api.Server.Services.GetRequiredService<LocalReplica>().Id;
+            await TerraBaseTestServer.EventuallyAsync(async cancellationToken =>
+            {
+                var destination = await receiver.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(cancellationToken);
+                await using var read = await destination.BeginTransactionAsync(write: false, cancellationToken);
+                var applied = await read.GetAppliedAsync(cancellationToken);
+                return applied.TryGetValue(origin, out var held) && held.Value >= unchecked((ulong)cut);
+            }, timeout: TimeSpan.FromSeconds(30));
+        }
 
         public async Task StartAsync() =>
             _api = await ManagementApi.StartAsync(settings =>
