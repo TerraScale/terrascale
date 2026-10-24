@@ -920,10 +920,11 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
         var (key, path) = Place(database);
         // An open store keeps its file handles, so only an opening checks the path for links (as the system database's):
-        // this runs several times per request, and the checks are seven readlink calls.
+        // this runs several times per request, and the checks are seven readlink calls. Its file's presence is an lstat, done
+        // at most once a second per store and again after any of TerraBase's own file operations (_fileEpoch).
         if (_stores.TryGetValue(key, out var open))
         {
-            return File.Exists(path) ? open : null;
+            return open.FilePresent(Volatile.Read(ref _fileEpoch)) ? open : null;
         }
 
         RejectDatabaseLinks(path);
@@ -1643,6 +1644,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     }
 
     // Count semaphore waiters toward storage-queue, and release admission even if waiting is cancelled.
+    // Moves on entering and leaving _creation, under which TerraBase creates, deletes, swaps and purges database files.
+    private long _fileEpoch;
+
     private async ValueTask EnterCreationAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1650,6 +1654,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         try
         {
             await _creation.WaitAsync(cancellationToken).ConfigureAwait(false);
+            // Every create, delete, swap and purge runs under _creation: a file seen before it is looked up again.
+            Interlocked.Increment(ref _fileEpoch);
         }
         catch
         {
@@ -1662,6 +1668,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     {
         TaskCompletionSource[] released = _awaitingRelease.Count == 0 ? [] : [.. _awaitingRelease];
         _awaitingRelease.Clear();
+        Interlocked.Increment(ref _fileEpoch);
         _creation.Release();
         Io.Release();
         foreach (var initialization in released)
