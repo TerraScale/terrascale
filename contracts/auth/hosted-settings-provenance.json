@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/TerraScale/terrascale",
-  "revision": "752cecb6263da2f40a7163740d76ab646b7da6b8",
+  "revision": "8cf991cc1f06a436ec3000934cabdf3335b968d4",
   "pull_request": "https://github.com/TerraScale/terrascale/pull/609",
   "sources_sha256": {
     "src/TerraScale.Authentication/Features/ProjectTenants/ProjectTenantEndpoint.cs": "9b09baff16b052e79bed6a7576595a92a547e134fa6992042ca4759449edc019",
@@ -10,7 +10,7 @@
     "get_project_settings",
     "update_project_settings"
   ],
-  "qualification": "Source-derived from the owning producer change; HTTP fixture coverage only. Merge this SDK change only after the producer contract lands.",
+  "qualification": "Owning producer merged in TerraScale/terrascale#609; HTTP fixture coverage only. Installed package and live-service qualification remain separate.",
   "fields": {
     "branding": [
       "title_size: int? (20..40)",

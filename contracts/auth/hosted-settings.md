@@ -30,5 +30,5 @@ record deconstruction changes arity; consumers that deconstruct these records
 must update their patterns. This SDK
 contract test uses an HTTP fixture; it does not establish live-service or
 installed-dashboard qualification. The concrete producer revision and source hashes are in
-`hosted-settings-provenance.json`. The SDK merge follows the owning producer
-contract in TerraScale/terrascale#609; package qualification follows that merge.
+`hosted-settings-provenance.json`. The owning producer contract landed in TerraScale/terrascale#609. Immutable
+package qualification follows the SDK merge.
