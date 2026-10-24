@@ -53,8 +53,9 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
         await users.SetDisabledAsync(projectId, userId, disabled, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
 
     /// <summary>A page of the tenant's live sessions (unrevoked, unexpired, of an enabled user at its current epoch), with each document id.</summary>
-    public Task<Page<ProjectSession>> SessionsAsync(string projectId, string? userId, int limit, string? after, CancellationToken cancellationToken)
+    public async Task<Page<ProjectSession>> SessionsAsync(string projectId, string? userId, int limit, string? after, CancellationToken cancellationToken)
     {
+        var lifetime = await sessions.GetLifetimeAsync(projectId, cancellationToken).ConfigureAwait(false);
         var now = JsonSerializer.SerializeToNode(clock.GetUtcNow(), IdentityJson.Default.DateTimeOffset);
         List<JsonObject> conditions = [new() { ["eq"] = new JsonArray("/revoked", false) }, new() { ["gt"] = new JsonArray("/expiresAt", now) }];
         if (userId is not null)
@@ -63,9 +64,16 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
         }
 
         var owners = new Dictionary<string, UserRecord?>(StringComparer.Ordinal);
-        return this.ScanAsync(AuthStore.SessionCollection, projectId, conditions, limit, after, async document =>
+        return await this.ScanAsync(AuthStore.SessionCollection, projectId, conditions, limit, after, async document =>
         {
             if (document.Document.Deserialize(IdentityJson.Default.SessionRecord) is not { } session || session.InstanceId != projectId)
+            {
+                return null;
+            }
+
+            var policyExpiry = session.CreatedAt + lifetime;
+            session = session with { ExpiresAt = policyExpiry < session.ExpiresAt ? policyExpiry : session.ExpiresAt };
+            if (session.ExpiresAt <= clock.GetUtcNow())
             {
                 return null;
             }
@@ -77,7 +85,7 @@ public sealed class TenantDirectory(AuthStore store, Users users, Sessions sessi
 
             return user is { Disabled: false } && user.AuthEpoch == session.AuthEpoch && user.AuthStamp == session.AuthStamp
                 ? new ProjectSession(document.Id, session, user.Email) : null;
-        }, cancellationToken);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Revokes the tenant's session with document id <paramref name="id"/>; false when there is none.</summary>

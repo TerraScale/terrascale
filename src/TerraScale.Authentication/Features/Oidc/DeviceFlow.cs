@@ -100,7 +100,7 @@ public static class DeviceFlow
             }, StatusCodes.Status403Forbidden);
         }
 
-        return OidcResults.SignIn(user, session.ExpiresAt - Sessions.Lifetime, device.GetScopes(), OidcIssuer.SignInAudiences(options));
+        return OidcResults.SignIn(user, session.CreatedAt, device.GetScopes(), OidcIssuer.SignInAudiences(options));
     }
 }
 

@@ -140,6 +140,55 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
         await Assert.That(removed.GetProperty("providers")[2].GetProperty("configured").GetBoolean()).IsTrue();
     }
 
+    [Test]
+    public async Task Project_branding_and_configuration_are_validated_persisted_and_isolated()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var (_, token, project, root) = await this.ProjectAsync(oidc);
+        var (viewer, viewerToken) = await oidc.SignInUserAsync(this.Email(2));
+        await Assert.That(await oidc.GrantAsync(project, viewer.Id, "viewer")).IsTrue();
+        var branding = new
+        {
+            name = "Paperwork",
+            logo_url = "https://assets.example.test/logo.svg",
+            theme_color = "#A1B2C3",
+            title_size = 30,
+            default_theme = "dark",
+            background_color = "#151515",
+            text_color = "#FAFAFA",
+            footer_links = new[] { new { label = "Privacy", url = "https://example.test/privacy" } },
+        };
+        var configuration = new { redirect_urls = new[] { "https://app.example.test/callback" }, session_lifetime_seconds = 3600 };
+        await Assert.That(await oidc.FailAsync(HttpMethod.Put, $"{root}/settings", viewerToken, new { branding })).IsEqualTo((403, "forbidden_role"));
+        await oidc.OkAsync(HttpMethod.Put, $"{root}/settings", token, new { branding, configuration });
+        // A separate read and unrelated methods update retain the committed theme and policy.
+        var answer = await oidc.OkAsync(HttpMethod.Put, $"{root}/settings", token, new { methods = new { sign_up = false } });
+        await Assert.That(answer.GetProperty("branding").GetProperty("title_size").GetInt32()).IsEqualTo(30);
+        await Assert.That(answer.GetProperty("branding").GetProperty("text_color").GetString()).IsEqualTo("#fafafa");
+        await Assert.That(answer.GetProperty("configuration").GetProperty("session_lifetime_seconds").GetInt32()).IsEqualTo(3600);
+        await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{root}/settings", viewerToken)).GetProperty("branding").GetProperty("footer_links")[0].GetProperty("label").GetString()).IsEqualTo("Privacy");
+        foreach (var invalid in new object[]
+        {
+            new { branding = branding with { title_size = 19 } },
+            new { branding = branding with { default_theme = "invalid" } },
+            new { branding = branding with { theme_color = "#123456\n" } },
+            new { branding = branding with { logo_url = "javascript:alert(1)" } },
+            new { branding = branding with { footer_links = [new { label = "Unsafe", url = "javascript:alert(1)" }] } },
+            new { configuration = configuration with { session_lifetime_seconds = 299 } },
+            new { configuration = configuration with { redirect_urls = ["https://example.test/cb#fragment"] } },
+            new { configuration = configuration with { redirect_urls = ["https://user:password@example.test/cb"] } },
+        })
+        {
+            await Assert.That(await oidc.FailAsync(HttpMethod.Put, $"{root}/settings", token, invalid)).IsEqualTo((400, "invalid_request"));
+        }
+
+        var other = await oidc.CreateProjectAsync(token, await oidc.CreateOrganizationAsync(token, this.faker.Company.CompanyName()), this.faker.Commerce.ProductName());
+        var untouched = await oidc.OkAsync(HttpMethod.Get, $"/v1/{other}/settings", token);
+        await Assert.That(untouched.GetProperty("branding").GetProperty("title_size").ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.Null);
+        await Assert.That(untouched.GetProperty("configuration").GetProperty("session_lifetime_seconds").GetInt32()).IsEqualTo(1209600);
+        await Assert.That((await oidc.Server.App.Services.GetRequiredService<ProjectAuthSettings>().GetAsync(project)).TitleSize).IsEqualTo(30);
+    }
+
     private string Email(int index) =>
         this.faker.Internet.Email(provider: "example.test", uniqueSuffix: index.ToString(CultureInfo.InvariantCulture)).ToLowerInvariant();
 

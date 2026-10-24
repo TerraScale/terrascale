@@ -25,21 +25,25 @@ public sealed partial record HostedLayoutModel
     ];
 
     /// <summary>
-    /// Creates a model, discarding a theme colour that is not exactly <c>#rrggbb</c> and a title size outside 16 to 40 px.
+    /// Creates a model, discarding a theme colour that is not exactly <c>#rrggbb</c> and a title size outside 20 to 40 px.
     /// A project theme names its logo, name, accent, title size and footer links; without one the TerraScale defaults apply.
     /// </summary>
     public HostedLayoutModel(string title, string nonce, string? themeColor = null, string? logoUrl = null, string? name = null, int? titleSize = null,
-        IReadOnlyList<(string Label, string Url)>? footer = null)
+        IReadOnlyList<(string Label, string Url)>? footer = null, string? defaultTheme = null, string? tenant = null,
+        string? backgroundColor = null, string? textColor = null)
     {
         this.Title = title;
         this.Nonce = nonce;
-        this.LogoUrl = logoUrl;
+        this.LogoUrl = HttpsUrl(logoUrl) ? logoUrl : null;
         this.Name = string.IsNullOrWhiteSpace(name) ? DefaultName : name;
-        this.AccentColor = themeColor is null && logoUrl is null ? null
-            : themeColor is not null && HexColor().IsMatch(themeColor) ? themeColor
-            : DefaultAccent;
-        this.TitleSize = titleSize is >= 16 and <= 40 ? titleSize : null;
-        this.Footer = footer ?? DefaultFooter;
+        this.AccentColor = ValidColor(themeColor);
+        this.TitleSize = titleSize is >= 20 and <= 40 ? titleSize : null;
+        this.Footer = footer is null ? DefaultFooter : [.. footer.Where(link => !string.IsNullOrWhiteSpace(link.Label) && HttpsUrl(link.Url)).Take(5)];
+        this.DefaultTheme = defaultTheme is "light" or "dark" ? defaultTheme : "system";
+        this.ThemeKey = "ts-auth-theme:" + (tenant ?? DefaultName);
+        this.BackgroundColor = ValidColor(backgroundColor);
+        this.TextColor = ValidColor(textColor);
+        this.Palette = HostedPalette.Css(this.AccentColor, this.BackgroundColor, this.TextColor);
     }
 
     /// <summary>Page title, shown as <c>{title} · {name}</c>.</summary>
@@ -63,8 +67,25 @@ public sealed partial record HostedLayoutModel
     /// <summary>The footer links under the card.</summary>
     public IReadOnlyList<(string Label, string Url)> Footer { get; }
 
-    /// <summary>Whether to credit TerraScale under a project's own brand.</summary>
-    public bool Powered => this.Name != DefaultName;
+    /// <summary>The initial theme until the visitor chooses one for this tenant.</summary>
+    public string DefaultTheme { get; }
+
+    /// <summary>Tenant-scoped browser preference key; never contains credentials.</summary>
+    public string ThemeKey { get; }
+
+    /// <summary>Validated optional page background.</summary>
+    public string? BackgroundColor { get; }
+
+    /// <summary>Validated primary text colour, adjusted per surface and scheme for readable contrast.</summary>
+    public string? TextColor { get; }
+
+    /// <summary>Derived text and accent tokens for both colour schemes and the page background.</summary>
+    public string Palette { get; }
+
+    private static string? ValidColor(string? value) => value is not null && HexColor().IsMatch(value) ? value : null;
+
+    private static bool HttpsUrl(string? value) => Uri.TryCreate(value, UriKind.Absolute, out var uri)
+        && uri.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(uri.UserInfo);
 
     [GeneratedRegex(@"\A#[0-9A-Fa-f]{6}\z")]
     private static partial Regex HexColor();
@@ -75,8 +96,10 @@ public sealed partial record HostedLayoutModel
 @font-face { font-family: "Geist Mono"; src: url("/fonts/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
 :root {
   color-scheme: light dark;
-  --accent: #2158e8; /* logo blue; an instance theme colour overrides this inline */
-  --link: light-dark(var(--accent), #6b93ff); /* dark text and focus: 5.9:1 on graphite */
+  --accent: #2158e8;
+  --on-accent: #ffffff;
+  --accent-hover: #1a4bd0; /* logo blue; an instance theme colour overrides this inline */
+  --link: light-dark(#1f52d9, #6b93ff); /* dark text and focus: 5.9:1 on graphite */
   --canvas: light-dark(#ffffff, #151515);
   --surface: light-dark(#fafafa, #1b1b1b);
   --surface-2: light-dark(#f4f4f5, #222222);
@@ -99,7 +122,7 @@ public sealed partial record HostedLayoutModel
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
-body { position: relative; font: var(--body-size) / 1.5 var(--font); margin: 0; background: var(--canvas); color: var(--ink); }
+body { position: relative; font: var(--body-size) / 1.5 var(--font); margin: 0; background: var(--page-background, var(--canvas)); color: var(--ink); }
 a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
 :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
@@ -120,7 +143,7 @@ form { display: grid; gap: 16px; margin: 0; }
 label { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 500; }
 label a { font-weight: 400; }
 .hint { font-size: 12px; color: var(--ink-3); }
-input, select { width: 100%; height: 36px; padding: 0 12px; border: 1px solid var(--control-line); border-radius: var(--radius); font: inherit; background: var(--canvas); color: inherit; }
+input, select { width: 100%; height: 36px; padding: 0 12px; border: 1px solid var(--control-line); border-radius: var(--radius); font: inherit; background: var(--surface); color: inherit; }
 input::placeholder { color: var(--ink-3); }
 input:focus-visible, select:focus-visible { outline-offset: -1px; border-color: transparent; }
 input.code { height: 52px; font: 500 24px / 1 var(--mono); letter-spacing: 0.35em; text-align: center; caret-color: var(--accent); }
@@ -128,8 +151,8 @@ input.code { height: 52px; font: 500 24px / 1 var(--mono); letter-spacing: 0.35e
 .chip > .icon { color: var(--ink-3); }
 .chip span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip a { padding: 0 8px; font-size: 13px; }
-button, .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 36px; padding: 0 12px; border: 1px solid transparent; border-radius: var(--radius); background: var(--accent); color: #fff; font: inherit; font-weight: 500; text-decoration: none; cursor: pointer; }
-button:hover, .btn:hover { background: color-mix(in oklab, var(--accent), #000 12%); text-decoration: none; }
+button, .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 36px; padding: 0 12px; border: 1px solid transparent; border-radius: var(--radius); background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 500; text-decoration: none; cursor: pointer; }
+button:hover, .btn:hover { background: var(--accent-hover); text-decoration: none; }
 button.secondary, .btn.secondary { background: var(--surface); border-color: var(--control-line); color: var(--ink); }
 button.secondary:hover, .btn.secondary:hover { background: var(--surface-2); }
 button.danger { background: light-dark(#c81e1e, #d92626); }
@@ -148,14 +171,24 @@ button.danger { background: light-dark(#c81e1e, #d92626); }
 .facts div { display: flex; justify-content: space-between; gap: 12px; }
 .facts dt { color: var(--ink-3); }
 .facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; text-align: right; }
-.auth-foot { position: absolute; left: 0; right: 0; bottom: 0; height: 96px; display: grid; align-content: center; justify-items: center; gap: 10px; padding: 0 16px; font-size: 12px; }
+.auth-foot { position: absolute; left: 0; right: 0; bottom: 0; min-height: 96px; display: grid; align-content: center; justify-items: center; gap: 8px; padding: 8px 16px; font-size: 12px; color: var(--ink); }
 .foot-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; }
 .foot-links a { color: var(--ink-3); }
-.foot-row { display: flex; align-items: center; gap: 12px; }
+.foot-row { display: flex; align-items: center; justify-content: center; gap: 12px; }
 .auth-powered { color: var(--ink-3); }
 .auth-powered b { font-weight: 500; color: var(--ink-2); }
-.theme-picker { width: auto; height: 28px; padding: 0 8px; font-size: 12px; background: var(--canvas); }
-@media (max-width: 640px) { .auth-page { padding-left: 12px; padding-right: 12px; } .card { padding: 24px; } input.code { font-size: 20px; } }
+.theme-picker { width: auto; height: 28px; padding: 0 8px; font-size: 12px; background: var(--page-background, var(--canvas)); }
+.password-control { display: flex; align-items: center; border: 1px solid var(--control-line); border-radius: var(--radius); background: var(--surface); }
+.password-control input { border: 0; background: transparent; min-width: 0; }
+.password-control:focus-within { outline: 2px solid var(--link); outline-offset: -1px; border-color: transparent; }
+.password-control input:focus-visible { outline: none; }
+.password-toggle { flex: none; width: 30px; height: 30px; margin-right: 2px; padding: 0; color: var(--ink-3); background: transparent; }
+.password-toggle:hover { background: var(--surface-2); }
+.otp { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 8px repeat(3, minmax(0, 1fr)); gap: 8px; }
+.otp input { height: 52px; padding: 0; font: 500 24px / 1 var(--mono); text-align: center; caret-color: var(--accent); }
+.otp input:nth-child(4) { grid-column: 5; }
+.otp input:not(:placeholder-shown) { background: var(--surface-2); }
+@media (max-width: 640px) { .auth-page { padding-left: 12px; padding-right: 12px; } .card { padding: 24px; } input.code { font-size: 20px; } .otp { gap: 6px; } .otp input { height: 48px; font-size: 20px; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 """;
 }

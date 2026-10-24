@@ -1,16 +1,13 @@
 @inherits RazorLayoutSlice<HostedLayoutModel>
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="@Model.DefaultTheme" data-theme-key="@Model.ThemeKey" data-default-theme="@Model.DefaultTheme">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>@Model.Title · @Model.Name</title>
 <link rel="icon" href="/admin/logo-icon-blue.svg" type="image/svg+xml">
 <style nonce="@Model.Nonce">@WriteHtml(HostedLayoutModel.PageCss)</style>
-@if (Model.AccentColor is { } accent)
-{
-<style nonce="@Model.Nonce">:root{--accent:@accent}</style>
-}
+<style nonce="@Model.Nonce">@WriteHtml(Model.Palette)</style>
 @if (Model.TitleSize is { } titleSize)
 {
 <style nonce="@Model.Nonce">:root{--title-size:@(titleSize.ToString(CultureInfo.InvariantCulture))px}</style>
@@ -18,8 +15,8 @@
 @await RenderSectionAsync("head")
 <script nonce="@Model.Nonce">
 (function () {
-  var saved = 'system';
-  try { saved = localStorage.getItem('ts-auth-theme') || saved; } catch (e) { }
+  var root = document.documentElement, saved = root.dataset.theme;
+  try { saved = localStorage.getItem(root.dataset.themeKey) || saved; } catch (e) { }
   document.documentElement.dataset.theme = saved === 'light' || saved === 'dark' ? saved : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 })();
 </script>
@@ -44,20 +41,17 @@
 <option value="light">Light</option>
 <option value="dark">Dark</option>
 </select>
-@if (Model.Powered)
-{
-<p class="auth-powered">Powered by <b>TerraScale</b></p>
-}
 </div>
+<p class="auth-powered">Powered by <b>TerraScale</b></p>
 </footer>
 <script nonce="@Model.Nonce">
 (function () {
-  var root = document.documentElement, picker = document.querySelector('.theme-picker'), key = 'ts-auth-theme';
+  var root = document.documentElement, picker = document.querySelector('.theme-picker'), key = root.dataset.themeKey;
   var osDark = window.matchMedia('(prefers-color-scheme: dark)');
   function apply(choice) {
     root.dataset.theme = choice === 'light' || choice === 'dark' ? choice : osDark.matches ? 'dark' : 'light';
   }
-  var saved = 'system';
+  var saved = document.documentElement.getAttribute('data-default-theme') || 'system';
   try { saved = localStorage.getItem(key) || saved; } catch (e) { }
   if (saved !== 'light' && saved !== 'dark') saved = 'system';
   picker.value = saved;
@@ -69,5 +63,6 @@
   osDark.addEventListener('change', function () { apply(picker.value); });
 })();
 </script>
+<script nonce="@Model.Nonce">@WriteHtml(HostedPageBehavior.Script)</script>
 </body>
 </html>

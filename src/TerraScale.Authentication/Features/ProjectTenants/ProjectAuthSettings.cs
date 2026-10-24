@@ -15,8 +15,15 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 /// <param name="LogoUrl">An https logo URL, or null.</param>
 /// <param name="ThemeColor"><c>#rrggbb</c>, or null for the default theme.</param>
 /// <param name="Providers">The configured social sign-in providers, or null for none.</param>
+/// <param name="TitleSize">Hosted title size in pixels, or the default.</param>
+/// <param name="DefaultTheme">Light, dark or system appearance.</param>
+/// <param name="FooterLinks">Project footer links, or the default links.</param>
+/// <param name="BackgroundColor">Optional page background colour.</param>
+/// <param name="TextColor">Optional text colour.</param>
+/// <param name="Configuration">Project redirect and absolute session policy.</param>
 public sealed record ProjectAuthSettingsRecord(string InstanceId, bool Passcode = true, bool Password = true, bool SignUp = true, string? Name = null, string? LogoUrl = null, string? ThemeColor = null,
-    IReadOnlyList<SocialProviderRecord>? Providers = null)
+    IReadOnlyList<SocialProviderRecord>? Providers = null, int? TitleSize = null, string? DefaultTheme = null, IReadOnlyList<FooterLinkBody>? FooterLinks = null,
+    string? BackgroundColor = null, string? TextColor = null, ConfigurationBody? Configuration = null)
 {
     /// <summary>The configured <paramref name="provider"/>, or null.</summary>
     public SocialProviderRecord? Provider(string provider) => this.Providers?.FirstOrDefault(record => record.Provider == provider);

@@ -212,7 +212,7 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, HostedAuth hosted,
         {
             AuthMetrics.SignIn("hosted_password", "refused");
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Password, SignInFlow.Tenant(this.HttpContext), address, next,
-                "Check both and try again, or email yourself a sign-in code.")
+                HostedTheme.Of(this.HttpContext).Passcode ? "Check both and try again, or email yourself a sign-in code." : "Check both and try again, or reset your password.")
             { ErrorTitle = "Wrong email or password" }, StatusCodes.Status401Unauthorized);
         }
 
