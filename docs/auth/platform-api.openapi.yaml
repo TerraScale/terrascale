@@ -92,6 +92,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Organization' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/Unavailable' }
     patch:
@@ -122,6 +123,39 @@ paths:
       description: Needs the owner role. 409 not_empty while it has projects. Deletes its members, invitations, transfer, organization API keys and audit events.
       responses:
         '204': { description: 'Deleted.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/organizations/{organization}/mfa-policy:
+    parameters:
+      - $ref: '#/components/parameters/Organization'
+    put:
+      operationId: set_organization_mfa_policy
+      tags: [Organizations]
+      summary: Require two-factor authentication
+      description: |
+        Needs the owner role. With require_mfa true, members without an active second factor get 403 mfa_required from
+        the organization's endpoints and token exchange until they enrol; turning it on needs the caller's own factor
+        (409 mfa_not_enrolled). Recorded in the audit log as organization.mfa_required or organization.mfa_optional.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [require_mfa]
+              additionalProperties: false
+              properties:
+                require_mfa: { type: boolean }
+      responses:
+        '200':
+          description: The organization with its new policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Organization' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -203,8 +237,29 @@ paths:
       responses:
         '204': { description: 'Left.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/account/mfa:
+    get:
+      operationId: get_account_mfa
+      tags: [Members]
+      summary: Get two-factor status
+      description: The caller's own second-factor state and the hosted page (/ui/terrascale/security) that enrols or removes it.
+      responses:
+        '200':
+          description: The caller's second-factor state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, recovery_codes_remaining, manage_url]
+                properties:
+                  enabled: { type: boolean, description: Whether an authenticator app (TOTP) is active. }
+                  recovery_codes_remaining: { type: integer, minimum: 0, maximum: 8 }
+                  manage_url: { type: string, format: uri }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/account:
     delete:
@@ -479,6 +534,7 @@ paths:
               schema: { $ref: '#/components/schemas/ProjectPage' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/organizations/{organization}/projects/{project}:
@@ -497,6 +553,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Project' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/Unavailable' }
     patch:
@@ -586,6 +643,7 @@ paths:
               schema: { $ref: '#/components/schemas/ProjectMemberPage' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/organizations/{organization}/projects/{project}/members/{user}:
@@ -1147,7 +1205,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     Forbidden:
-      description: forbidden_role, or for invitations email_mismatch.
+      description: forbidden_role, mfa_required (the organization requires two-factor authentication and the caller has none), or for invitations email_mismatch.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -1157,7 +1215,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     Conflict:
-      description: name_taken, not_empty, last_owner, already_member, invitation_pending, invitation_expired, not_pending, rotation_pending, closure_conflict or binding_conflict.
+      description: name_taken, not_empty, last_owner, already_member, invitation_pending, invitation_expired, not_pending, rotation_pending, closure_conflict, binding_conflict or mfa_not_enrolled.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -1223,8 +1281,9 @@ components:
         name: { $ref: '#/components/schemas/Name' }
     Organization:
       type: object
-      required: [id, name, created_by, created_at, role]
+      required: [id, name, created_by, created_at, role, require_mfa]
       properties:
+        require_mfa: { type: boolean, description: Whether members need an active second factor to reach it. }
         id: { $ref: '#/components/schemas/Ulid' }
         name: { type: string }
         created_by: { $ref: '#/components/schemas/Ulid' }

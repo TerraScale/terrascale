@@ -29,7 +29,10 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
     // Issued tokens are 48 characters; anything far longer is never ours and is not hashed or looked up.
     private const int MaxTokenLength = 256;
 
-    /// <summary>Opens a primary-only session; refuses active MFA and stale authentication.</summary>
+    /// <summary>
+    /// Opens a session; refuses stale authentication, and an active factor unless <see cref="UserRecord.MultiFactor"/>
+    /// says this sign-in proved it.
+    /// </summary>
     public async Task<IssuedSession> CreateAsync(UserRecord user, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);
@@ -163,13 +166,13 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
     private async Task<IssuedSession?> IssueAsync(UserRecord user, DateTimeOffset expiresAt, CancellationToken cancellationToken)
     {
         if (!await store.AreCredentialsCurrentAsync(user.InstanceId, user.AuthenticationBindings, cancellationToken).ConfigureAwait(false)
-            || !await totp.AllowsPrimaryAuthenticationAsync(user, cancellationToken).ConfigureAwait(false))
+            || !user.MultiFactor && !await totp.AllowsPrimaryAuthenticationAsync(user, cancellationToken).ConfigureAwait(false))
         {
             return null;
         }
 
         var token = Tokens.RandomToken(48);
-        var session = new SessionRecord(user.InstanceId, user.Id, Tokens.Sha256Hex(token), user.AuthEpoch, clock.GetUtcNow(), expiresAt) { Bindings = user.AuthenticationBindings, AuthStamp = user.AuthStamp };
+        var session = new SessionRecord(user.InstanceId, user.Id, Tokens.Sha256Hex(token), user.AuthEpoch, clock.GetUtcNow(), expiresAt) { Bindings = user.AuthenticationBindings, AuthStamp = user.AuthStamp, Mfa = user.MultiFactor };
         var epoch = new JsonObject
         {
             ["and"] = new JsonArray(
@@ -210,8 +213,8 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         // A lookup that completes after expiry authorizes nothing.
         return user is not null && !user.Disabled && user.AuthEpoch == session.AuthEpoch && user.AuthStamp == session.AuthStamp
             && await store.AreCredentialsCurrentAsync(instanceId, session.Bindings, cancellationToken).ConfigureAwait(false)
-            && await totp.AllowsPrimaryAuthenticationAsync(user, cancellationToken).ConfigureAwait(false)
-            && session.ExpiresAt > clock.GetUtcNow() ? (session, document!.Version, user with { AuthenticationBindings = session.Bindings }) : null;
+            && (session.Mfa || await totp.AllowsPrimaryAuthenticationAsync(user, cancellationToken).ConfigureAwait(false))
+            && session.ExpiresAt > clock.GetUtcNow() ? (session, document!.Version, user with { AuthenticationBindings = session.Bindings, MultiFactor = session.Mfa }) : null;
     }
 
     private async Task<bool> TryRevokeAsync(SessionRecord session, string version, CredentialBinding binding, CancellationToken cancellationToken) =>

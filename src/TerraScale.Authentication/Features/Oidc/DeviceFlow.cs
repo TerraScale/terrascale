@@ -90,7 +90,7 @@ public static class DeviceFlow
         }
 
         // The same rule as every other user grant: an active MFA factor refuses primary-only tokens.
-        if (!await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
+        if (!user.MultiFactor && !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
         {
             return SignInPageModel.Render(http, page with
             {
@@ -294,7 +294,7 @@ public sealed class DeviceDecisionEndpoint(TotpCredentials mfa, AuthOptions opti
         Post("/ui/{slug}/device");
         Name("ui_device_decide");
         Summary("Approve or deny a device");
-        Description("Same-origin form post with user_code and decision=approve or deny, from a browser with a live session (otherwise 403). Approve signs the device in as the session's user with the scopes it asked for; active MFA users are refused (403) as at every user grant. Deny makes the device's next poll answer access_denied. A code works once; an unknown, expired or decided code answers 400. Lookups share the device page's limits (429 with Retry-After).");
+        Description("Same-origin form post with user_code and decision=approve or deny, from a browser with a live session (otherwise 403). Approve signs the device in as the session's user with the scopes it asked for; an active MFA user's session must have proved the second factor (otherwise 403). Deny makes the device's next poll answer access_denied. A code works once; an unknown, expired or decided code answers 400. Lookups share the device page's limits (429 with Retry-After).");
         Tags("Sign-in");
         // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));

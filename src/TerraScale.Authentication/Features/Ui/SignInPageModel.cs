@@ -55,6 +55,21 @@ public enum SignInStep
 
     /// <summary>A browser opened a URL that does not exist.</summary>
     NotFound,
+
+    /// <summary>Ask for the authenticator app's code or a recovery code after the primary credential.</summary>
+    Mfa,
+
+    /// <summary>The signed-in account's two-factor state.</summary>
+    Security,
+
+    /// <summary>Show a pending authenticator's QR code and ask for its first code.</summary>
+    TotpSetup,
+
+    /// <summary>Two-factor authentication was turned on; show the recovery codes once.</summary>
+    RecoveryCodes,
+
+    /// <summary>A credential change needs a recent sign-in.</summary>
+    Reauthenticate,
 }
 
 /// <summary>Model for <c>SignInPage.cshtml</c>. Razor encodes every value.</summary>
@@ -87,6 +102,27 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The client's validated post-logout redirect URI the signed-out page continues to.</summary>
     public string? ReturnTo { get; init; }
 
+    /// <summary>The sealed second-factor challenge the second sign-in step posts back.</summary>
+    public string? Challenge { get; init; }
+
+    /// <summary>The pending authenticator's QR code, as a PNG data URI.</summary>
+    public string? QrCode { get; init; }
+
+    /// <summary>The pending authenticator's base32 key, for manual entry.</summary>
+    public string? Secret { get; init; }
+
+    /// <summary>Recovery codes, shown once at activation.</summary>
+    public IReadOnlyList<string> RecoveryCodes { get; init; } = [];
+
+    /// <summary>Whether the account has an active authenticator.</summary>
+    public bool MfaEnabled { get; init; }
+
+    /// <summary>Unused recovery codes left.</summary>
+    public int RecoveryRemaining { get; init; }
+
+    /// <summary>A success message shown above the page.</summary>
+    public string? Notice { get; init; }
+
     /// <summary>The page (tab) title.</summary>
     public string Title => this.Step switch
     {
@@ -105,6 +141,11 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         SignInStep.DeviceApproved => "Device connected",
         SignInStep.DeviceDenied => "Request denied",
         SignInStep.NotFound => "Page not found",
+        SignInStep.Mfa => "Two-factor authentication",
+        SignInStep.Security => "Account security",
+        SignInStep.TotpSetup => "Set up your authenticator app",
+        SignInStep.RecoveryCodes => "Save your recovery codes",
+        SignInStep.Reauthenticate => "Sign in again to continue",
         _ => "Sign in",
     };
 

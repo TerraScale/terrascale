@@ -1,6 +1,9 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Mfa;
+using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
@@ -20,7 +23,7 @@ public sealed class PlatformBootstrapTests(TerraBaseFixture fixture)
         var target = await SharedStateTarget.CreateAsync(fixture);
         var store = new AuthStore(target.Database, TimeProvider.System);
         var users = new Users(store, TimeProvider.System);
-        var directory = new PlatformDirectory(store, users, TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<PlatformDirectory>.Instance);
+        var directory = new PlatformDirectory(store, users, Credentials(store, users), TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<PlatformDirectory>.Instance);
         var first = new PlatformBootstrap(store, users, directory, TimeProvider.System, AuthTestServer.BootstrapOwnerEmail);
         var second = new PlatformBootstrap(store, users, directory, TimeProvider.System, AuthTestServer.BootstrapOwnerEmail);
         await Task.WhenAll(first.EnsureAsync(CancellationToken.None), second.EnsureAsync(CancellationToken.None));
@@ -77,7 +80,7 @@ public sealed class PlatformBootstrapTests(TerraBaseFixture fixture)
         var target = await SharedStateTarget.CreateAsync(fixture);
         var store = new AuthStore(target.Database, TimeProvider.System);
         var users = new Users(store, TimeProvider.System);
-        var directory = new PlatformDirectory(store, users, TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<PlatformDirectory>.Instance);
+        var directory = new PlatformDirectory(store, users, Credentials(store, users), TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<PlatformDirectory>.Instance);
         var conflict = TerraBaseFixture.Json("{\"instanceId\":\"terrascale\",\"name\":\"another-project\"}");
         await target.PutAsync(AuthStore.ProjectCollection, PlatformDirectory.Instance, PlatformBootstrap.DashboardProjectId, conflict);
         var before = await target.ReadAsync(AuthStore.ProjectCollection, PlatformDirectory.Instance, PlatformBootstrap.DashboardProjectId);
@@ -98,5 +101,11 @@ public sealed class PlatformBootstrapTests(TerraBaseFixture fixture)
         }
 
         return string.Join('\n', records.Order(StringComparer.Ordinal));
+    }
+
+    private static TotpCredentials Credentials(AuthStore store, Users users)
+    {
+        var options = AuthOptions.Load(AuthTestServer.DefaultSettings());
+        return new TotpCredentials(store, users, new AttemptLimiter(new TerraBaseDocumentStore(store), TimeProvider.System, options), options, TimeProvider.System);
     }
 }
