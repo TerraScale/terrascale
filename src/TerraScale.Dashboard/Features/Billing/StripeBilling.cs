@@ -106,10 +106,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
             SuccessUrl = Origin + "/billing/checkout/return?session_id={CHECKOUT_SESSION_ID}",
             CancelUrl = Origin + returnPath + (returnPath.Contains('?') ? "&" : "?") + "payment=canceled&plan=" + Uri.EscapeDataString(plan.Key),
             Mode = plan.PriceCents == 0 ? "setup" : "subscription",
-            AutomaticTax = new() { Enabled = true },
             BillingAddressCollection = "required",
-            TaxIdCollection = new() { Enabled = true },
-            CustomerUpdate = new() { Address = "auto", Name = "auto" },
             ExpiresAt = binding.StartedAt.UtcDateTime.AddHours(1)
         };
         if (plan.PriceCents > 0)
@@ -117,6 +114,10 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
             var price = await PriceAsync(client, plan, interval, cancellationToken);
             options.LineItems = [new() { Price = price.Id, Quantity = 1 }];
             options.PaymentMethodCollection = "always";
+            // Invoices carry the customer's name, address and tax IDs. Stripe Tax (automatic_tax) stays off: the account's
+            // country is not eligible yet, and Stripe refuses every Checkout Session that asks for it (docs/billing/stripe-tax-handoff.md).
+            options.TaxIdCollection = new() { Enabled = true };
+            options.CustomerUpdate = new() { Address = "auto", Name = "auto" };
             options.SubscriptionData = new() { Metadata = metadata, TrialPeriodDays = binding.TrialUsed || plan.TrialDays == 0 ? null : plan.TrialDays };
         }
         var checkout = await client.V1.Checkout.Sessions.CreateAsync(options,
