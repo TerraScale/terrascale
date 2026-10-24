@@ -607,6 +607,12 @@ public sealed class RemoteAckTests
             {
                 pair.HoldWait?.TrySetResult();
                 _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+                // WaitEntered precedes the async placement read inside PeerStreams.WaitAsync. Keep the sender held until
+                // the real waiter has registered its marker, so this arm cannot take the unknown-position fallback.
+                var acks = pair.OriginServer.Services.GetRequiredService<RemoteAckWaiter>();
+                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(
+                    acks.ReplayThrough(pair.Database, marker.Incarnation, marker.ChangeId) == marker.ChangeId - 1), timeout: RemoteAckWaiter.Bound);
+                Trace("known marker registered");
             }
 
             if (unregistered && large)
