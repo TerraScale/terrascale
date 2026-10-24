@@ -9,6 +9,9 @@ public interface ITsAuthProjects
 {
     Task<TerraScaleAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken);
     Task<TerraScaleAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TerraScaleAuthProjectSettingsUpdate update, CancellationToken cancellationToken);
+    // The update carries the provider's client secret; never log or store it.
+    Task<TerraScaleAuthProjectSettings> SetProviderAsync(SessionRecord session, string projectId, string provider, TerraScaleAuthProjectProviderUpdate update, CancellationToken cancellationToken);
+    Task<TerraScaleAuthProjectSettings> DeleteProviderAsync(SessionRecord session, string projectId, string provider, CancellationToken cancellationToken);
     Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>> ListUsersAsync(SessionRecord session, string projectId, string? query, string? after, CancellationToken cancellationToken);
     Task<TerraScaleAuthProjectUser> SetUserDisabledAsync(SessionRecord session, string projectId, string userId, bool disabled, CancellationToken cancellationToken);
     Task DeleteUserAsync(SessionRecord session, string projectId, string userId, CancellationToken cancellationToken);
@@ -29,6 +32,12 @@ public sealed partial class TsAuthGateway : ITsAuthProjects
 
     public Task<TerraScaleAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TerraScaleAuthProjectSettingsUpdate update, CancellationToken cancellationToken) =>
         ProjectAsync(() => Client().Projects.UpdateSettingsAsync(Bearer(session), Id(projectId), update, cancellationToken));
+
+    public Task<TerraScaleAuthProjectSettings> SetProviderAsync(SessionRecord session, string projectId, string provider, TerraScaleAuthProjectProviderUpdate update, CancellationToken cancellationToken) =>
+        ProjectAsync(() => Client().Projects.SetProviderAsync(Bearer(session), Id(projectId), provider, update, cancellationToken));
+
+    public Task<TerraScaleAuthProjectSettings> DeleteProviderAsync(SessionRecord session, string projectId, string provider, CancellationToken cancellationToken) =>
+        ProjectAsync(() => Client().Projects.DeleteProviderAsync(Bearer(session), Id(projectId), provider, cancellationToken));
 
     public Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>> ListUsersAsync(SessionRecord session, string projectId, string? query, string? after, CancellationToken cancellationToken) =>
         ProjectAsync(() => Client().Projects.ListUsersAsync(Bearer(session), Id(projectId), Blank(query), ProjectPageSize, Blank(after), cancellationToken));
