@@ -5,6 +5,7 @@ using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
@@ -25,12 +26,27 @@ public sealed record RoleRequest([property: JsonPropertyName("role")] string? Ro
 /// <param name="CreatedBy">The creating user.</param>
 /// <param name="CreatedAt">Creation time.</param>
 /// <param name="Role">The caller's organization role; null for a collaborator.</param>
+/// <param name="RequireMfa">Whether members need an active second factor to reach it.</param>
 public sealed record OrganizationBody(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("created_by")] string CreatedBy,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
-    [property: JsonPropertyName("role")] string? Role);
+    [property: JsonPropertyName("role")] string? Role,
+    [property: JsonPropertyName("require_mfa")] bool RequireMfa);
+
+/// <summary>A body that sets an organization's second-factor policy.</summary>
+/// <param name="RequireMfa">Whether members need an active second factor.</param>
+public sealed record MfaPolicyRequest([property: JsonPropertyName("require_mfa")] bool? RequireMfa);
+
+/// <summary>The caller's second-factor state.</summary>
+/// <param name="Enabled">Whether an authenticator app (TOTP) is active.</param>
+/// <param name="RecoveryCodesRemaining">Unused, unexpired recovery codes.</param>
+/// <param name="ManageUrl">The hosted page that enrols and removes the factor.</param>
+public sealed record AccountMfaBody(
+    [property: JsonPropertyName("enabled")] bool Enabled,
+    [property: JsonPropertyName("recovery_codes_remaining")] int RecoveryCodesRemaining,
+    [property: JsonPropertyName("manage_url")] string ManageUrl);
 
 /// <summary>A page of organizations.</summary>
 /// <param name="Items">The organizations.</param>
@@ -147,7 +163,7 @@ public sealed class GetOrganizationEndpoint(PlatformDirectory platform, Platform
     public override void Configure()
     {
         Get(Organization);
-        this.Document("get_organization", "Get an organization", "Members and collaborators. A caller who is neither gets 404, as for an unknown id.", "Organizations", null, StatusCodes.Status200OK, typeof(OrganizationBody), roleChecked: false);
+        this.Document("get_organization", "Get an organization", "Members and collaborators. A caller who is neither gets 404, as for an unknown id.", "Organizations", null, StatusCodes.Status200OK, typeof(OrganizationBody));
     }
 
     /// <inheritdoc />
@@ -175,6 +191,45 @@ public sealed class RenameOrganizationEndpoint(PlatformDirectory platform, Platf
         var organization = await platform.RenameOrganizationAsync(caller.Id, this.RouteId("organization"), name, cancellationToken);
         var access = await platform.OrganizationAccessAsync(caller.Id, organization.Id, cancellationToken);
         return Results.Json(Map(organization, access.Role), PlatformApiJson.Default.OrganizationBody);
+    }
+}
+
+/// <summary><c>PUT /v1/terrascale/organizations/{organization}/mfa-policy</c>.</summary>
+public sealed class SetMfaPolicyEndpoint(PlatformDirectory platform, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Put($"{Organization}/mfa-policy");
+        this.Document("set_organization_mfa_policy", "Require two-factor authentication",
+            "Needs the owner role. With require_mfa true, members without an active second factor get 403 mfa_required from the organization's endpoints and token exchange until they enrol; turning it on needs the caller's own factor (409 mfa_not_enrolled). Recorded in the audit log.",
+            "Organizations", typeof(MfaPolicyRequest), StatusCodes.Status200OK, typeof(OrganizationBody), conflict: true);
+    }
+
+    /// <inheritdoc />
+    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    {
+        var require = (await this.BodyAsync(PlatformApiJson.Default.MfaPolicyRequest, cancellationToken)).RequireMfa ?? throw Invalid("require_mfa must be true or false.");
+        var organization = await platform.SetMfaPolicyAsync(caller.Id, this.RouteId("organization"), require, cancellationToken);
+        return Results.Json(Map(organization, Roles.Owner), PlatformApiJson.Default.OrganizationBody);
+    }
+}
+
+/// <summary><c>GET /v1/terrascale/account/mfa</c>.</summary>
+public sealed class AccountMfaEndpoint(TotpCredentials mfa, AuthOptions options, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Get("/v1/terrascale/account/mfa");
+        this.Document("get_account_mfa", "Get two-factor status", "The caller's own second-factor state and the hosted page that manages it.", "Members", null, StatusCodes.Status200OK, typeof(AccountMfaBody), roleChecked: false, scoped: false);
+    }
+
+    /// <inheritdoc />
+    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    {
+        var (enabled, remaining) = await mfa.StatusAsync(caller.InstanceId, caller.Id, cancellationToken);
+        return Results.Json(new AccountMfaBody(enabled, remaining, new Uri(options.PublicOrigin, $"/ui/{OidcIssuer.Slug}/security").AbsoluteUri), PlatformApiJson.Default.AccountMfaBody);
     }
 }
 
@@ -264,7 +319,7 @@ public sealed class LeaveOrganizationEndpoint(PlatformDirectory platform, Platfo
     public override void Configure()
     {
         Post($"{Organization}/leave");
-        this.Document("leave_organization", "Leave an organization", "Members and collaborators. Removes the caller's organization and project roles. 409 last_owner for the last owner.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true, roleChecked: false);
+        this.Document("leave_organization", "Leave an organization", "Members and collaborators. Removes the caller's organization and project roles. 409 last_owner for the last owner.", "Members", null, StatusCodes.Status204NoContent, null, conflict: true);
     }
 
     /// <inheritdoc />
@@ -318,7 +373,7 @@ public sealed class ListProjectsEndpoint(PlatformDirectory platform, PlatformAut
     public override void Configure()
     {
         Get($"{Organization}/projects");
-        this.Document("list_projects", "List projects", "Every project for organization members, the granted ones for collaborators; in id order.", "Projects", null, StatusCodes.Status200OK, typeof(ProjectPageBody), paged: true, roleChecked: false);
+        this.Document("list_projects", "List projects", "Every project for organization members, the granted ones for collaborators; in id order.", "Projects", null, StatusCodes.Status200OK, typeof(ProjectPageBody), paged: true);
     }
 
     /// <inheritdoc />
@@ -337,7 +392,7 @@ public sealed class GetProjectEndpoint(PlatformDirectory platform, PlatformAuthe
     public override void Configure()
     {
         Get(Project);
-        this.Document("get_project", "Get a project", "Needs an effective project role. Others get 404.", "Projects", null, StatusCodes.Status200OK, typeof(ProjectBody), roleChecked: false);
+        this.Document("get_project", "Get a project", "Needs an effective project role. Others get 404.", "Projects", null, StatusCodes.Status200OK, typeof(ProjectBody));
     }
 
     /// <inheritdoc />
@@ -411,7 +466,7 @@ public sealed class ListProjectMembersEndpoint(PlatformDirectory platform, Platf
     public override void Configure()
     {
         Get($"{Project}/members");
-        this.Document("list_project_members", "List explicit project roles", "Needs an effective project role. Lists explicit grants only; organization members' implied roles are not repeated. In user id order.", "Project members", null, StatusCodes.Status200OK, typeof(ProjectMemberPageBody), paged: true, roleChecked: false);
+        this.Document("list_project_members", "List explicit project roles", "Needs an effective project role. Lists explicit grants only; organization members' implied roles are not repeated. In user id order.", "Project members", null, StatusCodes.Status200OK, typeof(ProjectMemberPageBody), paged: true);
     }
 
     /// <inheritdoc />
@@ -607,7 +662,7 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
 
     /// <summary>The organization as the caller sees it.</summary>
     protected static OrganizationBody Map(OrganizationRecord organization, string? role) =>
-        new(organization.Id, organization.Name, organization.CreatedBy, organization.CreatedAt, role);
+        new(organization.Id, organization.Name, organization.CreatedBy, organization.CreatedAt, role, organization.RequireMfa);
 
     /// <summary>The project as the caller sees it.</summary>
     protected ProjectBody Map(ProjectRecord project, string role)
@@ -650,6 +705,8 @@ internal static class LocationResults
 [JsonSourceGenerationOptions(UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(NameRequest))]
 [JsonSerializable(typeof(RoleRequest))]
+[JsonSerializable(typeof(MfaPolicyRequest))]
+[JsonSerializable(typeof(AccountMfaBody))]
 [JsonSerializable(typeof(OrganizationBody))]
 [JsonSerializable(typeof(OrganizationPageBody))]
 [JsonSerializable(typeof(MemberBody))]
