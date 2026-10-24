@@ -45,7 +45,7 @@ export TERRASCALE_ACCESS_TOKEN="$(curl -sS --fail-with-body \
   | sed -nE 's/.*"access_token": *"([^"]+)".*/\1/p')"
 ```
 
-The token lasts 15 minutes (`expires_in: 900`) and carries the key's scopes, such as `documents:read documents:write`. Run the exchange again when requests start answering `401`. [Authentication](/hi/guides/authentication) explains the contract.
+The token lasts 60 seconds (`expires_in: 60`) and carries the key's scopes, such as `documents:read documents:write`. Run the exchange again when requests start answering `401`. [Authentication](/hi/guides/authentication) explains the contract.
 
 ## Write and read a document with curl
 

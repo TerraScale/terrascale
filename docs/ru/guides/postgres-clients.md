@@ -13,14 +13,10 @@ description: Connect psql, node-postgres, psycopg, pgx, Npgsql and JDBC to a Ter
 TerraBase databases accept connections over the PostgreSQL wire protocol (version 3). Use `psql` or a standard Postgres driver: you change the connection URL, not your client code. Tables are TerraBase collections and rows are documents, so SQL writes replicate across regions like writes through the Documents API.
 
 ::: tip Verified
-Checked on 2026-10-23 against production (`pg.terrascale.tech`) with `psql` 18, `pg` 8.23.1, `psycopg` 3.3.6, `pgx` v5.11.0 and `Npgsql` 10.0.3: tables, writes, joins, parameters, prepared statements and transactions.
+Checked on 2026-10-24 against production (`pg.terrascale.tech`) with a dashboard API key as the password: `psql` 18, `pg` 8.23.1 and `pgx` v5.11.0 ran tables, writes, joins, parameters, prepared statements, transactions and indexes; a read-only key got `42501` on writes, and a revoked key was refused within a minute.
 :::
 
 ## Connection URL
-
-::: warning Dashboard credentials are not accepted yet
-`pg.terrascale.tech` checks the password against TerraBase-internal keys. Customers cannot obtain those keys. API keys from the dashboard's **API keys** page, and the access tokens exchanged from them, fail with `28P01 password authentication failed`. Support for access tokens as the password is in progress; this page will document it once it is live. Until then, use [SQL over HTTP](/ru/guides/sql-http) (`POST /sql`) with your API key.
-:::
 
 ```text
 postgresql://{label}:{api-key}@pg.terrascale.tech:5432/{database}?sslmode=require
@@ -29,7 +25,7 @@ postgresql://{label}:{api-key}@pg.terrascale.tech:5432/{database}?sslmode=requir
 | Part | Value |
 | --- | --- |
 | `{label}` | Any user name. TerraBase ignores it; use it to tell your applications apart in your own logs. |
-| `{api-key}` | The password. See the note above for the credential it accepts today. |
+| `{api-key}` | The password: an API key from the dashboard's **API keys** page (`<key ID>_<secret>`), as is. No token exchange. Its database restriction and permissions apply. A revoked key is refused within about a minute. |
 | `{database}` | The database name in the key's project. With an organization-wide key, use `{projectId}/{name}`, written `{projectId}%2F{name}` in a URL. |
 | `sslmode=require` | Required. TLS is mandatory and plaintext connections are refused. |
 
@@ -167,6 +163,7 @@ Use the PostgreSQL JDBC driver (`org.postgresql:postgresql`).
 | Simple and extended query protocol, parameters (`$1`, `$2`, …) | Supported |
 | Prepared statements (named and unnamed) | Supported, up to 256 per connection |
 | `CREATE TABLE`, `DROP TABLE` | Supported |
+| `CREATE [UNIQUE] INDEX`, `DROP INDEX` | Supported; a `UNIQUE` index rejects duplicates with `23505` |
 | `INSERT`, `UPDATE`, `DELETE` with affected-row counts | Supported |
 | `SELECT` with joins | Supported |
 | `BEGIN`, `COMMIT`, `ROLLBACK` | Supported, optimistic (see [Transactions](#transactions)) |
