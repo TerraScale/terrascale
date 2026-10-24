@@ -218,10 +218,15 @@ public sealed class HistoryErasureTests
         await Assert.That(await UntilAsync(sjc, HistoryErasure.MarkCollection, erasure, live: true)).IsTrue();
         var requested = DateTimeOffset.UtcNow;
         await RequestAsync(gru, erasure, requested);
-        await RunAsync(gru);
-        await RunAsync(sjc);
-        await RunAsync(fra);
-        await Assert.That(await UntilAsync(gru, () => ReceiptsAsync(gru, erasure), 3)).IsTrue();
+        // Hosted passes are disabled. A holder's single pass can precede replication of the request;
+        // keep driving every holder until each has observed it and published the required receipt.
+        await Assert.That(await UntilAsync(gru, async () =>
+        {
+            await RunAsync(gru);
+            await RunAsync(sjc);
+            await RunAsync(fra);
+            return await ReceiptsAsync(gru, erasure);
+        }, 3)).IsTrue();
         List<string> lateRows = [];
         List<string> survivors = [];
         HistoryErasureStatus recovered = null!;
