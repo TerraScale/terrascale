@@ -25,6 +25,7 @@ Use the [quickstart](/pt-br/getting-started/) to establish one working applicati
 - [Transactions](/pt-br/guides/transactions): atomic multi-document writes with conditional asserts.
 - [Realtime changes](/pt-br/guides/realtime): the server-sent changes feed and filtered collection shapes.
 - [Functions](/pt-br/guides/functions): JavaScript functions called over HTTPS, on collection changes or on a cron schedule.
+- [Metrics, log drains and alerts](/pt-br/guides/monitoring): Prometheus scraping, OTLP log drains, and alert emails and webhooks.
 - [Backups and restore](/pt-br/guides/backups-and-restore): backup policy, point-in-time restore into a new database.
 - [Export your data](/pt-br/guides/export): stream every document as NDJSON, resume and restore.
 - [Branches](/pt-br/guides/branches): copy a database into a new branch database, and preview databases for pull requests.

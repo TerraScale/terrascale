@@ -25,6 +25,7 @@ Use the [quickstart](/ar/getting-started/) to establish one working application 
 - [Transactions](/ar/guides/transactions): atomic multi-document writes with conditional asserts.
 - [Realtime changes](/ar/guides/realtime): the server-sent changes feed and filtered collection shapes.
 - [Functions](/ar/guides/functions): JavaScript functions called over HTTPS, on collection changes or on a cron schedule.
+- [Metrics, log drains and alerts](/ar/guides/monitoring): Prometheus scraping, OTLP log drains, and alert emails and webhooks.
 - [Backups and restore](/ar/guides/backups-and-restore): backup policy, point-in-time restore into a new database.
 - [Export your data](/ar/guides/export): stream every document as NDJSON, resume and restore.
 - [Branches](/ar/guides/branches): copy a database into a new branch database, and preview databases for pull requests.
