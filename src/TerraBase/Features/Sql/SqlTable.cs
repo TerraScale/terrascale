@@ -45,6 +45,10 @@ internal static class SqlTable
     public const int MaxColumns = 256;
 
     /// <summary>The affinity SQLite gives a declared type.</summary>
+    /// <summary>Whether <paramref name="type"/> is one of Postgres's auto-increment types: SMALLSERIAL, SERIAL or BIGSERIAL.</summary>
+    public static bool IsSerial(string type) =>
+        type.ToUpperInvariant() is "SERIAL" or "SMALLSERIAL" or "BIGSERIAL" or "SERIAL2" or "SERIAL4" or "SERIAL8";
+
     public static SqlAffinity AffinityOf(string type)
     {
         var upper = type.ToUpperInvariant();

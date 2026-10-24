@@ -29,7 +29,8 @@ public sealed class SqlInjectionTests
             "SELECT N''', (SELECT v FROM _tb_state) AS ''' FROM t",
             "SELECT N''' FROM t; DELETE FROM _tb_state; --' FROM t",
             "SELECT [a]]b] FROM t",
-            "SELECT `v` FROM t",
+            "SELECT `v``` FROM t",
+            "SELECT `v\"` FROM t",
             "SELECT E'\\x27' FROM t",
             "UPDATE t SET v = N''' WHERE 1; DELETE FROM _tb_state; --'",
             "SELECT replace('x', 'x', 'y')",
@@ -48,6 +49,20 @@ public sealed class SqlInjectionTests
 
         await Assert.That(await StatesAsync(api)).IsEqualTo(states);
         await Assert.That((await SqlApi.OkAsync(api, "SELECT v FROM t"))[0].GetProperty("rows").GetRawText()).IsEqualTo("""[["a"]]""");
+    }
+
+    [Test]
+    public async Task Backtick_names_without_quote_characters_are_double_quoted_names()
+    {
+        await using var api = await DocumentApi.StartAsync();
+
+        var results = await SqlApi.OkAsync(api,
+            "CREATE TABLE `orm_t` (`id` integer PRIMARY KEY NOT NULL, `v` text DEFAULT false NOT NULL)",
+            "CREATE UNIQUE INDEX `orm_t_v_unique` ON `orm_t` (`v`);",
+            "INSERT INTO `orm_t` (`id`, `v`) VALUES (1, 'x')",
+            "SELECT `orm_t`.`v`, \"v\" FROM `orm_t` WHERE `id` = 1");
+
+        await Assert.That(results[3].GetProperty("rows").GetRawText()).IsEqualTo("""[["x","x"]]""");
     }
 
     [Test]

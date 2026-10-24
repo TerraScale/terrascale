@@ -71,6 +71,30 @@ internal sealed record TransactionSql(TransactionKind Kind) : ParsedSql
     public override bool IsWrite => false;
 }
 
+/// <summary>The pragmas ORMs and libSQL clients send.</summary>
+internal enum PragmaKind
+{
+    /// <summary><c>PRAGMA foreign_keys = ON|OFF</c>: a no-op, since FOREIGN KEY clauses are accepted and never enforced.</summary>
+    ForeignKeys,
+
+    /// <summary><c>PRAGMA read_uncommitted</c>: always 0.</summary>
+    ReadUncommitted,
+
+    /// <summary><c>PRAGMA [main.]table_info(t)</c>: one row per column, as SQLite answers.</summary>
+    TableInfo,
+
+    /// <summary><c>PRAGMA temp.table_info(t)</c>: no rows, since there are no temporary tables.</summary>
+    TempTableInfo,
+}
+
+/// <summary>A pragma (see <see cref="PragmaKind"/>).</summary>
+/// <param name="Kind">Which.</param>
+/// <param name="Table">The table of <c>table_info</c>.</param>
+internal sealed record PragmaSql(PragmaKind Kind, string? Table = null) : ParsedSql
+{
+    public override bool IsWrite => false;
+}
+
 /// <summary>A statement, or why it is refused.</summary>
 internal readonly union SqlParseResult(ParsedSql, SqlError);
 
@@ -112,6 +136,11 @@ internal static partial class SqlParse
             return new TransactionSql(TransactionKind.BeginReadOnly);
         }
 
+        if (Pragma(sql) is { } pragma)
+        {
+            return pragma;
+        }
+
         try
         {
             var (numbered, names) = SqlRead.Number(sql);
@@ -132,6 +161,30 @@ internal static partial class SqlParse
         {
             return SqlErrors.Error(exception.Message);
         }
+    }
+
+    // SqlParserCS takes no keyword (ON/OFF) as a pragma value, and no schema before a pragma name.
+    private static SqlParseResult? Pragma(string sql)
+    {
+        if (ForeignKeysPragma().IsMatch(sql))
+        {
+            return new PragmaSql(PragmaKind.ForeignKeys);
+        }
+
+        if (ReadUncommittedPragma().IsMatch(sql))
+        {
+            return new PragmaSql(PragmaKind.ReadUncommitted);
+        }
+
+        if (TableInfoPragma().Match(sql) is not { Success: true } info)
+        {
+            return null;
+        }
+
+        var name = info.Groups["name"].Value.ToLowerInvariant();
+        return !DatabaseName.TryParse(name, out var table) || CollectionName.IsReserved(table.Value)
+            ? SqlErrors.Error("table names are a lowercase letter, then letters, digits, _ or -, at most 63 characters")
+            : new PragmaSql(info.Groups["temp"].Success ? PragmaKind.TempTableInfo : PragmaKind.TableInfo, table.Value);
     }
 
     private static string Syntax(long line, long column) =>
@@ -255,9 +308,11 @@ internal static partial class SqlParse
                         unique.Add([columnName]);
                         break;
                     case ColumnOption.DialectSpecific { Tokens: [{ } token] } when string.Equals(token.ToString(), "AUTOINCREMENT", StringComparison.OrdinalIgnoreCase):
+                    // Accepted and not enforced, as in SQLite with foreign keys off (its default).
+                    case ColumnOption.ForeignKey:
                         break;
                     default:
-                        throw new FormatException("columns support NOT NULL, NULL, DEFAULT <literal>, PRIMARY KEY and UNIQUE only");
+                        throw new FormatException("columns support NOT NULL, NULL, DEFAULT <literal>, PRIMARY KEY, UNIQUE and REFERENCES only");
                 }
             }
 
@@ -266,9 +321,20 @@ internal static partial class SqlParse
 
         foreach (var constraint in create.Constraints ?? [])
         {
+            // Accepted and not enforced, as in SQLite with foreign keys off; its columns must exist.
+            if (constraint is TableConstraint.ForeignKey { Columns: var foreign })
+            {
+                if (foreign.Any(ident => !seen.Contains(ident.Value)))
+                {
+                    throw new FormatException("a constraint names a column the table does not have");
+                }
+
+                continue;
+            }
+
             if (constraint is not TableConstraint.Unique { Characteristics: null, Conflict: null } table || table.Columns is not { Count: > 0 } keyColumns)
             {
-                throw new FormatException("table constraints support PRIMARY KEY (…) and UNIQUE (…) only");
+                throw new FormatException("table constraints support PRIMARY KEY (…), UNIQUE (…) and FOREIGN KEY (…) only");
             }
 
             var named = keyColumns.Select(ident => definitions.Find(column => column.Name.Equals(ident.Value, StringComparison.OrdinalIgnoreCase))?.Name
@@ -332,4 +398,13 @@ internal static partial class SqlParse
 
     [GeneratedRegex(@"\A\s*BEGIN(\s+TRANSACTION)?\s+READONLY\s*;?\s*\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex ReadOnlyBegin();
+
+    [GeneratedRegex(@"\A\s*PRAGMA\s+(main\s*\.\s*)?foreign_keys\s*=\s*(on|off|true|false|yes|no|0|1)\s*;?\s*\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex ForeignKeysPragma();
+
+    [GeneratedRegex(@"\A\s*PRAGMA\s+(main\s*\.\s*)?read_uncommitted\s*;?\s*\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex ReadUncommittedPragma();
+
+    [GeneratedRegex(@"\A\s*PRAGMA\s+(?:main\s*\.\s*|(?<temp>temp)\s*\.\s*)?table_info\s*\(\s*(?<q>[""'`]?)(?<name>[A-Za-z][A-Za-z0-9_-]{0,62})\k<q>\s*\)\s*;?\s*\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex TableInfoPragma();
 }

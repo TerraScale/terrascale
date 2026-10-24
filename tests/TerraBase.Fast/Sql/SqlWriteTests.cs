@@ -94,7 +94,7 @@ public sealed class SqlWriteTests
         await Assert.That(await RefusedAsync(api, new { sql = "INSERT INTO ints (id) VALUES (9)" })).IsEqualTo("SQLITE_CONSTRAINT_NOTNULL");
         await Assert.That(await RefusedAsync(api, new { sql = "INSERT INTO ints (id, name) VALUES ('x', 'y')" })).IsEqualTo("SQLITE_MISMATCH");
         await Assert.That(await RefusedAsync(api, new { sql = "INSERT INTO u (id, email) VALUES (2, 'a@x')" })).IsEqualTo("SQLITE_CONSTRAINT_UNIQUE");
-        await Assert.That(await RefusedAsync(api, new { sql = "INSERT INTO ints (id, name) VALUES (5, 'x') RETURNING id" })).IsEqualTo("SQLITE_ERROR");
+        await Assert.That(await RefusedAsync(api, new { sql = "INSERT INTO ints (id, name) VALUES (5, 'x') RETURNING length(name)" })).IsEqualTo("SQLITE_ERROR");
         await Assert.That(await RowsAsync(api, "SELECT count(*) FROM ints")).IsEqualTo("[[3]]");
     }
 

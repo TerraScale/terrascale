@@ -58,6 +58,10 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         statement switch
         {
             ReadSql read => await ReadAsync(transaction, read, command, tally, describe, null, cancellationToken).ConfigureAwait(false),
+            PragmaSql pragma => await PragmaAsync(transaction, pragma, tally, cancellationToken).ConfigureAwait(false),
+            // A described write runs nothing: its columns are its RETURNING list.
+            InsertSql { Returning: { } returning } insert when describe => await ReturningColumnsAsync(transaction, insert.Table, returning, tally, cancellationToken).ConfigureAwait(false),
+            ChangeSql { Returning: { } returning } change when describe => await ReturningColumnsAsync(transaction, change.Table, returning, tally, cancellationToken).ConfigureAwait(false),
             InsertSql insert => await InsertAsync(transaction, insert, command, keys, tally, cancellationToken).ConfigureAwait(false),
             ChangeSql change => await ChangeAsync(transaction, change, command, tally, cancellationToken).ConfigureAwait(false),
             CreateTableSql create => await CreateAsync(transaction, create, tally, cancellationToken).ConfigureAwait(false),
@@ -317,7 +321,17 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             return SqlErrors.TooBig("a statement writes at most 1024 rows");
         }
 
-        var integerKey = table.PrimaryKey is [var only] && Column(table, only).Affinity == SqlAffinity.Integer ? only : null;
+        // An INTEGER key, or a SERIAL one (Postgres's auto-increment types, which ORM migration tables declare), is generated when left out.
+        var integerKey = table.PrimaryKey is [var only] && Column(table, only) is var key && (key.Affinity == SqlAffinity.Integer || SqlTable.IsSerial(key.Type))
+            ? only
+            : null;
+        (List<SqlColumn>? Columns, List<string> Names)? returned = insert.Returning is { } returning ? Returned(table, returning) : null;
+        if (returned is { Columns: null })
+        {
+            return SqlErrors.Error("no such column");
+        }
+
+        var output = new List<IReadOnlyList<SqlValue>>();
         long affected = 0;
         long? lastRowid = null;
         foreach (var row in rows)
@@ -373,9 +387,13 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
 
             affected++;
             lastRowid = integerKey is null ? null : values[integerKey].Integer;
+            if (returned is { Names: var names })
+            {
+                output.Add([.. names.Select(name => values[name])]);
+            }
         }
 
-        return new SqlResult([], [], affected, lastRowid);
+        return new SqlResult(returned?.Columns ?? [], output, affected, lastRowid);
     }
 
     private async ValueTask<SqlOutcome> ChangeAsync(
@@ -413,9 +431,19 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             return SqlErrors.TooBig("a statement writes at most 1024 rows");
         }
 
+        (List<SqlColumn>? Columns, List<string> Names)? returned = change.Returning is { } returning ? Returned(table, returning) : null;
+        if (returned is { Columns: null })
+        {
+            return SqlErrors.Error("no such column");
+        }
+
+        // With RETURNING the read ends with every column (*) as it was; an update's new values replace the assigned ones.
+        var output = new List<IReadOnlyList<SqlValue>>();
         foreach (var row in rows)
         {
             var id = row[0].Text!;
+            var after = returned is null ? null : table.Columns.Select((column, index) => (column.Name, Value: row[row.Count - table.Columns.Count + index]))
+                .ToDictionary(StringComparer.Ordinal);
             DocumentOperation operation;
             if (change.IsDelete)
             {
@@ -430,6 +458,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
                     var (_, op, by) = change.Assignments[i];
                     var path = "/" + columns[i].Name;
                     var set = op is "set" or "inc" ? SqlWrite.Apply(columns[i].Affinity, row[value++]) : SqlValue.Null;
+                    after?[columns[i].Name] = set;
                     // Only an INTEGER NOT NULL column is a counter; elsewhere c = c + 1 is the computed value (NULL stays NULL).
                     if (op == "inc" && columns[i] is { Affinity: SqlAffinity.Integer, NotNull: true })
                     {
@@ -462,9 +491,14 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             {
                 return refused;
             }
+
+            if (returned is { Names: var names })
+            {
+                output.Add([.. names.Select(name => after![name])]);
+            }
         }
 
-        return new SqlResult([], [], rows.Count, null);
+        return new SqlResult(returned?.Columns ?? [], output, rows.Count, null);
     }
 
     // The document service's refusal of one operation, in SQLite's vocabulary, or null when it applied. Each storage call
@@ -526,6 +560,65 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
     }
 
     private static SqlColumnDefinition Column(SqlTableDefinition table, string name) => table.Columns.First(column => column.Name == name);
+
+    // A RETURNING list's result columns and the table columns they read; no columns when one names no column of the table.
+    private static (List<SqlColumn>? Columns, List<string> Names) Returned(SqlTableDefinition table, IReadOnlyList<SqlReturning> returning)
+    {
+        var columns = new List<SqlColumn>();
+        var names = new List<string>();
+        foreach (var item in returning)
+        {
+            var matched = item.Column is null ? table.Columns : [.. table.Columns.Where(column => column.Name.Equals(item.Column, StringComparison.OrdinalIgnoreCase))];
+            if (matched.Count == 0)
+            {
+                return (null, names);
+            }
+
+            foreach (var column in matched)
+            {
+                columns.Add(new SqlColumn(item.Alias ?? column.Name, column.Type));
+                names.Add(column.Name);
+            }
+        }
+
+        return (columns, names);
+    }
+
+    private static async ValueTask<SqlOutcome> ReturningColumnsAsync(
+        IStorageTransaction transaction, string name, IReadOnlyList<SqlReturning> returning, SqlTally tally, CancellationToken cancellationToken) =>
+        await TableAsync(transaction, name, tally, cancellationToken).ConfigureAwait(false) is not { } table ? SqlErrors.Error("no such table")
+        : Returned(table, returning) is { Columns: { } columns } ? new SqlResult(columns, [], 0, null)
+        : SqlErrors.Error("no such column");
+
+    private static readonly SqlColumn[] TableInfoColumns =
+        [new("cid", null), new("name", null), new("type", null), new("notnull", null), new("dflt_value", null), new("pk", null)];
+
+    // As SQLite answers: table_info has one row per column (no rows for a missing table), dflt_value is the DEFAULT as SQL text.
+    private static async ValueTask<SqlOutcome> PragmaAsync(IStorageTransaction transaction, PragmaSql pragma, SqlTally tally, CancellationToken cancellationToken)
+    {
+        if (pragma.Kind == PragmaKind.ReadUncommitted)
+        {
+            return new SqlResult([new SqlColumn("read_uncommitted", null)], [[SqlValue.Of(0)]], 0, null);
+        }
+
+        if (pragma.Kind != PragmaKind.TableInfo || await TableAsync(transaction, pragma.Table!, tally, cancellationToken).ConfigureAwait(false) is not { } table)
+        {
+            return new SqlResult(TableInfoColumns, [], 0, null);
+        }
+
+        var rows = table.Columns.Select((column, index) => (IReadOnlyList<SqlValue>)
+        [
+            SqlValue.Of(index),
+            SqlValue.Of(column.Name),
+            SqlValue.Of(column.Type),
+            SqlValue.Of(column.NotNull ? 1 : 0),
+            column.Default is { } fallback && SqlWrite.Default(fallback) is var value
+                ? value.Kind == SqlValueKind.Text ? SqlValue.Of("'" + value.Text!.Replace("'", "''", StringComparison.Ordinal) + "'") : SqlValue.Of(fallback.GetRawText())
+                : SqlValue.Null,
+            SqlValue.Of(table.PrimaryKey.ToList().IndexOf(column.Name) + 1),
+        ]).ToList();
+        return new SqlResult(TableInfoColumns, rows, 0, null);
+    }
 
     // The document id: a single INTEGER or TEXT key's canonical value, otherwise the JSON array of the key values, or a
     // new ULID without a key.
