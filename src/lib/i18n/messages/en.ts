@@ -58,6 +58,8 @@ export const en = {
           apiReference: 'API Reference',
           status: 'Status',
           community: 'Community',
+          support: 'Support',
+          supportEmail: 'Contact: support@terrascale.tech',
         },
       },
     },
