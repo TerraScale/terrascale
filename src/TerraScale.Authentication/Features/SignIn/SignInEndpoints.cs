@@ -6,6 +6,7 @@ using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
+using TerraScale.Authentication.Features.Sso;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
@@ -79,6 +80,11 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
         if (HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
         {
             throw ApiException.Unavailable();
+        }
+
+        if (await SignInFlow.SsoAsync(this.HttpContext, address, SignInFlow.SafeNext(this.HttpContext, form.Next), cancellationToken) is { } sso)
+        {
+            return sso;
         }
 
         if ((await hosted.LimitIpAsync(ip, mails: true, cancellationToken)
@@ -189,6 +195,11 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, HostedAuth hosted,
 
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
+        if (await SignInFlow.SsoAsync(this.HttpContext, address, next, cancellationToken) is { } sso)
+        {
+            return sso;
+        }
+
         if (string.IsNullOrEmpty(form.Password))
         {
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Password, SignInFlow.Tenant(this.HttpContext), address, next));
@@ -282,6 +293,11 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), address, next,
                 "Enter a valid email address and a password of at least 8 characters.")
             { ErrorTitle = "Check your details" }, StatusCodes.Status400BadRequest);
+        }
+
+        if (await SignInFlow.SsoAsync(this.HttpContext, address, next, cancellationToken) is { } sso)
+        {
+            return sso;
         }
 
         var (pending, wait) = await hosted.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext), cancellationToken);
@@ -494,15 +510,33 @@ internal static class SignInFlow
         }
     }
 
-    /// <summary>Replaces the browser's session with <paramref name="session"/> and resumes <paramref name="next"/>.</summary>
-    public static async Task<IResult> SignedInAsync(HttpContext context, Sessions sessions, IssuedSession session, string? next, CancellationToken cancellationToken)
+    /// <summary>
+    /// Replaces the browser's session with <paramref name="session"/> and resumes <paramref name="next"/>. Unless it came
+    /// <paramref name="viaSso"/>, a platform account whose domain signs in through its organization's identity provider
+    /// is refused: the new session ends at once and the page points at single sign-on.
+    /// </summary>
+    public static async Task<IResult> SignedInAsync(HttpContext context, Sessions sessions, IssuedSession session, string? next, CancellationToken cancellationToken, bool viaSso = false)
     {
-        // The browser's previous session, if any, ends with this sign-in.
         var tenant = Tenant(context);
+        if (!viaSso && !Tenancy.IsProject(tenant)
+            && await context.RequestServices.GetRequiredService<Users>().GetAsync(tenant, session.Session.UserId, cancellationToken) is { } user
+            && await SsoAsync(context, user.Email, next, cancellationToken) is { } sso)
+        {
+            await sessions.RevokeAsync(tenant, session.Token, cancellationToken);
+            return sso;
+        }
+
+        // The browser's previous session, if any, ends with this sign-in.
         await sessions.RevokeAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
         BrowserSecurity.SetSessionCookie(context.Response, session.Token, tenant);
         return SignInPageModel.Render(context, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, tenant, Next: next));
     }
+
+    /// <summary>The single sign-on page when <paramref name="email"/> must sign in through its organization's identity provider; otherwise null.</summary>
+    public static async Task<IResult?> SsoAsync(HttpContext context, string email, string? next, CancellationToken cancellationToken) =>
+        !Tenancy.IsProject(Tenant(context)) && await context.RequestServices.GetRequiredService<SsoSignIn>().RequiredAsync(email, cancellationToken)
+            ? SignInPageModel.Render(context, new SignInPageModel(SignInStep.Sso, Tenant(context), email, next) { SsoUrl = SsoSignIn.StartUrl(email, next) })
+            : null;
 
     /// <summary>Whether the page's slug is not a tenant: <c>terrascale</c> or an existing project (<see cref="Tenancy"/>).</summary>
     public static bool WrongSlug(HttpContext context) => Tenancy.Resolved(context) is not { } tenant

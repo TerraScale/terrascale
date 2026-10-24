@@ -55,6 +55,9 @@ public enum SignInStep
 
     /// <summary>A browser opened a URL that does not exist.</summary>
     NotFound,
+
+    /// <summary>The email's domain signs in through its organization's identity provider; continue there.</summary>
+    Sso,
 }
 
 /// <summary>Model for <c>SignInPage.cshtml</c>. Razor encodes every value.</summary>
@@ -87,6 +90,9 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The client's validated post-logout redirect URI the signed-out page continues to.</summary>
     public string? ReturnTo { get; init; }
 
+    /// <summary>The same-origin page that starts the single sign-on (<see cref="SignInStep.Sso"/>).</summary>
+    public string? SsoUrl { get; init; }
+
     /// <summary>The page (tab) title.</summary>
     public string Title => this.Step switch
     {
@@ -105,6 +111,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         SignInStep.DeviceApproved => "Device connected",
         SignInStep.DeviceDenied => "Request denied",
         SignInStep.NotFound => "Page not found",
+        SignInStep.Sso => "Continue with single sign-on",
         _ => "Sign in",
     };
 

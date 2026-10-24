@@ -57,6 +57,9 @@ break;
 case SignInStep.NotFound:
 <p class="sub">The page you opened doesn't exist. Check the link, or sign in again.</p>
 break;
+case SignInStep.Sso:
+<p class="sub">Your organization signs in <strong>@Model.Email</strong> through its identity provider.</p>
+break;
 }
 </div>
 @if (Model.Error is { } error)
@@ -134,6 +137,10 @@ case SignInStep.Continue:
 break;
 case SignInStep.SignedIn:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>You are signed in.</p></div>
+break;
+case SignInStep.Sso:
+<a class="btn" href="@Model.SsoUrl">Continue with single sign-on<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></a>
+<div class="row"><a href="@Model.Link("sign-in")"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-left"></use></svg>Different email</a></div>
 break;
 case SignInStep.SignedOut:
 <div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-log-out"></use></svg><p>You are signed out.</p></div>

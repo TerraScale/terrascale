@@ -5,13 +5,57 @@ using TerraScale.Authentication.Tests;
 namespace TerraScale.Authentication.Fast.Management;
 
 /// <summary>
-/// Organization single sign-on connections against an in-process OpenID Connect provider and DNS resolver: an owner
-/// connects the provider and proves the email domain by DNS; only owners change it, and a verified domain stays theirs.
+/// Organization single sign-on against an in-process OpenID Connect provider and DNS resolver: an owner connects the
+/// provider and proves the email domain by DNS; then the domain's accounts sign in only through the provider and join
+/// with the default role, owners keep email-code sign-in, every broken callback is refused, and only owners change it.
 /// </summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class OrganizationSsoTests(TerraBaseFixture fixture)
 {
     private const string Domain = "acme.test";
+
+    [Test]
+    public async Task A_verified_domain_signs_members_in_through_the_provider_and_owners_keep_codes()
+    {
+        using var idp = new FakeSsoIdp();
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: idp.Route);
+        var (organization, token) = await ConnectAsync(oidc, idp);
+
+        using var email = await oidc.PostFormAsync("/ui/terrascale/sign-in", new() { ["email"] = "bob@acme.test" });
+        await Assert.That((await email.Content.ReadAsStringAsync()).Contains("/ui/terrascale/sso?email=bob@acme.test", StringComparison.Ordinal)).IsTrue();
+        using var password = await oidc.PostFormAsync("/ui/terrascale/sign-in/password", new() { ["email"] = "bob@acme.test", ["password"] = "correct horse battery" });
+        await Assert.That((await password.Content.ReadAsStringAsync()).Contains("Continue with single sign-on", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(oidc.Email.HasPending).IsFalse();
+
+        using var callback = await SignInAsync(oidc, idp, "bob@acme.test");
+        await Assert.That(callback.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(OidcHarness.SessionCookie(callback)).IsNotNull();
+        var members = await oidc.OkAsync(HttpMethod.Get, $"{PlatformCalls.Organizations}/{organization}/members", token);
+        await Assert.That(members.GetProperty("items").EnumerateArray().Any(member => member.GetProperty("email").GetString() == "bob@acme.test"
+            && member.GetProperty("role").GetString() == "viewer")).IsTrue();
+
+        // Break-glass: the organization's owner still signs in with an emailed code.
+        await Assert.That(await oidc.SignInAsync("owner@acme.test")).IsNotEmpty();
+    }
+
+    [Test]
+    public async Task Broken_callbacks_are_refused()
+    {
+        using var idp = new FakeSsoIdp();
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: idp.Route);
+        await ConnectAsync(oidc, idp);
+
+        foreach (var claims in new Dictionary<string, object?>[] { new() { ["nonce"] = "other" }, new() { ["email"] = "eve@evil.test" },
+            new() { ["email_verified"] = false }, new() { ["aud"] = "another-client" }, new() { ["iss"] = "https://idp.example.test/realms/other" } })
+        {
+            using var refused = await SignInAsync(oidc, idp, "bob@acme.test", claims);
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            await Assert.That(OidcHarness.SessionCookie(refused)).IsNull();
+        }
+
+        using var noCookie = await SignInAsync(oidc, idp, "bob@acme.test", cookie: false);
+        await Assert.That(noCookie.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+    }
 
     [Test]
     public async Task Only_owners_change_the_connection_and_a_verified_domain_cannot_be_taken()
@@ -28,6 +72,8 @@ public sealed class OrganizationSsoTests(TerraBaseFixture fixture)
 
         await oidc.OkAsync(HttpMethod.Delete, $"{PlatformCalls.Organizations}/{organization}/sso", token, status: HttpStatusCode.NoContent);
         await Assert.That((await oidc.FailAsync(HttpMethod.Get, $"{PlatformCalls.Organizations}/{organization}/sso", token)).Status).IsEqualTo(404);
+        using var email = await oidc.PostFormAsync("/ui/terrascale/sign-in", new() { ["email"] = "bob@acme.test" });
+        await Assert.That((await email.Content.ReadAsStringAsync()).Contains("Check your email", StringComparison.Ordinal)).IsTrue();
         await Assert.That((await oidc.FailAsync(HttpMethod.Put, $"{PlatformCalls.Organizations}/{otherOrganization}/sso", other, new { domain = Domain, oidc = new { issuer = FakeSsoIdp.Issuer, client_id = "c" } })).Code).IsEqualTo("invalid_request");
     }
 
@@ -55,5 +101,23 @@ public sealed class OrganizationSsoTests(TerraBaseFixture fixture)
         var verified = await oidc.OkAsync(HttpMethod.Post, path + "/verify", token);
         await Assert.That(verified.GetProperty("domain_verified").GetBoolean()).IsTrue();
         return (organization, token);
+    }
+
+    // Starts an SSO sign-in, lets the provider sign <paramref name="email"/> in, and follows its redirect back.
+    private static async Task<HttpResponseMessage> SignInAsync(OidcHarness oidc, FakeSsoIdp idp, string email, IReadOnlyDictionary<string, object?>? claims = null, bool cookie = true)
+    {
+        using var start = await oidc.Client.GetAsync($"/ui/terrascale/sso?email={Uri.EscapeDataString(email)}");
+        await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+        var location = start.Headers.Location!;
+        await Assert.That(location.AbsoluteUri.StartsWith(FakeSsoIdp.Issuer + "/protocol/openid-connect/auth?", StringComparison.Ordinal)).IsTrue();
+        var state = start.Headers.GetValues("Set-Cookie").Select(value => value.Split(';')[0]).Single(pair => pair.StartsWith("tsauth_sso=", StringComparison.Ordinal));
+        var (code, returned) = idp.Authorize(location, email, claims);
+        using var callback = new HttpRequestMessage(HttpMethod.Get, $"/ui/terrascale/sso/callback?code={code}&state={Uri.EscapeDataString(returned)}");
+        if (cookie)
+        {
+            callback.Headers.Add("Cookie", state);
+        }
+
+        return await oidc.Client.SendAsync(callback);
     }
 }

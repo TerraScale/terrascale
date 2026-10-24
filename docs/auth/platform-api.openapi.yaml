@@ -948,7 +948,7 @@ paths:
       operationId: delete_sso_connection
       tags: [Single sign-on]
       summary: Delete the organization's SSO connection
-      description: Needs the owner role. Memberships stay.
+      description: Needs the owner role. Members of the domain sign in with email codes and passwords again; their memberships stay.
       responses:
         '204': { description: 'Deleted.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -963,7 +963,7 @@ paths:
       operationId: verify_sso_domain
       tags: [Single sign-on]
       summary: Verify the SSO connection's domain
-      description: Needs the owner role. Looks up the TXT record named in verification; 409 domain_unverified until it carries the value. Once verified, no other organization can take the domain.
+      description: Needs the owner role. Looks up the TXT record named in verification; 409 domain_unverified until it carries the value. Once verified, no other organization can take the domain, and every account of the domain signs in through the identity provider on the hosted sign-in page (new accounts join with default_role), except the organization's owners, who keep email-code and password sign-in.
       responses:
         '200':
           description: The verified connection.
