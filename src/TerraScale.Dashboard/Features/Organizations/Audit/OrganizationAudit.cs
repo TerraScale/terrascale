@@ -4,7 +4,7 @@ using TerraScale.Dashboard.Features.Accounts;
 
 namespace TerraScale.Dashboard.Features.Organizations.Audit;
 
-// One audit event as the API, NDJSON export and MCP list it. Ip is empty when the producer reported none (ts-auth events).
+// One audit event as the API, JSON and NDJSON exports and MCP list it. Ip is empty when the producer reported none (ts-auth events).
 public sealed record AuditEventRow(string Id, DateTimeOffset OccurredAt, string Actor, string ActorType, string Action, string Target, string TargetType,
     string Source, string Severity, string Outcome, string Ip)
 {
@@ -42,8 +42,15 @@ public static class OrganizationAudit
             var pages = Math.Max(1, (events.Count + pageSize - 1) / pageSize);
             var page = Math.Min(filter.Page, pages);
             http.Response.Headers.CacheControl = "no-store";
-            return Results.Json(new { retentionDays = snapshot.AuditRetentionDays, total = events.Count, page, pageCount = pages,
-                filters = new { filter.Action, filter.Search, filter.Range, filter.Severity }, events = events.Skip((page - 1) * pageSize).Take(pageSize).Select(AuditEventRow.From) }, Json);
+            return Results.Json(new
+            {
+                retentionDays = snapshot.AuditRetentionDays,
+                total = events.Count,
+                page,
+                pageCount = pages,
+                filters = new { filter.Action, filter.Search, filter.Range, filter.Severity },
+                events = events.Skip((page - 1) * pageSize).Take(pageSize).Select(AuditEventRow.From)
+            }, Json);
         });
         endpoints.MapGet("/audit/export", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, TimeProvider time) =>
         {
@@ -64,7 +71,7 @@ public static class OrganizationAudit
                     count = events.Count,
                     retentionDays = snapshot.AuditRetentionDays,
                     filters = new { filter.Action, filter.Search, filter.Range, filter.Severity },
-                    events
+                    events = events.Select(AuditEventRow.From)
                 }, Json), "application/json", name + ".json");
             if (format == "ndjson")
             {
