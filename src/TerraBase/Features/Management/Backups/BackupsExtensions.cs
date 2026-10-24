@@ -3,10 +3,13 @@ namespace TerraBase.Features.Management.Backups;
 /// <summary>Registers database backups.</summary>
 public static class BackupsExtensions
 {
-    /// <summary>Registers <see cref="IManagedBackupService"/> and the backup scheduler.</summary>
+    /// <summary>Registers <see cref="IManagedBackupService"/> the backup scheduler and scheduled exports.</summary>
     public static IServiceCollection AddTerraBaseManagementBackups(this IServiceCollection services) =>
         services
             .AddSingleton<IManagedBackupService, EngineManagedBackupService>()
             .AddSingleton<TerraBase.Features.Backup.IProjectBackupDestinations, ProjectBackupDestinations>()
-            .AddHostedService<BackupScheduler>();
+            .AddHostedService<BackupScheduler>()
+            .AddSingleton<ScheduledExports>()
+            .AddSingleton<IScheduledExports>(provider => provider.GetRequiredService<ScheduledExports>())
+            .AddHostedService(provider => provider.GetRequiredService<ScheduledExports>());
 }

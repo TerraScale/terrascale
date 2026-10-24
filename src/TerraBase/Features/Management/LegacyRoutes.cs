@@ -86,6 +86,7 @@ public static class LegacyRoutes
         ["backups"] => HttpMethods.IsGet(method) || HttpMethods.IsPost(method),
         ["backups", _, "restore"] => HttpMethods.IsPost(method),
         ["backup-policy"] => HttpMethods.IsGet(method) || HttpMethods.IsPut(method),
+        ["export-schedule"] => HttpMethods.IsGet(method) || HttpMethods.IsPut(method),
         ["point-in-time"] => HttpMethods.IsGet(method),
         ["point-in-time", "plan" or "restore"] => HttpMethods.IsPost(method),
         ["indexes"] => HttpMethods.IsGet(method) || HttpMethods.IsPost(method),

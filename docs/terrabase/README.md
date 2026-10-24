@@ -148,6 +148,8 @@ Shape data of dropped or recreated collections is retired by an always-on sweep:
 
 Export a database as NDJSON, resumable by cursor: [export](export.md).
 
+Export a database on a schedule to the project's own bucket: [scheduled exports](scheduled-exports.md).
+
 Import NDJSON (an export, or mongoexport-style documents) through the import pipeline: [NDJSON import](import-ndjson.md).
 
 Relational SQL (tables, joins, transactions) and libSQL clients over Hrana: [design](sql/relational-sql.md).
