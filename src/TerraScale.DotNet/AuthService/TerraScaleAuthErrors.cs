@@ -87,6 +87,8 @@ internal static class TerraScaleAuthErrors
     private static readonly HashSet<string> KnownErrorCodes = new(StringComparer.Ordinal)
     {
         "already_member",
+        "binding_conflict",
+        "closure_conflict",
         "forbidden_role",
         "invalid_target",
         "last_owner",

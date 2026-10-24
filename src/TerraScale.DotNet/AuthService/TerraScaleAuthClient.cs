@@ -337,6 +337,22 @@ public sealed class TerraScaleAuthClient
         await RequireStatusAsync(response, expectedStatus, deadline.Token).ConfigureAwait(false);
     }
 
+    // A deletion that ts-auth may finish in the background: true for 204 (done), false for 202 (pending; repeating the
+    // request resumes it). Any other success status is not evidence either way.
+    internal async Task<bool> SendAuthenticatedForDeletionAsync(string route, AuthenticationHeaderValue authorization, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(RequestDeadline);
+        using var response = await SendWithRetriesAsync(HttpMethod.Delete, route, null, new RequestAuthentication(authorization), deadline.Token).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.Accepted)
+        {
+            return false;
+        }
+
+        await RequireStatusAsync(response, HttpStatusCode.NoContent, deadline.Token).ConfigureAwait(false);
+        return true;
+    }
+
     private static async Task RequireStatusAsync(HttpResponseMessage response, HttpStatusCode expected, CancellationToken cancellationToken)
     {
         if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)

@@ -151,6 +151,61 @@ public sealed class TerraScaleAuthIntegrationContractTests
         else await Assert.That(handler.Body).IsNull();
     }
 
+    // ts-auth answers 204 once a deletion is done and 202 while a project closure is pending (routes.json pending_status).
+    [Test]
+    [Arguments("delete_account", 204, true)]
+    [Arguments("delete_account", 202, false)]
+    [Arguments("delete_project", 204, true)]
+    [Arguments("delete_project", 202, false)]
+    public async Task Deletions_report_done_or_pending(string operation, int status, bool done)
+    {
+        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("routes.json")));
+        var contract = manifest.RootElement.GetProperty("operations").EnumerateArray().Single(item => item.GetProperty("operation_id").GetString() == operation);
+        await Assert.That(contract.GetProperty(done ? "success_status" : "pending_status").GetInt32()).IsEqualTo(status);
+        using var handler = new CaptureHandler((HttpStatusCode)status, "");
+        using var http = new HttpClient(handler);
+        var platform = Client(http).Platform;
+        var answer = operation == "delete_account"
+            ? await platform.DeleteAccountAsync("fixture-sign-in")
+            : await platform.DeleteProjectAsync("fixture-sign-in", "01JA0000000000000000000005", "01JA0000000000000000000006");
+        await Assert.That(answer).IsEqualTo(done);
+        await Assert.That(handler.Calls).IsEqualTo(1);
+    }
+
+    // Any other success status is not evidence of either outcome.
+    [Test]
+    [Arguments(200)]
+    [Arguments(201)]
+    public async Task Deletions_refuse_other_success_statuses(int status)
+    {
+        using var handler = new CaptureHandler((HttpStatusCode)status, "");
+        using var http = new HttpClient(handler);
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Platform.DeleteProjectAsync("fixture-sign-in", "01JA0000000000000000000005", "01JA0000000000000000000006"));
+        await Assert.That(exception!.ErrorCode).IsEqualTo("invalid_response");
+    }
+
+    // Every refusal ts-auth answers for a closure keeps its code (admitted vocabulary), sent once.
+    [Test]
+    [Arguments("delete_project", "not_empty")]
+    [Arguments("delete_project", "closure_conflict")]
+    [Arguments("delete_project", "binding_conflict")]
+    [Arguments("delete_account", "last_owner")]
+    [Arguments("delete_account", "not_empty")]
+    [Arguments("delete_account", "closure_conflict")]
+    [Arguments("delete_account", "binding_conflict")]
+    public async Task Deletions_surface_each_closure_refusal_once(string operation, string code)
+    {
+        using var handler = new CaptureHandler(HttpStatusCode.Conflict, $$$"""{"error":{"code":"{{{code}}}","message":"refused"}}""");
+        using var http = new HttpClient(handler);
+        var platform = Client(http).Platform;
+        var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => operation == "delete_account"
+            ? platform.DeleteAccountAsync("fixture-sign-in")
+            : platform.DeleteProjectAsync("fixture-sign-in", "01JA0000000000000000000005", "01JA0000000000000000000006"));
+        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(exception.ErrorCode).IsEqualTo(code);
+        await Assert.That(handler.Calls).IsEqualTo(1);
+    }
+
     [Test]
     public async Task DeleteAccountSurfacesLastOwnerConflictOnce()
     {

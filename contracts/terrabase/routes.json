@@ -213,6 +213,24 @@
     },
     {
       "client": "management",
+      "operation": "closeProject",
+      "method": "PUT",
+      "path": "/admin/projects/{project}/closure"
+    },
+    {
+      "client": "documents",
+      "operation": "cancelClosure",
+      "method": "PUT",
+      "path": "/admin/projects/{project}/databases/{database}/closure-cancellations/{generation}"
+    },
+    {
+      "client": "management",
+      "operation": "requestHistoryErasure",
+      "method": "PUT",
+      "path": "/admin/history-erasures/{erasure}"
+    },
+    {
+      "client": "management",
       "operation": "deleteProject",
       "method": "DELETE",
       "path": "/v1/management/organizations/{organization}/projects/{project}"

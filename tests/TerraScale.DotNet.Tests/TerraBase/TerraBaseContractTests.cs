@@ -92,6 +92,7 @@ public sealed class TerraBaseContractTests
         yield return ("documents", "listChangeWebhookDeliveries", client => Db(client).ListChangeWebhookDeliveriesAsync("users", User));
         yield return ("documents", "createDatabase", client => Db(client).CreateAsync());
         yield return ("documents", "deleteDatabase", client => Db(client).DeleteAsync());
+        yield return ("documents", "cancelClosure", client => Db(client).CancelClosureAsync(User, User));
         yield return ("documents", "listCollections", client => Db(client).ListCollectionsAsync());
         yield return ("documents", "createCollection", client => Db(client).CreateCollectionAsync("users"));
         yield return ("documents", "getCollection", client => Db(client).GetCollectionAsync("users"));
@@ -175,6 +176,8 @@ public sealed class TerraBaseContractTests
         yield return ("management", "getProject", client => M(client).GetProjectAsync(User, Organization, Project));
         yield return ("management", "renameProject", client => M(client).RenameProjectAsync(User, Organization, Project, "App"));
         yield return ("management", "deleteProject", client => M(client).DeleteProjectAsync(User, Organization, Project));
+        yield return ("management", "closeProject", client => M(client).CloseProjectAsync(Project, Organization, User));
+        yield return ("management", "requestHistoryErasure", client => M(client).RequestHistoryErasureAsync(User, DateTimeOffset.UnixEpoch));
         yield return ("management", "createManagedDatabase", client => M(client).CreateDatabaseAsync(User, Organization, Project, "app"));
         yield return ("management", "listDatabases", client => M(client).ListDatabasesAsync(User, Organization, Project));
         yield return ("management", "getDatabase", client => M(client).GetDatabaseAsync(User, Organization, Project, User));

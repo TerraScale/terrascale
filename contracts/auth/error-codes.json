@@ -12,9 +12,11 @@
     "authentication_changed",
     "authorization_pending",
     "billing_not_configured",
+    "binding_conflict",
     "bootstrap_key_conflict",
     "checkout_in_progress",
     "client_changed",
+    "closure_conflict",
     "connection_exists",
     "connection_not_found",
     "credential_exists",
@@ -138,5 +140,22 @@
     "src/TerraScale.Authentication/Features/Platform/ApiKeys.cs": "4667529347f9446398624a507f37b8bd8f94bc2167984cd75a46b05beabf8e87",
     "src/TerraScale.Authentication/Features/Headless/HeadlessEndpoints.cs": "0927c0c52c6b1607b94a2a4fa0078bb3d967a792438f0b82c046e3ee91b3e251",
     "src/TerraScale.Authentication/Features/Platform/Invitations.cs": "c2c25fb0e3ac58a282a9401a8c56c4aa5d8d4777db048b6e4799429a001564b3"
+  },
+  "ts873_closure_producer": {
+    "state": "Merged TS-873 producer: TerraScale/terrascale#495.",
+    "base_revision": "2d639336d1df5799bd2d62bd6cfded1498774dde",
+    "sources_sha256": {
+      "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "a7436836b58919b0804661cdacfd30760f568d3d41a969823514cfceb54f04fd",
+      "src/TerraScale.Authentication/Features/Platform/PlatformDirectory.cs": "c8ed08c159da30b5c6538f6202b5a4f970353740a984728590427e1174518856",
+      "src/TerraScale.Authentication/Features/Platform/Closures.cs": "deefbefc6fb13b864cf5499d4e4c19b206cda60129afb7a28f8589f38cb72216",
+      "src/TerraScale.Authentication/Features/Platform/AccountDeletion.cs": "dc4e2a4ff6c4c66969555ccf0e2cdef11da820f6fbf8ee7bcc16abbaac2b757f",
+      "docs/auth/platform-api.openapi.yaml": "7265b724ceef3201da65c95b283da827818ee97a6c6ecb92199fcb73aeff0aa7"
+    },
+    "codes": [
+      "closure_conflict",
+      "binding_conflict"
+    ],
+    "statuses": "delete_account and delete_project answer 202 while a TerraBase project closure is pending",
+    "revision": "c1a1d9662662698739750a9af45db979abb2cea7"
   }
 }

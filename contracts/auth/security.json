@@ -46,6 +46,8 @@
     "safe_metadata": "StatusCode, admitted ErrorCode, RetryAfter only; unknown code, server descriptions and bodies omitted.",
     "platform_codes": [
       "already_member",
+      "binding_conflict",
+      "closure_conflict",
       "email_mismatch",
       "forbidden_role",
       "invalid_request",

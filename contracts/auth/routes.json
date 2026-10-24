@@ -197,6 +197,7 @@
       "request_dto": null,
       "response_dto": null,
       "success_status": 204,
+      "pending_status": 202,
       "errors": [
         401,
         409,
@@ -302,10 +303,12 @@
       "request_dto": null,
       "response_dto": null,
       "success_status": 204,
+      "pending_status": 202,
       "errors": [
         401,
         403,
         404,
+        409,
         503
       ],
       "security": "platform_user_sign_in_bearer",
