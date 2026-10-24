@@ -62,6 +62,7 @@ public sealed class LiveRestoreDrillSafetyTests
             {
                 var damaged = Path.Combine(scratch, "damaged.db");
                 File.Copy(replayed, damaged, overwrite: true);
+                File.Copy(replayed + DatabaseKeys.Suffix, damaged + DatabaseKeys.Suffix, overwrite: true);
                 Execute(damaged, mutation);
                 await Assert.That(Convert.ToHexString(await engine.RestoreDrillChecksumAsync(damaged, token))).IsNotEqualTo(expected).Because(mutation);
             }
@@ -96,6 +97,7 @@ public sealed class LiveRestoreDrillSafetyTests
         try
         {
             var snapshot = Path.Combine(scratch, "scan.db");
+            TestMasterKey.Create(snapshot);
             Execute(snapshot, """
                 CREATE TABLE payload (value BLOB);
                 WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i + 1 FROM n WHERE i < 4096)
@@ -178,7 +180,7 @@ public sealed class LiveRestoreDrillSafetyTests
     }
 
     private static TursoStorageEngine CreateEngine(string scratch, Meter meter) =>
-        new(scratch, 1, 32, 64L << 20, meter, NullLogger<TursoStorageEngine>.Instance, TimeSpan.Zero);
+        new(scratch, 1, 32, 64L << 20, meter, NullLogger<TursoStorageEngine>.Instance, new TestMasterKey(), TimeSpan.Zero);
 
     private static void Execute(string file, string sql)
     {

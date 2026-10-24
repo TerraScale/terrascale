@@ -1,4 +1,5 @@
 using System.Net;
+using TerraBase.Testing;
 using Turso.Data.Sqlite;
 
 namespace TerraBase.E2E;
@@ -34,7 +35,8 @@ public sealed class ExpectedTests
     public async Task A_database_lock_is_never_the_gap()
     {
         var file = Path.Combine(Directory.CreateTempSubdirectory("terrabase-expected-").FullName, "locked.db");
-        await using var holder = new SqliteConnection($"Data Source={file};Pooling=False");
+        TestMasterKey.Create(file);
+        await using var holder = new SqliteConnection(TestMasterKey.ConnectionString(file, SqliteOpenMode.ReadWriteCreate));
         await holder.OpenAsync();
         await using (var create = holder.CreateCommand())
         {
@@ -51,7 +53,7 @@ public sealed class ExpectedTests
 
         var refused = await RefusedAsync(async () =>
         {
-            await using var other = new SqliteConnection($"Data Source={file};Pooling=False");
+            await using var other = new SqliteConnection(TestMasterKey.ConnectionString(file));
             await other.OpenAsync();
             await using var write = other.CreateCommand();
             write.CommandText = "INSERT INTO t VALUES (2)";

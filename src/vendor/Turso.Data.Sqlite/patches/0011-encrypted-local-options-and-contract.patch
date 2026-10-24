@@ -1,0 +1,187 @@
+diff --git a/src/Turso.Data.Sqlite/SqliteCommand.cs b/src/Turso.Data.Sqlite/SqliteCommand.cs
+index 9c9f326feeb76a2a03e287fb88b3574b206ea447..bdc3121cc53d647f281e535de77359b676e737ad 100644
+--- a/src/Turso.Data.Sqlite/SqliteCommand.cs
++++ b/src/Turso.Data.Sqlite/SqliteCommand.cs
+@@ -1079,7 +1079,9 @@ public class SqliteCommand : DbCommand
+         {
+             var codeEnd = message.IndexOf(':', sqliteErrorPrefix.Length);
+             if (codeEnd > sqliteErrorPrefix.Length
+-                && int.TryParse(message[sqliteErrorPrefix.Length..codeEnd], NumberStyles.Integer, CultureInfo.InvariantCulture, out var errorCode))
++                && int.TryParse(message[sqliteErrorPrefix.Length..codeEnd], NumberStyles.Integer, CultureInfo.InvariantCulture, out var errorCode)
++                // SQL and callbacks can forge this prefix; only native status can report physical damage.
++                && (errorCode & 0xff) is not (10 or 11 or 26))
+             {
+                 var sqliteMessage = message[(codeEnd + 1)..];
+                 return new SqliteException(Properties.Resources.SqliteNativeError(errorCode, sqliteMessage), errorCode);
+diff --git a/src/Turso.Data.Sqlite/SqliteConnection.cs b/src/Turso.Data.Sqlite/SqliteConnection.cs
+index 99ae83bb7d65d998fc51112ea3db1f8a88ad98e9..feaea5ab39e50283a305ae65a975d376c72b1a40 100644
+--- a/src/Turso.Data.Sqlite/SqliteConnection.cs
++++ b/src/Turso.Data.Sqlite/SqliteConnection.cs
+@@ -167,13 +167,21 @@ public partial class SqliteConnection : DbConnection
+         if (!string.IsNullOrEmpty(_connectionOptions.Password))
+             throw new InvalidOperationException(Properties.Resources.EncryptionNotSupported("e_sqlite3"));
+ 
++        var encryption = new TursoConnectionStringBuilder(_connectionOptions.GetTursoConnectionString());
++        var cipher = encryption.GetEncryptionCipher();
++        if (cipher.HasValue != !string.IsNullOrWhiteSpace(_connectionOptions.EncryptionKey))
++            throw new InvalidOperationException("Encryption Cipher and Encryption Key must be specified together.");
++
+         var originalState = State;
+         var filename = NormalizeDataSource(_connectionOptions);
+         var readOnly = _connectionOptions.Mode == SqliteOpenMode.ReadOnly;
+         var sharedMemoryPath = IsSharedMemory(_connectionOptions) ? RegisterSharedMemoryFile(filename) : null;
+         try
+         {
+-            _database = CanPool(_connectionOptions, filename, sharedMemoryPath)
++            // The filename-only pool must never reuse a handle authenticated with another key.
++            _database = cipher.HasValue
++                ? TursoBindings.OpenDatabaseWithEncryption(filename, cipher.Value, _connectionOptions.EncryptionKey)
++                : CanPool(_connectionOptions, filename, sharedMemoryPath)
+                 ? SqliteDatabasePool.Connect(filename)
+                 : TursoBindings.OpenDatabase(filename);
+             _database.CloseRefusal = CloseRefusal;
+diff --git a/src/Turso.Data.Sqlite/SqliteConnectionStringBuilder.cs b/src/Turso.Data.Sqlite/SqliteConnectionStringBuilder.cs
+index 0bb94642ff182c8b256b9d447b0e838aa46f66a0..56b1046ec5b9bf0b8d9b70773b543c475b25f9f4 100644
+--- a/src/Turso.Data.Sqlite/SqliteConnectionStringBuilder.cs
++++ b/src/Turso.Data.Sqlite/SqliteConnectionStringBuilder.cs
+@@ -14,6 +14,8 @@ public class SqliteConnectionStringBuilder : DbConnectionStringBuilder
+         "Mode",
+         "Cache",
+         "Password",
++        "Encryption Cipher",
++        "Encryption Key",
+         "Foreign Keys",
+         "Recursive Triggers",
+         "Default Timeout",
+@@ -51,6 +53,10 @@ public class SqliteConnectionStringBuilder : DbConnectionStringBuilder
+         ["Mode"] = "Mode",
+         ["Cache"] = "Cache",
+         ["Password"] = "Password",
++        ["Encryption Cipher"] = "Encryption Cipher",
++        ["EncryptionCipher"] = "Encryption Cipher",
++        ["Encryption Key"] = "Encryption Key",
++        ["EncryptionKey"] = "Encryption Key",
+         ["Foreign Keys"] = "Foreign Keys",
+         ["ForeignKeys"] = "Foreign Keys",
+         ["Recursive Triggers"] = "Recursive Triggers",
+@@ -296,6 +302,18 @@ public class SqliteConnectionStringBuilder : DbConnectionStringBuilder
+         set => SetString("Password", value);
+     }
+ 
++    public string EncryptionCipher
++    {
++        get => GetString("Encryption Cipher");
++        set => SetString("Encryption Cipher", value);
++    }
++
++    public string EncryptionKey
++    {
++        get => GetString("Encryption Key");
++        set => SetString("Encryption Key", value);
++    }
++
+     public bool? ForeignKeys
+     {
+         get => GetNullableBool("Foreign Keys");
+@@ -429,6 +447,8 @@ public class SqliteConnectionStringBuilder : DbConnectionStringBuilder
+     private static readonly string[] ManagedKeywords =
+     [
+         "Data Source",
++        "Encryption Cipher",
++        "Encryption Key",
+         "Default Timeout",
+         "Pooling",
+         "Auth Token",
+@@ -565,6 +585,8 @@ public class SqliteConnectionStringBuilder : DbConnectionStringBuilder
+             "Mode" => SqliteOpenMode.ReadWriteCreate,
+             "Cache" => SqliteCacheMode.Default,
+             "Password" => string.Empty,
++            "Encryption Cipher" => string.Empty,
++            "Encryption Key" => string.Empty,
+             "Foreign Keys" => null!,
+             "Recursive Triggers" => false,
+             "Default Timeout" => 30,
+diff --git a/src/Turso.Data/TursoConnection.cs b/src/Turso.Data/TursoConnection.cs
+index 0680e2b8c76f44cd1ea9908ffd46a5b672cf8102..acdb78ca96fab3c2650468fc70fb07087b593cce 100644
+--- a/src/Turso.Data/TursoConnection.cs
++++ b/src/Turso.Data/TursoConnection.cs
+@@ -90,11 +90,13 @@ public class TursoConnection : DbConnection
+         var cipher = _connectionOptions.GetEncryptionCipher();
+         var hexkey = _connectionOptions["Encryption Key"];
+ 
++        if (!cipher.HasValue && !string.IsNullOrWhiteSpace(hexkey))
++            throw new InvalidOperationException("Encryption Cipher and Encryption Key must be specified together.");
++
+         if (cipher.HasValue)
+         {
+             if (string.IsNullOrWhiteSpace(hexkey))
+-                throw new InvalidOperationException("Encryption Key is required when Encryption Cipher is specified.");
+-
++                throw new InvalidOperationException("Encryption Cipher and Encryption Key must be specified together.");
+             _turso = TursoBindings.OpenDatabaseWithEncryption(filename, cipher.Value, hexkey);
+         }
+         else
+diff --git a/src/Turso.Data/TursoConnectionStringBuilder.cs b/src/Turso.Data/TursoConnectionStringBuilder.cs
+index 44ef2451fee466770032d7e9257ac95420989e37..b37dfa5dce6ce211be2e596e2d6e7a3417339f1c 100644
+--- a/src/Turso.Data/TursoConnectionStringBuilder.cs
++++ b/src/Turso.Data/TursoConnectionStringBuilder.cs
+@@ -334,7 +334,7 @@ public sealed class TursoConnectionStringBuilder : DbConnectionStringBuilder
+             "aegis128l" => TursoEncryptionCipher.Aegis128l,
+             "aegis128x2" => TursoEncryptionCipher.Aegis128x2,
+             "aegis128x4" => TursoEncryptionCipher.Aegis128x4,
+-            _ => throw new InvalidOperationException($"Unknown encryption cipher: {cipher}")
++            _ => throw new InvalidOperationException("Unknown encryption cipher.")
+         };
+     }
+ 
+diff --git a/src/Turso.Raw/Public/TursoBindings.cs b/src/Turso.Raw/Public/TursoBindings.cs
+index 988ba0d8bc05250d5ef3b7c36b31c8d15f7f9b1b..8d6776b07cb41adf86de4575d02f763a1b62f51a 100644
+--- a/src/Turso.Raw/Public/TursoBindings.cs
++++ b/src/Turso.Raw/Public/TursoBindings.cs
+@@ -25,7 +25,31 @@ public static class TursoBindings
+         ArgumentNullException.ThrowIfNull(path);
+         ArgumentNullException.ThrowIfNull(hexkey);
+ 
+-        return OpenDatabase(path, cipher.ToRustString(), hexkey);
++        var nativeCipher = cipher.ToRustString();
++        var keyLength = cipher is TursoEncryptionCipher.Aes256Gcm
++            or TursoEncryptionCipher.Aegis256 or TursoEncryptionCipher.Aegis256x2 ? 64 : 32;
++        if (hexkey.Length != keyLength || hexkey.Any(c => !Uri.IsHexDigit(c)))
++            throw new ArgumentException("Encryption Key must be a hex-encoded key of the cipher's required length.", nameof(hexkey));
++
++        try
++        {
++            if (TursoInterop.StorageErrorContract() != 1)
++                throw new NotSupportedException("The native library does not preserve encrypted-page corruption errors.");
++        }
++        catch (EntryPointNotFoundException)
++        {
++            throw new NotSupportedException("The native library must include the encrypted-page storage-error contract.");
++        }
++
++        try
++        {
++            return OpenDatabase(path, nativeCipher, hexkey);
++        }
++        catch (TursoNativeException ex)
++        {
++            // Native diagnostics can contain supplied configuration; never retain key-bearing text.
++            throw new TursoNativeException(ex.StatusCode, "Unable to open encrypted database.");
++        }
+     }
+ 
+     /// <summary>
+diff --git a/src/Turso.Raw/TursoInterop.cs b/src/Turso.Raw/TursoInterop.cs
+index 6e442b53011cb76d72d2277de17ef77668cef877..d1119181c47405bf305cc5513ae4fb3cfcd96054 100644
+--- a/src/Turso.Raw/TursoInterop.cs
++++ b/src/Turso.Raw/TursoInterop.cs
+@@ -55,6 +55,9 @@ internal static class TursoInterop
+         TursoNativeLibraryResolver.EnsureInitialized();
+     }
+ 
++    [DllImport(DllName, EntryPoint = "turso_terrascale_storage_error_contract", CallingConvention = CallingConvention.Cdecl)]
++    public static extern uint StorageErrorContract();
++
+     [DllImport(DllName, EntryPoint = "turso_database_new", CallingConvention = CallingConvention.Cdecl)]
+     public static extern TursoStatusCode DatabaseNew(
+         ref TursoDatabaseConfig config,

@@ -37,6 +37,7 @@ public sealed class TenantDatabasePowerLossTests
         var main = await File.ReadAllBytesAsync(database);
         var snapshot = node.PathOf("before-full.db");
         await File.WriteAllBytesAsync(snapshot, main);
+        File.Copy(database + ".key", snapshot + ".key");
         await Assert.That(await NormalRowsAsync(snapshot)).IsEqualTo(0).Because("the earlier NORMAL rows must exist only in the WAL, not in checkpointed main-database pages");
         await Assert.That(new FileInfo(wal).Length).IsEqualTo(normalLength).Because("no intervening writer or checkpoint changed the WAL");
         await Assert.That(faults.SyncedLength(wal)).IsEqualTo(before).Because("no intervening sync made the NORMAL commits durable");
@@ -49,6 +50,7 @@ public sealed class TenantDatabasePowerLossTests
         await Assert.That((await File.ReadAllBytesAsync(database)).SequenceEqual(main)).IsTrue().Because("no checkpoint supplied the NORMAL rows instead of the FULL WAL sync");
         var recoveredCopy = node.PathOf("after-loss.db");
         File.Copy(database, recoveredCopy);
+        File.Copy(database + ".key", recoveredCopy + ".key");
         File.Copy(wal, recoveredCopy + "-wal");
         await Assert.That(await NormalRowsAsync(recoveredCopy)).IsEqualTo(3).Because("the FULL barrier persisted the three earlier NORMAL commits");
 
@@ -183,7 +185,7 @@ public sealed class TenantDatabasePowerLossTests
 
     private static async Task<long> NormalRowsAsync(string database)
     {
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = database, Pooling = false }.ToString());
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = database, Pooling = false }));
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT count(*) FROM sqlite_master WHERE name = '_b3_normal_frames'";
@@ -225,7 +227,7 @@ public sealed class TenantPowerLossHost
         }
 
         var database = await File.ReadAllTextAsync(arm, cancellationToken);
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = database, Pooling = false }.ToString());
+        await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = database, Pooling = false }));
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "PRAGMA synchronous = FULL; CREATE TABLE _b3_normal_frames (n INTEGER PRIMARY KEY); PRAGMA synchronous = NORMAL;";

@@ -19,6 +19,7 @@ using OpenTelemetry.Exporter;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
@@ -123,6 +124,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         var options = new TerraBaseOptions { DataDirectory = dataDirectory, MemoryBudget = 64 * 1024 * 1024, StorageThreads = 1, StorageQueue = 16 };
         var services = new ServiceCollection();
         services.AddTerraBaseEngine(options);
+        services.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
         await using var provider = services.BuildServiceProvider();
         _ = provider.GetRequiredService<IStorageEngine>();
     }
@@ -625,6 +627,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
             builder.ConfigureTestServices(values =>
             {
+                // Storage and backup fakes are independent; storage restarts retain this process's test-only master.
+                values.Replace(ServiceDescriptor.KeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey));
+
                 // Replaces Program's registration (empty: records peers as unmatched and cannot send) before the test's callbacks, which may replace it again.
                 values.Replace(ServiceDescriptor.Singleton(peerCredential));
                 // Completion barriers must observe commits after the previous scrape, not its cached zero.

@@ -7,7 +7,7 @@ internal sealed partial class TursoStorageEngine
     private readonly Lock _salvageGate = new();
     private readonly Dictionary<string, int> _salvageOperations = [];
 
-    private async ValueTask<T> RunSalvageAsync<T>(string path, Func<SalvageOperation, T> call, CancellationToken token)
+    private async ValueTask<T> RunSalvageAsync<T>(string path, Func<SalvageOperation, Task<T>> call, CancellationToken token)
     {
         var parts = Path.GetRelativePath(Path.GetFullPath(_dataDirectory), Path.GetFullPath(path)).Split(Path.DirectorySeparatorChar);
         if (parts is not [var organization, var project, var name] || !IsId(organization) || !IsId(project)
@@ -43,7 +43,7 @@ internal sealed partial class TursoStorageEngine
             Io.Admit();
             try
             {
-                return await Io.RunAsync(() => call(operation), token).ConfigureAwait(false);
+                return await call(operation).ConfigureAwait(false);
             }
             finally
             {
@@ -53,18 +53,22 @@ internal sealed partial class TursoStorageEngine
     }
 
     private ValueTask<T> ReadSalvageAsync<T>(string path, Func<global::Turso.Data.Sqlite.SqliteConnection, T> read, CancellationToken token) =>
-        RunSalvageAsync(path, operation =>
+        RunSalvageAsync(path, async operation =>
         {
-            var connection = Working(path, operation);
-            try
+            var connectionString = await Encryption.ExistingAsync(path, Io, token).ConfigureAwait(false);
+            return await Io.RunAsync(() =>
             {
-                _checkpoint("rebuild.salvage_reader", operation.Database);
-                return read(connection);
-            }
-            finally
-            {
-                CloseSalvage(connection, operation);
-            }
+                var connection = Working(path, connectionString, operation);
+                try
+                {
+                    _checkpoint("rebuild.salvage_reader", operation.Database);
+                    return read(connection);
+                }
+                finally
+                {
+                    CloseSalvage(connection, operation);
+                }
+            }, token).ConfigureAwait(false);
         }, token);
 
     private static void CloseSalvage(global::Turso.Data.Sqlite.SqliteConnection connection, SalvageOperation operation)

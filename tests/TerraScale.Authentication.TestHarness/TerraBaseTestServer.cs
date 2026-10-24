@@ -27,6 +27,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     private readonly ConcurrentQueue<string> output = new();
     private readonly string directory;
+    private readonly byte[] masterKey;
     private TestListenerRelay? publicFront;
     private TestListenerRelay? internalFront;
     private (int Internal, int Public, int Metrics) backendPorts;
@@ -40,6 +41,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         this.directory = directory;
         this.production = production;
         this.node = node;
+        this.masterKey = node is null ? RandomNumberGenerator.GetBytes(32) : Convert.FromBase64String(node.MasterKey);
     }
 
     internal (int Internal, int Public, int Metrics) BackendPorts => this.backendPorts;
@@ -48,6 +50,35 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     internal string StoppedDataDirectory => this.process is null
         ? Path.Combine(this.directory, "data")
         : throw new InvalidOperationException("Stop TerraBase before modifying its storage files.");
+
+    // Only stopped fixture storage is inspected; this synthetic master never comes from the environment.
+    internal string StoppedDatabaseKey(params string[] relativePath)
+    {
+        var path = Path.Combine([this.StoppedDataDirectory, .. relativePath]) + ".key";
+        var record = File.ReadAllLines(path);
+        if (record.Length != 2 || record[0] != "TERRABASE-DB-KEY-1")
+        {
+            throw new InvalidDataException("The fixture database key record is malformed.");
+        }
+
+        var wrapped = Convert.FromBase64String(record[1]);
+        if (wrapped.Length != 60)
+        {
+            throw new InvalidDataException("The fixture database key envelope is malformed.");
+        }
+
+        var key = new byte[32];
+        try
+        {
+            using var aes = new AesGcm(this.masterKey, 16);
+            aes.Decrypt(wrapped.AsSpan(0, 12), wrapped.AsSpan(12, 32), wrapped.AsSpan(44, 16), key);
+            return Convert.ToHexString(key);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
 
     /// <summary>Origin of the public listener (Documents API with API keys and ts-auth tokens).</summary>
     public Uri ClientAddress => this.publicFront?.Address ?? throw new InvalidOperationException("TerraBase has not started.");
@@ -229,7 +260,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
         var path = Path.Combine(this.directory, "data", organization, project, database + ".db");
         var hashes = new Dictionary<string, string>();
-        foreach (var suffix in (string[])["", "-wal", "-journal"])
+        foreach (var suffix in (string[])["", "-wal", "-journal", ".key"])
         {
             if (suffix.Length == 0 || File.Exists(path + suffix))
             {
@@ -251,7 +282,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             return false;
         }
 
-        foreach (var suffix in (string[])["", "-wal", "-journal"])
+        foreach (var suffix in (string[])["", "-wal", "-journal", ".key"])
         {
             var path = copies[0] + suffix;
             if (File.Exists(path) != hashes.ContainsKey(suffix)
@@ -316,7 +347,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 RedirectStandardError = true,
                 UseShellExecute = false,
             };
-            // Development: no Tigris backup to attach in a test. The test process's own ts-orch, Tigris and TerraBase variables never reach it.
+            // The test process's own ts-orch, Tigris and TerraBase variables never reach this child.
             foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TS_", StringComparison.Ordinal) || name.StartsWith("AWS_", StringComparison.Ordinal)
                 || name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name is "BUCKET_NAME" or "PRIMARY_REGION").ToList())
             {
@@ -341,22 +372,28 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
             if (this.production)
             {
-                // Outside Development TerraBase needs its Tigris bucket and master key; port 1 refuses every upload.
+                // Production admission tests require backup settings; no test contacts a production bucket.
                 start.Environment["AWS_ENDPOINT_URL_S3"] = "https://127.0.0.1:1";
                 start.Environment["AWS_REGION"] = "auto";
                 start.Environment["BUCKET_NAME"] = "terrabase-test";
                 start.Environment["AWS_ACCESS_KEY_ID"] = "test";
                 start.Environment["AWS_SECRET_ACCESS_KEY"] = "test";
-                // Secrets arrive as files with a trailing newline, as OCI Vault mounts them; each file wins over a malformed
-                // variable, which would stop the start if it were read.
-                var secrets = Directory.CreateDirectory(Path.Combine(this.directory, "secrets")).FullName;
-                File.WriteAllText(Path.Combine(secrets, "master-key"), Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)) + "\n");
-                File.WriteAllText(Path.Combine(secrets, "peer-secret"), PeerSecret + "\n");
-                start.Environment["TERRABASE_MASTER_KEY_FILE"] = Path.Combine(secrets, "master-key");
-                start.Environment[PeerSecretVariable] = "not-a-peer-secret";
-                start.Environment["TERRABASE_MASTER_KEY"] = "not-a-key";
-                start.Environment[PeerSecretVariable + "_FILE"] = Path.Combine(secrets, "peer-secret");
             }
+
+            // Database encryption needs the same test master across restarts, independently of backups.
+            // Secrets arrive as files with a trailing newline, as OCI Vault mounts them; each file wins over a malformed
+            // variable, which would stop the start if it were read.
+            var secrets = Directory.CreateDirectory(Path.Combine(this.directory, "secrets")).FullName;
+            var masterKeyFile = Path.Combine(secrets, "master-key");
+            if (!File.Exists(masterKeyFile))
+            {
+                File.WriteAllText(masterKeyFile, Convert.ToBase64String(this.masterKey) + "\n");
+            }
+            File.WriteAllText(Path.Combine(secrets, "peer-secret"), PeerSecret + "\n");
+            start.Environment["TERRABASE_MASTER_KEY_FILE"] = Path.Combine(secrets, "master-key");
+            start.Environment[PeerSecretVariable] = "not-a-peer-secret";
+            start.Environment["TERRABASE_MASTER_KEY"] = "not-a-key";
+            start.Environment[PeerSecretVariable + "_FILE"] = Path.Combine(secrets, "peer-secret");
 
             // All three backend ports are freshly owned by this child, including metrics on every restart.
             start.ArgumentList.Add(this.production ? "--environment=Production" : "--environment=Development");

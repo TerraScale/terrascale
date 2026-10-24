@@ -11,6 +11,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -624,6 +625,7 @@ public sealed class DatabaseRecoveryTests
         var paths = new[]
         {
             state.Path(unregistered),
+            state.Path(unregistered) + ".key",
             // Matching ids under another organization do not make this copy registered.
             System.IO.Path.Combine(state.Directory, EntityIds.New().ToString(), state.Project, state.Source + ".db"),
             System.IO.Path.Combine(state.Directory, state.Organization, state.Project, "operator-notes.txt"),
@@ -632,7 +634,7 @@ public sealed class DatabaseRecoveryTests
             System.IO.Path.Combine(state.Directory, state.Organization, "other", "nested", "archive.db"),
             System.IO.Path.Combine(state.Directory, "operator-notes.txt"),
         };
-        foreach (var path in paths.Skip(1))
+        foreach (var path in paths.Skip(2))
         {
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
             await File.WriteAllBytesAsync(path, state.Faker.Random.Bytes(73));
@@ -779,6 +781,7 @@ public sealed class DatabaseRecoveryTests
             var options = new TerraBaseOptions { DataDirectory = state.Directory, MemoryBudget = 64 * 1024 * 1024, StorageThreads = 1, StorageQueue = 16 };
             var services = new ServiceCollection();
             services.AddTerraBaseEngine(options);
+            services.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
             await using var provider = services.BuildServiceProvider();
             var engine = provider.GetRequiredService<IStorageEngine>();
             var inventory = engine.EnumerateDatabaseFiles().ToArray();
@@ -822,6 +825,7 @@ public sealed class DatabaseRecoveryTests
         externalServices.AddSingleton(externalOptions);
         externalServices.AddLogging();
         externalServices.AddTerraBaseEngine(externalOptions);
+        externalServices.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
         await using (var provider = externalServices.BuildServiceProvider())
         {
             // A real store with an old catalog version would be changed by management migration.
@@ -854,6 +858,7 @@ public sealed class DatabaseRecoveryTests
             services.AddSingleton(options);
             services.AddLogging();
             services.AddTerraBaseEngine(options);
+            services.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
             await using (var provider = services.BuildServiceProvider())
             {
                 // No management existence probe: the default engine must reject the link itself.
@@ -1046,14 +1051,14 @@ public sealed class DatabaseRecoveryTests
         // Add crash sidecars only after the seeded host has closed its real tenant stores.
         foreach (var database in new[] { state.Source, state.Neighbor })
         {
-            foreach (var suffix in state.Sidecars)
+            foreach (var suffix in state.Sidecars.Where(suffix => suffix != ".key"))
             {
                 await File.WriteAllBytesAsync(state.Path(database) + suffix, state.Faker.Random.Bytes(31));
             }
         }
 
         var paths = System.IO.Directory.GetFiles(System.IO.Path.GetDirectoryName(state.Path(state.Source))!);
-        await Assert.That(paths.Length).IsEqualTo(8);
+        await Assert.That(paths.Length).IsEqualTo(10);
         var before = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         foreach (var path in paths)
         {
@@ -1169,6 +1174,120 @@ public sealed class DatabaseRecoveryTests
         await state.AssertPreservedAsync(recovered, recoveredOwner);
         await recovered.CreateDatabaseAsync(state.Organization, state.Project, state.TargetName, recoveredOwner);
         await Assert.That(await CatalogAsync(recovered, "catalog", "version")).IsEqualTo("\"1\"");
+    }
+
+    [Test]
+    public async Task Registration_clearing_a_paged_intent_preserves_the_database_during_startup()
+    {
+        await using var state = new RecoveryData();
+        var registration = await UnregisterSourceWithCleanupIntentAsync(state);
+        var hook = new UsageCommitHook();
+        var reached = false;
+        await using var api = await state.StartAsync(services =>
+        {
+            hook.Install(services);
+            services.AddSingleton<DatabaseLifecycleCheckpoint>(provider => (step, storage) =>
+            {
+                if (step == "recovery.intent" && storage.DatabaseId == state.Source)
+                {
+                    // The page's transaction is closed; commit both facts before recovery opens its next snapshot.
+                    hook.BeforeCatalogBegin = async (_, token) =>
+                    {
+                        hook.BeforeCatalogBegin = null;
+                        var system = await provider.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+                        await using var transaction = await system.BeginTransactionAsync(write: true, token);
+                        await transaction.PutAsync($"projects/{state.Project}/databases", state.Source, registration.Json, token);
+                        await transaction.DeleteAsync("pending_database_cleanup", state.Source, token);
+                        await transaction.CommitAsync(token);
+                        reached = true;
+                    };
+                }
+            });
+        });
+
+        await Assert.That(reached).IsTrue();
+        await Assert.That((await PendingAsync(api)).Documents).IsEmpty();
+        using var owner = api.As(state.User);
+        await state.AssertPreservedAsync(api, owner);
+        await AssertReadyAsync(api);
+    }
+
+    [Test]
+    [Arguments("recovery.intent")]
+    [Arguments("cleanup.clearing")]
+    public async Task Recovery_does_not_clear_a_replacement_of_its_paged_intent(string replacementStep)
+    {
+        await using var state = new RecoveryData();
+        _ = await UnregisterSourceWithCleanupIntentAsync(state);
+        var source = await File.ReadAllBytesAsync(state.Path(state.Source));
+        var hook = new UsageCommitHook();
+        var replaced = false;
+        var revisited = false;
+        List<string>? replacementCatalog = null;
+        await using (var api = await state.StartAsync(services =>
+        {
+            // Startup defers the replacement to convergence; keep that later pass outside this test.
+            services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow));
+            hook.Install(services);
+            services.AddSingleton<DatabaseLifecycleCheckpoint>(provider => (step, storage) =>
+            {
+                if (storage.DatabaseId != state.Source)
+                {
+                    return;
+                }
+
+                if (step == "recovery.intent" && replaced)
+                {
+                    // A replacement belongs to a later convergence pass, never this startup page.
+                    revisited = true;
+                    throw new IOException("replacement intent awaits its own recovery");
+                }
+
+                if (step == replacementStep)
+                {
+                    // Arm before either the recovery read or cleanup's write (including a durable begin).
+                    hook.BeforeCatalogBegin = async (_, token) =>
+                    {
+                        // The replacement's own transaction must not reenter this callback.
+                        hook.BeforeCatalogBegin = null;
+                        var system = await provider.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+                        long version;
+                        await using (var transaction = await system.BeginTransactionAsync(write: true, token))
+                        {
+                            var pending = (await transaction.GetAsync("pending_database_cleanup", state.Source, token))!;
+                            // PUT mints a fresh state stamp even for identical JSON; version distinguishes the intent.
+                            version = await transaction.PutAsync("pending_database_cleanup", state.Source, pending.Json, token);
+                            await Assert.That(version).IsGreaterThan(pending.Version);
+                            await transaction.CommitAsync(token);
+                        }
+
+                        await using (var transaction = await system.BeginTransactionAsync(write: false, token))
+                        {
+                            var replacement = (await transaction.GetAsync("pending_database_cleanup", state.Source, token))!;
+                            await Assert.That(replacement.Version).IsEqualTo(version);
+                        }
+
+                        replacementCatalog = await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"));
+                        replaced = true;
+                    };
+                }
+            });
+        }))
+        {
+            await Assert.That((await PendingAsync(api)).Documents.Count).IsEqualTo(1);
+            await AssertReadyAsync(api);
+        }
+
+        await Assert.That(replaced).IsTrue();
+        await Assert.That(revisited).IsFalse();
+        await Assert.That(await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"))).IsEquivalentTo(replacementCatalog!);
+        if (replacementStep == "recovery.intent")
+        {
+            await Assert.That((await File.ReadAllBytesAsync(state.Path(state.Source))).SequenceEqual(source)).IsTrue();
+        }
+
+        await Assert.That(File.Exists(state.Path(state.Neighbor))).IsTrue();
+        await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(state.Directory)).IsFalse();
     }
 
     [Test]
@@ -1430,7 +1549,7 @@ public sealed class DatabaseRecoveryTests
         await File.WriteAllBytesAsync(notes, state.Faker.Random.Bytes(41));
         var paths = System.IO.Directory.GetFiles(System.IO.Path.GetDirectoryName(state.Path(target))!)
             .Where(path => System.IO.Path.GetFileName(path).Contains(target, StringComparison.Ordinal) || path == notes).ToArray();
-        await Assert.That(paths.Length).IsEqualTo(9);
+        await Assert.That(paths.Length).IsEqualTo(11);
         var before = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         foreach (var path in paths)
         {
@@ -1485,6 +1604,7 @@ public sealed class DatabaseRecoveryTests
         services.AddSingleton(options);
         services.AddLogging();
         services.AddTerraBaseEngine(options);
+        services.AddKeyedSingleton<IMasterKey, TestMasterKey>(EngineExtensions.DatabaseMasterKey);
         await using (var provider = services.BuildServiceProvider())
         {
             var engine = provider.GetRequiredService<IStorageEngine>();
@@ -1499,7 +1619,8 @@ public sealed class DatabaseRecoveryTests
         await using var restarted = await state.StartAsync(registered => registered.AddSingleton<ILoggerProvider>(logs));
         await Assert.That((await File.ReadAllBytesAsync(path)).SequenceEqual(bytes)).IsTrue();
         await Assert.That(logs.Messages).Contains("Warning: Preserved database file without a catalog registration: " + path);
-        await AssertUnknownCountAsync(restarted, 1);
+        await Assert.That(logs.Messages).Contains("Warning: Preserved database file without a catalog registration: " + path + ".key");
+        await AssertUnknownCountAsync(restarted, 2);
         await AssertReadyAsync(restarted);
         await Assert.That((await PendingAsync(restarted)).Documents).IsEmpty();
         using var owner = restarted.As(state.User);
@@ -2311,6 +2432,22 @@ public sealed class DatabaseRecoveryTests
         await Assert.That(double.Parse(count.Split(' ')[1], CultureInfo.InvariantCulture)).IsEqualTo((double)expected);
     }
 
+    private static async Task<StoredDocument> UnregisterSourceWithCleanupIntentAsync(RecoveryData state)
+    {
+        // Keep background convergence from consuming the fixture before the startup under test.
+        await using var api = await state.StartAsync(services => services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow)));
+        await state.SeedAsync(api);
+        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        await using var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None);
+        var registration = (await transaction.GetAsync($"projects/{state.Project}/databases", state.Source, CancellationToken.None))!;
+        var storage = new TenantContext(state.Organization, PlanTier.Hobby, state.Project, state.Source);
+        await transaction.PutAsync("pending_database_cleanup", state.Source,
+            JsonSerializer.SerializeToUtf8Bytes(storage, TerraBaseJsonContext.Default.TenantContext), CancellationToken.None);
+        await transaction.DeleteAsync($"projects/{state.Project}/databases", state.Source, CancellationToken.None);
+        await transaction.CommitAsync(CancellationToken.None);
+        return registration;
+    }
+
     private static async Task<DocumentPage> PendingAsync(ManagementApi api)
     {
         var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
@@ -2349,7 +2486,7 @@ public sealed class DatabaseRecoveryTests
         private readonly Lazy<Task> _cleanup;
 
         public Faker Faker { get; } = new();
-        public IReadOnlyList<string> Sidecars { get; } = ["-wal", "-shm", "-journal"];
+        public IReadOnlyList<string> Sidecars { get; } = ["-wal", "-shm", "-journal", ".key"];
         public string Directory { get; } = System.IO.Directory.CreateTempSubdirectory("terrabase-recovery-").FullName;
         public string User { get; }
         public string Organization { get; private set; } = string.Empty;
@@ -2450,7 +2587,7 @@ public sealed class DatabaseRecoveryTests
             foreach (var suffix in Sidecars.Prepend(string.Empty))
             {
                 await File.WriteAllBytesAsync(temporary + suffix, Faker.Random.Bytes(31));
-                if (sidecars && suffix.Length != 0)
+                if (sidecars && suffix.Length != 0 && suffix != ".key")
                 {
                     await File.WriteAllBytesAsync(path + suffix, Faker.Random.Bytes(31));
                 }

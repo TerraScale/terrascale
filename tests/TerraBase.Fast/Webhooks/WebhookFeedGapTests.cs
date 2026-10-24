@@ -51,7 +51,7 @@ public sealed class WebhookFeedGapTests
         await Assert.That(fixture.Receiver.Received).IsEqualTo(0);
         await Assert.That((await fixture.JsonAsync($"{fixture.Path}/{registration.GetProperty("id").GetString()}/deliveries", token)).GetArrayLength()).IsEqualTo(0);
         memory.Refuse = false;
-        var captured = await fixture.ReceiveAsync(token);
+        var captured = await fixture.WaitForRequestAsync(token);
         using var body = JsonDocument.Parse(captured.Body);
         await Assert.That(body.RootElement.GetProperty("events").GetArrayLength()).IsEqualTo(32);
         await Assert.That(memory.Admitted).IsGreaterThanOrEqualTo(32);
@@ -70,16 +70,16 @@ public sealed class WebhookFeedGapTests
             dropped.EnsureSuccessStatusCode();
         }
 
-        await fixture.DriveAsync(async cancellation =>
+        await fixture.DriveAfterCommitAsync(async cancellation =>
             (await fixture.JsonAsync(fixture.Path, cancellation))[0].GetProperty("status").GetString() == "feed_gap", token);
         await Assert.That((await fixture.JsonAsync($"{fixture.Path}/{id}/deliveries", token)).GetArrayLength()).IsEqualTo(0);
         await ManagementApi.CreateCollectionAsync(fixture.Client, fixture.Database, "items", token);
         var control = await fixture.RegisterAsync(token);
         await fixture.PutAsync("recreated", token);
-        var captured = await fixture.ReceiveAsync(token);
+        var captured = await fixture.WaitForRequestAsync(token);
         using var body = JsonDocument.Parse(captured.Body);
         await Assert.That(body.RootElement.GetProperty("webhookId").GetString()).IsEqualTo(control.GetProperty("id").GetString());
-        _ = await fixture.DeliveryAsync(control.GetProperty("id").GetString()!, "delivered", token);
+        _ = await fixture.WaitForDeliveryAsync(control.GetProperty("id").GetString()!, "delivered", token);
         var list = await fixture.JsonAsync(fixture.Path, token);
         await Assert.That(list.EnumerateArray().Single(item => item.GetProperty("id").GetString() == id)
             .GetProperty("status").GetString()).IsEqualTo("feed_gap");
@@ -116,7 +116,7 @@ public sealed class WebhookFeedGapTests
             _ = await transaction.CommitAsync(token);
         }
 
-        await fixture.DriveAsync(async cancellation =>
+        await fixture.DriveAfterCommitAsync(async cancellation =>
             (await fixture.JsonAsync(fixture.Path, cancellation))[0].GetProperty("status").GetString() == "feed_gap", token);
         await Assert.That((await fixture.JsonAsync($"{fixture.Path}/{id}/deliveries", token)).GetArrayLength()).IsEqualTo(0);
         await Assert.That(fixture.Receiver.Received).IsEqualTo(0);
@@ -126,14 +126,14 @@ public sealed class WebhookFeedGapTests
         var control = await fixture.RegisterAsync(token);
         var controlId = control.GetProperty("id").GetString()!;
         await fixture.PutAsync("control", token);
-        var captured = await fixture.ReceiveAsync(token);
+        var captured = await fixture.WaitForRequestAsync(token);
         using (var body = JsonDocument.Parse(captured.Body))
         {
             await Assert.That(body.RootElement.GetProperty("webhookId").GetString()).IsEqualTo(controlId);
             await Assert.That(body.RootElement.GetProperty("events").GetArrayLength()).IsEqualTo(1);
         }
 
-        _ = await fixture.DeliveryAsync(controlId, "delivered", token);
+        _ = await fixture.WaitForDeliveryAsync(controlId, "delivered", token);
         await Assert.That((await fixture.JsonAsync($"{fixture.Path}/{id}/deliveries", token)).GetArrayLength()).IsEqualTo(0);
         foreach (var remove in new[] { id, controlId })
         {
@@ -143,7 +143,7 @@ public sealed class WebhookFeedGapTests
 
         var recreated = await fixture.RegisterAsync(token);
         await fixture.PutAsync("recovered", token);
-        var recovered = await fixture.ReceiveAsync(token);
+        var recovered = await fixture.WaitForRequestAsync(token);
         using var recoveredBody = JsonDocument.Parse(recovered.Body);
         await Assert.That(recoveredBody.RootElement.GetProperty("webhookId").GetString()).IsEqualTo(recreated.GetProperty("id").GetString());
         var events = recoveredBody.RootElement.GetProperty("events");
@@ -160,18 +160,18 @@ public sealed class WebhookFeedGapTests
         var hook = await fixture.RegisterAsync(token);
         var id = hook.GetProperty("id").GetString()!;
         await fixture.PutAsync("captured", token);
-        var pending = await fixture.ReceiveAsync(token);
-        _ = await fixture.DeliveryAsync(id, "pending", token, "http_error");
+        var pending = await fixture.WaitForRequestAsync(token);
+        _ = await fixture.WaitForDeliveryAsync(id, "pending", token, "http_error");
         await fixture.StopAsync();
         fixture.Clock.Advance(FeedCursor.Retention + TimeSpan.FromMinutes(1));
         await fixture.RestartAsync(token);
 
-        var replay = await fixture.ReceiveAsync(token);
+        var replay = await fixture.WaitForRequestAsync(token);
         await Assert.That(replay.Delivery).IsEqualTo(pending.Delivery);
         await Assert.That(replay.Body.SequenceEqual(pending.Body)).IsTrue();
         await WebhookDeliveryTests.SignedAsync(replay, hook.GetProperty("secret").GetString()!);
-        _ = await fixture.DeliveryAsync(id, "delivered", token);
-        await fixture.DriveAsync(async cancellation =>
+        _ = await fixture.WaitForDeliveryAsync(id, "delivered", token);
+        await fixture.DriveAfterCommitAsync(async cancellation =>
             (await fixture.JsonAsync(fixture.Path, cancellation))[0].GetProperty("status").GetString() == "feed_gap", token);
         await Assert.That(fixture.Receiver.Received).IsEqualTo(2);
     }

@@ -228,7 +228,7 @@ public sealed class ManagementApi : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(database);
         var path = Path.Combine(dataDirectory, database.Organization, database.Project, database.Id + ".db");
         await using var connection = new SqliteConnection(
-            new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString());
+            TestMasterKey.ConnectionString(path));
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = sql;

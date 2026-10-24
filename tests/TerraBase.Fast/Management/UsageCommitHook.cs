@@ -31,6 +31,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
     // Runs when a transaction starts on an opened user database, before the store hands out a session.
     public Func<TenantContext, CancellationToken, ValueTask>? BeforeBegin { get; set; }
 
+    // Runs before opening a catalog transaction, so mutations finish before its snapshot or write lock is acquired.
+    public Func<bool, CancellationToken, ValueTask>? BeforeCatalogBegin { get; set; }
+
     // Runs before a user database's size is read.
     public Func<TenantContext, CancellationToken, ValueTask>? BeforeSize { get; set; }
 
@@ -266,6 +269,11 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
         public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken)
         {
+            if (hook.BeforeCatalogBegin is { } beforeCatalogBegin)
+            {
+                await beforeCatalogBegin(true, cancellationToken);
+            }
+
             if (Interlocked.Exchange(ref hook._write, null) is { } gate)
             {
                 await gate.WaitAsync(cancellationToken);
@@ -276,6 +284,11 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
         public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken)
         {
+            if (hook.BeforeCatalogBegin is { } beforeCatalogBegin)
+            {
+                await beforeCatalogBegin(write, cancellationToken);
+            }
+
             if (write && Interlocked.Exchange(ref hook._write, null) is { } gate)
             {
                 await gate.WaitAsync(cancellationToken);

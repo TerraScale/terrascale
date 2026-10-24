@@ -1,5 +1,6 @@
 using System.Net;
 using Turso.Data.Sqlite;
+using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
 
@@ -18,6 +19,7 @@ public sealed class StorageFormatTests
         await using var api = await DocumentApi.StartAsync();
         var path = await api.ReplaceFileAsync("old", async path =>
         {
+            TestMasterKey.Create(path);
             await using var connection = new SqliteConnection(DocumentApi.ConnectionString(path));
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();

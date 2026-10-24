@@ -169,12 +169,12 @@ public sealed class EntityIdTests
         await Assert.That(EntityIds.IsValid(database.DatabaseId)).IsTrue();
         var collection = await api.SendAsync(HttpMethod.Get, $"{api.Collections}/items");
         await Assert.That(EntityIds.IsValid(collection.Json.GetProperty("id").GetString())).IsTrue();
-        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
         {
             DataSource = Path.Combine(api.Server.DataDirectory, "_system.db"),
             Mode = SqliteOpenMode.ReadOnly,
             Pooling = false,
-        }.ToString());
+        }));
         await connection.OpenAsync();
         using var query = connection.CreateCommand();
         query.CommandText = "SELECT id, body FROM documents WHERE collection IN ('organizations', 'api_keys') AND body IS NOT NULL;";

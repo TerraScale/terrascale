@@ -1079,7 +1079,9 @@ public class SqliteCommand : DbCommand
         {
             var codeEnd = message.IndexOf(':', sqliteErrorPrefix.Length);
             if (codeEnd > sqliteErrorPrefix.Length
-                && int.TryParse(message[sqliteErrorPrefix.Length..codeEnd], NumberStyles.Integer, CultureInfo.InvariantCulture, out var errorCode))
+                && int.TryParse(message[sqliteErrorPrefix.Length..codeEnd], NumberStyles.Integer, CultureInfo.InvariantCulture, out var errorCode)
+                // SQL and callbacks can forge this prefix; only native status can report physical damage.
+                && (errorCode & 0xff) is not (10 or 11 or 26))
             {
                 var sqliteMessage = message[(codeEnd + 1)..];
                 return new SqliteException(Properties.Resources.SqliteNativeError(errorCode, sqliteMessage), errorCode);

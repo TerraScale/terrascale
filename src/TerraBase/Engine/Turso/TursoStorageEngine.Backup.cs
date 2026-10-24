@@ -49,7 +49,8 @@ internal sealed partial class TursoStorageEngine
         Io.Admit();
         try
         {
-            if (!await ChangeLog.ApplyAsync(file, segments, Io, cancellationToken).ConfigureAwait(false))
+            var connectionString = await Encryption.ExistingAsync(file, Io, cancellationToken).ConfigureAwait(false);
+            if (!await ChangeLog.ApplyAsync(file, segments, Io, connectionString, cancellationToken).ConfigureAwait(false))
             {
                 return false;
             }
@@ -58,13 +59,8 @@ internal sealed partial class TursoStorageEngine
             {
                 try
                 {
-                    using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-                    {
-                        DataSource = file,
-                        Mode = SqliteOpenMode.ReadWrite,
-                        Pooling = false,
-                    }.ToString());
-                    connection.Open();
+                    using var connection = new SqliteConnection(connectionString);
+                    TursoSession.OpenExisting(connection, file);
                     using var command = connection.CreateCommand();
                     command.CommandText = "PRAGMA integrity_check;";
                     if (command.ExecuteScalar() as string != "ok")
@@ -114,9 +110,21 @@ internal sealed partial class TursoStorageEngine
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await PublishAsync(key.Database, path, async temporary =>
             {
-                File.Move(file, temporary);
-                await TursoDatabaseStore.InitializeAsync(key.Database, temporary, Io, _pragmas, cancellationToken).ConfigureAwait(false);
+                var sourceConnection = await Encryption.ExistingAsync(file, Io, cancellationToken).ConfigureAwait(false);
+                var targetConnection = await Encryption.CreateAsync(temporary, Io, cancellationToken).ConfigureAwait(false);
+                await Io.RunAsync(() =>
+                {
+                    using var source = new global::Turso.TursoConnection(sourceConnection);
+                    TursoSession.OpenExisting(source, file);
+                    using var begin = source.CreateCommand();
+                    begin.CommandText = "BEGIN;";
+                    begin.ExecuteNonQuery();
+                    // Restoring a snapshot twice must give each database its own new data key.
+                    TursoCopy.Write(source, targetConnection, cancellationToken);
+                }, cancellationToken).ConfigureAwait(false);
+                await TursoDatabaseStore.InitializeAsync(key.Database, temporary, Io, _pragmas, Encryption, cancellationToken).ConfigureAwait(false);
             }).ConfigureAwait(false);
+            await Io.RunAsync(() => DeleteFiles(file), CancellationToken.None).ConfigureAwait(false);
             _checkpoint("create.published", database);
             initialization = GetInitializationLocked(key, path, cancellationToken, out _);
         }
@@ -142,16 +150,12 @@ internal sealed partial class TursoStorageEngine
         Io.Admit();
         try
         {
+            var connectionString = await Encryption.ExistingAsync(file, Io, cancellationToken).ConfigureAwait(false);
             return await Io.RunAsync(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-                {
-                    DataSource = file,
-                    Mode = SqliteOpenMode.ReadWrite,
-                    Pooling = false,
-                }.ToString());
-                connection.Open();
+                using var connection = new SqliteConnection(connectionString);
+                TursoSession.OpenExisting(connection, file);
                 using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                 var tables = new List<string>();
                 using (var schema = connection.CreateCommand())

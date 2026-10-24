@@ -87,9 +87,10 @@ internal sealed class TursoChangeTap : IWalTap
     {
         await using var operation = await store.BeginOperationAsync(cancellationToken).ConfigureAwait(false);
         // Read before the reader is counted: a rewrite starting meanwhile either refuses it or ends this tap.
+        var connectionString = await store.ConnectionStringAsync(io, cancellationToken).ConfigureAwait(false);
         var lineage = store.Lineage;
         store.OpenBackupReader();
-        var reader = new TursoConnection($"Data Source={store.FilePath}") { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
+        var reader = new TursoConnection(connectionString) { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
         try
         {
             await io.RunAsync(() => TursoSession.OpenExisting(reader, store.FilePath), cancellationToken).ConfigureAwait(false);
@@ -191,7 +192,8 @@ internal sealed class TursoChangeTap : IWalTap
                     await pinned(cancellationToken).ConfigureAwait(false);
                 }
 
-                await _io.RunAsync(() => TursoCopy.Write(_reader, snapshotPath, cancellationToken), cancellationToken).ConfigureAwait(false);
+                var targetConnection = await _store.Encryption.CreateAsync(snapshotPath, _io, cancellationToken).ConfigureAwait(false);
+                await _io.RunAsync(() => TursoCopy.Write(_reader, targetConnection, cancellationToken), cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -227,12 +229,13 @@ internal sealed class TursoChangeTap : IWalTap
     private async Task ReplaceReaderAsync()
     {
         var stale = _reader;
-        _reader = new TursoConnection($"Data Source={_store.FilePath}") { CloseRefusal = () => _store.CloseRefusal ?? "terminal backup reader close" };
-        await _io.RunAsync(() =>
+        // End the old snapshot even when reading or unwrapping the replacement's key fails.
+        await _io.RunAsync(stale.Dispose, CancellationToken.None).ConfigureAwait(false);
+        _reader = new TursoConnection(await _store.ConnectionStringAsync(_io, CancellationToken.None).ConfigureAwait(false))
         {
-            stale.Dispose();
-            TursoSession.OpenExisting(_reader, _store.FilePath);
-        }, CancellationToken.None).ConfigureAwait(false);
+            CloseRefusal = () => _store.CloseRefusal ?? "terminal backup reader close",
+        };
+        await _io.RunAsync(() => TursoSession.OpenExisting(_reader, _store.FilePath), CancellationToken.None).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -349,7 +352,8 @@ internal sealed class TursoChangeTap : IWalTap
         command.Parameters.Add(new TursoParameter("$after", after));
         command.Parameters.Add(new TursoParameter("$end", end));
         command.Parameters.Add(new TursoParameter("$limit", (long)PageRows));
-        using var rows = command.ExecuteReader();
+        // Aborted, not disposed, when the page stops early: finalize would step the SELECT through its unread rows.
+        using var rows = (TursoDataReader)command.ExecuteReader();
         var last = after;
         if (after == _anchor)
         {
@@ -380,6 +384,7 @@ internal sealed class TursoChangeTap : IWalTap
                 _open = null;
                 if (buffer.WrittenCount >= allowance)
                 {
+                    rows.Abort();
                     return (last, true, true);
                 }
 
@@ -395,6 +400,7 @@ internal sealed class TursoChangeTap : IWalTap
             {
                 if (!Place(type, rowid, image, schema, buffer))
                 {
+                    rows.Abort();
                     return (last, false, false);
                 }
             }
@@ -409,6 +415,11 @@ internal sealed class TursoChangeTap : IWalTap
                     ChangeLog.WriteUpsert(buffer, table, rowid, image ?? throw new InvalidDataException("a captured row change has no after-image"));
                 }
             }
+        }
+
+        if (buffer.WrittenCount >= PageBytes)
+        {
+            rows.Abort();
         }
 
         return (last, true, false);
@@ -579,12 +590,12 @@ internal static class ChangeLog
     /// Replays <paramref name="segments"/> on <paramref name="file"/>, a snapshot, one transaction per commit record. Returns
     /// <see langword="false"/> for a malformed log, one that ends inside a transaction, or a change the file refuses.
     /// </summary>
-    public static async Task<bool> ApplyAsync(string file, IAsyncEnumerable<Stream> segments, TursoRunner io, CancellationToken cancellationToken)
+    public static async Task<bool> ApplyAsync(string file, IAsyncEnumerable<Stream> segments, TursoRunner io, string connectionString, CancellationToken cancellationToken)
     {
-        var connection = new TursoConnection($"Data Source={file}");
+        var connection = new TursoConnection(connectionString);
         try
         {
-            await io.RunAsync(connection.Open, cancellationToken).ConfigureAwait(false);
+            await io.RunAsync(() => TursoSession.OpenExisting(connection, file), cancellationToken).ConfigureAwait(false);
             var replay = new Replay(connection);
             await foreach (var segment in segments.WithCancellation(cancellationToken).ConfigureAwait(false))
             {

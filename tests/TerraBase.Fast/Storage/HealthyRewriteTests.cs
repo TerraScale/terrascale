@@ -38,7 +38,10 @@ public sealed class HealthyRewriteTests
             await StorageFixture.ExecuteWhileWriterHeldAsync(server, null, "UPDATE _tb_gc_floor SET stamp = 123456;");
             await StorageFixture.ExecuteWhileWriterHeldAsync(server, null,
                 "INSERT INTO _tb_peers (node, applied, acked, stable, seen) VALUES (7, 111, 555, 99, 3);");
-            await Assert.That(Holds(SystemFiles(directory), marker)).IsTrue();
+            // Page encryption hides physical bytes even before erasure; the decrypted capture still contains the payload.
+            await Assert.That(Holds(SystemFiles(directory), marker)).IsFalse();
+            await Assert.That(CapturedMarker(store.FilePath, marker)).IsTrue();
+            var wrappedKey = File.ReadAllBytes(store.FilePath + DatabaseKeys.Suffix);
 
             rewrite = await engine.RewriteAsync(null, deletion.Offset, token);
 
@@ -47,7 +50,9 @@ public sealed class HealthyRewriteTests
             // The cached reference serves the new file.
             await Assert.That(ReferenceEquals(await engine.OpenSystemDatabaseAsync(token), store)).IsTrue();
             await Assert.That(store.Incarnation).IsEqualTo(rewrite.TargetIncarnation);
+            await Assert.That(File.ReadAllBytes(store.FilePath + DatabaseKeys.Suffix).SequenceEqual(wrappedKey)).IsTrue();
             await Assert.That(Holds(SystemFiles(directory), marker)).IsFalse();
+            await Assert.That(CapturedMarker(store.FilePath, marker)).IsFalse();
             await AssertRetainedAsync(store, token);
             await PutAsync(store, StorageFixture.Id("after"), """{"name":"later"}""", token);
         }
@@ -319,10 +324,35 @@ public sealed class HealthyRewriteTests
 
     private static string? Scalar(string path, string sql)
     {
-        using var connection = new Turso.TursoConnection($"Data Source={path}");
+        using var connection = new Turso.TursoConnection(TestMasterKey.ConnectionString(path));
         connection.Open();
         using var command = connection.CreateCommand();
         command.CommandText = sql;
         return Convert.ToString(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static bool CapturedMarker(string path, string marker)
+    {
+        using var connection = new Turso.TursoConnection(TestMasterKey.ConnectionString(path));
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';";
+        if (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) == 0)
+        {
+            return false;
+        }
+
+        command.CommandText = "SELECT after FROM turso_cdc WHERE after IS NOT NULL;";
+        using var rows = command.ExecuteReader();
+        var needle = Encoding.UTF8.GetBytes(marker);
+        while (rows.Read())
+        {
+            if (((byte[])rows.GetValue(0)).AsSpan().IndexOf(needle) >= 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

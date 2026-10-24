@@ -187,8 +187,15 @@ public sealed class WebhookErasureTests
             await Assert.That(await DispatchesAsync(fixture, token)).Contains(other);
             await Assert.That(await HasStateAsync(fixture, deleted.DatabaseId!, token)).IsFalse();
             await Assert.That(await fixture.Api.Server.Services.GetRequiredService<IWebhookErasure>().EraseAsync(deleted, token)).IsTrue();
-            // No main, WAL or change-history byte holds the refused payload; the admitted neighbor's marker proves the search sees rows.
-            await Assert.That(StoredContains(fixture, liveMarker)).IsTrue();
+            var directory = fixture.Api.Server.Services.GetRequiredService<TerraBaseOptions>().DataDirectory;
+            var path = System.IO.Path.Combine(directory, "_system.db");
+            var persisted = await DocumentFiles.ReadAsync(path);
+            // Check decrypted persisted rows and captured history; ciphertext cannot provide a positive plaintext sentinel.
+            await Assert.That(persisted.Any(row => row.Contains(liveMarker, StringComparison.Ordinal))).IsTrue();
+            await Assert.That(persisted.Any(row => row.Contains(marker, StringComparison.Ordinal))).IsFalse();
+            await Assert.That(CapturedContains(path, marker)).IsFalse();
+            // This additionally checks plaintext exposure in physical files, not decrypted free-page erasure.
+            await Assert.That(StoredContains(fixture, liveMarker)).IsFalse();
             await Assert.That(StoredContains(fixture, marker)).IsFalse();
         }
     }
@@ -575,6 +582,34 @@ public sealed class WebhookErasureTests
         var fields = ImmutableSortedDictionary.CreateRange(Utf8Ordinal.Instance,
             [KeyValuePair.Create(field, new FieldState(new BaseEntry(at, json, at.Stamp), FieldState.NoCounters, FieldState.NoDots))]);
         return new RepairState(collection, id, new DocumentState(new ClearEntry(at, false, at.Stamp), fields));
+    }
+
+    private static bool CapturedContains(string path, string marker)
+    {
+        using var connection = new Turso.TursoConnection(TestMasterKey.ConnectionString(path));
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';";
+        if (Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) == 0)
+        {
+            return false;
+        }
+
+        command.CommandText = "SELECT before, after FROM turso_cdc;";
+        using var rows = command.ExecuteReader();
+        var needle = System.Text.Encoding.UTF8.GetBytes(marker);
+        while (rows.Read())
+        {
+            for (var column = 0; column < 2; column++)
+            {
+                if (!rows.IsDBNull(column) && ((byte[])rows.GetValue(column)).AsSpan().IndexOf(needle) >= 0)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static bool StoredContains(WebhookApi fixture, string marker)

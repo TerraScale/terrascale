@@ -153,12 +153,12 @@ internal sealed class DocumentApi : IAsyncDisposable
     }
 
     /// <summary>A connection string for a file at <paramref name="path"/>, built rather than interpolated.</summary>
-    public static string ConnectionString(string path, bool readOnly = false) => new SqliteConnectionStringBuilder
+    public static string ConnectionString(string path, bool readOnly = false) => TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
     {
         DataSource = path,
         Mode = readOnly ? SqliteOpenMode.ReadOnly : SqliteOpenMode.ReadWriteCreate,
         Pooling = false,
-    }.ToString();
+    });
 
     /// <summary>A new document id.</summary>
     public static string NewId() => EntityIds.New().ToString();

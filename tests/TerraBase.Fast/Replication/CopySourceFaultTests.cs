@@ -337,7 +337,7 @@ public sealed class CopySourceFaultTests
 
     private static string? ReadSystemText(string path, TenantContext database, string sql)
     {
-        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }));
         connection.Open();
         using var command = connection.CreateCommand();
         command.CommandText = sql;
@@ -350,7 +350,7 @@ public sealed class CopySourceFaultTests
     private static async Task CorruptCollectionPageAsync(string path)
     {
         long offset;
-        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString()))
+        using (var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWrite, Pooling = false })))
         {
             await connection.OpenAsync();
             using var command = connection.CreateCommand();
@@ -370,7 +370,7 @@ public sealed class CopySourceFaultTests
             file.WriteByte(0xFF);
         }
         // Prove this is isolated collection damage, without establishing a tenant transaction intent on the next host.
-        using var healthy = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        using var healthy = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }));
         await healthy.OpenAsync();
         using var readable = healthy.CreateCommand();
         readable.CommandText = $"SELECT count(*) FROM {TursoStorageTransaction.Table("healthy")};";

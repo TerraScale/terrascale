@@ -65,7 +65,7 @@ try
     using var meter = new Meter("TerraBase.LiveRestoreDrill");
     var services = new ServiceCollection();
     engine = new TursoStorageEngine(options.DataDirectory, 1, 32, options.MemoryBudget, meter,
-        NullLogger<TursoStorageEngine>.Instance, TimeSpan.FromSeconds(10));
+        NullLogger<TursoStorageEngine>.Instance, new MasterKey(master), TimeSpan.FromSeconds(10));
     services.AddHttpClient(S3ObjectStore.HttpClientName)
         .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false })
         .AddHttpMessageHandler(() => new ReadOnlyTransport(bucket));
@@ -128,13 +128,17 @@ try
     proof.Stage = "reference_download";
     var baseline = Path.Combine(scratch, "reference.db");
     var started = Stopwatch.GetTimestamp();
-    await using (var output = new FileStream(baseline, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16, FileOptions.Asynchronous))
+    await using (var output = new FileStream(baseline + ".snapshot", FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16,
+        FileOptions.Asynchronous | FileOptions.DeleteOnClose))
     {
         if (!await readOnly.ReadAsync(latest.Key,
             (input, token) => BackupObject.ReadAsync(input, output, latest.Key, id => keys.GetAsync(scope, id, token), token), stop.Token).ConfigureAwait(false))
         {
             throw new InvalidDataException("reference snapshot disappeared");
         }
+
+        output.Position = 0;
+        await SnapshotBundle.ReadAsync(output, baseline, stop.Token).ConfigureAwait(false);
     }
 
     proof.ReferenceDownloadMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;

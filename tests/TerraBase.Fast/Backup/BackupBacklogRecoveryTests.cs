@@ -95,16 +95,135 @@ public sealed class BackupBacklogRecoveryTests
         var engine = (WatchedBackup)host.Api.Server.Services.GetRequiredService<IWalBackup>();
         engine.Watch(host.Database.Id);
         await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        // Finish initial retention before the backlog.
+        await host.ShipAsync(TimeSpan.Zero, cancellationToken);
         var generation = host.Status().Generation!;
-        await WriteBacklogAsync(host, cancellationToken);
+        host.Time.Advance(TimeSpan.FromSeconds(1));
+        var texts = await WriteBacklogAsync(host, cancellationToken);
+        // Read the real encrypted log outside shutdown's deadline; Stop still seals and uploads every original chunk.
+        var reads = await engine.StageAsync(cancellationToken);
+        await Assert.That(reads.Length).IsEqualTo(2);
+        await Assert.That(reads[0].Bytes).IsGreaterThanOrEqualTo(ReadBudget);
+        await Assert.That(reads[0].Remaining).IsTrue();
+        await Assert.That(reads[1].Remaining).IsFalse();
+        await Assert.That(reads.All(read => read.Continuous && read.Bytes > 0)).IsTrue();
+        await Assert.That(host.Segments(generation)).IsEmpty();
 
         await ((IHostedService)host.Api.Server.Services.GetRequiredService<IContinuousBackup>()).StopAsync(cancellationToken);
 
-        // The last read before shutdown found nothing left, and every read went into a stored segment.
-        await Assert.That(engine.LastRead.Remaining).IsFalse();
         var segments = host.Segments(generation);
-        await Assert.That(segments.Count).IsGreaterThanOrEqualTo(2);
+        await Assert.That(engine.DeliveredReads).IsEqualTo(reads.Length);
+        await Assert.That(engine.LastRead.Remaining).IsFalse();
+        await Assert.That(segments.Count).IsEqualTo(reads.Length);
         await BackupShippingHost.AssertContiguousAsync(segments);
+        await Assert.That(segments[1].Start).IsEqualTo(reads[0].Bytes);
+        await AssertRestoredAsync(host, segments[^1].At, "after-shutdown", texts, cancellationToken);
+    }
+
+    [Test]
+    public async Task Shutdown_deadline_keeps_the_acknowledged_segment_restorable_and_cancels_the_next_upload(CancellationToken cancellationToken)
+    {
+        var host = await BackupShippingHost.StartAsync();
+        Exception? failure = null;
+        try
+        {
+            await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            await host.ShipAsync(TimeSpan.Zero, cancellationToken);
+            var generation = host.Status().Generation!;
+            var prefix = $"{host.File}/wal/{generation}/";
+            var text = new Faker().Lorem.Sentence();
+            await host.PutAsync("people", "acknowledged", text, cancellationToken);
+            // Retain a genuine marked segment for Stop to retry before reading the next write.
+            host.S3.FailPut = key => key.StartsWith(prefix, StringComparison.Ordinal);
+            await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+            await Assert.That(host.Status().LastError).IsNotNull();
+            await Assert.That(host.Segments(generation)).IsEmpty();
+            host.S3.FailPut = _ => false;
+            await host.PutAsync("people", "unacknowledged", new Faker().Lorem.Sentence(), cancellationToken);
+            host.Time.Advance(TimeSpan.FromSeconds(2));
+            var now = host.Time.GetUtcNow();
+            var backup = host.Api.Server.Services.GetRequiredService<IContinuousBackup>();
+            var blocked = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            string? acknowledged = null;
+            byte[]? stored = null;
+            Task? stop = null;
+            host.S3.BeforePut = async (key, token) =>
+            {
+                if (!key.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                if (acknowledged is null)
+                {
+                    acknowledged = key;
+                    return;
+                }
+
+                stored = [.. host.S3.Objects[acknowledged]];
+                blocked.TrySetResult(key);
+                try
+                {
+                    await release.Task.WaitAsync(token);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    cancelled.TrySetResult();
+                    throw;
+                }
+            };
+            try
+            {
+                stop = ((IHostedService)backup).StopAsync(shutdown.Token);
+                // This watchdog is not the shipping budget: only production's real four-second timer can release the upload.
+                await stop.WaitAsync(TimeSpan.FromSeconds(8), cancellationToken);
+                await Assert.That(blocked.Task.IsCompletedSuccessfully).IsTrue();
+                await Assert.That(cancelled.Task.IsCompletedSuccessfully).IsTrue();
+                await Assert.That(release.Task.IsCompleted).IsFalse();
+                await Assert.That(shutdown.IsCancellationRequested).IsFalse();
+                await Assert.That(host.Time.GetUtcNow()).IsEqualTo(now);
+                await Assert.That(backup.Status.Files).IsEmpty();
+                await Assert.That(Directory.EnumerateFiles(Path.Combine(host.Api.Server.DataDirectory, ".backup"))).IsEmpty();
+                await Assert.That(host.S3.Objects.ContainsKey(await blocked.Task)).IsFalse();
+                var segment = host.Segments(generation).Single();
+                await Assert.That(segment.Key).IsEqualTo(acknowledged);
+                await Assert.That(host.S3.Objects[segment.Key].AsSpan().SequenceEqual(stored)).IsTrue();
+                await host.RestoreAsync(segment.At, "deadline-acknowledged", cancellationToken);
+                await Assert.That(await host.ReadAsync("deadline-acknowledged", "people", "acknowledged", cancellationToken)).IsEqualTo(text);
+                await Assert.That(await host.ReadAsync("deadline-acknowledged", "people", "unacknowledged", cancellationToken)).IsNull();
+            }
+            finally
+            {
+                await shutdown.CancelAsync();
+                release.TrySetResult();
+                if (stop is not null)
+                {
+                    await stop.WaitAsync(TimeSpan.FromSeconds(8), CancellationToken.None).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                }
+
+                host.S3.BeforePut = null;
+            }
+        }
+        catch (Exception error)
+        {
+            failure = error;
+            throw;
+        }
+        finally
+        {
+            try
+            {
+                await host.DisposeAsync();
+            }
+            catch (Exception error) when (failure is not null)
+            {
+                // Host shutdown can rethrow Stop's cleanup cancellation; retain the original watchdog/assertion failure.
+                failure.Data["FixtureCleanupFailure"] = error;
+            }
+        }
     }
 
     [Test]
@@ -234,10 +353,14 @@ public sealed class BackupBacklogRecoveryTests
         private string? _watched;
         private int _failTrim;
         private int _trimFailures;
+        // The shipping job owns and disposes the tap; the fixture only borrows its staging operation.
+        private Func<CancellationToken, Task<WalRead[]>>? _stage;
 
         public ConcurrentQueue<long> SnapshotReads { get; } = new();
 
         public int TrimFailures => Volatile.Read(ref _trimFailures);
+
+        public int DeliveredReads { get; set; }
 
         // Written by the file's job; the test reads it only after shipping has stopped.
         public WalRead LastRead { get; set; }
@@ -245,6 +368,9 @@ public sealed class BackupBacklogRecoveryTests
         public void Watch(string database) => Volatile.Write(ref _watched, database);
 
         public void FailNextTrim() => Volatile.Write(ref _failTrim, 1);
+
+        public Task<WalRead[]> StageAsync(CancellationToken cancellationToken) =>
+            (_stage ?? throw new InvalidOperationException("the watched tap is not open"))(cancellationToken);
 
         public async ValueTask<IWalTap?> OpenTapAsync(TenantContext? database, CancellationToken cancellationToken)
         {
@@ -256,7 +382,7 @@ public sealed class BackupBacklogRecoveryTests
 
             if (tap is TursoChangeTap turso)
             {
-                turso.BeforeTrim = _ =>
+                turso.BeforeTrim = token =>
                 {
                     if (Interlocked.Exchange(ref _failTrim, 0) == 1)
                     {
@@ -268,7 +394,9 @@ public sealed class BackupBacklogRecoveryTests
                 };
             }
 
-            return new WatchedTap(tap, this);
+            var watched = new WatchedTap(tap, this);
+            _stage = watched.StageAsync;
+            return watched;
         }
 
         public ValueTask<bool> RollForwardAsync(string file, IAsyncEnumerable<Stream> segments, CancellationToken cancellationToken) =>
@@ -286,8 +414,58 @@ public sealed class BackupBacklogRecoveryTests
 
     private sealed class WatchedTap(IWalTap tap, WatchedBackup owner) : IWalTap
     {
+        private readonly Queue<(MemoryStream Content, WalRead Read)> _staged = new();
+
+        // Manual hosting joins every pass before staging; this is the same tap, never a second CDC consumer.
+        public async Task<WalRead[]> StageAsync(CancellationToken cancellationToken)
+        {
+            if (_staged.Count != 0 || owner.DeliveredReads != 0)
+            {
+                throw new InvalidOperationException("the fixture stages its backlog only once");
+            }
+
+            var reads = new List<WalRead>(2);
+            for (var index = 0; index < 2; index++)
+            {
+                // Two non-growing buffers bound this fixture to 80 MiB; no plaintext spill files or pooled payloads.
+                var content = new MemoryStream(new byte[40 << 20], writable: true);
+                try
+                {
+                    content.SetLength(0);
+                    var read = await tap.ReadAsync(content, cancellationToken);
+                    await Assert.That(content.Length).IsEqualTo(read.Bytes);
+                    _staged.Enqueue((content, read));
+                    reads.Add(read);
+                }
+                catch
+                {
+                    content.Dispose();
+                    throw;
+                }
+
+                if (!reads[^1].Remaining)
+                {
+                    return [.. reads];
+                }
+            }
+
+            throw new InvalidOperationException("the fixture backlog exceeded two real reads");
+        }
+
         public async ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken)
         {
+            if (_staged.TryPeek(out var staged))
+            {
+                // A failed copy retains the chunk: the caller truncates its partial append and retries this same read.
+                staged.Content.Position = 0;
+                await staged.Content.CopyToAsync(destination, cancellationToken);
+                _staged.Dequeue();
+                staged.Content.Dispose();
+                owner.DeliveredReads++;
+                owner.LastRead = staged.Read;
+                return staged.Read;
+            }
+
             var read = await tap.ReadAsync(destination, cancellationToken);
             owner.LastRead = read;
             return read;
@@ -295,11 +473,24 @@ public sealed class BackupBacklogRecoveryTests
 
         public async ValueTask<WalSnapshot> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken)
         {
+            if (_staged.Count != 0)
+            {
+                throw new InvalidOperationException("a snapshot cannot pass staged log chunks");
+            }
+
             var snapshot = await tap.SnapshotAsync(destination, snapshotPath, cancellationToken);
             owner.SnapshotReads.Enqueue(snapshot.Read.Bytes);
             return snapshot;
         }
 
-        public ValueTask DisposeAsync() => tap.DisposeAsync();
+        public ValueTask DisposeAsync()
+        {
+            while (_staged.TryDequeue(out var staged))
+            {
+                staged.Content.Dispose();
+            }
+
+            return tap.DisposeAsync();
+        }
     }
 }

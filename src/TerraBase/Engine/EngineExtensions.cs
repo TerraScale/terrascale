@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Turso;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
@@ -19,6 +20,9 @@ public static class EngineExtensions
     /// </summary>
     internal const string QueryDeadlineClock = "query-deadline";
 
+    // Database page keys and backup envelope keys share production custody, with separate test-fake boundaries.
+    internal const string DatabaseMasterKey = "database-master-key";
+
     /// <summary>
     /// Registers the Turso engine over <see cref="TerraBaseOptions.DataDirectory"/> as <see cref="IStorageEngine"/>, with the
     /// <see cref="IWriteStamps"/> of every write made through it.
@@ -27,6 +31,12 @@ public static class EngineExtensions
     {
         ArgumentNullException.ThrowIfNull(options);
         services.TryAddSingleton(options);
+        services.TryAddKeyedSingleton<IMasterKey>(DatabaseMasterKey, (provider, _) =>
+        {
+            var configured = provider.GetRequiredService<TerraBaseOptions>();
+            return new MasterKey(configured.DatabaseMasterKey ?? configured.Backup?.MasterKey
+                ?? throw new TerraBaseConfigurationException("master-key is required for database encryption"));
+        });
         services.TryAddSingleton<DatabaseLifecycleCheckpoint>(_ => static (_, _) => { });
         // The engine records metrics; AddMetrics is idempotent and the host adds it too.
         services.AddMetrics();
@@ -39,7 +49,7 @@ public static class EngineExtensions
             return new TursoStorageEngine(
                 configured.DataDirectory, configured.StorageThreads, configured.StorageQueue, configured.MemoryBudget,
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                provider.GetRequiredService<ILogger<TursoStorageEngine>>(), configured.ShutdownGrace, readinessCacheTtl: configured.ReadinessCacheTtl,
+                provider.GetRequiredService<ILogger<TursoStorageEngine>>(), provider.GetRequiredKeyedService<IMasterKey>(DatabaseMasterKey), configured.ShutdownGrace, readinessCacheTtl: configured.ReadinessCacheTtl,
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), queryBudget: configured.QueryBudget,
                 backupTime: provider.GetService<TimeProvider>(),

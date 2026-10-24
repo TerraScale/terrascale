@@ -2,6 +2,8 @@ using System.Text.Json.Nodes;
 using TerraBase.Engine.Turso;
 using Turso.Data.Sqlite;
 
+using TerraBase.Testing;
+
 namespace TerraBase.Slow.Replication;
 
 internal sealed partial class FaultSoakCluster
@@ -24,7 +26,7 @@ internal sealed partial class FaultSoakCluster
         {
             var database = Path.Combine(snapshot, "database.db");
             // Recovery and connection disposal may touch sidecars: inspect a copy so the node's original bytes stay intact.
-            foreach (var suffix in new[] { string.Empty, "-wal", "-shm" })
+            foreach (var suffix in new[] { string.Empty, "-wal", "-shm", ".key" })
             {
                 if (File.Exists(source + suffix))
                 {
@@ -32,12 +34,12 @@ internal sealed partial class FaultSoakCluster
                 }
             }
 
-            await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            await using var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
             {
                 DataSource = database,
                 Mode = SqliteOpenMode.ReadOnly,
                 Pooling = false,
-            }.ToString());
+            }));
             await connection.OpenAsync(cancellationToken);
             await using var command = connection.CreateCommand();
             command.CommandText = "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = $name;";

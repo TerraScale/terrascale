@@ -55,7 +55,7 @@ public sealed class CorruptChangeLogTests
         await Assert.That(written.Count).IsEqualTo(1);
         await Assert.That(written[0].Deltas.Select(delta => delta.Id)).IsEquivalentTo(["a"]);
 
-        await node.DamageAsync(node.Database, before, damage);
+        await node.DamageAsync(node.Database, before, "a", damage);
         if (damage.Expect == "refused")
         {
             var error = await Assert.ThrowsAsync<InvalidDataException>(async () => await node.ReadGroupsAsync(node.Database, before));
@@ -105,7 +105,7 @@ public sealed class CorruptChangeLogTests
         await gru.WriteAsync(first, async transaction => _ = await transaction.PutAsync(Items, "damaged", Json("""{"n":1}"""), CancellationToken.None));
         if (firstWrite == "damaged")
         {
-            await gru.DamageAsync(first, before, Damage.Load("truncated-state-image"));
+            await gru.DamageAsync(first, before, "damaged", Damage.Load("truncated-state-image"));
         }
 
         await gru.WriteAsync(other, async transaction => _ = await transaction.PutAsync(Items, "clean", Json("""{"n":2}"""), CancellationToken.None));
@@ -166,7 +166,7 @@ public sealed class CorruptChangeLogTests
         await node.WriteAsync(node.Database, async transaction => _ = await transaction.CreateCollectionAsync(new CollectionInfo(Items, 1), CancellationToken.None));
         var before = await node.HeadAsync(node.Database);
         await node.WriteAsync(node.Database, async transaction => _ = await transaction.PutAsync(Items, "a", Json("""{"n":1}"""), CancellationToken.None));
-        await node.DamageAsync(node.Database, before, Damage.Load("unknown-change-type-on-state-row"));
+        await node.DamageAsync(node.Database, before, "a", Damage.Load("unknown-change-type-on-state-row"));
         // Expire the one-second gauge cache without firing the five-second maintenance timer.
         time.Advance(TimeSpan.FromSeconds(2));
         var peer = ReplicaId.Of(99, 1, 0);
@@ -197,8 +197,20 @@ public sealed class CorruptChangeLogTests
 
         await cluster.UnlistAsync(sjc);
         var before = await gru.HeadAsync(first);
+        // An unrelated captured transaction can precede the intended write after the sampled head.
+        await gru.WriteAsync(first, async transaction => _ = await transaction.CreateCollectionAsync(new CollectionInfo("unrelated", 1), CancellationToken.None));
         await gru.WriteAsync(first, async transaction => _ = await transaction.PutAsync(Items, "held", Json("""{"n":1}"""), CancellationToken.None));
-        await gru.DamageAsync(first, before, Damage.Load("unknown-change-type-on-state-row"));
+        await gru.DamageAsync(first, before, "held", Damage.Load("unknown-change-type-on-state-row"));
+        // Read past the healthy unrelated group: background probes stop at the first local group.
+        try
+        {
+            _ = await gru.Groups.ReadAsync(first, await gru.IncarnationAsync(first), before,
+                ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+        }
+        catch (InvalidDataException)
+        {
+            // A racing reader may already have recorded refusal; the durable checks below prove either path.
+        }
         // Establish the fault while unlisted, so the new sender link has never learned this copy's cursor.
         await gru.UntilFaultRecordedAsync(first);
         cluster.List(sjc);
@@ -519,18 +531,26 @@ public sealed class CorruptChangeLogTests
         public async Task<T> HoldingWriterAsync<T>(TenantContext database, Func<T> call) =>
             await (await StoreAsync(database)).WithWriterAsync(_ => call(), "a test reading the database's files", CancellationToken.None);
 
-        // Damages one CDC row of the first transaction after change id `after` on the writer (changes to turso_cdc are not
-        // captured): its collection row, its _tb_state row, or its commit row.
-        public async Task DamageAsync(TenantContext database, long after, Damage damage)
+        // Damages the intended document's captured transaction after `after`, skipping unrelated commits:
+        // its collection row, its _tb_state row, or its commit row. Changes to turso_cdc are not captured.
+        public async Task DamageAsync(TenantContext database, long after, string documentId, Damage damage)
         {
+            var commit = (await ReadGroupsAsync(database, after)).Single(group =>
+                group.Deltas.Any(delta => delta.Collection == Items && delta.Id == documentId)).ChangeId;
             var store = await StoreAsync(database);
             var damaged = await store.WithWriterAsync(session =>
             {
                 List<(long Id, long Type, string Table, byte[]? After)> rows = [];
                 using (var read = session.Connection.CreateCommand())
                 {
-                    read.CommandText = "SELECT change_id, change_type, table_name, after FROM turso_cdc WHERE change_id > $after ORDER BY change_id LIMIT 64;";
+                    read.CommandText = """
+                        SELECT change_id, change_type, table_name, after FROM turso_cdc
+                        WHERE change_id > $after AND change_id <= $commit AND change_id > coalesce((
+                            SELECT max(change_id) FROM turso_cdc WHERE change_type = 2 AND change_id < $commit), 0)
+                        ORDER BY change_id;
+                        """;
                     read.Parameters.AddWithValue("$after", after);
+                    read.Parameters.AddWithValue("$commit", commit);
                     using var reader = read.ExecuteReader();
                     while (reader.Read())
                     {
@@ -538,13 +558,14 @@ public sealed class CorruptChangeLogTests
                     }
                 }
 
-                var commit = rows.First(row => row.Type == 2).Id;
                 var (id, _, _, image) = damage.Row switch
                 {
-                    "commit" => rows.First(row => row.Id == commit),
-                    "document" => rows.First(row => row.Id < commit && row.Type is 0 or 1 && row.Table == Items),
+                    "commit" => rows.Single(row => row.Id == commit && row.Type == 2),
+                    "document" => rows.First(row => row.Id < commit && row.Type is 0 or 1 && row.Table == Items
+                        && SqliteRecord.Decode(row.After) is [string capturedId, ..] && capturedId == documentId),
                     _ => rows.First(row => row.Id < commit && row.Type is 0 or 1 && row.Table == "_tb_state"
-                        && SqliteRecord.Decode(row.After) is [string collection, ..] && collection == Items),
+                        && SqliteRecord.Decode(row.After) is [string collection, string capturedId, ..]
+                        && collection == Items && capturedId == documentId),
                 };
                 using var write = session.Connection.CreateCommand();
                 write.Parameters.AddWithValue("$id", id);

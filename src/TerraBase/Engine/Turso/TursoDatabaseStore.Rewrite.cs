@@ -104,9 +104,11 @@ internal sealed partial class TursoDatabaseStore
         ExceptionDispatchInfo? sourceError = null;
         try
         {
+            var sourceConnection = await ConnectionStringAsync(io, cancellationToken).ConfigureAwait(false);
+            var targetConnection = new global::Turso.Data.Sqlite.SqliteConnectionStringBuilder(sourceConnection) { DataSource = target }.ToString();
             return await io.RunAsync(() =>
             {
-                var source = new FaultAwareCopySource($"Data Source={FilePath}", error =>
+                var source = new FaultAwareCopySource(sourceConnection, error =>
                 {
                     NoteCopyFault(reason);
                     sourceError ??= ExceptionDispatchInfo.Capture(error);
@@ -121,10 +123,10 @@ internal sealed partial class TursoDatabaseStore
                     Execute(source, "BEGIN;");
                     offset = Convert.ToInt64(Scalar(source, TursoStatements.CurrentOffset), System.Globalization.CultureInfo.InvariantCulture);
                     var stamp = Convert.ToInt64(Scalar(source, ClockSql), System.Globalization.CultureInfo.InvariantCulture);
-                    TursoCopy.Write(source, target, cancellationToken);
+                    TursoCopy.Write(source, targetConnection, cancellationToken);
                     var expected = RewriteDigest(source);
                     Execute(source, "ROLLBACK;");
-                    using (var copy = new TursoConnection($"Data Source={target}"))
+                    using (var copy = new TursoConnection(targetConnection))
                     {
                         copy.Open();
                         if (!expected.AsSpan().SequenceEqual(RewriteDigest(copy)))

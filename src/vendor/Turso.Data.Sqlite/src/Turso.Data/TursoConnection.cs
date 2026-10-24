@@ -90,11 +90,13 @@ public class TursoConnection : DbConnection
         var cipher = _connectionOptions.GetEncryptionCipher();
         var hexkey = _connectionOptions["Encryption Key"];
 
+        if (!cipher.HasValue && !string.IsNullOrWhiteSpace(hexkey))
+            throw new InvalidOperationException("Encryption Cipher and Encryption Key must be specified together.");
+
         if (cipher.HasValue)
         {
             if (string.IsNullOrWhiteSpace(hexkey))
-                throw new InvalidOperationException("Encryption Key is required when Encryption Cipher is specified.");
-
+                throw new InvalidOperationException("Encryption Cipher and Encryption Key must be specified together.");
             _turso = TursoBindings.OpenDatabaseWithEncryption(filename, cipher.Value, hexkey);
         }
         else

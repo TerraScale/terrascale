@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
+using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -43,7 +44,7 @@ public sealed class HarnessShutdownTests
                     var options = provider.GetRequiredService<TerraBaseOptions>();
                     return new TursoStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                         provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                        provider.GetRequiredService<ILogger<TursoStorageEngine>>(), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl);
+                        provider.GetRequiredService<ILogger<TursoStorageEngine>>(), provider.GetRequiredKeyedService<IMasterKey>(EngineExtensions.DatabaseMasterKey), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl);
                 });
             }
         });

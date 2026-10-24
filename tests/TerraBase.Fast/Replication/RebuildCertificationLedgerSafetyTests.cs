@@ -695,12 +695,12 @@ public sealed class RebuildCertificationLedgerSafetyTests
     private static async Task CorruptCollectionPageAsync(string path)
     {
         long offset;
-        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        using (var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
         {
             DataSource = path,
             Mode = SqliteOpenMode.ReadWrite,
             Pooling = false,
-        }.ToString()))
+        })))
         {
             await connection.OpenAsync();
             using var command = connection.CreateCommand();
@@ -714,9 +714,13 @@ public sealed class RebuildCertificationLedgerSafetyTests
             await Assert.That(page).IsGreaterThan(1);
             offset = (page - 1) * size;
         }
-        using var file = File.OpenWrite(path);
+        using var file = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         file.Position = offset;
-        file.WriteByte(0xFF);
+        var original = file.ReadByte();
+        await Assert.That(original).IsGreaterThanOrEqualTo(0);
+        file.Position = offset;
+        file.WriteByte((byte)(original ^ 0x80));
+        file.Flush(flushToDisk: true);
     }
 
     private static async Task<(int ExitCode, string Output)> RunCrashChildAsync(string root)

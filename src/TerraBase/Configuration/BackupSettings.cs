@@ -69,7 +69,7 @@ public sealed class BackupSettings
     /// <summary>Reads the settings, or <see langword="null"/> when none is set.</summary>
     internal static BackupSettings? Parse(IReadOnlyDictionary<string, string> values)
     {
-        if (!Keys.Any(values.ContainsKey))
+        if (!Keys.Any(key => key != "master-key" && values.ContainsKey(key)))
         {
             return null;
         }
@@ -142,7 +142,7 @@ public sealed class BackupSettings
     private static bool IsBucket(string bucket) =>
         bucket.Length is >= 3 and <= 63 && bucket.All(character => character is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '.' or '-');
 
-    private static byte[] ParseMasterKey(string value)
+    internal static byte[] ParseMasterKey(string value)
     {
         var key = new byte[33];
         return Convert.TryFromBase64String(value, key, out var written) && written == 32

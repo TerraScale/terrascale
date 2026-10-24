@@ -54,22 +54,22 @@ public sealed class WebhookSecurityTests
         var id = hook.GetProperty("id").GetString()!;
         fixture.Receiver.Addresses("93.184.216.34", "10.0.0.1");
         await fixture.PutAsync("rebind", token);
-        await fixture.DriveAsync(async cancellation =>
+        await fixture.DriveAfterCommitAsync(async cancellation =>
         {
             var list = await fixture.JsonAsync($"{fixture.Path}/{id}/deliveries", cancellation);
             return list.GetArrayLength() == 1 && list[0].GetProperty("errorCode").GetString() == "target_rejected";
         }, token);
-        var rejected = await fixture.DeliveryAsync(id, "pending", token, "target_rejected");
+        var rejected = await fixture.WaitForDeliveryAsync(id, "pending", token, "target_rejected");
         await Assert.That(rejected.GetProperty("httpStatus").ValueKind).IsEqualTo(JsonValueKind.Null);
         await Assert.That(rejected.GetProperty("attempts").GetInt64()).IsEqualTo(1);
         await Assert.That(fixture.Receiver.Connections).IsEqualTo(0);
         await Assert.That(fixture.Receiver.Received).IsEqualTo(0);
 
         fixture.Receiver.Addresses("93.184.216.34");
-        var captured = await fixture.ReceiveAsync(token);
+        var captured = await fixture.WaitForRequestAsync(token);
         await Assert.That(captured.Delivery).IsEqualTo(rejected.GetProperty("id").GetString());
         await WebhookDeliveryTests.SignedAsync(captured, hook.GetProperty("secret").GetString()!);
-        var delivered = await fixture.DeliveryAsync(id, "delivered", token);
+        var delivered = await fixture.WaitForDeliveryAsync(id, "delivered", token);
         await Assert.That(delivered.GetProperty("attempts").GetInt64()).IsEqualTo(2);
         await Assert.That(fixture.Receiver.Connections).IsEqualTo(1);
         await Assert.That(fixture.Receiver.UsesProxy).IsFalse();
@@ -84,16 +84,16 @@ public sealed class WebhookSecurityTests
         var hook = await fixture.RegisterAsync(token);
         var id = hook.GetProperty("id").GetString()!;
         await fixture.PutAsync("redirect", token);
-        var first = await fixture.ReceiveAsync(token);
-        var rejected = await fixture.DeliveryAsync(id, "pending", token, "http_error");
+        var first = await fixture.WaitForRequestAsync(token);
+        var rejected = await fixture.WaitForDeliveryAsync(id, "pending", token, "http_error");
         await Assert.That(rejected.GetProperty("httpStatus").GetInt32()).IsEqualTo(302);
         await Assert.That(fixture.Receiver.RedirectsFollowed).IsEqualTo(0);
         await Assert.That(fixture.Receiver.Received).IsEqualTo(1);
         await Assert.That(fixture.Receiver.FollowsRedirects).IsFalse();
-        var retried = await fixture.ReceiveAsync(token);
+        var retried = await fixture.WaitForRequestAsync(token);
         await Assert.That(retried.Delivery).IsEqualTo(first.Delivery);
         await Assert.That(retried.Body.SequenceEqual(first.Body)).IsTrue();
-        _ = await fixture.DeliveryAsync(id, "delivered", token);
+        _ = await fixture.WaitForDeliveryAsync(id, "delivered", token);
         await Assert.That(fixture.Receiver.RedirectsFollowed).IsEqualTo(0);
     }
 
@@ -193,7 +193,7 @@ public sealed class WebhookSecurityTests
         await fixture.PutAsync("excluded-db", token, sibling);
         await fixture.PutAsync("excluded-col", token, collection: "other");
         await fixture.PutAsync("included", token);
-        var delivered = await fixture.ReceiveAsync(token);
+        var delivered = await fixture.WaitForRequestAsync(token);
         using var payload = JsonDocument.Parse(delivered.Body);
         var events = payload.RootElement.GetProperty("events");
         await Assert.That(events.GetArrayLength()).IsEqualTo(1);

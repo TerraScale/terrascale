@@ -31,17 +31,22 @@ public sealed class WebhookDeliveryTests
             using var parsed = JsonDocument.Parse(json);
             return parsed.RootElement.GetProperty("details").GetProperty("status").GetString() == "delivered";
         });
-        await using var fixture = await WebhookApi.StartAsync(hook.Install, token);
+        var failureLog = new WebhookFailureLog();
+        await using var fixture = await WebhookApi.StartAsync(services =>
+        {
+            hook.Install(services);
+            TerraBaseTestServer.CaptureDebugLogs(services, failureLog);
+        }, token);
         var registration = await fixture.RegisterAsync(token);
         var id = registration.GetProperty("id").GetString()!;
         using var failure = hook.PauseCommit(fail: true);
         await fixture.PutAsync("ack-failed", token);
-        var accepted = await fixture.ReceiveAsync(token);
+        var accepted = await fixture.WaitForRequestAsync(token);
         await failure.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
         // The real receiver returned 204; fail only the durable acknowledgment transaction.
         failure.Dispose();
-        await fixture.DriveAsync(_ => Task.FromResult(fixture.Logs.Text.Contains("Webhook delivery failed; persisted work will retry", StringComparison.Ordinal)), token);
-        var pending = await fixture.DeliveryAsync(id, "pending", token);
+        await failureLog.Failed.Task.WaitAsync(TimeSpan.FromSeconds(15), token);
+        var pending = await fixture.WaitForDeliveryAsync(id, "pending", token);
         await Assert.That(pending.GetProperty("attempts").GetInt64()).IsEqualTo(1);
         await Assert.That(pending.GetProperty("httpStatus").ValueKind).IsEqualTo(JsonValueKind.Null);
         await fixture.PutAsync("after-ack", token);
@@ -49,12 +54,12 @@ public sealed class WebhookDeliveryTests
         fixture.Clock.Advance(TimeSpan.FromSeconds(12));
         await fixture.RestartAsync(token);
 
-        var replay = await fixture.ReceiveAsync(token);
+        var replay = await fixture.WaitForRequestAsync(token);
         await Assert.That(replay.Delivery).IsEqualTo(accepted.Delivery);
         await Assert.That(replay.Body.SequenceEqual(accepted.Body)).IsTrue();
         await SignedAsync(replay, registration.GetProperty("secret").GetString()!);
-        _ = await fixture.DeliveryAsync(id, "delivered", token);
-        var later = await fixture.ReceiveAsync(token);
+        _ = await fixture.WaitForDeliveryAsync(id, "delivered", token);
+        var later = await fixture.WaitForRequestAsync(token);
         using var body = JsonDocument.Parse(later.Body);
         await Assert.That(later.Delivery).IsNotEqualTo(accepted.Delivery);
         await Assert.That(body.RootElement.GetProperty("events").GetArrayLength()).IsEqualTo(1);
@@ -108,7 +113,7 @@ public sealed class WebhookDeliveryTests
         await Assert.That(registeredVersion).IsNotNull();
         await fixture.PutAsync("after", token);
 
-        var first = await fixture.ReceiveAsync(token);
+        var first = await fixture.WaitForRequestAsync(token);
         await SignedAsync(first, secret);
         using var payload = JsonDocument.Parse(first.Body);
         await Assert.That(payload.RootElement.GetProperty("id").GetString()).IsEqualTo(first.Delivery);
@@ -124,17 +129,17 @@ public sealed class WebhookDeliveryTests
         await Assert.That(events[0].GetProperty("version").GetString()!.Length).IsEqualTo(16);
         await Assert.That(Encoding.UTF8.GetString(first.Body).Contains("privateValue", StringComparison.Ordinal)).IsFalse();
 
-        var failed = await fixture.DeliveryAsync(id, "pending", token, "http_error");
+        var failed = await fixture.WaitForDeliveryAsync(id, "pending", token, "http_error");
         await Assert.That(failed.GetProperty("attempts").GetInt64()).IsEqualTo(1);
         await Assert.That(failed.GetProperty("httpStatus").GetInt32()).IsEqualTo(503);
         await Assert.That(failed.GetProperty("nextAttemptAt").GetDateTimeOffset()
             - failed.GetProperty("lastAttemptAt").GetDateTimeOffset()).IsEqualTo(TimeSpan.FromSeconds(1));
-        var second = await fixture.ReceiveAsync(token);
+        var second = await fixture.WaitForRequestAsync(token);
         await SignedAsync(second, secret);
         await Assert.That(second.Delivery).IsEqualTo(first.Delivery);
         await Assert.That(second.Body.SequenceEqual(first.Body)).IsTrue();
         await Assert.That(long.Parse(second.Timestamp, CultureInfo.InvariantCulture)).IsGreaterThan(long.Parse(first.Timestamp, CultureInfo.InvariantCulture));
-        var delivered = await fixture.DeliveryAsync(id, "delivered", token);
+        var delivered = await fixture.WaitForDeliveryAsync(id, "delivered", token);
         await Assert.That(delivered.GetProperty("attempts").GetInt64()).IsEqualTo(2);
         await Assert.That(delivered.GetProperty("httpStatus").GetInt32()).IsEqualTo(204);
         await Assert.That(delivered.GetProperty("errorCode").ValueKind).IsEqualTo(JsonValueKind.Null);
@@ -172,10 +177,10 @@ public sealed class WebhookDeliveryTests
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var control = await fixture.RegisterAsync(token);
         await fixture.PutAsync("after-delete", token);
-        var afterDelete = await fixture.ReceiveAsync(token);
+        var afterDelete = await fixture.WaitForRequestAsync(token);
         using var controlPayload = JsonDocument.Parse(afterDelete.Body);
         await Assert.That(controlPayload.RootElement.GetProperty("webhookId").GetString()).IsEqualTo(control.GetProperty("id").GetString());
-        _ = await fixture.DeliveryAsync(control.GetProperty("id").GetString()!, "delivered", token);
+        _ = await fixture.WaitForDeliveryAsync(control.GetProperty("id").GetString()!, "delivered", token);
         await Assert.That(fixture.Receiver.Received).IsEqualTo(3);
         await Assert.That((await fixture.JsonAsync(fixture.Path, token)).GetArrayLength()).IsEqualTo(1);
         using var deletedHistory = await fixture.Client.GetAsync(ManagementApi.Uri($"{fixture.Path}/{id}/deliveries"), token);
@@ -198,15 +203,15 @@ public sealed class WebhookDeliveryTests
         var id = hook.GetProperty("id").GetString()!;
         var secret = hook.GetProperty("secret").GetString()!;
         await fixture.PutAsync("restart", token);
-        var first = await fixture.ReceiveAsync(token);
-        _ = await fixture.DeliveryAsync(id, "pending", token, "http_error");
+        var first = await fixture.WaitForRequestAsync(token);
+        _ = await fixture.WaitForDeliveryAsync(id, "pending", token, "http_error");
         await fixture.RestartAsync(token);
 
-        var replay = await fixture.ReceiveAsync(token);
+        var replay = await fixture.WaitForRequestAsync(token);
         await SignedAsync(replay, secret);
         await Assert.That(replay.Delivery).IsEqualTo(first.Delivery);
         await Assert.That(replay.Body.SequenceEqual(first.Body)).IsTrue();
-        var delivered = await fixture.DeliveryAsync(id, "delivered", token);
+        var delivered = await fixture.WaitForDeliveryAsync(id, "delivered", token);
         await Assert.That(delivered.GetProperty("attempts").GetInt64()).IsEqualTo(2);
         await Assert.That((await fixture.JsonAsync(fixture.Path, token))[0].GetProperty("id").GetString()).IsEqualTo(id);
 
@@ -214,7 +219,7 @@ public sealed class WebhookDeliveryTests
         using var removed = await fixture.Client.DeleteAsync(ManagementApi.Uri(
             ManagementApi.DocumentPath(fixture.Database, "items", "restart")), token);
         removed.EnsureSuccessStatusCode();
-        var deletion = await fixture.ReceiveAsync(token);
+        var deletion = await fixture.WaitForRequestAsync(token);
         using var body = JsonDocument.Parse(deletion.Body);
         var changes = body.RootElement.GetProperty("events");
         await Assert.That(changes.GetArrayLength()).IsEqualTo(1);
@@ -232,28 +237,28 @@ public sealed class WebhookDeliveryTests
         var original = await fixture.RegisterAsync(token);
         var originalId = original.GetProperty("id").GetString()!;
         await fixture.PutAsync("owned", token);
-        var pending = await fixture.ReceiveAsync(token);
-        _ = await fixture.DeliveryAsync(originalId, "pending", token, "http_error");
+        var pending = await fixture.WaitForRequestAsync(token);
+        _ = await fixture.WaitForDeliveryAsync(originalId, "pending", token, "http_error");
         await fixture.RestartAsync(token, differentMachine: true);
         var control = await fixture.RegisterAsync(token);
         var controlId = control.GetProperty("id").GetString()!;
         await fixture.PutAsync("control", token);
-        var ownedHere = await fixture.ReceiveAsync(token);
+        var ownedHere = await fixture.WaitForRequestAsync(token);
         using (var body = JsonDocument.Parse(ownedHere.Body))
         {
             await Assert.That(body.RootElement.GetProperty("webhookId").GetString()).IsEqualTo(controlId);
         }
 
-        _ = await fixture.DeliveryAsync(controlId, "delivered", token);
-        var untouched = await fixture.DeliveryAsync(originalId, "pending", token, "http_error");
+        _ = await fixture.WaitForDeliveryAsync(controlId, "delivered", token);
+        var untouched = await fixture.WaitForDeliveryAsync(originalId, "pending", token, "http_error");
         await Assert.That(untouched.GetProperty("attempts").GetInt64()).IsEqualTo(1);
         await Assert.That(fixture.Receiver.Received).IsEqualTo(2);
         await fixture.RestartAsync(token);
-        var resumed = await fixture.ReceiveAsync(token);
+        var resumed = await fixture.WaitForRequestAsync(token);
         await Assert.That(resumed.Delivery).IsEqualTo(pending.Delivery);
         await Assert.That(resumed.Body.SequenceEqual(pending.Body)).IsTrue();
         await SignedAsync(resumed, original.GetProperty("secret").GetString()!);
-        _ = await fixture.DeliveryAsync(originalId, "delivered", token);
+        _ = await fixture.WaitForDeliveryAsync(originalId, "delivered", token);
     }
 
     internal static async Task SignedAsync(WebhookRequest request, string secret)

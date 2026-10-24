@@ -2,10 +2,12 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
+using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
 
@@ -50,6 +52,13 @@ public sealed class CertifiedGcTests
         await Assert.That(await source.HasStateAsync("items", deleted)).IsFalse();
         var peer = (await cluster.Members.ListAsync(token)).Single(member => member.Name == stale.Name);
         cluster.Members.Leave(stale.Name);
+        // Directory removal does not invalidate the receiver's cached membership view.
+        await TerraBaseTestServer.EventuallyAsync(async cancellationToken =>
+        {
+            var view = await receiver.Api.Server.Services.GetRequiredService<IMembership>().RefreshAsync(cancellationToken);
+            return view.Elsewhere.Any(member => member.Name == source.Name)
+                && view.Elsewhere.All(member => member.Name != stale.Name);
+        });
         var incarnation = await receiver.IncarnationAsync();
         await receiver.Api.Server.Services.GetRequiredService<IReplicaCopyFaults>()
             .RecordAsync(cluster.Database, incarnation, "a fixture copy requiring certified refill", token);

@@ -194,6 +194,9 @@ public sealed record TerraBaseOptions
     /// <summary>Continuous backup to object storage (TS-633); <see langword="null"/> turns it off.</summary>
     public BackupSettings? Backup { get; init; }
 
+    /// <summary>The master key wrapping database keys, independently of continuous backup.</summary>
+    public byte[]? DatabaseMasterKey { get; init; }
+
     /// <summary>
     /// The host environment: <c>--environment=</c> (WebApplicationFactory's argument override), then <c>DOTNET_ENVIRONMENT</c>,
     /// then <c>ASPNETCORE_ENVIRONMENT</c>, as the slim host reads them; Production when none is set.
@@ -351,6 +354,7 @@ public sealed record TerraBaseOptions
             ReadinessCacheTtl = TimeSpan.FromSeconds(ParseReadinessCacheSeconds(values)),
             QueryBudget = TimeSpan.FromSeconds(ParseInteger(values, "query-budget-seconds", 1, MaxQueryBudgetSeconds) ?? DefaultQueryBudgetSeconds),
             Backup = BackupSettings.Parse(values),
+            DatabaseMasterKey = values.TryGetValue("master-key", out var masterKey) ? BackupSettings.ParseMasterKey(masterKey) : null,
         };
     }
 

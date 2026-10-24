@@ -334,7 +334,7 @@ public sealed class TursoConnectionStringBuilder : DbConnectionStringBuilder
             "aegis128l" => TursoEncryptionCipher.Aegis128l,
             "aegis128x2" => TursoEncryptionCipher.Aegis128x2,
             "aegis128x4" => TursoEncryptionCipher.Aegis128x4,
-            _ => throw new InvalidOperationException($"Unknown encryption cipher: {cipher}")
+            _ => throw new InvalidOperationException("Unknown encryption cipher.")
         };
     }
 

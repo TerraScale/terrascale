@@ -672,14 +672,15 @@ public sealed class PeerStreamFaultIsolationTests
                 await Assert.That(sender.Status(sender.Database)!.Acknowledged).IsEqualTo(acknowledged);
                 await Assert.That((await source.AckedAsync(sender.Database, peer, deadline.Token))!.Value.Acked).IsLessThan(marker.ChangeId);
                 await Assert.That(source.Connections).IsEqualTo(connected);
+                await Assert.That(observed.CurrentCount).IsEqualTo(0).Because("unchanged work at a held checkpoint must not report progress twice");
                 _ = release.Release();
             }
 
+            // Completing the final JoinAsync adds work after the last drop checkpoint; a heartbeat may report it before the ACK.
             await UntilAckedAsync(sender.Database);
             await Assert.That(sender.Status(sender.Database)!.Acknowledged).IsGreaterThanOrEqualTo(marker.ChangeId);
             await Assert.That(time.GetUtcNow() - shipped).IsGreaterThan(2 * ReplicationProtocol.ProgressTimeout);
             await Assert.That(source.Connections).IsEqualTo(connected).Because("progress kept the long batch on its stream");
-            await Assert.That(observed.CurrentCount).IsEqualTo(0).Because("each checkpoint's growth was observed once");
             await using var read = await (await receiver.StoreAsync(receiver.Database, deadline.Token)).BeginTransactionAsync(write: false, deadline.Token);
             await Assert.That(await read.GetCollectionAsync("items", deadline.Token)).IsNull();
         }

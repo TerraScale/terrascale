@@ -101,7 +101,7 @@ internal static class StorageFixture
             : (await engine.OpenDatabaseAsync(database, CancellationToken.None))!);
         await store.WithWritersHeldAsync(() =>
         {
-            using var connection = new Turso.TursoConnection($"Data Source={store.FilePath}");
+            using var connection = new Turso.TursoConnection(TestMasterKey.ConnectionString(store.FilePath));
             connection.Open();
             connection.ExecuteNonQuery(sql);
             return Task.FromResult(true);
@@ -126,13 +126,13 @@ internal static class StorageFixture
     // Unpooled, so the file is released on dispose and the server can delete it.
     private static async Task<SqliteConnection> OpenAsync(string path)
     {
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        var connection = new SqliteConnection(TestMasterKey.ConnectionString(new SqliteConnectionStringBuilder
         {
             DataSource = path,
             Mode = SqliteOpenMode.ReadWrite,
             Pooling = false,
             DefaultTimeout = 30,
-        }.ToString());
+        }));
         try
         {
             await connection.OpenAsync();
