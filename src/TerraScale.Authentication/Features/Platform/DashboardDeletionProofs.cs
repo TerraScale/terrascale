@@ -16,10 +16,14 @@ public sealed record DashboardDeletionList(IReadOnlyList<DashboardDeletionProof>
 /// <summary>The exact scope being acknowledged for the proof id in the route.</summary>
 public sealed record DashboardDeletionAcknowledgement(string Scope, string SubjectId, string? OrganizationId);
 
+/// <summary>Auth-owned durable position in the SDK query; null starts the next traversal.</summary>
+public sealed record DashboardDeletionCursor(string? NextCursor);
+
 /// <summary>Private service API metadata; unknown acknowledgement fields are rejected.</summary>
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(DashboardDeletionList))]
 [JsonSerializable(typeof(DashboardDeletionAcknowledgement))]
+[JsonSerializable(typeof(DashboardDeletionCursor))]
 [JsonSerializable(typeof(JsonObject))]
 public sealed partial class DashboardDeletionJson : JsonSerializerContext;
 
@@ -34,30 +38,32 @@ internal static class DashboardDeletionProofs
                 new JsonObject { ["ne"] = new JsonArray("/authLogicalVerifiedAt", null) },
                 new JsonObject { ["eq"] = new JsonArray("/dashboardVerifiedAt", null) }),
         }.ToJsonString());
-        var documents = await store.QueryAsync(AuthStore.DeletionJobCollection, filter.RootElement, 20,
-            [new TerraBaseSort("/dashboardDeliveryTurn")], cancellationToken).ConfigureAwait(false);
-        List<DashboardDeletionProof> items = [];
-        foreach (var document in documents)
+        var cursorId = AuthStore.NaturalKeyId(PlatformDirectory.Instance, AuthStore.DashboardDeletionCursorCollection, "pending");
+        var position = await database.GetDocumentAsync(AuthStore.DashboardDeletionCursorCollection, cursorId, cancellationToken).ConfigureAwait(false);
+        var cursor = position?.Document.Deserialize(DashboardDeletionJson.Default.DashboardDeletionCursor);
+        var page = await database.QueryAsync(AuthStore.DeletionJobCollection, new TerraBaseQuery
         {
-            // Rotate every candidate before validation, including a corrupt job with no trustworthy natural key.
-            // Missing/null sorts before numbers; thereafter the least visited jobs lead, with id breaking ties.
-            var value = JsonNode.Parse(document.Document.GetRawText())!.AsObject();
-            var turn = document.Document.TryGetProperty("dashboardDeliveryTurn", out var previous)
-                && previous.ValueKind == JsonValueKind.Number && previous.TryGetInt64(out var number)
-                && number is >= 0 and < long.MaxValue ? number : 0;
-            value["dashboardDeliveryTurn"] = checked(turn + 1);
-            try
-            {
-                await database.PutDocumentAsync(AuthStore.DeletionJobCollection, document.Id,
-                    JsonSerializer.SerializeToElement(value, DashboardDeletionJson.Default.JsonObject),
-                    TerraBasePrecondition.Matches(document.Version), cancellationToken).ConfigureAwait(false);
-            }
-            catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed")
-            {
-                // Another poll, acknowledgement or cleanup won. No unbounded retry or stale proof delivery.
-                continue;
-            }
+            Filter = filter.RootElement,
+            Limit = 20,
+            Cursor = cursor?.NextCursor,
+        }, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Claim the entire page before validating anything. Even malformed or maximum-size jobs stay untouched.
+            // The SDK's null NextCursor wraps the next poll to the beginning, without a second query this poll.
+            await database.PutDocumentAsync(AuthStore.DashboardDeletionCursorCollection, cursorId,
+                JsonSerializer.SerializeToElement(new DashboardDeletionCursor(page.NextCursor), DashboardDeletionJson.Default.DashboardDeletionCursor),
+                position is null ? TerraBasePrecondition.Absent : TerraBasePrecondition.Matches(position.Version), cancellationToken).ConfigureAwait(false);
+        }
+        catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed")
+        {
+            // Another poll advanced the durable position. Retry on the next poll, with no retry scan here.
+            return new([]);
+        }
 
+        List<DashboardDeletionProof> items = [];
+        foreach (var document in page.Items)
+        {
             if (await ProofAsync(store, document, cancellationToken).ConfigureAwait(false) is { } proof)
             {
                 items.Add(proof);

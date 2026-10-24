@@ -26,8 +26,7 @@ public sealed record DeletionJob(
     DateTimeOffset? HistoryCompletedAt = null,
     string? ErasureId = null,
     string? ClosureGeneration = null,
-    DateTimeOffset? DashboardVerifiedAt = null,
-    long DashboardDeliveryTurn = 0)
+    DateTimeOffset? DashboardVerifiedAt = null)
 {
     /// <summary>
     /// How long the fence must outlive its request: every credential issued before it expires by then. Sessions and OIDC

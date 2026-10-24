@@ -174,22 +174,20 @@ public sealed class DashboardDeletionTests(TerraBaseFixture fixture)
         var database = auth.Server.App.Services.GetRequiredService<TerraBaseDatabase>();
         var jobs = Enumerable.Range(0, 45).Select(_ => NewJob(clock, "account") with { NextAttemptAt = clock.UtcNow.AddDays(1) })
             .OrderBy(job => job.FenceId, StringComparer.Ordinal).ToArray();
-        var stored = new List<JsonObject>();
+        var stored = new List<TerraBaseDocument>();
         for (var index = 0; index < jobs.Length; index++)
         {
             var value = JsonSerializer.SerializeToNode(jobs[index], DeletionJson.Default.DeletionJob)!.AsObject();
             if (rejected && index < 40)
             {
-                // Include bad bindings that AuthStore's natural-key CAS cannot address, and malformed typed fields.
+                // Include incorrect document bindings and malformed typed fields; delivery must never rewrite them.
                 switch (index % 4)
                 {
                     case 0:
                         value["id"] = AuthStore.NewId();
-                        value.Remove("dashboardDeliveryTurn");
                         break;
                     case 1:
                         value["erasureId"] = "invalid";
-                        value["dashboardDeliveryTurn"] = null;
                         break;
                     case 2:
                         value["requestedAt"] = "invalid";
@@ -200,9 +198,9 @@ public sealed class DashboardDeletionTests(TerraBaseFixture fixture)
                 }
             }
 
-            stored.Add(value.DeepClone().AsObject());
             await database.PutDocumentAsync(AuthStore.DeletionJobCollection, jobs[index].FenceId,
                 JsonSerializer.SerializeToElement(value, DashboardDeletionJson.Default.JsonObject), TerraBasePrecondition.Absent);
+            stored.Add((await database.GetDocumentAsync(AuthStore.DeletionJobCollection, jobs[index].FenceId))!);
         }
 
         var first = await ListAsync(auth.Client);
@@ -221,23 +219,24 @@ public sealed class DashboardDeletionTests(TerraBaseFixture fixture)
         await Assert.That(second.Count).IsEqualTo(rejected ? 0 : 20);
         await Assert.That(second.Any(item => first.Contains(item))).IsFalse();
         var third = await ListAsync(restarted.Client);
-        await Assert.That(third.Count).IsLessThanOrEqualTo(20);
+        await Assert.That(third.Count).IsEqualTo(5);
         var later = jobs.Skip(40).Select(Proof).ToArray();
         await Assert.That(later.All(third.Contains)).IsTrue();
-        if (rejected)
+        var restartedDatabase = restarted.App.Services.GetRequiredService<TerraBaseDatabase>();
+        var cursor = (await restartedDatabase.ListDocumentsAsync(AuthStore.DashboardDeletionCursorCollection)).Items.Single();
+        await Assert.That(cursor.Document.GetProperty("nextCursor").ValueKind).IsEqualTo(JsonValueKind.Null);
+        var wrapped = await ListAsync(restarted.Client);
+        await Assert.That(wrapped.Count).IsEqualTo(rejected ? 0 : 20);
+        if (!rejected)
         {
-            await Assert.That(third.Count).IsEqualTo(5);
+            await Assert.That(wrapped.SequenceEqual(first)).IsTrue();
         }
 
-        var restartedDatabase = restarted.App.Services.GetRequiredService<TerraBaseDatabase>();
         for (var index = 0; index < jobs.Length; index++)
         {
             var document = (await restartedDatabase.GetDocumentAsync(AuthStore.DeletionJobCollection, jobs[index].FenceId))!;
-            await Assert.That(document.Document.GetProperty("dashboardDeliveryTurn").GetInt64()).IsGreaterThan(0);
-            var actual = JsonNode.Parse(document.Document.GetRawText())!.AsObject();
-            actual.Remove("dashboardDeliveryTurn");
-            stored[index].Remove("dashboardDeliveryTurn");
-            await Assert.That(JsonNode.DeepEquals(actual, stored[index])).IsTrue();
+            await Assert.That(document.Version).IsEqualTo(stored[index].Version);
+            await Assert.That(document.Document.GetRawText()).IsEqualTo(stored[index].Document.GetRawText());
         }
 
         foreach (var proof in later)
@@ -262,6 +261,52 @@ public sealed class DashboardDeletionTests(TerraBaseFixture fixture)
         {
             await Assert.That((await JobAsync(store, proof)).DashboardVerifiedAt).IsEqualTo(clock.UtcNow);
         }
+    }
+
+    [Test]
+    public async Task A_malformed_candidate_at_the_4096_value_limit_cannot_block_the_next_page()
+    {
+        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
+        await using var auth = await OidcHarness.StartAsync(fixture, clock: clock);
+        await auth.Server.App.Services.GetRequiredService<DeletionCleanup>().StopAsync(CancellationToken.None);
+        var database = auth.Server.App.Services.GetRequiredService<TerraBaseDatabase>();
+        var jobs = Enumerable.Range(0, 21).Select(_ => NewJob(clock, "account") with { NextAttemptAt = clock.UtcNow.AddDays(1) })
+            .OrderBy(job => job.FenceId, StringComparer.Ordinal).ToArray();
+        for (var index = 0; index < jobs.Length; index++)
+        {
+            var value = JsonSerializer.SerializeToNode(jobs[index], DeletionJson.Default.DeletionJob)!.AsObject();
+            if (index < 20)
+            {
+                value["id"] = AuthStore.NewId();
+            }
+
+            if (index == 0)
+            {
+                // All members are scalars: the root plus 4095 members exactly fills TerraBase's value budget.
+                while (value.Count < 4095)
+                {
+                    value["padding" + value.Count] = 0;
+                }
+            }
+
+            await database.PutDocumentAsync(AuthStore.DeletionJobCollection, jobs[index].FenceId,
+                JsonSerializer.SerializeToElement(value, DashboardDeletionJson.Default.JsonObject), TerraBasePrecondition.Absent);
+            if (index == 0)
+            {
+                var maximum = (await database.GetDocumentAsync(AuthStore.DeletionJobCollection, jobs[index].FenceId))!;
+                value["anotherValue"] = 0;
+                await Assert.ThrowsAsync<TerraBaseValidationException>(() => database.PutDocumentAsync(AuthStore.DeletionJobCollection, jobs[index].FenceId,
+                    JsonSerializer.SerializeToElement(value, DashboardDeletionJson.Default.JsonObject), TerraBasePrecondition.Matches(maximum.Version)));
+            }
+        }
+
+        var before = (await database.GetDocumentAsync(AuthStore.DeletionJobCollection, jobs[0].FenceId))!;
+        await Assert.That((await ListAsync(auth.Client)).Count).IsEqualTo(0);
+        await Assert.That((await ListAsync(auth.Client)).Single()).IsEqualTo(Proof(jobs[^1]));
+        await Assert.That((await ListAsync(auth.Client)).Count).IsEqualTo(0);
+        var unchanged = (await database.GetDocumentAsync(AuthStore.DeletionJobCollection, jobs[0].FenceId))!;
+        await Assert.That(unchanged.Version).IsEqualTo(before.Version);
+        await Assert.That(unchanged.Document.GetRawText()).IsEqualTo(before.Document.GetRawText());
     }
 
     private static DeletionJob NewJob(StoreTestClock clock, string scope, string? subject = null)
