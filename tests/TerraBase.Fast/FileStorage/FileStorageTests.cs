@@ -49,6 +49,25 @@ public sealed class FileStorageTests
     }
 
     [Test]
+    public async Task A_backup_only_endpoint_keeps_documents_available_and_file_uploads_fail_closed()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var backups = new FakeS3();
+        await using var api = await DocumentApi.StartAsync(backups.Configure, backups.Route, cancellationToken: token);
+        await Assert.That((await api.SendAsync(HttpMethod.Get, api.Documents, cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.OK);
+        var buckets = api.Project + "/buckets";
+        var created = await Send(api.Client, HttpMethod.Post, buckets,
+            new { name = "files", rules = new CollectionAccessRules(null, new(false, true, []), new(false, true, [])) });
+        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
+        var bucket = buckets + "/" + created.Json.GetProperty("id").GetString();
+        var upload = await Send(api.Client, HttpMethod.Post, bucket + "/files/upload",
+            new { name = "one", contentType = "text/plain", size = 1, sha256 = Convert.ToBase64String(new byte[32]), metadata = new { } });
+        await Assert.That(upload.Status).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        var used = await api.Server.Services.GetRequiredService<IFileStorageUsage>().BytesAsync(api.Tenant.OrganizationId, api.Tenant.ProjectId, token);
+        await Assert.That(used).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task File_reservations_and_documents_share_the_organization_quota()
     {
         await using var api = await WebhookApi.StartAsync(services =>
