@@ -38,7 +38,7 @@ and clients fall back to origin reads.
      pin a 404 in the cache. Without this rule, Cloudflare does not cache extensionless keys (`cf-cache-status: DYNAMIC`).
    - Smart Tiered Cache is on for the zone, so a miss at one location is first served from an upper tier.
 3. Give the bucket's S3 credentials Object Read & Write on that bucket only. Give `cloudflare-api-token` Zone Cache
-   Purge on `terrascale.tech`. Both go to OCI Vault and reach nodes through ts-orch.
+   Purge and Zone Analytics Read on `terrascale.tech`. Both go to OCI Vault and reach nodes through ts-orch.
 
 Buckets set up this way: `terrascale-gru-terrabase` (production gru), `ts-terrabase-ci` (Slow tests),
 `ts-terrabase-bench` (benchmarks).
@@ -59,6 +59,19 @@ limit on every plan). It waits and retries a throttled or failed request up to 5
 The token is `cloudflare-api-token` (`TERRABASE_CLOUDFLARE_API_TOKEN`, or its `_FILE` from OCI Vault through ts-orch).
 It needs Zone Cache Purge on `terrascale.tech`. It is required with an R2 endpoint and refused with any other, so a node
 never links a CDN it cannot purge.
+
+## Metrics
+
+`terrabase.shape.cdn.requests{cache_status}` counts the requests Cloudflare answered on the node's
+`shapes-<bucket>` host, taken from zone analytics (`httpRequestsAdaptiveGroups`) and never counted per request
+(`ShapeCdnAnalytics`).
+
+- `cache_status` is `hit` (served from cache), `miss` (read from the bucket) or `other` (anything else, such as a
+  blocked request).
+- Every 5 minutes the node reads the half-open window up to 10 minutes ago, so Cloudflare has ingested it. Windows are
+  adjacent, so no request is counted twice. A failed read is retried with the next window.
+- The hit ratio is `hit / (hit + miss)`. `miss` is the bucket's read count per cache location (FR-32).
+- The token also needs Zone Analytics Read on `terrascale.tech`.
 
 ## Limits
 

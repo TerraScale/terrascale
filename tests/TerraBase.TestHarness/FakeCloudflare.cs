@@ -7,22 +7,36 @@ using Microsoft.Extensions.DependencyInjection;
 namespace TerraBase.Testing;
 
 /// <summary>
-/// The Cloudflare purge API behind the shape CDN (ShapeCdnPurge), routed in place of api.cloudflare.com: it checks the
-/// bearer token and zone, records every purged URL and answers success.
+/// The Cloudflare API behind the shape CDN, routed in place of api.cloudflare.com: purge (ShapeCdnPurge) records every
+/// purged URL, and zone analytics (ShapeCdnAnalytics) answers the configured cache-status groups. Both check the bearer
+/// token and the zone.
 /// </summary>
 public sealed class FakeCloudflare : IDisposable
 {
     /// <summary>The API token a server configured by <see cref="FakeS3"/> with <c>R2 = true</c> sends.</summary>
     public const string Token = "test-cloudflare-token";
 
-    private const string PurgePath = "/client/v4/zones/4cc466e19478c116fae7dc445a6d0911/purge_cache";
+    private const string Zone = "4cc466e19478c116fae7dc445a6d0911";
+    private const string Api = "https://api.cloudflare.com/client/v4";
     private readonly ConcurrentQueue<string> _purged = new();
     private readonly SemaphoreSlim _requests = new(0);
+    private readonly ConcurrentQueue<(string Host, string Start, string End)> _windows = new();
+    private readonly SemaphoreSlim _queries = new(0);
 
     /// <summary>Every URL purged so far, in request order.</summary>
     public IReadOnlyCollection<string> Purged => _purged;
 
-    public void Dispose() => _requests.Dispose();
+    /// <summary>The (cache status, count) groups every analytics query answers.</summary>
+    public IReadOnlyList<(string CacheStatus, long Count)> Analytics { get; set; } = [];
+
+    /// <summary>Every analytics query's host and half-open window, in request order.</summary>
+    public IReadOnlyCollection<(string Host, string Start, string End)> Windows => _windows;
+
+    public void Dispose()
+    {
+        _requests.Dispose();
+        _queries.Dispose();
+    }
 
     /// <summary>Routes the server's Cloudflare API client to this fake.</summary>
     public void Route(IServiceCollection services) =>
@@ -37,9 +51,18 @@ public sealed class FakeCloudflare : IDisposable
         }
     }
 
+    /// <summary>Waits until at least <paramref name="count"/> analytics queries arrived; the caller's token bounds the wait.</summary>
+    public async Task QueriedAsync(int count, CancellationToken cancellationToken)
+    {
+        while (_windows.Count < count)
+        {
+            await _queries.WaitAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+        }
+    }
+
     private async Task<HttpResponseMessage> RespondAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        if (request.Method != HttpMethod.Post || request.RequestUri?.AbsoluteUri != "https://api.cloudflare.com" + PurgePath)
+        if (request.Method != HttpMethod.Post)
         {
             return new HttpResponseMessage(HttpStatusCode.NotFound);
         }
@@ -50,14 +73,40 @@ public sealed class FakeCloudflare : IDisposable
         }
 
         using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
-        foreach (var file in body.RootElement.GetProperty("files").EnumerateArray())
+        return request.RequestUri?.AbsoluteUri switch
+        {
+            Api + "/zones/" + Zone + "/purge_cache" => Purge(body.RootElement),
+            Api + "/graphql" => Query(body.RootElement.GetProperty("variables")),
+            _ => new HttpResponseMessage(HttpStatusCode.NotFound),
+        };
+    }
+
+    private HttpResponseMessage Purge(JsonElement body)
+    {
+        foreach (var file in body.GetProperty("files").EnumerateArray())
         {
             _purged.Enqueue(file.GetString()!);
         }
 
         _ = _requests.Release();
-        return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"success":true,"errors":[],"messages":[]}""", Encoding.UTF8, "application/json") };
+        return Answer("""{"success":true,"errors":[],"messages":[]}""");
     }
+
+    private HttpResponseMessage Query(JsonElement variables)
+    {
+        if (variables.GetProperty("zone").GetString() != Zone)
+        {
+            return Answer("""{"data":null,"errors":[{"message":"unknown zone"}]}""");
+        }
+
+        _windows.Enqueue((variables.GetProperty("host").GetString()!, variables.GetProperty("start").GetString()!, variables.GetProperty("end").GetString()!));
+        _ = _queries.Release();
+        var groups = string.Join(",", Analytics.Select(group => $$$"""{"count":{{{group.Count}}},"dimensions":{"cacheStatus":"{{{group.CacheStatus}}}"}}"""));
+        return Answer($$$"""{"data":{"viewer":{"zones":[{"httpRequestsAdaptiveGroups":[{{{groups}}}]}]}},"errors":null}""");
+    }
+
+    private static HttpResponseMessage Answer(string json) =>
+        new(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
     private sealed class Handler(FakeCloudflare cloudflare) : HttpMessageHandler
     {
