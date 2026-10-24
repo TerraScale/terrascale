@@ -44,6 +44,7 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
  * @property {URLSearchParams | undefined} [query]
  * @property {AbortSignal | undefined} [signal]
  * @property {"no-store" | undefined} [cache] Authenticated shape epoch keys must bypass caches.
+ * @property {"follow" | undefined} [redirect] Only the shape bootstrap, after a browser hides its 307 behind an opaque redirect.
  */
 
 /**
@@ -51,6 +52,7 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
  * @property {number} status
  * @property {Headers} headers
  * @property {JsonValue | undefined} value
+ * @property {string | undefined} [redirectedTo] The final URL after a followed redirect.
  */
 
 /**
@@ -131,6 +133,23 @@ export class BodyTransportError extends Error {
   constructor(cause) {
     super("TerraBase response body failed in transit.", { cause });
     this.name = "BodyTransportError";
+  }
+}
+
+/** A request that failed in transit before any response; the native failure is the cause. */
+export class RequestTransportError extends TypeError {
+  /** @param {unknown} cause */
+  constructor(cause) {
+    super(cause instanceof Error ? cause.message : "TerraBase request failed in transit.", { cause });
+    this.name = "RequestTransportError";
+  }
+}
+
+/** A browser hid a 307 behind an opaque redirect; only the shape bootstrap may follow it. */
+export class OpaqueRedirectError extends TypeError {
+  constructor() {
+    super("Fresh shape bootstrap requires server fetch; obtain a handle and snapshot offset with collection.shape() on your server.");
+    this.name = "OpaqueRedirectError";
   }
 }
 
@@ -353,7 +372,8 @@ export class V1Transport {
       await response.body?.cancel();
       return { status: response.status, headers: response.headers, value: undefined };
     }
-    return { status: response.status, headers: response.headers, value: await this.readJson(response, options.signal) };
+    return { status: response.status, headers: response.headers, value: await this.readJson(response, options.signal),
+      ...(response.redirected ? { redirectedTo: response.url } : {}) };
   }
 
   /**
@@ -387,7 +407,7 @@ export class V1Transport {
     if (route.responseMediaType !== "") headers.set("accept", route.responseMediaType);
     if (options.body !== undefined) headers.set("content-type", options.contentType ?? "application/json");
     /** @type {RequestInit & { duplex?: "half" }} */
-    const init = { method: route.method, headers, redirect: "manual" };
+    const init = { method: route.method, headers, redirect: options.redirect ?? "manual" };
     if (options.cache !== undefined) init.cache = options.cache;
     if (route.permission.endsWith(":write") && typeof process !== "undefined" && process.release?.name === "node") {
       // Node fetch replays buffered or absent bodies on 421; use a one-shot stream, including DELETE.
@@ -397,13 +417,15 @@ export class V1Transport {
     } else if (options.body !== undefined) init.body = typeof options.body === "string" ? options.body : options.body.slice().buffer;
     if (options.signal !== undefined) init.signal = options.signal;
     options.signal?.throwIfAborted();
-    const response = await this.#fetch(url, init);
+    /** @type {Response} */
+    let response;
+    try { response = await this.#fetch(url, init); }
+    catch (error) { options.signal?.throwIfAborted(); throw new RequestTransportError(error); }
     if (options.signal?.aborted) {
       void response.body?.cancel().catch(() => undefined);
       options.signal.throwIfAborted();
     }
-    if (response.type === "opaqueredirect")
-      throw new TypeError("Fresh shape bootstrap requires server fetch; obtain a handle and snapshot offset with collection.shape() on your server.");
+    if (response.type === "opaqueredirect") throw new OpaqueRedirectError();
     if (!route.successStatuses.includes(response.status)) throw await this.error(response, options.signal);
     return response;
   }
