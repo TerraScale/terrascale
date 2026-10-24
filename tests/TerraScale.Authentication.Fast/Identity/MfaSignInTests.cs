@@ -156,6 +156,16 @@ public sealed partial class MfaSignInTests(TerraBaseFixture fixture)
             await Assert.That(await OidcHarness.ErrorAsync(exchange)).IsEqualTo("access_denied");
         }
 
+        // Leaving and deleting one's own account never need the second factor.
+        var (leaver, leaverToken) = await oidc.SignInUserAsync("leaver@example.test");
+        await Assert.That(await oidc.Server.App.Services.GetRequiredService<PlatformDirectory>().AddMemberAsync(organization, leaver.Id, Roles.Member, CancellationToken.None)).IsTrue();
+        await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{organization}/leave", leaverToken, status: HttpStatusCode.NoContent);
+        await Assert.That(await oidc.Server.App.Services.GetRequiredService<PlatformDirectory>().AddMemberAsync(organization, leaver.Id, Roles.Member, CancellationToken.None)).IsTrue();
+        using (var deleted = await oidc.CallAsync(HttpMethod.Delete, "/v1/terrascale/account", leaverToken))
+        {
+            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        }
+
         // Once the member enrols, the organization opens again; the owner's audit log has both changes.
         var memberSession = await oidc.SignInAsync(member.Email);
         var (_, _, memberEnrolled) = await EnrolAsync(oidc, memberSession, clock);

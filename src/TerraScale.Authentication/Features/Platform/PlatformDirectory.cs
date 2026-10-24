@@ -146,7 +146,11 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
     }
 
     /// <summary>The caller's place in an organization; 404 when it has none, as for an unknown id.</summary>
-    public async Task<OrganizationAccess> OrganizationAccessAsync(string userId, string organizationId, CancellationToken cancellationToken)
+    public Task<OrganizationAccess> OrganizationAccessAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+        this.OrganizationAccessAsync(userId, organizationId, requireMfa: true, cancellationToken);
+
+    // Leaving and closing one's own account stay possible without a second factor; nothing else does.
+    private async Task<OrganizationAccess> OrganizationAccessAsync(string userId, string organizationId, bool requireMfa, CancellationToken cancellationToken)
     {
         if (!IsId(organizationId))
         {
@@ -164,7 +168,11 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
             throw NotFound();
         }
 
-        await this.RequireMfaAsync(organization.Value, userId, cancellationToken).ConfigureAwait(false);
+        if (requireMfa)
+        {
+            await this.RequireMfaAsync(organization.Value, userId, cancellationToken).ConfigureAwait(false);
+        }
+
         return new(organization, membership);
     }
 
@@ -240,11 +248,15 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
         }, cancellationToken);
 
     /// <summary>Deletes an organization without projects, then its memberships; needs owner.</summary>
-    public async Task DeleteOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken)
+    public Task DeleteOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+        this.DeleteOrganizationAsync(userId, organizationId, closingAccount: false, cancellationToken);
+
+    /// <summary>As <see cref="DeleteOrganizationAsync(string, string, CancellationToken)"/>; closing the caller's own account needs no second factor.</summary>
+    internal async Task DeleteOrganizationAsync(string userId, string organizationId, bool closingAccount, CancellationToken cancellationToken)
     {
         await this.CommitAsync(async () =>
         {
-            var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+            var access = await this.OrganizationAccessAsync(userId, organizationId, requireMfa: !closingAccount, cancellationToken).ConfigureAwait(false);
             RequireRole(access, Roles.Owner);
             if (access.Organization.Value.Projects > 0)
             {
@@ -341,8 +353,8 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
     public Task RemoveAsync(string userId, string organizationId, string memberId, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
         {
-            var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
             var leaving = userId == memberId;
+            var access = await this.OrganizationAccessAsync(userId, organizationId, requireMfa: !leaving, cancellationToken).ConfigureAwait(false);
             if (!leaving)
             {
                 RequireRole(access, Roles.Admin);
@@ -475,7 +487,10 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
     }
 
     /// <summary>The caller's effective role on a project; 404 when it has none, as for an unknown id.</summary>
-    public async Task<ProjectAccess> ProjectAccessAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken)
+    public Task<ProjectAccess> ProjectAccessAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
+        this.ProjectAccessAsync(userId, organizationId, projectId, requireMfa: true, cancellationToken);
+
+    private async Task<ProjectAccess> ProjectAccessAsync(string userId, string organizationId, string projectId, bool requireMfa, CancellationToken cancellationToken)
     {
         if (!IsId(organizationId) || !IsId(projectId))
         {
@@ -502,7 +517,11 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
             throw NotFound();
         }
 
-        await this.RequireMfaAsync(organization.Value, userId, cancellationToken).ConfigureAwait(false);
+        if (requireMfa)
+        {
+            await this.RequireMfaAsync(organization.Value, userId, cancellationToken).ConfigureAwait(false);
+        }
+
         return new(membership, organization, project, grant);
     }
 
@@ -558,7 +577,8 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredenti
     {
         await this.CommitAsync(async () =>
         {
-            var access = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            // An account closure (accountId set) closes the caller's own sole organizations, with or without a second factor.
+            var access = await this.ProjectAccessAsync(userId, organizationId, projectId, requireMfa: accountId is null, cancellationToken).ConfigureAwait(false);
             RequireRole(access, Roles.Admin);
             if (await this.ClosureAsync("project", projectId, cancellationToken).ConfigureAwait(false) is { } existing)
             {
