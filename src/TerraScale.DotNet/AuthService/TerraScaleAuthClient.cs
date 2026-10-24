@@ -353,6 +353,31 @@ public sealed class TerraScaleAuthClient
         return true;
     }
 
+    internal async Task<bool> SendForAccountDeletionAsync(HttpMethod method, string route,
+        AuthenticationHeaderValue? authorization, string deletionReceipt, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(deletionReceipt);
+        if (deletionReceipt.Length != 43 || deletionReceipt.Any(character =>
+                character is not (>= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '-' or '_')) ||
+            !"AEIMQUYcgkosw048".Contains(deletionReceipt[^1]))
+        {
+            throw new ArgumentException("A deletion receipt must be the canonical unpadded base64url encoding of exactly 32 bytes.", nameof(deletionReceipt));
+        }
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(RequestDeadline);
+        using var response = await SendWithRetriesAsync(method, route, null,
+            authorization is null ? RequestAuthentication.None : new RequestAuthentication(authorization),
+            deadline.Token, deletionReceipt).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.Accepted)
+        {
+            return false;
+        }
+
+        await RequireStatusAsync(response, HttpStatusCode.NoContent, deadline.Token).ConfigureAwait(false);
+        return true;
+    }
+
     private static async Task RequireStatusAsync(HttpResponseMessage response, HttpStatusCode expected, CancellationToken cancellationToken)
     {
         if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
@@ -449,7 +474,8 @@ public sealed class TerraScaleAuthClient
         string requestUri,
         Func<HttpContent?>? bodyFactory,
         RequestAuthentication authentication,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? deletionReceipt = null)
     {
         var token = cancellationToken;
         var attempt = 0;
@@ -463,6 +489,10 @@ public sealed class TerraScaleAuthClient
                 throw new InvalidOperationException("Unauthenticated ts-auth requests require an HttpClient without a default Authorization header.");
             }
             ApplyAuthentication(request, authentication);
+            if (deletionReceipt is not null)
+            {
+                request.Headers.Add("X-TerraScale-Deletion-Receipt", deletionReceipt);
+            }
             request.Headers.Accept.Add(AcceptJson);
             if (bodyFactory?.Invoke() is { } content)
             {
@@ -472,7 +502,7 @@ public sealed class TerraScaleAuthClient
             try
             {
                 var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
-                if (authentication.Kind == RequestAuthenticationKind.Explicit || !ShouldRetry(response, method, attempt, options.MaxRetryAttempts))
+                if (deletionReceipt is not null || authentication.Kind == RequestAuthenticationKind.Explicit || !ShouldRetry(response, method, attempt, options.MaxRetryAttempts))
                 {
                     return response;
                 }
@@ -488,7 +518,7 @@ public sealed class TerraScaleAuthClient
                 response.Dispose();
                 await Task.Delay(delay, token).ConfigureAwait(false);
             }
-            catch (HttpRequestException) when (authentication.Kind != RequestAuthenticationKind.Explicit && IsSafeRead(method) && attempt < options.MaxRetryAttempts)
+            catch (HttpRequestException) when (deletionReceipt is null && authentication.Kind != RequestAuthenticationKind.Explicit && IsSafeRead(method) && attempt < options.MaxRetryAttempts)
             {
                 await Task.Delay(GetRetryDelay(response: null, attempt), token).ConfigureAwait(false);
             }

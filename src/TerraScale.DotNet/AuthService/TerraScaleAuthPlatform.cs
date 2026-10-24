@@ -5,8 +5,8 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace TerraScale.DotNet;
 
-/// <summary>Platform management with the caller's user sign-in token. Organization/project/API-key tokens
-/// cannot authenticate these routes. Pages are bounded, mutations and reads are sent once.</summary>
+/// <summary>Platform management with the caller's user sign-in token, except receipt-only account deletion status.
+/// Organization/project/API-key tokens cannot authenticate user routes. Pages are bounded, mutations and reads are sent once.</summary>
 public sealed class TerraScaleAuthPlatformClient(TerraScaleAuthClient client)
 {
     /// <summary>create_organization: POST /v1/terrascale/organizations.</summary>
@@ -114,6 +114,48 @@ public sealed class TerraScaleAuthPlatformClient(TerraScaleAuthClient client)
         string accessToken,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedForDeletionAsync("/v1/terrascale/account", TerraScaleAuthCredentials.Bearer(accessToken), cancellationToken);
+
+    /// <summary>
+    /// delete_account: DELETE /v1/terrascale/account with X-TerraScale-Deletion-Receipt.
+    /// Returns true only for 204 (completed), false only for 202 (pending). Authentication failures are errors.
+    /// Generate the receipt from 32 cryptographically random bytes encoded as 43 unpadded base64url characters;
+    /// retain it securely before sending, then use <see cref="AccountDeletionCompletedAsync"/> after sign-in revocation.
+    /// Only this authenticated deletion creates the receipt capability. Each call is sent once.
+    /// </summary>
+    public Task<bool> DeleteAccountAsync(
+        string accessToken,
+        string deletionReceipt,
+        CancellationToken cancellationToken = default) =>
+        client.SendForAccountDeletionAsync(HttpMethod.Delete, "/v1/terrascale/account",
+            TerraScaleAuthCredentials.Bearer(accessToken), deletionReceipt, cancellationToken);
+
+    /// <summary>
+    /// account_deletion_status: GET /v1/terrascale/account/deletion using only X-TerraScale-Deletion-Receipt, without a bearer or API key.
+    /// Returns true only for 204 (completed), false only for 202 (pending). Unknown receipts (404), authentication
+    /// failures (401), and other unexpected responses throw <see cref="TerraScaleAuthException"/>.
+    /// This read neither creates a deletion nor exposes user data. Use an HttpClient without default Authorization.
+    /// Each call is sent once.
+    /// </summary>
+    public Task<bool> AccountDeletionCompletedAsync(
+        string deletionReceipt,
+        CancellationToken cancellationToken = default) =>
+        client.SendForAccountDeletionAsync(HttpMethod.Get, "/v1/terrascale/account/deletion",
+            null, deletionReceipt, cancellationToken);
+
+    /// <summary>
+    /// account_deletion_status: GET /v1/terrascale/account/deletion?organization={organization} using only the receipt.
+    /// Returns true only for 204: the account deletion completed and this candidate organization's atomic deletion fence
+    /// exists. False (202) can mean incomplete deletion or a retained shared organization; it does not promise eventual
+    /// removal. Unknown receipts or noncandidate organizations (404) throw <see cref="TerraScaleAuthException"/>.
+    /// Remove a local organization only after its explicit true result. No bearer or API key is sent; default
+    /// HttpClient Authorization is rejected. Each call is sent once.
+    /// </summary>
+    public Task<bool> AccountDeletionOrganizationCompletedAsync(
+        string deletionReceipt,
+        string organizationId,
+        CancellationToken cancellationToken = default) =>
+        client.SendForAccountDeletionAsync(HttpMethod.Get, $"/v1/terrascale/account/deletion?organization={Id(organizationId)}",
+            null, deletionReceipt, cancellationToken);
 
     /// <summary>create_project: POST /v1/terrascale/organizations/{organization}/projects.</summary>
     public Task<TerraScaleAuthPlatformProject> CreateProjectAsync(
