@@ -187,7 +187,7 @@ public sealed class ClientAccessRetainedShapeTests
                     api.Server.Services.GetRequiredService<IMemoryBudget>(), time, CancellationToken.None);
                 await Assert.That(body.NextId).IsEqualTo(page < 2 ? ids[page] : null);
                 await using var writer = await transactions.BeginAsync(store, write: true, CancellationToken.None);
-                await ((IShapeSnapshotStorage)writer).InsertShapeSnapshotPageAsync(initial.Handle, offset, page, body, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), CancellationToken.None);
+                await ((IShapeSnapshotStorage)writer).InsertShapeSnapshotPageAsync(definition, offset, page, body, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), CancellationToken.None);
                 _ = await writer.CommitAsync(CancellationToken.None);
                 after = body.NextId;
             }
