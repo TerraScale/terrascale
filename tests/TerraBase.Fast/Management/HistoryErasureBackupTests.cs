@@ -222,7 +222,8 @@ public sealed class HistoryErasureBackupTests
         await Assert.That(own.AuthMark).IsEqualTo(marked.AuthMark).Because("its own rewrite is no restore: no new fence marker");
 
         Volatile.Write(ref refusing, 0);
-        host.Clock.Advance(TimeSpan.FromSeconds(11));
+        // Past the first backoff (10 s) and its jitter (up to a quarter more).
+        host.Clock.Advance(TimeSpan.FromSeconds(13));
         await Host.PassAsync(api);
         own = await Host.OwnAsync(api, erasure);
         await Assert.That(own.Phase).IsEqualTo(HistoryErasure.Rewritten);

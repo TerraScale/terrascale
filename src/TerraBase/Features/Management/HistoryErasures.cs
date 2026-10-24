@@ -769,11 +769,13 @@ internal sealed partial class HistoryErasures(
         }
         catch (RewriteRefusedException error)
         {
-            // The old file serves again; the file's next attempt waits, doubling.
+            // The old file serves again; the file's next attempt waits, doubling, plus up to a quarter more so machines and
+            // files refused together do not all try again at once.
             var delay = _backoff.TryGetValue(file, out var backoff) ? TimeSpan.FromTicks(Math.Min(backoff.Delay.Ticks * 2, MaxBackoff.Ticks)) : Interval;
-            _backoff[file] = (time.GetUtcNow() + delay, delay);
+            var wait = delay + TimeSpan.FromTicks((long)(delay.Ticks * 0.25 * Random.Shared.NextDouble()));
+            _backoff[file] = (time.GetUtcNow() + wait, delay);
             _errors.Add(1, new KeyValuePair<string, object?>("reason", "rewrite_refused"));
-            logger.ZLogWarning(error, $"A history erasure rewrite was refused; it is tried again after {delay}");
+            logger.ZLogWarning(error, $"A history erasure rewrite of {file} was refused; it is tried again after {wait}");
             return null;
         }
         catch (RewriteUncertainException error)

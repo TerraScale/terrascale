@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -16,6 +17,18 @@ internal sealed partial class TursoDatabaseStore
     /// <summary>Moves as a healthy rewrite starts: a backup tap opened before ends instead of holding the old file open.</summary>
     internal int Lineage => Volatile.Read(ref _lineage);
 
+    private int _quiescing;
+
+    /// <summary>Whether a healthy rewrite waits for this store's handles or holds it quiesced: a backup tap does not open meanwhile.</summary>
+    internal bool Quiescing => Volatile.Read(ref _quiescing) != 0;
+
+    // How long and how often a healthy rewrite waits for this store's readers to end before it takes the writer.
+    private static readonly TimeSpan QuietBudget = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan QuietPoll = TimeSpan.FromMilliseconds(20);
+
+    // The longest a healthy rewrite holds the writer waiting for readers; then it is refused and its caller backs off.
+    internal static readonly TimeSpan HeldDrain = TimeSpan.FromSeconds(2);
+
     /// <summary>Runs as a healthy rewrite starts waiting for operations to end or handles to drain; for integration tests.</summary>
     internal Action? RewriteWaiting { get; set; }
 
@@ -30,8 +43,28 @@ internal sealed partial class TursoDatabaseStore
         RefuseUnhealthy();
         Interlocked.Increment(ref _lineage);
         var quiesced = new Quiesced(this);
+        Interlocked.Increment(ref _quiescing);
         try
         {
+            // Readers get time to end first, holding neither the writer nor the operations gate: a reader held for seconds
+            // then delays only this rewrite, never the writers that would queue behind it (TS-982: a 30 s drain under the
+            // writer stalled every catalog write). A reader still held at the end refuses the rewrite; the few that start just
+            // before the writer is taken drain under it.
+            var quiet = Stopwatch.GetTimestamp();
+            if (pool.BusyOf(this, _writerSession) > 0)
+            {
+                RewriteWaiting?.Invoke();
+                while (pool.BusyOf(this, _writerSession) > 0)
+                {
+                    if (Stopwatch.GetElapsedTime(quiet) >= QuietBudget)
+                    {
+                        throw new RewriteRefusedException("the database's readers did not end before its writer was taken");
+                    }
+
+                    await Task.Delay(QuietPoll, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
             if (Ledger is not null && !IsSystem)
             {
                 // Operations record write intents for this incarnation: none may span the swap.
@@ -53,7 +86,7 @@ internal sealed partial class TursoDatabaseStore
                 }
             }
 
-            // Writers first: a running write transaction may still open readers, which the pause below would hold.
+            // Writers next: a running write transaction may still open readers, which the pause below would hold.
             await AcquireWriterAsync("a healthy rewrite", cancellationToken).ConfigureAwait(false);
             quiesced.Writer = true;
             RefuseUnhealthy();
@@ -74,7 +107,16 @@ internal sealed partial class TursoDatabaseStore
                 RewriteWaiting?.Invoke();
             }
 
-            await drained.WaitAsync(cancellationToken).ConfigureAwait(false);
+            // Writers queue meanwhile: a reader still held after the wait above refuses the rewrite instead of stalling them.
+            try
+            {
+                await drained.WaitAsync(HeldDrain, cancellationToken).ConfigureAwait(false);
+            }
+            catch (TimeoutException error)
+            {
+                throw new RewriteRefusedException("the database did not drain while its writer was held", error);
+            }
+
             if (pool.FailedClosesOf(this) is > 0 and var failed)
             {
                 throw new RewriteRefusedException($"{failed} native closes of this database failed; its handles may still be open");
@@ -367,6 +409,7 @@ internal sealed partial class TursoDatabaseStore
         internal bool Operations { get; set; }
         internal bool Writer { get; set; }
         internal bool Paused { get; set; }
+        private bool Ended { get; set; }
 
         public ValueTask DisposeAsync()
         {
@@ -394,6 +437,12 @@ internal sealed partial class TursoDatabaseStore
                     {
                         Operations = false;
                         store._operations.Release();
+                    }
+
+                    if (!Ended)
+                    {
+                        Ended = true;
+                        Interlocked.Decrement(ref store._quiescing);
                     }
                 }
             }

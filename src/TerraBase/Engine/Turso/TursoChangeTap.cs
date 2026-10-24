@@ -86,30 +86,47 @@ internal sealed class TursoChangeTap : IWalTap
     public static async Task<TursoChangeTap> OpenAsync(TursoDatabaseStore store, TursoIoPool io, TimeProvider time, CancellationToken cancellationToken)
     {
         await using var operation = await store.BeginOperationAsync(cancellationToken).ConfigureAwait(false);
-        // Read before the reader is counted: a rewrite starting meanwhile either refuses it or ends this tap.
         var connectionString = await store.ConnectionStringAsync(io, cancellationToken).ConfigureAwait(false);
-        var lineage = store.Lineage;
-        store.OpenBackupReader();
-        var reader = new TursoConnection(connectionString) { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
+        TursoChangeTap? tap = null;
         try
         {
-            await io.RunAsync(() => TursoSession.OpenExisting(reader, store.FilePath), cancellationToken).ConfigureAwait(false);
-            var tap = new TursoChangeTap(store, io, time, reader, lineage);
-            // Under the writer, so the anchor and the schema map describe the same commit; this also opens the writer, whose
-            // capture creates turso_cdc.
-            await store.WithWriterAsync(tap.Reset, "the continuous backup's tap", cancellationToken).ConfigureAwait(false);
+            // The reader is counted only under the writer: a healthy rewrite holds the writer while this store's handles drain,
+            // so a reader counted while waiting for it would hold that drain until the rewrite gave up (TS-982). Under the
+            // writer, too, the anchor and the schema map describe the same commit; this also opens the writer, whose capture
+            // creates turso_cdc.
+            await store.WithWriterAsync(writer =>
+            {
+                if (store.Quiescing)
+                {
+                    // The lineage already moved: a tap opened now would not end, and would hold the file the rewrite drains.
+                    throw new InvalidOperationException("a healthy rewrite of this database waits for its handles; the tap opens after it");
+                }
+
+                store.OpenBackupReader();
+                var reader = new TursoConnection(connectionString) { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
+                tap = new TursoChangeTap(store, io, time, reader, store.Lineage);
+                TursoSession.OpenExisting(reader, store.FilePath);
+                return tap.Reset(writer);
+            }, "the continuous backup's tap", cancellationToken).ConfigureAwait(false);
             operation?.Complete();
-            return tap;
+            return tap!;
         }
         catch (Exception error)
         {
-            await io.RunAsync(reader.Dispose, CancellationToken.None).ConfigureAwait(false);
-            store.CloseBackupReader();
+            if (tap is not null)
+            {
+                await io.RunAsync(tap._reader.Dispose, CancellationToken.None).ConfigureAwait(false);
+                store.CloseBackupReader();
+            }
+
             await store.RecordOperationDamageAsync(error).ConfigureAwait(false);
             operation?.Complete();
             throw;
         }
     }
+
+    /// <inheritdoc />
+    public bool Ended => _lineage != _store.Lineage;
 
     public async ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken)
     {
