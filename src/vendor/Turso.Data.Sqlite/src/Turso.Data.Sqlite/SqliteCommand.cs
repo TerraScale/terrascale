@@ -166,6 +166,7 @@ public class SqliteCommand : DbCommand
 
     public override int ExecuteNonQuery()
     {
+        using var timed = StatementProfile.Time(CommandText);
         using var reader = Execute("ExecuteNonQuery");
         while (reader.Read())
         {
@@ -180,6 +181,7 @@ public class SqliteCommand : DbCommand
 
     public override object? ExecuteScalar()
     {
+        using var timed = StatementProfile.Time(CommandText);
         using var reader = Execute("ExecuteScalar");
         return reader.Read() ? reader.GetValue(0) : null;
     }
@@ -233,9 +235,9 @@ public class SqliteCommand : DbCommand
 
     public new SqliteDataReader ExecuteReader() => Execute("ExecuteReader");
 
-    public new SqliteDataReader ExecuteReader(CommandBehavior behavior) => Execute("ExecuteReader", behavior);
+    public new SqliteDataReader ExecuteReader(CommandBehavior behavior) { using var timed = StatementProfile.Time(CommandText); return Execute("ExecuteReader", behavior); }
 
-    protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior) => Execute("ExecuteReader", behavior);
+    protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior) { using var timed = StatementProfile.Time(CommandText); return Execute("ExecuteReader", behavior); }
 
     public new Task<SqliteDataReader> ExecuteReaderAsync(CancellationToken cancellationToken = default)
         => ExecuteReaderAsync(CommandBehavior.Default, cancellationToken);

@@ -214,6 +214,7 @@ namespace TerraBase.E2E
                     {
                         cpuBefore = Process.GetCurrentProcess().TotalProcessorTime;
                         gcBefore = GC.GetTotalAllocatedBytes();
+                        Turso.Data.Sqlite.StatementProfile.Stats.Clear();
                     }
 
                     var id = Bodies.Id(body.Size, random.Next(Keys));
@@ -246,6 +247,11 @@ namespace TerraBase.E2E
             await Task.WhenAll(workers);
             var cpu = Process.GetCurrentProcess().TotalProcessorTime - cpuBefore;
             var allocated = GC.GetTotalAllocatedBytes() - gcBefore;
+            var opsDone = latencies.Sum(list => list.Count);
+            File.AppendAllLines(Environment.GetEnvironmentVariable("TERRABASE_VS_TURSO_OUT") + ".stmts",
+                [$"## {body.Size} {workload} c={concurrency} ops={opsDone}", .. Turso.Data.Sqlite.StatementProfile.Stats
+                    .OrderByDescending(pair => pair.Value[1])
+                    .Select(pair => $"{pair.Value[0] / (double)Math.Max(1, opsDone):0.00}/op {pair.Value[1] * 1e6 / Stopwatch.Frequency / Math.Max(1, opsDone):0.0}us/op | {pair.Key.ReplaceLineEndings(" ")[..Math.Min(150, pair.Key.ReplaceLineEndings(" ").Length)]}")]);
             var all = latencies.SelectMany(list => list).Order().ToArray();
             double Micros(double quantile)
             {
