@@ -14,8 +14,21 @@ public sealed class ScheduledExportJourneyTests(DashboardRootFixture fixture)
         var failed = 0;
         await using var host = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
             Task.FromResult<IResult?>(Volatile.Read(ref failed) == 1 && http.Request.Method == "GET" && http.Request.Path.Value!.EndsWith("/export-schedule", StringComparison.Ordinal)
-                ? Results.Json(new { cron = "0 3 * * *", updatedAt = DateTimeOffset.UtcNow, lastRun = new { startedAt = DateTimeOffset.Parse("2026-10-24T03:00:00Z"), finishedAt = DateTimeOffset.Parse("2026-10-24T03:00:09Z"),
-                    status = "failed", key = (string?)null, documents = 0L, bytes = 0L, error = "bucket refused the write" } }) : null));
+                ? Results.Json(new
+                {
+                    cron = "0 3 * * *",
+                    updatedAt = DateTimeOffset.UtcNow,
+                    lastRun = new
+                    {
+                        startedAt = DateTimeOffset.Parse("2026-10-24T03:00:00Z"),
+                        finishedAt = DateTimeOffset.Parse("2026-10-24T03:00:09Z"),
+                        status = "failed",
+                        key = (string?)null,
+                        documents = 0L,
+                        bytes = 0L,
+                        error = "bucket refused the write"
+                    }
+                }) : null));
         using var client = host.CreateClient();
         using var producer = host.CreateProviderClient();
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
