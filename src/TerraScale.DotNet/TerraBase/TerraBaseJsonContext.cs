@@ -12,6 +12,14 @@ namespace TerraScale.DotNet.TerraBase;
 /// </summary>
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, MaxDepth = TerraBaseJsonContext.MaxResponseDepth,
     RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true)]
+[JsonSerializable(typeof(TerraBaseFileBucketRequest))]
+[JsonSerializable(typeof(TerraBaseFileRulesRequest))]
+[JsonSerializable(typeof(TerraBaseFileBucket))]
+[JsonSerializable(typeof(TerraBaseStoredFile))]
+[JsonSerializable(typeof(TerraBaseFileUrl))]
+[JsonSerializable(typeof(TerraBaseFileUpload))]
+[JsonSerializable(typeof(TerraBasePage<TerraBaseFileBucket>))]
+[JsonSerializable(typeof(TerraBasePage<TerraBaseStoredFile>))]
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(TerraBaseDatabaseInfo))]
 [JsonSerializable(typeof(TerraBaseCollection))]

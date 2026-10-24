@@ -3,7 +3,8 @@
 This additive SDK contract was assigned after account-deletion PR #62 merged.
 The matching auth producer and dashboard consumer are being implemented together;
 SDK HTTP-handler tests do not establish deployed producer parity. Existing receipt
-and sign-in operations keep their contracts. No package version is changed here.
+and sign-in operations keep their contracts. Package version 0.0.11 gives this
+change a distinct immutable identity; main already owns 0.0.10 for file storage.
 
 `auth.Platform.ListDeletionsAsync(clientId, clientSecret, ct)` sends one
 `GET /v1/{configured-instance-slug}/deletions` with HTTP Basic client credentials.
@@ -30,3 +31,8 @@ response reader, request deadline, cancellation and source-generated JSON apply.
 Caller-owned HTTP handlers must disable redirects and cookies as documented in
 `contracts/auth/README.md`. No production calls, deployment or storage change is
 part of this SDK PR. The owning auth contract must land before SDK merge/release.
+
+The parent change will qualify and build `TerraScale.DotNet.0.0.11.nupkg` from
+the merged SDK PR #63 SHA, then vendor those exact bytes into dashboard PR #211
+with matching provenance and lockfile updates. Do not vendor a branch build as
+the merged artifact. This handoff requires no NuGet publication or release tag.

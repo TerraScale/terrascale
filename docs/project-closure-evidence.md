@@ -22,5 +22,6 @@ engine's accepted response as the revised evidence. The SDK does not alter
 existing acceptance semantics or perform cleanup itself. HTTP-handler coverage
 checks accepted and pending responses, with omitted evidence and version 2, for
 both request versions. Producer integration and auth enforcement belong to the
-parent change; these SDK tests do not prove live erasure. No package bump or
-storage migration is introduced.
+parent change; these SDK tests do not prove live erasure. This ships with the
+outbox client as package 0.0.11, a new immutable version for dashboard vendoring.
+No storage migration is introduced; see [the package handoff](deletion-outbox.md).
