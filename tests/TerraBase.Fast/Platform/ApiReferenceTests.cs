@@ -52,6 +52,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks TsAuth(documents:read) listCollectionWebhooks Webhooks
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/webhooks/{webhook}/deliveries TsAuth(documents:read) listCollectionWebhookDeliveries Webhooks
         GET /v1/projects/{project}/databases/{database}/export TsAuth(documents:read) exportDatabase Documents
+        GET /v1/projects/{project}/databases/{database}/export-schedule TsAuth(databases:read) getExportSchedule Backups
         GET /v1/projects/{project}/databases/{database}/import TsAuth(databases:read) getImport Imports
         GET /v1/projects/{project}/databases/{database}/index-recommendations TsAuth(databases:read) listIndexRecommendations Indexes
         GET /v1/projects/{project}/databases/{database}/indexes TsAuth(databases:read) listIndexes Indexes
@@ -101,6 +102,7 @@ public sealed class ApiReferenceTests
         PUT /v1/projects/{project}/databases/{database}/collections/{collection}/rules TsAuth(documents:write) putCollectionRules Collections
         PUT /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) putDeclaredCollectionSchema Collections
         PUT /v1/projects/{project}/databases/{database}/collections/{collection}/ttl TsAuth(documents:write) putCollectionTtl Collections
+        PUT /v1/projects/{project}/databases/{database}/export-schedule TsAuth(databases:write) setExportSchedule Backups
         PUT /v1/projects/{project}/databases/{database}/import/source TsAuth(databases:write,documents:write) uploadImportSource Imports
         PUT /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:write) declareCollectionSchema Schema
         PUT /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) updateSavedQuery Queries

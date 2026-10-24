@@ -72,7 +72,8 @@ public sealed class ExportDatabaseEndpoint(IDocumentService documents, ITenantDi
         };
     }
 
-    private static async Task WriteAsync(Stream body, IAsyncEnumerable<ExportRow> rows, CancellationToken cancellationToken)
+    /// <summary>Writes export lines to <paramref name="body"/>; scheduled exports write the same format.</summary>
+    internal static async Task WriteAsync(Stream body, IAsyncEnumerable<ExportRow> rows, CancellationToken cancellationToken)
     {
         // Lines collect in one buffer and reach the response in chunks of about 64 KiB, not one write per document.
         const int Chunk = 64 * 1024;
