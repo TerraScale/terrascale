@@ -369,7 +369,8 @@ internal sealed partial class EngineManagementService(
 
             if (await AnyAsync(transaction, Databases(project.Id), cancellationToken).ConfigureAwait(false)
                 || await AnyAsync(transaction, EngineApiKeyStore.ProjectKeys(project.Id), cancellationToken).ConfigureAwait(false)
-                || await AnyAsync(transaction, ProjectBackupDestinations.Collection(project.Id), cancellationToken).ConfigureAwait(false))
+                || await AnyAsync(transaction, ProjectBackupDestinations.Collection(project.Id), cancellationToken).ConfigureAwait(false)
+                || await AnyAsync(transaction, Features.FileStorage.FileStorageUsage.Buckets(project.Id), cancellationToken).ConfigureAwait(false))
             {
                 return ManagementErrors.NotEmpty;
             }
