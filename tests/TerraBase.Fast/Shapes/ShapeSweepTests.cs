@@ -87,30 +87,101 @@ public sealed class ShapeSweepTests
     }
 
     [Test]
-    public async Task More_retired_handles_than_the_retirement_queue_holds_leave_in_bounded_passes()
+    public async Task More_durable_retired_handles_than_the_retirement_queue_holds_leave_in_bounded_passes_without_the_registry()
     {
         await using var node = await Node.StartAsync();
         await node.PutAsync(1);
+        var sealedHandle = (await node.SealAsync("")).Handle;
         var count = ShapeRegistry.MaxRetired + 1;
-        for (var i = 0; i < count; i++)
+        // One real seal, and the rest written as it writes them, never tracked by the registry: a chunk and the same lineage record.
+        await node.WriteAsync(connection =>
         {
-            _ = await node.SealAsync(string.Create(CultureInfo.InvariantCulture, $$"""{"eq":["/n",{{i}}]}"""));
-        }
+            for (var i = 1; i < count; i++)
+            {
+                var handle = string.Create(CultureInfo.InvariantCulture, $"h1-{i:x16}");
+                Chunk(connection, handle, 0);
+                Execute(connection, """
+                    INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at)
+                    SELECT $lineage, 0, 0, body, 0 FROM _tb_shape_chunk WHERE handle = $sealed;
+                    """, ("$lineage", "~lineage:" + handle), ("$sealed", "~lineage:" + sealedHandle));
+            }
+        });
 
-        // Each sealed handle holds one chunk and its lineage record.
         await Assert.That(await node.ShapeRowsAsync()).IsEqualTo(2L * count);
         await node.DropAsync();
-        var passes = 0;
+        List<long> deleted = [];
         long remaining;
         do
         {
-            var pass = await node.PassAsync();
-            await Assert.That(pass.Deleted).IsGreaterThan(0L).And.IsLessThanOrEqualTo(ShapeRetention.BatchRows);
+            deleted.Add((await node.PassAsync()).Deleted);
             remaining = await node.ShapeRowsAsync();
         }
-        while (remaining > 0 && ++passes < 4);
+        while (remaining > 0 && deleted.Count < 4);
 
         await Assert.That(remaining).IsEqualTo(0L);
+        // One budget per database per pass across all of its handles, then the cursor resumes where it stopped.
+        await Assert.That(deleted).IsEquivalentTo([ShapeRetention.BatchRows, ShapeRetention.BatchRows, 2L * count - 2 * ShapeRetention.BatchRows]);
+    }
+
+    [Test]
+    public async Task A_current_handle_gets_ordinary_retention_with_no_request_and_keeps_its_newest_complete_snapshot()
+    {
+        await using var node = await Node.StartAsync();
+        await node.PutAsync(3);
+        var handle = (await node.SealAsync("")).Handle;
+        long end = 0;
+        await node.WriteAsync(connection =>
+        {
+            // The chunk was sealed before the feed's retention; snapshot 0 is older than the newest complete one at 1, and a seal
+            // of a later offset published its first page only.
+            Execute(connection, "UPDATE _tb_shape_chunk SET sealed_at = 0 WHERE handle = $h;", ("$h", handle));
+            end = Scalar(connection, "SELECT end_offset FROM _tb_shape_chunk WHERE handle = $h;", ("$h", handle));
+            Snapshot(connection, handle, 0, 0);
+            Snapshot(connection, handle, 1, 0, next: "a");
+            Snapshot(connection, handle, 1, 1);
+            Snapshot(connection, handle, end + 10, 0, next: "b");
+        });
+        await Assert.That(end).IsGreaterThan(1L);
+
+        var pass = await node.PassAsync();
+        await Assert.That(pass.Current).IsEqualTo(1);
+        await Assert.That(pass.Deleted).IsEqualTo(2L);
+        await Assert.That(await node.RowsAsync(handle)).IsEqualTo(new Rows(0, 3, 1, 1));
+        await Assert.That(await node.ReadAsync(connection => Scalar(connection, "SELECT end_offset FROM _tb_shape_chunk WHERE handle = $h;",
+            ("$h", "~floor:" + handle)))).IsEqualTo(end);
+        await Assert.That(await node.ReadAsync(connection => Scalar(connection,
+            "SELECT count(*) FROM _tb_shape_snapshot WHERE handle = $h AND offset = 1;", ("$h", handle)))).IsEqualTo(2L)
+            .Because("the newest complete snapshot keeps every page while a newer one is still being sealed");
+
+        var idle = await node.PassAsync();
+        await Assert.That(idle.Current).IsEqualTo(1);
+        await Assert.That(idle.Deleted).IsEqualTo(0L);
+    }
+
+    [Test]
+    public async Task A_damaged_handle_is_protected_and_the_sweep_moves_past_it()
+    {
+        await using var node = await Node.StartAsync();
+        await node.PutAsync(1);
+        string[] handles = [(await node.SealAsync("")).Handle, (await node.SealAsync("""{"eq":["/n",1]}""")).Handle];
+        Array.Sort(handles, StringComparer.Ordinal);
+        var (damaged, healthy) = (handles[0], handles[1]);
+        // A body over the 8 MiB object bound fails every batch that reaches it.
+        await node.WriteAsync(connection => Execute(connection, "UPDATE _tb_shape_chunk SET body = $b WHERE handle = $h;",
+            ("$h", damaged), ("$b", new byte[ShapeRetention.BatchBytes + 1])));
+        await node.DropAsync();
+
+        var pass = await node.PassAsync();
+        await Assert.That(pass.Retired).IsEqualTo(1);
+        await Assert.That(pass.Protected).IsEqualTo(1);
+        await Assert.That(pass.Failed).IsEqualTo(0);
+        await Assert.That(await node.RowsAsync(healthy)).IsEqualTo(Rows.None);
+        await Assert.That(await node.RowsAsync(damaged)).IsEqualTo(new Rows(1, 0, 0, 1));
+
+        var next = await node.PassAsync();
+        await Assert.That(next.Protected).IsEqualTo(1);
+        await Assert.That(next.Failed).IsEqualTo(0);
+        await Assert.That(await node.RowsAsync(damaged)).IsEqualTo(new Rows(1, 0, 0, 1));
     }
 
     [Test]
@@ -217,9 +288,9 @@ public sealed class ShapeSweepTests
         await using (var transaction = await node.Api.Server.Services.GetRequiredService<IShapeStorage>()
             .BeginTransactionAsync(node.Store, write: true, CancellationToken.None))
         {
-            var step = await ((IShapeSweepTransaction)transaction).SweepShapeHandleAsync(handle, ShapeRetention.BatchRows,
+            var step = await ((IShapeSweepTransaction)transaction).SweepShapeHandleAsync(handle, 0, ShapeRetention.BatchRows,
                 ShapeRetention.BatchBytes, cancellation.Token);
-            await Assert.That(step).IsEqualTo(new ShapeSweepStep(ShapeHandleState.Retired, 3, step.Bytes, false));
+            await Assert.That(step).IsEqualTo(new ShapeSweepStep(ShapeHandleState.Retired, 3, step.Bytes, 0, false));
             await cancellation.CancelAsync();
             await Assert.That(async () => await transaction.CommitAsync(cancellation.Token)).Throws<OperationCanceledException>();
         }
@@ -255,16 +326,32 @@ public sealed class ShapeSweepTests
         Execute(connection, "INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) VALUES ($h, $o, $e, X'00', 0);",
             ("$h", handle), ("$o", offset), ("$e", end));
 
-    private static void Execute(SqliteConnection connection, string sql, params (string Name, object Value)[] parameters)
+    private static void Snapshot(SqliteConnection connection, string handle, long offset, long page, string? next = null) =>
+        Execute(connection, "INSERT INTO _tb_shape_snapshot (handle, offset, page, next_id, body, sealed_at) VALUES ($h, $o, $p, $n, X'00', 0);",
+            ("$h", handle), ("$o", offset), ("$p", page), ("$n", next));
+
+    private static void Execute(SqliteConnection connection, string sql, params (string Name, object? Value)[] parameters)
     {
-        using var command = connection.CreateCommand();
+        using var command = Command(connection, sql, parameters);
+        command.ExecuteNonQuery();
+    }
+
+    private static long Scalar(SqliteConnection connection, string sql, params (string Name, object? Value)[] parameters)
+    {
+        using var command = Command(connection, sql, parameters);
+        return (long)command.ExecuteScalar()!;
+    }
+
+    private static SqliteCommand Command(SqliteConnection connection, string sql, (string Name, object? Value)[] parameters)
+    {
+        var command = connection.CreateCommand();
         command.CommandText = sql;
         foreach (var (name, value) in parameters)
         {
-            _ = command.Parameters.AddWithValue(name, value);
+            _ = command.Parameters.AddWithValue(name, value ?? DBNull.Value);
         }
 
-        command.ExecuteNonQuery();
+        return command;
     }
 
     /// <summary>A handle's chunks, snapshot pages, floor sentinel and lineage record.</summary>
@@ -368,6 +455,9 @@ public sealed class ShapeSweepTests
             reader.Read();
             return new Rows(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3));
         }, "a test counting shape rows", CancellationToken.None);
+
+        public Task<T> ReadAsync<T>(Func<SqliteConnection, T> read) =>
+            turso.WithWriterAsync(session => read(session.Connection), "a test reading shape rows", CancellationToken.None);
 
         /// <summary>Every shape row except the durable frontier's.</summary>
         public Task<long> ShapeRowsAsync() => turso.WithWriterAsync(session =>

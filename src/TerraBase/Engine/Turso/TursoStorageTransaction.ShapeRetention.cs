@@ -20,50 +20,57 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
     public async ValueTask<int> TrimShapeAsync(string handle, long before, int maxRows, long maxBytes, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
-        return await RunAsync(() =>
+        return await RunAsync(() => TrimShape(handle, before, maxRows, maxBytes, cancellationToken).Rows, cancellationToken, mutation: true)
+            .ConfigureAwait(false);
+    }
+
+    // Worker-only: one bounded trim of a current handle. Raised is the floor it left when that is above the stored one, else 0,
+    // so a floor raised by the feed alone is reported too; More when a candidate did not fit the byte budget.
+    private (int Rows, long Bytes, long Raised, bool More) TrimShape(string handle, long before, int maxRows, long maxBytes, CancellationToken cancellationToken)
+    {
+        var stored = StoredShapeFloor(handle);
+        var floor = Math.Max(stored, FeedHoleFloor());
+        if (floor > 0)
         {
-            var floor = Math.Max(ShapeFloor(handle), FeedHoleFloor());
-            if (floor > 0)
-            {
-                RaiseShapeFloor(handle, floor);
-            }
-            var chunks = Command("""
-                SELECT rowid, end_offset, octet_length(body) FROM _tb_shape_chunk
-                WHERE handle = $handle AND (sealed_at < $before OR offset < $floor) ORDER BY offset LIMIT $limit;
-                """);
-            chunks.Parameters.AddWithValue("$handle", handle);
-            chunks.Parameters.AddWithValue("$before", before);
-            chunks.Parameters.AddWithValue("$floor", floor);
-            chunks.Parameters.AddWithValue("$limit", (long)maxRows);
-            var (rows, bytes, end) = ShapeBudget(chunks, maxBytes);
-            if (rows.Count > 0 && end > floor)
-            {
-                // The floor rises in the same transaction, before the rows it now hides go.
-                RaiseShapeFloor(handle, end);
-                floor = end;
-            }
+            RaiseShapeFloor(handle, floor);
+        }
+        var chunks = Command("""
+            SELECT rowid, end_offset, octet_length(body) FROM _tb_shape_chunk
+            WHERE handle = $handle AND (sealed_at < $before OR offset < $floor) ORDER BY offset LIMIT $limit;
+            """);
+        chunks.Parameters.AddWithValue("$handle", handle);
+        chunks.Parameters.AddWithValue("$before", before);
+        chunks.Parameters.AddWithValue("$floor", floor);
+        chunks.Parameters.AddWithValue("$limit", (long)maxRows);
+        var (rows, bytes, end, more) = ShapeBudget(chunks, maxBytes);
+        if (rows.Count > 0 && end > floor)
+        {
+            // The floor rises in the same transaction, before the rows it now hides go.
+            RaiseShapeFloor(handle, end);
+            floor = end;
+        }
 
-            var deleted = DeleteShapeRows("_tb_shape_chunk", rows, cancellationToken);
-            if (deleted == maxRows)
-            {
-                return deleted;
-            }
+        var raised = floor > stored ? floor : 0;
+        var deleted = DeleteShapeRows("_tb_shape_chunk", rows, cancellationToken);
+        if (deleted == maxRows)
+        {
+            return (deleted, bytes, raised, more);
+        }
 
-            // The newest complete snapshot keeps every page, however old: it is the only full read a refetch can start from,
-            // and an incomplete newer one being sealed does not replace it.
-            var snapshots = Command("""
-                SELECT rowid, offset, octet_length(body) FROM _tb_shape_snapshot
-                WHERE handle = $handle AND offset < $floor AND sealed_at < $before
-                AND offset < (SELECT max(offset) FROM _tb_shape_snapshot WHERE handle = $handle AND next_id IS NULL)
-                ORDER BY offset, page LIMIT $limit;
-                """);
-            snapshots.Parameters.AddWithValue("$handle", handle);
-            snapshots.Parameters.AddWithValue("$floor", floor);
-            snapshots.Parameters.AddWithValue("$before", before);
-            snapshots.Parameters.AddWithValue("$limit", (long)(maxRows - deleted));
-            (rows, _, _) = ShapeBudget(snapshots, maxBytes - bytes);
-            return deleted + DeleteShapeRows("_tb_shape_snapshot", rows, cancellationToken);
-        }, cancellationToken, mutation: true).ConfigureAwait(false);
+        // The newest complete snapshot keeps every page, however old: it is the only full read a refetch can start from,
+        // and an incomplete newer one being sealed does not replace it.
+        var snapshots = Command("""
+            SELECT rowid, offset, octet_length(body) FROM _tb_shape_snapshot
+            WHERE handle = $handle AND offset < $floor AND sealed_at < $before
+            AND offset < (SELECT max(offset) FROM _tb_shape_snapshot WHERE handle = $handle AND next_id IS NULL)
+            ORDER BY offset, page LIMIT $limit;
+            """);
+        snapshots.Parameters.AddWithValue("$handle", handle);
+        snapshots.Parameters.AddWithValue("$floor", floor);
+        snapshots.Parameters.AddWithValue("$before", before);
+        snapshots.Parameters.AddWithValue("$limit", (long)(maxRows - deleted));
+        (rows, var snapshotBytes, _, var snapshotMore) = ShapeBudget(snapshots, maxBytes - bytes);
+        return (deleted + DeleteShapeRows("_tb_shape_snapshot", rows, cancellationToken), bytes + snapshotBytes, raised, more || snapshotMore);
     }
 
     public async ValueTask<int> DropShapeAsync(string handle, int maxRows, long maxBytes, CancellationToken cancellationToken)
@@ -78,13 +85,13 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
         var chunks = Command("SELECT rowid, end_offset, octet_length(body) FROM _tb_shape_chunk WHERE handle = $handle ORDER BY offset LIMIT $limit;");
         chunks.Parameters.AddWithValue("$handle", handle);
         chunks.Parameters.AddWithValue("$limit", (long)maxRows);
-        var (rows, bytes, _) = ShapeBudget(chunks, maxBytes);
+        var (rows, bytes, _, _) = ShapeBudget(chunks, maxBytes);
         var deleted = DeleteShapeRows("_tb_shape_chunk", rows, cancellationToken);
 
         var snapshots = Command("SELECT rowid, offset, octet_length(body) FROM _tb_shape_snapshot WHERE handle = $handle ORDER BY offset, page LIMIT $limit;");
         snapshots.Parameters.AddWithValue("$handle", handle);
         snapshots.Parameters.AddWithValue("$limit", (long)(maxRows - deleted));
-        (rows, var snapshotBytes, _) = ShapeBudget(snapshots, maxBytes - bytes);
+        (rows, var snapshotBytes, _, _) = ShapeBudget(snapshots, maxBytes - bytes);
         deleted += DeleteShapeRows("_tb_shape_snapshot", rows, cancellationToken);
         bytes += snapshotBytes;
 
@@ -122,10 +129,7 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
     // Worker-only: the handle's sentinel floor, or the feed's when higher.
     private long ShapeFloor(string handle)
     {
-        var sentinel = Command("SELECT max(end_offset) FROM _tb_shape_chunk WHERE handle = $sentinel AND offset = 0;");
-        sentinel.Parameters.AddWithValue("$sentinel", ShapeFloorPrefix + handle);
-        CountRead("shape");
-        var floor = sentinel.ExecuteScalar() is long end ? end : 0;
+        var floor = StoredShapeFloor(handle);
         CountRead("shape");
         var counter = Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar() is long seq ? seq : 0;
         var head = Command("SELECT 1 FROM _tb_feed WHERE seq = $seq;");
@@ -142,6 +146,15 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
         CountRead("shape");
         var first = Command("SELECT min(seq) FROM _tb_feed;").ExecuteScalar();
         return Math.Max(floor, first is long start ? start - 1 : counter);
+    }
+
+    // Worker-only: the handle's sentinel floor alone.
+    private long StoredShapeFloor(string handle)
+    {
+        var sentinel = Command("SELECT max(end_offset) FROM _tb_shape_chunk WHERE handle = $sentinel AND offset = 0;");
+        sentinel.Parameters.AddWithValue("$sentinel", ShapeFloorPrefix + handle);
+        CountRead("shape");
+        return sentinel.ExecuteScalar() is long end ? end : 0;
     }
 
     // Worker-only: the highest feed sequence no longer retained. A missing head is the counter itself; otherwise the
@@ -171,9 +184,9 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
         return hole.ExecuteScalar() is long above ? above - 1 : 0;
     }
 
-    // Worker-only: the candidates' longest prefix within maxBytes, its body bytes, and its highest second column.
-    // Reads row metadata only; bodies stay on disk.
-    private (List<long> Rows, long Bytes, long End) ShapeBudget(SqliteCommand candidates, long maxBytes)
+    // Worker-only: the candidates' longest prefix within maxBytes, its body bytes, its highest second column, and whether a
+    // candidate did not fit. Reads row metadata only; bodies stay on disk.
+    private (List<long> Rows, long Bytes, long End, bool More) ShapeBudget(SqliteCommand candidates, long maxBytes)
     {
         var rows = new List<long>();
         long bytes = 0;
@@ -190,7 +203,7 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
 
             if (bytes + size > maxBytes)
             {
-                break;
+                return (rows, bytes, end, true);
             }
 
             rows.Add(reader.GetInt64(0));
@@ -198,7 +211,7 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
             end = Math.Max(end, reader.GetInt64(1));
         }
 
-        return (rows, bytes, end);
+        return (rows, bytes, end, false);
     }
 
     // Worker-only: a failed or cancelled delete faults the mutation, and the transaction rolls back with the floor.

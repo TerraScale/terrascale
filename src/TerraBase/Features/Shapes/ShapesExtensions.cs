@@ -123,7 +123,8 @@ public static class ShapesExtensions
             .AddSingleton<IShapeMirror>(provider => provider.GetRequiredService<ShapeMirror>())
             .AddSingleton<IShapeKeyRetention>(provider => provider.GetRequiredService<ShapeMirror>())
             .AddHostedService(provider => provider.GetRequiredService<ShapeMirror>())
-            .AddSingleton<ShapeSweeper>()
+            .AddSingleton(provider => ActivatorUtilities.CreateInstance<ShapeSweeper>(provider,
+                (Func<IDatabaseStore, string, long, CancellationToken, ValueTask>)provider.GetRequiredService<ShapeMirror>().FloorTrimmedAsync))
             .AddHostedService(provider => provider.GetRequiredService<ShapeSweeper>())
             .AddSingleton<IShapeCrypto>(provider => new ShapeCrypto(provider.GetService<DataKeys>(),
                 provider.GetRequiredService<IShapeKeyRetention>(), provider.GetRequiredService<IMemoryBudget>(),

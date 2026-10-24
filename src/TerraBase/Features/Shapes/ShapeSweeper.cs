@@ -27,8 +27,11 @@ internal enum ShapeHandleState
     Unknown,
 }
 
-/// <summary>One classification and the bounded batch it deleted; <see cref="Remains"/> when rows of the handle are left.</summary>
-internal sealed record ShapeSweepStep(ShapeHandleState State, int Deleted, long Bytes, bool Remains);
+/// <summary>
+/// One classification and the bounded batch it deleted: <see cref="Floor"/> is the floor a current handle's trim raised, 0 when it
+/// stayed; <see cref="Remains"/> when the handle has more to delete.
+/// </summary>
+internal sealed record ShapeSweepStep(ShapeHandleState State, int Deleted, long Bytes, long Floor, bool Remains);
 
 /// <summary>Storage operations of the sweep, kept on the engine's transaction runner.</summary>
 internal interface IShapeSweepTransaction
@@ -40,23 +43,26 @@ internal interface IShapeSweepTransaction
     ValueTask<IReadOnlyList<string>> ListShapeHandlesAsync(string? after, int limit, CancellationToken cancellationToken);
 
     /// <summary>
-    /// In one write transaction: classifies the handle from its lineage record against the current lineage, and when it is
-    /// retired deletes one bounded batch, its floor sentinel after its objects and its lineage record last.
+    /// In one write transaction: classifies the handle from its lineage record against the current lineage; a current handle gets
+    /// one bounded retention trim of what was sealed before <paramref name="before"/> or lies below its floor, and a retired one
+    /// one bounded drop batch, its floor sentinel after its objects and its lineage record last.
     /// </summary>
-    ValueTask<ShapeSweepStep> SweepShapeHandleAsync(string handle, int maxRows, long maxBytes, CancellationToken cancellationToken);
+    ValueTask<ShapeSweepStep> SweepShapeHandleAsync(string handle, long before, int maxRows, long maxBytes, CancellationToken cancellationToken);
 }
 
 /// <summary>What one pass did, for tests and diagnostics; counts only, never tenant or shape identity.</summary>
 internal sealed record ShapeSweepPass(int Databases, int Current, int Retired, int Protected, long Deleted, int Refused, int Failed);
 
 /// <summary>
-/// Retires local shape data of handles whose lineage changed (#277): every minute, for each tenant database, one bounded page
-/// of handles past a per-database cursor that wraps, and at most <see cref="ShapeRetention.BatchRows"/> rows and
-/// <see cref="ShapeRetention.BatchBytes"/> of bodies deleted. Independent of shape requests and of the registry; the
-/// registry's retirement queue only lowers latency. Mirrored Tigris objects are not touched.
+/// Keeps local shape data bounded with no shape request (#277): every minute, for each tenant database, bounded pages of handles
+/// past a per-database cursor that wraps. Current handles get ordinary retention, retired ones (lineage changed) are dropped,
+/// together at most <see cref="ShapeRetention.BatchRows"/> rows and <see cref="ShapeRetention.BatchBytes"/> of bodies per
+/// database per pass. Independent of the registry, whose retirement queue only lowers latency. A raised floor of a current
+/// handle is handed to the mirror; mirrored Tigris objects of retired handles are not touched.
 /// </summary>
-internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage, IMemoryBudget memory, TimeProvider time,
-    IMeterFactory meters, ILogger<ShapeSweeper> logger) : BackgroundService
+internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage, ITenantDirectory tenants, IMemoryBudget memory, TimeProvider time,
+    IMeterFactory meters, ILogger<ShapeSweeper> logger, Func<IDatabaseStore, string, long, CancellationToken, ValueTask>? onTrimmed = null)
+    : BackgroundService
 {
     internal static readonly TimeSpan Interval = TimeSpan.FromMinutes(1);
     internal const int PageHandles = 16;
@@ -65,29 +71,37 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
     // A listed key is at most 65 UTF-16 characters; the page, its list and the step results.
     private const long PageBytes = 16 * 1024;
 
-    private readonly Dictionary<(string, string?, string?), string?> _cursors = [];
+    // Created with the service, so a tick that comes before ExecuteAsync starts waiting is not lost.
+    private readonly PeriodicTimer _timer = new(Interval, time);
+    // Only cursors inside an inventory; a wrapped or finished database has none.
+    private readonly Dictionary<(string, string?, string?), string> _cursors = [];
     private readonly Counter<long> _handles = meters.Create(Telemetry.MeterName)
         .CreateCounter<long>("terrabase.shape.sweep.handles", description: "Shape handles the sweep classified, by result.");
     private readonly Counter<long> _deleted = meters.Create(Telemetry.MeterName)
-        .CreateCounter<long>("terrabase.shape.sweep.deleted", description: "Rows of retired shape handles deleted by the sweep.");
+        .CreateCounter<long>("terrabase.shape.sweep.deleted", description: "Shape rows the sweep deleted, by retention or retirement.");
     private TaskCompletionSource<ShapeSweepPass> _next = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>Completes with the next pass to finish.</summary>
     internal Task<ShapeSweepPass> NextPassAsync() => Volatile.Read(ref _next).Task;
 
+    public override void Dispose()
+    {
+        _timer.Dispose();
+        base.Dispose();
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(Interval, time);
         try
         {
-            while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+            while (await _timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
             {
                 ShapeSweepPass pass;
                 try
                 {
                     pass = await PassAsync(stoppingToken).ConfigureAwait(false);
                 }
-                catch (Exception error) when (!stoppingToken.IsCancellationRequested)
+                catch (Exception error) when (error is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
                 {
                     logger.ZLogWarning(error, $"Shape sweep pass failed; retrying next interval");
                     pass = new ShapeSweepPass(0, 0, 0, 0, 0, 0, 1);
@@ -105,6 +119,8 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
     private async Task<ShapeSweepPass> PassAsync(CancellationToken cancellationToken)
     {
         var totals = new Totals();
+        // Once per pass, as a request's retention pass computes it.
+        var before = (time.GetUtcNow() - FeedCursor.Retention).ToUnixTimeMilliseconds();
         HashSet<(string, string?, string?)> seen = [];
         await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -113,14 +129,14 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
             totals.Databases++;
             try
             {
-                await SweepDatabaseAsync(database, key, totals, cancellationToken).ConfigureAwait(false);
+                await SweepDatabaseAsync(database, key, before, totals, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 // Deleted, closed, busy or damaged: skip this database until the next pass, keeping its cursor.
                 totals.Failed++;
                 Record("failed");
-                if (error is not (ObjectDisposedException or ShapeSealOffsetException or StorageBusyException))
+                if (error is not (ObjectDisposedException or StorageBusyException))
                 {
                     logger.ZLogWarning(error, $"Shape sweep skipped a database; retrying next interval");
                 }
@@ -137,12 +153,22 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
             logger.ZLogInformation($"Shape sweep protected {totals.Protected} handles without a valid lineage record");
         }
 
-        return new ShapeSweepPass(totals.Databases, totals.Current, totals.Retired, totals.Protected, totals.Deleted, totals.Refused, totals.Failed);
+        return totals.Pass();
     }
 
-    private async Task SweepDatabaseAsync(TenantContext database, (string, string?, string?) key, Totals totals, CancellationToken cancellationToken)
+    private async Task SweepDatabaseAsync(TenantContext database, (string, string?, string?) key, long before, Totals totals, CancellationToken cancellationToken)
     {
-        if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { IsClosed: false } store)
+        // Listed databases carry no plan: the tenant's own plan sizes its bulk memory share and QoS context.
+        if (await tenants.PlanAsync(database.OrganizationId, cancellationToken).ConfigureAwait(false) is not PlanTier plan)
+        {
+            totals.Refused++;
+            Record("refused");
+            return;
+        }
+
+        // Stores are keyed by ids; one first opened here carries the resolved plan, as one a request opens does.
+        var tenant = database with { Plan = plan };
+        if (await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is not { IsClosed: false } store)
         {
             return;
         }
@@ -155,8 +181,8 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
             for (var page = 0; page < MaxPages; page++)
             {
                 // Admitted per page under the tenant's QoS context and released before the next, so one database's large
-                // retired handle cannot hold memory across the pass.
-                using var admission = memory.TryReserve(MemoryLane.Bulk, PageBytes, database);
+                // handle cannot hold memory across the pass.
+                using var admission = memory.TryReserve(MemoryLane.Bulk, PageBytes, tenant);
                 if (admission is null)
                 {
                     totals.Refused++;
@@ -164,7 +190,7 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
                     return;
                 }
 
-                using var qos = QosContext.Enter(database, memory);
+                using var qos = QosContext.Enter(tenant, memory);
                 IReadOnlyList<string> handles;
                 // The reader ends before any writer starts: the writer re-reads everything it decides on.
                 await using (var reader = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false))
@@ -174,27 +200,53 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
 
                 foreach (var handle in handles)
                 {
+                    if (cursor is not null && string.CompareOrdinal(handle, cursor) <= 0)
+                    {
+                        // A listing that does not advance starts over next pass instead of repeating this page.
+                        cursor = null;
+                        return;
+                    }
+
                     while (true)
                     {
-                        ShapeSweepStep step;
-                        await using (var writer = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false))
+                        // The budget is the database's for the whole pass, across trims and drops; checked before every writer.
+                        if (rows <= 0 || bytes <= 0)
                         {
-                            step = await Sweep(writer).SweepShapeHandleAsync(handle, rows, bytes, cancellationToken).ConfigureAwait(false);
+                            return;
+                        }
+
+                        ShapeSweepStep step;
+                        try
+                        {
+                            await using var writer = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
+                            step = await Sweep(writer).SweepShapeHandleAsync(handle, before, rows, bytes, cancellationToken).ConfigureAwait(false);
                             _ = await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
+                        }
+                        catch (InvalidDataException)
+                        {
+                            // Rolled back: a damaged row of this handle protects it without pinning the database's cursor.
+                            Count(ShapeHandleState.Malformed, totals);
+                            break;
                         }
 
                         rows -= step.Deleted;
                         bytes -= step.Bytes;
                         totals.Deleted += step.Deleted;
                         _deleted.Add(step.Deleted);
+                        if (step.Floor > 0 && onTrimmed is not null)
+                        {
+                            // After the trim's writer is disposed; the mirror queues it and rereads the floor.
+                            await onTrimmed(store, handle, step.Floor, cancellationToken).ConfigureAwait(false);
+                        }
+
                         if (!step.Remains)
                         {
                             Count(step.State, totals);
                             break;
                         }
 
-                        // A batch that deleted rows continues; the next pass resumes at this handle once the budget is spent.
-                        if (step.Deleted == 0 || rows <= 0 || bytes <= 0)
+                        // A batch that deleted rows continues; one that fit nothing resumes at this handle next pass.
+                        if (step.Deleted == 0)
                         {
                             return;
                         }
@@ -213,7 +265,14 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
         }
         finally
         {
-            _cursors[key] = cursor;
+            if (cursor is null)
+            {
+                _cursors.Remove(key);
+            }
+            else
+            {
+                _cursors[key] = cursor;
+            }
         }
     }
 
@@ -223,23 +282,22 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
         {
             case ShapeHandleState.Current:
                 totals.Current++;
+                Record("current");
                 break;
             case ShapeHandleState.Retired:
                 totals.Retired++;
+                Record("retired");
                 break;
             default:
                 totals.Protected++;
+                Record(state switch
+                {
+                    ShapeHandleState.Unclassified => "unclassified",
+                    ShapeHandleState.Malformed => "malformed",
+                    _ => "unknown",
+                });
                 break;
         }
-
-        Record(state switch
-        {
-            ShapeHandleState.Current => "current",
-            ShapeHandleState.Retired => "retired",
-            ShapeHandleState.Unclassified => "unclassified",
-            ShapeHandleState.Malformed => "malformed",
-            _ => "unknown",
-        });
     }
 
     private void Record(string result) => _handles.Add(1, new KeyValuePair<string, object?>("result", result));
@@ -256,5 +314,7 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
         public long Deleted;
         public int Refused;
         public int Failed;
+
+        public ShapeSweepPass Pass() => new(Databases, Current, Retired, Protected, Deleted, Refused, Failed);
     }
 }

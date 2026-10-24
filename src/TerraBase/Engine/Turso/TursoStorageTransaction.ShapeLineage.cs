@@ -98,7 +98,8 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
                     }
                 }
 
-                if (next is null)
+                // SQLite orders keys by UTF-8 bytes, this loop by UTF-16 code units: stop rather than repeat a key.
+                if (next is null || string.CompareOrdinal(next, cursor) <= 0)
                 {
                     break;
                 }
@@ -135,19 +136,26 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
         return reader.GetInt64(1) - prefix.Length > ShapeKeyChars ? key + "\U0010FFFF" : key;
     }
 
-    public async ValueTask<ShapeSweepStep> SweepShapeHandleAsync(string handle, int maxRows, long maxBytes, CancellationToken cancellationToken)
+    public async ValueTask<ShapeSweepStep> SweepShapeHandleAsync(string handle, long before, int maxRows, long maxBytes, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         return await RunAsync(() =>
         {
             // Classified and deleted in this one writer transaction: a writer that publishes after it sees the same lineage.
             var state = ClassifyShapeHandle(handle);
-            if (state != ShapeHandleState.Retired)
+            if (state == ShapeHandleState.Current)
             {
-                return new ShapeSweepStep(state, 0, 0, false);
+                // Ordinary retention, as a request runs it: a batch that deleted rows, or stopped at the byte budget, continues.
+                var (rows, bytes, floor, more) = TrimShape(handle, before, maxRows, maxBytes, cancellationToken);
+                return new ShapeSweepStep(state, rows, bytes, floor, rows > 0 || more);
             }
 
-            var (deleted, bytes) = DropShape(handle, maxRows, maxBytes, cancellationToken);
+            if (state != ShapeHandleState.Retired)
+            {
+                return new ShapeSweepStep(state, 0, 0, 0, false);
+            }
+
+            var (deleted, dropped) = DropShape(handle, maxRows, maxBytes, cancellationToken);
             var remains = Command("""
                 SELECT EXISTS (SELECT 1 FROM _tb_shape_chunk WHERE handle IN ($handle, $floor, $lineage))
                     OR EXISTS (SELECT 1 FROM _tb_shape_snapshot WHERE handle = $handle);
@@ -156,7 +164,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSweepTransaction
             remains.Parameters.AddWithValue("$floor", ShapeFloorPrefix + handle);
             remains.Parameters.AddWithValue("$lineage", ShapeLineagePrefix + handle);
             CountRead(Sweep);
-            return new ShapeSweepStep(state, deleted, bytes, (long)remains.ExecuteScalar()! != 0);
+            return new ShapeSweepStep(state, deleted, dropped, 0, (long)remains.ExecuteScalar()! != 0);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
