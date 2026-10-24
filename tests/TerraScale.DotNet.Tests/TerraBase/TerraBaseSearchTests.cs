@@ -93,7 +93,8 @@ public sealed class TerraBaseSearchTests
         await Assert.That(bodies[0]).IsEqualTo("""{"filter":{"and":[{"search":["/title","database"]},{"within":["/loc",{"lat":0,"lon":0,"meters":1000}]},{"within":["/loc",{"south":-1,"west":-1,"north":1,"east":1}]}]},"sort":[{"path":"$score","order":"desc"}]}""");
         await Assert.ThrowsAsync<ArgumentException>(() => db.QueryAsync("articles", new()
         {
-            Filter = combined.RootElement, Sort = [TerraBaseSort.NearPoint("/loc", 0, 0)],
+            Filter = combined.RootElement,
+            Sort = [TerraBaseSort.NearPoint("/loc", 0, 0)],
         }));
         await Assert.That(bodies.Count).IsEqualTo(1);
     }
