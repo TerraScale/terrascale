@@ -96,9 +96,9 @@ public sealed class DataBrowserJourneyTests(DashboardRootFixture fixture)
         { throw new InvalidOperationException("The native SQL editor did not become ready: " + string.Join(" | ", bootFailures.Concat(errors))); }
         await Assert.That(await page.TitleAsync()).IsEqualTo("core-primary · SQL console · TerraScale");
         await Assert.That(await page.Locator("#sql").GetAttributeAsync("aria-hidden")).IsEqualTo("true");
-        await Assert.That(await page.Locator("#sql").InputValueAsync()).IsEqualTo("SELECT * FROM orders LIMIT 20");
-        await Assert.That(await page.Locator("#sql-analysis").InnerTextAsync()).Contains("EXPLAIN QUERY PLAN SELECT * FROM orders LIMIT 20");
-        await Assert.That((await page.Locator("#sql-analysis").InnerTextAsync()).Contains("Server check passed.", StringComparison.Ordinal)).IsFalse();
+        // Collections are not SQL tables, so the editor opens empty instead of querying one.
+        await Assert.That(await page.Locator("#sql").InputValueAsync()).IsEqualTo("");
+        await Assert.That(await page.Locator("#sql-catalog").TextContentAsync()).DoesNotContain("orders");
         await EditorAsync("SELECT * FROM orders WHERE total > 500 ORDER BY createdAt");
         await page.GetByRole(AriaRole.Button, new() { Name = "Format", Exact = true }).ClickAsync();
         await page.WaitForFunctionAsync("() => document.getElementById('sql').value.includes('\\nFROM orders')");

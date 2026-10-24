@@ -36,7 +36,7 @@ public sealed class CollectionLifecycleJourneyTests(DashboardRootFixture fixture
             fields.Append(("_csrf", csrf)).Append(("databaseId", id)).ToDictionary(field => field.Item1, field => field.Item2);
         using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", Fields(("name", "items"))))
             await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(await client.GetStringAsync($"/databases/{id}/sql")).Contains("SELECT * FROM items LIMIT 20");
+        await Assert.That(await client.GetStringAsync($"/databases/{id}/sql")).DoesNotContain("SELECT * FROM items");
         using (var duplicate = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", Fields(("name", "items"))))
         {
             await Assert.That(duplicate.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
