@@ -5,9 +5,9 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace TerraScale.DotNet;
 
-/// <summary>Platform management with the caller's user sign-in token, except receipt-only account deletion status.
+/// <summary>Platform management with user sign-in tokens, receipt-only account status, or service Basic credentials for deletion outbox operations.
 /// Organization/project/API-key tokens cannot authenticate user routes. Pages are bounded, mutations and reads are sent once.</summary>
-public sealed class TerraScaleAuthPlatformClient(TerraScaleAuthClient client)
+public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient client)
 {
     /// <summary>create_organization: POST /v1/terrascale/organizations.</summary>
     public Task<TerraScaleAuthPlatformOrganization> CreateOrganizationAsync(
