@@ -72,6 +72,55 @@ A branch is created in the source database's home region. Any other region answe
 
 Delete a branch like any other database. Deleting the source does not delete its branches; they are independent copies.
 
+## Preview databases for pull requests
+
+The `TerraScale/branch-action@v1` GitHub Action gives each pull request its own branch of a database. When a pull request opens, reopens or gets new commits, the action creates the branch `pr-<number>` from the database you choose. Later pushes keep the branch. When the pull request closes or merges, the action deletes it.
+
+Store an API key in the repository secret `TERRASCALE_API_KEY`. `ts keys create ci` prints a key once; it has `databases:read`, `databases:write`, `documents:read` and `documents:write`.
+
+| Input | Required | Meaning |
+| --- | --- | --- |
+| `api-key` | yes | The API key, from `secrets.TERRASCALE_API_KEY` |
+| `database` | yes | The database to branch |
+| `branch` | no | The branch name. The default is `pr-<number>` |
+| `command` | no | `create`, `reset` or `delete`. Empty deletes the branch when the pull request closes and creates it otherwise. `reset` branches again from the source on each push |
+| `project` | no | The project. Only organization keys need it |
+
+The action has these outputs: `name`, `id`, `project-id` and `api-url`, which is `https://api.terrascale.tech/v1/projects/<project>/databases/<name>`.
+
+This workflow creates the preview branch, migrates it and runs a query on it. The action installs the `ts` CLI and adds it to `PATH` for later steps. The migration step is skipped when the pull request closes.
+
+```yaml
+name: Preview database
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+concurrency: preview-database-${{ github.event.pull_request.number }}
+
+jobs:
+  branch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - id: db
+        uses: TerraScale/branch-action@v1
+        with:
+          api-key: ${{ secrets.TERRASCALE_API_KEY }}
+          database: app
+      - name: Migrate and test against the branch
+        if: github.event.action != 'closed'
+        env:
+          TERRASCALE_API_KEY: ${{ secrets.TERRASCALE_API_KEY }}
+          DATABASE: ${{ steps.db.outputs.name }}
+        run: |
+          ts migrate up "$DATABASE"
+          ts migrate diff "$DATABASE"
+          ts exec "$DATABASE" 'SELECT name FROM users LIMIT 10'
+```
+
+Outside a pull request, `ts db branch <source> <new>` creates a branch from the CLI. To apply SQL migrations to a branch, see [schema migrations](/ar/guides/migrations).
+
 ## Branches and your plan
 
 Branches share the organization's normal plan allowances. There is no extra branch allowance. See [pricing](/ar/pricing).

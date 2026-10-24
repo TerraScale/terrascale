@@ -21,7 +21,8 @@ Use the [quickstart](/getting-started/) to establish one working application con
 - [Functions](/guides/functions): JavaScript functions called over HTTPS, on collection changes or on a cron schedule.
 - [Backups and restore](/guides/backups-and-restore): backup policy, point-in-time restore into a new database.
 - [Export your data](/guides/export): stream every document as NDJSON, resume and restore.
-- [Branches](/guides/branches): copy a database into a new branch database.
+- [Branches](/guides/branches): copy a database into a new branch database, and preview databases for pull requests.
+- [Schema migrations](/guides/migrations): versioned SQL table migrations with `ts migrate`.
 - [Dashboard usage](/guides/dashboard): customer account and database workflow.
 - [Import an existing database](/guides/import) (pending): one-time import of a PostgreSQL or Turso export with dry-run preview and validation.
 - [Import from MongoDB or Firestore](/guides/import-ndjson): mongoexport or a Firestore script into one NDJSON file, then the same import.
