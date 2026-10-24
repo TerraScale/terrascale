@@ -164,6 +164,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
 
         var body = ShapeEnvelope(shape, offset, covered, frontier, ShapeResume(shape.ResumeScope.Span, covered, cancellationToken),
             changes.WrittenSpan);
+        PublishShapeLineage(shape.Handle, shape.Collection, shape.CollectionGeneration, shape.Incarnation);
         var insert = Command("INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) VALUES ($handle, $offset, $end, $body, $at);");
         insert.Parameters.AddWithValue("$handle", shape.Handle);
         insert.Parameters.AddWithValue("$offset", offset);

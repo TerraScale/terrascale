@@ -732,7 +732,8 @@ public sealed class ShapeMirrorTests
 
         /// <summary>Seals a snapshot of the shape's collection at the feed head, through the production snapshot store.</summary>
         public ValueTask<ShapeSnapshot> SealSnapshotAsync() => Snapshots.SealIfDueAsync(Db.Store,
-            new ShapeSnapshotDefinition(Shape.Handle, Shape.ShapeId, Shape.Collection, Shape.CollectionGeneration, Shape.ResumeScope), Cancellation);
+            new ShapeSnapshotDefinition(Shape.Handle, Shape.ShapeId, Shape.Collection, Shape.CollectionGeneration, Shape.ResumeScope,
+                Shape.Incarnation), Cancellation);
 
         public Task<HttpResponseMessage> GetKeyAsync(string epoch, string keyId) =>
             _api.Client.GetAsync(new Uri($"{_api.Collections}/{Collection}/shape/keys?handle={Shape.Handle}&epoch={epoch}&key_id={keyId}", UriKind.Relative));
@@ -784,7 +785,8 @@ public sealed class ShapeMirrorTests
             var collection = await transaction.GetCollectionAsync(Collection, CancellationToken.None)
                 ?? throw new InvalidOperationException("the collection is missing");
             return new ShapeSealDefinition(Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)),
-                "h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), Collection, collection.Id, RandomNumberGenerator.GetBytes(16));
+                "h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), Collection, collection.Id, RandomNumberGenerator.GetBytes(16),
+                db.Store.Incarnation);
         }
     }
 

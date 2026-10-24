@@ -12,10 +12,13 @@ using ZLogger;
 
 namespace TerraBase.Features.Shapes;
 
-/// <summary>Identity supplied by the handle lane; the predicate is supplied by the filtered-shape lane.</summary>
+/// <summary>
+/// Identity supplied by the handle lane; the predicate is supplied by the filtered-shape lane. <c>Incarnation</c> is the
+/// database incarnation the handle was computed under, checked by every page's writer.
+/// </summary>
 internal sealed record ShapeSnapshotDefinition(
     string Handle, string ShapeId, string Collection, string CollectionGeneration, ReadOnlyMemory<byte> ResumeScope,
-    Func<StoredDocument, bool>? Predicate = null, DocumentFilter? OwnerFilter = null);
+    Ulid Incarnation, Func<StoredDocument, bool>? Predicate = null, DocumentFilter? OwnerFilter = null);
 
 internal sealed record ShapeSnapshot(long Offset, long SealedAt)
 {
@@ -51,7 +54,8 @@ internal interface IShapeSnapshotStorage
     /// </summary>
     ValueTask<(long Offset, string Cursor)> ShapeSnapshotHeadAsync(bool remote, ReadOnlyMemory<byte> resumeScope, DateTimeOffset now, CancellationToken cancellationToken);
     ValueTask<ShapeSnapshotPage> BuildShapeSnapshotPageAsync(ShapeSnapshotDefinition shape, long offset, string? afterId, string cursor, IMemoryBudget memory, TimeProvider time, CancellationToken cancellationToken);
-    ValueTask InsertShapeSnapshotPageAsync(string handle, long offset, int page, ShapeSnapshotPage body, long sealedAt, CancellationToken cancellationToken);
+    /// <summary>Inserts a page after checking, in this writer transaction, that the shape's lineage is still current.</summary>
+    ValueTask InsertShapeSnapshotPageAsync(ShapeSnapshotDefinition shape, long offset, int page, ShapeSnapshotPage body, long sealedAt, CancellationToken cancellationToken);
     ValueTask DeleteIncompleteShapeSnapshotsAsync(string handle, CancellationToken cancellationToken);
     ValueTask<ShapeSnapshotPage?> ReadShapeSnapshotPageAsync(string handle, long offset, string? afterId, IMemoryBudget memory, CancellationToken cancellationToken);
 }
@@ -181,7 +185,7 @@ internal sealed class ShapeSnapshots(
             {
                 using var body = await storage.BuildShapeSnapshotPageAsync(shape, offset, after, cursor, memory, time, cancellationToken).ConfigureAwait(false);
                 await using var writer = await transactions.BeginAsync(store, write: true, cancellationToken).ConfigureAwait(false);
-                await Storage(writer).InsertShapeSnapshotPageAsync(shape.Handle, offset, page, body, now.ToUnixTimeMilliseconds(), cancellationToken).ConfigureAwait(false);
+                await Storage(writer).InsertShapeSnapshotPageAsync(shape, offset, page, body, now.ToUnixTimeMilliseconds(), cancellationToken).ConfigureAwait(false);
                 _ = await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
                 // Counted per committed page; the snapshot's publication is recorded once, after its last page.
                 published += body.Body.Length;

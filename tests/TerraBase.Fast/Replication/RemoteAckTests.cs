@@ -1663,7 +1663,8 @@ public sealed class RemoteAckTests
         var collection = await transaction.GetCollectionAsync(Collection, CancellationToken.None)
             ?? throw new InvalidOperationException("the collection is missing");
         return new ShapeSealDefinition(Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)),
-            "h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), Collection, collection.Id, RandomNumberGenerator.GetBytes(16));
+            "h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), Collection, collection.Id, RandomNumberGenerator.GetBytes(16),
+            store.Incarnation);
     }
 
     // A seal waiting on an unacknowledged commit ends at the bound; null means it waited rather than returning a boundary.
@@ -1749,7 +1750,7 @@ public sealed class RemoteAckTests
         }, "a test reading the feed head", cancellationToken);
 
     private static ShapeSnapshotDefinition SnapshotOf(ShapeSealDefinition shape) =>
-        new(shape.Handle, shape.ShapeId, shape.Collection, shape.CollectionGeneration, shape.ResumeScope);
+        new(shape.Handle, shape.ShapeId, shape.Collection, shape.CollectionGeneration, shape.ResumeScope, shape.Incarnation);
 
     private sealed record Reply(HttpStatusCode Status, JsonElement Json, string? Location);
 

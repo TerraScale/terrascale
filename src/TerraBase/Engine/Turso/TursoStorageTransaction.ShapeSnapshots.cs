@@ -328,11 +328,14 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
     }
 
     public async ValueTask InsertShapeSnapshotPageAsync(
-        string handle, long offset, int page, ShapeSnapshotPage body, long sealedAt, CancellationToken cancellationToken)
+        ShapeSnapshotDefinition shape, long offset, int page, ShapeSnapshotPage body, long sealedAt, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         _ = await RunAsync(() =>
         {
+            // The page was built by a long-lived reader that may predate a committed drop: check lineage in this writer.
+            var handle = shape.Handle;
+            PublishShapeLineage(handle, shape.Collection, shape.CollectionGeneration, shape.Incarnation);
             var command = Command("""
                 INSERT INTO _tb_shape_snapshot (handle, offset, page, next_id, body, sealed_at)
                 VALUES ($handle, $offset, $page, $next, $body, $sealed);

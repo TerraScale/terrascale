@@ -88,7 +88,7 @@ internal sealed class ShapeService(
         if (registry.CurrentHandle(scope.Database, collection, scope.CanonicalFilter) != lineage.Handle)
         {
             var head = await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false);
-            if (registry.Track(scope.Database, collection, scope.Filter, Definition(scope, lineage), head) is { } full)
+            if (registry.Track(scope.Database, collection, scope.Filter, Definition(store, scope, lineage), head) is { } full)
             {
                 return full;
             }
@@ -164,7 +164,7 @@ internal sealed class ShapeService(
             }
 
             // Seals at the head when none is due or the newest is below the floor (ShapeSnapshotDueAsync).
-            var snapshot = await snapshots.SealIfDueAsync(store, SnapshotDefinition(scope, lineage), cancellationToken).ConfigureAwait(false);
+            var snapshot = await snapshots.SealIfDueAsync(store, SnapshotDefinition(store, scope, lineage), cancellationToken).ConfigureAwait(false);
             if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } changed)
             {
                 return changed switch
@@ -373,7 +373,7 @@ internal sealed class ShapeService(
                 return stale;
             }
 
-            var definition = Definition(scope, lineage);
+            var definition = Definition(store, scope, lineage);
             // Read before the head: F only rises and never passes the head, so offset <= F here stays below the head read next.
             var frontier = await sealer.FrontierAsync(store, cancellationToken).ConfigureAwait(false);
             var head = await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false);
@@ -729,12 +729,15 @@ internal sealed class ShapeService(
         }
     }
 
-    private static ShapeSealDefinition Definition(ShapeScope scope, ShapeLineage lineage) =>
-        new(lineage.ShapeId, lineage.Handle, scope.Collection.Name, scope.Collection.Id, ResumeScope(scope.Database, scope.Collection, scope.CanonicalFilter), Predicate(scope), scope.Filter.Access?.Owner);
+    // The incarnation the handle was computed from (ShapeHandle.ComputeCanonical): every object writer checks it, with the
+    // generation and this process's replica.
+    private static ShapeSealDefinition Definition(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage) =>
+        new(lineage.ShapeId, lineage.Handle, scope.Collection.Name, scope.Collection.Id, ResumeScope(scope.Database, scope.Collection, scope.CanonicalFilter),
+            store.Incarnation, Predicate(scope), scope.Filter.Access?.Owner);
 
-    private static ShapeSnapshotDefinition SnapshotDefinition(ShapeScope scope, ShapeLineage lineage) =>
-        new(lineage.Handle, lineage.ShapeId, scope.Collection.Name, scope.Collection.Id, ResumeScope(scope.Database, scope.Collection, scope.CanonicalFilter), Predicate(scope),
-            scope.Filter.Access is { Owner: not null } access ? access.Rules.OwnerFilter(access.Identity.Actor) : null);
+    private static ShapeSnapshotDefinition SnapshotDefinition(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage) =>
+        new(lineage.Handle, lineage.ShapeId, scope.Collection.Name, scope.Collection.Id, ResumeScope(scope.Database, scope.Collection, scope.CanonicalFilter),
+            store.Incarnation, Predicate(scope), scope.Filter.Access is { Owner: not null } access ? access.Rules.OwnerFilter(access.Identity.Actor) : null);
 
     private static Func<StoredDocument, bool>? Predicate(ShapeScope scope) => scope.Filter.Filter is null && scope.Filter.Access?.Owner is null ? null : scope.Filter.Matches;
 }

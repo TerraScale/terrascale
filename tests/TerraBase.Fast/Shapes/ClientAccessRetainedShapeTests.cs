@@ -49,7 +49,7 @@ public sealed class ClientAccessRetainedShapeTests
         {
             var collection = (await transaction.GetCollectionAsync(DocumentApi.Collection, CancellationToken.None))!;
             var definition = new ShapeSealDefinition(pageBody.RootElement.GetProperty("shape_id").GetString()!, handle,
-                collection.Name, collection.Id, RandomNumberGenerator.GetBytes(16),
+                collection.Name, collection.Id, RandomNumberGenerator.GetBytes(16), store.Incarnation,
                 OwnerAuthorization: new DocumentOwnerProof(collection.Id, rules.Owner!, actor, rules.Fingerprint()));
             _ = await api.Server.Services.GetRequiredService<IShapeSealer>().SealUpToHeadAsync(store, definition, 0, CancellationToken.None);
         }
@@ -124,7 +124,7 @@ public sealed class ClientAccessRetainedShapeTests
         {
             var collection = (await transaction.GetCollectionAsync(DocumentApi.Collection, CancellationToken.None))!;
             var definition = new ShapeSealDefinition(initial.ShapeId, initial.Handle, collection.Name, collection.Id,
-                RandomNumberGenerator.GetBytes(16), OwnerAuthorization: new DocumentOwnerProof(collection.Id, rules.Owner!, alice, rules.Fingerprint()));
+                RandomNumberGenerator.GetBytes(16), store.Incarnation, OwnerAuthorization: new DocumentOwnerProof(collection.Id, rules.Owner!, alice, rules.Fingerprint()));
             _ = await api.Server.Services.GetRequiredService<IShapeSealer>().SealUpToHeadAsync(store, definition,
                 long.Parse(initial.Offset, CultureInfo.InvariantCulture), CancellationToken.None);
         }
@@ -172,7 +172,7 @@ public sealed class ClientAccessRetainedShapeTests
             var collection = (await transaction.GetCollectionAsync(DocumentApi.Collection, CancellationToken.None))!;
             var time = new FakeTimeProvider();
             var definition = new ShapeSnapshotDefinition(initial.Handle, initial.ShapeId, collection.Name, collection.Id,
-                RandomNumberGenerator.GetBytes(16), document =>
+                RandomNumberGenerator.GetBytes(16), store.Incarnation, document =>
                 {
                     time.Advance(ShapeSnapshots.PageDeadline);
                     return filter.Matches(document);
@@ -187,7 +187,7 @@ public sealed class ClientAccessRetainedShapeTests
                     api.Server.Services.GetRequiredService<IMemoryBudget>(), time, CancellationToken.None);
                 await Assert.That(body.NextId).IsEqualTo(page < 2 ? ids[page] : null);
                 await using var writer = await transactions.BeginAsync(store, write: true, CancellationToken.None);
-                await ((IShapeSnapshotStorage)writer).InsertShapeSnapshotPageAsync(initial.Handle, offset, page, body, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), CancellationToken.None);
+                await ((IShapeSnapshotStorage)writer).InsertShapeSnapshotPageAsync(definition, offset, page, body, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), CancellationToken.None);
                 _ = await writer.CommitAsync(CancellationToken.None);
                 after = body.NextId;
             }

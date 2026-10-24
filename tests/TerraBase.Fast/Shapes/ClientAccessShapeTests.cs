@@ -35,7 +35,7 @@ public sealed class ClientAccessShapeTests
         var identity = ShapeHandle.ComputeCanonical(store, replica, collection, "owner-pagination-test");
         var time = new FakeTimeProvider();
         var shape = new ShapeSnapshotDefinition(identity.Handle, identity.ShapeId, collection.Name, collection.Id,
-            RandomNumberGenerator.GetBytes(16), _ =>
+            RandomNumberGenerator.GetBytes(16), store.Incarnation, _ =>
             {
                 time.Advance(ShapeSnapshots.PageDeadline);
                 return true;
