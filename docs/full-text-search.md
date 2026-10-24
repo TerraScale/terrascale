@@ -1,6 +1,6 @@
 # Full-text search
 
-Requires the TerraBase full-text backend change, which is not available on current main or live services yet. These SDK tests verify serialization and fake HTTP responses, not live backend qualification.
+Full-text search is available on the live TerraBase API. These helpers require an SDK version containing this change. SDK tests use serialized requests and fake HTTP responses; live backend qualification is recorded separately.
 
 ```js
 import { v1Filter } from "@terrascale/sdk";
