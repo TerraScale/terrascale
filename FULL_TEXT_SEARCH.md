@@ -1,6 +1,6 @@
 # Full-text search
 
-Requires the TerraBase full-text search backend, which is not yet available on current main or the live API.
+Full-text search is available on the live TerraBase API. These helpers require an SDK version containing this change. SDK tests use serialized requests and fake HTTP responses; live backend qualification is recorded separately.
 
 Create a text index using one to four dotted field names:
 
