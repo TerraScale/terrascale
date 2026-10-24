@@ -62,6 +62,11 @@ internal sealed partial class TursoStorageTransaction
         {
             return true;
         }
+        if (write && KnownCollection(collection) is not null)
+        {
+            (_tables ??= [with(StringComparer.Ordinal)]).Add(collection);
+            return true;
+        }
         if (path is not null)
         {
             CountRead(path);
@@ -75,6 +80,11 @@ internal sealed partial class TursoStorageTransaction
 
         return exists;
     }
+
+    // The committed collection row the store's loaded names hold, while this transaction changed no collection (a commit
+    // that changes one forgets the names); null when unknown, and the caller reads the row itself.
+    private CollectionInfo? KnownCollection(string collection) =>
+        !ChangedReaderState && store.TryKnownCollection(collection, out var known) ? known : null;
 
     // Worker-only: deletes a client collection's row; every collection found so far is looked up again.
     private int DropCollectionRow(string collection)
