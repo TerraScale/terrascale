@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Engine.Turso;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Replication;
@@ -86,6 +87,13 @@ public sealed class CatalogRestoreSafetyTests
             {
                 await Assert.That(await machine.Api.Server.Services.GetRequiredService<IApiKeyStore>().FindAsync(secret, token) is NotFound).IsTrue();
             }
+            else
+            {
+                var system = await machine.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+                await using var read = await system.BeginTransactionAsync(write: false, token);
+                await Assert.That(await read.GetAsync("api_keys", id, token)).IsNotNull()
+                    .Because("the readable restored catalog still holds the revoked key; the gate must refuse to authorize it");
+            }
             using var tls = new ClientTls();
             using var client = tls.CreateClient(machine.Api.Server.ClientAddress!, secret);
             using var response = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{project}/databases/missing/collections"), token);
@@ -122,6 +130,9 @@ public sealed class CatalogRestoreSafetyTests
         public void Restore()
         {
             File.Copy(Path.Combine(_directory, ".restore-drill", "before.db"), Path.Combine(_directory, "_system.db"), overwrite: true);
+            // Each encrypted snapshot has its own data key: restore its wrapped key with its ciphertext.
+            File.Copy(Path.Combine(_directory, ".restore-drill", "before.db" + DatabaseKeys.Suffix),
+                Path.Combine(_directory, "_system.db" + DatabaseKeys.Suffix), overwrite: true);
             File.Delete(Path.Combine(_directory, "_system.db-wal"));
             File.Delete(Path.Combine(_directory, "_system.db-shm"));
         }
