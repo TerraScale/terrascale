@@ -3,7 +3,6 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Text;
-using System.Threading.Channels;
 using Microsoft.AspNetCore.Connections;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -57,29 +56,38 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
     }
 
     /// <inheritdoc />
-    public override async Task OnConnectedAsync(ConnectionContext connection)
+    public override Task OnConnectedAsync(ConnectionContext connection)
     {
         ArgumentNullException.ThrowIfNull(connection);
-        var input = connection.Transport.Input;
-        var closed = connection.ConnectionClosed;
+        return RunAsync(connection.Transport.Input, connection.Transport.Output, connection.ConnectionClosed);
+    }
+
+    // Serves one connection until the client, a refusal or the shutdown drain ends it.
+    private async Task RunAsync(PipeReader input, PipeWriter output, CancellationToken closed)
+    {
         // Cancelled to stop reading frames (a revoked key); requests already running finish and answer.
         using var closing = CancellationTokenSource.CreateLinkedTokenSource(closed);
-        // Bounded by the slots: a request keeps its slot until its answer is written.
-        var answers = Channel.CreateUnbounded<Outgoing>(new UnboundedChannelOptions { SingleReader = true });
-        var writing = WriteAsync(connection.Transport.Output, answers.Reader, closed);
+        var outbox = new Outbox(output, closed);
         var slots = new SemaphoreSlim(MaxInFlight, MaxInFlight);
         try
         {
-            if (await HandshakeAsync(input, answers.Writer, closing.Token).ConfigureAwait(false) is not { } session)
+            if (await HandshakeAsync(input, outbox, closing.Token).ConfigureAwait(false) is not { } session)
             {
                 return;
             }
 
             // Requests to one document run in arrival order: each starts after the connection's previous request to it answered.
-            // Requests to different documents run concurrently, so pipelined puts share the engine's group commit.
-            var latest = new Dictionary<string, Task>(StringComparer.Ordinal);
+            // Requests to different documents run concurrently, so pipelined puts share the engine's group commit. Only
+            // requests still running are kept, so a request looks its document up only while some other one runs.
+            var running = new Dictionary<string, Task>(StringComparer.Ordinal);
             while (true)
             {
+                // Answers wait while more whole frames are buffered, so one flush carries a batch; never across a wait.
+                if (slots.CurrentCount == 0 || !WholeFrameBuffered(input))
+                {
+                    await outbox.FlushAsync().ConfigureAwait(false);
+                }
+
                 await slots.WaitAsync(closing.Token).ConfigureAwait(false);
                 Frame? next;
                 try
@@ -98,41 +106,52 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
                     break;
                 }
 
-                var address = frame.Body.Length > 0 && frame.Body.Length >= 1 + frame.Body[0] + 26 ? Encoding.UTF8.GetString(frame.Body, 0, 1 + frame.Body[0] + 26) : "";
-                Task? prior;
-                lock (latest)
+                var address = running.Count > 0 ? Address(frame.Body) : null;
+                var prior = address is null ? null : GetPrior(running, address);
+
+                // Inline: a request runs on this loop until it first waits (a cache hit never does), then its answer is
+                // written by whoever completes it.
+                outbox.Deferring = true;
+                Task request;
+                try
                 {
-                    prior = latest.GetValueOrDefault(address);
+                    request = RequestAsync(session, frame, prior ?? Task.CompletedTask, slots, outbox, closing, closed);
+                }
+                finally
+                {
+                    outbox.Deferring = false;
                 }
 
-                // On the thread pool: a request's synchronous storage work never holds up reading the next frame.
-                var running = Task.Run(() => RequestAsync(session, frame, prior ?? Task.CompletedTask, slots, answers.Writer, closing, closed), CancellationToken.None);
-                lock (latest)
+                if (!request.IsCompleted)
                 {
-                    latest[address] = running;
-                }
-
-                _ = running.ContinueWith(
-                    done =>
+                    var key = address ?? Address(frame.Body);
+                    lock (running)
                     {
-                        lock (latest)
+                        running[key] = request;
+                    }
+
+                    _ = request.ContinueWith(
+                        done =>
                         {
-                            if (latest.GetValueOrDefault(address) == done)
+                            lock (running)
                             {
-                                latest.Remove(address);
+                                if (running.GetValueOrDefault(key) == done)
+                                {
+                                    running.Remove(key);
+                                }
                             }
-                        }
-                    }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                }
             }
         }
         catch (InvalidDataException error)
         {
             // The stream cannot be read past a bad frame: answer it and end the session.
-            answers.Writer.TryWrite(new Outgoing(Error(0, new Validation(error.Message, "invalid_frame"))));
+            outbox.Add(new Outgoing(Error(0, new Validation(error.Message, "invalid_frame"))));
         }
         catch (QosMemoryException)
         {
-            answers.Writer.TryWrite(new Outgoing(Error(0, new QuotaExceeded("organization memory budget exceeded", "tenant_memory"))));
+            outbox.Add(new Outgoing(Error(0, new QuotaExceeded("organization memory budget exceeded", "tenant_memory"))));
         }
         catch (Exception error) when (error is OperationCanceledException or IOException)
         {
@@ -140,18 +159,51 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
         }
         finally
         {
+            await outbox.FlushAsync().ConfigureAwait(false);
             for (var i = 0; i < MaxInFlight; i++)
             {
                 await slots.WaitAsync(CancellationToken.None).ConfigureAwait(false);
             }
 
-            answers.Writer.TryComplete();
-            await writing.ConfigureAwait(false);
+            await outbox.FlushAsync().ConfigureAwait(false);
             slots.Dispose();
         }
     }
 
-    private async ValueTask<Session?> HandshakeAsync(PipeReader input, ChannelWriter<Outgoing> answers, CancellationToken cancellationToken)
+    private static Task? GetPrior(Dictionary<string, Task> running, string address)
+    {
+        lock (running)
+        {
+            return running.GetValueOrDefault(address);
+        }
+    }
+
+    // A frame's collection and document id, the key of the per-document order.
+    private static string Address(byte[] body) =>
+        body.Length > 0 && body.Length >= 1 + body[0] + 26 ? Encoding.UTF8.GetString(body, 0, 1 + body[0] + 26) : "";
+
+    // Whether a whole frame is already buffered, so reading it waits for nothing.
+    private static bool WholeFrameBuffered(PipeReader input)
+    {
+        if (!input.TryRead(out var read))
+        {
+            return false;
+        }
+
+        var buffer = read.Buffer;
+        var whole = false;
+        if (buffer.Length >= 4)
+        {
+            Span<byte> header = stackalloc byte[4];
+            buffer.Slice(0, 4).CopyTo(header);
+            whole = buffer.Length - 4 >= BinaryPrimitives.ReadUInt32LittleEndian(header);
+        }
+
+        input.AdvanceTo(buffer.Start);
+        return whole;
+    }
+
+    private async ValueTask<Session?> HandshakeAsync(PipeReader input, Outbox answers, CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(HandshakeTimeout);
@@ -160,7 +212,7 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
         {
             if (frame.Op != Hello || frame.Body.Length < 1 || frame.Body[0] != Version)
             {
-                answers.TryWrite(new Outgoing(Error(frame.Id, new Validation("the first frame must be a hello for protocol version 1", "unsupported_version"))));
+                answers.Add(new Outgoing(Error(frame.Id, new Validation("the first frame must be a hello for protocol version 1", "unsupported_version"))));
                 return null;
             }
 
@@ -169,11 +221,12 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
             var access = await AuthorizeAsync(secret, project, database, timeout.Token).ConfigureAwait(false);
             if (access is not Grant grant)
             {
-                answers.TryWrite(new Outgoing(Error(frame.Id, Refusal(access))));
+                answers.Add(new Outgoing(Error(frame.Id, Refusal(access))));
                 return null;
             }
 
-            answers.TryWrite(new Outgoing(Answer(frame.Id, 200, [Version], [])));
+            answers.Add(new Outgoing(Answer(frame.Id, 200, [Version], [])));
+            await answers.FlushAsync().ConfigureAwait(false);
             return new Session(secret, project, database) { Grant = grant };
         }
     }
@@ -231,13 +284,17 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
     }
 
     private async Task RequestAsync(
-        Session session, Frame frame, Task prior, SemaphoreSlim slots, ChannelWriter<Outgoing> answers, CancellationTokenSource closing, CancellationToken closed)
+        Session session, Frame frame, Task prior, SemaphoreSlim slots, Outbox outbox, CancellationTokenSource closing, CancellationToken closed)
     {
         byte[]? answer = null;
         IMemoryReservation? held = null;
         try
         {
-            await prior.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            if (!prior.IsCompleted)
+            {
+                await prior.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
+
             answer = await ExecuteAsync(session, frame, closing, closed).ConfigureAwait(false);
             // Held until written, so a client that stops reading holds at most MaxInFlight admitted answers.
             held = services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Foreground, answer.Length, session.Grant.Database);
@@ -256,10 +313,20 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
                 slots.Release();
             }
 
-            if (answer is null || !answers.TryWrite(new Outgoing(answer, Release)))
+            if (answer is null)
             {
                 Release();
             }
+            else
+            {
+                outbox.Add(new Outgoing(answer, Release));
+            }
+        }
+
+        // An answer completed off the reading loop is flushed here; the loop flushes its own before it waits.
+        if (!outbox.Deferring)
+        {
+            await outbox.FlushAsync().ConfigureAwait(false);
         }
     }
 
@@ -449,35 +516,94 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
         }
     }
 
-    // One writer per connection: answers in completion order, flushed whenever no other answer is ready, then released.
-    // Once the client is gone, answers are released unwritten until the connection ends.
-    private static async Task WriteAsync(PipeWriter output, ChannelReader<Outgoing> answers, CancellationToken cancellationToken)
+    /// <summary>
+    /// A connection's answers in completion order: written and flushed by one caller at a time, then released. Once the client
+    /// is gone, answers are released unwritten.
+    /// </summary>
+    private sealed class Outbox(PipeWriter output, CancellationToken closed)
     {
-        var batch = new List<Outgoing>();
-        var gone = false;
-        while (await answers.WaitToReadAsync(CancellationToken.None).ConfigureAwait(false))
+        private readonly Queue<Outgoing> _queue = new();
+        private readonly List<Outgoing> _batch = [];
+        private int _flushing;
+        private bool _gone;
+
+        /// <summary>Set while the reading loop runs a request inline: its answer waits for the loop's next flush.</summary>
+        public bool Deferring
         {
-            while (answers.TryRead(out var answer))
+            get => Volatile.Read(ref field);
+            set => Volatile.Write(ref field, value);
+        }
+
+        public void Add(Outgoing answer)
+        {
+            lock (_queue)
             {
-                if (!gone)
+                _queue.Enqueue(answer);
+            }
+        }
+
+        public async ValueTask FlushAsync()
+        {
+            // Whoever holds the gate writes what was added before it rechecks the queue, so an answer is never stranded.
+            while (Interlocked.CompareExchange(ref _flushing, 1, 0) == 0)
+            {
+                try
                 {
-                    output.Write(answer.Answer);
+                    lock (_queue)
+                    {
+                        while (_queue.TryDequeue(out var answer))
+                        {
+                            _batch.Add(answer);
+                        }
+                    }
+
+                    if (_batch.Count > 0)
+                    {
+                        await WriteAsync().ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    Volatile.Write(ref _flushing, 0);
                 }
 
-                batch.Add(answer);
+                lock (_queue)
+                {
+                    if (_queue.Count == 0)
+                    {
+                        return;
+                    }
+                }
             }
+        }
 
+        private async ValueTask WriteAsync()
+        {
             try
             {
-                gone = gone || (await output.FlushAsync(cancellationToken).ConfigureAwait(false)).IsCompleted;
+                if (!_gone)
+                {
+                    foreach (var answer in _batch)
+                    {
+                        output.Write(answer.Answer);
+                    }
+
+                    _gone = (await output.FlushAsync(closed).ConfigureAwait(false)).IsCompleted;
+                }
             }
             catch (Exception error) when (error is OperationCanceledException or IOException)
             {
-                gone = true;
+                _gone = true;
             }
+            finally
+            {
+                foreach (var answer in _batch)
+                {
+                    answer.Release?.Invoke();
+                }
 
-            batch.ForEach(answer => answer.Release?.Invoke());
-            batch.Clear();
+                _batch.Clear();
+            }
         }
     }
 

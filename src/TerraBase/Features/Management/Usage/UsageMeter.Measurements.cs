@@ -80,15 +80,19 @@ internal sealed partial class UsageMeter
         }
 
         latency[index] = 1;
-        Record(database, new(new("requests", options.Region, "", kind), 1, status >= 400 ? 1 : 0, latency));
-        RecordClientBytes(database, received, sent);
+        // One update for the request and its bytes: each update takes the measurements lock.
+        Record(database, null,
+            new(new("requests", options.Region, "", kind), 1, status >= 400 ? 1 : 0, latency),
+            new(new("client_bytes", options.Region, "", "received"), received),
+            new(new("client_bytes", options.Region, "", "sent"), sent));
         stats.Request(database, elapsed, status >= 400);
     }
 
     public void RecordClientBytes(TenantContext database, long received, long sent, DateTimeOffset? transferredAt = null)
     {
-        Record(database, new(new("client_bytes", options.Region, "", "received"), received), transferredAt);
-        Record(database, new(new("client_bytes", options.Region, "", "sent"), sent), transferredAt);
+        Record(database, transferredAt,
+            new(new("client_bytes", options.Region, "", "received"), received),
+            new(new("client_bytes", options.Region, "", "sent"), sent));
     }
 
     public IDisposable TrackActive(Action report)
@@ -225,16 +229,28 @@ internal sealed partial class UsageMeter
             _ => false,
         };
 
-    private void Record(TenantContext database, UsageReading reading, DateTimeOffset? at = null)
+    private void Record(TenantContext database, UsageReading reading, DateTimeOffset? at = null) => Record(database, at, reading);
+
+    // Readings of one minute in one update; invalid and zero ones are left out.
+    private void Record(TenantContext database, DateTimeOffset? at, params ReadOnlySpan<UsageReading> readings)
     {
-        if (!ValidDimension(reading.Dimension) || reading.IsZero)
+        Dictionary<string, UsageReading>? meters = null;
+        foreach (var reading in readings)
+        {
+            if (ValidDimension(reading.Dimension) && !reading.IsZero)
+            {
+                (meters ??= [with(StringComparer.Ordinal)])[reading.Dimension.Key] = reading;
+            }
+        }
+
+        if (meters is null)
         {
             return;
         }
 
         var minute = (at ?? time.GetUtcNow()).ToUnixTimeSeconds() / 60;
         var key = new UsageKey(DatabaseOwner.Of(database), minute / 60, UsageScope.Minute, (int)(minute % 60));
-        Add(key, new(0, 0, new Dictionary<string, UsageReading>(StringComparer.Ordinal) { [reading.Dimension.Key] = reading }));
+        Add(key, new(0, 0, meters));
     }
 
     private void AddMeasurements(UsageKey key, OpCounts counts)
