@@ -10,15 +10,26 @@ root = Path(__file__).resolve().parents[2]
 workflow = (root / ".github/workflows/ci.yml").read_text()
 dockerfile = (root / "Dockerfile").read_text()
 writers = re.findall(r"^\s+cache-to: (.+)$", workflow, re.M)
-assert writers == [
-    "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', env.AREA) || '' }}",
-], writers
+assert writers == ["type=gha,mode=min,scope=ci-restore"], writers
+docker_writer = workflow.split("      - name: Cache shared Docker restore layers\n", 1)[1].split("\n      #", 1)[0]
+assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in docker_writer
+assert "target: restored" in docker_writer
+assert "cache-from: &cache-from type=gha,scope=ci-restore" in workflow
+assert "mode=max" not in workflow, "Published binaries and source snapshots must not fill GHA"
 # setup-dotnet saves its NuGet cache after any successful job, pull requests included: no job may enable it.
 assert "cache: true" not in workflow
-assert not re.search(r"uses: actions/cache(?:/save)?@", workflow), "Explicit cache writers need a main-only gate"
+assert not re.search(r"uses: actions/cache@", workflow), "Use explicit restore/save to restrict writers"
+assert workflow.count("uses: actions/cache/save@") == 1
+nuget_writer = workflow.split("uses: actions/cache/save@", 1)[1].split("\n      - ", 1)[0]
+assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in nuget_writer
+assert "steps.nuget.outputs.cache-primary-key" in nuget_writer
+assert "uses: actions/cache/restore@" in workflow
+assert "DeterministicSourcePaths: false" in workflow, "CallerFilePath fixtures need their real source path"
+assert "ContinuousIntegrationBuild: false" not in workflow
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow.split("\npermissions:", 1)[0]
-assert "no-cache-filters: test-${{ env.AREA }}" in workflow
-assert "no-cache-filters: slow-${{ env.AREA }}-run" in workflow
+assert 'bash scripts/ci/test-area.sh fast "$AREA"' in workflow
+assert 'bash scripts/ci/test-area.sh slow "$AREA"' in workflow
+assert "native-audit:" not in workflow, "Remove the temporary executor comparison"
 
 # Guard behavior at the build graph boundary: publishing and Slow must never rerun checked Fast stages.
 stages = {
@@ -71,4 +82,4 @@ def filtered(change=None):
 baseline = filtered()
 for path in fixtures:
     assert (filtered(path) != baseline) == (path in expected), path
-print(f"cache-policy-test: ok (main-only writers, superseded runs cancelled, {len(fixtures)} restore invalidation controls)")
+print(f"cache-policy-test: ok (main-only package/restore writers, fresh native suites, {len(fixtures)} restore invalidation controls)")
