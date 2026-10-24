@@ -46,6 +46,8 @@ public sealed record ProjectCredential(string Id, string ProjectId, string Name,
     // Last successful token exchange as ts-auth reports it (at most five minutes stale); null when never used.
     public DateTimeOffset? LastUsedAt { get; init; }
     public bool IsActive { get; init; } = true;
+    // ts-auth's canonical CIDRs a request with this key must come from; empty allows any IP, null when not reported.
+    public IReadOnlyList<string>? AllowedCidrs { get; init; }
 }
 public sealed record CreatedProjectCredential(ProjectCredential Key, string Secret)
 {

@@ -1,4 +1,5 @@
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.ApiKeys;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Shared.UI;
 
@@ -28,6 +29,7 @@ public static class NotificationEndpoints
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountRequest.LoginRedirect(http);
+            await ApiKeyExpiryNotifications.RefreshAsync(http, context);
             return NotificationView.Create(Page(http, context));
         });
         endpoints.MapGet("/notifications/dialog", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
@@ -35,6 +37,7 @@ public static class NotificationEndpoints
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             if (http.Request.Headers["Datastar-Request"] != "true") return Results.Redirect("/notifications");
+            await ApiKeyExpiryNotifications.RefreshAsync(http, context);
             await DatastarEvents.PatchElementsAsync(http, NotificationPatch.Create(Page(http, context, true)));
             return Results.Empty;
         });

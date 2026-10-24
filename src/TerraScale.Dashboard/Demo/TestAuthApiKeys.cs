@@ -19,12 +19,14 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
     private readonly object gate = new();
     private readonly SortedDictionary<string, (Key Key, string Secret)> keys = new(StringComparer.Ordinal);
     private readonly List<(string Method, string Path, string UserId, string Token)> requests = [];
+    private readonly Dictionary<string, string[]> projectCidrs = new(StringComparer.Ordinal);
     private TaskCompletionSource? listGate;
     private int pausedLists;
     public int PausedLists => Volatile.Read(ref pausedLists);
     public void PauseLists() { Interlocked.Exchange(ref pausedLists, 0); listGate = new(TaskCreationOptions.RunContinuationsAsynchronously); }
     public void ReleaseLists() { listGate?.TrySetResult(); listGate = null; }
     public (Key Key, string Secret)[] Issued() { lock (gate) return keys.Values.ToArray(); }
+    public void ExpireAt(string keyId, DateTimeOffset expiresAt) { lock (gate) keys[keyId] = (keys[keyId].Key with { ExpiresAt = expiresAt }, keys[keyId].Secret); }
     // ts-auth's unauthenticated /readyz; a journey sets false to take ts-auth out of service.
     public bool Ready { get; set; } = true;
 
@@ -33,7 +35,8 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
         [property: JsonPropertyName("database")] string? Database, [property: JsonPropertyName("scopes")] IReadOnlyList<string> Scopes,
         [property: JsonPropertyName("created_by")] string CreatedBy, [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
         [property: JsonPropertyName("expires_at")] DateTimeOffset? ExpiresAt,
-        [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt);
+        [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt,
+        [property: JsonPropertyName("allowed_cidrs")] IReadOnlyList<string> AllowedCidrs);
 
     public object Observations()
     {
@@ -64,10 +67,36 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
         if (!match.Success) return Error(HttpStatusCode.NotFound, "not_found");
         string organization = match.Groups["organization"].Value, project = match.Groups["project"].Value, keyId = match.Groups["key"].Value;
         var rotate = match.Groups["rotate"].Success;
+        var cidrsRoute = match.Groups["cidrs"].Success;
         lock (gate) requests.Add((request.Method.Method, uri.AbsolutePath, actor.UserId, token));
         var current = role(actor.UserId, organization, project);
         if (current.Length == 0) return Error(HttpStatusCode.NotFound, "not_found");
         var manage = current is "owner" or "admin";
+        if (!match.Groups["keys"].Success)
+        {
+            // ts-auth's project body, reduced to what the dashboard reads; PUT .../allowed-cidrs needs project admin.
+            if (request.Method == HttpMethod.Put && cidrsRoute)
+            {
+                if (!manage) return Error(HttpStatusCode.Forbidden, "access_denied");
+                if (await CidrsAsync(request, cancellationToken) is not { } replaced) return Error(HttpStatusCode.BadRequest, "invalid_request", "allowed_cidrs must hold up to 32 valid IPs or CIDR ranges");
+                lock (gate) projectCidrs[project] = replaced;
+            }
+            else if (request.Method != HttpMethod.Get || cidrsRoute) return Error(HttpStatusCode.MethodNotAllowed, "invalid_request");
+            lock (gate) return Json(new { id = project, organization_id = organization, allowed_cidrs = projectCidrs.GetValueOrDefault(project) ?? [] });
+        }
+        if (cidrsRoute)
+        {
+            if (request.Method != HttpMethod.Put) return Error(HttpStatusCode.MethodNotAllowed, "invalid_request");
+            if (!manage) return Error(HttpStatusCode.Forbidden, "access_denied");
+            if (await CidrsAsync(request, cancellationToken) is not { } replaced) return Error(HttpStatusCode.BadRequest, "invalid_request", "allowed_cidrs must hold up to 32 valid IPs or CIDR ranges");
+            lock (gate)
+            {
+                if (!keys.TryGetValue(keyId, out var stored) || stored.Key.OrganizationId != organization || stored.Key.ProjectId != project)
+                    return Error(HttpStatusCode.NotFound, "api_key_not_found");
+                keys[keyId] = (stored.Key with { AllowedCidrs = replaced }, stored.Secret);
+                return Json(keys[keyId].Key);
+            }
+        }
         if (keyId.Length == 0 && request.Method == HttpMethod.Get)
         {
             var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
@@ -89,7 +118,7 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
             if (!manage) return Error(HttpStatusCode.Forbidden, "access_denied");
             using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
             var root = body.RootElement;
-            if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Any(field => field.Name is not ("name" or "scopes" or "database" or "expires_at")) ||
+            if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Any(field => field.Name is not ("name" or "scopes" or "database" or "expires_at" or "allowed_cidrs")) ||
                 !root.TryGetProperty("name", out var name) || name.GetString() is not { Length: > 0 and <= 128 } keyName ||
                 !root.TryGetProperty("scopes", out var scopes) || scopes.ValueKind != JsonValueKind.Array || scopes.GetArrayLength() == 0)
                 return Error(HttpStatusCode.BadRequest, "invalid_request");
@@ -97,7 +126,8 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
             if (granted.Any(scope => !Allowed.Contains(scope)) || granted.Distinct(StringComparer.Ordinal).Count() != granted.Length) return Error(HttpStatusCode.BadRequest, "invalid_scope");
             var database = root.TryGetProperty("database", out var named) && named.ValueKind == JsonValueKind.String ? named.GetString() : null;
             DateTimeOffset? expires = root.TryGetProperty("expires_at", out var expiry) && expiry.ValueKind == JsonValueKind.String ? expiry.GetDateTimeOffset() : null;
-            var key = new Key(ids.NewId(), keyName, organization, project, database, granted, actor.UserId, DateTimeOffset.UtcNow, expires, null);
+            if (Canonical(root) is not { } allowed) return Error(HttpStatusCode.BadRequest, "invalid_request", "allowed_cidrs must hold up to 32 valid IPs or CIDR ranges");
+            var key = new Key(ids.NewId(), keyName, organization, project, database, granted, actor.UserId, DateTimeOffset.UtcNow, expires, null, allowed);
             var secret = Secret(key.Id);
             lock (gate) keys[key.Id] = (key, secret);
             return Json(new { api_key = key, key = secret }, HttpStatusCode.Created);
@@ -135,11 +165,33 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
         }
     }
 
-    [GeneratedRegex("^/v1/terrascale/organizations/(?<organization>[0-9A-HJKMNP-TV-Z]{26})/projects/(?<project>[0-9A-HJKMNP-TV-Z]{26})/api-keys(?:/(?<key>[0-9A-HJKMNP-TV-Z]{26})(?<rotate>/rotate)?)?$")]
+    // Like ts-auth: bare IPs become /32 or /128, an absent or empty list allows any IP.
+    private static string[]? Canonical(JsonElement root)
+    {
+        if (!root.TryGetProperty("allowed_cidrs", out var list) || list.ValueKind == JsonValueKind.Null) return [];
+        if (list.ValueKind != JsonValueKind.Array || list.GetArrayLength() > 32) return null;
+        var canonical = new List<string>();
+        foreach (var item in list.EnumerateArray())
+        {
+            var text = item.ValueKind == JsonValueKind.String ? item.GetString()! : "";
+            if (IPNetwork.TryParse(text, out var network)) canonical.Add(network.ToString());
+            else if (IPAddress.TryParse(text, out var address)) canonical.Add(new IPNetwork(address, address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork ? 32 : 128).ToString());
+            else return null;
+        }
+        return canonical.Distinct(StringComparer.Ordinal).ToArray();
+    }
+    private static async Task<string[]?> CidrsAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+        return body.RootElement.ValueKind == JsonValueKind.Object && body.RootElement.EnumerateObject().All(field => field.Name == "allowed_cidrs") &&
+            body.RootElement.TryGetProperty("allowed_cidrs", out _) ? Canonical(body.RootElement) : null;
+    }
+
+    [GeneratedRegex("^/v1/terrascale/organizations/(?<organization>[0-9A-HJKMNP-TV-Z]{26})/projects/(?<project>[0-9A-HJKMNP-TV-Z]{26})(?:(?<keys>/api-keys(?:/(?<key>[0-9A-HJKMNP-TV-Z]{26})(?:(?<rotate>/rotate)|(?<cidrs>/allowed-cidrs))?)?)|(?<cidrs>/allowed-cidrs))?$")]
     private static partial Regex Route();
     private static string Secret(string keyId) => keyId + "_" + string.Concat(Enumerable.Range(0, 52).Select(_ => Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)]));
     private static HttpResponseMessage Json(object value, HttpStatusCode status = HttpStatusCode.OK) =>
         new(status) { Content = new StringContent(JsonSerializer.Serialize(value), new MediaTypeHeaderValue("application/json")) };
     // ts-auth management errors use the nested envelope (TerraScaleAuthErrors).
-    private static HttpResponseMessage Error(HttpStatusCode status, string code) => Json(new { error = new { code, message = "Test ts-auth rejected the request" } }, status);
+    private static HttpResponseMessage Error(HttpStatusCode status, string code, string message = "Test ts-auth rejected the request") => Json(new { error = new { code, message } }, status);
 }
