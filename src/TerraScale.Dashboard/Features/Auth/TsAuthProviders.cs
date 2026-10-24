@@ -12,7 +12,7 @@ public interface ITsAuthProviders
     Task UnlinkProviderAsync(SessionRecord session, string provider, string code, CancellationToken cancellationToken);
 }
 
-// Like the MFA routes, these account APIs are not yet exposed by the pinned ts-dotnet 0.0.7.
+// Like the MFA routes, these account APIs are not yet exposed by the pinned ts-dotnet package.
 // Keep the adapter on the platform client and the user's original sign-in bearer until the SDK ships them.
 public sealed partial class TsAuthGateway : ITsAuthProviders
 {
