@@ -102,6 +102,7 @@ builder.Services.AddTerraBaseMemory(options);
 builder.Services.AddTerraBaseQos();
 builder.Services.AddTerraBaseEngine(options);
 builder.Services.AddTerraBaseApiKeys();
+builder.Services.AddTerraBaseClientCors();
 builder.Services.AddTerraBaseDocuments();
 builder.Services.AddTerraBaseWebhooks();
 builder.Services.AddTerraBaseSql();
@@ -142,6 +143,7 @@ try
     app.UseTerraBaseBadRequests();
     app.UseTerraBaseLegacyRoutes();
     app.UseRouting();
+    app.UseTerraBaseClientCors();
     TerraBase.Features.Shapes.ShapesExtensions.UseTerraBaseShapeNoStore(app);
     app.UseTerraBaseListeners();
     // Refuse new work on existing connections while preserving the probes' shutdown responses.

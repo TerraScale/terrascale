@@ -327,6 +327,7 @@ internal sealed partial class EngineManagementService
                 await documents.Value.QueryAsync(transaction, query with { Collection = DashboardSpace + query.Collection }, countLimit, cancellationToken, observation).ConfigureAwait(false) switch
                 {
                     QueryOutcome outcome => outcome,
+                    Forbidden error => new NotFound(error.Message, error.Code),
                     NotFound error => error,
                     Validation error => error,
                 }, static error => error, cancellationToken).ConfigureAwait(false);

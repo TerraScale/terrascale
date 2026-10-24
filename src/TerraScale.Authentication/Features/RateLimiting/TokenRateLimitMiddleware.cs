@@ -47,7 +47,8 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
                 || context.Request.Path.Equals(TokenPath + "/", StringComparison.OrdinalIgnoreCase)
                 || context.Request.Path.Equals(DevicePath, StringComparison.OrdinalIgnoreCase)
                 || context.Request.Path.Equals(DevicePath + "/", StringComparison.OrdinalIgnoreCase)
-                || IsProjectTokenPath(context.Request.Path)))
+                || IsProjectTokenPath(context.Request.Path)
+                || EndUserTokenEndpoint.Matches(context.Request.Path)))
         {
             await next(context);
             return;
@@ -61,8 +62,11 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
             context.Response.Headers.CacheControl = "no-store";
-            refusal = Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, "The token request could not be checked; retry shortly."),
-                statusCode: StatusCodes.Status503ServiceUnavailable);
+            refusal = EndUserTokenEndpoint.Matches(context.Request.Path)
+                ? Results.Json(new ErrorBody(new ErrorDetail("temporarily_unavailable", "The token request could not be checked; retry shortly.")),
+                    statusCode: StatusCodes.Status503ServiceUnavailable)
+                : Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, "The token request could not be checked; retry shortly."),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
         if (refusal is not null)

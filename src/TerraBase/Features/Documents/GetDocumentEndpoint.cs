@@ -48,6 +48,7 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
             NotFound error => ErrorResponse.From(error),
             Validation error => ErrorResponse.From(error),
             StoredDocument document => Conditional(key, document, cancellationToken),
+            Forbidden error => ErrorResponse.From(error),
             NeverWritten => Conditional(key, null, cancellationToken),
         };
 

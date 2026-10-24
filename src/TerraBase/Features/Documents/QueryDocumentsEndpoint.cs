@@ -59,18 +59,28 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDi
             },
         };
 
-    private async ValueTask<IResult> QueryAsync(TenantContext database, string collection, byte[] body, QueryRequest request, CancellationToken cancellationToken) =>
-        QueryParser.CheckParse(database, collection, request) switch
+    private async ValueTask<IResult> QueryAsync(TenantContext database, string collection, byte[] body, QueryRequest request, CancellationToken cancellationToken)
+    {
+        var checkedQuery = QueryParser.CheckParse(database, collection, request);
+        if (checkedQuery is Validation invalid)
         {
-            Validation error => ErrorResponse.From(error),
-            ParsedQuery query => request.Cursor is not { } cursor
-                ? await PageAsync(database, collection, body, request, query, after: null, cancellationToken)
-                : QueryParser.CheckPosition(cursor, query.Digest, query.Sort.Count) switch
-                {
-                    Validation error => ErrorResponse.From(error),
-                    QueryPosition after => await PageAsync(database, collection, body, request, query, after, cancellationToken),
-                },
+            return ErrorResponse.From(invalid);
+        }
+
+        var parsed = checkedQuery switch
+        {
+            ParsedQuery value => value,
+            Validation => throw new InvalidOperationException("query validation was already handled"),
         };
+        var query = parsed with { Digest = await CollectionRuleAccess.BindCursorAsync(documents, database, collection, parsed.Digest, cancellationToken) };
+        return request.Cursor is not { } cursor
+            ? await PageAsync(database, collection, body, request, query, after: null, cancellationToken)
+            : QueryParser.CheckPosition(cursor, query.Digest, query.Sort.Count) switch
+            {
+                Validation error => ErrorResponse.From(error),
+                QueryPosition after => await PageAsync(database, collection, body, request, query, after, cancellationToken),
+            };
+    }
 
     private async ValueTask<IResult> PageAsync(
         TenantContext database, string collection, byte[] body, QueryRequest request, ParsedQuery query, QueryPosition? after, CancellationToken cancellationToken) =>
@@ -82,6 +92,7 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDi
         {
             NotFound error => ErrorResponse.From(error),
             Validation error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
             QueryOutcome outcome => Page(collection, body, query, outcome.Page, outcome.Count, cancellationToken),
         };
 

@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
@@ -80,6 +81,16 @@ public static class UserAuthExtensions
         ArgumentNullException.ThrowIfNull(app);
         app.Use(async (context, next) =>
         {
+            if (Identity(context.User, UserAuthenticationHandler.SchemeName)?.HasClaim("token_kind", "end_user") == true
+                && context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName is not
+                    ("getDocument" or "listDocuments" or "queryDocuments" or "createDocument" or "putDocument"
+                    or "patchDocument" or "deleteDocument" or "runTransaction" or "streamDatabaseChanges"
+                    or "getShape" or "getShapeKey" or "getShapeManifest"))
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
+
             // Project tokens never enter the membership-based compatibility API: that would discard their narrowing.
             if (Identity(context.User, UserAuthenticationHandler.SchemeName)?.FindFirst("project_id") is not null
                 && (context.Features.Get<LegacyManagementRoute>() is not null
@@ -184,7 +195,11 @@ public static class UserAuthExtensions
                     Unavailable => throw new UnreachableException(),
                 };
             }
-            var grant = new ProjectAccess(actor, project, organization, restricted, restrictedId);
+            var grant = new ProjectAccess(actor, project, organization, restricted, restrictedId)
+            {
+                IsEndUser = jwt.HasClaim("token_kind", "end_user"),
+                Roles = jwt.FindAll("roles").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
+            };
             context.Features.Set(grant);
 
             if (managementRoute)

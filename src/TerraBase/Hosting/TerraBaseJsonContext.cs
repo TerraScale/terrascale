@@ -66,6 +66,8 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(BackupRecord))]
 [JsonSerializable(typeof(BackupSchedule))]
 [JsonSerializable(typeof(CollectionList))]
+[JsonSerializable(typeof(CollectionAccessRules))]
+[JsonSerializable(typeof(CollectionRulesBody))]
 [JsonSerializable(typeof(CollectionSchema))]
 [JsonSerializable(typeof(UniqueSchema))]
 [JsonSerializable(typeof(UniqueSchemaRequest))]

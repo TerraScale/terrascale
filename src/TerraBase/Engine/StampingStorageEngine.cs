@@ -326,6 +326,13 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         public ValueTask<CollectionInfo?> GetCollectionAsync(string name, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetCollectionAsync(name, cancellationToken), cancellationToken);
 
+        public ValueTask<CollectionAccessRules?> GetCollectionRulesAsync(string name, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.GetCollectionRulesAsync(name, cancellationToken), cancellationToken);
+        public ValueTask<bool> SetCollectionRulesAsync(string name, CollectionAccessRules rules, CancellationToken cancellationToken) =>
+            WriteCollectionAsync(() => inner.SetCollectionRulesAsync(name, rules, cancellationToken), cancellationToken);
+        public ValueTask<DocumentOwnerProof?> GetDocumentOwnerProofAsync(string collection, string id, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.GetDocumentOwnerProofAsync(collection, id, cancellationToken), cancellationToken);
+
         public ValueTask<JsonElement?> GetCollectionSchemaAsync(string name, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetCollectionSchemaAsync(name, cancellationToken), cancellationToken);
 

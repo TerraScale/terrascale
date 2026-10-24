@@ -54,6 +54,9 @@ public enum Comparison
 /// <summary>A predicate over one document (query v1 filter grammar).</summary>
 public abstract record DocumentFilter;
 
+// Only server authorization creates this boundary; submitted filters cannot change candidate admission.
+internal sealed record AuthorizedFilter(DocumentFilter Predicate, DocumentFilter? ClientFilter) : DocumentFilter;
+
 /// <summary>Every child matches.</summary>
 /// <param name="Children">At least one child.</param>
 public sealed record AndFilter(IReadOnlyList<DocumentFilter> Children) : DocumentFilter;

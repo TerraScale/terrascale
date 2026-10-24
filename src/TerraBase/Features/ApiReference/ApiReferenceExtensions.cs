@@ -115,6 +115,21 @@ public static class ApiReferenceExtensions
         {
             ApiExamples.Apply(operation);
             return Task.CompletedTask;
+        }).AddDocumentTransformer((document, _, _) =>
+        {
+            // Request-body metadata can replace content after the operation examples ran.
+            foreach (var path in document.Paths.Values)
+            {
+                if (path.Operations is not { } operations)
+                {
+                    continue;
+                }
+                foreach (var operation in operations.Values)
+                {
+                    ApiExamples.ApplyRequestExamples(operation);
+                }
+            }
+            return Task.CompletedTask;
         }));
 
     private static OpenApiResponse Error(string description, IOpenApiSchema schema) => new()
