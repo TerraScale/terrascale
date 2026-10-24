@@ -102,7 +102,7 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         // Restarted past the one-minute retry delay the failed attempt recorded.
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow.AddMinutes(2) };
         await using var restarted = await oidc.StartReplicaAsync(clock: clock);
-        await SettleAsync(restarted, clock, async () => await restarted.App.Services.GetRequiredService<PlatformDirectory>().ProjectAsync(project, CancellationToken.None) is null);
+        await SettleAsync(restarted, clock, async () => await restarted.App.Services.GetRequiredService<PlatformDirectory>().ClosureAsync("project", project, CancellationToken.None) is null);
         await Assert.That(await restarted.App.Services.GetRequiredService<PlatformDirectory>().ProjectAsync(project, CancellationToken.None)).IsNull();
         await Assert.That(await restarted.App.Services.GetRequiredService<PlatformDirectory>().ClosureAsync("project", project, CancellationToken.None)).IsNull();
         await FencedAsync(project, organization);
@@ -130,9 +130,28 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await oidc.Server.DisposeAsync();
         // Restarted past the one-minute retry delay the failed attempt recorded.
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow.AddMinutes(2) };
-        await using var restarted = await oidc.StartReplicaAsync(clock: clock);
-        await SettleAsync(restarted, clock, async () => await restarted.App.Services.GetRequiredService<Users>().GetAsync("terrascale", alice.Id) is null);
+        using var completion = new HeldClosureCompletion(AuthStore.NaturalKeyId("terrascale", AuthStore.ClosureJobCollection, ClosureJob.Key("account", alice.Id)))
+        {
+            InnerHandler = TerraBaseFixture.NewHandler(),
+        };
+        await using var restarted = await oidc.StartReplicaAsync(clock: clock, services: services => services.AddSingleton(new HttpClient(completion)));
         var directory = restarted.App.Services.GetRequiredService<PlatformDirectory>();
+        async Task<bool> DoneAsync() => await directory.ClosureAsync("account", alice.Id, CancellationToken.None) is null;
+        var settling = SettleAsync(restarted, clock, DoneAsync);
+        try
+        {
+            // Hold the real terminal DELETE before TerraBase commits it. The user is already gone, but the durable
+            // account job still exists: user absence cannot be this fixture's completion condition.
+            await completion.Entered.Task.WaitAsync(TestContext.Current!.Execution.CancellationToken);
+            await Assert.That(await restarted.App.Services.GetRequiredService<Users>().GetAsync("terrascale", alice.Id)).IsNull();
+            await Assert.That(await directory.ClosureAsync("account", alice.Id, CancellationToken.None)).IsNotNull();
+            await Assert.That(await DoneAsync()).IsFalse();
+        }
+        finally
+        {
+            completion.Release.TrySetResult();
+            await settling.WaitAsync(TestContext.Current!.Execution.CancellationToken);
+        }
         await Assert.That(await restarted.App.Services.GetRequiredService<Users>().GetAsync("terrascale", alice.Id)).IsNull();
         await Assert.That(await directory.OrganizationAsync(organization, CancellationToken.None)).IsNull();
         await Assert.That(await directory.ProjectAsync(project, CancellationToken.None)).IsNull();
@@ -560,6 +579,26 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await Assert.That(await directory.CancelClosureAsync((await directory.ClosureAsync("account", alice.Id, CancellationToken.None))!, CancellationToken.None)).IsTrue();
         await Assert.That((await closures.DetachAsync(projectIntent, CancellationToken.None))!.Value.AccountId).IsNull();
         await Assert.That(await directory.CancelClosureAsync(organizationIntent, CancellationToken.None, unlessAccount: alice.Id)).IsTrue();
+    }
+
+    private sealed class HeldClosureCompletion(string id) : DelegatingHandler
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Method == HttpMethod.Delete
+                && request.RequestUri!.AbsolutePath.EndsWith("/collections/closure_jobs/documents/by-key", StringComparison.Ordinal)
+                && request.RequestUri.Query == "?id=" + id)
+            {
+                this.Entered.TrySetResult();
+                await this.Release.Task.WaitAsync(cancellationToken);
+            }
+
+            return await base.SendAsync(request, cancellationToken);
+        }
     }
 
     // The restarted replica's own hosted pass runs too, and either pass may meet the other's deferral (one minute). Pass a
