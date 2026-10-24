@@ -4,7 +4,7 @@
   import { dict, locale } from '@/lib/i18n'
   import { localeMeta } from '@/lib/i18n/locales'
   import { pricingCatalog, publicAlphaCatalog } from '@/lib/site'
-  import { formatPlanBilling } from '@/lib/pricing'
+  import { formatEntitlementRows, formatPlanBilling } from '@/lib/pricing'
 
   const comparePlans = publicAlphaCatalog
   const rates = pricingCatalog.metering.overageRates
@@ -26,6 +26,7 @@
     { label: compare.egress, cells: comparePlans.map((plan) => storage(plan.limits.egressGbPerMonth)) },
     { label: compare.billing, cells: comparePlans.map((plan) => formatPlanBilling(plan, $dict.pricing, localeMeta($locale).bcp47).cadence) },
   ]
+  $: entitlementRows = formatEntitlementRows(comparePlans, compare, localeMeta($locale).bcp47)
   $: rules = $dict.pricing.detailed.rows.map((row, i) => ({
     ...row,
     price: new Intl.NumberFormat(localeMeta($locale).bcp47, { style: 'currency', currency: 'USD' }).format(rowPrices[i]),
@@ -61,8 +62,22 @@
           </tr>
         {/each}
       </tbody>
+      <tbody>
+        <tr class="is-group">
+          <th scope="colgroup" colspan={comparePlans.length + 1}>{compare.entitlementsHead}</th>
+        </tr>
+        {#each entitlementRows as row (row.label)}
+          <tr>
+            <th scope="row">{row.label}</th>
+            {#each row.cells as cell, i}
+              <td class:is-popular={comparePlans[i].popular}>{cell}</td>
+            {/each}
+          </tr>
+        {/each}
+      </tbody>
     </table>
   </div>
+  <p class="detailed__text detailed__note">{compare.entitlementsNote}</p>
 
   <div class="detailed__notes">
     <span class="ts-eyebrow">{$dict.pricing.detailed.eyebrow}</span>
@@ -162,6 +177,20 @@
 
   .detailed__table tr.is-cadence td {
     white-space: normal;
+  }
+
+  .detailed__table tr.is-group th {
+    padding-top: var(--ts-space-6);
+    font: 400 11.5px / 1.5 var(--ts-font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ts-text-muted);
+  }
+
+  .detailed__note {
+    max-width: 720px;
+    margin-top: var(--ts-space-4);
+    font-size: 14px;
   }
 
   .detailed__plan {
@@ -288,11 +317,7 @@
       display: none;
     }
 
-    .detailed__table tbody tr:nth-child(-n + 5) td {
-      white-space: nowrap;
-    }
-
-    .detailed__table tbody tr:nth-child(-n + 5) td {
+    .detailed__table tbody:first-of-type tr:nth-child(-n + 5) td {
       white-space: nowrap;
       overflow-wrap: normal;
     }
