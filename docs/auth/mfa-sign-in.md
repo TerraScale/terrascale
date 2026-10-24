@@ -56,7 +56,9 @@ plus the authenticator.
 owner's own factor (409 `mfa_not_enrolled`). While it is on, a member without an
 active factor gets 403 `mfa_required` from every organization- or
 project-scoped endpoint (including API key creation) and `access_denied` from
-the organization/project token exchange. Listing organizations still works and
+the organization/project token exchange. Leaving the organization and deleting
+one's own account (with its sole-member organizations) stay possible without a
+factor. Listing organizations still works and
 shows `require_mfa`, so the dashboard can send the member to enrol. Existing
 API keys keep working: they are the organization's credentials.
 

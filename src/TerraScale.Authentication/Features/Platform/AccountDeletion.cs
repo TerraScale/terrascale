@@ -264,7 +264,7 @@ public sealed class AccountDeletion(
         {
             try
             {
-                await platform.DeleteOrganizationAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+                await platform.DeleteOrganizationAsync(userId, organizationId, closingAccount: true, cancellationToken).ConfigureAwait(false);
             }
             catch (ApiException error) when (error.Status == StatusCodes.Status404NotFound)
             {
