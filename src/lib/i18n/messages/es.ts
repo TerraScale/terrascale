@@ -60,6 +60,8 @@ export const es: Messages = {
           apiReference: 'Referencia de la API',
           status: 'Estado',
           community: 'Comunidad',
+          support: 'Soporte',
+          supportEmail: 'Contacto: support@terrascale.tech',
         },
       },
     },

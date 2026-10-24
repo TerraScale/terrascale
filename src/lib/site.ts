@@ -108,6 +108,8 @@ export const footerColumns: FooterColumn[] = [
     links: [
       { key: 'apiReference', href: 'https://api.terrascale.tech/scalar/' },
       { key: 'status', href: 'https://status.terrascale.tech' },
+      { key: 'support', href: 'https://docs.terrascale.tech/legal/support' },
+      { key: 'supportEmail', href: 'mailto:support@terrascale.tech' },
       { key: 'community', href: 'https://discord.gg/8Zr2Nw9g' },
     ],
   },
