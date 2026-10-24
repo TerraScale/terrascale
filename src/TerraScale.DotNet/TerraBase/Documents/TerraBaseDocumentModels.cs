@@ -39,7 +39,11 @@ public sealed record TerraBaseCollectionPage(
 /// <param name="Distance">
 /// Distance to the query vector of a <see cref="TerraBaseSort.Near"/> query, or meters to the point of a <see cref="TerraBaseSort.NearPoint"/> query; otherwise null.
 /// </param>
-public sealed record TerraBaseDocument(string Id, string Version, string State, JsonElement Document, double? Distance = null);
+public sealed record TerraBaseDocument(string Id, string Version, string State, JsonElement Document, double? Distance = null)
+{
+    /// <summary>Full-text relevance score on results sorted by <c>$score</c>; otherwise null.</summary>
+    public double? Score { get; init; }
+}
 
 /// <summary>A count of query matches.</summary>
 /// <param name="Value">Number of matches; a lower bound when <paramref name="Exact"/> is false.</param>
@@ -199,11 +203,14 @@ public sealed class TerraBasePrecondition
 }
 
 /// <summary>One sort key of a query.</summary>
-/// <param name="Path">A JSON Pointer to object members, or <c>$id</c>; null for a <see cref="Near"/> or <see cref="NearPoint"/> sort.</param>
+/// <param name="Path">A JSON Pointer to object members, <c>$id</c>, or <c>$score</c> with a search filter; null for a <see cref="Near"/> or <see cref="NearPoint"/> sort.</param>
 /// <param name="Order"><c>asc</c> (the default) or <c>desc</c>.</param>
 public sealed record TerraBaseSort(string? Path, string? Order = null)
 {
     private const int MaxNearDimensions = 4096;
+
+    /// <summary>Highest full-text relevance first. Must be the only sort key and requires exactly one search predicate.</summary>
+    public static TerraBaseSort Score { get; } = new("$score", "desc");
 
     /// <summary>The vector or geo distance order of a <see cref="Near"/> or <see cref="NearPoint"/> sort.</summary>
     [JsonPropertyName("near")]
