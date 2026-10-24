@@ -99,6 +99,52 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    public async Task Hosted_pages_show_the_project_brand_and_only_its_sign_in_methods()
+    {
+        var faker = new Faker();
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var (_, ownerToken) = await oidc.SignInUserAsync(faker.Internet.Email().ToLowerInvariant());
+        var projectName = faker.Commerce.ProductName();
+        var project = await oidc.CreateProjectAsync(ownerToken, await oidc.CreateOrganizationAsync(ownerToken), projectName);
+
+        // Until the project changes anything, its pages carry its name and every method.
+        using var initial = await oidc.Client.GetAsync($"/ui/{project}/sign-in");
+        var initialPage = await initial.Content.ReadAsStringAsync();
+        await Assert.That(initialPage).Contains($"Sign in to {System.Net.WebUtility.HtmlEncode(projectName)}");
+        await Assert.That(initialPage).Contains("Create account");
+
+        var brand = faker.Company.CompanyName().Replace("&", "and", StringComparison.Ordinal);
+        await oidc.OkAsync(HttpMethod.Put, $"/v1/{project}/settings", ownerToken, new
+        {
+            methods = new { password = false, sign_up = false },
+            branding = new { name = brand, logo_url = "https://cdn.example.test/logo.png", theme_color = "#112233" },
+        });
+
+        using var themed = await oidc.Client.GetAsync($"/ui/{project}/sign-in");
+        var page = await themed.Content.ReadAsStringAsync();
+        await Assert.That(page).Contains(System.Net.WebUtility.HtmlEncode(brand));
+        await Assert.That(page).Contains("https://cdn.example.test/logo.png");
+        await Assert.That(page).Contains("#112233");
+        await Assert.That(page).DoesNotContain("Create account");
+        await Assert.That(page).DoesNotContain("sign-in/password");
+        await Assert.That(page).DoesNotContain("Forgot password?");
+
+        using var signUp = await oidc.Client.GetAsync($"/ui/{project}/sign-up");
+        await Assert.That(signUp.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using var reset = await oidc.Client.GetAsync($"/ui/{project}/reset");
+        await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using var password = await oidc.PostFormAsync($"/ui/{project}/sign-in/password", new() { ["email"] = faker.Internet.Email(), ["next"] = string.Empty });
+        await Assert.That(password.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+
+        // The platform's pages keep the TerraScale brand and every method.
+        using var platform = await oidc.Client.GetAsync($"/ui/{OidcIssuer.Slug}/sign-in");
+        var platformPage = await platform.Content.ReadAsStringAsync();
+        await Assert.That(platformPage).Contains("Sign in to TerraScale");
+        await Assert.That(platformPage).Contains("Create account");
+        await Assert.That(platformPage).DoesNotContain(System.Net.WebUtility.HtmlEncode(brand));
+    }
+
+    [Test]
     public async Task Unknown_project_tenants_serve_no_pages_or_endpoints()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);

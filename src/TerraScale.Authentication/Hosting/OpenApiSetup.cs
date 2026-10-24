@@ -108,7 +108,7 @@ public static partial class OpenApiSetup
         ["Invitations"] = "Email invitations to an organization role or to one project's role.",
         ["Ownership transfer"] = "Handing an organization's ownership to another member, confirmed by the nominee.",
         ["Audit"] = "Audit events of an organization's identity changes.",
-        ["Project tenants"] = "A project tenant's end users and live sessions, for the project's platform members (viewer reads, admin changes).",
+        ["Project tenants"] = "A project tenant's end users, live sessions, OAuth clients and sign-in settings, for the project's platform members (viewer reads, admin changes).",
     };
 
     private static readonly Dictionary<string, Func<OpenApiSecurityScheme>> SchemeDefinitions = new(StringComparer.Ordinal)

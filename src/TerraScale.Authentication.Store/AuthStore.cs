@@ -100,6 +100,9 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>Audit events of the platform's organizations, addressed by instance and id.</summary>
     public const string AuditEventCollection = "audit_events";
 
+    /// <summary>One project tenant's sign-in methods and branding, addressed by the project id in its own instance.</summary>
+    public const string ProjectAuthSettingsCollection = "project_auth_settings";
+
     /// <summary>
     /// Every collection the service needs; provisioning creates them and readiness requires them. <c>rate_limits</c> belongs to the TS-488 attempt limiter,
     /// which every hosted sign-in call and email test send (TS-583) charges; and <c>email_configs</c> and
@@ -112,7 +115,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
         "rate_limits", "email_configs", "email_config_versions", "email_allowance_deliveries",
         OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection, ApiKeyUsageCollection,
         InvitationCollection, AuditEventCollection, MfaCollection, DeletionJobCollection, ClosureJobCollection, HistoryMarkCollection,
-        ClosureCancellationCollection, ClosureCommitCollection,
+        ClosureCancellationCollection, ClosureCommitCollection, ProjectAuthSettingsCollection,
     ];
 
     private static readonly TerraScaleIdGenerator Ids = new();
@@ -217,6 +220,14 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>Up to <paramref name="limit"/> documents matching a TerraBase query filter, in <paramref name="sort"/> order, then id order.</summary>
     public async Task<IReadOnlyList<TerraBaseDocument>> QueryAsync(string collection, JsonElement filter, int limit, IReadOnlyList<TerraBaseSort>? sort, CancellationToken cancellationToken = default) =>
         (await local.QueryAsync(collection, new TerraBaseQuery { Filter = filter, Limit = limit, Sort = sort }, cancellationToken).ConfigureAwait(false)).Items;
+
+    /// <summary>How many of the instance's documents <paramref name="collection"/> holds; a lower bound beyond 100000.</summary>
+    public async Task<long> CountAsync(string collection, string instanceId, CancellationToken cancellationToken = default)
+    {
+        using var parsed = JsonDocument.Parse(new JsonObject { ["eq"] = new JsonArray("/instanceId", instanceId) }.ToJsonString());
+        var page = await local.QueryAsync(collection, new TerraBaseQuery { Filter = parsed.RootElement.Clone(), Limit = 1, Count = true }, cancellationToken).ConfigureAwait(false);
+        return page.Count?.Value ?? 0;
+    }
 
     /// <summary>Creates only; a taken address throws a precondition failure.</summary>
     public Task<TerraBaseWriteResult> CreateAsync(string collection, string instanceId, string key, JsonElement record, CancellationToken cancellationToken = default)

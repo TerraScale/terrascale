@@ -5,6 +5,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
@@ -505,7 +506,23 @@ internal static class SignInFlow
 
     /// <summary>Whether the page's slug is not a tenant: <c>terrascale</c> or an existing project (<see cref="Tenancy"/>).</summary>
     public static bool WrongSlug(HttpContext context) => Tenancy.Resolved(context) is not { } tenant
-        || !string.Equals(context.GetRouteValue("slug") as string, tenant, StringComparison.Ordinal);
+        || !string.Equals(context.GetRouteValue("slug") as string, tenant, StringComparison.Ordinal)
+        || !Allowed(context);
+
+    // A sign-in method the tenant turned off has no pages: passcode sign-in, password sign-in and reset, or sign-up.
+    private static bool Allowed(HttpContext context)
+    {
+        var theme = HostedTheme.Of(context);
+        var page = (context.Request.Path.Value ?? string.Empty).Split('/', 4) is [_, _, _, var rest] ? rest.TrimEnd('/') : string.Empty;
+        return page switch
+        {
+            "sign-in" => theme.Passcode || HttpMethods.IsGet(context.Request.Method),
+            "sign-in/verify" => theme.Passcode,
+            "sign-in/password" or "reset" or "reset/complete" => theme.Password,
+            "sign-up" or "sign-up/verify" => theme.SignUp,
+            _ => true,
+        };
+    }
 
     /// <summary>The tenant of a hosted page whose slug <see cref="WrongSlug"/> accepted.</summary>
     public static string Tenant(HttpContext context) => Tenancy.Resolved(context) ?? throw new InvalidOperationException("The page has no tenant.");
