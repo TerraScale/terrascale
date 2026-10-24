@@ -236,10 +236,34 @@ public sealed class AccountDeletion(
         }
 
         // From here on removals are irreversible: record it first, so no later refusal cancels a half-removed account.
-        if (job.Value.CommittedAt is null)
+        for (var attempt = 0; job.Value.CommittedAt is null; attempt++)
         {
             var committed = job.Value with { CommittedAt = clock.GetUtcNow() };
-            job = new(committed, await store.CommitAccountClosureAsync(committed, job.Version, cancellationToken).ConfigureAwait(false) ?? throw ApiException.Unavailable());
+            if (await store.CommitAccountClosureAsync(committed, job.Version, cancellationToken).ConfigureAwait(false) is { } version)
+            {
+                job = new(committed, version);
+                break;
+            }
+
+            // Another pass may defer, commit or finish this generation while its projects close. A lost version is
+            // not an outage, and an absent or replaced intent is completion only with this generation's durable proof.
+            if (await platform.ClosureAsync("account", userId, cancellationToken).ConfigureAwait(false) is not { } reread || !reread.Value.Same(job.Value))
+            {
+                return await this.CompletedAsync(userId, job.Value.Generation!, cancellationToken).ConfigureAwait(false)
+                    ? true : throw PlatformDirectory.Conflict("deletion_refused", "No completion proof exists for this closure generation.");
+            }
+
+            job = reread;
+            if (job.Value.CommittedAt is null && await store.IsClosureCancellingAsync(job.Value, cancellationToken).ConfigureAwait(false))
+            {
+                await this.CancelAsync(job, "refused", cancellationToken).ConfigureAwait(false);
+                return false;
+            }
+
+            if (attempt == 3 && job.Value.CommittedAt is null)
+            {
+                throw ApiException.Unavailable();
+            }
         }
 
         // Shared memberships first: a late last_owner there pauses the closure before any organization goes.

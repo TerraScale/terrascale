@@ -134,6 +134,11 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         var original = (await JobAsync(oidc, "project", project))!;
         await Assert.That(original.FenceSeen).IsFalse();
 
+        // Put the account first in the due snapshot. Its retry reschedules the child before this same batch reaches it.
+        var account = (await services.GetRequiredService<PlatformDirectory>().ClosureAsync("account", owner.Id, CancellationToken.None))!;
+        await Assert.That(await services.GetRequiredService<AuthStore>().ReplaceAsync(AuthStore.ClosureJobCollection, "terrascale", ClosureJob.Key("account", owner.Id),
+            JsonSerializer.SerializeToElement(account.Value with { NextAttemptAt = clock.UtcNow.AddSeconds(1) }, ClosureJson.Default.ClosureJob), account.Version)).IsNotNull();
+
         // The old engine's fallback now meets the real v2 fence, with no recorded fence evidence in auth.
         clock.UtcNow += TimeSpan.FromSeconds(3);
         await worker.RunOnceAsync();

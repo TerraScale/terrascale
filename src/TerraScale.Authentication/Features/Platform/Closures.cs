@@ -269,8 +269,10 @@ public sealed class ClosureWorker(Closures closures, PlatformDirectory directory
         {
             try
             {
-                if (await directory.ClosureAsync(due.Scope, due.SubjectId, cancellationToken).ConfigureAwait(false) is not { } job || !job.Value.Same(due))
+                if (await directory.ClosureAsync(due.Scope, due.SubjectId, cancellationToken).ConfigureAwait(false) is not { } job || !job.Value.Same(due)
+                    || job.Value.NextAttemptAt > clock.GetUtcNow())
                 {
+                    // Another pass, including an earlier account in this batch, may have rescheduled this snapshot entry.
                     continue;
                 }
 
