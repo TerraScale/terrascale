@@ -1,0 +1,196 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using Bogus;
+using TUnit.Core;
+
+namespace TerraScale.Dashboard.E2E.Features.AuthenticationManagement;
+
+// The console manages the current project's ts-auth tenant: the demo host's in-memory tenant stands in for
+// ts-auth's project management API, except in the pre-live journey, which uses the real gateway and SDK.
+[ClassDataSource<DashboardRootFixture>]
+public sealed class AuthenticationConsoleJourneyTests(DashboardRootFixture fixture)
+{
+    private static readonly string[] Sections = ["overview", "users", "sessions", "sign-in", "clients", "branding"];
+    private static readonly string[] Removed = ["organizations", "memberships", "invitations", "domains", "connections", "mfa", "directories",
+        "templates", "keys", "webhooks", "emails", "audit", "danger", "quickstart"];
+
+    [Test]
+    public async Task OwnerManagesUsersSessionsApplicationsAndSignInOfTheCurrentProject()
+    {
+        var faker = new Faker();
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var browser = scenario.CreateClient();
+        using (var anonymous = await browser.GetAsync("/auth/users"))
+            Check(anonymous.StatusCode == HttpStatusCode.Redirect, "Signed-out visitors sign in first");
+        using (var login = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me"))
+            Check(login.StatusCode == HttpStatusCode.SeeOther, "The owner signs in");
+
+        var overview = await Page(browser, "/auth");
+        var nav = Regex.Match(overview, "<nav aria-label=\"Authentication sections\">(.*?)</nav>", RegexOptions.Singleline).Groups[1].Value;
+        Check(Regex.Matches(nav, "href=\"/auth/([^\"]+)\"").Select(match => match.Groups[1].Value).SequenceEqual(Sections), "The sidebar lists only sections ts-auth backs");
+        foreach (var section in Removed)
+        {
+            using var missing = await browser.GetAsync("/auth/" + section);
+            Check(missing.StatusCode == HttpStatusCode.NotFound, "Unbacked sections answer 404: " + section);
+        }
+        Check(!overview.Contains("id=\"auth-error\""), "The overview renders without an error");
+        var project = Regex.Match(overview, "id=\"auth-issuer\">https://auth\\.terrascale\\.tech/([0-9A-Z]{26})</code>").Groups[1].Value;
+        Check(project.Length == 26 && overview.Contains($"https://auth.terrascale.tech/ui/{project}/sign-in") &&
+            overview.Contains("id=\"auth-count-users\">5<") && overview.Contains("id=\"auth-count-clients\">1<"), "The overview shows issuer, hosted sign-in and counts");
+
+        var first = await Page(browser, "/auth/users");
+        var next = Regex.Match(first, "href=\"/auth/users\\?after=([0-9A-Z]{26})\">Next page").Groups[1].Value;
+        Check(Ids(first, "users", "disable").Length == 3 && next.Length == 26, "Users list in pages");
+        var second = await Page(browser, "/auth/users?after=" + next);
+        Check(Ids(second, "users", "disable").Length == 2 && !second.Contains("Next page") && second.Contains("First page"), "The last page ends paging");
+        var search = await Page(browser, "/auth/users?q=GLOBEX");
+        Check(search.Contains("alan@globex.io") && Ids(search, "users", "disable").Length == 1, "Search matches an email substring");
+
+        var csrf = Csrf(first);
+        var user = Ids(first, "users", "disable")[0];
+        Check((await Post(browser, $"users/{user}/disable", csrf)).StatusCode == HttpStatusCode.SeeOther, "Disabling redirects back");
+        var disabled = await Page(browser, "/auth/users");
+        Check(Ids(disabled, "users", "enable").SequenceEqual([user]) && disabled.Contains(">Disabled</span>"), "The user shows as disabled");
+        Check((await Post(browser, $"users/{user}/enable", csrf)).StatusCode == HttpStatusCode.SeeOther, "Enabling redirects back");
+        Check((await Post(browser, $"users/{user}/delete", csrf)).StatusCode == HttpStatusCode.SeeOther, "Deleting redirects back");
+        Check((await Page(browser, "/auth")).Contains("id=\"auth-count-users\">4<"), "The deleted user leaves the count");
+        using (var gone = await Post(browser, $"users/{user}/delete", csrf))
+            Check(gone.StatusCode == HttpStatusCode.NotFound && (await gone.Content.ReadAsStringAsync()).Contains("the requested record, is unavailable"), "A missing user reports a friendly 404");
+        using (var forged = await HttpJourney.PostFormAsync(browser, $"/api/v1/auth-management/users/{Ids(second, "users", "disable")[0]}/disable", new()))
+            Check(forged.StatusCode == HttpStatusCode.Forbidden, "A change without the form token is refused");
+
+        var sessions = await Page(browser, "/auth/sessions");
+        var live = Ids(sessions, "sessions", "revoke");
+        Check(live.Length == 1, "The deleted user's session ended with it; one live session remains");
+        Check((await Post(browser, $"sessions/{live[0]}/revoke", csrf)).StatusCode == HttpStatusCode.SeeOther, "Revoking redirects back");
+        Check((await Page(browser, "/auth/sessions")).Contains("No live sessions"), "The revoked session is gone");
+
+        var name = "App " + faker.Random.AlphaNumeric(12);
+        var uris = $"https://{faker.Internet.DomainName()}/callback\nhttp://127.0.0.1:{faker.Random.Int(1024, 65535)}/callback";
+        using (var invalid = await Post(browser, "clients", csrf, ("name", name), ("type", "machine"), ("redirect_uris", uris)))
+            Check(invalid.StatusCode == HttpStatusCode.UnprocessableEntity && (await invalid.Content.ReadAsStringAsync()).Contains("Choose a public or confidential application."), "An unknown client type is refused");
+        using var created = await Post(browser, "clients", csrf, ("name", name), ("type", "confidential"), ("redirect_uris", uris));
+        var reveal = await created.Content.ReadAsStringAsync();
+        var secret = Regex.Match(reveal, "id=\"auth-client-secret\">([^<]+)<").Groups[1].Value;
+        Check(created.StatusCode == HttpStatusCode.OK && secret.Length > 16 && reveal.Contains(WebUtility.HtmlEncode(name)), "A confidential client's secret shows once after creation");
+        var clients = await Page(browser, "/auth/clients");
+        var client = Ids(clients, "clients", "delete");
+        Check(client.Length == 2 && !clients.Contains(secret) && clients.Contains("http://127.0.0.1:"), "The list shows both applications and never the secret");
+        Check((await Post(browser, $"clients/{client[1]}/delete", csrf)).StatusCode == HttpStatusCode.SeeOther, "Deleting an application redirects back");
+        Check(Ids(await Page(browser, "/auth/clients"), "clients", "delete").Length == 1, "The application is gone");
+
+        using (var none = await Post(browser, "settings", csrf, ("sign_up", "on")))
+            Check(none.StatusCode == HttpStatusCode.UnprocessableEntity && (await none.Content.ReadAsStringAsync()).Contains("Keep email passcode or password sign-in on."), "One first factor stays on");
+        Check((await Post(browser, "settings", csrf, ("passcode", "on"))).StatusCode == HttpStatusCode.SeeOther, "Saving sign-in methods redirects back");
+        var methods = await Page(browser, "/auth/sign-in");
+        Check(Regex.IsMatch(methods, "id=\"auth-method-passcode\" name=\"passcode\" checked") && !Regex.IsMatch(methods, "name=\"password\" checked") &&
+            !Regex.IsMatch(methods, "name=\"sign_up\" checked"), "Only passcode sign-in stays on and sign-up is off");
+
+        var color = faker.Internet.Color();
+        using (var badColor = await Post(browser, "branding", csrf, ("name", name), ("theme_color", "blue")))
+            Check(badColor.StatusCode == HttpStatusCode.UnprocessableEntity && (await badColor.Content.ReadAsStringAsync()).Contains("The theme color must look like #2158e8."), "A theme color must be #rrggbb");
+        using (var badLogo = await Post(browser, "branding", csrf, ("logo_url", "http://example.com/logo.png")))
+            Check(badLogo.StatusCode == HttpStatusCode.UnprocessableEntity, "A logo must be an https URL");
+        Check((await Post(browser, "branding", csrf, ("name", name), ("logo_url", "https://" + faker.Internet.DomainName() + "/logo.svg"), ("theme_color", color.ToUpperInvariant()))).StatusCode == HttpStatusCode.SeeOther, "Saving branding redirects back");
+        var branding = await Page(browser, "/auth/branding");
+        Check(branding.Contains($"value=\"{color.ToLowerInvariant()}\"") && branding.Contains(WebUtility.HtmlEncode(name)), "Branding is saved with a normalized color");
+    }
+
+    [Test]
+    public async Task McpToolsCallProjectAuthenticationWithTheCallersRole()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var browser = scenario.CreateClient();
+        using var replica = scenario.CreateClient(replica: true);
+        using var producer = scenario.CreateProviderClient();
+        using (var login = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me"))
+            Check(login.StatusCode == HttpStatusCode.SeeOther, "The owner signs in");
+        var secret = await HttpJourney.CreatePatAsync(browser, "Project authentication");
+        var tools = (await HttpJourney.McpAsync(replica, secret, "tools/list", new { })).GetProperty("result").GetProperty("tools").EnumerateArray()
+            .Select(tool => tool.GetProperty("name").GetString()!).Where(name => name.StartsWith("auth_", StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray();
+        Check(tools.SequenceEqual(["auth_create_client", "auth_delete_client", "auth_delete_user", "auth_get_overview", "auth_list_clients", "auth_list_sessions",
+            "auth_list_users", "auth_revoke_session", "auth_set_user_disabled", "auth_update_settings"]), "The MCP inventory holds only working project authentication tools");
+
+        var overview = await Tool(replica, secret, "auth_get_overview", new { });
+        Check(overview.GetProperty("issuer").GetString()!.StartsWith("https://auth.terrascale.tech/", StringComparison.Ordinal) &&
+            overview.GetProperty("counts").GetProperty("users").GetInt32() == 5, "The overview reads the project tenant");
+        var users = await Tool(replica, secret, "auth_list_users", new { search = "northwind" });
+        var user = users.GetProperty("items")[0].GetProperty("id").GetString()!;
+        Check((await Tool(replica, secret, "auth_set_user_disabled", new { userId = user, disabled = true })).GetProperty("disabled").GetBoolean(), "An owner disables a user");
+        var created = await Tool(replica, secret, "auth_create_client", new { name = "CLI", type = "public", redirectUris = new[] { "http://127.0.0.1/callback" } });
+        Check(created.GetProperty("type").GetString() == "public" && !created.TryGetProperty("client_secret", out _), "A public client has no secret");
+        var settings = await Tool(replica, secret, "auth_update_settings", new { signUp = false, themeColor = "#00AA55" });
+        Check(!settings.GetProperty("methods").GetProperty("sign_up").GetBoolean() && settings.GetProperty("methods").GetProperty("password").GetBoolean() &&
+            settings.GetProperty("branding").GetProperty("theme_color").GetString() == "#00aa55" && settings.GetProperty("branding").GetProperty("name").GetString() == "Northwind",
+            "Omitted settings keep their values");
+        Error(await Call(replica, secret, "auth_update_settings", new { passcode = false, password = false }), "Keep email passcode or password sign-in on.");
+
+        await Control(producer, "member");
+        Check((await Tool(replica, secret, "auth_list_clients", new { })).GetProperty("clients").GetArrayLength() == 2, "A member reads applications");
+        Error(await Call(replica, secret, "auth_delete_client", new { clientId = created.GetProperty("client_id").GetString() }), "Organization management is required.");
+        await Control(producer, "");
+        Error(await Call(replica, secret, "auth_get_overview", new { }), "Organization is unavailable.");
+    }
+
+    [Test]
+    public async Task PagesShowAClearErrorUntilTsAuthServesTheProjectManagementApi()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root, liveProjects: true);
+        using var browser = scenario.CreateClient();
+        using var producer = scenario.CreateProviderClient();
+        using (var login = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me"))
+            Check(login.StatusCode == HttpStatusCode.SeeOther, "The owner signs in");
+        foreach (var section in Sections)
+            Check((await Page(browser, "/auth/" + section)).Contains("id=\"auth-error\"><p class=\"ts-alert-body\">Authentication for this project, or the requested record, is unavailable.</p>"),
+                "The real gateway maps ts-auth's 404 to a clear error: " + section);
+        using (var change = await Post(browser, "branding", Csrf(await Page(browser, "/auth/branding")), ("name", "Pending")))
+            Check(change.StatusCode == HttpStatusCode.NotFound, "A change reports ts-auth's 404");
+        // Six pages, the branding form, the refused change and its re-rendered page.
+        using var observed = await producer.GetAsync("/__test/observations");
+        using var observations = JsonDocument.Parse(await observed.Content.ReadAsStringAsync());
+        Check(observations.RootElement.GetProperty("projectManagementRequests").GetInt32() == Sections.Length + 3 &&
+            observations.RootElement.GetProperty("managementRequests").GetInt32() == 0 && observations.RootElement.GetProperty("contractFailures").GetInt32() == 0,
+            "Every page called the project management API with the user's token and never the dashboard tenant's management key");
+    }
+
+    private static async Task<string> Page(HttpClient client, string path)
+    {
+        using var response = await client.GetAsync(path);
+        Check(response.StatusCode == HttpStatusCode.OK, "The page loads: " + path);
+        return await response.Content.ReadAsStringAsync();
+    }
+
+    private static string[] Ids(string html, string family, string action) =>
+        Regex.Matches(html, $"action=\"/api/v1/auth-management/{family}/([0-9A-Z]{{26}})/{action}\"").Select(match => match.Groups[1].Value).ToArray();
+
+    private static string Csrf(string html) => WebUtility.HtmlDecode(Regex.Match(html, "name=\"_csrf\" value=\"([^\"]+)\"").Groups[1].Value);
+
+    private static Task<HttpResponseMessage> Post(HttpClient client, string path, string csrf, params (string Key, string Value)[] fields) =>
+        HttpJourney.PostFormAsync(client, "/api/v1/auth-management/" + path, fields.Append(("_csrf", csrf)).ToDictionary(field => field.Item1, field => field.Item2));
+
+    private static Task<JsonElement> Call(HttpClient client, string secret, string name, object arguments) =>
+        HttpJourney.McpAsync(client, secret, "tools/call", new { name, arguments });
+
+    private static async Task<JsonElement> Tool(HttpClient client, string secret, string name, object arguments)
+    {
+        var result = (await Call(client, secret, name, arguments)).GetProperty("result");
+        Check(!(result.TryGetProperty("isError", out var error) && error.GetBoolean()), name + " succeeds: " + result.GetRawText());
+        return result.GetProperty("structuredContent");
+    }
+
+    private static void Error(JsonElement response, string expected)
+    {
+        var result = response.GetProperty("result");
+        Check(result.GetProperty("isError").GetBoolean() && result.GetProperty("content")[0].GetProperty("text").GetString() == expected, "The tool reports: " + expected);
+    }
+
+    private static async Task Control(HttpClient producer, string role)
+    {
+        using var response = await producer.PostAsJsonAsync("/__test/control", new { command = "workspace-role", role });
+        Check(response.StatusCode == HttpStatusCode.OK, "The workspace producer changes the caller's organization role");
+    }
+
+    private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+}

@@ -1,98 +1,113 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Mcp;
+using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Features.AuthenticationManagement;
 
+// The project's end-user authentication at ts-auth, called with the caller's own sign-in token.
 [McpServerToolType]
-public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountService accounts)
+public sealed class AuthenticationMcpTools(IHttpContextAccessor http, AccountService accounts, ITsAuthProjects projects)
 {
-    [McpServerTool(Name = "auth_describe_sections", Title = "Describe authentication sections", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true),
-     Description("List the ts-auth record sections with their fields, validation rules, and actions, the SSO connection providers, and the sign-in strategies. Strategy values describe the source API defaults, not a live project's configuration. Use it to build auth_save_resource values.")]
-    public async Task<AuthenticationCatalog> Describe()
+    [McpServerTool(Name = "auth_get_overview", Title = "Get project authentication", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true),
+     Description("Read a project's ts-auth issuer, discovery and hosted sign-in URLs, sign-in methods, branding and user and OAuth application counts.")]
+    public async Task<TerraScaleAuthProjectSettings> Overview(string? organizationId = null, string? projectId = null)
     {
-        var context = http.HttpContext?.Items[DashboardMcp.ContextKey] as AccountContext ?? throw new AccountAccessException("Authentication is required.", 401);
-        _ = await accounts.GetContextAsync(context.Session, Cancellation);
-        return AuthenticationMetadata.Describe();
+        var context = await Fresh(organizationId, projectId, false);
+        return await projects.GetSettingsAsync(context.Session, context.Project!.Id, Cancellation);
     }
 
-    [McpServerTool(Name = "auth_get_overview", Title = "Get authentication overview", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true),
-     Description("Summarize a project's ts-auth management settings. Returns unavailable because the current producer does not expose its customer management API or matching project credential binding.")]
-    public Task<AuthenticationOverview> Overview(string? organizationId = null, string? projectId = null) => Read<AuthenticationOverview>(organizationId, projectId);
-
-    [McpServerTool(Name = "auth_list_resources", Title = "List authentication records", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true),
-     Description("List a ts-auth record section. Call auth_describe_sections for each section's fields. Requires the project's customer management API and matching project credential binding.")]
-    public Task<AuthenticationResources> List(string section, string search = "", string? organizationId = null, string? projectId = null) => Read<AuthenticationResources>(organizationId, projectId);
-
-    [McpServerTool(Name = "auth_save_resource", Title = "Save authentication record", UseStructuredContent = true, Destructive = false, OpenWorld = false),
-     Description("Create a ts-auth record or update an editable record's mutable fields. Requires an owner or admin and the project's customer management API with its matching project credential binding.")]
-    public Task<AuthenticationResource> Save(string section,
-        [Description("Field values keyed by field key from auth_describe_sections. Choices fields take comma-separated values. Connections also need protocol: Google, Microsoft, GitHub, OIDC, or SAML.")] IReadOnlyDictionary<string, string> values,
-        string id = "", string? organizationId = null, string? projectId = null) => Manage<AuthenticationResource>(organizationId, projectId);
-
-    [McpServerTool(Name = "auth_delete_resource", Title = "Delete authentication record", UseStructuredContent = true, Destructive = true, OpenWorld = false),
-     Description("Revoke an invitation or management key, or delete another ts-auth record. Requires an owner or admin and the project's customer management API with its matching project credential binding.")]
-    public Task<AuthenticationDeleted> Delete(string section, string id, string? organizationId = null, string? projectId = null) => Manage<AuthenticationDeleted>(organizationId, projectId);
-
-    [McpServerTool(Name = "auth_run_resource_action", Title = "Run authentication record action", UseStructuredContent = true, Destructive = false, OpenWorld = false),
-     Description("Block or unblock a user, enable or disable an SSO connection, or rotate a SCIM bearer token. Requires an owner or admin and the project's customer management API with its matching project credential binding.")]
-    public Task<AuthenticationResource> Action(string section, string id, string action, string? organizationId = null, string? projectId = null) => Manage<AuthenticationResource>(organizationId, projectId);
-
-    [McpServerTool(Name = "auth_set_strategy", Title = "Set sign-in strategy", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
-     Description("Change a customer's sign-in or multi-factor strategy. This is an authentication security setting, not a dashboard deployment switch. Requires an owner or admin and the project's customer management API with its matching project credential binding.")]
-    public Task<AuthenticationStrategies> Strategy(string strategy, bool enabled, string? organizationId = null, string? projectId = null) => Manage<AuthenticationStrategies>(organizationId, projectId);
-
-    [McpServerTool(Name = "auth_update_branding", Title = "Update hosted page branding", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
-     Description("Set the name, HTTPS logo and six-digit hex theme color of hosted sign-in pages. Requires an owner or admin and the project's customer management API with its matching project credential binding.")]
-    public Task<AuthenticationBranding> Branding(string name, string logoUrl = "", string themeColor = "", string? organizationId = null, string? projectId = null) => Manage<AuthenticationBranding>(organizationId, projectId);
-
-    [McpServerTool(Name = "auth_list_audit_events", Title = "List authentication audit events", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true),
-     Description("List the authentication console changes made for a project, newest first. Requires its customer management API and matching project credential binding.")]
-    public Task<AuthenticationEvents> Audit(string? organizationId = null, string? projectId = null) => Read<AuthenticationEvents>(organizationId, projectId);
-
-    [McpServerTool(Name = "auth_get_emails", Title = "Get authentication emails", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true),
-     Description("Read ts-auth email branding, customized templates and one email's fields and defaults. Requires the project's customer management API and matching project credential binding.")]
-    public Task<AuthenticationEmails> Emails(string template = "sign_in_code", string locale = "en", string? organizationId = null, string? projectId = null) => Read<AuthenticationEmails>(organizationId, projectId);
-
-    [McpServerTool(Name = "auth_update_email_branding", Title = "Update email branding", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
-     Description("Change the logo, colors, theme, sender and footer of every ts-auth email. Requires an owner or admin and the project's customer management API with its matching project credential binding.")]
-    public Task<AuthenticationEmailSaved> EmailBranding(AuthenticationEmailBranding? branding = null, IReadOnlyList<string>? clear = null,
-        string? organizationId = null, string? projectId = null) => Manage<AuthenticationEmailSaved>(organizationId, projectId);
-
-    [McpServerTool(Name = "auth_update_email_template", Title = "Update authentication email", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
-     Description("Change one email's wording; omitted fields keep their wording and clear restores named defaults. Requires an owner or admin and the project's customer management API with its matching project credential binding.")]
-    public Task<AuthenticationEmails> EmailTemplate(string template = "sign_in_code", string locale = "en", AuthenticationEmailFields? fields = null,
-        IReadOnlyList<string>? clear = null, string? organizationId = null, string? projectId = null) => Manage<AuthenticationEmails>(organizationId, projectId);
-
-    [McpServerTool(Name = "auth_reset_email_template", Title = "Reset authentication email", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
-     Description("Return one authentication email to its default wording. Requires an owner or admin and the project's customer management API with its matching project credential binding.")]
-    public Task<AuthenticationEmails> ResetEmail(string template = "sign_in_code", string locale = "en", string? organizationId = null, string? projectId = null) => Manage<AuthenticationEmails>(organizationId, projectId);
-
-    [McpServerTool(Name = "auth_preview_email", Title = "Preview authentication email", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true),
-     Description("Render one ts-auth email in light, dark or auto color scheme. Requires the project's customer management API and matching project credential binding.")]
-    public Task<AuthenticationRenderedEmail> PreviewEmail(string template = "sign_in_code", string locale = "en", string colorScheme = "auto",
-        string? organizationId = null, string? projectId = null) => Read<AuthenticationRenderedEmail>(organizationId, projectId);
-
-    [McpServerTool(Name = "auth_send_test_email", Title = "Send test authentication email", OpenWorld = true, UseStructuredContent = true, Destructive = false),
-     Description("Send a test authentication email to the verified caller. Requires an owner or admin and the project's customer management API with its matching project credential binding.")]
-    public Task<AuthenticationEmailSent> SendEmail(string template = "sign_in_code", string locale = "en", string? organizationId = null, string? projectId = null) => Manage<AuthenticationEmailSent>(organizationId, projectId);
-
-    private async Task<AccountContext> Fresh(string? organizationId, string? projectId) =>
-        await AccountScope.RefreshAsync(accounts, DashboardMcp.Scope(http.HttpContext, organizationId, projectId), Cancellation, requireProject: true);
-
-    // Project tenants exist, but customer management routes and matching
-    // project-scoped credentials are not available from the producer yet.
-    // The dashboard tenant's key or confidential email client is never used.
-    private async Task<T> Read<T>(string? organizationId, string? projectId)
+    [McpServerTool(Name = "auth_list_users", Title = "List project users", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true),
+     Description("List a project's end users, optionally matching an email substring. Pass next back as after for the following page.")]
+    public async Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>> Users(string? search = null, string? after = null, string? organizationId = null, string? projectId = null)
     {
-        _ = await Fresh(organizationId, projectId);
-        throw new AccountAccessException(AuthenticationConsole.Unavailable, 503);
+        var context = await Fresh(organizationId, projectId, false);
+        return await projects.ListUsersAsync(context.Session, context.Project!.Id, search, after, Cancellation);
     }
-    private async Task<T> Manage<T>(string? organizationId, string? projectId)
+
+    [McpServerTool(Name = "auth_set_user_disabled", Title = "Disable or enable a project user", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
+     Description("Disable an end user, which ends every session and token of the user, or enable them again. Requires an owner or admin.")]
+    public async Task<TerraScaleAuthProjectUser> SetDisabled(string userId, bool disabled, string? organizationId = null, string? projectId = null)
     {
-        var context = await Fresh(organizationId, projectId);
-        if (!context.CanManage) throw new AccountAccessException("Organization management is required.");
-        throw new AccountAccessException(AuthenticationConsole.Unavailable, 503);
+        var context = await Fresh(organizationId, projectId, true);
+        return await projects.SetUserDisabledAsync(context.Session, context.Project!.Id, userId, disabled, Cancellation);
     }
+
+    [McpServerTool(Name = "auth_delete_user", Title = "Delete a project user", UseStructuredContent = false, Destructive = true, OpenWorld = false),
+     Description("Delete an end user of the project. Requires an owner or admin.")]
+    public async Task<string> DeleteUser(string userId, string? organizationId = null, string? projectId = null)
+    {
+        var context = await Fresh(organizationId, projectId, true);
+        await projects.DeleteUserAsync(context.Session, context.Project!.Id, userId, Cancellation);
+        return "Deleted user " + userId + ".";
+    }
+
+    [McpServerTool(Name = "auth_list_sessions", Title = "List live project sessions", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true),
+     Description("List live end-user sessions, optionally of one user. Pass next back as after for the following page.")]
+    public async Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectSession>> Sessions(string? userId = null, string? after = null, string? organizationId = null, string? projectId = null)
+    {
+        var context = await Fresh(organizationId, projectId, false);
+        return await projects.ListSessionsAsync(context.Session, context.Project!.Id, userId, after, Cancellation);
+    }
+
+    [McpServerTool(Name = "auth_revoke_session", Title = "Revoke a project session", UseStructuredContent = false, Destructive = true, OpenWorld = false),
+     Description("Revoke one live end-user session. Requires an owner or admin.")]
+    public async Task<string> RevokeSession(string sessionId, string? organizationId = null, string? projectId = null)
+    {
+        var context = await Fresh(organizationId, projectId, true);
+        await projects.RevokeSessionAsync(context.Session, context.Project!.Id, sessionId, Cancellation);
+        return "Revoked session " + sessionId + ".";
+    }
+
+    [McpServerTool(Name = "auth_list_clients", Title = "List OAuth applications", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true),
+     Description("List the project's OAuth applications. Client secrets are never listed.")]
+    public async Task<AuthenticationClients> Clients(string? organizationId = null, string? projectId = null)
+    {
+        var context = await Fresh(organizationId, projectId, false);
+        return new(await projects.ListClientsAsync(context.Session, context.Project!.Id, Cancellation));
+    }
+
+    [McpServerTool(Name = "auth_create_client", Title = "Create an OAuth application", UseStructuredContent = true, Destructive = false, OpenWorld = false),
+     Description("Create an OAuth application. type is public or confidential; 1 to 10 https redirect URIs (http only on localhost and loopback). A confidential client's client_secret is returned once. Requires an owner or admin.")]
+    public async Task<TerraScaleAuthProjectOAuthClient> CreateClient(string name, string type, IReadOnlyList<string> redirectUris, string? organizationId = null, string? projectId = null)
+    {
+        var context = await Fresh(organizationId, projectId, true);
+        return await projects.CreateClientAsync(context.Session, context.Project!.Id, AuthenticationConsole.NewClient(name, type, redirectUris), Cancellation);
+    }
+
+    [McpServerTool(Name = "auth_delete_client", Title = "Delete an OAuth application", UseStructuredContent = false, Destructive = true, OpenWorld = false),
+     Description("Delete an OAuth application. Requires an owner or admin.")]
+    public async Task<string> DeleteClient(string clientId, string? organizationId = null, string? projectId = null)
+    {
+        var context = await Fresh(organizationId, projectId, true);
+        await projects.DeleteClientAsync(context.Session, context.Project!.Id, clientId, Cancellation);
+        return "Deleted OAuth application " + clientId + ".";
+    }
+
+    [McpServerTool(Name = "auth_update_settings", Title = "Update sign-in methods and branding", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
+     Description("Set the hosted pages' sign-in methods (passcode, password, signUp; passcode or password stays on) and, when any branding argument is given, their branding (name up to 64 characters, https logoUrl, #rrggbb themeColor; an empty string clears a value). Omitted arguments keep their current value. Requires an owner or admin.")]
+    public async Task<TerraScaleAuthProjectSettings> UpdateSettings(bool? passcode = null, bool? password = null, bool? signUp = null,
+        string? name = null, string? logoUrl = null, string? themeColor = null, string? organizationId = null, string? projectId = null)
+    {
+        var context = await Fresh(organizationId, projectId, true);
+        // Omitted arguments keep their current value, so read the settings first.
+        var current = await projects.GetSettingsAsync(context.Session, context.Project!.Id, Cancellation);
+        var methods = passcode is null && password is null && signUp is null ? null
+            : AuthenticationConsole.Methods(passcode ?? current.Methods.Passcode, password ?? current.Methods.Password, signUp ?? current.Methods.SignUp);
+        var branding = name is null && logoUrl is null && themeColor is null ? null
+            : AuthenticationConsole.Branding(name ?? current.Branding.Name, logoUrl ?? current.Branding.LogoUrl, themeColor ?? current.Branding.ThemeColor);
+        return await projects.UpdateSettingsAsync(context.Session, context.Project!.Id, new(methods, branding), Cancellation);
+    }
+
+    private async Task<AccountContext> Fresh(string? organizationId, string? projectId, bool manage)
+    {
+        var context = await AccountScope.RefreshAsync(accounts, DashboardMcp.Scope(http.HttpContext, organizationId, projectId), Cancellation, requireProject: true);
+        if (manage && !context.CanManage) throw new AccountAccessException("Organization management is required.");
+        return context;
+    }
+
     private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 }
+
+public sealed record AuthenticationClients(IReadOnlyList<TerraScaleAuthProjectOAuthClient> Clients);

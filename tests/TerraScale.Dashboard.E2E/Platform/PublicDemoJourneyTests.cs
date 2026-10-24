@@ -67,7 +67,7 @@ public sealed class PublicDemoJourneyTests
     }
 
     [Test]
-    public async Task AuthenticationConsoleRendersEverySectionReadOnlyFromSyntheticData()
+    public async Task AuthenticationConsoleRendersEverySectionFromTheSyntheticTenant()
     {
         await using var demo = await StartAsync();
         using var client = demo.Client();
@@ -84,23 +84,16 @@ public sealed class PublicDemoJourneyTests
             var html = await response.Content.ReadAsStringAsync();
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(section.Key);
             await Assert.That(html).Contains($"data-auth-section=\"{section.Key}\"");
-            await Assert.That(html).DoesNotContain(AuthenticationConsole.Unavailable).Because($"{section.Key} shows synthetic data, not the unavailable state.");
-            await Assert.That(html).DoesNotContain("unavailable</p>").Because(section.Key);
-            if (section.Fields is not null || section.Key is "overview" or "sessions" or "audit")
-                await Assert.That(Regex.IsMatch(html, @"<tbody>\s*<tr>")).IsTrue().Because($"{section.Key} lists fixture rows.");
+            await Assert.That(html).DoesNotContain("id=\"auth-error\"").Because($"{section.Key} shows the synthetic tenant, not an error.");
+            if (section.Key is "users" or "sessions" or "clients")
+                await Assert.That(Regex.IsMatch(html, @"<tbody>\s*<tr>")).IsTrue().Because($"{section.Key} lists synthetic rows.");
         }
-        var preview = await client.GetStringAsync("/auth/emails/preview?template=Magic%20link&locale=en");
-        await Assert.That(preview).Contains("Preview of Magic link");
-        await Assert.That(preview).Contains("auth-email-subject");
-        await Assert.That(preview).Contains("Sign in to Northwind");
         var users = await client.GetStringAsync("/auth/users?q=globex");
-        await Assert.That(users).Contains("Alan Turing").Because("Read-only search filters the rows.");
-        await Assert.That(users).DoesNotContain("<td class=\"ts-table-strong\">Ada Lovelace</td>");
-        await Assert.That(users).Contains("commandfor=\"auth-create\" disabled>").Because("Creating records stays disabled.");
+        await Assert.That(users).Contains("alan@globex.io").Because("Search filters the rows.");
+        await Assert.That(users).DoesNotContain("ada@northwind.app");
         var signIn = await client.GetStringAsync("/auth/sign-in");
-        await Assert.That(signIn).Contains("role=\"switch\" aria-checked=\"true\"");
-        await Assert.That(signIn).Contains("role=\"switch\" aria-checked=\"false\"");
-        foreach (var path in new[] { "/api/v1/auth-management/users", "/api/v1/auth-management/settings", "/api/v1/auth-management/instance", "/api/v1/auth-management/emails" })
+        await Assert.That(signIn).Contains("role=\"switch\" id=\"auth-method-password\" name=\"password\" checked");
+        foreach (var path in new[] { "/api/v1/auth-management/clients", "/api/v1/auth-management/settings", "/api/v1/auth-management/branding" })
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["name"] = "x" }) };
             request.Headers.Add("Origin", demo.Origin.GetLeftPart(UriPartial.Authority));

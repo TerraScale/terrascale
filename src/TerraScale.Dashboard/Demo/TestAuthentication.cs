@@ -1,99 +1,125 @@
-using TerraScale.Dashboard.Features.AuthenticationManagement;
+using System.Collections.Concurrent;
+using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Auth;
+using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Demo;
 
-// Read-only synthetic ts-auth tenant for the public demo (DEMO=true), copied from the approved v3 prototype.
-// Registered only by PublicDemo.Configure; nothing here reaches ts-auth.
-sealed class TestAuthentication : IAuthenticationDemoData
+// In-memory stand-in for ts-auth's project tenant management API (test hosts and the public demo only).
+// Each project starts with the same synthetic tenant. Pages hold three records so journeys exercise paging.
+sealed class TestAuthentication : ITsAuthProjects
 {
-    private static AuthenticationRow Row(params string[] cells) => new(cells);
-    private static AuthenticationRow Status(string status, string tone, params string[] cells) => new(cells, status, tone);
-    private static AuthenticationTable Table(string[] columns, params AuthenticationRow[] rows) => new(columns, rows);
+    public const int PageSize = 3;
+    private readonly ConcurrentDictionary<string, Tenant> tenants = new(StringComparer.Ordinal);
+    private readonly TerraScaleIdGenerator ids = new();
 
-    public AuthenticationSnapshot Snapshot { get; } = new(
-        "https://auth.terrascale.tech/core-platform", "01JA9C2W7RZK4P1M8N3Q5T6V0X", "Google, GitHub, 3 enterprise connections",
-        new HashSet<string> { "email_verification", "email_passcode", "password", "passkeys", "totp", "recovery_codes" },
-        new Dictionary<string, AuthenticationTable>
+    private sealed class Tenant
+    {
+        public TerraScaleAuthProjectMethods Methods = new(true, true, true);
+        public TerraScaleAuthProjectBranding Branding = new("Northwind", null, "#2158e8");
+        public readonly List<TerraScaleAuthProjectUser> Users = [];
+        public readonly List<TerraScaleAuthProjectSession> Sessions = [];
+        public readonly List<TerraScaleAuthProjectOAuthClient> Clients = [];
+    }
+
+    private Tenant For(string projectId) => tenants.GetOrAdd(projectId, _ =>
+    {
+        var tenant = new Tenant();
+        var now = DateTimeOffset.UtcNow;
+        foreach (var (email, days) in new[] { ("ada@northwind.app", 10), ("grace@acme.com", 8), ("alan@globex.io", 6), ("kj@initech.dev", 4), ("linus@umbrella.health", 2) })
+            tenant.Users.Add(new(ids.NewId(), email, now.AddDays(-days), false));
+        foreach (var user in tenant.Users.Take(2))
+            tenant.Sessions.Add(new(ids.NewId(), user.Id, user.Email, now.AddHours(-1), now.AddDays(7)));
+        tenant.Clients.Add(new(ids.NewId(), "Northwind web", "public", ["https://northwind.app/callback"], now.AddDays(-9)));
+        return tenant;
+    });
+
+    private static T Locked<T>(Tenant tenant, Func<T> action) { lock (tenant) return action(); }
+    private static AccountAccessException Missing() => new("Authentication for this project, or the requested record, is unavailable.", 404);
+
+    private static TerraScaleAuthPlatformPage<T> Page<T>(IEnumerable<T> items, Func<T, string> id, string? after)
+    {
+        var rest = items.SkipWhile(item => after is not null && id(item) != after).Skip(after is null ? 0 : 1).Take(PageSize + 1).ToArray();
+        return new(rest.Take(PageSize).ToArray(), rest.Length > PageSize ? id(rest[PageSize - 1]) : null);
+    }
+
+    public Task<TerraScaleAuthProjectSettings> GetSettingsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
+    {
+        var tenant = For(projectId);
+        return Task.FromResult(Locked(tenant, () => new TerraScaleAuthProjectSettings(projectId, "https://auth.terrascale.tech/" + projectId,
+            "https://auth.terrascale.tech/" + projectId + "/.well-known/openid-configuration", "https://auth.terrascale.tech/ui/" + projectId + "/sign-in",
+            tenant.Methods, tenant.Branding, new(tenant.Users.Count, tenant.Clients.Count))));
+    }
+
+    public Task<TerraScaleAuthProjectSettings> UpdateSettingsAsync(SessionRecord session, string projectId, TerraScaleAuthProjectSettingsUpdate update, CancellationToken cancellationToken)
+    {
+        var tenant = For(projectId);
+        Locked(tenant, () =>
         {
-            ["users"] = Table(["Name", "Email", "Username", "Sign-in", "Created", "Status"],
-                Status("Verified", "success", "Ada Lovelace", "ada@northwind.app", "ada", "passkey, totp", "2026-10-13"),
-                Status("Verified", "success", "Grace Hopper", "grace@acme.com", "grace", "password, sso", "2026-10-12"),
-                Status("Verified", "success", "Alan Turing", "alan@globex.io", "—", "email code", "2026-10-10"),
-                Status("Verified", "success", "Katherine Johnson", "kj@initech.dev", "kjohnson", "password", "2026-10-02"),
-                Status("Unverified", "warning", "Linus Pauling", "linus@umbrella.health", "—", "magic link", "2026-09-28")),
-            ["organizations"] = Table(["Name", "Slug", "Members", "Created", "SSO"],
-                Status("SAML", "success", "Acme Inc.", "acme", "1,204", "2026-08-14"),
-                Status("OIDC", "success", "Globex", "globex", "388", "2026-08-30"),
-                Status("None", "neutral", "Initech", "initech", "92", "2026-09-11"),
-                Status("SAML", "success", "Umbrella Health", "umbrella-health", "2,410", "2026-09-19")),
-            ["memberships"] = Table(["User", "Organization", "Role", "Since"],
-                Row("Grace Hopper", "Acme Inc.", "admin", "2026-08-14"),
-                Row("Ada Lovelace", "Acme Inc.", "member", "2026-09-02"),
-                Row("Alan Turing", "Globex", "billing-viewer", "2026-09-21"),
-                Row("Katherine Johnson", "Initech", "admin", "2026-10-02")),
-            ["invitations"] = Table(["Email", "Organization", "Role", "Expires", "Status"],
-                Status("Pending", "neutral", "m.curie@acme.com", "Acme Inc.", "member", "2026-10-20"),
-                Status("Pending", "neutral", "ops@globex.io", "Globex", "admin", "2026-10-18"),
-                Status("Expires in 1 day", "warning", "n.tesla@initech.dev", "Initech", "member", "2026-10-15")),
-            ["domains"] = Table(["Domain", "Organization", "Status"],
-                Status("Verified", "success", "acme.com", "Acme Inc."),
-                Status("Verified", "success", "globex.io", "Globex"),
-                Status("Pending DNS", "warning", "umbrella.health", "Umbrella Health")),
-            ["connections"] = Table(["Name", "Type", "Organization", "Status"],
-                Status("Active", "success", "Google", "social", "Instance-wide"),
-                Status("Active", "success", "GitHub", "social", "Instance-wide"),
-                Status("Active", "success", "Acme Okta", "SAML", "Acme Inc."),
-                Status("Active", "success", "Globex Entra ID", "OIDC", "Globex"),
-                Status("Certificate expires in 9 days", "warning", "Umbrella ADFS", "SAML", "Umbrella Health")),
-            ["directories"] = Table(["Scope", "SCIM base URL", "Users", "Last sync"],
-                Status("4 min ago", "success", "Acme Inc.", "…/scim/v2/01JA4R…", "1,198"),
-                Status("12 min ago", "success", "Umbrella Health", "…/scim/v2/01JA6M…", "2,402")),
-            ["clients"] = Table(["Application", "Client ID", "Client authentication", "Redirect URIs"],
-                Row("Northwind web", "01JA9C2W7RZK4P1M8N3Q5T6V0X", "none", "https://northwind.app/callback"),
-                Row("Northwind API", "01JA9C5H1BQ7S2D6F8G0J3K4LM", "client_secret_basic", "https://api.northwind.app/auth/callback"),
-                Row("Northwind CLI", "01JA9D0P8T4V6W2X1Y3Z5A7B9C", "none", "http://127.0.0.1/callback")),
-            ["templates"] = Table(["Name", "Claims", "Lifetime"],
-                Row("supabase", "sub, email, role", "300 s"),
-                Row("hasura", "sub, https://hasura.io/jwt/claims", "900 s")),
-            ["keys"] = Table(["Name", "Prefix", "Scopes", "Last used"],
-                Row("Backend", "sk_01JA8…", "users, organizations, sessions", "2 min ago"),
-                Row("Provisioning job", "sk_01JA2…", "directories, domains", "3 days ago"),
-                Row("Ops (full access)", "sk_01J9X…", "*", "Never")),
-            ["webhooks"] = Table(["Endpoint", "Events", "Deliveries (24h)", "Status"],
-                Status("Healthy", "success", "https://api.northwind.app/webhooks/auth", "user.*, membership.*", "4,812"),
-                Status("3 in dead-letter queue", "danger", "https://hooks.zapier.com/…/8812", "user.signed_up", "96")),
-            ["sessions"] = Table(["User", "Signed in with", "Device", "Location", "Last active"],
-                Row("Ada Lovelace", "Passkey", "Safari · macOS", "gru", "1 min ago"),
-                Row("Grace Hopper", "Acme Okta", "Chrome · Windows", "sjc", "6 min ago"),
-                Row("Alan Turing", "Email code", "Firefox · Linux", "fra", "22 min ago"),
-                Row("Katherine Johnson", "Password + TOTP", "Northwind CLI", "fra", "2 h ago")),
-            ["audit"] = Table(["Change", "Actor", "Target", "When"],
-                Row("user.created", "Directory sync (Acme Okta)", "Ada Lovelace", "2 min ago"),
-                Row("connection.updated", "grace@terrascale.tech", "Umbrella ADFS", "41 min ago"),
-                Row("settings.updated", "grace@terrascale.tech", "magic_link: off", "3 h ago"),
-                Row("oauth-client.created", "mario@terrascale.tech", "Northwind CLI", "Yesterday"),
-                Row("webhook.updated", "mario@terrascale.tech", "api.northwind.app", "Yesterday"),
-                Row("api-key.created", "mario@terrascale.tech", "Backend", "2026-10-11")),
-            ["emails"] = Table(["Email", "Subject", "Locale", "Preheader", "Heading", "Body", "Button", "Footnote"],
-                Status("Custom", "success", "Verify your email", "Confirm your email for {{ app_name }}", "en", "Confirm this is your email address", "Confirm your email address",
-                    "Hi {{ user.name }},\n\nConfirm this is your email address to finish creating your {{ app_name }} account.", "Verify email", "If you did not sign up, you can ignore this email."),
-                Status("Custom", "success", "Sign-in code", "Your {{ app_name }} sign-in code", "en", "Enter this code to sign in", "Your sign-in code is 482 913",
-                    "Enter this code to sign in. It expires in 10 minutes.", "", "Never share this code. {{ app_name }} will never ask for it."),
-                Status("Default", "neutral", "Magic link", "Sign in to {{ app_name }}", "en", "Open this link to sign in", "Sign in to {{ app_name }}",
-                    "Open this link to sign in. It works once and expires in 15 minutes.", "Sign in", "If you did not request this, you can ignore this email."),
-                Status("Default", "neutral", "Password reset", "Reset your {{ app_name }} password", "en", "Someone asked to reset the password for your account", "Reset your password",
-                    "Someone asked to reset the password for your account. Choose a new password with the button below.", "Reset password", "Resetting signs you out of every device."),
-                Status("Default", "neutral", "MFA code", "Your {{ app_name }} verification code", "en", "Enter this code to finish signing in", "Your verification code is 771 204",
-                    "Enter this code to finish signing in.", "", "Never share this code."),
-                Status("Default", "neutral", "New device", "New sign-in to {{ app_name }}", "en", "Your account was just used to sign in from a new device near São Paulo", "New sign-in from Chrome on Windows",
-                    "Your account was just used to sign in from a new device near São Paulo.", "Review activity", "If this was not you, reset your password now."),
-                Status("Default", "neutral", "Invitation", "You are invited to {{ organization.name }}", "en", "{{ inviter.name }} invited you to join {{ organization.name }}", "Join {{ organization.name }} on {{ app_name }}",
-                    "{{ inviter.name }} invited you to join {{ organization.name }}.", "Accept invitation", "This invitation expires in 7 days."),
-                Status("Default", "neutral", "Lockout", "Your {{ app_name }} account is locked", "en", "We paused sign-ins to your account for 15 minutes after repeated failed attempts", "Too many sign-in attempts",
-                    "We paused sign-ins to your account for 15 minutes after repeated failed attempts.", "Reset password", "If this was not you, reset your password.")),
-        },
-        new AuthenticationBranding("Northwind", ThemeColor: "#2158e8"),
-        new AuthenticationEmailBranding(BrandName: "Northwind", SenderName: "Northwind accounts", ReplyTo: "support@northwind.app",
-            LogoUrl: "https://assets.northwind.app/logo.png", PrimaryColor: "#2158e8", WebsiteUrl: "https://northwind.app",
-            FooterText: "Northwind Ltd · 22 Rua Augusta, São Paulo"));
+            if (update.Methods is { Passcode: false, Password: false }) throw new AccountAccessException("ts-auth rejected these values. Check them and try again.", 422, "invalid_request");
+            tenant.Methods = update.Methods ?? tenant.Methods;
+            tenant.Branding = update.Branding ?? tenant.Branding;
+            return true;
+        });
+        return GetSettingsAsync(session, projectId, cancellationToken);
+    }
+
+    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>> ListUsersAsync(SessionRecord session, string projectId, string? query, string? after, CancellationToken cancellationToken)
+    {
+        var tenant = For(projectId);
+        return Task.FromResult(Locked(tenant, () => Page(tenant.Users.Where(user => string.IsNullOrWhiteSpace(query) || user.Email.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase)), user => user.Id, after)));
+    }
+
+    public Task<TerraScaleAuthProjectUser> SetUserDisabledAsync(SessionRecord session, string projectId, string userId, bool disabled, CancellationToken cancellationToken)
+    {
+        var tenant = For(projectId);
+        return Task.FromResult(Locked(tenant, () =>
+        {
+            var index = tenant.Users.FindIndex(user => user.Id == userId);
+            if (index < 0) throw Missing();
+            if (disabled) tenant.Sessions.RemoveAll(item => item.UserId == userId);
+            return tenant.Users[index] = tenant.Users[index] with { Disabled = disabled };
+        }));
+    }
+
+    public Task DeleteUserAsync(SessionRecord session, string projectId, string userId, CancellationToken cancellationToken)
+    {
+        var tenant = For(projectId);
+        Locked(tenant, () => tenant.Users.RemoveAll(user => user.Id == userId) == 0 ? throw Missing() : tenant.Sessions.RemoveAll(item => item.UserId == userId));
+        return Task.CompletedTask;
+    }
+
+    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectSession>> ListSessionsAsync(SessionRecord session, string projectId, string? userId, string? after, CancellationToken cancellationToken)
+    {
+        var tenant = For(projectId);
+        return Task.FromResult(Locked(tenant, () => Page(tenant.Sessions.Where(item => string.IsNullOrWhiteSpace(userId) || item.UserId == userId), item => item.Id, after)));
+    }
+
+    public Task RevokeSessionAsync(SessionRecord session, string projectId, string sessionId, CancellationToken cancellationToken)
+    {
+        var tenant = For(projectId);
+        Locked(tenant, () => tenant.Sessions.RemoveAll(item => item.Id == sessionId) == 0 ? throw Missing() : true);
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<TerraScaleAuthProjectOAuthClient>> ListClientsAsync(SessionRecord session, string projectId, CancellationToken cancellationToken)
+    {
+        var tenant = For(projectId);
+        return Task.FromResult(Locked(tenant, () => (IReadOnlyList<TerraScaleAuthProjectOAuthClient>)tenant.Clients.ToArray()));
+    }
+
+    public Task<TerraScaleAuthProjectOAuthClient> CreateClientAsync(SessionRecord session, string projectId, TerraScaleAuthProjectCreateOAuthClient request, CancellationToken cancellationToken)
+    {
+        var tenant = For(projectId);
+        var client = new TerraScaleAuthProjectOAuthClient(ids.NewId(), request.Name!, request.Type!, request.RedirectUris!.ToArray(), DateTimeOffset.UtcNow);
+        Locked(tenant, () => { tenant.Clients.Add(client); return true; });
+        return Task.FromResult(request.Type == "confidential" ? client with { ClientSecret = "tsas_test_" + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)) } : client);
+    }
+
+    public Task DeleteClientAsync(SessionRecord session, string projectId, string clientId, CancellationToken cancellationToken)
+    {
+        var tenant = For(projectId);
+        Locked(tenant, () => tenant.Clients.RemoveAll(item => item.ClientId == clientId) == 0 ? throw Missing() : true);
+        return Task.CompletedTask;
+    }
 }
