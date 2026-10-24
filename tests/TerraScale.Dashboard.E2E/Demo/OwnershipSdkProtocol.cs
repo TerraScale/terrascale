@@ -79,6 +79,8 @@ sealed class OwnershipSdkProtocol(TestWorkspace workspace, Func<string, (string 
         string Field(string name) => body.ValueKind == JsonValueKind.Object && body.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString()! : "";
         switch (parts, method)
         {
+            case (["account", "providers"], "GET"):
+                return Json(new { providers = Array.Empty<string>() });
             case (["organizations"], "GET"):
                 return Page(http, await workspace.ListOrganizationsAsync(session, token));
             case (["organizations"], "POST"):

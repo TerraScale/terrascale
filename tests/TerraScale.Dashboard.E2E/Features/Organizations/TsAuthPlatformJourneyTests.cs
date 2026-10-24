@@ -810,6 +810,8 @@ public sealed class TsAuthPlatformJourneyTests
 
         private HttpResponseMessage Route(string method, string[] parts, string query, string body, (string UserId, string Email) caller)
         {
+            if (parts is ["account", "providers"] && method == "GET")
+                return Json(new { providers = Array.Empty<string>() });
             using var json = body.Length == 0 ? null : JsonDocument.Parse(body);
             string Field(string name) => json?.RootElement.TryGetProperty(name, out var value) == true ? value.GetString() ?? "" : "";
             if (parts is ["account"] && method == "DELETE") return new(HttpStatusCode.Accepted);

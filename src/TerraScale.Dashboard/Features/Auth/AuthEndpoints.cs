@@ -19,6 +19,7 @@ public static class AuthEndpoints
         services.AddSingleton<IAuthOidcGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<IAuthRefreshGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<ITsAuthMfa>(provider => provider.GetRequiredService<TsAuthGateway>());
+        services.AddSingleton<ITsAuthProviders>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<IAuthLogoutGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<IPlatformRoleGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<IProjectAccessTokens>(provider => provider.GetRequiredService<TsAuthGateway>());

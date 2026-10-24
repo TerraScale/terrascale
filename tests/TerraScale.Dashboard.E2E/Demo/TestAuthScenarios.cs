@@ -403,6 +403,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 if (http.Request.Method is not "GET" and not "HEAD") Interlocked.Increment(ref managementMutations);
                 return Results.NotFound();
             }
+            if (http.Request.Method == "GET" && path == "/v1/terrascale/account/providers")
+                return Bearer(http, out _) ? Results.Json(new { providers = Array.Empty<string>() }) : OAuthError("invalid_token", 401);
             // This producer predates the two-factor routes; like such a ts-auth it answers 404, and the dashboard leaves the status unknown.
             if (http.Request.Method == "GET" && (path == "/v1/terrascale/account/mfa" || path.StartsWith("/v1/terrascale/organizations/", StringComparison.Ordinal)))
                 return Results.NotFound();
