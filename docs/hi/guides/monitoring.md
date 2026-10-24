@@ -90,9 +90,9 @@ Rules are checked every minute. When a rule fires, organization owners get an em
 The webhook body is JSON:
 
 ```json
-{"type":"alert.firing","alertId":"01JB...","projectId":"01JA...","rule":{"id":"01JB...","name":"Slow orders","metric":"p95_latency_ms","threshold":250},"database":"orders","value":412.5,"at":"2026-10-24T12:00:00Z"}
+{"type":"alert.firing","alertId":"01JB...","projectId":"01JA...","rule":{"id":"01JB...","name":"Slow orders","metric":"p95_latency_ms","threshold":250},"database":{"id":"01JA...","name":"orders"},"value":412.5,"at":"2026-10-24T12:00:00Z"}
 ```
 
-`type` is `alert.firing` or `alert.resolved`; both carry the same `alertId`. Requests are signed exactly like [change webhooks](/hi/guides/change-webhooks#verify-the-exact-request-bytes): `X-TerraScale-Delivery`, `X-TerraScale-Timestamp` and `X-TerraScale-Signature` with the rule's secret, which the dashboard shows once when you create the rule. The webhook URL must be public HTTPS. A failed delivery is retried on the next checks, up to 3 attempts.
+`type` is `alert.firing` or `alert.resolved`; both carry the same `alertId`. `database` is `null` for a rule that watches every database of the project. Requests are signed exactly like [change webhooks](/hi/guides/change-webhooks#verify-the-exact-request-bytes): `X-TerraScale-Delivery`, `X-TerraScale-Timestamp` and `X-TerraScale-Signature` with the rule's secret, which the dashboard shows once when you create the rule. The webhook URL must be public HTTPS. A failed delivery is retried on the next checks, up to 3 attempts.
 
 </div>
