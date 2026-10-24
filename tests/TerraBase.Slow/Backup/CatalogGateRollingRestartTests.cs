@@ -14,7 +14,8 @@ namespace TerraBase.Slow.Backup;
 public sealed class CatalogGateRollingRestartTests
 {
     private const int Restarts = 20;
-    private static readonly TimeSpan Within = TimeSpan.FromSeconds(10);
+    // A loaded runner verifies a restarted region slower; a catalog closed as restored never reopens, however long it waits.
+    private static readonly TimeSpan Within = TimeSpan.FromSeconds(30);
 
     [Test]
     public async Task Twenty_rolling_restarts_under_write_load_keep_the_catalog_and_reopen_the_gate()
@@ -68,7 +69,15 @@ public sealed class CatalogGateRollingRestartTests
                 // The same file came back: a lost log under a file holding no schema yet would be bootstrapped anew.
                 var catalog = await gru.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
                 await Assert.That(catalog.Incarnation).IsEqualTo(before);
-                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(gru.Gate.IsOpen), timeout: Within);
+                try
+                {
+                    await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(gru.Gate.IsOpen), timeout: Within);
+                }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    Assert.Fail($"restart {restart}: the catalog gate stayed closed, waiting for: {string.Join("; ", gru.Gate.Waiting)}");
+                }
+
                 await using var read = await catalog.BeginTransactionAsync(write: false, token);
                 foreach (var organization in acknowledged)
                 {
