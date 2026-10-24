@@ -12,6 +12,9 @@ internal static class ApiExamples
         """;
     private const string DeclaredSchema = """{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["name"],"properties":{"name":{"type":"string"}}}""";
     private const string CollectionRules = """{"owner":"/userId","read":{"owner":true,"public":false,"roles":[]},"write":{"owner":true,"public":false,"roles":[]}}""";
+    private const string FileBucket = "{\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FAC\",\"name\":\"avatars\",\"region\":\"gru\",\"rules\":" + CollectionRules + "}";
+    private const string StoredFile = """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAD","name":"hello.txt","contentType":"text/plain","size":5,"sha256":"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=","metadata":{"userId":"01ARZ3NDEKTSV4RRFFQ69G5FAE"},"status":"ready","uploadExpiresAt":"2026-10-24T12:05:00Z","deleteAfter":null}""";
+    private const string FileCapability = """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAD","url":"https://files.example/signed-capability","expiresAt":"2026-10-24T12:05:00Z","headers":{"Content-Type":"text/plain","Content-Length":"5","x-amz-checksum-sha256":"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ="}}""";
     private const string Collection = """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA7","name":"people","created_at":"1791374400000"}""";
     private const string Document = """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA3","version":"opaque-version-from-server","state":"value","document":{"name":"Ada"}}""";
     private const string Write = """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA3","version":"opaque-version-from-server","offset":"1","durability":"local_durable"}""";
@@ -92,6 +95,9 @@ internal static class ApiExamples
 
     private static string Request(string? id, string mediaType) => id switch
     {
+        "createFileBucket" => "{\"name\":\"avatars\",\"rules\":" + CollectionRules + "}",
+        "setFileBucketRules" => "{\"rules\":" + CollectionRules + "}",
+        "createFileUpload" => """{"name":"hello.txt","contentType":"text/plain","size":5,"sha256":"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=","metadata":{"userId":"01ARZ3NDEKTSV4RRFFQ69G5FAE"}}""",
         "createDatabase" => """{"name":"main"}""",
         "branchDatabase" => """{"name":"main_branch"}""",
         "updateDatabase" => """{"replicaRegions":[]}""",
@@ -130,6 +136,12 @@ internal static class ApiExamples
 
     private static string Response(string? id, string status) => id switch
     {
+        "createFileBucket" or "setFileBucketRules" => FileBucket,
+        "listFileBuckets" => "{\"items\":[" + FileBucket + "],\"next\":null}",
+        "listBucketFiles" => "{\"items\":[" + StoredFile + "],\"next\":null}",
+        "completeFileUpload" => StoredFile,
+        "createFileUpload" => FileCapability,
+        "createFileDownload" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAD","url":"https://files.example/signed-capability","expiresAt":"2026-10-24T12:01:00Z","headers":{}}""",
         "healthz" => $$"""{"status":"ok","version":"{{ServiceVersion.Value}}","region":"gru-1"}""",
         "readyz" => $$"""{"status":"{{(status == "503" ? "unavailable" : "ready")}}","version":"{{ServiceVersion.Value}}","region":"gru-1"}""",
         "createDatabase" or "getDatabase" or "updateDatabase" => Database,

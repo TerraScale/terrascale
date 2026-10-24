@@ -94,7 +94,8 @@ public static class UserAuthExtensions
                 && context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName is not
                     ("getDocument" or "listDocuments" or "queryDocuments" or "createDocument" or "putDocument"
                     or "patchDocument" or "deleteDocument" or "runTransaction" or "streamDatabaseChanges"
-                    or "getShape" or "getShapeKey" or "getShapeManifest"))
+                    or "getShape" or "getShapeKey" or "getShapeManifest"
+                    or "createFileUpload" or "completeFileUpload" or "listBucketFiles" or "createFileDownload" or "deleteBucketFile"))
             {
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
                 return;
@@ -173,7 +174,10 @@ public static class UserAuthExtensions
 
             var actor = jwt.FindFirst(ClaimTypes.NameIdentifier)!.Value;
             var catalog = context.RequestServices.GetRequiredService<IProjectCatalog>();
-            var resolved = await catalog.ResolveProjectAsync(project, actor, createIn: null, context.RequestAborted).ConfigureAwait(false);
+            var bucketCreation = context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == "createFileBucket"
+                && !jwt.HasClaim("token_kind", "end_user") && jwt.FindFirst("database") is null;
+            var resolved = await catalog.ResolveProjectAsync(project, actor,
+                createIn: bucketCreation ? jwt.FindFirst("org_id")?.Value : null, context.RequestAborted).ConfigureAwait(false);
             if (resolved is not string organization)
             {
                 await (resolved switch
