@@ -42,8 +42,15 @@ public static class OrganizationAudit
             var pages = Math.Max(1, (events.Count + pageSize - 1) / pageSize);
             var page = Math.Min(filter.Page, pages);
             http.Response.Headers.CacheControl = "no-store";
-            return Results.Json(new { retentionDays = snapshot.AuditRetentionDays, total = events.Count, page, pageCount = pages,
-                filters = new { filter.Action, filter.Search, filter.Range, filter.Severity }, events = events.Skip((page - 1) * pageSize).Take(pageSize).Select(AuditEventRow.From) }, Json);
+            return Results.Json(new
+            {
+                retentionDays = snapshot.AuditRetentionDays,
+                total = events.Count,
+                page,
+                pageCount = pages,
+                filters = new { filter.Action, filter.Search, filter.Range, filter.Severity },
+                events = events.Skip((page - 1) * pageSize).Take(pageSize).Select(AuditEventRow.From)
+            }, Json);
         });
         endpoints.MapGet("/audit/export", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, TimeProvider time) =>
         {
