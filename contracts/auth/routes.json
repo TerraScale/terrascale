@@ -192,7 +192,7 @@
     },
     {
       "operation_id": "delete_account",
-      "receipt_producer_revision": "f68e17496c81afcde889542f1f5325dc598e56aa",
+      "receipt_producer_revision": "b1c8fc92c55fd1235b6b94e1350a5c76908e20ed",
       "method": "DELETE",
       "path": "/v1/terrascale/account",
       "request_dto": null,
@@ -215,7 +215,7 @@
     },
     {
       "operation_id": "account_deletion_status",
-      "producer_revision": "f68e17496c81afcde889542f1f5325dc598e56aa",
+      "producer_revision": "b1c8fc92c55fd1235b6b94e1350a5c76908e20ed",
       "method": "GET",
       "path": "/v1/terrascale/account/deletion",
       "request_dto": null,
