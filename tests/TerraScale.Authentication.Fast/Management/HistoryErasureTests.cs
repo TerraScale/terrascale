@@ -1,7 +1,10 @@
+using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
@@ -25,7 +28,12 @@ public sealed class HistoryErasureTests
         await using var terrabase = started ?? throw new InvalidOperationException(unavailable);
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         await using var auth = await AuthTestServer.StartAsync(
-            settings: values => values["terrabase-url"] = terrabase.InternalAddress.GetLeftPart(UriPartial.Authority),
+            settings: values =>
+            {
+                values["terrabase-url"] = terrabase.InternalAddress.GetLeftPart(UriPartial.Authority);
+                values["dashboard-client-secret"] = OidcHarness.ClientSecret;
+                values["dashboard-redirect-uris"] = OidcHarness.RedirectUri;
+            },
             services: services => services.AddSingleton<TimeProvider>(clock));
         var store = auth.App.Services.GetRequiredService<AuthStore>();
         var users = auth.App.Services.GetRequiredService<Users>();
@@ -74,6 +82,21 @@ public sealed class HistoryErasureTests
         job = await JobAsync(store, user.Id);
         await Assert.That(job.HistoryStatus).IsEqualTo("residue").Because("every holder rewrote both files; tombstone and feed residue at or below the cut remain for up to 7 days");
         await Assert.That(job.HistoryCompletedAt).IsNull();
+
+        // Shared-file rewrites retain the current outbox proof. Dashboard can recover it without a user or receipt.
+        using var list = new HttpRequestMessage(HttpMethod.Get, "/v1/terrascale/deletions");
+        list.Headers.TryAddWithoutValidation("Authorization", "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{OidcIssuer.DashboardClientId}:{OidcHarness.ClientSecret}")));
+        using var listed = await auth.Client.SendAsync(list);
+        await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var proof = (await listed.Content.ReadFromJsonAsync<DashboardDeletionList>(DashboardDeletionJson.Default.DashboardDeletionList))!.Items.Single(item => item.Id == job.ErasureId);
+        var document = (await store.GetAsync(AuthStore.DeletionJobCollection, PlatformDirectory.Instance, job.Id))!;
+        await Assert.That(await store.RetireDeletionFenceAsync(job, document.Version)).IsFalse();
+        using var ack = new HttpRequestMessage(HttpMethod.Post, $"/v1/terrascale/deletions/{proof.Id}/acknowledge");
+        ack.Headers.TryAddWithoutValidation("Authorization", "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{OidcIssuer.DashboardClientId}:{OidcHarness.ClientSecret}")));
+        ack.Content = JsonContent.Create(new DashboardDeletionAcknowledgement(proof.Scope, proof.SubjectId, proof.OrganizationId), DashboardDeletionJson.Default.DashboardDeletionAcknowledgement);
+        using var acknowledged = await auth.Client.SendAsync(ack);
+        await Assert.That(acknowledged.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That((await JobAsync(store, user.Id)).DashboardVerifiedAt).IsNotNull();
 
         // Past the credential bound the fence stays: the erasure is not complete.
         clock.UtcNow = job.FenceExpiresAt!.Value.AddMinutes(1);

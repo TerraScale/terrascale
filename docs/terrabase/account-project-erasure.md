@@ -21,6 +21,7 @@ Compatibility: version 1 still refuses nonempty projects and now waits for prior
 require evidence-version-2 receipts; legacy empty-only receipts are refreshed. This also makes a delayed v1
 acceptance safe when auth adopts an intent in another region. Older TerraBase binaries reject version 2, so auth retains
 its durable intent until the TerraBase rollout. This adds a versioned JSON record and no SQLite schema
-change or storage-format bump. Complete the TerraBase rollout through FR1 and drain all closure calls started against older binaries before
-advancing account adoption traffic. Older responses do not certify active erasure. Collect live acceptance
-evidence and release the dashboard consent change only after that barrier.
+change or storage-format bump. The response also carries `evidenceVersion: 2`. Auth keeps a durable pending intent when an older engine
+rejects version 2 or returns legacy acceptance without this evidence, and retries automatically after FR1
+updates TerraBase. There is no fallback to destructive version-1 behavior. This permits auth to auto-release
+before the scheduled TerraBase update. Collect live acceptance evidence after every holder is upgraded.

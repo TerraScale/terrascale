@@ -393,11 +393,17 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>
     /// Retires a deletion fence whose shared-history erasure TerraBase certified: the job at the version read, its holders' markers
     /// and its request document, atomically.
-    /// False when another writer changed it. Callers check completion and <see cref="DeletionJob.FenceExpiresAt"/>.
+    /// False when another writer changed it or platform dashboard cleanup is unacknowledged.
+    /// Callers check completion and <see cref="DeletionJob.FenceExpiresAt"/>.
     /// </summary>
     public async Task<bool> RetireDeletionFenceAsync(DeletionJob job, string expectedVersion, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(job);
+        if (job.InstanceId == "terrascale" && job.DashboardVerifiedAt is null)
+        {
+            return false;
+        }
+
         using var filter = JsonDocument.Parse(new JsonObject { ["eq"] = new JsonArray("/erasureId", job.ErasureId) }.ToJsonString());
         var marks = await this.QueryAsync(HistoryMarkCollection, filter.RootElement, 1000, cancellationToken).ConfigureAwait(false);
         // One transaction, so nothing is orphaned; the request document last, so its deletion stamp is the highest: a holder that

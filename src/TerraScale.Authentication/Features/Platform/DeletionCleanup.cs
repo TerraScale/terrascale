@@ -79,7 +79,8 @@ public sealed class DeletionCleanup(
     /// <summary>
     /// One fair batch of logically verified jobs: advances each one's shared-history erasure with TerraBase, re-running the scoped
     /// cleanup when TerraBase covered every origin's pre-fence writes; retires a fence only when TerraBase reports the erasure
-    /// complete and every credential issued before it has expired. Deadlines are TerraBase's, from the original request time.
+    /// complete, every credential issued before it has expired, and platform dashboard cleanup was acknowledged.
+    /// Deadlines are TerraBase's, from the original request time.
     /// </summary>
     public async Task RunHistoryOnceAsync(CancellationToken cancellationToken = default)
     {
@@ -88,7 +89,15 @@ public sealed class DeletionCleanup(
         {
             ["and"] = new JsonArray(
                 new JsonObject { ["lte"] = new JsonArray("/nextAttemptAt", JsonValue.Create(now)) },
-                new JsonObject { ["ne"] = new JsonArray("/authLogicalVerifiedAt", null) }),
+                new JsonObject { ["ne"] = new JsonArray("/authLogicalVerifiedAt", null) },
+                // Completed platform proofs wait durably without starving other jobs during a dashboard outage.
+                new JsonObject
+                {
+                    ["or"] = new JsonArray(
+                    new JsonObject { ["eq"] = new JsonArray("/historyCompletedAt", null) },
+                    new JsonObject { ["ne"] = new JsonArray("/dashboardVerifiedAt", null) },
+                    new JsonObject { ["ne"] = new JsonArray("/instanceId", PlatformDirectory.Instance) })
+                }),
         }.ToJsonString());
         var jobs = await store.QueryAsync(AuthStore.DeletionJobCollection, filter.RootElement, BatchSize,
             [new TerraBaseSort("/nextAttemptAt")], cancellationToken).ConfigureAwait(false);
@@ -102,7 +111,8 @@ public sealed class DeletionCleanup(
 
             if (job.HistoryCompletedAt is not null)
             {
-                if (clock.GetUtcNow() >= job.FenceExpiresAt)
+                if (clock.GetUtcNow() >= job.FenceExpiresAt
+                    && (job.InstanceId != PlatformDirectory.Instance || job.DashboardVerifiedAt is not null))
                 {
                     _ = await store.RetireDeletionFenceAsync(job, document.Version, cancellationToken).ConfigureAwait(false);
                 }
@@ -167,27 +177,34 @@ public sealed class DeletionCleanup(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(Interval, clock);
-        do
+        try
         {
-            try
-            {
-                await this.RunOnceAsync(stoppingToken).ConfigureAwait(false);
-                await this.RunHistoryOnceAsync(stoppingToken).ConfigureAwait(false);
-            }
-            catch (Exception) when (!stoppingToken.IsCancellationRequested)
+            do
             {
                 try
                 {
-                    logger.ZLogWarning($"Auth deletion retry pass failed; retrying at the next interval");
+                    await this.RunOnceAsync(stoppingToken).ConfigureAwait(false);
+                    await this.RunHistoryOnceAsync(stoppingToken).ConfigureAwait(false);
                 }
-                catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
+                catch (Exception) when (!stoppingToken.IsCancellationRequested)
                 {
-                    // Logging must not stop the worker while storage remains unavailable.
-                    _ = logFailure;
+                    try
+                    {
+                        logger.ZLogWarning($"Auth deletion retry pass failed; retrying at the next interval");
+                    }
+                    catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
+                    {
+                        // Logging must not stop the worker while storage remains unavailable.
+                        _ = logFailure;
+                    }
                 }
             }
+            while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Stopping this worker is normal even while the host remains available.
+        }
     }
 
     private async Task<string?> CleanAsync(DeletionJob job, CancellationToken cancellationToken)

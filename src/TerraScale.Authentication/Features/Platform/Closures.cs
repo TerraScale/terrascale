@@ -71,9 +71,10 @@ public sealed class Closures(
             return await this.WithoutIntentAsync(job, cancellationToken).ConfigureAwait(false);
         }
 
-        if (!answer.Accepted)
+        if (!answer.Accepted || answer.EvidenceVersion != 2)
         {
-            await this.DeferAsync(seen, "terrabase_pending", cancellationToken).ConfigureAwait(false);
+            // Older engines can accept catalog emptiness while active purges remain. Retain the driver until upgraded.
+            await this.DeferAsync(seen, answer.Accepted ? "terrabase_evidence_pending" : "terrabase_pending", cancellationToken).ConfigureAwait(false);
             return false;
         }
 
@@ -292,25 +293,32 @@ public sealed class ClosureWorker(Closures closures, PlatformDirectory directory
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(Interval, clock);
-        do
+        try
         {
-            try
-            {
-                await this.RunOnceAsync(stoppingToken).ConfigureAwait(false);
-            }
-            catch (Exception) when (!stoppingToken.IsCancellationRequested)
+            do
             {
                 try
                 {
-                    logger.ZLogWarning($"The closure retry pass failed; retrying at the next interval");
+                    await this.RunOnceAsync(stoppingToken).ConfigureAwait(false);
                 }
-                catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
+                catch (Exception) when (!stoppingToken.IsCancellationRequested)
                 {
-                    // Logging must not stop the worker while storage remains unavailable.
-                    _ = logFailure;
+                    try
+                    {
+                        logger.ZLogWarning($"The closure retry pass failed; retrying at the next interval");
+                    }
+                    catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
+                    {
+                        // Logging must not stop the worker while storage remains unavailable.
+                        _ = logFailure;
+                    }
                 }
             }
+            while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Stopping this worker is normal even while the host remains available.
+        }
     }
 }

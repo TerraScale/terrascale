@@ -50,6 +50,46 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    public async Task Legacy_acceptance_keeps_the_project_until_current_erasure_evidence_arrives()
+    {
+        using var legacy = new LegacyClosureEvidence { InnerHandler = TerraBaseFixture.NewHandler() };
+        using var transport = new HttpClient(legacy);
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: services =>
+            services.AddKeyedSingleton(App.StorageAuthority, (_, _) => new TerraBaseManagementClient(transport,
+                new TerraBaseManagementClientOptions { BaseAddress = fixture.Server.InternalAddress })));
+        await oidc.Server.App.Services.GetRequiredService<ClosureWorker>().StopAsync(CancellationToken.None);
+        var (_, token) = await oidc.SignInUserAsync("owner@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var project = await oidc.CreateProjectAsync(token, organization, "Retained");
+        var route = $"{Organizations}/{organization}/projects/{project}";
+        await oidc.OkAsync(HttpMethod.Delete, route, token, status: HttpStatusCode.Accepted);
+        await oidc.OkAsync(HttpMethod.Get, route, token);
+        await Assert.That((await JobAsync(oidc, "project", project))!.FailureCode).IsEqualTo("terrabase_evidence_pending");
+        legacy.OmitEvidence = false;
+        await oidc.OkAsync(HttpMethod.Delete, route, token, status: HttpStatusCode.NoContent);
+        await Assert.That(await JobAsync(oidc, "project", project)).IsNull();
+    }
+
+    private sealed class LegacyClosureEvidence : DelegatingHandler
+    {
+        public bool OmitEvidence { get; set; } = true;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = await base.SendAsync(request, cancellationToken);
+            if (this.OmitEvidence && request.RequestUri!.AbsolutePath.EndsWith("/closure", StringComparison.Ordinal) && response.IsSuccessStatusCode)
+            {
+                var body = System.Text.Json.Nodes.JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))!.AsObject();
+                body.Remove("evidenceVersion");
+                response.Content.Dispose();
+                response.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
+            }
+
+            return response;
+        }
+    }
+
+    [Test]
     [Arguments("closure")]
     [Arguments("binding")]
     public async Task A_terrabase_refusal_changes_nothing_and_keeps_every_right_of_the_project(string refusal)

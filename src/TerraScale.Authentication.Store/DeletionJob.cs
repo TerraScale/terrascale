@@ -6,7 +6,8 @@ namespace TerraScale.Authentication.Store;
 /// <summary>
 /// Auth logical deletion evidence, then TerraBase's shared-history erasure of the auth database and SYSTEM
 /// (<see cref="HistoryStatus"/>, docs/terrabase/history-erasure.md). The job is the subject's write fence; it retires only after
-/// that erasure is complete (every holder, residue and backups) and <see cref="FenceExpiresAt"/> passed.
+/// that erasure is complete (every holder, residue and backups), <see cref="FenceExpiresAt"/> passed, and the dashboard
+/// acknowledged platform cleanup through <see cref="DashboardVerifiedAt"/> (app-owned tenant jobs need no acknowledgement).
 /// </summary>
 public sealed record DeletionJob(
     string Id,
@@ -24,7 +25,9 @@ public sealed record DeletionJob(
     string? HistoryStatus = null,
     DateTimeOffset? HistoryCompletedAt = null,
     string? ErasureId = null,
-    string? ClosureGeneration = null)
+    string? ClosureGeneration = null,
+    DateTimeOffset? DashboardVerifiedAt = null,
+    long DashboardDeliveryTurn = 0)
 {
     /// <summary>
     /// How long the fence must outlive its request: every credential issued before it expires by then. Sessions and OIDC

@@ -24,6 +24,7 @@ Standalone project and organization deletion keep version 1 through `CloseProjec
 returns `409 not_empty`. Version 2 preserves binding checks: an unverified legacy namespace or a different authority
 organization is refused. A fence with a different closure id or authority organization conflicts. An authorized account may upgrade the same fence from version 1 to 2; receipts must match the new version, and downgrades are refused.
 Version 1 also waits for prior database purges and current evidence-version-2 receipts. Thus a delayed v1
-acceptance from another auth region certifies active erasure even before it sees adoption. Finish the TerraBase
-rollout and drain all closure calls started against older binaries before advancing account adoption traffic;
-older empty-only responses are insufficient. Release dashboard consent after that barrier.
+acceptance from another auth region certifies active erasure even before it sees adoption. Auth also requires the response
+`evidenceVersion: 2` before removing any project. Older engine refusals or legacy acceptance retain the durable
+intent and return pending, allowing auth to release ahead of FR1 and finish automatically once TerraBase is
+updated. No second submit or contract downgrade is required. Validate live completion after all holders update.

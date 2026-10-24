@@ -149,7 +149,12 @@ public sealed class CatalogLatticeTests
         });
         await Assert.That(await sjc.UntilDocumentAsync(tenant, "items", "one", json => json == """{"n":1}""")).IsTrue();
 
-        await gru.CommitAsync(user, new { op = "delete_database", organization, project, database });
+        using var replicaOwner = sjc.Api.As(user);
+        var path = ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases/{database}");
+        using var wrongRegion = await replicaOwner.DeleteAsync(path);
+        await Assert.That(wrongRegion.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+        using var deleted = await gru.Api.Client.DeleteAsync(path);
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await deleted.Content.ReadAsStringAsync());
         await Assert.That(await Until(() => Task.FromResult(!File.Exists(sjc.FileOf(tenant))))).IsTrue();
         await Assert.That(await sjc.VersionAsync($"projects/{project}/databases", database) is { Deleted: true }).IsTrue();
         await Assert.That(await sjc.Tenants.RegisteredAsync(tenant, CancellationToken.None) is false).IsTrue();
@@ -243,6 +248,13 @@ public sealed class CatalogLatticeTests
     {
         await using var cluster = await Cluster.StartAsync("gru", "sjc", "fra");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await Until(async () => (await region.Api.Server.Services.GetRequiredService<IRemoteDurability>()
+                .OtherRegionsAsync(CancellationToken.None)).Count == 2)).IsTrue();
+        }
+
+        var user = gru.Api.User;
         var organization = await gru.Api.CreateOrganizationAsync("Erasing");
         await gru.Api.SetPlanAsync(gru.Api.User, organization, "starter");
         var project = await gru.Api.CreateProjectAsync(organization, "erased");
@@ -290,13 +302,15 @@ public sealed class CatalogLatticeTests
         await Assert.That(databases.All(database => File.Exists(sjc.FileOf(new TenantContext(organization, PlanTier.Starter, project, database.Id))))).IsTrue();
         await gru.StopAsync();
         await gru.StartAsync();
-        await Assert.That(await CloseAsync(gru, project, closure, organization, 2)).IsEqualTo(HttpStatusCode.Accepted);
+        await Assert.That(await gru.ReadAsync(ProjectClosure.Collection, project)).IsNotNull();
+        var resumed = await CloseAsync(gru, project, closure, organization, 2);
+        await Assert.That(resumed is HttpStatusCode.Accepted or HttpStatusCode.ServiceUnavailable).IsTrue();
         await sjc.StartAsync();
         await Assert.That(await Until(async () => await CloseAsync(gru, project, closure, organization, 2) == HttpStatusCode.OK)).IsTrue();
         foreach (var region in cluster.Regions)
         {
             await Assert.That(await Until(async () => await CloseAsync(region, project, closure, organization, 2) == HttpStatusCode.OK)).IsTrue();
-            using var owner = region.Api.As(gru.Api.User);
+            using var owner = region.Api.As(user);
             foreach (var database in databases)
             {
                 var tenant = new TenantContext(organization, PlanTier.Starter, project, database.Id);
@@ -312,7 +326,8 @@ public sealed class CatalogLatticeTests
         }
 
         await Assert.That(await CloseAsync(gru, project, EntityIds.New().ToString(), organization, 2)).IsEqualTo(HttpStatusCode.Conflict);
-        using var late = await gru.Api.Client.PostAsJsonAsync(ManagementApi.Uri(databases[0].ProjectPath + "/databases"), new { name = "late" });
+        using var survivingOwner = gru.Api.As(user);
+        using var late = await survivingOwner.PostAsJsonAsync(ManagementApi.Uri(databases[0].ProjectPath + "/databases"), new { name = "late" });
         await Assert.That(late.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 

@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
@@ -158,19 +156,7 @@ internal static class EmailApi
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
 
     /// <summary>A 401 for a missing or wrong client credential, a 404 for another instance, or null to proceed.</summary>
-    public static IResult? Refuse(HttpContext context, AuthOptions options)
-    {
-        context.Response.Headers.CacheControl = "no-store";
-        if (!Authenticated(context.Request.Headers.Authorization, options))
-        {
-            context.Response.Headers.WWWAuthenticate = "Basic realm=\"ts-auth\", charset=\"UTF-8\"";
-            return Error(StatusCodes.Status401Unauthorized, "invalid_client", "Authenticate as the ts-dashboard client with HTTP Basic.");
-        }
-
-        return string.Equals(context.GetRouteValue("slug") as string, OidcIssuer.Slug, StringComparison.Ordinal)
-            ? null
-            : Error(StatusCodes.Status404NotFound, "not_found", "No such instance.");
-    }
+    public static IResult? Refuse(HttpContext context, AuthOptions options) => DashboardClientAuthentication.Refuse(context, options);
 
     /// <summary>Reads a JSON body of at most <see cref="MaxBodyBytes"/>; anything else is 400, 413 or 415.</summary>
     public static async Task<T> ReadAsync<T>(HttpContext context, CancellationToken cancellationToken)
@@ -261,38 +247,6 @@ internal static class EmailApi
 
     public static IResult Error(int status, string code, string message) =>
         TypedResults.Json(new ErrorBody(new ErrorDetail(code, message)), statusCode: status);
-
-    private static bool Authenticated(string? authorization, AuthOptions options)
-    {
-        if (options.DashboardClient is not { } dashboard || authorization is null
-            || !authorization.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        string credentials;
-        try
-        {
-            credentials = new UTF8Encoding(false, true).GetString(Convert.FromBase64String(authorization["Basic ".Length..].Trim()));
-        }
-        catch (Exception error) when (error is FormatException or DecoderFallbackException)
-        {
-            return false;
-        }
-
-        var separator = credentials.IndexOf(':', StringComparison.Ordinal);
-        if (separator < 0)
-        {
-            return false;
-        }
-
-        // Both parts are form-urlencoded before encoding (RFC 6749 section 2.3.1). Hashing first keeps the comparison
-        // constant-time whatever the lengths.
-        var id = System.Net.WebUtility.UrlDecode(credentials[..separator]);
-        var secret = System.Net.WebUtility.UrlDecode(credentials[(separator + 1)..]);
-        var match = CryptographicOperations.FixedTimeEquals(SHA256.HashData(Encoding.UTF8.GetBytes(secret)), SHA256.HashData(Encoding.UTF8.GetBytes(dashboard.Secret)));
-        return match && string.Equals(id, OidcIssuer.DashboardClientId, StringComparison.Ordinal);
-    }
 }
 
 /// <summary><c>GET /v1/{slug}/email/branding</c>: the saved branding and the defaults.</summary>

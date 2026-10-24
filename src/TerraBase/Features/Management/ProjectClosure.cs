@@ -13,7 +13,8 @@ public sealed record ProjectClosureRequest(int Version, string? ClosureId, strin
 /// <param name="Status"><c>accepted</c> once every holder confirmed emptiness under the fence, otherwise <c>pending</c>.</param>
 /// <param name="ClosureId">The fence's closure id.</param>
 /// <param name="PendingHolders">Machines that have not confirmed the project empty under the fence.</param>
-public sealed record ProjectClosureStatus(string Status, string ClosureId, int PendingHolders);
+/// <param name="EvidenceVersion">2 certifies that acceptance waits for active-copy purge evidence.</param>
+public sealed record ProjectClosureStatus(string Status, string ClosureId, int PendingHolders, int EvidenceVersion = 2);
 
 /// <summary>A closure's status, or why it was refused without writing anything.</summary>
 public readonly union CloseProjectResult(ProjectClosureStatus, Conflict, Unavailable);
