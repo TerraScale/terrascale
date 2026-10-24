@@ -20,6 +20,19 @@ public interface IWebhookTransport
         DateTimeOffset now, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// An in-process receiver for its own URL scheme (customer functions): such URLs are delivered without the network. A receiver
+/// must refuse a body whose project and database are not the ones its URL names.
+/// </summary>
+public interface IWebhookLocalReceiver
+{
+    /// <summary>Whether <paramref name="url"/> names this receiver.</summary>
+    bool Accepts(string url);
+
+    /// <summary>Delivers the exact persisted body.</summary>
+    ValueTask<WebhookAttempt> ReceiveAsync(string url, ReadOnlyMemory<byte> body, CancellationToken cancellationToken);
+}
+
 /// <summary>A receiver status or a redacted transport failure; no receiver content is retained.</summary>
 public sealed record WebhookAttempt(int? HttpStatus, string? ErrorCode);
 
@@ -47,7 +60,7 @@ public static class WebhookTransportExtensions
     }
 }
 
-internal sealed class WebhookTransport(IHttpClientFactory clients, IWebhookNetwork network) : IWebhookTransport
+internal sealed class WebhookTransport(IHttpClientFactory clients, IWebhookNetwork network, IEnumerable<IWebhookLocalReceiver> receivers) : IWebhookTransport
 {
     internal const string HttpClientName = "TerraBase.Webhooks";
     private static readonly HttpRequestOptionsKey<bool> TargetRejected = new("TerraBase.Webhooks.TargetRejected");
@@ -74,6 +87,11 @@ internal sealed class WebhookTransport(IHttpClientFactory clients, IWebhookNetwo
 
     public async ValueTask<bool> ValidateAsync(string url, CancellationToken cancellationToken)
     {
+        if (receivers.Any(receiver => receiver.Accepts(url)))
+        {
+            return true;
+        }
+
         if (Endpoint(url) is not { } endpoint)
         {
             return false;
@@ -95,6 +113,11 @@ internal sealed class WebhookTransport(IHttpClientFactory clients, IWebhookNetwo
     public async ValueTask<WebhookAttempt> SendAsync(string url, string secret, string deliveryId, ReadOnlyMemory<byte> body,
         DateTimeOffset now, CancellationToken cancellationToken)
     {
+        if (receivers.FirstOrDefault(receiver => receiver.Accepts(url)) is { } local)
+        {
+            return await local.ReceiveAsync(url, body, cancellationToken).ConfigureAwait(false);
+        }
+
         if (Endpoint(url) is not { } endpoint)
         {
             return new(null, "target_rejected");
