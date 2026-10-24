@@ -841,10 +841,12 @@ internal sealed class ShapeObjectStore : IDisposable
     private readonly IObjectStore _objects;
     private readonly TimeProvider _time;
     private readonly Uri? _cdn;
+    private readonly IShapeCdnPurge _purge;
 
-    public ShapeObjectStore(BackupSettings settings, IHttpClientFactory http, IObjectStore objects, TimeProvider time)
+    public ShapeObjectStore(BackupSettings settings, IHttpClientFactory http, IObjectStore objects, TimeProvider time, IShapeCdnPurge purge)
     {
         _settings = settings;
+        _purge = purge;
         _cdn = Cdn(settings);
         _objects = objects;
         _time = time;
@@ -869,7 +871,17 @@ internal sealed class ShapeObjectStore : IDisposable
     public IAsyncEnumerable<StoredObject> ListAsync(string? handle, string? after, CancellationToken cancellationToken) =>
         _objects.ListAsync(handle is null ? "v1/shapes/" : "v1/shapes/" + handle + "/", after, cancellationToken);
 
-    public Task<bool> DeleteAsync(string key, CancellationToken cancellationToken) => _objects.DeleteAsync(key, cancellationToken);
+    /// <summary>Deletes the object; on an R2 bucket its Cloudflare copies are then purged in the background.</summary>
+    public async Task<bool> DeleteAsync(string key, CancellationToken cancellationToken)
+    {
+        var deleted = await _objects.DeleteAsync(key, cancellationToken).ConfigureAwait(false);
+        if (deleted && _cdn is not null)
+        {
+            _ = _purge.Queue(_cdn.AbsoluteUri + key);
+        }
+
+        return deleted;
+    }
 
     public async Task<ShapeObjectHead?> HeadAsync(string key, CancellationToken cancellationToken)
     {

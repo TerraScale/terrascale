@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Text.Json.Nodes;
 using Microsoft.OpenApi;
 using TerraBase.Configuration;
@@ -67,8 +68,10 @@ public static class ShapesExtensions
     }
 
     /// <summary>Registers the shape services behind <c>GET …/collections/{collection}/shape</c>, their JSON metadata and examples.</summary>
-    public static IServiceCollection AddTerraBaseShapes(this IServiceCollection services) =>
-        services.ConfigureHttpJsonOptions(json =>
+    public static IServiceCollection AddTerraBaseShapes(this IServiceCollection services)
+    {
+        services.AddHttpClient(ShapeCdnPurge.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30));
+        return services.ConfigureHttpJsonOptions(json =>
             {
                 json.SerializerOptions.TypeInfoResolverChain.Insert(0, ShapeJsonContext.Default);
                 json.SerializerOptions.TypeInfoResolverChain.Insert(0, ShapeKeyJsonContext.Default);
@@ -118,14 +121,21 @@ public static class ShapesExtensions
                 provider.GetRequiredService<IShapeStorage>(), provider.GetRequiredService<IShapeMetrics>(), provider.GetRequiredService<IMemoryBudget>(), provider.GetRequiredService<TimeProvider>(),
                 () => provider.GetRequiredService<IShapeCrypto>(),
                 provider.GetService<BackupSettings>() is { } settings ? new ShapeObjectStore(settings,
-                    provider.GetRequiredService<IHttpClientFactory>(), provider.GetRequiredService<IObjectStore>(), provider.GetRequiredService<TimeProvider>()) : null,
+                    provider.GetRequiredService<IHttpClientFactory>(), provider.GetRequiredService<IObjectStore>(), provider.GetRequiredService<TimeProvider>(),
+                    provider.GetRequiredService<IShapeCdnPurge>()) : null,
                 provider.GetRequiredService<ILogger<ShapeMirror>>()))
+            .AddSingleton<ShapeCdnPurge>(provider => new ShapeCdnPurge(provider.GetRequiredService<IHttpClientFactory>(),
+                provider.GetService<BackupSettings>()?.CloudflareApiToken, provider.GetRequiredService<TimeProvider>(),
+                provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<ShapeCdnPurge>>()))
+            .AddSingleton<IShapeCdnPurge>(provider => provider.GetRequiredService<ShapeCdnPurge>())
+            .AddHostedService(provider => provider.GetRequiredService<ShapeCdnPurge>())
             .AddSingleton<IShapeMirror>(provider => provider.GetRequiredService<ShapeMirror>())
             .AddSingleton<IShapeKeyRetention>(provider => provider.GetRequiredService<ShapeMirror>())
             .AddHostedService(provider => provider.GetRequiredService<ShapeMirror>())
             .AddSingleton<IShapeCrypto>(provider => new ShapeCrypto(provider.GetService<DataKeys>(),
                 provider.GetRequiredService<IShapeKeyRetention>(), provider.GetRequiredService<IMemoryBudget>(),
                 provider.GetRequiredService<TimeProvider>()));
+    }
 
     private static void Document(OpenApiOperation operation)
     {

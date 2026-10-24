@@ -37,6 +37,10 @@ public sealed class BenchmarkClusterHost
                 settings["backup-access-key-id"] = Required("AWS_ACCESS_KEY_ID");
                 settings["backup-secret-key"] = Required("AWS_SECRET_ACCESS_KEY");
                 settings["master-key"] = Required("TERRABASE_MASTER_KEY");
+                if (new Uri(settings["backup-endpoint"]).Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase))
+                {
+                    settings["cloudflare-api-token"] = Required("CLOUDFLARE_API_TOKEN");
+                }
             })
             : await Cluster.StartLocalAsync(chosen);
         foreach (var pair in (Environment.GetEnvironmentVariable("TERRABASE_BENCH_LINK_DELAYS") ?? "")
