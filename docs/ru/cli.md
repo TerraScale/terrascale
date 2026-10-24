@@ -95,6 +95,10 @@ ts -org my-org projects create other-project   # pick the organization
 `projects create` uses your only organization, or creates an organization of
 the same name when you have none.
 
+In CI, set `TERRASCALE_API_KEY` to an API key instead of running `ts auth login`.
+Database commands then act as that key in its project. Store the key in your CI
+secret store. See [CI](/ru/guides/migrations#ci).
+
 ## Manage databases
 
 ```sh
@@ -242,6 +246,18 @@ The CLI sends the query to the database SQL endpoint and prints each returned ro
 own line. A truncated result produces a warning on standard error; it is not
 an export of all matching rows. SQL is separate from the Documents API's
 [JSON filter queries](/ru/guides/queries).
+
+## Schema migrations
+
+```sh
+ts migrate new "add orders"    # add the next migrations/NNNN_<name>.sql
+ts migrate up app              # apply pending migrations, each in one transaction
+ts migrate status app          # list each migration and whether it is applied
+ts migrate diff app-orders     # print the schema changes against the branched-from database
+ts exec app 'SELECT * FROM orders LIMIT 10'  # run one relational SQL statement
+```
+
+See [Schema migrations](/ru/guides/migrations) for the file format, history and workflow.
 
 ## API keys
 
