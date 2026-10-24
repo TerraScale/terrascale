@@ -1,6 +1,6 @@
 ---
 title: Connect an AI assistant with MCP
-description: Connect Claude Code or another MCP client to TerraScale with a personal access token and your existing dashboard permissions.
+description: Connect Claude Code, claude.ai, Cursor or another MCP client to TerraScale by signing in, or with a personal access token, using your existing dashboard permissions.
 ---
 
 <!-- i18n:fallback:ar -->
@@ -10,18 +10,40 @@ description: Connect Claude Code or another MCP client to TerraScale with a pers
 
 # Connect an AI assistant with MCP
 
-Connect your MCP client to **`https://mcp.terrascale.tech/`** using HTTP transport and a personal access token. The assistant acts as your dashboard user; each call checks your access to the selected organization, project and resource.
+Connect your MCP client to **`https://mcp.terrascale.tech/`** over HTTP. Clients that support MCP sign-in (Claude Code, claude.ai connectors, Cursor) need only the URL: they open a browser where you sign in to TerraScale. Other clients send a personal access token. Either way, the assistant acts as your dashboard user, and each call checks your access to the selected organization, project and resource.
 
-## 1. Create a personal access token
+## 1. Add TerraScale and sign in
+
+In Claude Code:
+
+```bash
+claude mcp add --transport http terrascale https://mcp.terrascale.tech/
+claude
+```
+
+Run `/mcp`, select **terrascale** and choose **Authenticate**. Your browser opens a TerraScale page that names the client and where the sign-in returns. Choose **Sign in and allow**, then sign in to TerraScale, or sign up. The browser hands control back to Claude Code, which lists the TerraScale tools.
+
+Other clients that support MCP authorization, such as claude.ai custom connectors and Cursor, start the same sign-in when you add the URL `https://mcp.terrascale.tech/`.
+
+Sign-in creates a personal access token named `MCP: <client name>`. It lasts 90 days, counts toward the 25-token limit, and appears on **Profile → Access tokens**, where you can revoke it. When it expires, the client asks you to sign in again.
+
+Check the connection:
+
+```text
+Use TerraScale get_context to show my accessible organizations and projects.
+Do not change anything.
+```
+
+## 2. Or use a personal access token
+
+Use this for clients without MCP sign-in, or for automation.
 
 1. Sign in to the [dashboard](https://dash.terrascale.tech/).
 2. Open **Profile → Access tokens**, or [open the tab directly](https://dash.terrascale.tech/profile?tab=access-tokens).
 3. Create a named token, choose its expiry and complete the sign-in redirect.
 4. Save the token securely when it is shown. Its secret is displayed only once.
 
-Tokens expire after 7, 30, 90 or 365 days. An account can hold up to 25 live tokens. Use a personal access token for MCP: a database API key or an OAuth access token is not a substitute. Assistants cannot create personal access tokens or change your password, email, MFA or passkeys; those actions require the browser.
-
-## 2. Add TerraScale to Claude Code
+Tokens expire after 7, 30, 90 or 365 days. An account can hold up to 25 live tokens. A database API key is not a substitute. Assistants cannot create personal access tokens or change your password, email, MFA or passkeys; those actions require the browser.
 
 In Bash, enter the token without recording its value in shell history:
 
@@ -33,13 +55,6 @@ claude
 ```
 
 Keep the header's **single quotes**: they save the variable reference rather than the token value. Claude Code expands it from the environment when connecting. Launch Claude from this shell; after opening a new shell, supply the token again. The [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp) describes HTTP servers and environment variable expansion.
-
-Open `/mcp` in Claude Code to check the connection and approve the project server if prompted. Ask:
-
-```text
-Use TerraScale get_context to show my accessible organizations and projects.
-Do not change anything.
-```
 
 Other MCP clients need the same HTTP URL and an `Authorization: Bearer <personal access token>` header. Use that client's protected credential storage; do not commit a literal token in client configuration. Clients must support Streamable HTTP and accept both JSON and event-stream responses.
 
@@ -69,15 +84,15 @@ Keep confirmation enabled in your client for destructive actions and review the 
 
 ## Connection and call failures
 
-An HTTP `401` means the personal access token is missing, invalid, expired or revoked. Create a replacement in **Profile → Access tokens** and update your client's credential. An HTTP `403` can indicate a rejected cross-origin browser request; use the MCP client's HTTP connection. Permission failures, rejected input and data-plane refusals (a missing collection, an existing document ID, a changed `version`) arrive as an MCP tool result with `isError: true` and a message naming the cause.
+An HTTP `401` means the access token is missing, invalid, expired or revoked. A client with MCP sign-in starts the sign-in again; with a personal access token, create a replacement in **Profile → Access tokens** and update your client's credential. An HTTP `403` can indicate a rejected cross-origin browser request; use the MCP client's HTTP connection. Permission failures, rejected input and data-plane refusals (a missing collection, an existing document ID, a changed `version`) arrive as an MCP tool result with `isError: true` and a message naming the cause.
 
 For an unavailable organization or project, call `get_context` again and use IDs you can currently access. Do not retry a denied mutation with a broader identity. If a document write reports an unknown outcome, read the document and reconcile its state before retrying.
 
 To disconnect securely, revoke the token in **Profile → Access tokens** and remove the server from your client. For Claude Code:
 
 ```bash
-claude mcp remove --scope project terrascale
-unset TERRASCALE_MCP_TOKEN
+claude mcp remove terrascale            # added with sign-in
+claude mcp remove --scope project terrascale && unset TERRASCALE_MCP_TOKEN  # added with a token
 ```
 
 </div>

@@ -18,6 +18,7 @@ const routes = [
   ['/guides/libsql-clients', 'Run SQL from the official libSQL clients (JavaScript, Go, Rust, Python)'],
   ['/guides/errors', 'Typed errors, SDK retry behavior and uncertain mutation reconciliation'],
   ['/guides/dashboard', 'Customer dashboard and application database workflow'],
+  ['/guides/functions', 'Deploy JavaScript functions, call them over HTTPS, trigger them on changes or cron, read logs'],
   ['/guides/mcp', 'Connect MCP clients with a personal access token and discover permitted tools'],
   ['/legal/data-deletion', 'Deletion, changes-feed and backup retention timelines'],
   ['/legal/sla', 'No SLA during Public Alpha; measured uptime and publication prerequisites'],
