@@ -9,11 +9,21 @@ internal sealed partial class TursoDatabaseStore
     private readonly SemaphoreSlim _operations = new(1, 1);
     private int _activeOperations;
 
-    internal async ValueTask<CopyOperation?> BeginOperationAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Starts a storage operation. With <paramref name="intent"/> (anything that can write or sync the file) the first active
+    /// one records the write intent. A read-only transaction (<c>query_only</c>) passes false: it cannot leave unsynced pages
+    /// behind, and damage it detects is marked <c>Faulting</c>, with FULL, before its error reaches the caller (decision 0013d).
+    /// </summary>
+    internal async ValueTask<CopyOperation?> BeginOperationAsync(CancellationToken cancellationToken, bool intent = true)
     {
         if (Ledger is not { } ledger || IsSystem)
         {
             return null;
+        }
+
+        if (!intent)
+        {
+            return new CopyOperation(this, io.HasAdmission, intent: false);
         }
 
         await _operations.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -24,7 +34,7 @@ internal sealed partial class TursoDatabaseStore
                 await ledger.RecordIntentAsync(this, cancellationToken).ConfigureAwait(false);
             }
             _activeOperations++;
-            return new CopyOperation(this, io.HasAdmission);
+            return new CopyOperation(this, io.HasAdmission, intent: true);
         }
         finally
         {
@@ -32,14 +42,14 @@ internal sealed partial class TursoDatabaseStore
         }
     }
 
-    internal sealed class CopyOperation(TursoDatabaseStore store, bool admitted) : IAsyncDisposable
+    internal sealed class CopyOperation(TursoDatabaseStore store, bool admitted, bool intent) : IAsyncDisposable
     {
         private bool _complete;
         public void Complete() => _complete = true;
-        public ValueTask DisposeAsync() => store.EndOperationAsync(_complete, admitted);
+        public ValueTask DisposeAsync() => store.EndOperationAsync(_complete, admitted, intent);
     }
 
-    private async ValueTask EndOperationAsync(bool complete, bool admitted)
+    private async ValueTask EndOperationAsync(bool complete, bool admitted, bool intent)
     {
         await _operations.WaitAsync().ConfigureAwait(false);
         try
@@ -49,7 +59,7 @@ internal sealed partial class TursoDatabaseStore
                 NoteCopyFault("a storage operation did not finish cleanup");
                 await RecordCopyFaultAsync(CopyFault!).ConfigureAwait(false);
             }
-            if (--_activeOperations == 0 && CopyFault is null && Ledger!.FailedClosed is null)
+            if (intent && --_activeOperations == 0 && CopyFault is null && Ledger!.FailedClosed is null)
             {
                 if (admitted)
                 {
