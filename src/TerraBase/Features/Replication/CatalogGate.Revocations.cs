@@ -16,6 +16,7 @@ internal sealed partial class CatalogGate
     private RevocationCut? _revocation;
     private volatile string? _revocationStage;
     private string? _lastMissingRevocations;
+    private DateTimeOffset? _lastMissingRevocationsAt;
     private readonly record struct RevocationCut(ReplicaId Replica, Hlc Stamp);
 
     // Written after the destructive transaction and before its external anchor/response. The stream cannot acknowledge
@@ -86,8 +87,8 @@ internal sealed partial class CatalogGate
             var legacy = false;
             foreach (var name in names.Order(StringComparer.Ordinal))
             {
-                // This node's own start head/identity was already checked against this anchor. Its own old epoch need not
-                // be inferred from a newer replica id, nor inserted into received coverage.
+                // This node's own start head/identity was already checked against this anchor. Its exact old-epoch
+                // cut was persisted under that same file's writer, without inferring coverage from a newer replica id.
                 if (name == _options.MachineId && _anchorHeld && _restored == false)
                 {
                     continue;
@@ -182,9 +183,12 @@ internal sealed partial class CatalogGate
         {
             // Only replica identities and causal stamps: no catalog bodies, object-store errors or credentials.
             var evidence = string.Join(",", missing.Select(cut => $"{cut.Replica.Value:x}:{applied.GetValueOrDefault(cut.Replica).Value}/{cut.Stamp.Value}"));
-            if (evidence != _lastMissingRevocations)
+            var now = _time.GetUtcNow();
+            if (evidence != _lastMissingRevocations
+                && (_lastMissingRevocationsAt is not { } last || now - last >= TimeSpan.FromSeconds(30)))
             {
                 _lastMissingRevocations = evidence;
+                _lastMissingRevocationsAt = now;
                 _logger.ZLogInformation($"Catalog revocation coverage is missing {missing.Length} cuts (replica:held/required): {evidence:@Cuts}");
             }
         }

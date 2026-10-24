@@ -527,7 +527,10 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
                 await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
                 if (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != _startIncarnation)
                 {
-                    return null;
+                    // The proof names the startup file, not its replacement. Classify it as requiring reviewed
+                    // recovery instead of retrying the same readable anchor forever as though it were unreadable.
+                    _logger.ZLogWarning($"This machine's catalog changed while checking its anchored revocation cut; the catalog gate stays closed for reviewed recovery");
+                    return true;
                 }
 
                 await transaction.RecordAppliedAsync(witness.Replica, witness.Stamp, cancellationToken).ConfigureAwait(false);
