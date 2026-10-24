@@ -7,6 +7,7 @@ using System.Text.Json.Nodes;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Shapes;
@@ -488,13 +489,19 @@ public sealed class ShapeEndToEndTests
         // Any catalog commit invalidates every cached plan and database lookup; 64 readers (an organization's most joined
         // shape requesters, ShapeFlights.MaxRequestersPerOrganization: more answer 429 shape_busy) then miss together.
         _ = await api.Management.CreateOrganizationAsync("Invalidate the catalog caches");
+        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
         var before = await Scrape(api.Server, token);
+        var commits = system.CommitSequence;
         var answers = await Task.WhenAll(Enumerable.Range(0, 64).Select(_ => client.Get(client.Uri(closedAt, live: false))));
+        commits = system.CommitSequence - commits;
         var after = await Scrape(api.Server, token);
 
         await Assert.That(answers.All(answer => answer.Status == HttpStatusCode.OK)).IsTrue();
-        // One plan read is three point reads; one per reader would be 192. Background catalog commits may add a round or two.
-        await Assert.That(Delta(before, after, "terrabase_storage_reads_total", "path=\"point\"")).IsLessThan(60d);
+        // One plan read is three point reads; one per reader would be 192 per round. Every background catalog commit during
+        // the fan-out (usage and query-field flushes) invalidates the caches again and costs one more shared round.
+        var reads = Delta(before, after, "terrabase_storage_reads_total", "path=\"point\"");
+        TestContext.Current!.OutputWriter.WriteLine($"point_reads={reads} catalog_commits={commits}");
+        await Assert.That(reads).IsLessThan(60d + (20d * commits));
     }
 
     [Test]
