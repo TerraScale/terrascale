@@ -80,7 +80,7 @@ public sealed class TerraBaseFileStorageTests
             {
                 using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
                 await Assert.That(body.RootElement.GetProperty("size").GetInt64()).IsEqualTo(5);
-                return new(HttpStatusCode.Created) { Content = new StringContent($$"""{"id":"{{File}}","url":"https://objects.example/put","expiresAt":"2026-10-24T12:00:00Z","headers":{"Content-Length":"5"}}""") };
+                return new(HttpStatusCode.Created) { Content = new StringContent($$$"""{"id":"{{{File}}}","url":"https://objects.example/put","expiresAt":"2026-10-24T12:00:00Z","headers":{"Content-Length":"5"}}""") };
             }
             return new(HttpStatusCode.OK) { Content = new StringContent($$"""{"items":[],"next":"{{File}}"}""") };
         });
