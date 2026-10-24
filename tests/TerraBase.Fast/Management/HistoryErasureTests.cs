@@ -71,9 +71,14 @@ public sealed class HistoryErasureTests
             var first = await RequestAsync(gru, erasure, requested);
             await Assert.That(first.Status).IsEqualTo(HistoryErasure.Fencing);
             await Assert.That(first.PendingHolders).IsEqualTo(2);
-            await RunAsync(gru);
-            await RunAsync(sjc);
-            await Assert.That(await UntilAsync(gru, () => ReceiptsAsync(gru, erasure), 2)).IsTrue();
+            // Hosted erasure passes are disabled here. The fence can arrive before the later request/record, so keep
+            // driving both holders until each has actually observed the request and published its receipt.
+            await Assert.That(await UntilAsync(gru, async () =>
+            {
+                await RunAsync(gru);
+                await RunAsync(sjc);
+                return await ReceiptsAsync(gru, erasure);
+            }, 2)).IsTrue();
 
             // gru holds both receipts (SYSTEM is not held) but has not applied sjc's committed auth marker: no token.
             await Assert.That(await LiveAsync(gru, Users, late)).IsFalse().Because("the late record is still in flight");

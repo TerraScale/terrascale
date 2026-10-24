@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Documents;
@@ -181,7 +182,24 @@ public sealed partial class ShapeResumeTests
         // Anchors the catalog first: a restart while another region is down opens its catalog gate on a majority only with it.
         public async Task StopAsync()
         {
-            await Assert.That(await _api!.Server.Services.GetRequiredService<ICatalogGate>().TryAnchorAsync(TestContext.Current!.Execution.CancellationToken)).IsTrue();
+            var token = TestContext.Current!.Execution.CancellationToken;
+            await Assert.That(await _api!.Server.Services.GetRequiredService<ICatalogGate>().TryAnchorAsync(token)).IsTrue();
+            // fra stays online throughout both failovers. Before removing a witness's source, prove fra received its
+            // final SYSTEM prefix; observing tenant durability or the local anchor write alone cannot prove that.
+            var source = await _api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+            long cut;
+            await using (var read = await source.BeginTransactionAsync(write: false, token))
+            {
+                cut = (await read.GetVersionAsync(CatalogGate.Revocations, _name, token))!.Value.Version;
+            }
+            var origin = _api.Server.Services.GetRequiredService<LocalReplica>().Id;
+            await TerraBaseTestServer.EventuallyAsync(async cancellationToken =>
+            {
+                var destination = await cell.Fra._api!.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(cancellationToken);
+                await using var read = await destination.BeginTransactionAsync(write: false, cancellationToken);
+                var applied = await read.GetAppliedAsync(cancellationToken);
+                return applied.TryGetValue(origin, out var held) && held.Value >= unchecked((ulong)cut);
+            }, timeout: TimeSpan.FromSeconds(30));
             await CloseAsync();
         }
 
