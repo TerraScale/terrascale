@@ -25,6 +25,19 @@ public sealed class TerraScaleAuthProjectsClient(TerraScaleAuthClient client)
             request ?? throw new ArgumentNullException(nameof(request)), Json.TerraScaleAuthProjectSettingsUpdate,
             Json.TerraScaleAuthProjectSettings, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, MaxRequestBytes, cancellationToken);
 
+    /// <summary>PUT /v1/{project}/providers/{provider} (admin). Provider is google, github, apple or oidc; 400
+    /// <c>invalid_request</c> when a value is invalid or the first configuration has no secret.</summary>
+    public Task<TerraScaleAuthProjectSettings> SetProviderAsync(
+        string accessToken, string projectId, string provider, TerraScaleAuthProjectProviderUpdate request, CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedJsonAsync(HttpMethod.Put, Route(projectId, "/providers/" + Provider(provider)),
+            request ?? throw new ArgumentNullException(nameof(request)), Json.TerraScaleAuthProjectProviderUpdate,
+            Json.TerraScaleAuthProjectSettings, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, MaxRequestBytes, cancellationToken);
+
+    /// <summary>DELETE /v1/{project}/providers/{provider} (admin). Answers the settings without the provider.</summary>
+    public Task<TerraScaleAuthProjectSettings> DeleteProviderAsync(
+        string accessToken, string projectId, string provider, CancellationToken cancellationToken = default) =>
+        SendAsync(HttpMethod.Delete, accessToken, projectId, "/providers/" + Provider(provider), Json.TerraScaleAuthProjectSettings, HttpStatusCode.OK, cancellationToken);
+
     /// <summary>GET /v1/{project}/users (viewer). <paramref name="query"/> matches an email substring.</summary>
     public Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>> ListUsersAsync(
         string accessToken, string projectId, string? query = null, int? limit = null, string? after = null,
@@ -94,6 +107,9 @@ public sealed class TerraScaleAuthProjectsClient(TerraScaleAuthClient client)
     private static string Route(string projectId, string relative) => "/v1/" + Id(projectId) + relative;
 
     private static string Id(string value) => TerraScaleIds.Validate(value);
+
+    private static string Provider(string value) => value is "google" or "github" or "apple" or "oidc"
+        ? value : throw new ArgumentException("Provider must be google, github, apple or oidc.", nameof(value));
 
     private static string PageQuery(string filterName, string? filter, int? limit, string? after)
     {
