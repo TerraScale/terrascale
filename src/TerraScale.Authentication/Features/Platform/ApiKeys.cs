@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -50,12 +52,59 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
     /// <summary>How stale a key's last-used time may be: a key records at most one use per this interval.</summary>
     public static readonly TimeSpan UsageGranularity = TimeSpan.FromMinutes(5);
 
+    /// <summary>The most CIDRs one allowlist holds.</summary>
+    public const int MaxAllowedCidrs = 32;
+
     private const string Alphabet = "0123456789abcdefghjkmnpqrstvwxyz";
     private const string Instance = PlatformDirectory.Instance;
 
     /// <summary>Whether <paramref name="value"/> has the shape of a key id.</summary>
     public static bool IsKeyId(string? value) =>
         TerraScaleIds.IsValid(value);
+
+    /// <summary>
+    /// The canonical form of an IP allowlist: each entry an IPv4 or IPv6 CIDR or bare address (a /32 or /128), host bits
+    /// cleared, IPv4-mapped addresses as IPv4, duplicates removed. Null when an entry is invalid or there are too many.
+    /// </summary>
+    public static IReadOnlyList<string>? NormalizeCidrs(IReadOnlyList<string>? values)
+    {
+        if (values is null)
+        {
+            return [];
+        }
+
+        List<string> cidrs = [];
+        foreach (var value in values)
+        {
+            var parts = (value ?? "").Trim().Split('/');
+            if (parts.Length > 2 || !IPAddress.TryParse(parts[0], out var address) || parts[0].Contains('%', StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            address = address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address;
+            var bits = address.AddressFamily == AddressFamily.InterNetwork ? 32 : 128;
+            var prefix = bits;
+            if (parts.Length == 2 && (!int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out prefix) || prefix > bits))
+            {
+                return null;
+            }
+
+            var bytes = address.GetAddressBytes();
+            for (var bit = prefix; bit < bits; bit++)
+            {
+                bytes[bit / 8] &= (byte)~(0x80 >> (bit % 8));
+            }
+
+            var cidr = $"{new IPAddress(bytes)}/{prefix}";
+            if (!cidrs.Contains(cidr))
+            {
+                cidrs.Add(cidr);
+            }
+        }
+
+        return cidrs.Count <= MaxAllowedCidrs ? cidrs : null;
+    }
 
     /// <summary>Whether <paramref name="value"/> is a TerraBase database name.</summary>
     public static bool IsDatabaseName(string? value) => value is not null && DatabaseName().IsMatch(value);
@@ -64,7 +113,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
     /// Creates an organization key (<paramref name="projectId"/> null; needs the admin organization role) or a project
     /// key (needs the project's member role, and scopes within the caller's). Returns the key and its string, once.
     /// </summary>
-    public Task<(ApiKeyRecord Key, string Secret)> CreateAsync(UserRecord caller, string organizationId, string? projectId, string name, IReadOnlyList<string> scopes, string? database, DateTimeOffset? expiresAt, CancellationToken cancellationToken) =>
+    public Task<(ApiKeyRecord Key, string Secret)> CreateAsync(UserRecord caller, string organizationId, string? projectId, string name, IReadOnlyList<string> scopes, string? database, DateTimeOffset? expiresAt, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken) =>
         directory.CommitAsync(async () =>
         {
             var authority = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken).ConfigureAwait(false);
@@ -74,7 +123,7 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             }
 
             var (id, secret) = Generate();
-            var key = new ApiKeyRecord(id, Instance, organizationId, projectId, database, name, scopes, Tokens.Sha256Hex(secret), null, null, caller.Id, clock.GetUtcNow(), expiresAt);
+            var key = new ApiKeyRecord(id, Instance, organizationId, projectId, database, name, scopes, Tokens.Sha256Hex(secret), null, null, caller.Id, clock.GetUtcNow(), expiresAt, allowedCidrs);
             List<StoreOperation> operations = [authority.Assertion, AuthStore.Create(AuthStore.ApiKeyCollection, Instance, id, Serialize(key))];
             if (projectId is not null)
             {
@@ -112,6 +161,18 @@ public sealed partial class ApiKeys(AuthStore store, PlatformDirectory directory
             var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
             return new PlatformDirectory.Plan<bool>(
                 [authority.Assertion, AuthStore.Delete(AuthStore.ApiKeyCollection, Instance, keyId, key.Version), directory.Audit(organizationId, userId, "api_key.revoked", keyId)], true);
+        }, cancellationToken);
+
+    /// <summary>Replaces the key's IP allowlist (empty allows any address); its next token carries the new list.</summary>
+    public Task<ApiKeyRecord> SetAllowedCidrsAsync(string userId, string organizationId, string? projectId, string keyId, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken) =>
+        directory.CommitAsync(async () =>
+        {
+            var authority = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+            var changed = key.Value with { AllowedCidrs = allowedCidrs };
+            return new PlatformDirectory.Plan<ApiKeyRecord>(
+                [authority.Assertion, AuthStore.Replace(AuthStore.ApiKeyCollection, Instance, keyId, Serialize(changed), key.Version),
+                    directory.Audit(organizationId, userId, "api_key.allowed_cidrs_changed", keyId, string.Join(' ', allowedCidrs))], changed);
         }, cancellationToken);
 
     /// <summary>

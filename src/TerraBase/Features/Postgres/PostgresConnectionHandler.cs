@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.IO.Pipelines;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Connections;
@@ -22,7 +23,8 @@ namespace TerraBase.Features.Postgres;
 
 /// <summary>
 /// PostgreSQL wire protocol 3.0 on the postgres listener: plaintext behind the platform's TLS edge, a dashboard API key or a TerraBase API key as
-/// the password, and one <see cref="ISqlSession"/> per connection under the tenant's QoS admission.
+/// the password, and one <see cref="ISqlSession"/> per connection under the tenant's QoS admission. A connection from the
+/// edge may open with a PROXY protocol v2 header naming the client, whose address API key IP allowlists are checked against.
 /// </summary>
 internal sealed class PostgresConnectionHandler(IServiceProvider services) : ConnectionHandler
 {
@@ -30,6 +32,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private const int MaxStartupBytes = 10_000, MaxMessageBytes = 1024 * 1024, MaxNamed = 256;
     private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(10);
     private static readonly PgError Denied = new("28P01", "password authentication failed");
+
+    // PROXY protocol v2 (HAProxy's proxy-protocol.txt §2.2): the signature, then version/command, family and length.
+    private static ReadOnlySpan<byte> ProxySignature => [0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A];
 
     // Sessions by process id, for CancelRequest; one handler serves the whole listener.
     private readonly ConcurrentDictionary<int, Session> _sessions = new();
@@ -57,7 +62,9 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(connection.ConnectionClosed))
             {
                 handshake.CancelAfter(HandshakeTimeout);
-                session = await StartAsync(input, output, handshake.Token).ConfigureAwait(false);
+                var peer = (connection.RemoteEndPoint as IPEndPoint)?.Address;
+                var client = IpAllowlists.IsTrustedPeer(peer) ? await ReadProxyHeaderAsync(input, peer, handshake.Token).ConfigureAwait(false) : peer;
+                session = await StartAsync(input, output, client, handshake.Token).ConfigureAwait(false);
             }
 
             if (session is not null)
@@ -85,7 +92,35 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
     }
 
-    private async ValueTask<Session?> StartAsync(PipeReader input, PgWriter output, CancellationToken cancellationToken)
+    // A startup packet's length never begins with 0x0D, so a connection without the header is read unchanged.
+    private static async ValueTask<IPAddress?> ReadProxyHeaderAsync(PipeReader input, IPAddress? peer, CancellationToken cancellationToken)
+    {
+        var read = await input.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var first = read.Buffer.IsEmpty ? (byte)0 : read.Buffer.FirstSpan[0];
+        input.AdvanceTo(read.Buffer.Start);
+        if (first != ProxySignature[0])
+        {
+            return peer;
+        }
+
+        var header = await ReadAsync(input, 16, cancellationToken).ConfigureAwait(false);
+        var length = BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(14));
+        if (!header.AsSpan(0, 12).SequenceEqual(ProxySignature) || header[12] >> 4 != 2 || length > 512)
+        {
+            throw new InvalidDataException("invalid PROXY protocol header");
+        }
+
+        var addresses = await ReadAsync(input, length, cancellationToken).ConfigureAwait(false);
+        // LOCAL (the edge's own health check) and families other than TCP over IPv4 or IPv6 keep the socket peer.
+        return (header[12] & 0x0F, header[13]) switch
+        {
+            (1, 0x11) when length >= 12 => new IPAddress(addresses.AsSpan(0, 4)),
+            (1, 0x21) when length >= 36 => new IPAddress(addresses.AsSpan(0, 16)),
+            _ => peer,
+        };
+    }
+
+    private async ValueTask<Session?> StartAsync(PipeReader input, PgWriter output, IPAddress? client, CancellationToken cancellationToken)
     {
         for (var negotiated = 0; ; negotiated++)
         {
@@ -139,11 +174,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 output.End();
             }
 
-            return await AuthenticateAsync(input, output, parameters, cancellationToken).ConfigureAwait(false);
+            return await AuthenticateAsync(input, output, parameters, client, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private async ValueTask<Session?> AuthenticateAsync(PipeReader input, PgWriter output, Dictionary<string, string> parameters, CancellationToken cancellationToken)
+    private async ValueTask<Session?> AuthenticateAsync(PipeReader input, PgWriter output, Dictionary<string, string> parameters, IPAddress? client, CancellationToken cancellationToken)
     {
         output.Begin('R');
         output.Int32(3); // AuthenticationCleartextPassword: the password is an API key.
@@ -159,7 +194,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
             var secret = new PgReader(body).CString();
             var database = parameters.GetValueOrDefault("database") ?? parameters.GetValueOrDefault("user") ?? "";
-            var access = await AuthorizeAsync(secret, database, cancellationToken).ConfigureAwait(false);
+            var access = await AuthorizeAsync(secret, database, client, cancellationToken).ConfigureAwait(false);
             if (access is PgError error)
             {
                 output.Error(error.Code, error.Message, fatal: true);
@@ -173,7 +208,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             do
             {
                 session = new Session(RandomNumberGenerator.GetInt32(1, int.MaxValue), RandomNumberGenerator.GetInt32(int.MaxValue), secret, database,
-                    parameters.GetValueOrDefault("user") ?? "", sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""));
+                    parameters.GetValueOrDefault("user") ?? "", client, sql, PostgresStatements.Settings(parameters.GetValueOrDefault("application_name") ?? ""));
             }
             while (!_sessions.TryAdd(session.ProcessId, session));
 
@@ -215,12 +250,12 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
     // Every statement re-checks the key and database, like every HTTP request: revocation and deletion apply at once.
     // `database` is a name in the key's project, or project/name for a key that reaches the whole organization.
-    private async ValueTask<Access> AuthorizeAsync(string secret, string database, CancellationToken cancellationToken)
+    private async ValueTask<Access> AuthorizeAsync(string secret, string database, IPAddress? client, CancellationToken cancellationToken)
     {
         var slash = database.IndexOf('/', StringComparison.Ordinal);
         if (TsAuthKeyExchange.IsKey(secret))
         {
-            return await AuthorizeDashboardKeyAsync(secret, database, slash, cancellationToken).ConfigureAwait(false);
+            return await AuthorizeDashboardKeyAsync(secret, database, slash, client, cancellationToken).ConfigureAwait(false);
         }
 
         if (await Keys.FindAsync(secret, cancellationToken).ConfigureAwait(false) is not ApiKey key
@@ -242,7 +277,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
     // A dashboard API key, as ts-auth issues it: its access token names the project, an optional database and the scopes,
     // and the project resolves to its storage namespace like a bearer token's on the client listener.
-    private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, CancellationToken cancellationToken)
+    private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, IPAddress? client, CancellationToken cancellationToken)
     {
         var grant = await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(secret, cancellationToken).ConfigureAwait(false);
         if (grant is Unavailable)
@@ -257,6 +292,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             || (key.Database is not null && !string.Equals(key.Database, name.Value, StringComparison.Ordinal)))
         {
             return Denied;
+        }
+
+        if (!IpAllowlists.Admits(key.Allowlists, client))
+        {
+            return new PgError("28000", "ip_not_allowed: " + IpAllowlists.Refusal(client));
         }
 
         var organization = await services.GetRequiredService<IProjectCatalog>()
@@ -654,7 +694,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         session.Track(running);
         try
         {
-            if (await AuthorizeAsync(session.ApiKey, session.Database, running.Token).ConfigureAwait(false) is not Authorized { Database: var database })
+            if (await AuthorizeAsync(session.ApiKey, session.Database, session.Client, running.Token).ConfigureAwait(false) is not Authorized { Database: var database })
             {
                 return Denied;
             }
@@ -831,7 +871,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     }
 
     // The running statement's cancellation, swapped under a lock so CancelRequest never cancels a disposed source.
-    private sealed record Session(int ProcessId, int Secret, string ApiKey, string Database, string User, ISqlSession Sql, Dictionary<string, string> Settings)
+    private sealed record Session(int ProcessId, int Secret, string ApiKey, string Database, string User, IPAddress? Client, ISqlSession Sql, Dictionary<string, string> Settings)
     {
         private readonly Lock _gate = new();
         private CancellationTokenSource? _running;

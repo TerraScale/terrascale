@@ -65,6 +65,7 @@ public sealed record MemberPageBody(
 /// <param name="CreatedBy">The creating user.</param>
 /// <param name="CreatedAt">Creation time.</param>
 /// <param name="Role">The caller's effective project role.</param>
+/// <param name="AllowedCidrs">The canonical CIDRs every API key token of the project must be used from; empty allows any address.</param>
 public sealed record ProjectBody(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("organization_id")] string OrganizationId,
@@ -72,7 +73,8 @@ public sealed record ProjectBody(
     [property: JsonPropertyName("issuer")] string? Issuer,
     [property: JsonPropertyName("created_by")] string CreatedBy,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
-    [property: JsonPropertyName("role")] string Role);
+    [property: JsonPropertyName("role")] string Role,
+    [property: JsonPropertyName("allowed_cidrs")] IReadOnlyList<string> AllowedCidrs);
 
 /// <summary>A page of projects.</summary>
 /// <param name="Items">The projects.</param>
@@ -365,6 +367,27 @@ public sealed class RenameProjectEndpoint(PlatformDirectory platform, PlatformAu
     }
 }
 
+/// <summary><c>PUT /v1/terrascale/organizations/{organization}/projects/{project}/allowed-cidrs</c>.</summary>
+public sealed class SetProjectAllowedCidrsEndpoint(PlatformDirectory platform, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Put($"{Project}/allowed-cidrs");
+        this.Document("set_project_allowed_cidrs", "Set a project's IP allowlist", "Needs the project's admin role. Replaces the allowlist every API key token of the project is held to, on top of the key's own: up to 32 IPv4 or IPv6 CIDRs or addresses, empty allows any address. TerraBase answers 403 ip_not_allowed otherwise; a change applies to tokens issued afterwards, within 60 seconds.", "Projects", typeof(AllowedCidrsRequest), StatusCodes.Status200OK, typeof(ProjectBody));
+    }
+
+    /// <inheritdoc />
+    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
+    {
+        var body = await this.BodyAsync(PlatformApiJson.Default.AllowedCidrsRequest, cancellationToken);
+        var cidrs = (body.AllowedCidrs is null ? null : ApiKeys.NormalizeCidrs(body.AllowedCidrs))
+            ?? throw Invalid("allowed_cidrs must be up to 32 IPv4 or IPv6 CIDRs or addresses.");
+        var access = await platform.SetProjectAllowedCidrsAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), cidrs, cancellationToken);
+        return Results.Json(Map(access.Project.Value, access.Role), PlatformApiJson.Default.ProjectBody);
+    }
+}
+
 /// <summary><c>DELETE /v1/terrascale/organizations/{organization}/projects/{project}</c>.</summary>
 public sealed class DeleteProjectEndpoint(Closures closures, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
@@ -591,7 +614,7 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
     {
         ArgumentNullException.ThrowIfNull(project);
         var issuer = OidcIssuer.Issuer(this.HttpContext.RequestServices.GetRequiredService<AuthOptions>(), project.Id);
-        return new(project.Id, project.OrganizationId, project.Name, issuer.AbsoluteUri, project.CreatedBy, project.CreatedAt, role);
+        return new(project.Id, project.OrganizationId, project.Name, issuer.AbsoluteUri, project.CreatedBy, project.CreatedAt, role, project.AllowedCidrs ?? []);
     }
 
     /// <summary>A member (never a collaborator, whose record has no role).</summary>
@@ -637,6 +660,7 @@ internal static class LocationResults
 [JsonSerializable(typeof(ProjectMemberPageBody))]
 [JsonSerializable(typeof(ErrorBody))]
 [JsonSerializable(typeof(CreateApiKeyRequest))]
+[JsonSerializable(typeof(AllowedCidrsRequest))]
 [JsonSerializable(typeof(RotateApiKeyRequest))]
 [JsonSerializable(typeof(ApiKeyBody))]
 [JsonSerializable(typeof(ApiKeySecretBody))]

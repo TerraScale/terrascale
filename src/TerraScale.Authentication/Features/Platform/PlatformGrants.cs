@@ -36,6 +36,12 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
     /// <summary>The database an API key's token is narrowed to.</summary>
     public const string DatabaseClaim = "database";
 
+    /// <summary>The space-separated CIDRs an API key's token must be used from (absent: any address).</summary>
+    public const string KeyCidrsClaim = "key_cidrs";
+
+    /// <summary>The space-separated CIDRs every API key token of the project must be used from (absent: any address).</summary>
+    public const string ProjectCidrsClaim = "project_cidrs";
+
     /// <summary>
     /// The lifetime of organization and project tokens. TerraBase validates them offline, so this bounds how long one
     /// keeps working after its key is revoked or its project or organization is deleted.
@@ -70,8 +76,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         }
 
         var project = Parameter(request, "project") ?? key.ProjectId;
-        if (project is not null && (key.ProjectId is not null && project != key.ProjectId
-            || await directory.ProjectAsync(project, cancellationToken) is not { } found || found.Value.OrganizationId != key.OrganizationId))
+        var found = project is null || key.ProjectId is not null && project != key.ProjectId ? null : await directory.ProjectAsync(project, cancellationToken);
+        if (project is not null && (found is null || found.Value.OrganizationId != key.OrganizationId))
         {
             return OidcResults.Forbid(Errors.InvalidTarget, "The project is not one this key reaches.");
         }
@@ -86,6 +92,17 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         if (key.Database is { } database)
         {
             identity.SetClaim(DatabaseClaim, database);
+        }
+
+        // TerraBase enforces both lists offline (docs/auth/api-key-ip-allowlists.md); a token outlives a change by 60 seconds at most.
+        if (key.AllowedCidrs is { Count: > 0 } keyCidrs)
+        {
+            identity.SetClaim(KeyCidrsClaim, string.Join(' ', keyCidrs));
+        }
+
+        if (found?.Value.AllowedCidrs is { Count: > 0 } projectCidrs)
+        {
+            identity.SetClaim(ProjectCidrsClaim, string.Join(' ', projectCidrs));
         }
 
         await keys.RecordUseAsync(key, cancellationToken);

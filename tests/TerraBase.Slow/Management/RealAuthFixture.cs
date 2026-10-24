@@ -116,7 +116,7 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         var project = await directory.CreateProjectAsync(user.Id, organization.Id, "E2E", token);
         var deadline = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds());
         var (key, secret) = await services.GetRequiredService<ApiKeys>().CreateAsync(user, organization.Id, project.Id, "fixture seed",
-            [TerraBaseScopes.DatabasesRead, TerraBaseScopes.DatabasesWrite, TerraBaseScopes.DocumentsRead, TerraBaseScopes.DocumentsWrite], null, deadline, token);
+            [TerraBaseScopes.DatabasesRead, TerraBaseScopes.DatabasesWrite, TerraBaseScopes.DocumentsRead, TerraBaseScopes.DocumentsWrite], null, deadline, [], token);
         using var seedRequest = new HttpRequestMessage(HttpMethod.Post, new Uri("/terrascale/oauth/token", UriKind.Relative))
         {
             Content = new FormUrlEncodedContent(new Dictionary<string, string>

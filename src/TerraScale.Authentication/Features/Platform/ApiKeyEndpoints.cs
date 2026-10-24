@@ -9,11 +9,17 @@ namespace TerraScale.Authentication.Features.Platform;
 /// <param name="Scopes">A non-empty set of TerraBase scopes.</param>
 /// <param name="Database">Project keys only: the TerraBase database the key is narrowed to.</param>
 /// <param name="ExpiresAt">Optional expiry, in the future.</param>
+/// <param name="AllowedCidrs">Optional IP allowlist: up to 32 IPv4 or IPv6 CIDRs or addresses; absent or empty allows any address.</param>
 public sealed record CreateApiKeyRequest(
     [property: JsonPropertyName("name")] string? Name,
     [property: JsonPropertyName("scopes")] IReadOnlyList<string>? Scopes,
     [property: JsonPropertyName("database")] string? Database = null,
-    [property: JsonPropertyName("expires_at")] DateTimeOffset? ExpiresAt = null);
+    [property: JsonPropertyName("expires_at")] DateTimeOffset? ExpiresAt = null,
+    [property: JsonPropertyName("allowed_cidrs")] IReadOnlyList<string>? AllowedCidrs = null);
+
+/// <summary>Replaces an IP allowlist.</summary>
+/// <param name="AllowedCidrs">Up to 32 IPv4 or IPv6 CIDRs or addresses; empty allows any address.</param>
+public sealed record AllowedCidrsRequest([property: JsonPropertyName("allowed_cidrs")] IReadOnlyList<string>? AllowedCidrs);
 
 /// <summary>Rotates an API key.</summary>
 /// <param name="PreviousSecretTtl">Seconds the previous key string keeps working, 0 to 86400 (default 0).</param>
@@ -31,6 +37,7 @@ public sealed record RotateApiKeyRequest([property: JsonPropertyName("previous_s
 /// <param name="ExpiresAt">Its expiry, or null.</param>
 /// <param name="PreviousSecretExpiresAt">Until when the key string before the last rotation still works, or null.</param>
 /// <param name="LastUsedAt">Its last successful token exchange (up to 5 minutes stale), or null when it was never used.</param>
+/// <param name="AllowedCidrs">The canonical CIDRs its tokens must be used from; empty allows any address.</param>
 public sealed record ApiKeyBody(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("name")] string Name,
@@ -42,7 +49,8 @@ public sealed record ApiKeyBody(
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
     [property: JsonPropertyName("expires_at")] DateTimeOffset? ExpiresAt,
     [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt,
-    [property: JsonPropertyName("last_used_at")] DateTimeOffset? LastUsedAt);
+    [property: JsonPropertyName("last_used_at")] DateTimeOffset? LastUsedAt,
+    [property: JsonPropertyName("allowed_cidrs")] IReadOnlyList<string> AllowedCidrs);
 
 /// <summary>An API key with its key string, shown once.</summary>
 /// <param name="ApiKey">The key.</param>
@@ -128,6 +136,20 @@ public sealed class RotateOrganizationApiKeyEndpoint(ApiKeys keys, PlatformAuthe
     protected override Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) => this.RotateAsync(caller, cancellationToken);
 }
 
+/// <summary><c>PUT /v1/terrascale/organizations/{organization}/api-keys/{key}/allowed-cidrs</c>.</summary>
+public sealed class SetOrganizationApiKeyAllowedCidrsEndpoint(ApiKeys keys, PlatformAuthentication authentication, TimeProvider clock) : ApiKeyEndpoint(keys, authentication, clock, project: false)
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Put($"{Organization}/api-keys/{{key}}/allowed-cidrs");
+        this.Document("set_organization_api_key_allowed_cidrs", "Set an organization API key's IP allowlist", AllowedCidrsDescription, "API keys", typeof(AllowedCidrsRequest), StatusCodes.Status200OK, typeof(ApiKeyBody));
+    }
+
+    /// <inheritdoc />
+    protected override Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) => this.SetAllowedCidrsAsync(caller, cancellationToken);
+}
+
 /// <summary><c>POST /v1/terrascale/organizations/{organization}/projects/{project}/api-keys</c>.</summary>
 public sealed class CreateProjectApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authentication, TimeProvider clock) : ApiKeyEndpoint(keys, authentication, clock, project: true)
 {
@@ -198,9 +220,26 @@ public sealed class RotateProjectApiKeyEndpoint(ApiKeys keys, PlatformAuthentica
     protected override Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) => this.RotateAsync(caller, cancellationToken);
 }
 
+/// <summary><c>PUT /v1/terrascale/organizations/{organization}/projects/{project}/api-keys/{key}/allowed-cidrs</c>.</summary>
+public sealed class SetProjectApiKeyAllowedCidrsEndpoint(ApiKeys keys, PlatformAuthentication authentication, TimeProvider clock) : ApiKeyEndpoint(keys, authentication, clock, project: true)
+{
+    /// <inheritdoc />
+    public override void Configure()
+    {
+        Put($"{Project}/api-keys/{{key}}/allowed-cidrs");
+        this.Document("set_project_api_key_allowed_cidrs", "Set a project API key's IP allowlist", AllowedCidrsDescription, "API keys", typeof(AllowedCidrsRequest), StatusCodes.Status200OK, typeof(ApiKeyBody));
+    }
+
+    /// <inheritdoc />
+    protected override Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) => this.SetAllowedCidrsAsync(caller, cancellationToken);
+}
+
 /// <summary>What the organization and project API key endpoints share.</summary>
 public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authentication, TimeProvider clock, bool project) : PlatformEndpoint(authentication)
 {
+    /// <summary>How an allowlist is described in the API reference.</summary>
+    protected const string AllowedCidrsDescription = "The same role as creating the key. Replaces its IP allowlist: up to 32 IPv4 or IPv6 CIDRs or addresses, empty allows any address. TerraBase answers 403 ip_not_allowed to a token of the key used from another address, or from outside the project's allowlist; a change applies to tokens issued afterwards, within 60 seconds.";
+
     /// <summary>Creates a key from the body.</summary>
     protected async Task<IResult> CreateAsync(UserRecord caller, CancellationToken cancellationToken)
     {
@@ -222,7 +261,8 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
             throw Invalid("expires_at must be in the future.");
         }
 
-        var (key, secret) = await keys.CreateAsync(caller, this.RouteId("organization"), this.ProjectId(), name, scopes, body.Database, body.ExpiresAt, cancellationToken);
+        var cidrs = ApiKeys.NormalizeCidrs(body.AllowedCidrs) ?? throw InvalidCidrs();
+        var (key, secret) = await keys.CreateAsync(caller, this.RouteId("organization"), this.ProjectId(), name, scopes, body.Database, body.ExpiresAt, cidrs, cancellationToken);
         return Results.Json(new ApiKeySecretBody(this.Map(key, null), secret), PlatformApiJson.Default.ApiKeySecretBody, statusCode: StatusCodes.Status201Created);
     }
 
@@ -273,10 +313,24 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
         return Results.Json(new ApiKeySecretBody(this.Map(key, used.TryGetValue(key.Id, out var at) ? at : null), secret), PlatformApiJson.Default.ApiKeySecretBody);
     }
 
+    /// <summary>Replaces one key's IP allowlist.</summary>
+    protected async Task<IResult> SetAllowedCidrsAsync(UserRecord caller, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        var body = await this.BodyAsync(PlatformApiJson.Default.AllowedCidrsRequest, cancellationToken);
+        var cidrs = (body.AllowedCidrs is null ? null : ApiKeys.NormalizeCidrs(body.AllowedCidrs)) ?? throw InvalidCidrs();
+        var key = await keys.SetAllowedCidrsAsync(caller.Id, this.RouteId("organization"), this.ProjectId(), this.KeyId(), cidrs, cancellationToken);
+        var used = await keys.LastUsedAsync([key], cancellationToken);
+        return Results.Json(this.Map(key, used.TryGetValue(key.Id, out var at) ? at : null), PlatformApiJson.Default.ApiKeyBody);
+    }
+
+    /// <summary>The answer to an allowlist that is not up to 32 IPv4 or IPv6 CIDRs or addresses.</summary>
+    protected static ApiException InvalidCidrs() => Invalid("allowed_cidrs must be up to 32 IPv4 or IPv6 CIDRs or addresses.");
+
     // The previous key string's expiry is shown only while it still works.
     private ApiKeyBody Map(ApiKeyRecord key, DateTimeOffset? lastUsedAt) =>
         new(key.Id, key.Name, key.OrganizationId, key.ProjectId, key.Database, key.Scopes, key.CreatedBy, key.CreatedAt, key.ExpiresAt,
-            key.PreviousSecretExpiresAt > clock.GetUtcNow() ? key.PreviousSecretExpiresAt : null, lastUsedAt);
+            key.PreviousSecretExpiresAt > clock.GetUtcNow() ? key.PreviousSecretExpiresAt : null, lastUsedAt, key.AllowedCidrs ?? []);
 
     private string? ProjectId() => project ? this.RouteId("project") : null;
 
