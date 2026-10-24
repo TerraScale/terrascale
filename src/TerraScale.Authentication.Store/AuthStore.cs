@@ -103,6 +103,9 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>One project tenant's sign-in methods and branding, addressed by the project id in its own instance.</summary>
     public const string ProjectAuthSettingsCollection = "project_auth_settings";
 
+    /// <summary>Organizations' single sign-on connections, one per email domain.</summary>
+    public const string OrganizationSsoCollection = "organization_sso";
+
     /// <summary>
     /// Every collection the service needs; provisioning creates them and readiness requires them. <c>rate_limits</c> belongs to the TS-488 attempt limiter,
     /// which every hosted sign-in call and email test send (TS-583) charges; and <c>email_configs</c> and
@@ -115,7 +118,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
         "rate_limits", "email_configs", "email_config_versions", "email_allowance_deliveries", "email_support_deliveries",
         OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection, ApiKeyUsageCollection,
         InvitationCollection, AuditEventCollection, MfaCollection, DeletionJobCollection, ClosureJobCollection, HistoryMarkCollection,
-        ClosureCancellationCollection, ClosureCommitCollection, ProjectAuthSettingsCollection,
+        ClosureCancellationCollection, ClosureCommitCollection, ProjectAuthSettingsCollection, OrganizationSsoCollection,
     ];
 
     private static readonly TerraScaleIdGenerator Ids = new();
