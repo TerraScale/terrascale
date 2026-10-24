@@ -198,6 +198,13 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             tables[name] = table;
         }
 
+        // The catalog relations it reads come first, as CTEs of their rows.
+        if (read.Catalog.Count > 0)
+        {
+            var catalog = await SqlCatalog.CtesAsync(transaction, read.Catalog, name => TableAsync(transaction, name, tally, cancellationToken), cancellationToken).ConfigureAwait(false);
+            read = read with { Query = read.Query with { With = new SqlParser.Ast.With(false, [.. catalog, .. read.Query.With?.CteTables ?? []]) } };
+        }
+
         if (Bind(read.Params, command) is not { } parameters)
         {
             return SqlErrors.Error(string.Create(CultureInfo.InvariantCulture, $"the statement takes {read.Params.Count} arguments"));
@@ -590,10 +597,7 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
         : Returned(table, returning) is { Columns: { } columns } ? new SqlResult(columns, [], 0, null)
         : SqlErrors.Error("no such column");
 
-    private static readonly SqlColumn[] TableInfoColumns =
-        [new("cid", null), new("name", null), new("type", null), new("notnull", null), new("dflt_value", null), new("pk", null)];
-
-    // As SQLite answers: table_info has one row per column (no rows for a missing table), dflt_value is the DEFAULT as SQL text.
+    // As SQLite answers: no rows for a missing table or index (SqlCatalog).
     private static async ValueTask<SqlOutcome> PragmaAsync(IStorageTransaction transaction, PragmaSql pragma, SqlTally tally, CancellationToken cancellationToken)
     {
         if (pragma.Kind == PragmaKind.ReadUncommitted)
@@ -601,23 +605,10 @@ internal sealed class SqlExecutor(IDocumentService documents, TimeProvider time)
             return new SqlResult([new SqlColumn("read_uncommitted", null)], [[SqlValue.Of(0)]], 0, null);
         }
 
-        if (pragma.Kind != PragmaKind.TableInfo || await TableAsync(transaction, pragma.Table!, tally, cancellationToken).ConfigureAwait(false) is not { } table)
-        {
-            return new SqlResult(TableInfoColumns, [], 0, null);
-        }
-
-        var rows = table.Columns.Select((column, index) => (IReadOnlyList<SqlValue>)
-        [
-            SqlValue.Of(index),
-            SqlValue.Of(column.Name),
-            SqlValue.Of(column.Type),
-            SqlValue.Of(column.NotNull ? 1 : 0),
-            column.Default is { } fallback && SqlWrite.Default(fallback) is var value
-                ? value.Kind == SqlValueKind.Text ? SqlValue.Of("'" + value.Text!.Replace("'", "''", StringComparison.Ordinal) + "'") : SqlValue.Of(fallback.GetRawText())
-                : SqlValue.Null,
-            SqlValue.Of(table.PrimaryKey.ToList().IndexOf(column.Name) + 1),
-        ]).ToList();
-        return new SqlResult(TableInfoColumns, rows, 0, null);
+        List<SqlColumn> columns = [.. SqlCatalog.Columns(pragma.Kind).Select(name => new SqlColumn(name, null))];
+        return pragma.Kind == PragmaKind.TempTableInfo
+            ? new SqlResult(columns, [], 0, null)
+            : new SqlResult(columns, await SqlCatalog.PragmaAsync(transaction, pragma.Kind, pragma.Table!, name => TableAsync(transaction, name, tally, cancellationToken), cancellationToken).ConfigureAwait(false), 0, null);
     }
 
     // The document id: a single INTEGER or TEXT key's canonical value, otherwise the JSON array of the key values, or a

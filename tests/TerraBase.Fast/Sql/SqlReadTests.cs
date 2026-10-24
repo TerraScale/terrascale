@@ -141,7 +141,7 @@ public sealed class SqlReadTests
         [
             "SELECT * FROM items",
             "SELECT * FROM temp.people",
-            "SELECT * FROM sqlite_master",
+            "SELECT * FROM sqlite_sequence",
             "SELECT * FROM json_each('[1]')",
             "SELECT load_extension('secret_lib')",
             "SELECT tb_qos_scan(1)",

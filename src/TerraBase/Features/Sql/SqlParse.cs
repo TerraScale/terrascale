@@ -83,13 +83,25 @@ internal enum PragmaKind
     /// <summary><c>PRAGMA [main.]table_info(t)</c>: one row per column, as SQLite answers.</summary>
     TableInfo,
 
-    /// <summary><c>PRAGMA temp.table_info(t)</c>: no rows, since there are no temporary tables.</summary>
+    /// <summary><c>PRAGMA temp.table_info(t)</c> (and every other <c>temp.</c> catalog pragma): no rows, since there are no temporary tables.</summary>
     TempTableInfo,
+
+    /// <summary><c>PRAGMA table_xinfo(t)</c>: table_info with a <c>hidden</c> column.</summary>
+    TableXinfo,
+
+    /// <summary><c>PRAGMA index_list(t)</c>: the table's indexes.</summary>
+    IndexList,
+
+    /// <summary><c>PRAGMA index_info(i)</c>: the index's columns.</summary>
+    IndexInfo,
+
+    /// <summary><c>PRAGMA foreign_key_list(t)</c>: the table's FOREIGN KEY clauses.</summary>
+    ForeignKeyList,
 }
 
 /// <summary>A pragma (see <see cref="PragmaKind"/>).</summary>
 /// <param name="Kind">Which.</param>
-/// <param name="Table">The table of <c>table_info</c>.</param>
+/// <param name="Table">The pragma's argument: a table, or the index of <c>index_info</c>.</param>
 internal sealed record PragmaSql(PragmaKind Kind, string? Table = null) : ParsedSql
 {
     public override bool IsWrite => false;
@@ -182,9 +194,20 @@ internal static partial class SqlParse
         }
 
         var name = info.Groups["name"].Value.ToLowerInvariant();
-        return !DatabaseName.TryParse(name, out var table) || CollectionName.IsReserved(table.Value)
-            ? SqlErrors.Error("table names are a lowercase letter, then letters, digits, _ or -, at most 63 characters")
-            : new PragmaSql(info.Groups["temp"].Success ? PragmaKind.TempTableInfo : PragmaKind.TableInfo, table.Value);
+        var kind = info.Groups["pragma"].Value.ToLowerInvariant() switch
+        {
+            _ when info.Groups["temp"].Success => PragmaKind.TempTableInfo,
+            "table_xinfo" => PragmaKind.TableXinfo,
+            "index_list" => PragmaKind.IndexList,
+            "index_info" => PragmaKind.IndexInfo,
+            "foreign_key_list" => PragmaKind.ForeignKeyList,
+            _ => PragmaKind.TableInfo,
+        };
+        // An index name is answered as given; a table name follows the table name rules.
+        return kind == PragmaKind.IndexInfo ? new PragmaSql(kind, name)
+            : !DatabaseName.TryParse(name, out var table) || CollectionName.IsReserved(table.Value)
+                ? SqlErrors.Error("table names are a lowercase letter, then letters, digits, _ or -, at most 63 characters")
+                : new PragmaSql(kind, table.Value);
     }
 
     private static string Syntax(long line, long column) =>
@@ -271,6 +294,7 @@ internal static partial class SqlParse
         }
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var foreignKeys = new List<SqlForeignKey>();
         var key = new List<string>();
         var unique = new List<IReadOnlyList<string>>();
         var definitions = new List<SqlColumnDefinition>(columns.Count);
@@ -308,8 +332,10 @@ internal static partial class SqlParse
                         unique.Add([columnName]);
                         break;
                     case ColumnOption.DialectSpecific { Tokens: [{ } token] } when string.Equals(token.ToString(), "AUTOINCREMENT", StringComparison.OrdinalIgnoreCase):
-                    // Accepted and not enforced, as in SQLite with foreign keys off (its default).
-                    case ColumnOption.ForeignKey:
+                        break;
+                    // Accepted and not enforced, as in SQLite with foreign keys off (its default); kept for the catalog.
+                    case ColumnOption.ForeignKey reference:
+                        foreignKeys.Add(ForeignKey(reference.Name, [columnName], reference.ReferredColumns, reference.OnUpdateAction, reference.OnDeleteAction));
                         break;
                     default:
                         throw new FormatException("columns support NOT NULL, NULL, DEFAULT <literal>, PRIMARY KEY, UNIQUE and REFERENCES only");
@@ -322,13 +348,15 @@ internal static partial class SqlParse
         foreach (var constraint in create.Constraints ?? [])
         {
             // Accepted and not enforced, as in SQLite with foreign keys off; its columns must exist.
-            if (constraint is TableConstraint.ForeignKey { Columns: var foreign })
+            if (constraint is TableConstraint.ForeignKey { Columns: var foreign } reference)
             {
                 if (foreign.Any(ident => !seen.Contains(ident.Value)))
                 {
                     throw new FormatException("a constraint names a column the table does not have");
                 }
 
+                foreignKeys.Add(ForeignKey(reference.ForeignTable, [.. foreign.Select(ident => definitions.First(column => column.Name.Equals(ident.Value, StringComparison.OrdinalIgnoreCase)).Name)],
+                    reference.ReferredColumns, reference.OnUpdate, reference.OnDelete));
                 continue;
             }
 
@@ -363,8 +391,25 @@ internal static partial class SqlParse
         definitions = [.. definitions.Select(column => key.Contains(column.Name) ? column with { NotNull = true } : column)];
         var constraints = unique.Select((fields, index) => new UniqueConstraint(
             string.Create(CultureInfo.InvariantCulture, $"sql_unique_{index + 1}"), fields)).ToList();
-        return new CreateTableSql(name, new SqlTableDefinition(definitions, key), constraints, create.IfNotExists);
+        // SQLite's catalog keeps the statement without IF NOT EXISTS.
+        var text = (create with { IfNotExists = false }).ToSql();
+        return new CreateTableSql(name, new SqlTableDefinition(definitions, key, foreignKeys.Count > 0 ? foreignKeys : null, text), constraints, create.IfNotExists);
     }
+
+    // A FOREIGN KEY clause as the catalog shows it; the referenced table need not exist, as in SQLite.
+    private static SqlForeignKey ForeignKey(ObjectName table, IReadOnlyList<string> from, Sequence<Ident>? to, ReferentialAction? onUpdate, ReferentialAction? onDelete) =>
+        to is { Count: > 0 } && to.Count != from.Count
+            ? throw new FormatException("a FOREIGN KEY names as many referenced columns as columns")
+            : new SqlForeignKey(TableName(table), from, [.. (to ?? []).Select(ColumnName)], Action(onUpdate), Action(onDelete));
+
+    private static string Action(ReferentialAction? action) => action switch
+    {
+        ReferentialAction.Restrict => "RESTRICT",
+        ReferentialAction.Cascade => "CASCADE",
+        ReferentialAction.SetNull => "SET NULL",
+        ReferentialAction.SetDefault => "SET DEFAULT",
+        _ => "NO ACTION",
+    };
 
     /// <summary>A column name: it names a document field, so it is a letter, then letters, digits or <c>_</c>.</summary>
     public static string ColumnName(Ident ident) => ColumnPattern().IsMatch(ident.Value)
@@ -405,6 +450,6 @@ internal static partial class SqlParse
     [GeneratedRegex(@"\A\s*PRAGMA\s+(main\s*\.\s*)?read_uncommitted\s*;?\s*\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex ReadUncommittedPragma();
 
-    [GeneratedRegex(@"\A\s*PRAGMA\s+(?:main\s*\.\s*|(?<temp>temp)\s*\.\s*)?table_info\s*\(\s*(?<q>[""'`]?)(?<name>[A-Za-z][A-Za-z0-9_-]{0,62})\k<q>\s*\)\s*;?\s*\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\A\s*PRAGMA\s+(?:main\s*\.\s*|(?<temp>temp)\s*\.\s*)?(?<pragma>table_info|table_xinfo|index_list|index_info|foreign_key_list)\s*\(\s*(?<q>[""'`]?)(?<name>[A-Za-z][A-Za-z0-9_-]{0,127})\k<q>\s*\)\s*;?\s*\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex TableInfoPragma();
 }
