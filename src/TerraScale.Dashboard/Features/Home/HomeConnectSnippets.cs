@@ -17,6 +17,12 @@ public static class HomeConnectSnippets
           | sed -nE 's/.*"access_token": *"([^"]+)".*/\1/p')"
         """;
 
+    // The Postgres wire protocol takes the dashboard API key as the password (ts-docs guides/postgres-clients).
+    public static string Postgres(string database) => $"""
+        read -rs PGPASSWORD && export PGPASSWORD  # paste the API key, then press Enter
+        psql "postgresql://app@pg.terrascale.tech:5432/{database}?sslmode=require"
+        """;
+
     public static IReadOnlyList<(string Id, string Label, string Install, string Code)> For(string projectId, string database) =>
     [
         ("curl", "curl", "", $"""
