@@ -71,10 +71,19 @@ internal static class SqlRead
                     name = (tokens[i] is Colon ? ":" : "@") + word.Value;
                     i++;
                     break;
+                // SQLite's default schema: main.t and main.t.c are t and t.c (Prisma qualifies every name).
+                case Word { Value: var schema } when schema.Equals("main", StringComparison.OrdinalIgnoreCase)
+                    && i + 2 < tokens.Count && tokens[i + 1] is Period && tokens[i + 2] is Word && (i == 0 || tokens[i - 1] is not Period):
+                    i++;
+                    continue;
+                // ORMs (Drizzle, Prisma) quote names with backticks: one without quote characters is the same name "quoted".
+                case Word { QuoteStyle: '`', Value: var quoted } when !quoted.Contains('`', StringComparison.Ordinal) && !quoted.Contains('"', StringComparison.Ordinal):
+                    text.Append('"').Append(quoted).Append('"');
+                    continue;
                 // SqlParserCS renders these back without escaping ([a]]b] as [a]b], N'a''b' as N'a'b'), so SQLite would
-                // read other text than the validator saw: only plain and "…" names, and only '…' strings, pass.
+                // read other text than the validator saw: only plain, "…" and simple `…` names, and only '…' strings, pass.
                 case Word { QuoteStyle: not (null or '"') }:
-                    throw new FormatException("names are plain or \"quoted\"; [ ] and ` quotes are not supported");
+                    throw new FormatException("names are plain, \"quoted\" or `quoted` without quote characters; [ ] quotes are not supported");
                 case StringToken literal when literal is not SingleQuotedString
                     && (literal.GetType().Name.EndsWith("String", StringComparison.Ordinal) || literal.GetType().Name.Contains("Literal", StringComparison.Ordinal)):
                     throw new FormatException("strings are '…' literals; other string and blob literals are not supported");

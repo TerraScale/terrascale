@@ -74,18 +74,19 @@ public sealed class SqlDdlTests
         [
             "CREATE TABLE secret_name (",
             "CREATE TABLE t (a TEXT CHECK (a <> ''))",
-            "CREATE TABLE t (a TEXT REFERENCES u(id))",
+            "CREATE TABLE t (a TEXT, FOREIGN KEY (b) REFERENCES u(id))",
             "CREATE TABLE t (a TEXT COLLATE NOCASE)",
             "CREATE TEMP TABLE t (a TEXT)",
             "CREATE TABLE t AS SELECT 1",
-            "CREATE TABLE main.t (a TEXT)",
+            "CREATE TABLE aux.t (a TEXT)",
             "CREATE TABLE sqlite_t (a TEXT)",
             "CREATE TABLE t (a TEXT PRIMARY KEY, b TEXT PRIMARY KEY)",
             "CREATE TABLE t (a TEXT, A INTEGER)",
             "CREATE TABLE t (_a TEXT)",
             "CREATE TABLE t (a TEXT DEFAULT (1 + 2))",
             "CREATE TABLE t (a TEXT); CREATE TABLE u (a TEXT)",
-            "PRAGMA table_info(t)",
+            "PRAGMA table_list",
+            "PRAGMA foreign_keys = maybe",
             "DROP VIEW v",
         ];
 
@@ -97,6 +98,40 @@ public sealed class SqlDdlTests
         }
 
         await Assert.That(await SqlHarness.DefinitionAsync(api, "t")).IsNull();
+    }
+
+    [Test]
+    public async Task Foreign_keys_are_accepted_but_not_enforced_and_their_pragma_is_a_no_op()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var pragmas = await SqlHarness.RunAsync(api, canWrite: false, "PRAGMA foreign_keys=off", "pragma main.FOREIGN_KEYS = ON;");
+        var outcomes = await SqlHarness.RunAsync(api, canWrite: true,
+            "CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT)",
+            "CREATE TABLE posts (id INTEGER PRIMARY KEY, author_id INTEGER REFERENCES authors(id) ON DELETE CASCADE, editor_id INTEGER, FOREIGN KEY (editor_id) REFERENCES authors (id))",
+            // As in SQLite with foreign keys off: a dangling reference is stored.
+            "INSERT INTO posts (id, author_id, editor_id) VALUES (1, 42, 43)",
+            "SELECT author_id FROM posts");
+
+        await Assert.That(pragmas.Select(SqlHarness.Code)).IsEquivalentTo(new string?[2]);
+        await Assert.That(pragmas[0] is SqlResult { Columns.Count: 0, Rows.Count: 0, RowsAffected: 0 }).IsTrue();
+        await Assert.That(outcomes.Select(SqlHarness.Code)).IsEquivalentTo(new string?[4]);
+        await Assert.That(outcomes[3] is SqlResult { Rows.Count: 1 }).IsTrue();
+        await Assert.That((await SqlHarness.DefinitionAsync(api, "posts"))!.Value.GetProperty("columns").GetArrayLength()).IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task A_serial_primary_key_left_out_of_an_insert_is_generated_like_an_integer_key()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var outcomes = await SqlHarness.RunAsync(api, canWrite: true,
+            "CREATE TABLE IF NOT EXISTS \"drizzle_migrations\" (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at numeric)",
+            "INSERT INTO \"drizzle_migrations\" (\"hash\", \"created_at\") VALUES('h1', 1)",
+            "INSERT INTO drizzle_migrations (hash, created_at) VALUES('h2', 2)",
+            "SELECT count(DISTINCT id), min(typeof(id)) FROM drizzle_migrations");
+
+        await Assert.That(outcomes.Select(SqlHarness.Code)).IsEquivalentTo(new string?[4]);
+        await Assert.That(outcomes[1] is SqlResult { LastInsertRowid: > 0 }).IsTrue();
+        await Assert.That(outcomes[3] is SqlResult { Rows: [[{ Integer: 2 }, { Text: "integer" }]] }).IsTrue();
     }
 
     [Test]

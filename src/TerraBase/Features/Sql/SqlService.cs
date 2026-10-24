@@ -107,6 +107,8 @@ internal sealed class SqlSession(
         {
             case SqlError error:
                 return error;
+            case PragmaSql { Kind: PragmaKind.ForeignKeys }:
+                return Empty;
             case TransactionSql { Kind: TransactionKind.Begin or TransactionKind.BeginReadOnly } begin:
                 if (_readOnly is not null)
                 {
@@ -195,6 +197,14 @@ internal sealed class SqlSession(
                 SqlResult result => new SqlDescription(read.Params, result.Columns, IsExplain: false, IsReadOnly: true),
                 SqlError error => error,
             },
+            // A write's RETURNING columns come from the table definition, read without writing.
+            ParsedSql statement and (InsertSql { Returning: not null } or ChangeSql { Returning: not null } or PragmaSql { Kind: not PragmaKind.ForeignKeys }) =>
+                await AutocommitAsync(statement, command with { Args = [], Named = new Dictionary<string, SqlValue>() }, describe: true, cancellationToken)
+                    .ConfigureAwait(false) switch
+                {
+                    SqlResult result => new SqlDescription(statement.Params, result.Columns, IsExplain: false, IsReadOnly: !statement.IsWrite),
+                    SqlError error => error,
+                },
             ParsedSql statement => new SqlDescription(statement.Params, [], IsExplain: false, IsReadOnly: !statement.IsWrite),
         };
     }
@@ -327,7 +337,8 @@ internal sealed class SqlSession(
     // One statement in its own storage transaction, committed when it writes.
     private async ValueTask<SqlOutcome> AutocommitAsync(ParsedSql statement, SqlCommand command, bool describe, CancellationToken cancellationToken)
     {
-        var (opened, error) = await OpenAsync(statement.IsWrite, cancellationToken).ConfigureAwait(false);
+        // A described statement only reads, even a write with RETURNING.
+        var (opened, error) = await OpenAsync(statement.IsWrite && !describe, cancellationToken).ConfigureAwait(false);
         if (opened is not { } request)
         {
             return error!;
