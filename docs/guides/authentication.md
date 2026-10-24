@@ -15,7 +15,7 @@ curl -sS --fail-with-body -u "${TERRASCALE_API_KEY%%_*}:$TERRASCALE_API_KEY" \
   -d grant_type=client_credentials https://auth.terrascale.tech/terrascale/oauth/token
 ```
 
-The response holds `access_token` (a JWT), `token_type: Bearer`, `expires_in: 900` and the granted `scope`. Send the token to `https://api.terrascale.tech` as `Authorization: Bearer <token>`. The token is valid for 15 minutes; request a new one before it expires or after a `401`. Sending the key itself as a bearer token answers `401`.
+The response holds `access_token` (a JWT), `token_type: Bearer`, `expires_in: 60` and the granted `scope`. Send the token to `https://api.terrascale.tech` as `Authorization: Bearer <token>`. The token is valid for 60 seconds; request a new one before it expires or after a `401`. Sending the key itself as a bearer token answers `401`.
 
 | Item | Value |
 | --- | --- |
@@ -57,4 +57,4 @@ TerraScale uses TerraBase through the same SDK boundary as customer applications
 
 ## Failed authorization
 
-Handle `401` by checking expiry and revocation, then run the token exchange again. Handle `403` by checking the resource scope and operation permissions. A `403` with the code `ip_not_allowed` means the client address is outside a key or project allowlist; see [Key expiry and IP allowlists](#key-expiry-and-ip-allowlists). Do not retry these errors automatically. Revoking a key does not end access tokens already issued from it: they stay valid until they expire, up to 15 minutes. Never log the token, authorization header, raw server error body or a customer document while diagnosing the request.
+Handle `401` by checking expiry and revocation, then run the token exchange again. Handle `403` by checking the resource scope and operation permissions. A `403` with the code `ip_not_allowed` means the client address is outside a key or project allowlist; see [Key expiry and IP allowlists](#key-expiry-and-ip-allowlists). Do not retry these errors automatically. Revoking a key does not end access tokens already issued from it: they stay valid until they expire, up to 60 seconds. Never log the token, authorization header, raw server error body or a customer document while diagnosing the request.

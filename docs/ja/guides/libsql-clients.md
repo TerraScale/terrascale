@@ -25,7 +25,7 @@ Replace `{api-origin}` with your provisioned HTTPS API origin, and `{project}` a
 
 - Keep the trailing slash. `@libsql/client` resolves `v2/pipeline` relative to the URL; without the slash it drops the last path segment and the request misses your database.
 - Use the `https://` URL. Only HTTP is served; WebSocket (`wss://`) URLs are not.
-- The token is an access token minted from a project data API key with `documents:read` for reads and `documents:write` for writes and `CREATE`/`DROP` (the client-credentials exchange in [Authentication](/ja/guides/authentication#server-applications)). The raw API key is refused with `401`. Access tokens are short-lived (`expires_in`, 15 minutes today): mint a new one and recreate the client before it expires. Keep the key in your server's secret store and never ship it or a token to a browser.
+- The token is an access token minted from a project data API key with `documents:read` for reads and `documents:write` for writes and `CREATE`/`DROP` (the client-credentials exchange in [Authentication](/ja/guides/authentication#server-applications)). The raw API key is refused with `401`. Access tokens are short-lived (`expires_in`, 60 seconds today): mint a new one and recreate the client before it expires. Keep the key in your server's secret store and never ship it or a token to a browser.
 
 ## JavaScript and TypeScript
 
@@ -149,13 +149,13 @@ The Python package takes positional parameters only and sends integers outside t
 
 - `SELECT`, `VALUES` and `WITH … SELECT`, including joins, subqueries, aggregates, `GROUP BY`, window functions, `UNION` and `LIMIT`/`OFFSET`.
 - `INSERT` (with `VALUES` or `SELECT`), `INSERT OR REPLACE`, `REPLACE`, `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, `UPDATE` and `DELETE`.
-- `CREATE TABLE [IF NOT EXISTS]` and `DROP TABLE [IF EXISTS]`. Declare uniqueness in `CREATE TABLE` (`UNIQUE` or `PRIMARY KEY`).
+- `CREATE TABLE [IF NOT EXISTS]`, `DROP TABLE [IF EXISTS]`, `CREATE [UNIQUE] INDEX` and `DROP INDEX`. A `UNIQUE` index on a table with duplicate values is refused with `SQLITE_CONSTRAINT_UNIQUE`.
 - `BEGIN` (`DEFERRED`, `IMMEDIATE`, `EXCLUSIVE`, `READONLY`), `COMMIT`/`END` and `ROLLBACK`.
 - Parameters: `?`, `?NNN`, `:name`, `@name` and `$name`. Values: null, integer, real and text.
 - Column types follow SQLite affinity (`INTEGER`, `REAL`, `TEXT`, `NUMERIC`, none). `NOT NULL`, literal `DEFAULT`, `PRIMARY KEY` and `UNIQUE` are enforced.
 - Keys are yours: an `INTEGER` or `TEXT` primary key is the row's key, and composite keys work. An `INTEGER PRIMARY KEY` left out of an `INSERT` gets a generated positive integer, returned as the last insert rowid.
 
-Refused with an error: `CREATE INDEX` and `DROP INDEX`, `WITH RECURSIVE`, blob values, `RETURNING`, `ON CONFLICT DO UPDATE`, `ALTER TABLE`, triggers, views, `PRAGMA`, `ATTACH`, `VACUUM`, savepoints, `CHECK` and `FOREIGN KEY` constraints, schema-qualified table names and functions outside SQLite's core scalar, aggregate, window, date/time and JSON functions (no table-valued functions).
+Refused with an error: `WITH RECURSIVE`, blob values, `RETURNING`, `ON CONFLICT DO UPDATE`, `ALTER TABLE`, triggers, views, `PRAGMA`, `ATTACH`, `VACUUM`, savepoints, `CHECK` and `FOREIGN KEY` constraints, schema-qualified table names and functions outside SQLite's core scalar, aggregate, window, date/time and JSON functions (no table-valued functions).
 
 ## Limits
 
