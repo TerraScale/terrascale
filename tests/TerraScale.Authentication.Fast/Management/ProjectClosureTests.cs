@@ -1,11 +1,15 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Store;
+using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
@@ -118,7 +122,11 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Solo");
 
-        await oidc.OkAsync(HttpMethod.Delete, "/v1/terrascale/account", token, status: HttpStatusCode.Accepted);
+        var receipt = Receipt();
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token)).IsEqualTo((202, (string?)null));
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt)).IsEqualTo((202, (string?)null));
+        var attached = Receipt();
+        await Assert.That(await ReceiptCallAsync(oidc.Client, attached, HttpMethod.Delete, token: token)).IsEqualTo((202, (string?)null));
         var users = oidc.Server.App.Services.GetRequiredService<Users>();
         await Assert.That(await users.GetAsync("terrascale", alice.Id)).IsNotNull();
         await Assert.That(await JobAsync(oidc, "account", alice.Id)).IsNotNull();
@@ -146,6 +154,10 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
             await Assert.That(await restarted.App.Services.GetRequiredService<Users>().GetAsync("terrascale", alice.Id)).IsNull();
             await Assert.That(await directory.ClosureAsync("account", alice.Id, CancellationToken.None)).IsNotNull();
             await Assert.That(await DoneAsync()).IsFalse();
+            await Assert.That(await ReceiptCallAsync(restarted.Client, receipt)).IsEqualTo((204, (string?)null));
+            await Assert.That(await ReceiptCallAsync(restarted.Client, attached, organization: organization)).IsEqualTo((204, (string?)null));
+            using var unauthorized = await restarted.Client.SendAsync(BearerRequest(HttpMethod.Get, Organizations, token));
+            await Assert.That(unauthorized.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         }
         finally
         {
@@ -161,6 +173,8 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         }
 
         await FencedAsync(project, organization);
+        clock.UtcNow = clock.UtcNow.AddDays(16);
+        await Assert.That(await ReceiptCallAsync(restarted.Client, receipt)).IsEqualTo((404, "not_found"));
     }
 
     // The other owner of a shared organization leaves while the account closure waits: resuming finds the caller the last
@@ -181,7 +195,8 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await oidc.AddMemberAsync(shared, bob.Id, "owner");
         await oidc.AddMemberAsync(shared, carol.Id, "member");
 
-        await oidc.OkAsync(HttpMethod.Delete, "/v1/terrascale/account", token, status: HttpStatusCode.Accepted);
+        var receipt = Receipt();
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token)).IsEqualTo((202, (string?)null));
         await Assert.That((await JobAsync(oidc, "project", started))?.AccountId).IsEqualTo(alice.Id);
         await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{shared}/leave", bobToken, status: HttpStatusCode.NoContent);
 
@@ -210,6 +225,11 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         // The fences went with the intent: both organizations take members and roles again.
         await Assert.That(await directory.AddMemberAsync(solo, carol.Id, "member", CancellationToken.None)).IsTrue();
         await Assert.That(await directory.GrantAsync(untouched, bob.Id, "viewer", CancellationToken.None)).IsTrue();
+        await Assert.That(await ReceiptCallAsync(restarted.Client, receipt)).IsEqualTo((409, "deletion_refused"));
+        using var signedIn = await oidc.PostFormAsync("/ui/terrascale/sign-in", new() { ["email"] = alice.Email }, client: restarted.Client);
+        var code = await oidc.Email.NextCodeAsync(alice.Email);
+        using var verified = await oidc.PostFormAsync("/ui/terrascale/sign-in/verify", new() { ["email"] = alice.Email, ["code"] = code }, client: restarted.Client);
+        await Assert.That(OidcHarness.SessionCookie(verified)).IsNotNull();
     }
 
     // One project closure is accepted and removed, the next is refused: the account intent ends, the accepted removal
@@ -599,6 +619,76 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
 
             return await base.SendAsync(request, cancellationToken);
         }
+    }
+
+    [Test]
+    public async Task Receipts_require_authentication_to_bind_and_never_certify_unknown_or_malformed_requests()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: services => Misroute(services, "listener"));
+        const string password = "correct horse battery";
+        var alice = (await oidc.Server.App.Services.GetRequiredService<Users>().CreateAsync("terrascale", "alice@example.test", Passwords.Hash(password), CancellationToken.None))!;
+        var session = await oidc.SignInAsync(alice.Email);
+        var (verifier, challenge) = OidcHarness.Pkce();
+        using var redeemed = await oidc.RedeemCodeAsync(await oidc.CodeAsync(session, challenge), verifier);
+        var token = (await OidcHarness.JsonAsync(redeemed)).GetProperty("access_token").GetString()!;
+        var organization = await oidc.CreateOrganizationAsync(token);
+        await oidc.CreateProjectAsync(token, organization);
+        var receipt = Receipt();
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete)).IsEqualTo((401, "unauthorized"));
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt)).IsEqualTo((404, "not_found"));
+        foreach (var malformed in new[] { "", receipt + "=", receipt[..42] + "B", "!" + receipt[1..], receipt + "," + receipt })
+        {
+            await Assert.That(await ReceiptCallAsync(oidc.Client, malformed)).IsEqualTo((400, "invalid_request"));
+            await Assert.That(await ReceiptCallAsync(oidc.Client, malformed, HttpMethod.Delete, token: token)).IsEqualTo((400, "invalid_request"));
+        }
+
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token)).IsEqualTo((202, (string?)null));
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, organization: "invalid")).IsEqualTo((400, "invalid_request"));
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, organization: AuthStore.NewId())).IsEqualTo((404, "not_found"));
+        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(receipt)));
+        var stored = await store.GetAsync(AuthStore.AccountDeletionReceiptCollection, "terrascale", hash);
+        await Assert.That(stored!.Document.GetRawText()).DoesNotContain(receipt);
+        using var passwordAttempt = await oidc.PostFormAsync("/ui/terrascale/sign-in/password", new() { ["email"] = alice.Email, ["password"] = password });
+        await Assert.That(passwordAttempt.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(OidcHarness.SessionCookie(passwordAttempt)).IsNull();
+        using var requested = await oidc.PostFormAsync("/ui/terrascale/sign-in", new() { ["email"] = alice.Email });
+        var code = await oidc.Email.NextCodeAsync(alice.Email);
+        using var verified = await oidc.PostFormAsync("/ui/terrascale/sign-in/verify", new() { ["email"] = alice.Email, ["code"] = code });
+        await Assert.That(verified.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(OidcHarness.SessionCookie(verified)).IsNull();
+        // An authenticated different subject cannot adopt an existing capability.
+        var (_, otherToken) = await oidc.SignInUserAsync("other@example.test");
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: otherToken)).IsEqualTo((409, "deletion_refused"));
+        // Losing a root without Users.DeleteAsync's atomic fence must never certify completion.
+        var root = (await store.GetAsync(AuthStore.UserCollection, "terrascale", alice.Id))!;
+        await Assert.That(await store.CompareAndDeleteAsync(AuthStore.UserCollection, "terrascale", alice.Id, root.Version)).IsTrue();
+        var directory = oidc.Server.App.Services.GetRequiredService<PlatformDirectory>();
+        var job = (await directory.ClosureAsync("account", alice.Id, CancellationToken.None))!;
+        await Assert.That(async () => await oidc.Server.App.Services.GetRequiredService<AccountDeletion>().AdvanceAsync(job, CancellationToken.None)).Throws<ApiException>();
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt)).IsEqualTo((409, "deletion_refused"));
+    }
+
+    private static string Receipt() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    private static HttpRequestMessage BearerRequest(HttpMethod method, string path, string? token)
+    {
+        var request = new HttpRequestMessage(method, path);
+        if (token is not null)
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+
+        return request;
+    }
+
+    private static async Task<(int, string?)> ReceiptCallAsync(HttpClient client, string receipt, HttpMethod? method = null, string? token = null, string? organization = null)
+    {
+        var path = "/v1/terrascale/account" + (method == HttpMethod.Delete ? "" : "/deletion") + (organization is null ? "" : "?organization=" + organization);
+        using var request = BearerRequest(method ?? HttpMethod.Get, path, token);
+        request.Headers.TryAddWithoutValidation("X-TerraScale-Deletion-Receipt", receipt);
+        using var response = await client.SendAsync(request);
+        return ((int)response.StatusCode, response.IsSuccessStatusCode ? null : await OidcHarness.EnvelopeCodeAsync(response));
     }
 
     // The restarted replica's own hosted pass runs too, and either pass may meet the other's deferral (one minute). Pass a

@@ -184,6 +184,8 @@ public sealed class Sessions(AuthStore store, Users users, TotpCredentials totp,
         // Activation, reset and global revocation must not race a primary-only session into storage.
         return await store.TransactAsync(
         [
+            // A pending account closure temporarily blocks new sign-ins; cancellation restores them without changing credentials.
+            AuthStore.Absent(AuthStore.ClosureJobCollection, user.InstanceId, ClosureJob.Key("account", user.Id)),
             AuthStore.Require(AuthStore.UserCollection, user.InstanceId, user.Id, filter.RootElement),
             AuthStore.Create(AuthStore.SessionCollection, user.InstanceId, session.TokenHash,
                 JsonSerializer.SerializeToElement(session, IdentityJson.Default.SessionRecord)),
