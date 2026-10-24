@@ -10,6 +10,7 @@ using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SigningKeys;
+using TerraScale.Authentication.Features.Sso;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
@@ -115,6 +116,12 @@ public static class App
         builder.Services.AddSingleton<Invitations>();
         builder.Services.AddSingleton<TenantDirectory>();
         builder.Services.AddSingleton<ProjectAuthSettings>();
+        builder.Services.AddHttpClient(SsoConnections.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(10);
+            client.MaxResponseContentBufferSize = 1024 * 1024;
+        }).ConfigurePrimaryHttpMessageHandler(PublicAddresses.Handler);
+        builder.Services.AddSingleton<SsoConnections>();
         builder.Services.AddHostedService<SessionPruner>();
         // Ready means this regional copy takes writes.
         builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredService<TerraBaseDatabase>()));

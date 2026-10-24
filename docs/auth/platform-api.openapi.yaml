@@ -32,6 +32,8 @@ tags:
     description: Client credentials owned by an organization or project, exchanged at the token endpoint for short-lived tokens.
   - name: Audit
     description: Audit events of an organization's identity changes.
+  - name: Single sign-on
+    description: An organization's OpenID Connect identity provider and the email domain it proves by DNS.
   - name: Platform
     description: Operations of the platform itself, without a user - project suspension (ts-dashboard) and platform administrators (operator).
   - name: OAuth
@@ -902,6 +904,77 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/organizations/{organization}/sso:
+    parameters:
+      - $ref: '#/components/parameters/Organization'
+    get:
+      operationId: get_sso_connection
+      tags: [Single sign-on]
+      summary: Get the organization's SSO connection
+      description: Needs the admin organization role. 404 when the organization has none. The client secret is never returned.
+      responses:
+        '200':
+          description: The connection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SsoConnection' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    put:
+      operationId: put_sso_connection
+      tags: [Single sign-on]
+      summary: Create or change the organization's SSO connection
+      description: Needs the owner role. A new domain starts unverified, with a fresh TXT verification value; the issuer's discovery document must name the same https issuer. client_secret may be omitted to keep the stored one. 409 conflict when another organization verified the domain or this organization has a connection for another domain.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SsoConnectionRequest' }
+      responses:
+        '200':
+          description: The connection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SsoConnection' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    delete:
+      operationId: delete_sso_connection
+      tags: [Single sign-on]
+      summary: Delete the organization's SSO connection
+      description: Needs the owner role. Memberships stay.
+      responses:
+        '204': { description: 'Deleted.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/organizations/{organization}/sso/verify:
+    parameters:
+      - $ref: '#/components/parameters/Organization'
+    post:
+      operationId: verify_sso_domain
+      tags: [Single sign-on]
+      summary: Verify the SSO connection's domain
+      description: Needs the owner role. Looks up the TXT record named in verification; 409 domain_unverified until it carries the value. Once verified, no other organization can take the domain.
+      responses:
+        '200':
+          description: The verified connection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SsoConnection' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/organizations/{organization}/projects/{project}/suspension:
     parameters:
       - $ref: '#/components/parameters/Organization'
@@ -1240,6 +1313,69 @@ components:
         created_by: 01M4EQ2FRJ8S8B29E8TQVWNW4M
         created_at: '2026-10-06T12:00:00Z'
         role: owner
+    SsoConnectionRequest:
+      type: object
+      required: [domain, oidc]
+      additionalProperties: false
+      properties:
+        domain: { type: string, description: 'The members'' email domain.' }
+        protocol: { type: string, enum: [oidc], default: oidc }
+        default_role: { type: string, enum: [viewer, member, admin], default: member }
+        oidc:
+          type: object
+          required: [issuer, client_id]
+          additionalProperties: false
+          properties:
+            issuer: { type: string, format: uri, description: 'https issuer; {issuer}/.well-known/openid-configuration must name it.' }
+            client_id: { type: string, minLength: 1, maxLength: 256 }
+            client_secret: { type: string, maxLength: 1024, writeOnly: true, description: 'Required for a new connection; omit to keep the stored one.' }
+      example:
+        domain: acme.com
+        default_role: member
+        oidc: { issuer: 'https://idp.acme.com/realms/acme', client_id: terrascale, client_secret: synthetic-example-secret }
+    SsoConnection:
+      type: object
+      required: [organization_id, domain, domain_verified, verified_at, verification, protocol, default_role, oidc, created_at, updated_at]
+      properties:
+        organization_id: { $ref: '#/components/schemas/Ulid' }
+        domain: { type: string }
+        domain_verified: { type: boolean }
+        verified_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        verification:
+          type: object
+          required: [type, name, value]
+          properties:
+            type: { type: string, const: TXT }
+            name: { type: string }
+            value: { type: string }
+        protocol: { type: string, enum: [oidc] }
+        default_role: { type: string, enum: [viewer, member, admin] }
+        oidc:
+          oneOf:
+            - type: object
+              required: [issuer, client_id, client_secret_set, redirect_uri]
+              properties:
+                issuer: { type: string }
+                client_id: { type: string }
+                client_secret_set: { type: boolean }
+                redirect_uri: { type: string, description: 'Register it at the identity provider.' }
+            - type: 'null'
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+      example:
+        organization_id: 01M4EQ2FRJ8S8B29E8TQVWNW4J
+        domain: acme.com
+        domain_verified: false
+        verified_at: null
+        verification: { type: TXT, name: _terrascale-sso.acme.com, value: terrascale-sso-verification=Q2xLb3d0ZXN0VmFsdWVPbmx5Rm9yRG9jcw }
+        protocol: oidc
+        default_role: member
+        oidc: { issuer: 'https://idp.acme.com/realms/acme', client_id: terrascale, client_secret_set: true, redirect_uri: 'https://auth.terrascale.tech/ui/terrascale/sso/callback' }
+        created_at: '2026-10-24T12:00:00Z'
+        updated_at: '2026-10-24T12:00:00Z'
     OrganizationPage:
       type: object
       required: [items, next]

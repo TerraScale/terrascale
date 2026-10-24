@@ -112,6 +112,7 @@ public static partial class OpenApiSetup
         ["Ownership transfer"] = "Handing an organization's ownership to another member, confirmed by the nominee.",
         ["Audit"] = "Audit events of an organization's identity changes.",
         ["Project tenants"] = "A project tenant's end users, live sessions, OAuth clients and sign-in settings, for the project's platform members (viewer reads, admin changes).",
+        ["Single sign-on"] = "An organization's OpenID Connect identity provider and the email domain it proves by DNS: admins read the connection, owners change, verify and delete it.",
     };
 
     private static readonly Dictionary<string, Func<OpenApiSecurityScheme>> SchemeDefinitions = new(StringComparer.Ordinal)
