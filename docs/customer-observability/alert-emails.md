@@ -14,7 +14,7 @@ name or null for the whole project; `threshold` and `value` are finite numbers. 
 `invalid_request`. An unknown organization, or a project outside it, answers 404.
 
 ts-auth emails the organization's current owners ("[TerraScale] Alert firing: <rule>" or "Alert resolved: <rule>")
-with a link to `https://dashboard.terrascale.tech/notifications/alerts`, and returns only
+with a link to `https://dash.terrascale.tech/notifications/alerts`, and returns only
 `{ "status": "accepted" | "retryable" | "unknown" | "rejected" | "no_recipients" }`. Durable per-recipient claims in
 `email_alert_deliveries`, keyed by organization, alert and state, send one message per transition with the
 allowance email's retry semantics.

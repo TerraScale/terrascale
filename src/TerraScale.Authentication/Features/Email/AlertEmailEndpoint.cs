@@ -151,7 +151,7 @@ public sealed partial class AlertEmailEndpoint(AuthStore store, PlatformDirector
         var firing = request.State == "firing";
         var scope = request.DatabaseName is { } database ? $"database {database} in project {project}" : $"project {project}";
         var text = string.Create(CultureInfo.InvariantCulture,
-            $"Your alert rule \"{name}\" {(firing ? "is firing" : "has resolved")} for {scope}.\n\n{metric}: {value:0.##}{unit} (threshold {threshold:0.##}{unit}).\n\nView and manage alerts at https://dashboard.terrascale.tech/notifications/alerts .");
+            $"Your alert rule \"{name}\" {(firing ? "is firing" : "has resolved")} for {scope}.\n\n{metric}: {value:0.##}{unit} (threshold {threshold:0.##}{unit}).\n\nView and manage alerts at https://dash.terrascale.tech/notifications/alerts .");
         return new($"[TerraScale] Alert {(firing ? "firing" : "resolved")}: {name}", text) { FromName = "TerraScale" };
     }
 

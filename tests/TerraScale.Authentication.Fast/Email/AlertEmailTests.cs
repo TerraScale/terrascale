@@ -42,7 +42,7 @@ public sealed class AlertEmailTests(TerraBaseFixture fixture)
         await Assert.That(message.Subject).IsEqualTo("[TerraScale] Alert firing: Slow reads");
         await Assert.That(message.Text).Contains("database main");
         await Assert.That(message.Text).Contains("412.5 ms (threshold 250 ms)");
-        await Assert.That(message.Text).Contains("https://dashboard.terrascale.tech/notifications/alerts");
+        await Assert.That(message.Text).Contains("https://dash.terrascale.tech/notifications/alerts");
 
         await Assert.That(await StatusAsync(oidc.Client, firing with { State = "resolved", Value = 120 })).IsEqualTo("accepted");
         await Assert.That(sender.ProductMessages.Count).IsEqualTo(2);
