@@ -69,6 +69,61 @@ public sealed class TerraBaseAggregateAndGeoTests
     }
 
     [Test]
+    public async Task Explain_query_sends_the_flag_and_decodes_the_plan_and_suggestion()
+    {
+        string? sent = null;
+        using var handler = new TerraBaseTestHandler(async (request, token) =>
+        {
+            sent = await request.Content!.ReadAsStringAsync(token);
+            return TerraBaseIntegrationFixture.Json(
+                """{"items":[],"next_cursor":null,"explain":{"plan":["SCAN items"],"indexes":[],"full_scan":true,"rows_scanned":"9007199254740993","work_units":2400,"elapsed_ms":9.4,"suggested_index":["status"]}}""");
+        });
+        using var http = new HttpClient(handler);
+        var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
+
+        var page = await db.QueryAsync("items", new TerraBaseQuery
+        {
+            Filter = JsonDocument.Parse("""{"eq":["/status","open"]}""").RootElement,
+            Explain = true,
+        });
+
+        await Assert.That(sent).IsEqualTo("""{"filter":{"eq":["/status","open"]},"explain":true}""");
+        var explain = page.Explain!;
+        await Assert.That(explain.Plan.Single()).IsEqualTo("SCAN items");
+        await Assert.That(explain.Indexes.Count).IsEqualTo(0);
+        await Assert.That(explain.FullScan).IsTrue();
+        await Assert.That(explain.RowsScanned).IsEqualTo(9007199254740993L);
+        await Assert.That(explain.WorkUnits).IsEqualTo(2400);
+        await Assert.That(explain.ElapsedMs).IsEqualTo(9.4);
+        await Assert.That(explain.SuggestedIndex!.Single()).IsEqualTo("status");
+    }
+
+    [Test]
+    public async Task Explain_without_suggestion_and_queries_without_explain_decode_null()
+    {
+        var bodies = new List<string>();
+        using var handler = new TerraBaseTestHandler(async (request, token) =>
+        {
+            bodies.Add(await request.Content!.ReadAsStringAsync(token));
+            return TerraBaseIntegrationFixture.Json(bodies.Count == 1
+                ? """{"items":[],"next_cursor":null,"count":{"value":"0","exact":true},"explain":{"plan":["SEARCH items USING INDEX tb_index_by_status (key=?)"],"indexes":["by_status"],"full_scan":false,"rows_scanned":1,"work_units":3,"elapsed_ms":0.2}}"""
+                : """{"items":[],"next_cursor":null}""");
+        });
+        using var http = new HttpClient(handler);
+        var db = TerraBaseIntegrationFixture.Client(http).Database(TerraBaseIntegrationFixture.ProjectId, "app");
+
+        var explained = await db.QueryAsync("items", new TerraBaseQuery { Count = true, Explain = true });
+        var plain = await db.QueryAsync("items", new TerraBaseQuery { Limit = 1 });
+
+        await Assert.That(bodies[0]).IsEqualTo("""{"count":true,"explain":true}""");
+        await Assert.That(bodies[1]).IsEqualTo("""{"limit":1}""");
+        await Assert.That(explained.Explain!.FullScan).IsFalse();
+        await Assert.That(explained.Explain.Indexes.Single()).IsEqualTo("by_status");
+        await Assert.That(explained.Explain.SuggestedIndex).IsNull();
+        await Assert.That(plain.Explain).IsNull();
+    }
+
+    [Test]
     public async Task Invalid_geo_and_aggregate_queries_are_rejected_before_any_request()
     {
         using var handler = new TerraBaseTestHandler((_, _) => throw new HttpRequestException("sent"));

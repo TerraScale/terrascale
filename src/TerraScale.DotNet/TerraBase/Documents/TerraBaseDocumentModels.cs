@@ -51,11 +51,13 @@ public sealed record TerraBaseCount(long Value, bool Exact);
 /// <param name="NextCursor">Cursor of the next page; <see langword="null"/> on the last page.</param>
 /// <param name="Count">Match count, when the query asked for it.</param>
 /// <param name="Groups">An <see cref="TerraBaseQuery.Aggregate"/> query's groups in key order (<paramref name="Items"/> is then empty); otherwise null.</param>
+/// <param name="Explain">How the query ran, when <see cref="TerraBaseQuery.Explain"/> asked for it; otherwise null.</param>
 public sealed record TerraBaseDocumentPage(
     IReadOnlyList<TerraBaseDocument> Items,
     [property: JsonPropertyName("next_cursor")] string? NextCursor,
     TerraBaseCount? Count = null,
-    IReadOnlyList<TerraBaseGroup>? Groups = null) : IJsonOnDeserialized
+    IReadOnlyList<TerraBaseGroup>? Groups = null,
+    TerraBaseQueryExplain? Explain = null) : IJsonOnDeserialized
 {
     void IJsonOnDeserialized.OnDeserialized()
     {
@@ -63,6 +65,34 @@ public sealed record TerraBaseDocumentPage(
         if (Groups is not null)
         {
             TerraBaseJsonContext.RequireNonNullItems(Groups);
+        }
+    }
+}
+
+/// <summary>How a document query ran (<see cref="TerraBaseQuery.Explain"/>).</summary>
+/// <param name="Plan">Engine plan steps, such as <c>SCAN items</c> or <c>SEARCH items USING INDEX tb_index_status (…)</c>.</param>
+/// <param name="Indexes">TerraBase index names the plan uses.</param>
+/// <param name="FullScan">Whether a step walks a whole table or index, including the id-order walk.</param>
+/// <param name="RowsScanned">Candidate documents visited.</param>
+/// <param name="WorkUnits">Engine work units charged against the per-query budget.</param>
+/// <param name="ElapsedMs">Server time for the query, in milliseconds.</param>
+/// <param name="SuggestedIndex">On a full scan, the filtered field to index in the <c>fields</c> form of <c>POST …/indexes</c>; otherwise null.</param>
+public sealed record TerraBaseQueryExplain(
+    IReadOnlyList<string> Plan,
+    IReadOnlyList<string> Indexes,
+    [property: JsonPropertyName("full_scan")] bool FullScan,
+    [property: JsonPropertyName("rows_scanned")] long RowsScanned,
+    [property: JsonPropertyName("work_units")] long WorkUnits,
+    [property: JsonPropertyName("elapsed_ms")] double ElapsedMs,
+    [property: JsonPropertyName("suggested_index")] IReadOnlyList<string>? SuggestedIndex = null) : IJsonOnDeserialized
+{
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        TerraBaseJsonContext.RequireNonNullItems(Plan);
+        TerraBaseJsonContext.RequireNonNullItems(Indexes);
+        if (SuggestedIndex is not null)
+        {
+            TerraBaseJsonContext.RequireNonNullItems(SuggestedIndex);
         }
     }
 }
@@ -268,6 +298,12 @@ public sealed record TerraBaseQuery
     /// project, cursor or count; <see cref="Limit"/> then bounds the groups, and more groups fail the query.
     /// </summary>
     public TerraBaseAggregate? Aggregate { get; init; }
+
+    /// <summary>
+    /// Whether to return <see cref="TerraBaseDocumentPage.Explain"/> (plan, indexes, scan and cost, index suggestion). The query
+    /// still runs, bypassing TerraBase's result cache; works with <see cref="Aggregate"/>, <see cref="Count"/> and near sorts.
+    /// </summary>
+    public bool? Explain { get; init; }
 }
 
 /// <summary>One operation of an <c>application/vnd.terrabase.ops+json</c> patch, applied in order.</summary>
