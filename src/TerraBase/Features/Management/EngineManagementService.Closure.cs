@@ -60,7 +60,8 @@ internal sealed partial class EngineManagementService
     private static async ValueTask<bool> IsProjectEmptyAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken) =>
         !await AnyAsync(transaction, Databases(projectId), cancellationToken).ConfigureAwait(false)
         && !await AnyAsync(transaction, EngineApiKeyStore.ProjectKeys(projectId), cancellationToken).ConfigureAwait(false)
-        && !await AnyAsync(transaction, ProjectBackupDestinations.Collection(projectId), cancellationToken).ConfigureAwait(false);
+        && !await AnyAsync(transaction, ProjectBackupDestinations.Collection(projectId), cancellationToken).ConfigureAwait(false)
+        && !await AnyAsync(transaction, Features.FileStorage.FileStorageUsage.Buckets(projectId), cancellationToken).ConfigureAwait(false);
 
     // Every machine that ever ran this catalog (retired ones included) and this one; no holder is silently dropped.
     private ValueTask<HashSet<string>> ClosureHoldersAsync(IStorageTransaction transaction, CancellationToken cancellationToken) =>

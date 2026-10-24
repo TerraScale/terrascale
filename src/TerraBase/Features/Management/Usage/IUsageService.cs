@@ -56,7 +56,11 @@ public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, l
 /// <param name="Month">Billed operation units this UTC month.</param>
 public sealed record ProjectUsage(
     string ProjectId, long Databases, long StorageBytes, long LogicalBytes, long Documents, long Reads, long Writes, UsagePeriod Period,
-    IReadOnlyList<UsagePoint> Series, IReadOnlyList<DatabaseUsage> Items, UsageMonth Month);
+    IReadOnlyList<UsagePoint> Series, IReadOnlyList<DatabaseUsage> Items, UsageMonth Month)
+{
+    /// <summary>Logical file bytes and pending reservations, counted once across regions.</summary>
+    public long FileBytes { get; init; }
+}
 
 /// <summary>The usage of a database, or why there is none.</summary>
 public readonly union DatabaseUsageResult(DatabaseUsage, NotFound, Validation, Unavailable);
