@@ -41,11 +41,182 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         // The intent is committed and TerraBase accepted, then ts-auth lost the answer before removing the root: the retry
         // presents the same stored closure.
         var intent = await oidc.Server.App.Services.GetRequiredService<PlatformDirectory>().RequestProjectClosureAsync(owner.Id, organization, second, null, CancellationToken.None);
+        await Assert.That(intent.Value.ProjectClosureVersion).IsEqualTo(1);
         await Assert.That((await terraBase.CloseProjectAsync(second, organization, intent.Value.Id)).Accepted).IsTrue();
         await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{organization}/projects/{second}", token);
         await oidc.OkAsync(HttpMethod.Delete, $"{Organizations}/{organization}/projects/{second}", token, status: HttpStatusCode.NoContent);
         await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{Organizations}/{organization}/projects/{second}", token)).IsEqualTo((404, "not_found"));
         await Assert.That(await JobAsync(oidc, "project", second)).IsNull();
+    }
+
+    [Test]
+    public async Task Legacy_acceptance_keeps_the_project_until_current_erasure_evidence_arrives()
+    {
+        using var legacy = new LegacyClosureEvidence { InnerHandler = TerraBaseFixture.NewHandler() };
+        using var transport = new HttpClient(legacy);
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: services =>
+            services.AddKeyedSingleton(App.StorageAuthority, (_, _) => new TerraBaseManagementClient(transport,
+                new TerraBaseManagementClientOptions { BaseAddress = fixture.Server.InternalAddress })));
+        await oidc.Server.App.Services.GetRequiredService<ClosureWorker>().StopAsync(CancellationToken.None);
+        var (_, token) = await oidc.SignInUserAsync("owner@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var project = await oidc.CreateProjectAsync(token, organization, "Retained");
+        var route = $"{Organizations}/{organization}/projects/{project}";
+        await oidc.OkAsync(HttpMethod.Delete, route, token, status: HttpStatusCode.Accepted);
+        await oidc.OkAsync(HttpMethod.Get, route, token);
+        await Assert.That((await JobAsync(oidc, "project", project))!.FailureCode).IsEqualTo("terrabase_evidence_pending");
+        legacy.OmitEvidence = false;
+        await oidc.OkAsync(HttpMethod.Delete, route, token, status: HttpStatusCode.NoContent);
+        await Assert.That(await JobAsync(oidc, "project", project)).IsNull();
+    }
+
+    [Test]
+    [Arguments(HttpStatusCode.BadRequest, false)]
+    [Arguments(HttpStatusCode.NotFound, false)]
+    [Arguments(HttpStatusCode.NotImplemented, false)]
+    [Arguments(HttpStatusCode.BadRequest, true)]
+    [Arguments(HttpStatusCode.NotFound, true)]
+    [Arguments(HttpStatusCode.NotImplemented, true)]
+    public async Task Unsupported_erasure_uses_the_legacy_path_and_resumes_the_same_account_intent_after_upgrade(HttpStatusCode unsupported, bool nonempty)
+    {
+        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
+        using var legacy = new LegacyErasureContract(unsupported, nonempty) { InnerHandler = TerraBaseFixture.NewHandler() };
+        using var transport = new HttpClient(legacy);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services =>
+            services.AddKeyedSingleton(App.StorageAuthority, (_, _) => new TerraBaseManagementClient(transport,
+                new TerraBaseManagementClientOptions { BaseAddress = fixture.Server.InternalAddress })));
+        var services = oidc.Server.App.Services;
+        var worker = services.GetRequiredService<ClosureWorker>();
+        await worker.StopAsync(CancellationToken.None);
+        var (owner, token) = await oidc.SignInUserAsync("owner@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var project = await oidc.CreateProjectAsync(token, organization, "Retained");
+        await oidc.OkAsync(HttpMethod.Delete, "/v1/terrascale/account", token, status: HttpStatusCode.Accepted);
+        await Assert.That(legacy.Versions is [2, 1]).IsTrue();
+        var pending = (await JobAsync(oidc, "project", project))!;
+        await Assert.That(pending.ProjectClosureVersion).IsEqualTo(2);
+        await Assert.That(pending.FailureCode).IsEqualTo(nonempty ? "terrabase_erasure_unsupported" : "terrabase_evidence_pending");
+        await Assert.That(await services.GetRequiredService<Users>().GetAsync("terrascale", owner.Id)).IsNotNull();
+        await Assert.That(await JobAsync(oidc, "account", owner.Id)).IsNotNull();
+        var directory = services.GetRequiredService<PlatformDirectory>();
+        await Assert.That(await directory.ProjectAsync(project, CancellationToken.None)).IsNotNull();
+
+        // No second submit: the same durable driver resumes against the upgraded real engine.
+        legacy.Upgraded = true;
+        clock.UtcNow += TimeSpan.FromSeconds(3);
+        await worker.RunOnceAsync();
+        await Assert.That(await services.GetRequiredService<Users>().GetAsync("terrascale", owner.Id)).IsNull();
+        await Assert.That(await directory.ProjectAsync(project, CancellationToken.None)).IsNull();
+        await Assert.That(await JobAsync(oidc, "account", owner.Id)).IsNull();
+    }
+
+    [Test]
+    public async Task A_legacy_fallback_conflict_cannot_cancel_a_v2_fence_whose_answer_was_lost()
+    {
+        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
+        using var legacy = new LegacyErasureContract(HttpStatusCode.BadRequest, false)
+        {
+            InnerHandler = TerraBaseFixture.NewHandler(),
+            LoseFirstErasureAnswer = true,
+        };
+        using var transport = new HttpClient(legacy);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services =>
+            services.AddKeyedSingleton(App.StorageAuthority, (_, _) => new TerraBaseManagementClient(transport,
+                new TerraBaseManagementClientOptions { BaseAddress = fixture.Server.InternalAddress })));
+        var services = oidc.Server.App.Services;
+        var worker = services.GetRequiredService<ClosureWorker>();
+        await worker.StopAsync(CancellationToken.None);
+        var (owner, token) = await oidc.SignInUserAsync("owner@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var project = await oidc.CreateProjectAsync(token, organization, "Retained");
+        await oidc.OkAsync(HttpMethod.Delete, "/v1/terrascale/account", token, status: HttpStatusCode.Accepted);
+        await Assert.That(legacy.WroteFence).IsTrue();
+        var original = (await JobAsync(oidc, "project", project))!;
+        await Assert.That(original.FenceSeen).IsFalse();
+
+        // Put the account first in the due snapshot. Its retry reschedules the child before this same batch reaches it.
+        var account = (await services.GetRequiredService<PlatformDirectory>().ClosureAsync("account", owner.Id, CancellationToken.None))!;
+        await Assert.That(await services.GetRequiredService<AuthStore>().ReplaceAsync(AuthStore.ClosureJobCollection, "terrascale", ClosureJob.Key("account", owner.Id),
+            JsonSerializer.SerializeToElement(account.Value with { NextAttemptAt = clock.UtcNow.AddSeconds(1) }, ClosureJson.Default.ClosureJob), account.Version)).IsNotNull();
+
+        // The old engine's fallback now meets the real v2 fence, with no recorded fence evidence in auth.
+        clock.UtcNow += TimeSpan.FromSeconds(3);
+        await worker.RunOnceAsync();
+        await Assert.That(legacy.Versions is [2, 2, 1]).IsTrue();
+        var pending = (await JobAsync(oidc, "project", project))!;
+        await Assert.That(pending.Same(original)).IsTrue();
+        await Assert.That(pending.FailureCode).IsEqualTo("terrabase_erasure_unsupported");
+        await Assert.That(pending.FenceSeen).IsFalse();
+        await Assert.That(await JobAsync(oidc, "account", owner.Id)).IsNotNull();
+        await Assert.That(await services.GetRequiredService<Users>().GetAsync("terrascale", owner.Id)).IsNotNull();
+
+        legacy.Upgraded = true;
+        clock.UtcNow += TimeSpan.FromSeconds(3);
+        await worker.RunOnceAsync();
+        await Assert.That(await services.GetRequiredService<Users>().GetAsync("terrascale", owner.Id)).IsNull();
+        await Assert.That(await services.GetRequiredService<PlatformDirectory>().ProjectAsync(project, CancellationToken.None)).IsNull();
+        await Assert.That(await JobAsync(oidc, "account", owner.Id)).IsNull();
+    }
+
+    private sealed class LegacyErasureContract(HttpStatusCode unsupported, bool nonempty) : DelegatingHandler
+    {
+        public bool Upgraded { get; set; }
+        public bool LoseFirstErasureAnswer { get; set; }
+        public bool WroteFence { get; private set; }
+        public List<int> Versions { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/closure", StringComparison.Ordinal))
+            {
+                var body = await request.Content!.ReadFromJsonAsync<JsonElement>(cancellationToken);
+                var version = body.GetProperty("version").GetInt32();
+                this.Versions.Add(version);
+                if (version == 2 && this.LoseFirstErasureAnswer)
+                {
+                    this.LoseFirstErasureAnswer = false;
+                    using var accepted = await base.SendAsync(request, cancellationToken);
+                    this.WroteFence = accepted.IsSuccessStatusCode;
+                    return new(HttpStatusCode.ServiceUnavailable)
+                    {
+                        Content = new StringContent("""{"error":{"code":"temporarily_unavailable","message":"answer lost"}}""", Encoding.UTF8, "application/json"),
+                    };
+                }
+
+                if (!this.Upgraded && (version == 2 || nonempty))
+                {
+                    // Only the old wire failures are injected; auth persists in real TerraBase and successful closures
+                    // run through its real v1/v2 endpoint. A refusal writes no fence.
+                    return new(version == 2 ? unsupported : HttpStatusCode.Conflict)
+                    {
+                        Content = new StringContent(version == 2
+                            ? """{"error":{"code":"invalid_request","message":"version must be 1"}}"""
+                            : """{"error":{"code":"not_empty","message":"delete what it contains first"}}""", Encoding.UTF8, "application/json"),
+                    };
+                }
+            }
+
+            return await base.SendAsync(request, cancellationToken);
+        }
+    }
+
+    private sealed class LegacyClosureEvidence : DelegatingHandler
+    {
+        public bool OmitEvidence { get; set; } = true;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = await base.SendAsync(request, cancellationToken);
+            if (this.OmitEvidence && request.RequestUri!.AbsolutePath.EndsWith("/closure", StringComparison.Ordinal) && response.IsSuccessStatusCode)
+            {
+                var body = System.Text.Json.Nodes.JsonNode.Parse(await response.Content.ReadAsStringAsync(cancellationToken))!.AsObject();
+                body.Remove("evidenceVersion");
+                response.Content.Dispose();
+                response.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
+            }
+
+            return response;
+        }
     }
 
     [Test]
@@ -122,6 +293,13 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "Solo");
 
+        await oidc.OkAsync(HttpMethod.Delete, $"{Organizations}/{organization}/projects/{project}", token, status: HttpStatusCode.Accepted);
+        var directoryBeforeRestart = oidc.Server.App.Services.GetRequiredService<PlatformDirectory>();
+        var pending = (await directoryBeforeRestart.ClosureAsync("project", project, CancellationToken.None))!;
+        await Assert.That(pending.Value.ProjectClosureVersion).IsEqualTo(1);
+        await Assert.That(async () => await directoryBeforeRestart.RequestProjectClosureAsync(alice.Id, organization, project, alice.Id, CancellationToken.None)).Throws<ApiException>();
+        await Assert.That((await JobAsync(oidc, "project", project))!.ProjectClosureVersion).IsEqualTo(1);
+
         var receipt = Receipt();
         await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token)).IsEqualTo((202, (string?)null));
         await Assert.That(await ReceiptCallAsync(oidc.Client, receipt)).IsEqualTo((202, (string?)null));
@@ -131,6 +309,17 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await Assert.That(await users.GetAsync("terrascale", alice.Id)).IsNotNull();
         await Assert.That(await JobAsync(oidc, "account", alice.Id)).IsNotNull();
         await Assert.That(await JobAsync(oidc, "organization", organization)).IsNotNull();
+        await Assert.That((await JobAsync(oidc, "project", project))!.ProjectClosureVersion).IsEqualTo(2);
+        var adopted = (await JobAsync(oidc, "project", project))!;
+        await Assert.That(adopted.Id).IsEqualTo(pending.Value.Id);
+        await Assert.That(adopted.Generation).IsNotEqualTo(pending.Value.Generation);
+        await Assert.That(adopted.Same(pending.Value)).IsFalse();
+        await Assert.That(adopted.AccountId).IsEqualTo(alice.Id);
+        await Assert.That(await directoryBeforeRestart.CancelClosureAsync(pending, CancellationToken.None)).IsFalse();
+        var liveClosures = ActivatorUtilities.CreateInstance<Closures>(oidc.Server.App.Services, fixture.Server.Management());
+        await Assert.That(await liveClosures.AdvanceAsync(pending, CancellationToken.None)).IsFalse();
+        await Assert.That((await JobAsync(oidc, "project", project))!.Same(adopted)).IsTrue();
+        await Assert.That(await directoryBeforeRestart.ProjectAsync(project, CancellationToken.None)).IsNotNull();
         // Nobody joins the closing organization, so the sole-owner decision cannot go stale.
         await Assert.That(async () => await oidc.AddMemberAsync(organization, bob.Id, "member")).Throws<ApiException>();
         await Assert.That(await oidc.Server.App.Services.GetRequiredService<AuthStore>().GetAsync(AuthStore.MembershipCollection, "terrascale", $"{organization}/{bob.Id}")).IsNull();
@@ -197,7 +386,9 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
 
         var receipt = Receipt();
         await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token)).IsEqualTo((202, (string?)null));
-        await Assert.That((await JobAsync(oidc, "project", started))?.AccountId).IsEqualTo(alice.Id);
+        var startedJob = (await JobAsync(oidc, "project", started))!;
+        await Assert.That(startedJob.AccountId).IsEqualTo(alice.Id);
+        await Assert.That(startedJob.ProjectClosureVersion).IsEqualTo(2);
         await oidc.OkAsync(HttpMethod.Post, $"{Organizations}/{shared}/leave", bobToken, status: HttpStatusCode.NoContent);
 
         await oidc.Server.DisposeAsync();
@@ -214,6 +405,9 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await Assert.That(await directory.OrganizationAsync(solo, CancellationToken.None)).IsNotNull();
         await Assert.That(await directory.ProjectAsync(started, CancellationToken.None)).IsNull();
         await FencedAsync(started, solo);
+        // Detaching the child cannot downgrade the authorized erasure: the real permanent fence retains version 2.
+        var downgraded = await Assert.That(async () => await fixture.Server.Management().CloseProjectAsync(started, solo, startedJob.Id)).Throws<TerraBaseConflictException>();
+        await Assert.That(downgraded!.ErrorCode).IsEqualTo("closure_conflict");
         foreach (var (scope, subject) in new[] { ("organization", solo), ("project", started), ("project", untouched) })
         {
             await Assert.That(await directory.ClosureAsync(scope, subject, CancellationToken.None)).IsNull().Because(subject);

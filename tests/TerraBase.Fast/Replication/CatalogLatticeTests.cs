@@ -149,8 +149,12 @@ public sealed class CatalogLatticeTests
         });
         await Assert.That(await sjc.UntilDocumentAsync(tenant, "items", "one", json => json == """{"n":1}""")).IsTrue();
 
-        await gru.CommitAsync(user, new { op = "set_database_regions", organization, project, database, replica_regions = Array.Empty<string>() });
-        await gru.CommitAsync(user, new { op = "delete_database", organization, project, database });
+        using var replicaOwner = sjc.Api.As(user);
+        var path = ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases/{database}");
+        using var wrongRegion = await replicaOwner.DeleteAsync(path);
+        await Assert.That(wrongRegion.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+        using var deleted = await gru.Api.Client.DeleteAsync(path);
+        await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await deleted.Content.ReadAsStringAsync());
         await Assert.That(await Until(() => Task.FromResult(!File.Exists(sjc.FileOf(tenant))))).IsTrue();
         await Assert.That(await sjc.VersionAsync($"projects/{project}/databases", database) is { Deleted: true }).IsTrue();
         await Assert.That(await sjc.Tenants.RegisteredAsync(tenant, CancellationToken.None) is false).IsTrue();
@@ -239,10 +243,98 @@ public sealed class CatalogLatticeTests
         await Assert.That(await CloseAsync(sjc, project, closure)).IsEqualTo(HttpStatusCode.OK);
     }
 
-    private static async Task<HttpStatusCode> CloseAsync(Region region, string project, string closure)
+    [Test]
+    public async Task Account_erasure_waits_for_every_holder_and_purges_listed_and_all_region_databases()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc", "fra");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await Until(async () => (await region.Api.Server.Services.GetRequiredService<IRemoteDurability>()
+                .OtherRegionsAsync(CancellationToken.None)).Count == 2)).IsTrue();
+        }
+
+        var user = gru.Api.User;
+        var organization = await gru.Api.CreateOrganizationAsync("Erasing");
+        await gru.Api.SetPlanAsync(gru.Api.User, organization, "starter");
+        var project = await gru.Api.CreateProjectAsync(organization, "erased");
+        await gru.Api.VerifyProjectBindingAsync(organization, project);
+        var other = await gru.Api.CreateProjectAsync(organization, "retained");
+        var live = await gru.Api.CreateManagedDatabaseAsync(organization, other, "live");
+        var databases = new List<ManagedDatabaseRef>();
+        using var data = await gru.Api.CreateClientAsync(organization, "documents:read", "documents:write");
+        foreach (var all in new[] { false, true })
+        {
+            var name = all ? "everywhere" : "listed";
+            object request = all ? new { name, allRegions = true } : new { name, replicaRegions = Sjc };
+            using var created = await gru.Api.Client.PostAsJsonAsync(ManagementApi.Uri(
+                $"/v1/management/organizations/{organization}/projects/{project}/databases"), request);
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
+            var body = await created.Content.ReadFromJsonAsync<JsonElement>();
+            var database = new ManagedDatabaseRef(organization, project, body.GetProperty("id").GetString()!, name);
+            databases.Add(database);
+            await ManagementApi.CreateCollectionAsync(data, database, "items");
+            using var content = new StringContent("""{"n":1}""", Encoding.UTF8, "application/json");
+            using var written = await data.PutAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "one")), content);
+            await Assert.That(written.IsSuccessStatusCode).IsTrue().Because(await written.Content.ReadAsStringAsync());
+            var tenant = new TenantContext(organization, PlanTier.Starter, project, database.Id);
+            await Assert.That(await sjc.UntilDocumentAsync(tenant, "items", ManagementApi.DocumentId("one"), json => json == """{"n":1}""")).IsTrue();
+            if (all)
+            {
+                await Assert.That(await cluster["fra"].UntilDocumentAsync(tenant, "items", ManagementApi.DocumentId("one"), json => json == """{"n":1}""")).IsTrue();
+            }
+        }
+
+        var closure = EntityIds.New().ToString();
+        await ErrorAssert.ErrorAsync(gru.Api.Server.Client.PutAsJsonAsync(ManagementApi.Uri($"/admin/projects/{project}/closure"),
+            new { version = 1, closureId = closure, authorityOrganizationId = organization }), HttpStatusCode.Conflict, "not_empty", "delete what it contains first");
+        await Assert.That(await gru.ReadAsync("project_closures", project)).IsNull();
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await Until(async () => (await region.IdsAsync(CatalogGate.Members)).Length == 3)).IsTrue();
+        }
+
+        await sjc.StopAsync();
+        await Assert.That(await CloseAsync(gru, project, closure, organization, 2)).IsEqualTo(HttpStatusCode.Accepted);
+        await Assert.That(await Until(() => Task.FromResult(databases.All(database =>
+            !File.Exists(gru.FileOf(new TenantContext(organization, PlanTier.Starter, project, database.Id))))))).IsTrue();
+        // Local cleanup alone cannot accept: the offline holder still owns actual replicated files.
+        await Assert.That(databases.All(database => File.Exists(sjc.FileOf(new TenantContext(organization, PlanTier.Starter, project, database.Id))))).IsTrue();
+        await gru.StopAsync();
+        await gru.StartAsync();
+        await Assert.That(await gru.ReadAsync(ProjectClosure.Collection, project)).IsNotNull();
+        var resumed = await CloseAsync(gru, project, closure, organization, 2);
+        await Assert.That(resumed is HttpStatusCode.Accepted or HttpStatusCode.ServiceUnavailable).IsTrue();
+        await sjc.StartAsync();
+        await Assert.That(await Until(async () => await CloseAsync(gru, project, closure, organization, 2) == HttpStatusCode.OK)).IsTrue();
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await Until(async () => await CloseAsync(region, project, closure, organization, 2) == HttpStatusCode.OK)).IsTrue();
+            using var owner = region.Api.As(user);
+            foreach (var database in databases)
+            {
+                var tenant = new TenantContext(organization, PlanTier.Starter, project, database.Id);
+                await Assert.That(File.Exists(region.FileOf(tenant))).IsFalse();
+                await Assert.That(await region.Tenants.RegisteredAsync(tenant, CancellationToken.None) is false).IsTrue();
+                await Assert.That(await Until(async () => (await region.IdsAsync(DatabasePurge.Receipts(database.Id))).Length == 3)).IsTrue();
+                using var gone = await owner.GetAsync(ManagementApi.Uri(database.Path));
+                await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            }
+
+            using var retained = await owner.GetAsync(ManagementApi.Uri(live.Path));
+            await Assert.That(retained.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        await Assert.That(await CloseAsync(gru, project, EntityIds.New().ToString(), organization, 2)).IsEqualTo(HttpStatusCode.Conflict);
+        using var survivingOwner = gru.Api.As(user);
+        using var late = await survivingOwner.PostAsJsonAsync(ManagementApi.Uri(databases[0].ProjectPath + "/databases"), new { name = "late" });
+        await Assert.That(late.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
+    private static async Task<HttpStatusCode> CloseAsync(Region region, string project, string closure, string? organization = null, int version = 1)
     {
         using var response = await region.Api.Server.Client.PutAsJsonAsync(ManagementApi.Uri($"/admin/projects/{project}/closure"),
-            new { version = 1, closureId = closure, authorityOrganizationId = project });
+            new { version, closureId = closure, authorityOrganizationId = organization ?? project });
         return response.StatusCode;
     }
 

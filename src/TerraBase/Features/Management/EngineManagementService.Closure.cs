@@ -15,14 +15,25 @@ internal sealed partial class EngineManagementService
 {
     private string? _closuresAfter;
 
-    public async ValueTask<CloseProjectResult> CloseProjectAsync(string projectId, string closureId, string authorityOrganizationId, CancellationToken cancellationToken) =>
+    public async ValueTask<CloseProjectResult> CloseProjectAsync(string projectId, string closureId, string authorityOrganizationId, int version, CancellationToken cancellationToken) =>
         await WriteAsync<CloseProjectResult>(async transaction =>
         {
             if (await GetAsync(transaction, ProjectClosure.Collection, projectId, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false) is { } existing)
             {
-                if (existing.FormatVersion != 1 || existing.ProjectId != projectId || existing.ClosureId != closureId || existing.AuthorityOrganizationId != authorityOrganizationId)
+                if (existing.FormatVersion is not (1 or 2) || version < existing.FormatVersion || existing.ProjectId != projectId || existing.ClosureId != closureId || existing.AuthorityOrganizationId != authorityOrganizationId)
                 {
                     return ProjectClosure.ClosureConflict;
+                }
+
+                if (!await ClosureBindingMatchesAsync(transaction, projectId, authorityOrganizationId, cancellationToken).ConfigureAwait(false))
+                {
+                    return ProjectClosure.BindingConflict;
+                }
+
+                if (version > existing.FormatVersion)
+                {
+                    existing = existing with { FormatVersion = version };
+                    await PutAsync(transaction, ProjectClosure.Collection, projectId, existing, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false);
                 }
 
                 await RefreshClosureReceiptAsync(transaction, existing, cancellationToken).ConfigureAwait(false);
@@ -31,26 +42,35 @@ internal sealed partial class EngineManagementService
 
             // TerraBase's own mapping decides; the request's organization is only checked against a binding that names one.
             // An enrolled binding names none (TerraBase never learns it); a never-enrolled project has no mapping at all.
-            if (await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) is { } namespaceId
-                && (!await IsProjectBoundAsync(transaction, projectId, namespaceId, cancellationToken).ConfigureAwait(false)
-                    || await GetAsync(transaction, Bindings(projectId), "ts_auth", TerraBaseJsonContext.Default.ProjectCatalogBinding, cancellationToken).ConfigureAwait(false)
-                        is { AuthorityOrganizationId: { } authority } && authority != authorityOrganizationId))
+            if (!await ClosureBindingMatchesAsync(transaction, projectId, authorityOrganizationId, cancellationToken).ConfigureAwait(false))
             {
                 return ProjectClosure.BindingConflict;
             }
 
-            if (!await IsProjectEmptyAsync(transaction, projectId, cancellationToken).ConfigureAwait(false))
+            if (version == 1 && !await IsProjectEmptyAsync(transaction, projectId, cancellationToken).ConfigureAwait(false))
             {
                 return ManagementErrors.NotEmpty;
             }
 
             var record = new ProjectClosureRecord(projectId, closureId, authorityOrganizationId, time.GetUtcNow(),
-                [.. (await ClosureHoldersAsync(transaction, cancellationToken).ConfigureAwait(false)).Order(StringComparer.Ordinal)]);
+                [.. (await ClosureHoldersAsync(transaction, cancellationToken).ConfigureAwait(false)).Order(StringComparer.Ordinal)], version);
             await PutAsync(transaction, ProjectClosure.Collection, projectId, record, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false);
             await RefreshClosureReceiptAsync(transaction, record, cancellationToken).ConfigureAwait(false);
             logger.ZLogInformation($"Project {projectId:@Project} is fenced for closure {closureId:@Closure}");
             return await ClosureStatusAsync(transaction, record, cancellationToken).ConfigureAwait(false);
         }, static error => error, cancellationToken).ConfigureAwait(false);
+
+    private async ValueTask<bool> ClosureBindingMatchesAsync(IStorageTransaction transaction, string project, string authorityOrganization, CancellationToken token)
+    {
+        if (await GetAsync(transaction, ProjectOrganizations, project, Id, token).ConfigureAwait(false) is not { } namespaceId)
+        {
+            return true;
+        }
+
+        return await IsProjectBoundAsync(transaction, project, namespaceId, token).ConfigureAwait(false)
+            && (await GetAsync(transaction, Bindings(project), "ts_auth", TerraBaseJsonContext.Default.ProjectCatalogBinding, token).ConfigureAwait(false)
+                is not { AuthorityOrganizationId: { } authority } || authority == authorityOrganization);
+    }
 
     // Read by every registration and enrollment in its committing transaction.
     private static ValueTask<bool> IsProjectClosedAsync(IStorageTransaction transaction, string projectId, CancellationToken cancellationToken) =>
@@ -95,33 +115,28 @@ internal sealed partial class EngineManagementService
     // This machine's receipt, in a transaction that sees the fence: once empty, nothing registers here again.
     private async ValueTask RefreshClosureReceiptAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken)
     {
+        record = await GetAsync(transaction, ProjectClosure.Collection, record.ProjectId, TerraBaseJsonContext.Default.ProjectClosureRecord, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("a project closure fence is missing");
         var current = await OwnClosureReceiptAsync(transaction, record, cancellationToken).ConfigureAwait(false);
-        if (IsFinal(current, record))
-        {
-            return;
-        }
-
-        var empty = await IsProjectEmptyAsync(transaction, record.ProjectId, cancellationToken).ConfigureAwait(false);
-        if (current is not null && current.Empty == empty && current.ClosureId == record.ClosureId)
+        var empty = record.FormatVersion == 2
+            ? await EraseProjectBatchAsync(transaction, record, cancellationToken).ConfigureAwait(false)
+            : await IsProjectEmptyAsync(transaction, record.ProjectId, cancellationToken).ConfigureAwait(false)
+                && await VerifyProjectPurgesAsync(transaction, record.ProjectId, cancellationToken).ConfigureAwait(false);
+        if (current is not null && current.EvidenceVersion == 2 && current.Empty == empty && current.ClosureId == record.ClosureId && current.FormatVersion == record.FormatVersion)
         {
             return;
         }
 
         await PutAsync(transaction, ProjectClosure.Receipts(record.ProjectId), options.MachineId,
-            new ProjectClosureReceipt(record.ProjectId, record.ClosureId, options.MachineId, empty, time.GetUtcNow()), TerraBaseJsonContext.Default.ProjectClosureReceipt, cancellationToken)
+            new ProjectClosureReceipt(record.ProjectId, record.ClosureId, options.MachineId, empty, time.GetUtcNow(), record.FormatVersion, EvidenceVersion: 2), TerraBaseJsonContext.Default.ProjectClosureReceipt, cancellationToken)
             .ConfigureAwait(false);
     }
 
     private ValueTask<ProjectClosureReceipt?> OwnClosureReceiptAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken) =>
         GetAsync(transaction, ProjectClosure.Receipts(record.ProjectId), options.MachineId, TerraBaseJsonContext.Default.ProjectClosureReceipt, cancellationToken);
 
-    // Causal, not wall-clock: a receipt is written only in a transaction that sees the permanent fence it names, so its
-    // closure id proves it came after the fence whatever the two machines' clocks say.
-    private bool IsFinal(ProjectClosureReceipt? receipt, ProjectClosureRecord record) =>
-        receipt is { FormatVersion: 1, Empty: true } && receipt.ProjectId == record.ProjectId && receipt.ClosureId == record.ClosureId && receipt.MachineId == options.MachineId;
-
-    // Accepted only when the recorded holders and every machine listed now confirmed the project empty under this fence
-    // (bound by closure id: see IsFinal).
+    // Receipts must name this fence and current active-erasure evidence, independent of wall-clock ordering.
+    // Legacy empty-only receipts cannot complete either contract.
     private async ValueTask<ProjectClosureStatus> ClosureStatusAsync(IStorageTransaction transaction, ProjectClosureRecord record, CancellationToken cancellationToken)
     {
         var holders = await ClosureHoldersAsync(transaction, cancellationToken).ConfigureAwait(false);
@@ -131,7 +146,7 @@ internal sealed partial class EngineManagementService
         {
             var receipt = await GetAsync(transaction, ProjectClosure.Receipts(record.ProjectId), holder, TerraBaseJsonContext.Default.ProjectClosureReceipt, cancellationToken)
                 .ConfigureAwait(false);
-            if (receipt is not { FormatVersion: 1, Empty: true } || receipt.MachineId != holder || receipt.ProjectId != record.ProjectId
+            if (receipt is not { Empty: true, EvidenceVersion: 2 } || receipt.FormatVersion != record.FormatVersion || receipt.MachineId != holder || receipt.ProjectId != record.ProjectId
                 || receipt.ClosureId != record.ClosureId)
             {
                 pending++;
@@ -156,15 +171,9 @@ internal sealed partial class EngineManagementService
             try
             {
                 var record = EntityPayload.Read(document, TerraBaseJsonContext.Default.ProjectClosureRecord);
-                if (record is not { FormatVersion: 1 } || record.ProjectId != document.Id)
+                if (record is not { FormatVersion: 1 or 2 } || record.ProjectId != document.Id)
                 {
                     throw new InvalidOperationException("a project closure record has unsupported identity or format");
-                }
-
-                if (await ReadAsync<bool>(async transaction => IsFinal(await OwnClosureReceiptAsync(transaction, record, cancellationToken).ConfigureAwait(false), record),
-                    static _ => false, cancellationToken).ConfigureAwait(false))
-                {
-                    continue;
                 }
 
                 _ = await WriteAsync<Done>(async transaction =>

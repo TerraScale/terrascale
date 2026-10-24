@@ -34,10 +34,12 @@ public sealed class Closures(
     internal async Task<bool> AdvanceAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(job);
-        TerraBaseProjectClosure answer;
+        TerraBaseProjectClosure? answer;
         try
         {
-            answer = await terraBase.CloseProjectAsync(job.Value.SubjectId, job.Value.OrganizationId!, job.Value.Id, cancellationToken).ConfigureAwait(false);
+            answer = job.Value.ProjectClosureVersion == 2
+                ? await this.EraseOrCloseAsync(job.Value, cancellationToken).ConfigureAwait(false)
+                : await terraBase.CloseProjectAsync(job.Value.SubjectId, job.Value.OrganizationId!, job.Value.Id, cancellationToken).ConfigureAwait(false);
         }
         catch (TerraBaseConflictException error) when (error.ErrorCode is "not_empty" or "closure_conflict" or "binding_conflict")
         {
@@ -63,20 +65,51 @@ public sealed class Closures(
             return false;
         }
 
+        if (answer is null)
+        {
+            // The older contract refused contents or could not read a newer fence. Neither disproves an existing fence.
+            await this.DeferAsync(job, "terrabase_erasure_unsupported", cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
         // TerraBase showed the fence: record it before anything else, so no later refusal can cancel this intent.
         if (await this.MarkFenceSeenAsync(job, cancellationToken).ConfigureAwait(false) is not { } seen)
         {
             return await this.WithoutIntentAsync(job, cancellationToken).ConfigureAwait(false);
         }
 
-        if (!answer.Accepted)
+        if (!answer.Accepted || answer.EvidenceVersion != 2)
         {
-            await this.DeferAsync(seen, "terrabase_pending", cancellationToken).ConfigureAwait(false);
+            // Older engines can accept catalog emptiness while active purges remain. Retain the driver until upgraded.
+            await this.DeferAsync(seen, answer.Accepted ? "terrabase_evidence_pending" : "terrabase_pending", cancellationToken).ConfigureAwait(false);
             return false;
         }
 
         return await directory.RemoveClosedProjectAsync(seen, cancellationToken).ConfigureAwait(false)
             || await this.WithoutIntentAsync(job, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<TerraBaseProjectClosure?> EraseOrCloseAsync(ClosureJob job, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await terraBase.EraseProjectAsync(job.SubjectId, job.OrganizationId!, job.Id, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TerraBaseException error) when (error.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.MethodNotAllowed or System.Net.HttpStatusCode.NotImplemented
+            || error is TerraBaseValidationException && error.ErrorCode is "invalid_request" or "unsupported" or "unsupported_version")
+        {
+            try
+            {
+                // Same authority and closure id, using today's empty-only path. It never authorizes destructive completion.
+                var legacy = await terraBase.CloseProjectAsync(job.SubjectId, job.OrganizationId!, job.Id, cancellationToken).ConfigureAwait(false);
+                return legacy with { EvidenceVersion = 0 };
+            }
+            catch (TerraBaseConflictException refused) when (refused.ErrorCode is "not_empty" or "closure_conflict")
+            {
+                // An earlier v2 fence may exist even when its response was lost before auth recorded FenceSeen.
+                return null;
+            }
+        }
     }
 
     // This intent vanished (a concurrent refusal cancelled it) after TerraBase showed the fence: done when the root is gone,
@@ -236,8 +269,10 @@ public sealed class ClosureWorker(Closures closures, PlatformDirectory directory
         {
             try
             {
-                if (await directory.ClosureAsync(due.Scope, due.SubjectId, cancellationToken).ConfigureAwait(false) is not { } job || !job.Value.Same(due))
+                if (await directory.ClosureAsync(due.Scope, due.SubjectId, cancellationToken).ConfigureAwait(false) is not { } job || !job.Value.Same(due)
+                    || job.Value.NextAttemptAt > clock.GetUtcNow())
                 {
+                    // Another pass, including an earlier account in this batch, may have rescheduled this snapshot entry.
                     continue;
                 }
 
@@ -290,25 +325,32 @@ public sealed class ClosureWorker(Closures closures, PlatformDirectory directory
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(Interval, clock);
-        do
+        try
         {
-            try
-            {
-                await this.RunOnceAsync(stoppingToken).ConfigureAwait(false);
-            }
-            catch (Exception) when (!stoppingToken.IsCancellationRequested)
+            do
             {
                 try
                 {
-                    logger.ZLogWarning($"The closure retry pass failed; retrying at the next interval");
+                    await this.RunOnceAsync(stoppingToken).ConfigureAwait(false);
                 }
-                catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
+                catch (Exception) when (!stoppingToken.IsCancellationRequested)
                 {
-                    // Logging must not stop the worker while storage remains unavailable.
-                    _ = logFailure;
+                    try
+                    {
+                        logger.ZLogWarning($"The closure retry pass failed; retrying at the next interval");
+                    }
+                    catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
+                    {
+                        // Logging must not stop the worker while storage remains unavailable.
+                        _ = logFailure;
+                    }
                 }
             }
+            while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Stopping this worker is normal even while the host remains available.
+        }
     }
 }

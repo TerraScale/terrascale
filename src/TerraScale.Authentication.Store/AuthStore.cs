@@ -85,6 +85,9 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>Durable retries for auth logical deletion; completion is not physical erasure.</summary>
     public const string DeletionJobCollection = "deletion_jobs";
 
+    /// <summary>Durable SDK query positions for fair dashboard deletion proof delivery.</summary>
+    public const string DashboardDeletionCursorCollection = "dashboard_deletion_cursors";
+
     /// <summary>Hashed, expiring status capabilities bound to an account closure generation.</summary>
     public const string AccountDeletionReceiptCollection = "account_deletion_receipts";
 
@@ -120,7 +123,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
         SigningKeyCollection, OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection,
         "rate_limits", "email_configs", "email_config_versions", "email_allowance_deliveries", "email_alert_deliveries", "email_support_deliveries",
         OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection, ApiKeyUsageCollection,
-        InvitationCollection, AuditEventCollection, MfaCollection, DeletionJobCollection, ClosureJobCollection, HistoryMarkCollection,
+        InvitationCollection, AuditEventCollection, MfaCollection, DeletionJobCollection, DashboardDeletionCursorCollection, ClosureJobCollection, HistoryMarkCollection,
         ClosureCancellationCollection, ClosureCommitCollection, ProjectAuthSettingsCollection, OrganizationSsoCollection, AccountDeletionReceiptCollection,
     ];
 
@@ -393,11 +396,17 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     /// <summary>
     /// Retires a deletion fence whose shared-history erasure TerraBase certified: the job at the version read, its holders' markers
     /// and its request document, atomically.
-    /// False when another writer changed it. Callers check completion and <see cref="DeletionJob.FenceExpiresAt"/>.
+    /// False when another writer changed it or platform dashboard cleanup is unacknowledged.
+    /// Callers check completion and <see cref="DeletionJob.FenceExpiresAt"/>.
     /// </summary>
     public async Task<bool> RetireDeletionFenceAsync(DeletionJob job, string expectedVersion, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(job);
+        if (job.InstanceId == "terrascale" && job.DashboardVerifiedAt is null)
+        {
+            return false;
+        }
+
         using var filter = JsonDocument.Parse(new JsonObject { ["eq"] = new JsonArray("/erasureId", job.ErasureId) }.ToJsonString());
         var marks = await this.QueryAsync(HistoryMarkCollection, filter.RootElement, 1000, cancellationToken).ConfigureAwait(false);
         // One transaction, so nothing is orphaned; the request document last, so its deletion stamp is the highest: a holder that

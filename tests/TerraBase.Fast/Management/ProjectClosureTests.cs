@@ -7,6 +7,7 @@ using TerraBase.Configuration;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Testing;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Management;
 
@@ -31,8 +32,8 @@ public sealed class ProjectClosureTests
             "the project is already closing under another closure id or organization");
         await ErrorAssert.ErrorAsync(PutAsync(api.Server.Client, project, closure, EntityIds.New().ToString()), HttpStatusCode.Conflict, "closure_conflict",
             "the project is already closing under another closure id or organization");
-        await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(ManagementApi.Uri($"/admin/projects/{project}/closure"), new { version = 2, closureId = closure, authorityOrganizationId = organization }),
-            HttpStatusCode.BadRequest, "invalid_request", "version must be 1; project, closureId and authorityOrganizationId must be canonical uppercase ULIDs");
+        await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(ManagementApi.Uri($"/admin/projects/{project}/closure"), new { version = 3, closureId = closure, authorityOrganizationId = organization }),
+            HttpStatusCode.BadRequest, "invalid_request", "version must be 1 or 2; project, closureId and authorityOrganizationId must be canonical uppercase ULIDs");
 
         // A signed project token can no longer enroll the project or create its first database.
         using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project));
@@ -215,15 +216,131 @@ public sealed class ProjectClosureTests
         await CloseAsync(api.Server.Client, project, closure, organization, HttpStatusCode.OK);
     }
 
-    private static async Task<JsonElement> CloseAsync(HttpClient client, string project, string closure, string organization, HttpStatusCode expected)
+    [Test]
+    public async Task Account_erasure_revokes_existing_project_keys_and_the_current_backup_destination()
     {
-        using var response = await PutAsync(client, project, closure, organization);
+        var s3 = new FakeS3();
+        await using var api = await ManagementApi.StartAsync(s3.Configure, s3.Route);
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        var route = $"/v1/management/organizations/{database.Organization}/projects/{database.Project}";
+        using var issued = await api.Client.PostAsJsonAsync(ManagementApi.Uri(route + "/api-keys"), new { name = "existing", scopes = ReadScope });
+        await Assert.That(issued.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        var key = await issued.Content.ReadFromJsonAsync<JsonElement>();
+        using var data = api.DataClient(key.GetProperty("secret").GetString());
+        var collections = ManagementApi.Uri(database.Data + "/collections");
+        using var before = await data.GetAsync(collections);
+        await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var destination = await api.Client.PutAsJsonAsync(ManagementApi.Uri(route + "/backup-destination"), new Dictionary<string, string>
+        {
+            ["endpoint"] = FakeS3.CustomerEndpoint,
+            ["region"] = "test-region-1",
+            ["bucket"] = FakeS3.CustomerBucket,
+            ["accessKeyId"] = FakeS3.CustomerAccessKey,
+            ["secretKey"] = FakeS3.CustomerSecretKey,
+            ["mode"] = "customer",
+        });
+        await Assert.That(destination.IsSuccessStatusCode).IsTrue().Because(await destination.Content.ReadAsStringAsync());
+        var closure = EntityIds.New().ToString();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            using var response = await PutAsync(api.Server.Client, database.Project, closure, database.Organization, 2, token);
+            await Assert.That(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Accepted).IsTrue();
+            return response.StatusCode == HttpStatusCode.OK;
+        }, timeout: TimeSpan.FromSeconds(60));
+        using var revoked = await data.GetAsync(collections);
+        await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        var catalog = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        await using (var transaction = await catalog.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            await Assert.That(await transaction.GetAsync("api_keys", key.GetProperty("key").GetProperty("id").GetString()!, CancellationToken.None)).IsNull();
+            foreach (var collection in new[] { $"projects/{database.Project}/api_keys", $"projects/{database.Project}/api_key_order", $"projects/{database.Project}/backup_destination" })
+            {
+                await Assert.That((await transaction.ListAsync(collection, null, 10, 1024 * 1024, CancellationToken.None)).Documents).IsEmpty().Because(collection);
+            }
+        }
+
+        await CloseAsync(api.Server.Client, database.Project, closure, database.Organization, HttpStatusCode.OK, 2);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task Both_closure_contracts_require_current_erasure_evidence_and_holder_local_prior_purge_scans(bool priorPurge, bool legacyReceipt)
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var (project, organization, closure, holder) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        var machine = api.Server.Services.GetRequiredService<TerraBaseOptions>().MachineId;
+        var fence = new ProjectClosureRecord(project, closure, organization, DateTimeOffset.UtcNow, [machine, holder]);
+        var receipt = new ProjectClosureReceipt(project, closure, holder, true, DateTimeOffset.UtcNow, EvidenceVersion: legacyReceipt ? 0 : 2);
+        var storage = new TenantContext(organization, PlanTier.Hobby, project, EntityIds.New().ToString());
+        var catalog = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        await using (var transaction = await catalog.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            _ = await transaction.PutAsync(ProjectClosure.Collection, project,
+                EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(fence, TerraBaseJsonContext.Default.ProjectClosureRecord), project, nested: true), CancellationToken.None);
+            _ = await transaction.PutAsync(ProjectClosure.Receipts(project), holder,
+                EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(receipt, TerraBaseJsonContext.Default.ProjectClosureReceipt), holder, nested: true), CancellationToken.None);
+            if (priorPurge)
+            {
+                // A deletion authority predates the per-project index; a peer has already completed its own scan.
+                var now = DateTimeOffset.UtcNow;
+                var purge = new DatabasePurgeRecord(storage, now, now, now, now, [holder]);
+                _ = await transaction.PutAsync(DatabasePurge.Collection, storage.DatabaseId!,
+                    EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(purge, TerraBaseJsonContext.Default.DatabasePurgeRecord), storage.DatabaseId!, nested: true), CancellationToken.None);
+                _ = await transaction.PutAsync(ProjectClosure.Scans(project), holder,
+                    JsonSerializer.SerializeToUtf8Bytes("complete", TerraBaseJsonContext.Default.String), CancellationToken.None);
+            }
+
+            _ = await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        var initial = await CloseAsync(api.Server.Client, project, closure, organization,
+            priorPurge || legacyReceipt ? HttpStatusCode.Accepted : HttpStatusCode.OK);
+        await Assert.That(initial.GetProperty("pendingHolders").GetInt32()).IsEqualTo(priorPurge || legacyReceipt ? 1 : 0);
+        var upgraded = await CloseAsync(api.Server.Client, project, closure, organization, HttpStatusCode.Accepted, 2);
+        await Assert.That(upgraded.GetProperty("pendingHolders").GetInt32()).IsEqualTo(priorPurge ? 2 : 1);
+        await Assert.That(EntityPayload.Read((await StoredAsync(api, project))!, TerraBaseJsonContext.Default.ProjectClosureRecord)!.FormatVersion).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_replicated_fence_never_authorizes_erasure_of_an_unverified_or_conflicting_local_binding(bool verified)
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        if (verified)
+        {
+            await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        }
+
+        var fence = new ProjectClosureRecord(database.Project, EntityIds.New().ToString(), EntityIds.New().ToString(), DateTimeOffset.UtcNow, [], FormatVersion: 2);
+        var catalog = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        await using (var transaction = await catalog.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            _ = await transaction.PutAsync(ProjectClosure.Collection, database.Project,
+                EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(fence, TerraBaseJsonContext.Default.ProjectClosureRecord), database.Project, nested: true), CancellationToken.None);
+            _ = await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        await ErrorAssert.ErrorAsync(PutAsync(api.Server.Client, database.Project, fence.ClosureId, fence.AuthorityOrganizationId, 2),
+            HttpStatusCode.Conflict, "binding_conflict", "TerraBase binds this project id to another organization");
+        await ((EngineManagementService)api.Server.Services.GetRequiredService<IManagementService>()).ConvergeAsync(CancellationToken.None);
+        using var retained = await api.Client.GetAsync(ManagementApi.Uri(database.Path));
+        await Assert.That(retained.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    private static async Task<JsonElement> CloseAsync(HttpClient client, string project, string closure, string organization, HttpStatusCode expected, int version = 1)
+    {
+        using var response = await PutAsync(client, project, closure, organization, version);
         await Assert.That(response.StatusCode).IsEqualTo(expected).Because(await response.Content.ReadAsStringAsync());
         return await response.Content.ReadFromJsonAsync<JsonElement>();
     }
 
-    private static Task<HttpResponseMessage> PutAsync(HttpClient client, string project, string closure, string organization) =>
-        client.PutAsJsonAsync(ManagementApi.Uri($"/admin/projects/{project}/closure"), new { version = 1, closureId = closure, authorityOrganizationId = organization });
+    private static Task<HttpResponseMessage> PutAsync(HttpClient client, string project, string closure, string organization, int version = 1, CancellationToken cancellationToken = default) =>
+        client.PutAsJsonAsync(ManagementApi.Uri($"/admin/projects/{project}/closure"), new { version, closureId = closure, authorityOrganizationId = organization }, cancellationToken);
 
     private static async Task<StoredDocument?> StoredAsync(ManagementApi api, string project)
     {

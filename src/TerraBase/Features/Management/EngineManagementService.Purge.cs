@@ -33,9 +33,16 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask RecordDatabasePurgeAsync(IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken)
     {
-        if (await DatabasePurge.IsDeletedAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false))
+        // Every customer deletion participates in a later account closure, even after its database row is gone.
+        await PutAsync(transaction, ProjectClosure.Purges(storage.ProjectId!), database.Id, storage, TerraBaseJsonContext.Default.TenantContext, cancellationToken).ConfigureAwait(false);
+        if (await GetAsync(transaction, DatabasePurge.Collection, database.Id, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false) is { } existing)
         {
-            throw new InvalidOperationException("a permanently deleted database cannot be registered again");
+            if (existing.FormatVersion != 1 || !DatabasePurge.SameDatabase(existing.Database, storage))
+            {
+                throw new InvalidOperationException("a database purge conflicts with its cleanup scope");
+            }
+
+            return;
         }
 
         // Membership includes retired nodes; no unavailable holder is silently dropped from completion.

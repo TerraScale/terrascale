@@ -158,6 +158,21 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
+    // The caller has already checked the permanent account-erasure fence in this transaction.
+    internal static async ValueTask RevokeProjectBatchAsync(IStorageTransaction transaction, string project, int limit, long maxBytes, CancellationToken token)
+    {
+        var page = await transaction.ListAsync(ProjectKeys(project), null, limit, maxBytes, token).ConfigureAwait(false);
+        foreach (var document in page.Documents)
+        {
+            var entry = EntityPayload.Read(document, TerraBaseJsonContext.Default.ProjectKeyEntry)
+                ?? throw new InvalidOperationException("a closing project's API key is invalid");
+            await transaction.DeleteAsync(Collection, document.Id, token).ConfigureAwait(false);
+            await transaction.DeleteAsync(Hashes, entry.Hash, token).ConfigureAwait(false);
+            await transaction.DeleteAsync(ProjectKeys(project), document.Id, token).ConfigureAwait(false);
+            await transaction.DeleteAsync(ProjectKeyOrder(project), entry.Order, token).ConfigureAwait(false);
+        }
+    }
+
     // Stores a key's authentication document. A project key, whichever route issued it, is also listed: it can be listed
     // and revoked through its project, and keeps the project from being deleted.
     private async ValueTask<(ApiKey Key, ProjectApiKey? Listed)> StoreAsync(
