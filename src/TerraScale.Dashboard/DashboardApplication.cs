@@ -11,6 +11,7 @@ using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Features.Imports;
 using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Features.Profile;
+using TerraScale.Dashboard.Features.Support;
 using TerraScale.Dashboard.Features.Organizations;
 using TerraScale.Dashboard.Features.AuthenticationManagement;
 using TerraScale.Dashboard.Features.Admin;
@@ -49,6 +50,7 @@ public static class DashboardApplication
         builder.Services.AddSingleton<DashboardSessions>();
         builder.Services.AddAccountFeatures();
         builder.Services.AddAllowanceNotifications();
+        builder.Services.AddSupport();
         builder.Services.AddCustomerDelivery();
         builder.Services.AddAlerts();
         builder.Services.AddAuth();
@@ -222,6 +224,7 @@ public static class DashboardApplication
         app.MapQuerySubscriptions();
         app.MapProfile();
         app.MapProfileAccessTokens();
+        app.MapSupport();
         app.MapNotifications();
         app.MapAlerts();
         app.MapOrganizations();

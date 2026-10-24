@@ -111,6 +111,7 @@ public sealed class DemoEnvironment
             builder.Services.Replace(ServiceDescriptor.Singleton<IDocumentBackend>(documents));
             builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new TestMeasurements()));
             builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Notifications.IAllowanceNotificationBackend, TestAllowanceNotifications>());
+            builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Support.ISupportMail, TestSupportMail>());
             // Test hosts report overage through UsageOverageReporter directly; the hourly worker would share the allowance feed.
             builder.Services.Remove(builder.Services.Single(service => service.ImplementationType == typeof(TerraScale.Dashboard.Features.Billing.UsageOverageWorker)));
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(imports)));
