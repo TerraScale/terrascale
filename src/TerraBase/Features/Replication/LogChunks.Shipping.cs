@@ -50,11 +50,14 @@ internal sealed partial class LogChunks : BackgroundService
     private readonly Dictionary<string, long> _unreadable = [with(StringComparer.Ordinal)];
 
     /// <summary>
-    /// The groups of <paramref name="groups"/> (read after <paramref name="peer"/>'s ack <paramref name="acked"/>) to send it
-    /// now, and either their envelope or, when <paramref name="reads"/> and a chunk is cheaper, the chunk that holds them.
+    /// The groups of <paramref name="groups"/> (read after <paramref name="from"/>, where the batches <paramref name="peer"/> has
+    /// in flight end, or its ack <paramref name="acked"/> when none is) to send it now, and either their envelope or, when
+    /// <paramref name="reads"/> and a chunk is cheaper, the chunk that holds them. Only the ack places the peer as a reader:
+    /// batches in flight to a peer that refuses them are sent again from its ack.
     /// </summary>
     public async ValueTask<(IReadOnlyList<OriginGroup> Groups, ByteString Envelope, V1.LogChunk? Chunk)> BatchAsync(
-        string peer, bool reads, TenantContext database, Ulid incarnation, long acked, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken)
+        string peer, bool reads, TenantContext database, Ulid incarnation, long acked, long from, IReadOnlyList<OriginGroup> groups,
+        CancellationToken cancellationToken)
     {
         bool unread;
         lock (_gate)
@@ -80,7 +83,7 @@ internal sealed partial class LogChunks : BackgroundService
         // one to two times the break-even at this page's shipped bytes per change id; a copy keeps its width while pages stay
         // within a factor of four of it, so every link cuts the same buckets.
         var solo = (groups.Count == 1 ? inline : ChangeGroups.Encode([groups[0]])).Length >= least;
-        var width = solo ? 0 : 1L << BitOperations.Log2((ulong)Math.Max(1, 2 * least * (groups[^1].ChangeId - acked) / inline.Length));
+        var width = solo ? 0 : 1L << BitOperations.Log2((ulong)Math.Max(1, 2 * least * (groups[^1].ChangeId - from) / inline.Length));
         lock (_gate)
         {
             if (!solo && _acks.TryGetValue((database, incarnation), out var copy))
@@ -105,7 +108,7 @@ internal sealed partial class LogChunks : BackgroundService
         // Started inside the bucket: the rest of it inline, so the next one can be a chunk. A chunk already put is read
         // whatever the count (a GET costs less than a send); a new one needs two machines that still read it: their latest
         // acks are before its first change id.
-        var inside = !solo && Bucket(acked, width) == bucket;
+        var inside = !solo && Bucket(from, width) == bucket;
         var key = (database, incarnation, inside ? bucket + 1 : bucket, width);
         var before = solo ? groups[0].ChangeId : (key.Item3 * width) + 1;
         var chunk = new Chunk(_time.GetTimestamp());
