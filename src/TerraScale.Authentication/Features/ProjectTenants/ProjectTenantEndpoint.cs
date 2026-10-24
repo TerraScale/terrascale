@@ -16,8 +16,15 @@ public sealed record BrandingBody(string? Name, string? LogoUrl, string? ThemeCo
 /// <summary>How many users and clients the tenant has.</summary>
 public sealed record CountsBody(long Users, long Clients);
 
+/// <summary>A social sign-in provider; its secret is never answered. <c>callback_url</c> is registered at the provider.</summary>
+public sealed record ProviderBody(string Provider, bool Configured, string? ClientId, string? Issuer, string? TeamId, string? KeyId, string CallbackUrl);
+
 /// <summary>A project tenant's settings.</summary>
-public sealed record SettingsBody(string ProjectId, string Issuer, string DiscoveryUrl, string SignInUrl, MethodsBody Methods, BrandingBody Branding, CountsBody Counts);
+public sealed record SettingsBody(string ProjectId, string Issuer, string DiscoveryUrl, string SignInUrl, MethodsBody Methods, BrandingBody Branding, CountsBody Counts,
+    IReadOnlyList<ProviderBody> Providers);
+
+/// <summary><c>PUT /v1/{project}/providers/{provider}</c>: an omitted client_secret keeps the stored one.</summary>
+public sealed record SetProviderRequest(string? ClientId, string? ClientSecret, string? Issuer = null, string? TeamId = null, string? KeyId = null);
 
 /// <summary>Changes to the sign-in methods; an omitted method is unchanged.</summary>
 public sealed record MethodsPatch(bool? Passcode, bool? Password, bool? SignUp);
@@ -78,7 +85,10 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
         var issuer = OidcIssuer.Issuer(options, projectId).AbsoluteUri;
         return new(projectId, issuer, issuer + "/.well-known/openid-configuration", new Uri(options.PublicOrigin, $"ui/{projectId}/sign-in").AbsoluteUri,
             new(settings.Passcode, settings.Password, settings.SignUp), new(settings.Name, settings.LogoUrl, settings.ThemeColor),
-            new(await store.CountAsync(AuthStore.UserCollection, projectId, cancellationToken), await store.CountAsync(AuthStore.OidcApplicationCollection, projectId, cancellationToken)));
+            new(await store.CountAsync(AuthStore.UserCollection, projectId, cancellationToken), await store.CountAsync(AuthStore.OidcApplicationCollection, projectId, cancellationToken)),
+            [.. SocialProviders.Names.Select(name => settings.Provider(name) is { } record
+                ? new ProviderBody(name, true, record.ClientId, record.Issuer, record.TeamId, record.KeyId, SocialProviders.Callback(options, projectId, name).AbsoluteUri)
+                : new ProviderBody(name, false, null, null, null, null, SocialProviders.Callback(options, projectId, name).AbsoluteUri))]);
     }
 
     /// <summary>An end user.</summary>
@@ -92,6 +102,7 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(SettingsBody))]
 [JsonSerializable(typeof(UpdateSettingsRequest))]
+[JsonSerializable(typeof(SetProviderRequest))]
 [JsonSerializable(typeof(ProjectUserBody))]
 [JsonSerializable(typeof(ProjectUserPageBody))]
 [JsonSerializable(typeof(ProjectSessionPageBody))]

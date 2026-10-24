@@ -14,7 +14,13 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 /// <param name="Name">Display name, or null for the project's name.</param>
 /// <param name="LogoUrl">An https logo URL, or null.</param>
 /// <param name="ThemeColor"><c>#rrggbb</c>, or null for the default theme.</param>
-public sealed record ProjectAuthSettingsRecord(string InstanceId, bool Passcode = true, bool Password = true, bool SignUp = true, string? Name = null, string? LogoUrl = null, string? ThemeColor = null);
+/// <param name="Providers">The configured social sign-in providers, or null for none.</param>
+public sealed record ProjectAuthSettingsRecord(string InstanceId, bool Passcode = true, bool Password = true, bool SignUp = true, string? Name = null, string? LogoUrl = null, string? ThemeColor = null,
+    IReadOnlyList<SocialProviderRecord>? Providers = null)
+{
+    /// <summary>The configured <paramref name="provider"/>, or null.</summary>
+    public SocialProviderRecord? Provider(string provider) => this.Providers?.FirstOrDefault(record => record.Provider == provider);
+}
 
 /// <summary>Per-project sign-in settings, read by the management API and the tenant's hosted pages.</summary>
 public sealed class ProjectAuthSettings(AuthStore store)
