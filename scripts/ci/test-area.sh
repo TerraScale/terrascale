@@ -9,12 +9,6 @@ case "$1:$2" in
     make -o restore fmt-check libs-build SOLUTION=libs.slnf CONFIGURATION=Release
     make -o restore libs-check libs-test CONFIGURATION=Release
     ;;
-  fast:auth)
-    make -o restore -o auth-audit fmt-check auth-check auth-build SOLUTION=auth.slnf CONFIGURATION=Release
-    dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo
-    make auth-publish RUNTIME=linux-x64 PUBLISH_DIR="$RUNNER_TEMP/auth-publish"
-    make -o restore auth-audit auth-test-fast CONFIGURATION=Release
-    ;;
   fast:terrabase)
     make -o restore fmt-check terrabase-check SOLUTION=terrabase.slnf CONFIGURATION=Release
     dotnet format whitespace src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --verify-no-changes --no-restore
@@ -23,14 +17,8 @@ case "$1:$2" in
     scripts/vendor/test-turso-native-singlefile.sh
     make -j2 -o restore -o terrabase-build terrabase-replication-matrix terrabase-e2e-local CONFIGURATION=Release
     ;;
-  slow:auth)
-    make -o restore auth-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi
-    ;;
-  slow:terrabase)
-    make -o restore terrabase-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi
-    ;;
   *)
-    echo 'Expected fast|slow and libs|auth|terrabase (libs has no Slow suite)' >&2
+    echo 'Expected fast and libs|terrabase' >&2
     exit 2
     ;;
 esac

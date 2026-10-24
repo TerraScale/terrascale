@@ -10,11 +10,11 @@ root = Path(__file__).resolve().parents[2]
 workflow = (root / ".github/workflows/ci.yml").read_text()
 dockerfile = (root / "Dockerfile").read_text()
 writers = re.findall(r"^\s+cache-to: (.+)$", workflow, re.M)
-assert writers == ["type=gha,mode=min,scope=ci-restore"], writers
-docker_writer = workflow.split("      - name: Cache shared Docker restore layers\n", 1)[1].split("\n      #", 1)[0]
+assert writers == ["type=gha,mode=min,scope=ci-base"], writers
+docker_writer = workflow.split("      - name: Cache shared Docker base layers\n", 1)[1].split("\n      #", 1)[0]
 assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in docker_writer
-assert "target: restored" in docker_writer
-assert "cache-from: &cache-from type=gha,scope=ci-restore" in workflow
+assert "target: base" in docker_writer
+assert "cache-from: &cache-from type=gha,scope=ci-base" in workflow
 assert "mode=max" not in workflow, "Published binaries and source snapshots must not fill GHA"
 # setup-dotnet saves its NuGet cache after any successful job, pull requests included: no job may enable it.
 assert "cache: true" not in workflow
@@ -28,7 +28,11 @@ assert "DeterministicSourcePaths: false" in workflow, "CallerFilePath fixtures n
 assert "ContinuousIntegrationBuild: false" not in workflow
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow.split("\npermissions:", 1)[0]
 assert 'bash scripts/ci/test-area.sh fast "$AREA"' in workflow
-assert 'bash scripts/ci/test-area.sh slow "$AREA"' in workflow
+assert "no-cache-filters: test-${{ env.AREA }}" in workflow
+assert "no-cache-filters: slow-${{ env.AREA }}-run" in workflow
+assert "steps: *slow-steps" in workflow
+assert "if: env.AREA != 'auth'" in workflow
+assert "if: env.AREA == 'auth'" in workflow
 assert "native-audit:" not in workflow, "Remove the temporary executor comparison"
 
 # Guard behavior at the build graph boundary: publishing and Slow must never rerun checked Fast stages.
@@ -82,4 +86,4 @@ def filtered(change=None):
 baseline = filtered()
 for path in fixtures:
     assert (filtered(path) != baseline) == (path in expected), path
-print(f"cache-policy-test: ok (main-only package/restore writers, fresh native suites, {len(fixtures)} restore invalidation controls)")
+print(f"cache-policy-test: ok (main-only package/base writers, fresh hybrid suites, {len(fixtures)} restore invalidation controls)")
