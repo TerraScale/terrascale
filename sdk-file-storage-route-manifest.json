@@ -1,5 +1,5 @@
 {
-  "producerRevision": "ed8ba40539c8232fca200483f69a6a8d43271213",
+  "producerRevision": "4068125ff273074731d47fdae25443ee62fdce63",
   "routes": [
     {
       "operation": "createFileBucket",
