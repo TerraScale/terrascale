@@ -189,6 +189,70 @@ def test_vector_search(ts: TerraScale, fake: Fake) -> None:
         vecs.query(sort=[q.near("/e", [1.0]), q.asc("/n")])
 
 
+def test_geo_within_and_near(ts: TerraScale, fake: Fake) -> None:
+    ts.create_database("main")
+    db = ts.database("main")
+    db.create_collection("places")
+    places = db.collection("places")
+    places.create({"name": "se", "loc": {"lat": -23.5505, "lon": -46.6333}})
+    places.create({"name": "paulista", "loc": {"lat": -23.5614, "lon": -46.6559}})
+    places.create({"name": "rio", "loc": {"lat": -22.9068, "lon": -43.1729}})
+    places.create({"name": "fiji", "loc": {"lat": -17.7, "lon": 178.0}})
+    places.create({"name": "nowhere"})
+
+    near_se = places.query(q.within_radius("/loc", -23.5505, -46.6333, 5000))
+    assert sorted(d.data["name"] for d in near_se.items) == ["paulista", "se"]
+    assert json.loads(fake.requests[-1].content) == {
+        "filter": {"within": ["/loc", {"lat": -23.5505, "lon": -46.6333, "meters": 5000}]}}
+    crossing = places.query(q.not_(q.within_box("/loc", -20, 170, -10, -170)))
+    assert json.loads(fake.requests[-1].content)["filter"] == {
+        "not": {"within": ["/loc", {"south": -20, "west": 170, "north": -10, "east": -170}]}}
+    assert "fiji" not in [d.data.get("name") for d in crossing.items]
+
+    hits = places.query(sort=[q.geo_near("/loc", -23.5505, -46.6333)], limit=3).items
+    assert [h.data["name"] for h in hits] == ["se", "paulista", "rio"]
+    assert hits[0].distance == 0 and 2000 < hits[1].distance < 3000  # type: ignore[operator]
+    assert json.loads(fake.requests[-1].content)["sort"] == [{"near": {"path": "/loc", "lat": -23.5505, "lon": -46.6333}}]
+
+    with pytest.raises(ValueError):
+        q.within_radius("/loc", 91, 0, 10)
+    with pytest.raises(ValueError):
+        q.within_radius("/loc", 0, 0, 20_000_001)
+    with pytest.raises(ValueError):
+        places.query(sort=[q.geo_near("/loc", 0, 0), q.asc("/name")])
+
+
+def test_aggregate_groups(ts: TerraScale, fake: Fake) -> None:
+    ts.create_database("main")
+    db = ts.database("main")
+    db.create_collection("orders")
+    orders = db.collection("orders")
+    for status, amount in (("paid", 10), ("paid", 30.5), ("open", 5), ("open", None)):
+        orders.create({"status": status, "amount": amount})
+
+    agg = q.aggregate(["/status"], sum=["/amount"], avg=["/amount"], min=["/amount"], max=["/amount"])
+    page = orders.query(q.exists("/status"), aggregate=agg, limit=10)
+    assert json.loads(fake.requests[-1].content) == {
+        "filter": {"exists": "/status"}, "limit": 10,
+        "aggregate": {"group_by": ["/status"], "sum": ["/amount"], "avg": ["/amount"], "min": ["/amount"], "max": ["/amount"]}}
+    assert page.items == [] and page.groups is not None
+    by_key = {g.key[0]: g for g in page.groups}
+    assert by_key["paid"].count == 2 and by_key["paid"].sum == {"/amount": 40.5} and by_key["paid"].max["/amount"] == 30.5
+    assert by_key["open"].count == 2 and by_key["open"].avg == {"/amount": 5.0}
+    total = orders.query(aggregate=q.aggregate()).groups
+    assert total is not None and len(total) == 1 and total[0].key == [] and total[0].count == 4
+    assert orders.query().groups is None
+
+    with pytest.raises(ValueError):
+        q.aggregate(["/a", "/b", "/c", "/d", "/e"])
+    with pytest.raises(ValueError):
+        q.aggregate(sum=["/a", "/a"])
+    with pytest.raises(ValueError):
+        orders.query(aggregate=agg, sort=[q.asc("/status")])
+    with pytest.raises(ValueError):
+        orders.query(aggregate=agg, count=True)
+
+
 def test_ttl(ts: TerraScale, fake: Fake) -> None:
     ts.create_database("main")
     db = ts.database("main")

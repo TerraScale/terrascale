@@ -41,6 +41,8 @@ def _exercise(ts: TerraScale) -> None:
     c.list()
     c.query(q.eq("/a", 3))
     c.search("/v", [1.0])
+    c.query(q.within_radius("/loc", 0, 0, 10), sort=[q.geo_near("/loc", 0, 0)])
+    c.query(aggregate=q.aggregate(["/a"], sum=["/a"]))
     c.set_ttl("/t")
     c.get_ttl()
     c.delete_ttl()

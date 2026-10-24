@@ -234,10 +234,14 @@ def list_documents(project: str, db: str, collection: str, limit: int | None, cu
 
 def query_documents(project: str, db: str, collection: str, filter: dict[str, Any] | None,
                     sort: Sequence[dict[str, Any]] | None, project_paths: Sequence[str] | None, limit: int | None,
-                    cursor: str | None, count: bool) -> Call:
+                    cursor: str | None, count: bool, aggregate: dict[str, Any] | None = None) -> Call:
     body: dict[str, Any] = {}
     if filter is not None:
         body["filter"] = filter
+    if aggregate is not None:
+        if sort or project_paths or cursor or count:
+            raise ValueError("an aggregate query takes no sort, project, cursor or count")
+        body["aggregate"] = aggregate
     if sort:
         if any("near" in k for k in sort) and (len(sort) != 1 or cursor):
             raise ValueError("a near sort must be the only sort key and has no cursor")

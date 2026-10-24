@@ -10,6 +10,7 @@ __all__ = [
     "Document",
     "WriteResult",
     "Page",
+    "Group",
     "Collection",
     "CollectionPage",
     "Database",
@@ -70,22 +71,48 @@ class WriteResult:
 
 
 @dataclass(frozen=True)
+class Group:
+    """One aggregate group: ``key`` has one JSON value per ``group_by`` path;
+    ``sum``/``avg``/``min``/``max`` map each requested pointer to its value
+    (``None`` when the group has no numbers there; a sum is then 0)."""
+
+    key: list[Any]
+    count: int
+    sum: dict[str, float | None] = field(default_factory=dict)
+    avg: dict[str, float | None] = field(default_factory=dict)
+    min: dict[str, float | None] = field(default_factory=dict)
+    max: dict[str, float | None] = field(default_factory=dict)
+
+    @classmethod
+    def from_json(cls, body: dict[str, Any]) -> Group:
+        def folds(name: str) -> dict[str, float | None]:
+            return {p: float(v) if v is not None else None for p, v in (body.get(name) or {}).items()}
+
+        return cls(key=list(body.get("key") or []), count=int(body.get("count") or 0),
+                   sum=folds("sum"), avg=folds("avg"), min=folds("min"), max=folds("max"))
+
+
+@dataclass(frozen=True)
 class Page:
-    """One page of documents. Continue with ``next_cursor`` until it is None."""
+    """One page of documents. Continue with ``next_cursor`` until it is None.
+    An aggregate query answers ``groups`` and no items."""
 
     items: list[Document]
     next_cursor: str | None
     count: int | None = None
     count_exact: bool | None = None
+    groups: list[Group] | None = None
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> Page:
         count = body.get("count")
+        groups = body.get("groups")
         return cls(
             items=[Document.from_json(d) for d in body.get("items") or []],
             next_cursor=body.get("next_cursor") or None,
             count=int(count["value"]) if isinstance(count, dict) else None,
             count_exact=count.get("exact") if isinstance(count, dict) else None,
+            groups=[Group.from_json(g) for g in groups] if groups is not None else None,
         )
 
 
