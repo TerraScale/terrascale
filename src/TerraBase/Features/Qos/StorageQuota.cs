@@ -78,7 +78,7 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
             return new StorageQuotaLease(gate, limit, async token =>
             {
                 current = await UsageAsync(store, token).ConfigureAwait(false);
-                var used = current.Bytes;
+                var used = checked(current.Bytes + await new Features.FileStorage.FileStorageUsage(_engine).BytesAsync(database.OrganizationId, null, token).ConfigureAwait(false));
                 await foreach (var candidate in _engine.ListDatabasesAsync(token).ConfigureAwait(false))
                 {
                     if (candidate.OrganizationId != database.OrganizationId
@@ -184,7 +184,7 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
 
     private async ValueTask<StorageQuotaBytesResult> OrganizationUsageAsync(string organizationId, CancellationToken cancellationToken)
     {
-        var used = 0L;
+        var used = await new Features.FileStorage.FileStorageUsage(_engine).BytesAsync(organizationId, null, cancellationToken).ConfigureAwait(false);
         await foreach (var candidate in _engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
             if (candidate.OrganizationId != organizationId)

@@ -105,6 +105,7 @@ builder.Services.AddTerraBaseEngine(options);
 builder.Services.AddTerraBaseApiKeys();
 builder.Services.AddTerraBaseClientCors();
 builder.Services.AddTerraBaseDocuments();
+TerraBase.Features.FileStorage.FileStorageExtensions.AddTerraBaseFileStorage(builder.Services);
 builder.Services.AddTerraBaseWebhooks();
 builder.Services.AddTerraBaseFunctions();
 builder.Services.AddTerraBaseSql();

@@ -7,7 +7,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
-internal sealed class UsageService(IStorageEngine engine, IManagementService management, ISchemaService schema, UsageMeter meter, TimeProvider time, SystemCatalog catalog)
+internal sealed class UsageService(IStorageEngine engine, IManagementService management, ISchemaService schema, UsageMeter meter, TimeProvider time, SystemCatalog catalog, Features.FileStorage.IFileStorageUsage files)
     : IUsageService
 {
     /// <summary>
@@ -201,10 +201,11 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         }
 
         var series = Sum(window, items.Select(item => item.Series));
+        var fileBytes = await files.BytesAsync(organizationId, projectId, cancellationToken).ConfigureAwait(false);
         return new ProjectUsage(
-            projectId, items.Count, items.Sum(item => item.StorageBytes), items.Sum(item => item.LogicalBytes), items.Sum(item => item.Documents),
+            projectId, items.Count, checked(items.Sum(item => item.StorageBytes) + fileBytes), checked(items.Sum(item => item.LogicalBytes) + fileBytes), items.Sum(item => item.Documents),
             items.Sum(item => item.Reads), items.Sum(item => item.Writes), Period(window, series), series, [.. items.Select(item => item with { Series = [] })],
-            new UsageMonth(month, project.Reads, project.Writes, project.Reads + project.Writes, organization.Reads + organization.Writes));
+            new UsageMonth(month, project.Reads, project.Writes, project.Reads + project.Writes, organization.Reads + organization.Writes)) { FileBytes = fileBytes };
     }
 
     public async ValueTask<AllowanceUsageResult> ListAllowanceUsageAsync(string? after, CancellationToken cancellationToken)
