@@ -357,6 +357,94 @@ public sealed class TsAuthPlatformJourneyTests
         return await HttpJourney.CsrfAsync(client, "/organization?tab=invitations");
     }
 
+    [Test]
+    public async Task PendingAccountDeletionAndClosureConflictsKeepDashboardIdentityTokensAndSession()
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var owner = platform.Principal("pending-account");
+        using var client = platform.Client();
+        using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password))
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var personal = (await Me(client)).GetProperty("organizationId").GetString()!;
+        await HttpJourney.CreatePatAsync(client, "Pending deletion proof", owner.Password);
+        foreach (var (status, code) in new[] { (HttpStatusCode.Accepted, "pending"), (HttpStatusCode.Conflict, "closure_conflict"), (HttpStatusCode.Conflict, "binding_conflict") })
+        {
+            platform.Producer.RefuseNext("DELETE", "/v1/terrascale/account", status, code, "Private producer text must stay hidden.");
+            var csrf = await HttpJourney.CsrfAsync(client, "/profile?tab=danger");
+            using var deletion = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/profile/delete", new()
+            { ["_csrf"] = csrf, ["email"] = owner.Email });
+            await Assert.That(deletion.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            var html = await deletion.Content.ReadAsStringAsync();
+            await Assert.That(html).Contains(status == HttpStatusCode.Accepted ? "Account deletion is still in progress." : "Deletion is paused");
+            await Assert.That(html.Contains("Private producer text", StringComparison.Ordinal)).IsFalse();
+            var key = AccountService.AccountStorageKey(owner.Subject);
+            foreach (var collection in new[] { AccountService.AccountsCollection, AccountService.IdentitiesCollection, AccessTokens.Collection })
+                await Assert.That(await platform.StoredAsync(collection, key)).IsTrue();
+            await Assert.That(await platform.StoredAsync(AccountService.OrganizationsCollection, personal)).IsTrue();
+            await Assert.That((await Me(client)).GetProperty("organizationId").GetString()).IsEqualTo(personal);
+        }
+        await Assert.That(platform.Producer.Failures).IsEmpty();
+    }
+
+    [Test]
+    public async Task PendingProjectClosuresAndConflictsKeepOrganizationUntilAConfirmedRetry()
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var owner = platform.Principal("pending-organization");
+        using var client = platform.Client();
+        using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password))
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var personal = (await Me(client)).GetProperty("organizationId").GetString()!;
+        var business = platform.Producer.AddOrganization("Pending organization", owner.Subject, owner.Email);
+        var project = platform.Producer.AddProject(business, "Pending project", owner.Subject);
+        var csrf = await SwitchAsync(client, business);
+        foreach (var (status, code) in new[] { (HttpStatusCode.Accepted, "pending"), (HttpStatusCode.Conflict, "closure_conflict"), (HttpStatusCode.Conflict, "binding_conflict") })
+        {
+            platform.Producer.RefuseNext("DELETE", "/v1/terrascale/organizations/" + business + "/projects/" + project, status, code, "Private producer text must stay hidden.");
+            using var deletion = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/deletion", new()
+            { ["_csrf"] = csrf, ["confirmation"] = "Pending organization" });
+            await Assert.That(deletion.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            var html = await deletion.Content.ReadAsStringAsync();
+            await Assert.That(html).Contains(status == HttpStatusCode.Accepted ? "Project deletion is still in progress." : "Deletion is paused");
+            await Assert.That(html.Contains("Private producer text", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(platform.Producer.Count("DELETE", "/v1/terrascale/organizations/" + business, owner.Subject)).IsEqualTo(0);
+            var saved = await platform.ProjectionAsync(business);
+            await Assert.That(saved.Archived).IsFalse();
+            await Assert.That(saved.Status).IsEqualTo("active");
+            await Assert.That((await Me(client)).GetProperty("organizationId").GetString()).IsEqualTo(business);
+        }
+        using (var confirmed = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/deletion", new()
+        { ["_csrf"] = csrf, ["confirmation"] = "Pending organization" }))
+            await Assert.That(confirmed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await Assert.That(platform.Producer.Exists(business)).IsFalse();
+        await Assert.That((await platform.ProjectionAsync(business)).Archived).IsTrue();
+        await Assert.That((await Me(client)).GetProperty("organizationId").GetString()).IsEqualTo(personal);
+        await Assert.That(platform.Producer.Failures).IsEmpty();
+    }
+
+    [Test]
+    public async Task PendingStandaloneProjectDeletionKeepsItsSettingsAndSelection()
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var owner = platform.Principal("pending-project");
+        using var client = platform.Client();
+        using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password))
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var business = platform.Producer.AddOrganization("Project company", owner.Subject, owner.Email);
+        platform.Producer.AddProject(business, "Keep project", owner.Subject);
+        var project = platform.Producer.AddProject(business, "Pending project", owner.Subject);
+        var csrf = await SwitchAsync(client, business);
+        await platform.ProjectionAsync(business, org => org.Projects[project] = new() { Id = project, OrganizationId = business, Region = "GRU" });
+        platform.Producer.RefuseNext("DELETE", "/v1/terrascale/organizations/" + business + "/projects/" + project, HttpStatusCode.Accepted, "pending", "");
+        using var deletion = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/projects/" + project + "/delete", new()
+        { ["_csrf"] = csrf, ["confirmation"] = "Pending project" });
+        await Assert.That(deletion.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(await deletion.Content.ReadAsStringAsync()).Contains("Project deletion is still in progress.");
+        await Assert.That((await platform.ProjectionAsync(business)).Projects[project].Region).IsEqualTo("GRU");
+        await Assert.That((await Me(client)).GetProperty("organizationId").GetString()).IsEqualTo(business);
+        await Assert.That(platform.Producer.Failures).IsEmpty();
+    }
+
     private static async Task<JsonElement> Me(HttpClient client) => JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me")).RootElement.Clone();
     private static async Task<JsonElement> Context(HttpClient client) => JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/context")).RootElement.Clone();
 
@@ -409,6 +497,8 @@ public sealed class TsAuthPlatformJourneyTests
             auth!.RegisterFixturePrincipal(new(principal.Subject, key, principal.Email, principal.Password));
             return principal;
         });
+
+        public async Task<bool> StoredAsync(string collection, string key) => await state!.GetAsync(collection, key, default) is not null;
 
         public Task PlanAsync(string organizationId, string planId) => ProjectionAsync(organizationId, organization => organization.PlanId = planId);
 

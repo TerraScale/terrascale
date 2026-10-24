@@ -490,8 +490,8 @@ sealed class TestWorkspace : ITsAuthPlatform
             return Task.CompletedTask;
         }
     }
-    public Task DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken)
-    { lock (Gate) { var org = Manage(session.UserId, organizationId); if (ProjectDeleteFailure?.Invoke(session, organizationId, projectId) is { } error) throw error; if (!org.Projects.Remove(projectId)) throw new AccountAccessException("Project is unavailable.", 404, "not_found"); return Task.CompletedTask; } }
+    public Task<bool> DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken)
+    { lock (Gate) { var org = Manage(session.UserId, organizationId); if (ProjectDeleteFailure?.Invoke(session, organizationId, projectId) is { } error) throw error; if (!org.Projects.Remove(projectId)) throw new AccountAccessException("Project is unavailable.", 404, "not_found"); return Task.FromResult(true); } }
     public Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
     { lock (Gate) { var org = Manage(session.UserId, organizationId); return Task.FromResult<IReadOnlyList<TerraScaleAuthPlatformInvitation>>(invitations.Values.Where(value => value.OrganizationId == org.Id).Select(value => Wire(value.Invitation, org.OwnerUserId)).Concat(capturedInvitations.GetValueOrDefault(org.Id) ?? []).ToArray()); } }
     public void SeedInvitationMetadata(OrganizationRecord organization)
@@ -620,7 +620,7 @@ sealed class TestWorkspace : ITsAuthPlatform
         }
     }
     // ts-auth DELETE /v1/terrascale/account: refuses last_owner of a shared organization, deletes sole-member organizations, leaves the rest.
-    public Task DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken)
+    public Task<bool> DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken)
     {
         lock (Gate)
         {
@@ -631,7 +631,7 @@ sealed class TestWorkspace : ITsAuthPlatform
                 org.Members.Remove(session.UserId);
                 if (!org.Members.Values.Any(member => member.Status == "active")) Organizations.Remove(org.Id);
             }
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         }
     }
     // ts-auth e30ffdc2 invitation transactions emit these events; the registry is per test environment.
