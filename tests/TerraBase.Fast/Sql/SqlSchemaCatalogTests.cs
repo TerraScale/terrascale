@@ -95,6 +95,91 @@ public sealed class SqlSchemaCatalogTests
         await Assert.That(Flat(same[2])).IsEqualTo("u");
     }
 
+    // drizzle-kit 0.31 finds AUTOINCREMENT columns with an infix GLOB over sqlite_master.sql.
+    private const string DrizzleAutoincrement = """
+        SELECT
+        		  *
+        		FROM sqlite_master
+        		WHERE sql GLOB '*[ *' || CHAR(9) || CHAR(10) || CHAR(13) || ']AUTOINCREMENT[^'']*'
+        	  AND tbl_name != '__drizzle_migrations'
+        			AND tbl_name NOT LIKE '\_cf\_%' ESCAPE '\'
+        			AND tbl_name NOT LIKE '\_litestream\_%' ESCAPE '\'
+        			AND tbl_name NOT LIKE 'libsql\_%' ESCAPE '\'
+        			AND tbl_name NOT LIKE 'sqlite\_%' ESCAPE '\';
+        """;
+
+    [Test]
+    public async Task Catalog_names_never_reach_the_database_files_own_schema_at_any_depth()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api, Schema);
+
+        // SQLAlchemy's _get_table_sql, with its bound name; and catalog relations in nested scopes.
+        var table = await SqlApi.SendAsync(api, api.Client, new
+        {
+            sql = "SELECT sql FROM (SELECT * FROM sqlite_master UNION ALL SELECT * FROM sqlite_temp_master) WHERE name = ? AND type in ('table', 'view')",
+            args = new object[] { "users" },
+        });
+        var results = await SqlApi.OkAsync(api,
+            "SELECT count(*) FROM tags WHERE 'users' IN (SELECT name FROM sqlite_master)",
+            "SELECT sqlite_master.name FROM sqlite_master WHERE sqlite_master.type = 'table' ORDER BY 1",
+            "SELECT group_concat(sql, ' ') FROM (SELECT sql FROM sqlite_schema) AS s",
+            "SELECT count(*) FROM (SELECT * FROM pragma_table_info AS p WHERE p.arg = 'users')",
+            DrizzleAutoincrement);
+
+        await Assert.That(table.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(table.Json.GetProperty("results")[0].GetProperty("rows")[0][0].GetString()!).StartsWith("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT");
+        await Assert.That(Flat(results[0])).IsEqualTo("0");
+        await Assert.That(Flat(results[1])).IsEqualTo("posts;tags;users");
+        // The file's own tables keep each row as a doc column; the catalog never shows them.
+        await Assert.That(Flat(results[2])).DoesNotContain(" doc ");
+        await Assert.That(Flat(results[3])).IsEqualTo("3");
+        await Assert.That(Rows(results[4]).Select(row => row[1]).Single()).IsEqualTo("users");
+    }
+
+    [Test]
+    public async Task From_subqueries_are_validated_like_the_rest_of_the_statement()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api, "CREATE TABLE tags (name TEXT PRIMARY KEY)", "INSERT INTO tags VALUES ('x')");
+
+        var results = await SqlApi.OkAsync(api,
+            "SELECT * FROM (SELECT * FROM tags)",
+            "SELECT * FROM (SELECT * FROM (SELECT name FROM tags) AS a) AS b");
+        string[] refused =
+        [
+            "SELECT * FROM (SELECT * FROM _tb_state)",
+            "SELECT * FROM (SELECT * FROM (SELECT * FROM _collections))",
+            "SELECT * FROM (SELECT sqlite_version())",
+            "SELECT * FROM (SELECT * FROM nothing)",
+        ];
+
+        await Assert.That(Names(results[0])).IsEqualTo("name");
+        await Assert.That(Flat(results[1])).IsEqualTo("x");
+        foreach (var sql in refused)
+        {
+            await Assert.That(SqlApi.Error(await SqlApi.ExecuteAsync(api, sql)).Sqlite).IsEqualTo("SQLITE_ERROR").Because(sql);
+        }
+    }
+
+    [Test]
+    public async Task Glob_is_an_operator_and_similar_to_is_refused()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await SqlApi.OkAsync(api, "CREATE TABLE g (v TEXT)", "INSERT INTO g VALUES ('apple'), ('Apricot'), ('banana')");
+
+        var results = await SqlApi.OkAsync(api,
+            "SELECT group_concat(v) FROM g WHERE v GLOB 'a*'",
+            "SELECT group_concat(v) FROM g WHERE v NOT GLOB 'a*' ORDER BY v",
+            "SELECT count(*) FROM g WHERE glob('*an*', v)");
+        var similar = await SqlApi.ExecuteAsync(api, "SELECT v FROM g WHERE v SIMILAR TO 'a%'");
+
+        await Assert.That(Flat(results[0])).IsEqualTo("apple");
+        await Assert.That(Flat(results[1])).IsEqualTo("Apricot,banana");
+        await Assert.That(Flat(results[2])).IsEqualTo("1");
+        await Assert.That(SqlApi.Error(similar).Sqlite).IsEqualTo("SQLITE_ERROR");
+    }
+
     private static string Names(JsonElement result) => string.Join("|", result.GetProperty("columns").EnumerateArray().Select(column => column.GetProperty("name").GetString()));
 
     private static string Flat(JsonElement result) => string.Join(";", Rows(result).Select(row => string.Join("|", row)));

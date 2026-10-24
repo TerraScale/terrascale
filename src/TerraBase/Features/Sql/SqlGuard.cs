@@ -213,6 +213,8 @@ internal static class SqlGuard
     private static Expression? Rewritten(Expression expression) => expression switch
     {
         Expression.BinaryOp { Op: BinaryOperator.StringConcat, Left: var left, Right: var right } => Call($"{SqlProgram.Concat}({left.ToSql()}, {right.ToSql()})"),
+        // SqlRead.Number reads a GLOB b as a SIMILAR TO b.
+        Expression.SimilarTo { Expression: var value, Pattern: var pattern, Negated: var negated } => Call($"({(negated ? "NOT " : "")}glob({pattern.ToSql()}, {value.ToSql()}))"),
         Expression.LiteralValue { Value: Value.SingleQuotedString { Value: var text } } when text.Contains("''", StringComparison.Ordinal) =>
             Call(text.Split('\'').Skip(1).Aggregate("'" + text.Split('\'')[0] + "'", (joined, piece) => $"{SqlProgram.Concat}({SqlProgram.Concat}({joined}, char(39)), '{piece}')")),
         _ => null,
@@ -333,9 +335,11 @@ internal static class SqlGuard
 
         public override ControlFlow PreVisitTableFactor(TableFactor relation)
         {
-            if (relation is TableFactor.Derived { SubQuery: { } query })
+            // The visitor does not enter a FROM subquery: its own subqueries are found here.
+            if (relation is TableFactor.Derived { SubQuery: { } query } && !Found.Contains(query))
             {
                 Found.Add(query);
+                ((IElement)query).Visit(this);
             }
 
             return ControlFlow.Continue;
