@@ -29,6 +29,7 @@ Use the [quickstart](/de/getting-started/) to establish one working application 
 - [Branches](/de/guides/branches): copy a database into a new branch database, and preview databases for pull requests.
 - [Schema migrations](/de/guides/migrations): versioned SQL table migrations with `ts migrate`.
 - [Dashboard usage](/de/guides/dashboard): customer account and database workflow.
+- [Single sign-on](/de/guides/single-sign-on): connect your identity provider over OIDC for a verified email domain (Team and Enterprise).
 - [Import an existing database](/de/guides/import) (pending): one-time import of a PostgreSQL or Turso export with dry-run preview and validation.
 - [Import from MongoDB or Firestore](/de/guides/import-ndjson): mongoexport or a Firestore script into one NDJSON file, then the same import.
 

@@ -20,6 +20,7 @@ const routes = [
   ['/guides/dashboard', 'Customer dashboard and application database workflow'],
   ['/guides/functions', 'Deploy JavaScript functions, call them over HTTPS, trigger them on changes or cron, read logs'],
   ['/guides/mcp', 'Connect MCP clients with a personal access token and discover permitted tools'],
+  ['/guides/single-sign-on', 'Organization single sign-on over OIDC: verified domains, role defaults and the hosted sign-in flow'],
   ['/legal/data-deletion', 'Deletion, changes-feed and backup retention timelines'],
   ['/legal/sla', 'No SLA during Public Alpha; measured uptime and publication prerequisites'],
   ['/guides/zero-configuration', 'Public always-on operating contract and secret-store delivery'],
