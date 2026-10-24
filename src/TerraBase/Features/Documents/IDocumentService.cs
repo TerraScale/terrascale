@@ -72,8 +72,8 @@ public sealed record OperationResult(string? Id, long? Version, bool Created, lo
 /// <param name="Results">One result per operation.</param>
 /// <param name="Scope">ETag scope of the database that committed this write.</param>
 /// <param name="Durability">
-/// What the answer guarantees (decision 0013a): <c>remote_durable</c> once another placed region confirmed it,
-/// <c>local_durable</c> on a cell of one or for a write without that confirmation, <c>unchanged</c> for assertions only.
+/// What the answer guarantees: <c>local_durable</c> once this region's commit is synced (decision 0013e), <c>remote_durable</c>
+/// once another placed region confirmed it (an opted-in write, decision 0013a), <c>unchanged</c> for assertions only.
 /// </param>
 public sealed record WriteResult(long Offset, IReadOnlyList<OperationResult> Results, Guid Scope, string Durability = WriteResult.LocalDurable)
 {
