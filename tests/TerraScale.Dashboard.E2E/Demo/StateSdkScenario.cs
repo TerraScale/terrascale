@@ -302,8 +302,12 @@ public sealed class StateSdkScenario : IAsyncDisposable
                 }
                 if (parts.Length == 8 && parts[7] == "documents" && http.Request.Method == "GET")
                     lock (gate) return collections.TryGetValue(parts[6], out var listed)
-                        ? Results.Json(new { items = listed.Documents.Where(entry => !entry.Value.Deleted).OrderBy(entry => entry.Key, StringComparer.Ordinal)
-                            .Select(entry => new { id = entry.Key, version = entry.Value.Version, state = "value", document = entry.Value.Value }).ToArray(), next_cursor = (string?)null })
+                        ? Results.Json(new
+                        {
+                            items = listed.Documents.Where(entry => !entry.Value.Deleted).OrderBy(entry => entry.Key, StringComparer.Ordinal)
+                            .Select(entry => new { id = entry.Key, version = entry.Value.Version, state = "value", document = entry.Value.Value }).ToArray(),
+                            next_cursor = (string?)null
+                        })
                         : Error(404, "unknown_collection");
                 Require(parts.Length == 9 && parts[7] == "documents" && parts[8] == "by-key" && http.Request.Query.Keys.SequenceEqual(new[] { "id" }),
                     "The official state SDK must use the genuine by-key point route and one opaque id parameter.");
