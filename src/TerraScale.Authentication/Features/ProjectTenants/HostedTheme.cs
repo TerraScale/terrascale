@@ -55,6 +55,11 @@ public static class HostedThemes
             };
         }
 
+        if (context.Request.Path.StartsWithSegments("/ui") && Tenancy.Resolved(context) == OidcIssuer.InstanceId)
+        {
+            context.Items[HostedTheme.ItemKey] = HostedTheme.Platform with { Providers = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().SocialClients.Select(provider => provider.Provider).ToArray() };
+        }
+
         await next(context);
     });
 }

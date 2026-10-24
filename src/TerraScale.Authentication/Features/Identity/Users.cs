@@ -10,6 +10,7 @@ namespace TerraScale.Authentication.Features.Identity;
 public sealed class Users(AuthStore store, TimeProvider clock)
 {
     private const string EmailKind = "email";
+    private const string ProviderKind = "credential:social";
 
     /// <summary>
     /// The canonical (trimmed, lowercased) email, or <see langword="null"/> when it is not a plausible address: at most
@@ -67,6 +68,100 @@ public sealed class Users(AuthStore store, TimeProvider clock)
     /// <summary>The account with <paramref name="userId"/> in the instance, or <see langword="null"/>.</summary>
     public async Task<UserRecord?> GetAsync(string instanceId, string userId, CancellationToken cancellationToken = default) =>
         (await this.GetVersionedAsync(instanceId, userId, cancellationToken).ConfigureAwait(false))?.User;
+
+    /// <summary>Signs in a stable external subject, or links its verified email to one account atomically.</summary>
+    public async Task<UserRecord?> FromProviderAsync(string tenant, LinkedProvider identity, string verifiedEmail, bool allowCreation, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        var key = ProviderKey(identity);
+        for (var round = 0; round < 3; round++)
+        {
+            if (await store.FindUniqueOwnerAsync(tenant, ProviderKind, key, cancellationToken).ConfigureAwait(false) is { } owner)
+            {
+                var linked = await this.GetAsync(tenant, owner, cancellationToken).ConfigureAwait(false);
+                return linked is { Disabled: false } && linked.LinkedProviders.Contains(identity) ? BindProvider(linked, identity) : null;
+            }
+
+            var user = await this.FindByEmailAsync(tenant, verifiedEmail, cancellationToken).ConfigureAwait(false);
+            if (user is null && allowCreation)
+            {
+                user = await this.CreateAsync(tenant, verifiedEmail, cancellationToken).ConfigureAwait(false)
+                    ?? await this.FindByEmailAsync(tenant, verifiedEmail, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (user is null || user.Disabled || await this.GetVersionedAsync(tenant, user.Id, cancellationToken).ConfigureAwait(false) is not { } current)
+            {
+                return null;
+            }
+
+            if (current.User.Email != NormalizeEmail(verifiedEmail) || current.User.Disabled)
+            {
+                return null;
+            }
+
+            // One identity per provider and client. Never silently replace another linked subject.
+            if (current.User.LinkedProviders.Any(item => item.Provider == identity.Provider && item.ClientId == identity.ClientId))
+            {
+                return null;
+            }
+
+            var updated = current.User with
+            {
+                LinkedProviders = [.. current.User.LinkedProviders, identity],
+                AuthEpoch = checked(current.User.AuthEpoch + 1),
+                AuthStamp = AuthStore.NewId(),
+            };
+            if (await store.TransactAsync([
+                AuthStore.Claim(tenant, ProviderKind, key, user.Id),
+                AuthStore.Replace(AuthStore.UserCollection, tenant, user.Id, JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version),
+            ], cancellationToken).ConfigureAwait(false) is null)
+            {
+                return BindProvider(updated, identity);
+            }
+        }
+
+        throw ApiException.Unavailable();
+    }
+
+    /// <summary>Unlinks a provider at the reauthenticated account version and revokes all prior sessions.</summary>
+    public async Task<bool> UnlinkProviderAsync(UserRecord caller, string provider, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        if (await this.GetVersionedAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is not { } current
+            || current.User.AuthStamp != caller.AuthStamp || current.User.AuthEpoch != caller.AuthEpoch
+            || !await store.AreCredentialsCurrentAsync(caller.InstanceId, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        var identities = current.User.LinkedProviders.Where(item => item.Provider == provider).ToArray();
+        var updated = current.User with
+        {
+            LinkedProviders = [.. current.User.LinkedProviders.Where(item => item.Provider != provider)],
+            AuthEpoch = checked(current.User.AuthEpoch + 1),
+            AuthStamp = AuthStore.NewId(),
+        };
+        List<StoreOperation> operations = [AuthStore.Replace(AuthStore.UserCollection, caller.InstanceId, caller.Id,
+            JsonSerializer.SerializeToElement(updated, IdentityJson.Default.UserRecord), current.Version)];
+        foreach (var identity in identities)
+        {
+            if (await store.FindUniqueAsync(caller.InstanceId, ProviderKind, ProviderKey(identity), cancellationToken).ConfigureAwait(false) is not { } claim || claim.OwnerId != caller.Id)
+            {
+                return false;
+            }
+
+            operations.Add(AuthStore.Release(caller.InstanceId, ProviderKind, ProviderKey(identity), claim.Version));
+        }
+
+        return await store.TransactAsync(operations, cancellationToken).ConfigureAwait(false) is null;
+    }
+
+    private static UserRecord BindProvider(UserRecord user, LinkedProvider identity) => BindAuthenticationState(user) with
+    {
+        AuthenticationBindings = [.. BindAuthenticationState(user).AuthenticationBindings, new CredentialBinding(ProviderKind, ProviderKey(identity), user.Id)],
+    };
+
+    private static string ProviderKey(LinkedProvider identity) => $"{identity.Provider}:{identity.ClientId}:{identity.Subject}";
 
     /// <summary>
     /// Sets the password of the account while its authentication state still matches <paramref name="caller"/>, and
