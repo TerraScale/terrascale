@@ -142,7 +142,7 @@ public sealed class AllowanceEmailEndpoint(AuthStore store, PlatformDirectory di
         return TypedResults.Json(new AllowanceEmailResponse(result), AllowanceEmailJson.Default.AllowanceEmailResponse);
     }
 
-    private static MembershipRecord ReadMember(TerraBaseDocument document, string organizationId)
+    internal static MembershipRecord ReadMember(TerraBaseDocument document, string organizationId)
     {
         var member = document.Document.Deserialize(PlatformJson.Default.MembershipRecord);
         if (document.State != "value" || member is null || member.InstanceId != OidcIssuer.InstanceId || member.OrganizationId != organizationId || !TerraScaleIds.IsValid(member.UserId) ||

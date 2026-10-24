@@ -68,7 +68,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
         var operations = paths.EnumerateObject().Where(path => path.Name.StartsWith("/v1/{slug}/email/", StringComparison.Ordinal))
             .SelectMany(path => path.Value.EnumerateObject().Select(operation => (Path: path.Name, Method: operation.Name, Operation: operation.Value)))
             .ToList();
-        await Assert.That(operations.Count).IsEqualTo(12);
+        await Assert.That(operations.Count).IsEqualTo(13);
         var allowance = operations.Single(operation => operation.Path == "/v1/{slug}/email/allowance");
         await Assert.That(allowance.Method).IsEqualTo("post");
         await Assert.That(allowance.Operation.GetProperty("operationId").GetString()).IsEqualTo("email_allowance_send");
