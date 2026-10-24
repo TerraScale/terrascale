@@ -547,7 +547,7 @@ project, err := tsauth.NewExchangeSource(tsauth.ExchangeConfig{ClientID: "ts-das
 
 `ts` signs in with `tsauth.Device` (the device grant of ts-auth's ts-cli
 client) and acts as that user: projects, databases, collections, documents,
-read-only SQL, replica regions, backups and project API keys. It keeps the sign-in in
+read-only SQL, replica regions, backups, functions and project API keys. It keeps the sign-in in
 `terrascale/cli.json` under `os.UserConfigDir()` (mode 0600) and refreshes it.
 
 ```sh
@@ -560,6 +560,10 @@ ts doc list app users > users.jsonl && ts doc import app-copy users < users.json
 ts keys create backend app         # printed once on stdout
 ts db regions app sjc fra && ts db info app
 ts backup create app && ts backup list app
+ts functions deploy app hello.js -trigger-collection items -events upsert,delete
+ts functions deploy app ./report -cron '0 * * * *'   # deploys report/index.js as report
+ts functions invoke app hello -data '{"n":1}' && ts functions logs app hello -limit 10
+ts functions list app && ts functions delete app hello
 ts db branch app app-preview
 ts db list
 ts db delete app-preview
@@ -568,6 +572,10 @@ ts auth logout
 
 Project commands act in the user's only project; `-project <name or id>`
 picks one when the user reaches several. `ts help` lists every command.
+Functions (`Database.DeployFunction`, `Functions`, `InvokeFunction`,
+`FunctionLogs`, `FunctionDeliveries`, `DeleteFunction`) follow TerraBase's
+functions contract: JavaScript `handler(event)` deployed per database, run on
+`invoke`, collection changes or a UTC cron schedule.
 Invalid arguments exit with status 2, other failures with 1.
 
 ## Checks
