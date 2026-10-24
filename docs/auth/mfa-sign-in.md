@@ -44,6 +44,11 @@ issued under.
 The device flow (ts CLI) works for two-factor accounts: the approving browser
 session already proved the factor.
 
+GitHub, Google, project social providers and organization SSO do not ask for
+the second factor yet. For an account with an active authenticator they fail
+closed (no session), so such users sign in with their email code or password
+plus the authenticator.
+
 ## Organization policy
 
 `PUT /v1/terrascale/organizations/{organization}/mfa-policy` with
