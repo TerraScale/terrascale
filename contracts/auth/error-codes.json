@@ -20,6 +20,7 @@
     "connection_exists",
     "connection_not_found",
     "credential_exists",
+    "deletion_refused",
     "delivery_changed",
     "device_code_unavailable",
     "directory_changed",

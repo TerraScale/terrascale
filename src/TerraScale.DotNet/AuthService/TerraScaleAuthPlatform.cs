@@ -125,7 +125,7 @@ public sealed class TerraScaleAuthPlatformClient(TerraScaleAuthClient client)
     public Task<bool> DeleteAccountAsync(
         string accessToken,
         string deletionReceipt,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken) =>
         client.SendForAccountDeletionAsync(HttpMethod.Delete, "/v1/terrascale/account",
             TerraScaleAuthCredentials.Bearer(accessToken), deletionReceipt, cancellationToken);
 

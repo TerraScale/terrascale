@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace TerraScale.DotNet.Tests;
 
@@ -13,6 +14,10 @@ public sealed class TerraScaleAuthAccountDeletionTests
     [Arguments(true, 202, false)]
     public async Task ReceiptOperationsSendExpectedCredentialsAndReportOutcome(bool statusQuery, int status, bool completed)
     {
+        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "contracts/auth/routes.json")));
+        var operation = manifest.RootElement.GetProperty("operations").EnumerateArray().Single(item =>
+            item.GetProperty("operation_id").GetString() == (statusQuery ? "account_deletion_status" : "delete_account"));
+        await Assert.That(operation.GetProperty(completed ? "success_status" : "pending_status").GetInt32()).IsEqualTo(status);
         var receipt = Receipt();
         using var handler = new CaptureHandler((HttpStatusCode)status);
         using var http = new HttpClient(handler);
@@ -39,6 +44,7 @@ public sealed class TerraScaleAuthAccountDeletionTests
     [Arguments(true, 201)]
     [Arguments(true, 401)]
     [Arguments(true, 404)]
+    [Arguments(true, 409)]
     [Arguments(true, 503)]
     public async Task OtherResponsesAreErrorsAndNeverRetried(bool statusQuery, int status)
     {
@@ -47,6 +53,7 @@ public sealed class TerraScaleAuthAccountDeletionTests
         var exception = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Call(Client(http).Platform, statusQuery, Receipt()));
         await Assert.That(exception!.StatusCode).IsEqualTo((HttpStatusCode)status);
         if (status < 300) await Assert.That(exception.ErrorCode).IsEqualTo("invalid_response");
+        if (status == 409) await Assert.That(exception.ErrorCode).IsEqualTo("deletion_refused");
         await Assert.That(handler.Calls).IsEqualTo(1);
     }
 
@@ -109,7 +116,7 @@ public sealed class TerraScaleAuthAccountDeletionTests
     {
         using var handler = new CaptureHandler(HttpStatusCode.NoContent);
         using var http = new HttpClient(handler);
-        await Assert.That(await Client(http).Platform.DeleteAccountAsync("fixture-sign-in")).IsTrue();
+        await Assert.That(await Client(http).Platform.DeleteAccountAsync("fixture-sign-in", default)).IsTrue();
         await Assert.That(handler.Receipt).IsNull();
         await Assert.That(handler.Authorization!.ToString()).IsEqualTo("Bearer fixture-sign-in");
     }
@@ -180,7 +187,10 @@ public sealed class TerraScaleAuthAccountDeletionTests
             Authorization = request.Headers.Authorization;
             HasContent = request.Content is not null;
             return throwTransportError ? throw new HttpRequestException("Synthetic transport failure.")
-                : Task.FromResult(new HttpResponseMessage(status));
+                : Task.FromResult(new HttpResponseMessage(status)
+                {
+                    Content = status == HttpStatusCode.Conflict ? new StringContent("""{"error":{"code":"deletion_refused"}}""") : null
+                });
         }
     }
 

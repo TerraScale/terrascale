@@ -35,5 +35,16 @@
     ],
     "statuses": "delete_account and delete_project answer 202 while a TerraBase project closure is pending",
     "revision": "c1a1d9662662698739750a9af45db979abb2cea7"
+  },
+  "account_deletion_receipts_producer": {
+    "state": "Producer PR TerraScale/terrascale#608; land before SDK merge.",
+    "revision": "f68e17496c81afcde889542f1f5325dc598e56aa",
+    "sources_sha256": {
+      "src/TerraScale.Authentication/Features/Platform/AccountDeletionStatusEndpoint.cs": "e5452cf3e1e546359f04eb616f55cc86f58ed6bdcd8ad496b88fa0ff9ab19a47",
+      "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "5e6ae4b4c87db2ea14bf37148b983e02c0c148f1d440d7f9ec4cf26deea3bc47",
+      "src/TerraScale.Authentication/Features/Platform/AccountDeletion.cs": "fb0bdc2d7f35f9ebac28d0b914fe5f2746797a2a0c5809b5dacc224a5a633796",
+      "src/TerraScale.Authentication/Hosting/OpenApiSetup.cs": "1e79d24c7e391ad2d3c160765bfb25457eb4aaecc34909b747e7ea016e4e66a6",
+      "docs/auth/account-deletion-receipts.md": "42bcdce570c554d0465a77f0271f1af344cc97b02c6eb5bdf6d750fd7e150e3a"
+    }
   }
 }

@@ -5,12 +5,16 @@ cancellationToken)` and adds:
 
 ```csharp
 Task<bool> DeleteAccountAsync(string accessToken, string deletionReceipt,
-    CancellationToken cancellationToken = default);
+    CancellationToken cancellationToken);
 Task<bool> AccountDeletionCompletedAsync(string deletionReceipt,
     CancellationToken cancellationToken = default);
 Task<bool> AccountDeletionOrganizationCompletedAsync(string deletionReceipt,
     string organizationId, CancellationToken cancellationToken = default);
 ```
+
+The receipt DELETE overload requires its third argument to preserve existing
+`DeleteAccountAsync(accessToken, default)` calls. Pass `CancellationToken.None`
+when cancellation is unnecessary. Both status methods keep optional cancellation.
 
 Generate a receipt from 32 cryptographically random bytes, encode it as canonical
 unpadded base64url (43 characters), and retain it securely before sending the
@@ -41,9 +45,14 @@ it does not promise eventual removal. A noncandidate organization returns 404
 and throws. Remove each local organization only after its explicit 204; account
 completion alone does not prove every original organization was removed.
 
-The release target remains the untagged `0.0.7` on main (latest stable tag checked:
-`v0.0.6`). After the owning auth contract and SDK PR land with required checks,
-tag the merged SDK main commit `v0.0.7`. The release workflow qualifies and tests
+The release target is `0.0.8`: the dashboard already consumes qualified `0.0.7`
+bytes, which must retain their package identity even though the latest stable tag
+checked was `v0.0.6`. After the owning auth contract and SDK PR land with required checks,
+tag the merged SDK main commit `v0.0.8`. The release workflow qualifies and tests
 the package, publishes it to GitHub Packages, verifies a fresh installed consumer,
-then publishes the same qualified artifact to nuget.org. Update the dashboard's
-`TerraScale.DotNet` package reference only after publication succeeds.
+then publishes the same qualified artifact to nuget.org. Download the qualified
+artifact with `gh run download <run-id> --repo TerraScale/ts-dotnet --name package
+--dir <staging-dir>`. It contains `TerraScale.DotNet.0.0.8.nupkg` and
+`provenance.json`. The dashboard maps this package exclusively to `vendor/dotnet`:
+replace its package/provenance, update its central pin and lockfiles to `0.0.8`,
+and run its `scripts/verify-sdk.py` as documented by that repository.
