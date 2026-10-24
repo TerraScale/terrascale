@@ -1,5 +1,5 @@
 // Command ts is the TerraScale CLI: device sign-in, projects, databases,
-// collections, documents, SQL and API keys against the production API, as
+// collections, documents, SQL, functions and API keys against the production API, as
 // the signed-in user. Run ts help for every command.
 //
 // Project commands act in the user's only project; -project <name or id>
@@ -78,6 +78,17 @@ const usage = `usage: ts [-project <name or id>] [-org <name or id>] <command>
                                           ndjson file into a new database
   import status | cancel <db>             print or cancel the database's import
   sql <db> <query>                        run a read-only SQL query
+  functions deploy <db> <file.js | dir>   deploy or replace a JavaScript function
+                                          (a dir deploys its index.js); flags:
+                                          -name <name> (default: file or dir
+                                          name), -trigger-collection <name>,
+                                          -events upsert,delete, -cron <expr>
+  functions list <db>                     list the database's functions
+  functions invoke <db> <name>            run a function and print its response;
+                                          -data <json> sends a body, - stdin
+  functions logs <db> <name>              print recent invocations as JSON
+                                          lines, newest first; -limit 1..100
+  functions delete <db> <name>            delete a function and its logs
   keys list                               list the project's API keys
   keys create <name> [<db>]               create a read/write API key, shown once
   keys revoke <id>                        revoke an API key
@@ -141,6 +152,11 @@ var commands = map[string][]int{
 	"doc delete":        {3},
 	"doc import":        {2},
 	"sql":               {2},
+	"functions deploy":  {2},
+	"functions list":    {1},
+	"functions invoke":  {2},
+	"functions logs":    {2},
+	"functions delete":  {2},
 	"keys list":         {0},
 	"keys create":       {1, 2},
 	"keys revoke":       {1},
@@ -169,6 +185,13 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	for n := min(2, len(args)); n > 0 && name == ""; n-- {
 		if _, ok := commands[strings.Join(args[:n], " ")]; ok {
 			name, operands = strings.Join(args[:n], " "), args[n:]
+		}
+	}
+	var fn functionFlags
+	if strings.HasPrefix(name, "functions ") {
+		var err error
+		if operands, err = fn.parse(name, operands); err != nil {
+			return err
 		}
 	}
 	if !slices.Contains(commands[name], len(operands)) {
@@ -207,6 +230,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	s, err := open(ctx, u, token, *project)
 	if err != nil {
 		return err
+	}
+	if strings.HasPrefix(name, "functions ") {
+		return functions(ctx, s.tb.Database(s.project, operands[0]), name, fn, operands[1:], out)
 	}
 	return s.run(ctx, name, operands, out)
 }

@@ -50,7 +50,9 @@ func TestRunRejectsUnknownCommandsOffline(t *testing.T) {
 		{"backup", "restore", "app", "id"}, {"projects", "create"}, {"usage", "a", "b"}, {"completion"},
 		{"index", "create", "app", "col"}, {"index", "create", "app", "col", "a", "b", "c", "d", "e"},
 		{"schema", "set", "app", "col"}, {"ttl", "set", "app", "col"}, {"import", "app", "sqlite"},
-		{"import", "status"}, {"backup", "restore-at", "app", "2026-10-23T00:00:00Z"}, {"db", "changes"}} {
+		{"import", "status"}, {"backup", "restore-at", "app", "2026-10-23T00:00:00Z"}, {"db", "changes"},
+		{"functions", "list"}, {"functions", "invoke", "app"}, {"functions", "logs", "app", "fn", "-limit", "101"},
+		{"functions", "delete", "app", "fn", "-data", "{}"}, {"functions", "deploy", "app", "f.js", "-events", "delete"}} {
 		if err := run(t.Context(), args, io.Discard); !errors.Is(err, errUsage) {
 			t.Errorf("run(%q) = %v, want usage", args, err)
 		}
