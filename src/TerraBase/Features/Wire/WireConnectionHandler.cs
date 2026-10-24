@@ -39,6 +39,7 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
     private const int MaxFrameBytes = RequestJson.MaxDocumentBytes + 1024;
     private const int MaxHelloBytes = 4096;
     private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(10);
+    private static readonly Unavailable InternalError = new("internal error", "internal_error");
     private static readonly Unauthorized Denied = new("the API key is unknown, expired or revoked, or lacks documents:read", "invalid_key");
 
     private readonly union Access(Grant, Unauthorized, Validation, NotFound, Unavailable);
@@ -334,7 +335,7 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
     {
         var started = Stopwatch.GetTimestamp();
         TenantContext? tenant = null;
-        var answer = Error(frame.Id, new Unavailable("internal error", "internal_error"));
+        byte[]? answer = null;
         try
         {
             if (!services.GetRequiredService<ICatalogGate>().IsOpen)
@@ -386,12 +387,12 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
             services.GetRequiredService<ILogger<WireConnectionHandler>>().ZLogError(error, $"A wire request failed");
-            return answer;
+            return answer = Error(frame.Id, InternalError);
         }
         finally
         {
             // Metered like the HTTP request it replaces: one request with its bytes, on top of the document operation itself.
-            if (tenant is not null)
+            if (tenant is not null && answer is not null)
             {
                 var elapsed = Stopwatch.GetElapsedTime(started);
                 var status = BinaryPrimitives.ReadUInt16LittleEndian(answer.AsSpan(8));
@@ -438,8 +439,7 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
             return await documents.GetAsync(key, cancellationToken).ConfigureAwait(false) switch
             {
                 StoredDocument { UniqueConflict: true } => Error(frame.Id, new Conflict("the document lost a replicated uniqueness conflict", "unique_violation")),
-                StoredDocument { Deleted: false } document => Answer(
-                    frame.Id, 200, Short(ETags.Version(document.Scope, collection, document.Id, document.Version, document.Json)), document.Json.Span),
+                StoredDocument { Deleted: false } document => Read(frame.Id, ETags.Version(document.Scope, collection, document.Id, document.Version, document.Json), document.Json.Span),
                 StoredDocument or NeverWritten => Error(frame.Id, new NotFound("the document does not exist")),
                 NotFound error => Error(frame.Id, error),
                 Validation error => Error(frame.Id, error),
@@ -626,6 +626,19 @@ internal sealed class WireConnectionHandler(IServiceProvider services) : Connect
         Unavailable error => error,
         Grant => throw new UnreachableException(),
     };
+
+    // A get's answer: 200, the u8-length ETag, then the document, written into one array.
+    private static byte[] Read(uint id, string etag, ReadOnlySpan<byte> json)
+    {
+        var answer = new byte[11 + etag.Length + json.Length];
+        BinaryPrimitives.WriteUInt32LittleEndian(answer, (uint)(answer.Length - 4));
+        BinaryPrimitives.WriteUInt32LittleEndian(answer.AsSpan(4), id);
+        BinaryPrimitives.WriteUInt16LittleEndian(answer.AsSpan(8), 200);
+        answer[10] = checked((byte)etag.Length);
+        Encoding.ASCII.GetBytes(etag, answer.AsSpan(11));
+        json.CopyTo(answer.AsSpan(11 + etag.Length));
+        return answer;
+    }
 
     // An answer: u32 length of the rest, u32 request id, u16 status (the HTTP API's), head, body.
     private static byte[] Answer(uint id, ushort status, ReadOnlySpan<byte> head, ReadOnlySpan<byte> body)
