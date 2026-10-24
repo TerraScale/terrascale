@@ -31,6 +31,7 @@ public sealed class UsageOverageJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(created.GetProperty("quantity").GetInt64()).IsEqualTo(123_456);
         await Assert.That(decimal.Parse(created.GetProperty("unitAmountDecimal").GetString()!, CultureInfo.InvariantCulture)).IsEqualTo(0.0005m);
         await Assert.That(created.GetProperty("subscription").GetString()).StartsWith("sub_");
+        await Assert.That(created.GetProperty("pendingInvoiceItemInterval").GetString()).IsEqualTo("month").Because("Starter is billed yearly; its overage is invoiced monthly.");
         var metadata = created.GetProperty("metadata");
         await Assert.That(metadata.GetProperty("terrascale_kind").GetString()).IsEqualTo("operation_unit_overage");
         await Assert.That(metadata.GetProperty("terrascale_month").GetString()).IsEqualTo(DateTimeOffset.UtcNow.ToString("yyyy-MM", CultureInfo.InvariantCulture));
