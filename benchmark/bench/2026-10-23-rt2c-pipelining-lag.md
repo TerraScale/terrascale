@@ -112,17 +112,17 @@ The second main load run ended with host load 10.6 (another job); its 1991 and 2
 | receive.total | 18 / 17 / 24; 15 / 15 / 15 | 90 / 123 / 130; 96 / 122 / 117 | 38 / 53 / 32; 57 / 58 / 56 |
 | receive.begin + commit + stable | 13 / 12 / 17; 10 / 10 / 10 | 26 / 31 / 28; 27 / 30 / 28 | 22 / 29 / 19; 31 / 31 / 30 |
 | send.read / send.ack | 3.5 / 8.0 (fra) | 0.7 / 1.5 | 0.7 / 1.7 |
-| batches received / transactions (per node) | ~1300 / ~1300 | ~5250 / ~5250 | ~4900 / ~4400 (9-12 % fewer) |
+| batches received / transactions (per node) | 1240-1420 / same | 5090-5440 / same | 4740-5330 / 4200-4890 (8-12 % fewer) |
 
 ### Reading
 
 - Under load the receiver's wait behind the database's previous batch falls from 48-87 ms p50 to 0.4-8 ms, and its
-  total per batch from 90-130 ms to 32-58 ms. Remote ack p50 falls 15-35 % against pipe in 11 of 12 direction-runs
-  (204-267 ms against 263-350), and against main by 25-45 %.
-- Visible p50 falls against pipe in 8 of 12 direction-runs (by up to 78 ms on fra → sjc) and is within 10 ms in the
-  rest. Visible p99 under load is 210-479 ms for coal, with one 1589 ms tail (sjc → fra, run 1); pipe 282-614 ms. The
+  total per batch from 90-130 ms to 32-58 ms. Remote ack p50 falls against pipe in all 12 direction-runs, by 5-37 %
+  (204-267 ms against 263-350), and against main by 26-46 %.
+- Visible p50 falls against pipe in 9 of 12 direction-runs (by up to 78 ms on fra → sjc) and rises at most 5 ms in
+  the other 3. Visible p99 under load is 210-479 ms for coal, with one 1589 ms tail (sjc → fra, run 1); pipe 282-614 ms. The
   200 ms p99 target is not met under 8 writers on this cell; idle p99 is 120-206 ms.
-- Only 9-12 % of batches joined another's transaction, yet the wait collapsed: a batch that queues behind a slow
+- Only 8-12 % of batches joined another's transaction, yet the wait collapsed: a batch that queues behind a slow
   apply is now applied with it instead of starting its own begin/commit/stable cycle afterwards, which removes the
   queue's growth. The per-transaction cost (begin + FULL commit + stable read, 19-31 ms p50 under load, of which the
   stable read is 9-15 ms) is now the largest receiver contributor; next on the path are the sender's ship pass and the
