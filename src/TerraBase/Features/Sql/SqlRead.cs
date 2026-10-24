@@ -14,6 +14,9 @@ namespace TerraBase.Features.Sql;
 internal sealed record ReadSql(Query Query, IReadOnlyList<string> Tables) : ParsedSql
 {
     public override bool IsWrite => false;
+
+    /// <summary>Catalog relations it reads (<see cref="SqlCatalog.Relations"/>), defined as CTEs when it runs.</summary>
+    public IReadOnlyList<string> Catalog { get; init; } = [];
 }
 
 /// <summary>Parameter numbering, read validation and the engine program of a read.</summary>
@@ -76,14 +79,15 @@ internal static class SqlRead
                     && i + 2 < tokens.Count && tokens[i + 1] is Period && tokens[i + 2] is Word && (i == 0 || tokens[i - 1] is not Period):
                     i++;
                     continue;
-                // ORMs (Drizzle, Prisma) quote names with backticks: one without quote characters is the same name "quoted".
-                case Word { QuoteStyle: '`', Value: var quoted } when !quoted.Contains('`', StringComparison.Ordinal) && !quoted.Contains('"', StringComparison.Ordinal):
+                // ORMs (Drizzle, Prisma) quote names with backticks, drizzle-kit and SQLAlchemy also with [ ]: one without
+                // quote characters is the same name "quoted".
+                case Word { QuoteStyle: '`' or '[', Value: var quoted } when !quoted.Contains(']', StringComparison.Ordinal) && !quoted.Contains('`', StringComparison.Ordinal) && !quoted.Contains('"', StringComparison.Ordinal):
                     text.Append('"').Append(quoted).Append('"');
                     continue;
                 // SqlParserCS renders these back without escaping ([a]]b] as [a]b], N'a''b' as N'a'b'), so SQLite would
-                // read other text than the validator saw: only plain, "…" and simple `…` names, and only '…' strings, pass.
+                // read other text than the validator saw: only plain, "…" and simple `…` or […] names, and only '…' strings, pass.
                 case Word { QuoteStyle: not (null or '"') }:
-                    throw new FormatException("names are plain, \"quoted\" or `quoted` without quote characters; [ ] quotes are not supported");
+                    throw new FormatException("names are plain, \"quoted\", `quoted` or [quoted] without quote characters");
                 case StringToken literal when literal is not SingleQuotedString
                     && (literal.GetType().Name.EndsWith("String", StringComparison.Ordinal) || literal.GetType().Name.Contains("Literal", StringComparison.Ordinal)):
                     throw new FormatException("strings are '…' literals; other string and blob literals are not supported");
@@ -137,10 +141,80 @@ internal static class SqlRead
             throw new FormatException("WITH RECURSIVE is not supported");
         }
 
+        query = Pragmas(query);
         var validator = new Validator();
         ((IElement)query).Visit(validator);
         var ctes = query.With?.CteTables.Select(cte => cte.Alias.Name.Value.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal) ?? [];
-        return new ReadSql(query, [.. validator.Tables.Where(table => !ctes.Contains(table)).Distinct(StringComparer.Ordinal)]);
+        var tables = validator.Tables.Where(table => !ctes.Contains(table)).Distinct(StringComparer.Ordinal).ToList();
+        return new ReadSql(query, [.. tables.Where(table => !SqlCatalog.Relations.ContainsKey(table))])
+        {
+            Catalog = [.. tables.Where(SqlCatalog.Relations.ContainsKey)],
+        };
+    }
+
+    // SQLite's table-valued pragmas filter on their hidden arg column: FROM … pragma_x(e) AS p becomes FROM … pragma_x AS p
+    // WHERE p.arg = e, in every SELECT of the statement, its CTEs and derived tables. Only inner joins move a condition
+    // to WHERE unchanged.
+    private static Query Pragmas(Query query) => query with
+    {
+        Body = Pragmas(query.Body),
+        With = query.With is { } with ? with with { CteTables = [.. with.CteTables.Select(cte => cte with { Query = Pragmas(cte.Query) })] } : null,
+    };
+
+    private static SetExpression Pragmas(SetExpression body) => body switch
+    {
+        SetExpression.SelectExpression select => select with { Select = Pragmas(select.Select) },
+        SetExpression.SetOperation operation => operation with { Left = Pragmas(operation.Left), Right = Pragmas(operation.Right) },
+        SetExpression.QueryExpression nested => nested with { Query = Pragmas(nested.Query) },
+        _ => body,
+    };
+
+    private static Select Pragmas(Select select)
+    {
+        if (select.From is not { } from)
+        {
+            return select;
+        }
+
+        var conditions = new List<Expression>();
+        var rewritten = from.Select(item => item with
+        {
+            Relation = Factor(item.Relation!, inner: true),
+            Joins = item.Joins is { } joins
+                ? [.. joins.Select(join => join with { Relation = Factor(join.Relation!, join.JoinOperator is JoinOperator.Inner or JoinOperator.CrossJoin) })]
+                : null,
+        }).ToList();
+        if (conditions.Count == 0)
+        {
+            return select;
+        }
+
+        var where = conditions.Aggregate((left, right) => new Expression.BinaryOp(left, BinaryOperator.And, right));
+        return select with
+        {
+            From = [.. rewritten],
+            Selection = select.Selection is { } existing ? new Expression.BinaryOp(new Expression.Nested(existing), BinaryOperator.And, where) : where,
+        };
+
+        TableFactor Factor(TableFactor factor, bool inner)
+        {
+            switch (factor)
+            {
+                case TableFactor.Table { Name.Values: [var name], Args.Arguments: var arguments } table when SqlCatalog.IsPragmaFunction(name.Value.ToLowerInvariant()):
+                    if (!inner || arguments is not [FunctionArg.Unnamed { FunctionArgExpression: FunctionArgExpression.FunctionExpression { Expression: { } argument } }])
+                    {
+                        throw new FormatException("a pragma function takes one argument and joins with JOIN or a comma");
+                    }
+
+                    var alias = table.Alias?.Name ?? name;
+                    conditions.Add(new Expression.BinaryOp(new Expression.CompoundIdentifier([alias, new Ident("arg")]), BinaryOperator.Eq, new Expression.Nested(argument)));
+                    return table with { Args = null };
+                case TableFactor.Derived derived:
+                    return derived with { SubQuery = Pragmas(derived.SubQuery) };
+                default:
+                    return factor;
+            }
+        }
     }
 
     /// <summary>
@@ -272,6 +346,10 @@ internal static class SqlRead
         {
             switch (relation)
             {
+                case TableFactor.Table { Args: null, WithHints: null or [], Version: null, Partitions: null or [], WithOrdinality: false, Name.Values: [var only] }
+                    when SqlCatalog.Relations.ContainsKey(only.Value.ToLowerInvariant()):
+                    Tables.Add(only.Value.ToLowerInvariant());
+                    break;
                 case TableFactor.Table { Args: null, WithHints: null or [], Version: null, Partitions: null or [], WithOrdinality: false } table:
                     Tables.Add(SqlParse.TableName(table.Name));
                     break;

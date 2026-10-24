@@ -31,12 +31,29 @@ internal sealed record SqlColumnDefinition(
     public SqlAffinity Affinity => SqlTable.AffinityOf(Type);
 }
 
+/// <summary>A FOREIGN KEY clause: kept for the catalog (<c>PRAGMA foreign_key_list</c>), never enforced.</summary>
+/// <param name="Table">The referenced table, lowercased.</param>
+/// <param name="From">This table's columns.</param>
+/// <param name="To">The referenced columns, or empty for the referenced table's primary key.</param>
+/// <param name="OnUpdate">The ON UPDATE action as SQLite names it, such as <c>NO ACTION</c> or <c>CASCADE</c>.</param>
+/// <param name="OnDelete">The ON DELETE action.</param>
+internal sealed record SqlForeignKey(
+    string Table,
+    IReadOnlyList<string> From,
+    IReadOnlyList<string> To,
+    [property: JsonPropertyName("on_update")] string OnUpdate,
+    [property: JsonPropertyName("on_delete")] string OnDelete);
+
 /// <summary>A table definition, kept as member <c>sql</c> of its collection's <c>_collections</c> metadata document.</summary>
 /// <param name="Columns">Columns in declaration order.</param>
 /// <param name="PrimaryKey">Primary key columns in key order; empty when the table has none (ids are generated ULIDs).</param>
+/// <param name="ForeignKeys">FOREIGN KEY clauses in declaration order, or null for none.</param>
+/// <param name="Sql">The <c>CREATE TABLE</c> statement as the catalog shows it (<c>sqlite_master.sql</c>), rendered from its syntax tree.</param>
 internal sealed record SqlTableDefinition(
     IReadOnlyList<SqlColumnDefinition> Columns,
-    [property: JsonPropertyName("primary_key")] IReadOnlyList<string> PrimaryKey);
+    [property: JsonPropertyName("primary_key")] IReadOnlyList<string> PrimaryKey,
+    [property: JsonPropertyName("foreign_keys"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<SqlForeignKey>? ForeignKeys = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Sql = null);
 
 /// <summary>Reads and writes table definitions in a storage transaction.</summary>
 internal static class SqlTable

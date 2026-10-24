@@ -29,8 +29,10 @@ public sealed class SqlDdlTests
 
         await Assert.That(outcomes.Select(SqlHarness.Code)).IsEquivalentTo(new string?[5]);
         await Assert.That(outcomes[0] is SqlResult { Columns.Count: 0, Rows.Count: 0, RowsAffected: 0 }).IsTrue();
-        await Assert.That(ints.GetRawText()).IsEqualTo(
-            """{"columns":[{"name":"id","type":"INTEGER","not_null":true},{"name":"name","type":"TEXT","not_null":true,"default":"x"},{"name":"score","type":"REAL","not_null":false,"default":-1.5}],"primary_key":["id"]}""");
+        await Assert.That(ints.GetRawText()).StartsWith(
+            """{"columns":[{"name":"id","type":"INTEGER","not_null":true},{"name":"name","type":"TEXT","not_null":true,"default":"x"},{"name":"score","type":"REAL","not_null":false,"default":-1.5}],"primary_key":["id"],"sql":""");
+        // The catalog's text (sqlite_master.sql) keeps the statement without IF NOT EXISTS.
+        await Assert.That(ints.GetProperty("sql").GetString()!).StartsWith("CREATE TABLE ints (id INTEGER PRIMARY KEY AUTOINCREMENT");
         await Assert.That(codes.GetProperty("primary_key")[0].GetString()).IsEqualTo("code");
         await Assert.That(codes.GetProperty("columns")[0].GetProperty("type").GetString()).IsEqualTo("VARCHAR(16)");
         await Assert.That(pairs.GetProperty("primary_key").GetRawText()).IsEqualTo("""["a","b"]""");

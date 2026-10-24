@@ -76,18 +76,7 @@ internal static class SqlGuard
 
                     break;
                 case System.Collections.IList list:
-                    for (var i = 0; i < list.Count; i++)
-                    {
-                        if (list[i] is { } item && item.GetType().Namespace?.StartsWith("SqlParser", StringComparison.Ordinal) == true)
-                        {
-                            Concat(item, seen);
-                            if (item is Expression element && Rewritten(element) is { } replaced)
-                            {
-                                list[i] = replaced;
-                            }
-                        }
-                    }
-
+                    ConcatList(list, seen);
                     break;
                 case { } child when child.GetType().Namespace?.StartsWith("SqlParser", StringComparison.Ordinal) == true:
                     Concat(child, seen);
@@ -199,10 +188,39 @@ internal static class SqlGuard
         }
     }
 
-    private static Expression? Rewritten(Expression expression) =>
-        expression is Expression.BinaryOp { Op: BinaryOperator.StringConcat, Left: var left, Right: var right }
-            && new Parser().ParseSql($"SELECT {SqlProgram.Concat}({left.ToSql()}, {right.ToSql()})", new SQLiteDialect())
-                is [Statement.Select { Query.Body: SetExpression.SelectExpression { Select.Projection: [SelectItem.UnnamedExpression { Expression: var call }] } }]
+    // A list's items, and the items of nested lists (the rows of VALUES).
+    private static void ConcatList(System.Collections.IList list, HashSet<object> seen)
+    {
+        for (var i = 0; i < list.Count; i++)
+        {
+            if (list[i] is System.Collections.IList nested)
+            {
+                ConcatList(nested, seen);
+            }
+            else if (list[i] is { } item && item.GetType().Namespace?.StartsWith("SqlParser", StringComparison.Ordinal) == true)
+            {
+                Concat(item, seen);
+                if (item is Expression element && Rewritten(element) is { } replaced)
+                {
+                    list[i] = replaced;
+                }
+            }
+        }
+    }
+
+    // Also a '…' literal holding two adjacent quotes: SqlParserCS escapes a quote unless the next one is a quote too, so it
+    // renders the value it''s as 'it''s' and SQLite reads it's. Its quote-free pieces are joined with char(39) instead.
+    private static Expression? Rewritten(Expression expression) => expression switch
+    {
+        Expression.BinaryOp { Op: BinaryOperator.StringConcat, Left: var left, Right: var right } => Call($"{SqlProgram.Concat}({left.ToSql()}, {right.ToSql()})"),
+        Expression.LiteralValue { Value: Value.SingleQuotedString { Value: var text } } when text.Contains("''", StringComparison.Ordinal) =>
+            Call(text.Split('\'').Skip(1).Aggregate("'" + text.Split('\'')[0] + "'", (joined, piece) => $"{SqlProgram.Concat}({SqlProgram.Concat}({joined}, char(39)), '{piece}')")),
+        _ => null,
+    };
+
+    private static Expression? Call(string sql) =>
+        new Parser().ParseSql($"SELECT {sql}", new SQLiteDialect())
+            is [Statement.Select { Query.Body: SetExpression.SelectExpression { Select.Projection: [SelectItem.UnnamedExpression { Expression: var call }] } }]
             ? call
             : null;
 
