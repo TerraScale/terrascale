@@ -22,7 +22,7 @@ public static class AuthMetrics
 
     private static readonly Counter<long> Emails = Meter.CreateCounter<long>("ts_auth.emails", description: "Transactional email deliveries by outcome.");
 
-    /// <summary>Records a sign-in attempt. <paramref name="method"/> is hosted_code, hosted_password or hosted_sign_up.</summary>
+    /// <summary>Records a sign-in attempt. <paramref name="method"/> is hosted_code, hosted_password, hosted_sign_up or hosted_social.</summary>
     public static void SignIn(string method, string outcome) =>
         SignIns.Add(1, new KeyValuePair<string, object?>("method", method), new KeyValuePair<string, object?>("outcome", outcome));
 

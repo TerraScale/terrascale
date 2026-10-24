@@ -87,6 +87,15 @@ case SignInStep.Email:
 }
 </div>
 </form>
+@if (Model.Theme.Providers.Count > 0)
+{
+<div class="actions">
+@foreach (var provider in Model.Theme.Providers)
+{
+<a class="btn secondary" href="@Model.Link("social/" + provider)">Continue with @TerraScale.Authentication.Features.ProjectTenants.SocialProviders.Label(provider)</a>
+}
+</div>
+}
 <div class="row">
 @if (Model.Theme.Password)
 {
@@ -172,6 +181,15 @@ case SignInStep.SignUp:
 </div>
 <button type="submit">Create account</button>
 </form>
+@if (Model.Theme.Providers.Count > 0)
+{
+<div class="actions">
+@foreach (var provider in Model.Theme.Providers)
+{
+<a class="btn secondary" href="@Model.Link("social/" + provider)">Continue with @TerraScale.Authentication.Features.ProjectTenants.SocialProviders.Label(provider)</a>
+}
+</div>
+}
 <p class="alt">Already have an account? <a href="@Model.Link("sign-in")">Sign in</a></p>
 break;
 case SignInStep.SignUpCode:
