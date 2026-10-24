@@ -4,6 +4,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Fast.Storage;
 using TerraBase.Primitives;
+using TerraBase.Testing;
 using ReplicaCluster = TerraBase.Fast.Replication.PeerStreamTests.Cluster;
 
 namespace TerraBase.Fast.Replication;
@@ -73,7 +74,7 @@ public sealed class HealthyRewriteRefillTests
 
     private static string? Scalar(string path, string sql)
     {
-        using var connection = new Turso.TursoConnection($"Data Source={path}");
+        using var connection = new Turso.TursoConnection(TestMasterKey.ConnectionString(path));
         connection.Open();
         using var command = connection.CreateCommand();
         command.CommandText = sql;

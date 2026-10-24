@@ -69,8 +69,11 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                     throw new RewriteRefusedException("the copied cut precedes the requested commit offset");
                 }
 
-                // Renews the incarnation and syncs the copy, which then stands alone.
-                var target = await TursoDatabaseStore.InitializeAsync(key.Database, scratch, Io, _pragmas, cancellationToken).ConfigureAwait(false);
+                // Retain the key in place: a crash's old or new file must open with the same durable sidecar.
+                // Unlike a separate database copy, a healthy rewrite is not a data-key rotation.
+                var connectionString = new global::Turso.Data.Sqlite.SqliteConnectionStringBuilder(
+                    await store.ConnectionStringAsync(Io, cancellationToken).ConfigureAwait(false)) { DataSource = scratch }.ToString();
+                var target = await TursoDatabaseStore.InitializeAsync(key.Database, scratch, Io, _pragmas, connectionString, cancellationToken).ConfigureAwait(false);
                 try
                 {
                     await Io.RunAsync(() =>
@@ -125,7 +128,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         RejectDatabaseLinks(scratch);
         foreach (var file in new[] { path, scratch })
         {
-            foreach (var sidecar in Sidecars)
+            foreach (var sidecar in Sidecars.Where(sidecar => sidecar != DatabaseKeys.Suffix))
             {
                 // A log or journal still holding frames belongs to its file: never removed.
                 if (new FileInfo(file + sidecar) is { Exists: true } log && log.Length != 0 && sidecar != "-shm")
@@ -135,10 +138,10 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
             }
         }
 
-        DeleteSidecars(path);
+        DeleteSidecars(path, keepKey: true);
         _checkpoint("rewrite.old_log_removed", step);
         DirectorySync(directory);
-        DeleteSidecars(scratch);
+        DeleteSidecars(scratch, keepKey: true);
         _checkpoint("rewrite.replacing", step);
         File.Move(scratch, path, overwrite: true);
         renamed = true;

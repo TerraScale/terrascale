@@ -1604,10 +1604,10 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         DeleteSidecars(path);
     }
 
-    private void DeleteSidecars(string path)
+    private void DeleteSidecars(string path, bool keepKey = false)
     {
         RejectDatabaseLinks(path);
-        foreach (var sidecar in Sidecars)
+        foreach (var sidecar in Sidecars.Where(sidecar => !keepKey || sidecar != DatabaseKeys.Suffix))
         {
             RejectLink(path + sidecar);
             DeleteFileIfPresent(path + sidecar);

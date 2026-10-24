@@ -1246,7 +1246,13 @@ internal sealed partial class TursoDatabaseStore(
         var connectionString = File.Exists(path)
             ? await encryption.ExistingAsync(path, io, cancellationToken).ConfigureAwait(false)
             : await encryption.CreateAsync(path, io, cancellationToken).ConfigureAwait(false);
-        return await io.RunAsync(() =>
+        return await InitializeAsync(name, path, io, pragmas, connectionString, cancellationToken).ConfigureAwait(false);
+    }
+
+    // A healthy rewrite retains the original key so the single-file rename is also atomic with respect to its key.
+    internal static Task<Ulid> InitializeAsync(
+        string name, string path, TursoIoPool io, string pragmas, string connectionString, CancellationToken cancellationToken) =>
+        io.RunAsync(() =>
         {
             Ulid incarnation;
             using (var connection = new SqliteConnection(connectionString))
@@ -1270,8 +1276,7 @@ internal sealed partial class TursoDatabaseStore(
             using var file = File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite);
             RandomAccess.FlushToDisk(file);
             return incarnation;
-        }, cancellationToken).ConfigureAwait(false);
-    }
+        }, cancellationToken);
 
     // The caller holds an admission.
     internal async Task BootstrapAsync(CancellationToken cancellationToken)

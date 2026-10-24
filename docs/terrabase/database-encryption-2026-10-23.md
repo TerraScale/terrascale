@@ -60,6 +60,12 @@ backup before retiring the original file and wrapped key. Coordinate that
 cutover with the deployment owner; do not replace the key sidecar on an
 existing encrypted database, whose pages still require the original key.
 
+A healthy history-erasure rewrite retains the database's existing data key and
+wrapped-key sidecar. Its replacement pages are encrypted under that key, so
+an atomic database rename always leaves a usable file/key pair, including
+after a crash. The private rewrite scratch has no independent key sidecar.
+This operation removes old physical history; it does not rotate the data key.
+
 There is no in-place rekey endpoint. Changing the master key's Vault version
 alone is not a rotation procedure: existing wrapped keys still require the
 old master. Master-key rotation requires separately reviewed offline

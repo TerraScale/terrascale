@@ -168,7 +168,7 @@ internal sealed partial class TursoStorageEngine : IRebuildStorage
     public async ValueTask<string> CopyForSalvageAsync(string sidePath, CancellationToken cancellationToken)
     {
         var working = sidePath + ".salvage";
-        return await RunSalvageAsync(sidePath, operation =>
+        return await RunSalvageAsync(sidePath, operation => Io.RunAsync(() =>
         {
             _checkpoint("rebuild.salvage_copy", operation.Database);
             // The retained side copy is only read by copies, never opened in place.
@@ -182,7 +182,7 @@ internal sealed partial class TursoStorageEngine : IRebuildStorage
             }
 
             return working;
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken), cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<IReadOnlyList<SideRow>> MeasureSideAsync(
@@ -505,12 +505,12 @@ internal sealed partial class TursoStorageEngine : IRebuildStorage
     }
 
     // An unpooled connection on a private working copy (never on the retained side copy).
-    private static SqliteConnection Working(string workingPath, SalvageOperation operation)
+    private static SqliteConnection Working(string workingPath, string connectionString, SalvageOperation operation)
     {
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = workingPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString());
+        var connection = new SqliteConnection(connectionString);
         try
         {
-            connection.Open();
+            TursoSession.OpenExisting(connection, workingPath);
             return connection;
         }
         catch
