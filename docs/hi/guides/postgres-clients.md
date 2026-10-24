@@ -18,6 +18,10 @@ Checked on 2026-10-23 against production (`pg.terrascale.tech`) with `psql` 18, 
 
 ## Connection URL
 
+::: warning Dashboard credentials are not accepted yet
+`pg.terrascale.tech` checks the password against TerraBase-internal keys. Customers cannot obtain those keys. API keys from the dashboard's **API keys** page, and the access tokens exchanged from them, fail with `28P01 password authentication failed`. Support for access tokens as the password is in progress; this page will document it once it is live. Until then, use [SQL over HTTP](/hi/guides/sql-http) (`POST /sql`) with your API key.
+:::
+
 ```text
 postgresql://{label}:{api-key}@pg.terrascale.tech:5432/{database}?sslmode=require
 ```
@@ -25,7 +29,7 @@ postgresql://{label}:{api-key}@pg.terrascale.tech:5432/{database}?sslmode=requir
 | Part | Value |
 | --- | --- |
 | `{label}` | Any user name. TerraBase ignores it; use it to tell your applications apart in your own logs. |
-| `{api-key}` | The API key you create on the dashboard's **API keys** page. It is the password. |
+| `{api-key}` | The password. See the note above for the credential it accepts today. |
 | `{database}` | The database name in the key's project. With an organization-wide key, use `{projectId}/{name}`, written `{projectId}%2F{name}` in a URL. |
 | `sslmode=require` | Required. TLS is mandatory and plaintext connections are refused. |
 
