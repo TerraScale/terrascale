@@ -19,6 +19,10 @@ internal sealed class TestTerraBasePlans(IHttpClientFactory fallback, TestDataba
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var uri = request.RequestUri!;
+        // A TerraBase without the organization plan route: the publisher falls back to each enrolled project.
+        if (uri.AbsolutePath.Split('/') is ["", "admin", "organizations", var organization, "plan"] && TerraScaleIds.IsValid(organization) &&
+            request.Method == HttpMethod.Put && uri.Query.Length == 0)
+            return new(HttpStatusCode.NotFound);
         if (uri.GetLeftPart(UriPartial.Authority) != origin.GetLeftPart(UriPartial.Authority) || uri.Query.Length != 0 ||
             uri.AbsolutePath.Split('/') is not ["", "admin", "projects", var project, "plan"] || !TerraScaleIds.IsValid(project) ||
             request.Method != HttpMethod.Put || request.Headers.Authorization is not null ||
@@ -26,7 +30,7 @@ internal sealed class TestTerraBasePlans(IHttpClientFactory fallback, TestDataba
             throw new InvalidOperationException("Unexpected private TerraBase plan request.");
         using var body = JsonDocument.Parse(await request.Content.ReadAsStringAsync(cancellationToken));
         if (body.RootElement.ValueKind != JsonValueKind.Object || body.RootElement.EnumerateObject().Count() != 1 ||
-            !body.RootElement.TryGetProperty("plan", out var value) || value.GetString() is not ("hobby" or "starter" or "pro" or "enterprise"))
+            !body.RootElement.TryGetProperty("plan", out var value) || value.GetString() is not ("hobby" or "starter" or "pro" or "team" or "enterprise"))
             throw new InvalidOperationException("Unexpected TerraBase plan body.");
         var scope = new DatabaseScope("", "", "", "", project, "");
         var home = (await databases.RegionsAsync(cancellationToken))[0];

@@ -81,13 +81,15 @@ public static class BackupEndpoints
         if (export)
             try { exports = await http.RequestServices.GetRequiredService<BackupService>().ExportAsync(context, database.Id, http.RequestAborted); }
             catch (Exception failure) when (KnownFailure(failure) &&
-                (failure is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested)) { }
+                (failure is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
+            { }
         if (exports?.Schedule.LastRun is { Status: "failed" } failed && context.Role == "owner") await NotifyFailedExportAsync(http, context, database, failed);
         var form = http.Request.HasFormContentType ? await http.Request.ReadFormAsync(http.RequestAborted) : null;
         return new(ShellModel.For(http, context, database.Name + " · backups"), database, listing, unavailable, error,
             form?["backupId"].ToString() ?? http.Request.Query["restore"].ToString(), form?["name"].ToString() ?? http.Request.Query["name"].ToString(),
             form is not null && form.ContainsKey("fullBackupCron") ? form["fullBackupCron"].ToString() : null,
-            form is not null && form.ContainsKey("retentionDays") ? form["retentionDays"].ToString() : null) { Export = exports, ExportRead = export };
+            form is not null && form.ContainsKey("retentionDays") ? form["retentionDays"].ToString() : null)
+        { Export = exports, ExportRead = export };
     }
 
     // A failed scheduled export reaches the owner's inbox once: the run's start time identifies it.
@@ -97,8 +99,19 @@ public static class BackupEndpoints
         return http.RequestServices.GetRequiredService<AccountService>().UpdateAccountAsync(context.Session, account =>
         {
             if (account.Notifications.Any(item => item.Type == "export-failed" && item.Url == url && item.CreatedAt == run.StartedAt)) return;
-            account.Notifications.Add(new() { Id = AccountService.NewId(), OrganizationId = context.Organization!.Id, ProjectId = context.Project!.Id, Type = "export-failed",
-                Title = "Scheduled export failed", Body = database.Name + ": " + (run.Error ?? "TerraBase did not report the reason."), Severity = "warning", Status = "unread", Url = url, CreatedAt = run.StartedAt });
+            account.Notifications.Add(new()
+            {
+                Id = AccountService.NewId(),
+                OrganizationId = context.Organization!.Id,
+                ProjectId = context.Project!.Id,
+                Type = "export-failed",
+                Title = "Scheduled export failed",
+                Body = database.Name + ": " + (run.Error ?? "TerraBase did not report the reason."),
+                Severity = "warning",
+                Status = "unread",
+                Url = url,
+                CreatedAt = run.StartedAt
+            });
         }, http.RequestAborted);
     }
     internal static bool KnownFailure(Exception error) => DatabaseResults.KnownFailure(error) || error is HttpRequestException or JsonException or OperationCanceledException;
