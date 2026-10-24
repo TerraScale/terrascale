@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -109,6 +110,7 @@ internal sealed class AckPrototype : IAsyncDisposable
         }
 
         File.Delete(file);
+        File.Delete(file + DatabaseKeys.Suffix);
         return (ids, position, segments);
     }
 

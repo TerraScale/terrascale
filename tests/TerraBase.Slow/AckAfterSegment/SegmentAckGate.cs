@@ -1,5 +1,6 @@
 using System.Globalization;
 using TerraBase.Engine;
+using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 
@@ -79,13 +80,19 @@ internal sealed class SegmentAckGate : IAsyncDisposable
             var path = Path.Combine(scratch, $"snapshot-{Guid.NewGuid():N}.db");
             // Changes committed before the pin are in the copy itself: the generation's log starts after it, at 0.
             _ = await tap.SnapshotAsync(Stream.Null, path, cancellationToken).ConfigureAwait(false);
-            await using (var file = File.OpenRead(path))
+            var bundle = path + ".snapshot";
+            await using (var file = new FileStream(bundle, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
             {
+                // Keep the wrapped key and encrypted pages together, as the production backup does.
+                await SnapshotBundle.WriteAsync(path, file, cancellationToken).ConfigureAwait(false);
+                file.Position = 0;
                 gate.SnapshotBytes = file.Length;
                 await gate.StoreAsync($"{prefix}/snapshot", file, cancellationToken).ConfigureAwait(false);
             }
 
+            File.Delete(bundle);
             File.Delete(path);
+            File.Delete(path + DatabaseKeys.Suffix);
             gate.SnapshotStall = time.GetElapsedTime(started);
             gate._flusher = Task.Run(gate.FlushAsync, CancellationToken.None);
             return gate;
