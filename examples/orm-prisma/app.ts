@@ -38,7 +38,9 @@ try {
     prisma.author.create({ data: { name: 'Dup', email: 'ada@example.com' } }), // unique violation
   ])
 } catch (error) {
-  console.log('rolled back:', (error as { code?: string }).code)
+  // Over libSQL HTTP a unique violation is P2039 carrying SQLITE_CONSTRAINT_UNIQUE, not P2002.
+  const { code, message } = error as { code?: string; message: string }
+  console.log('rolled back:', code, message.includes('SQLITE_CONSTRAINT_UNIQUE') ? 'SQLITE_CONSTRAINT_UNIQUE' : '')
 }
 console.log('authors:', (await prisma.author.findMany()).map((a) => a.name))
 

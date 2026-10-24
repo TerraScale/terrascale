@@ -157,7 +157,7 @@ await prisma.$transaction(async (tx) => {
   await tx.post.update({ where: { id: draft.id }, data: { authorId: grace.id } })
 })
 
-// Batch: a unique violation (P2002) rolls back both creates.
+// Batch: the unique violation rolls back both creates.
 await prisma.$transaction([
   prisma.author.create({ data: { name: 'Linus', email: 'linus@example.com' } }),
   prisma.author.create({ data: { name: 'Dup', email: 'ada@example.com' } }),
@@ -165,6 +165,8 @@ await prisma.$transaction([
 ```
 
 Transactions are optimistic: a commit that conflicts with another writer fails, and nothing is written. Retry the whole transaction.
+
+`@libsql/client` does not pass SQLite's numeric error codes over HTTP, so the adapter cannot map constraint errors to Prisma codes. A unique violation arrives as `P2039`, with `SQLITE_CONSTRAINT_UNIQUE` in `error.meta.driverAdapterError.cause.originalMessage`, not as `P2002`. This happens with any libSQL server over HTTP.
 
 ## Limits
 

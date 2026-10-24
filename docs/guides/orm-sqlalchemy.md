@@ -139,11 +139,13 @@ try:
     with Session(engine) as session, session.begin():
         session.add(Author(name="Linus", email="linus@example.com"))
         session.add(Author(name="Dup", email="ada@example.com"))  # unique violation
-except IntegrityError:
+except (IntegrityError, ValueError) as error:
     pass  # nothing was written
 ```
 
 Transactions are optimistic: a commit that conflicts with another writer fails with `SQLITE_BUSY`, and nothing is written. Retry the whole transaction.
+
+The `libsql-experimental` driver under `sqlalchemy-libsql` raises a plain `ValueError` for database errors, with the SQLite code in the message (for example `SQLITE_CONSTRAINT_UNIQUE`). It does not raise a DB-API error, so SQLAlchemy cannot turn it into `IntegrityError`. Catch both, and check the message when you need the code.
 
 ## Limits
 

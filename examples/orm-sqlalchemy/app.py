@@ -37,8 +37,9 @@ try:
     with Session(engine) as session, session.begin():
         session.add(Author(name="Linus", email="linus@example.com"))
         session.add(Author(name="Dup", email="ada@example.com"))  # unique violation
-except IntegrityError as error:
-    print("rolled back:", type(error.orig).__name__)
+except (IntegrityError, ValueError) as error:
+    # libsql-experimental raises ValueError with the SQLite code in the message, not a DB-API IntegrityError.
+    print("rolled back:", "SQLITE_CONSTRAINT_UNIQUE" if "SQLITE_CONSTRAINT_UNIQUE" in str(error) else error)
 
 with Session(engine) as session:
     print("authors:", session.scalars(select(Author.name)).all())
