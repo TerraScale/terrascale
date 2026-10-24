@@ -55,6 +55,32 @@ public sealed class ProjectSessionPolicyTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    public async Task Administrative_session_pages_show_current_policy_expiry_and_exclude_policy_expired_sessions()
+    {
+        var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var (ownerToken, project) = await ProjectAsync(oidc);
+        await ConfigureAsync(oidc, ownerToken, project, 1200);
+        var users = oidc.Server.App.Services.GetRequiredService<Users>();
+        var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
+        var user = (await users.CreateAsync(project, new Faker().Internet.Email()))!;
+        var issued = await sessions.CreateAsync(user);
+        await ConfigureAsync(oidc, ownerToken, project, 300);
+        var listed = await oidc.OkAsync(HttpMethod.Get, $"/v1/{project}/sessions?user={user.Id}", ownerToken);
+        await Assert.That(listed.GetProperty("items").GetArrayLength()).IsEqualTo(1);
+        await Assert.That(listed.GetProperty("items")[0].GetProperty("expires_at").GetDateTimeOffset())
+            .IsEqualTo(issued.Session.CreatedAt.AddSeconds(300));
+
+        clock.UtcNow = issued.Session.CreatedAt.AddSeconds(301);
+        ownerToken = await RenewOwnerAsync(oidc, ownerToken);
+        listed = await oidc.OkAsync(HttpMethod.Get, $"/v1/{project}/sessions?user={user.Id}", ownerToken);
+        await Assert.That(listed.GetProperty("items").GetArrayLength()).IsEqualTo(0);
+        await sessions.CreateAsync(user);
+        listed = await oidc.OkAsync(HttpMethod.Get, $"/v1/{project}/sessions?user={user.Id}", ownerToken);
+        await Assert.That(listed.GetProperty("items").GetArrayLength()).IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task Policy_expired_code_and_refresh_grants_cannot_revive_after_a_policy_increase(bool refresh)

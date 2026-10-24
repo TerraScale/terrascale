@@ -44,7 +44,8 @@ thirty days), default 1209600. Project policy is isolated from the TerraScale
 platform tenant. A reduced policy takes effect at the next session or grant
 check. Once observed, a shortened browser session expiry is persisted; an
 expired OAuth authorization is revoked, so increasing the policy cannot revive
-that sign-in. Existing access tokens retain their issued short expiry. Redirects are exact absolute HTTPS URLs (HTTP is allowed only
+that sign-in. Administrative session lists display the current effective expiry
+and exclude sessions outside that policy. Existing access tokens retain their issued short expiry. Redirects are exact absolute HTTPS URLs (HTTP is allowed only
 for loopback development), without fragments or userinfo; at most 100. A nonempty
 project list restricts registered OAuth client redirects further. An empty list
 adds no project restriction: it never permits unregistered OAuth redirects.

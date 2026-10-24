@@ -10,7 +10,7 @@ public sealed class ListProjectSessionsEndpoint(TenantDirectory tenants, Platfor
     public override void Configure()
     {
         Get(Root + "/sessions");
-        this.Document("list_project_sessions", "List live sessions", "Unrevoked, unexpired sessions of enabled users, of one user when user is set; limit is 1 to 100 (default 50) and after the previous page's next. Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(ProjectSessionPageBody), paged: true);
+        this.Document("list_project_sessions", "List live sessions", "Unrevoked sessions of enabled users within both their issued expiry and the current project lifetime, with the earlier effective expiry returned, of one user when user is set; limit is 1 to 100 (default 50) and after the previous page's next. Needs the viewer project role.", "Project tenants", null, StatusCodes.Status200OK, typeof(ProjectSessionPageBody), paged: true);
     }
 
     /// <inheritdoc />
