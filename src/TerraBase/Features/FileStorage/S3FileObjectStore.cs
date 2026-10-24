@@ -22,12 +22,15 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
         var r2 = settings.Endpoint.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase);
         if (!r2 && settings.Endpoint.Host != "fly.storage.tigris.dev")
             throw new TerraBaseConfigurationException("app files require R2 or the Tigris integration-test store");
-        if (!r2 && !environment.IsDevelopment())
-            throw new TerraBaseConfigurationException("production app files require R2");
+        // Do not disrupt existing backups when app-file R2 credentials have not reached this node yet.
+        // App-file operations fail closed; production never sends customer files to Tigris.
+        if (!r2 && !environment.IsDevelopment()) return;
         _testBucket = r2 ? null : settings.Bucket;
         _client = new AmazonS3Client(new BasicAWSCredentials(settings.AccessKeyId, settings.SecretKey), new AmazonS3Config
         {
-            ServiceURL = settings.Endpoint.ToString(), AuthenticationRegion = settings.Region, ForcePathStyle = true,
+            ServiceURL = settings.Endpoint.ToString(),
+            AuthenticationRegion = settings.Region,
+            ForcePathStyle = true,
             RequestChecksumCalculation = RequestChecksumCalculation.WHEN_REQUIRED,
             ResponseChecksumValidation = ResponseChecksumValidation.WHEN_REQUIRED,
         });
@@ -41,8 +44,11 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         var request = new GetPreSignedUrlRequest
         {
-            BucketName = Bucket(region), Key = key, Verb = HttpVerb.PUT,
-            Expires = file.UploadExpiresAt.UtcDateTime, ContentType = file.ContentType,
+            BucketName = Bucket(region),
+            Key = key,
+            Verb = HttpVerb.PUT,
+            Expires = file.UploadExpiresAt.UtcDateTime,
+            ContentType = file.ContentType,
         };
         request.Headers.ContentLength = file.Size;
         request.Headers["x-amz-checksum-sha256"] = file.Sha256;
@@ -62,11 +68,15 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
         var expires = _time.GetUtcNow().AddSeconds(60);
         var request = new GetPreSignedUrlRequest
         {
-            BucketName = Bucket(region), Key = key, Verb = HttpVerb.GET, Expires = expires.UtcDateTime,
+            BucketName = Bucket(region),
+            Key = key,
+            Verb = HttpVerb.GET,
+            Expires = expires.UtcDateTime,
             ResponseHeaderOverrides = new ResponseHeaderOverrides
             {
                 ContentDisposition = "attachment; filename*=UTF-8''" + Uri.EscapeDataString(file.Name),
-                ContentType = "application/octet-stream", CacheControl = "private, no-store",
+                ContentType = "application/octet-stream",
+                CacheControl = "private, no-store",
             },
         };
         return ValueTask.FromResult(new FileSignedUrl(file.Id, Client.GetPreSignedURL(request), expires, []));
