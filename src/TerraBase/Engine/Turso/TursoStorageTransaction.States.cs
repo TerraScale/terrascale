@@ -169,6 +169,7 @@ internal sealed partial class TursoStorageTransaction
         }
 
         PutTextRows(collection, id, body);
+        PutVectorRows(collection, id, body);
         var before = TableCommand(TursoStatements.RowBytes, collection, id).ExecuteScalar() as long?;
         (long Documents, long Bytes) delta;
         if (body is null)

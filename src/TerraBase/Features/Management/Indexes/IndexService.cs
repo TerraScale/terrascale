@@ -11,7 +11,7 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Management.Indexes;
 
 /// <remarks>Indexes live in the managed database's storage; recommendations come from the <see cref="QueryFieldUsage"/> records the SQL endpoint keeps.</remarks>
-internal sealed partial class IndexService(IStorageEngine engine, QueryFieldRecorder recorder, SystemCatalog catalog) : IIndexService
+internal sealed partial class IndexService(IStorageEngine engine, QueryFieldRecorder recorder, SystemCatalog catalog, VectorIndexBuilder builder) : IIndexService
 {
     private const int MaxNameLength = 63;
     private const int HashLength = 8;
@@ -22,8 +22,9 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
         return new IndexListBody([.. indexes.Where(index => collection is null || index.Collection == collection).Select(IndexBody.From)]);
     }
 
-    public ValueTask<CreateIndexResult> CreateAsync(TenantContext database, IndexDefinition index, CancellationToken cancellationToken) =>
-        WriteAsync<CreateIndexResult>(database, new NotFound(), async transaction =>
+    public async ValueTask<CreateIndexResult> CreateAsync(TenantContext database, IndexDefinition index, CancellationToken cancellationToken)
+    {
+        var result = await WriteAsync<CreateIndexResult>(database, new NotFound(), async transaction =>
         {
             var indexes = await transaction.ListIndexesAsync(cancellationToken).ConfigureAwait(false);
             if (indexes.Any(other => other.Name == index.Name || (other.Kind == index.Kind && other.Collection == index.Collection && other.Fields.SequenceEqual(index.Fields)))
@@ -32,8 +33,16 @@ internal sealed partial class IndexService(IStorageEngine engine, QueryFieldReco
                 return IndexErrors.Exists;
             }
 
-            return IndexBody.From(index);
-        }, cancellationToken);
+            // A vector index over existing documents answers "building" until the builder has added them.
+            return IndexBody.From((await transaction.ListIndexesAsync(cancellationToken).ConfigureAwait(false)).First(created => created.Name == index.Name));
+        }, cancellationToken).ConfigureAwait(false);
+        if (result is IndexBody { State: "building" })
+        {
+            builder.Start(database);
+        }
+
+        return result;
+    }
 
     public ValueTask<DropIndexResult> DropAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
         WriteAsync<DropIndexResult>(database, new NotFound(), async transaction =>

@@ -128,8 +128,10 @@ public sealed record CollectionStats(string Name, long Documents, long Bytes);
 /// <param name="Name">Index name: a lowercase letter, then lowercase letters, digits or <c>_</c>, at most 63 characters; unique per database.</param>
 /// <param name="Collection">Indexed collection.</param>
 /// <param name="Fields">Key fields in order, 1 to 4.</param>
-/// <param name="Kind"><c>btree</c> or <c>text</c>.</param>
-public sealed record IndexDefinition(string Name, string Collection, IReadOnlyList<DocumentField> Fields, string Kind = "btree");
+/// <param name="Kind"><c>btree</c>, <c>text</c> or <c>vector</c>.</param>
+/// <param name="Dimensions">Vector length of a <c>vector</c> index (one field), 1 to 4096; 0 otherwise.</param>
+/// <param name="Building">A vector index still adding the documents that existed when it was created.</param>
+public sealed record IndexDefinition(string Name, string Collection, IReadOnlyList<DocumentField> Fields, string Kind = "btree", int Dimensions = 0, bool Building = false);
 
 /// <summary>How the engine would run a <see cref="SqlQuery"/>.</summary>
 /// <param name="Steps">Engine-specific plan steps, one per line.</param>

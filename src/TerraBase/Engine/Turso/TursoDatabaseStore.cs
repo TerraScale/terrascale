@@ -114,6 +114,7 @@ internal sealed partial class TursoDatabaseStore(
         CREATE TABLE "_collections" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
         CREATE TABLE "_indexes" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
         CREATE TABLE _tb_text_indexes (name TEXT PRIMARY KEY, collection TEXT NOT NULL, fields TEXT NOT NULL);
+        CREATE TABLE _tb_vector_indexes (name TEXT PRIMARY KEY, collection TEXT NOT NULL, field TEXT NOT NULL, dimensions INTEGER NOT NULL, built TEXT);
         CREATE TABLE "_unique" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
         CREATE TABLE _tb_state (
             collection TEXT NOT NULL, id TEXT NOT NULL, bucket INTEGER NOT NULL, state TEXT NOT NULL,
