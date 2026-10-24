@@ -59,6 +59,12 @@ public static class OidcIssuer
     /// <summary>The winning authentication-state identity, independent of concurrent equal numeric epochs.</summary>
     public const string StateClaim = "ts_auth_state";
 
+    /// <summary>
+    /// Present (value <c>totp</c>) in codes, refresh tokens and sign-in access tokens whose sign-in proved the user's second
+    /// factor. An account with an active factor accepts only these; activating or removing a factor advances the epoch.
+    /// </summary>
+    public const string MfaClaim = "ts_auth_mfa";
+
     /// <summary>The discovery document's path under a tenant's issuer.</summary>
     public const string ConfigurationPath = ".well-known/openid-configuration";
 

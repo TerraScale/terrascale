@@ -50,6 +50,7 @@
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
     <PackageReference Include="OpenIddict.Server.AspNetCore" />
     <PackageReference Include="Otp.NET" />
+    <PackageReference Include="QRCoder" />
   </ItemGroup>
 
   <ItemGroup>

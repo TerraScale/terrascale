@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet;
@@ -87,10 +88,13 @@ public sealed record Page<T>(IReadOnlyList<T> Items, string? Next);
 /// and every write that gives or takes a project role rewrites or deletes it, so a removal and a grant never both
 /// succeed on stale reads. A lost race is read and checked again, at most four times.
 /// </remarks>
-public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider clock, ILogger<PlatformDirectory> logger)
+public sealed class PlatformDirectory(AuthStore store, Users users, TotpCredentials mfa, TimeProvider clock, ILogger<PlatformDirectory> logger)
 {
     /// <summary>The platform tenant; organizations exist only there.</summary>
     public const string Instance = OidcIssuer.InstanceId;
+
+    /// <summary>The 403 code for a member without an active second factor in an organization that requires one.</summary>
+    public const string MfaRequiredCode = "mfa_required";
 
     /// <summary>How long an ownership transfer waits for its nominee.</summary>
     public static readonly TimeSpan TransferLifetime = TimeSpan.FromDays(7);
@@ -160,7 +164,64 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
             throw NotFound();
         }
 
+        await this.RequireMfaAsync(organization.Value, userId, cancellationToken).ConfigureAwait(false);
         return new(organization, membership);
+    }
+
+    /// <summary>
+    /// Sets whether members need an active second factor to reach the organization; needs owner. Turning it on also
+    /// needs the caller's own factor, so the policy never locks out the owner who set it.
+    /// </summary>
+    public Task<OrganizationRecord> SetMfaPolicyAsync(string userId, string organizationId, bool require, CancellationToken cancellationToken) =>
+        this.CommitAsync(async () =>
+        {
+            var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+            RequireRole(access, Roles.Owner);
+            if (require && !(await mfa.StatusAsync(Instance, userId, cancellationToken).ConfigureAwait(false)).Enabled)
+            {
+                throw Conflict("mfa_not_enrolled", "Turn on two-factor authentication for your own account first.");
+            }
+
+            var changed = access.Organization.Value with { RequireMfa = require };
+            return new Plan<OrganizationRecord>(
+            [
+                Authority(access, Roles.Owner),
+                AuthStore.Replace(AuthStore.OrganizationCollection, Instance, organizationId, Serialize(changed, PlatformJson.Default.OrganizationRecord), access.Organization.Version),
+                this.Audit(organizationId, userId, require ? "organization.mfa_required" : "organization.mfa_optional"),
+            ], changed);
+        }, cancellationToken);
+
+    /// <summary>Records a change to the user's own second factor in every organization it belongs to; best effort.</summary>
+    public async Task AuditFactorAsync(string userId, string action, CancellationToken cancellationToken)
+    {
+        string? after = null;
+        try
+        {
+            do
+            {
+                var page = await this.PageAsync(AuthStore.MembershipCollection, [Equal("/userId", userId)], PlatformJson.Default.MembershipRecord, "/organizationId", 100, after, cancellationToken).ConfigureAwait(false);
+                foreach (var membership in page.Items.Where(item => item.Value.UserId == userId))
+                {
+                    await store.TransactAsync([this.Audit(membership.Value.OrganizationId, userId, action, userId)], cancellationToken).ConfigureAwait(false);
+                }
+
+                after = page.Next;
+            }
+            while (after is not null);
+        }
+        catch (Exception error) when (error is HttpRequestException or TimeoutException or ApiException)
+        {
+            logger.ZLogWarning($"Could not record {action:@Action} in a user's organizations ({error.GetType().Name:@Error})");
+        }
+    }
+
+    // A member of an organization that requires a second factor reaches it only with an active factor of its own.
+    private async Task RequireMfaAsync(OrganizationRecord organization, string userId, CancellationToken cancellationToken)
+    {
+        if (organization.RequireMfa && !(await mfa.StatusAsync(Instance, userId, cancellationToken).ConfigureAwait(false)).Enabled)
+        {
+            throw new ApiException(StatusCodes.Status403Forbidden, MfaRequiredCode, "This organization requires two-factor authentication. Turn it on at /ui/terrascale/security.");
+        }
     }
 
     /// <summary>Renames an organization; needs admin.</summary>
@@ -436,7 +497,13 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
 
         var membership = await membershipRead.ConfigureAwait(false);
         var grant = await grantRead.ConfigureAwait(false);
-        return membership?.Value.Role is null && grant is null ? throw NotFound() : new(membership, organization, project, grant);
+        if (membership?.Value.Role is null && grant is null)
+        {
+            throw NotFound();
+        }
+
+        await this.RequireMfaAsync(organization.Value, userId, cancellationToken).ConfigureAwait(false);
+        return new(membership, organization, project, grant);
     }
 
     /// <summary>Renames a project; needs the project's admin role. Names stay unique in the organization, ignoring case.</summary>

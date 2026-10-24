@@ -37,7 +37,7 @@ public sealed class PrimaryUserTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Only_the_current_epoch_of_an_existing_user_without_an_active_factor_passes()
+    public async Task Only_the_current_epoch_of_an_existing_user_passes_and_an_active_factor_needs_its_proof()
     {
         var (_, database) = await fixture.CreateDatabaseAsync();
         var clock = new StoreTestClock();
@@ -45,18 +45,20 @@ public sealed class PrimaryUserTests(TerraBaseFixture fixture)
         var user = (await new Users(store, clock).CreateAsync(Instance, "bob@example.test"))!;
         var mfa = Credentials(store, clock);
 
-        await Assert.That(await mfa.PrimaryUserAsync(Instance, user.Id, Epoch(user) + "1", user.AuthStamp)).IsNull();
-        await Assert.That(await mfa.PrimaryUserAsync(Instance, user.Id, null, user.AuthStamp)).IsNull();
-        await Assert.That(await mfa.PrimaryUserAsync("other-instance", user.Id, Epoch(user), user.AuthStamp)).IsNull();
-        await Assert.That(await mfa.PrimaryUserAsync(Instance, "not-an-id", Epoch(user), user.AuthStamp)).IsNull();
-        await Assert.That(await mfa.PrimaryUserAsync(Instance, user.Id, Epoch(user), "another-stamp")).IsNull();
+        await Assert.That(await mfa.PrimaryUserAsync(Instance, user.Id, Epoch(user) + "1", user.AuthStamp, false)).IsNull();
+        await Assert.That(await mfa.PrimaryUserAsync(Instance, user.Id, null, user.AuthStamp, false)).IsNull();
+        await Assert.That(await mfa.PrimaryUserAsync("other-instance", user.Id, Epoch(user), user.AuthStamp, false)).IsNull();
+        await Assert.That(await mfa.PrimaryUserAsync(Instance, "not-an-id", Epoch(user), user.AuthStamp, false)).IsNull();
+        await Assert.That(await mfa.PrimaryUserAsync(Instance, user.Id, Epoch(user), "another-stamp", false)).IsNull();
         await Assert.That(await mfa.AllowsPrimaryAuthenticationAsync(user with { AuthEpoch = user.AuthEpoch + 1 })).IsFalse();
 
         // A pending enrollment still permits primary authentication; an active factor does not.
         var pending = (await mfa.BeginAsync(user))!;
-        await Assert.That((await mfa.PrimaryUserAsync(Instance, user.Id, Epoch(user), user.AuthStamp))?.Id).IsEqualTo(user.Id);
+        await Assert.That((await mfa.PrimaryUserAsync(Instance, user.Id, Epoch(user), user.AuthStamp, false))?.Id).IsEqualTo(user.Id);
         var active = (await mfa.ConfirmAsync(user, new Totp(Base32Encoding.ToBytes(pending.Secret)).ComputeTotp(clock.UtcNow.UtcDateTime)))!;
-        await Assert.That(await mfa.PrimaryUserAsync(Instance, user.Id, Epoch(active.User), active.User.AuthStamp)).IsNull();
+        await Assert.That(await mfa.PrimaryUserAsync(Instance, user.Id, Epoch(active.User), active.User.AuthStamp, false)).IsNull();
+        // A token whose sign-in proved the factor passes and carries the proof.
+        await Assert.That((await mfa.PrimaryUserAsync(Instance, user.Id, Epoch(active.User), active.User.AuthStamp, true))?.MultiFactor).IsTrue();
         await Assert.That(await mfa.AllowsPrimaryAuthenticationAsync(active.User)).IsFalse();
     }
 

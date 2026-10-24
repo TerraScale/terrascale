@@ -2,10 +2,10 @@
 
 The internal slices implement TOTP and recovery-code persistence, atomic
 composition with the caller's authorization transition, and refusal of
-primary-only authentication for users with active MFA. The service
-does not expose enrollment or MFA sign-in endpoints yet, so no user can hold an
-active factor. MFA enrollment, the hosted MFA challenge, WebAuthn and
-organization policies follow in separate slices. Sign-in for the dashboard and
+primary-only authentication for users with active MFA. Hosted enrolment, the
+second-factor sign-in step and organization policies are described in
+[mfa-sign-in.md](mfa-sign-in.md); where the two differ, that file wins. WebAuthn
+follows in a separate slice. Sign-in for the dashboard and
 the ts CLI happens on ts-auth's hosted pages (HA1).
 
 ## Credential state

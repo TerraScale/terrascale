@@ -22,7 +22,7 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
     private const string Email = "alice@example.test";
 
     [Test]
-    [Arguments("active", HttpStatusCode.Unauthorized)]
+    [Arguments("active", HttpStatusCode.OK)]
     [Arguments("corrupt", HttpStatusCode.ServiceUnavailable)]
     [Arguments("unavailable", HttpStatusCode.ServiceUnavailable)]
     public async Task Hosted_verification_never_sets_a_cookie_for_active_corrupt_or_unavailable_factors(string factor, HttpStatusCode expected)
@@ -55,7 +55,8 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         await Assert.That(OidcHarness.SessionCookie(verify)).IsNull();
         if (factor == "active")
         {
-            await Assert.That(await verify.Content.ReadAsStringAsync()).Contains("<strong>That code is wrong or expired</strong>");
+            // The emailed code only reaches the second-factor step.
+            await Assert.That(await verify.Content.ReadAsStringAsync()).Contains("action=\"/ui/terrascale/sign-in/mfa\"");
         }
 
         await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.SessionCollection)).Items.Count).IsEqualTo(0);
