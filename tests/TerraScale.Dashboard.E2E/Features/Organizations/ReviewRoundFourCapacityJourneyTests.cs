@@ -346,6 +346,8 @@ public sealed class ReviewRoundFourCapacityJourneyTests
         public Task ConfirmOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => inner.ConfirmOwnershipTransferAsync(session, organizationId, cancellationToken);
         public Task CancelOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => inner.CancelOwnershipTransferAsync(session, organizationId, cancellationToken);
         public Task<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => inner.ListAuditEventsAsync(session, organizationId, cancellationToken);
-        public Task<bool> DeleteAccountAsync(SessionRecord session, CancellationToken cancellationToken) => inner.DeleteAccountAsync(session, cancellationToken);
+        public Task<bool> DeleteAccountAsync(SessionRecord session, string receipt, CancellationToken cancellationToken) => inner.DeleteAccountAsync(session, receipt, cancellationToken);
+        public Task<bool> AccountDeletionCompletedAsync(string receipt, CancellationToken cancellationToken) => inner.AccountDeletionCompletedAsync(receipt, cancellationToken);
+        public Task<bool> AccountDeletionOrganizationCompletedAsync(string receipt, string organizationId, CancellationToken cancellationToken) => inner.AccountDeletionOrganizationCompletedAsync(receipt, organizationId, cancellationToken);
     }
 }

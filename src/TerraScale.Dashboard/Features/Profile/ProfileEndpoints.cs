@@ -1,5 +1,6 @@
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Profile;
@@ -29,6 +30,8 @@ public static class ProfileEndpoints
 {
     public static IEndpointRouteBuilder MapProfile(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/account-deleted", (HttpContext http) =>
+            AccountDeletedView.Create(new("Account deleted", DocumentModel.NonceFor(http))));
         endpoints.MapGet("/profile", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens, ITsAuthMfa mfa) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
@@ -45,6 +48,10 @@ public static class ProfileEndpoints
         endpoints.MapPost("/api/v1/dashboard/profile/language", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
             await SaveAsync(http, sessions, accounts, true));
         endpoints.MapPost("/api/v1/dashboard/profile/delete", AccountDeletion.DeleteAsync);
+        endpoints.MapGet("/account-deletion", AccountDeletion.ProgressAsync);
+        endpoints.MapPost("/api/v1/dashboard/profile/delete/continue", (HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform,
+            IDashboardState state, AccessTokens tokens, IDashboardIdentity identity) =>
+            AccountDeletion.ContinueAsync(http, sessions, platform, state, tokens, identity));
         return endpoints;
     }
 

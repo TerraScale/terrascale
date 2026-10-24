@@ -10,6 +10,7 @@ public static class DashboardStateSchema
     public static IReadOnlyList<string> Collections { get; } = Array.AsReadOnly(new[]
     {
         "sessions",
+        "account_deletions",
         "auth_credentials",
         "session_indexes",
         "auth-flows",

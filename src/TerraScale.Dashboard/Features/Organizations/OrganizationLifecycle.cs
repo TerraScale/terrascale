@@ -60,14 +60,28 @@ public sealed class OrganizationLifecycleService(IDashboardState state, AccountS
     {
         context = await FreshAsync(context, cancellationToken);
         if (!context.CanManage) throw new AccountAccessException("Organization management is required.");
-        var project = context.Organization!.Projects.GetValueOrDefault(projectId) ?? throw new AccountAccessException("Project is unavailable.", 404);
+        var project = context.Organization!.Projects.GetValueOrDefault(projectId);
+        var removed = project is null;
+        if (removed && await state.GetAsync(AccountService.OrganizationsCollection, context.Organization.Id, cancellationToken) is { } saved)
+        {
+            var pendingName = AccountService.Read<OrganizationRecord>(saved).PendingProjectDeletions.GetValueOrDefault(projectId);
+            if (!string.IsNullOrEmpty(pendingName) && pendingName == confirmation.Trim())
+                project = new() { Id = projectId, Name = pendingName, OrganizationId = context.Organization.Id };
+        }
+        if (project is null) throw new AccountAccessException("Project is unavailable.", 404);
         if (project.OrganizationId != context.Organization.Id) throw new AccountAccessException("Project is unavailable.", 404);
         if (project.Name != confirmation.Trim()) throw new AccountAccessException("Type the project name to confirm deletion.", 422);
-        if (project.IsDefault || context.Organization.Projects.Count <= 1) throw new AccountAccessException("The default or last project cannot be deleted.", 409);
+        if (!removed && (project.IsDefault || context.Organization.Projects.Count <= 1)) throw new AccountAccessException("The default or last project cannot be deleted.", 409);
         if (project.Databases.Count > 0) throw new AccountAccessException("Delete this project's databases before deleting the project.", 409);
         try
         {
-            if (!await platform.DeleteProjectAsync(context.Session, context.Organization.Id, projectId, cancellationToken))
+            if (!removed)
+                await accounts.UpdateOrganizationAsync(context, org =>
+                {
+                    if (!org.CanManage(context.UserId)) throw new AccountAccessException("Organization management is required.");
+                    org.PendingProjectDeletions[projectId] = confirmation.Trim();
+                }, cancellationToken);
+            if (!removed && !await platform.DeleteProjectAsync(context.Session, context.Organization.Id, projectId, cancellationToken))
                 throw PendingDeletion();
         }
         // A completed provider delete can outlive an interrupted dashboard write;
@@ -78,6 +92,7 @@ public sealed class OrganizationLifecycleService(IDashboardState state, AccountS
         {
             if (!org.CanManage(context.UserId)) throw new AccountAccessException("Organization management is required.");
             org.Projects.Remove(projectId);
+            org.PendingProjectDeletions.Remove(projectId);
             org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "project.deleted", project.Name, "project", time.GetUtcNow()));
         }, cancellationToken);
         await accounts.UpdateAccountAsync(context.Session, account =>

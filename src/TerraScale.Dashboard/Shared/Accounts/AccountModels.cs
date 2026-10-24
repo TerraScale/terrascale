@@ -63,6 +63,7 @@ public sealed class OrganizationRecord
     // Plan member allowance: invitations this dashboard is creating at ts-auth, by operation id,
     // until ts-auth lists them. Every change goes through the document's compare-and-set.
     public Dictionary<string, InvitationReservation> InvitationReservations { get; set; } = [];
+    public Dictionary<string, string> PendingProjectDeletions { get; set; } = [];
     [JsonIgnore] public DateTimeOffset CreatedAt { get; set; }
     // ts-auth refused this view: the organization requires two-factor and the caller has not enrolled.
     [JsonIgnore] public bool MfaRequired { get; set; }

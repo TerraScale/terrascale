@@ -1,5 +1,6 @@
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Backups;
+using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Settings;
 
@@ -36,6 +37,12 @@ public static class SettingsEndpoints
                             await settings.RestoreBackupAsync(context, form["databaseId"].ToString(), form["backupId"].ToString(), http.RequestAborted); break;
                     }
                     return HttpRedirects.SeeOther(action == "delete-project" ? "/organization" : "/");
+                }
+                catch (AccountAccessException error) when (error.Code == "deletion_pending")
+                {
+                    return DeletionProgress.Create(http, new FormCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
+                    { ["_csrf"] = form["_csrf"], ["confirmation"] = form["confirmName"] }),
+                        "/api/v1/dashboard/organization/projects/" + Uri.EscapeDataString(form["projectId"].ToString()) + "/delete?organizationId=" + Uri.EscapeDataString(context.Organization!.Id));
                 }
                 catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
                 catch (Exception error) when (error is HttpRequestException or IOException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
