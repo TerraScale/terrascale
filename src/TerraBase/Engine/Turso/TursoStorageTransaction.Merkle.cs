@@ -5,6 +5,15 @@ internal sealed partial class TursoStorageTransaction
     // Worker-only: remove the old contribution before its state is replaced or deleted, in the same writer transaction.
     private void RemoveMerkleState(string collection, string id)
     {
+        if (StoredDigest(collection, id) is var (h1, h2))
+        {
+            FoldMerkle(Bucket(collection, id), h1, h2);
+        }
+    }
+
+    // Worker-only: the digest a document's stored state contributes to its bucket, validated, or null without a state row.
+    private (long H1, long H2)? StoredDigest(string collection, string id)
+    {
         var command = Command("""
             SELECT CASE WHEN typeof(bucket) = 'integer' AND bucket >= 0 AND bucket < 4096
                 AND typeof(h1) = 'integer' AND typeof(h2) = 'integer' THEN 1 ELSE 0 END,
@@ -14,27 +23,18 @@ internal sealed partial class TursoStorageTransaction
             FROM _tb_state WHERE collection = $collection AND id = $id;
             """, collection);
         command.Parameters.AddWithValue("$id", id);
-        int bucket;
-        long h1;
-        long h2;
-        using (var reader = command.ExecuteReader())
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
         {
-            if (!reader.Read())
-            {
-                return;
-            }
-
-            if (reader.GetInt64(0) != 1 || reader.GetInt64(1) != Bucket(collection, id))
-            {
-                throw StoredDataCorruption.Create("a stored digest has non-integer hashes or an invalid bucket");
-            }
-
-            bucket = (int)reader.GetInt64(1);
-            h1 = reader.GetInt64(2);
-            h2 = reader.GetInt64(3);
+            return null;
         }
 
-        FoldMerkle(bucket, h1, h2);
+        if (reader.GetInt64(0) != 1 || reader.GetInt64(1) != Bucket(collection, id))
+        {
+            throw StoredDataCorruption.Create("a stored digest has non-integer hashes or an invalid bucket");
+        }
+
+        return (reader.GetInt64(2), reader.GetInt64(3));
     }
 
     // A collection/prefix purge accumulates at most 4096 contributions, independent of the number of documents.

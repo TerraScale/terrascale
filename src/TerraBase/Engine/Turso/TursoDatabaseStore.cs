@@ -171,6 +171,10 @@ internal sealed partial class TursoDatabaseStore(
     /// <summary>Whether this is TerraBase's own database rather than a client database.</summary>
     internal bool IsSystem => name == TursoStorageEngine.SystemName;
 
+    // The node-local write-intent journal is never replicated or backed up: its writer captures nothing, so no transaction
+    // pays to turn capture off and on again (two toggles per write before, one recording and one retiring the intent).
+    internal bool Captures => name != TursoStorageEngine.IntentName;
+
     public long CommitSequence
     {
         get
@@ -629,7 +633,10 @@ internal sealed partial class TursoDatabaseStore(
         try
         {
             // Takes the write lock without waiting on busy_timeout; ExecuteAsync retries it.
-            await session.ExecuteAsync(WriteLane, () => Scalar(session.Connection, null, TursoSession.CaptureOn), cancellationToken).ConfigureAwait(false);
+            if (Captures)
+            {
+                await session.ExecuteAsync(WriteLane, () => Scalar(session.Connection, null, TursoSession.CaptureOn), cancellationToken).ConfigureAwait(false);
+            }
         }
         catch
         {

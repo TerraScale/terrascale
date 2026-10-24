@@ -262,6 +262,31 @@ internal sealed class TursoSession(SqliteConnection connection) : IDisposable
     public SqliteCommand Command(string sql, SqliteTransaction transaction) => Kept(_commands, sql, transaction);
 
     /// <summary>
+    /// The kept command for <paramref name="sql"/>, run outside any transaction right after <paramref name="transaction"/>
+    /// committed on this connection, or null when that transaction did not check the schema (<see cref="CheckSchema"/>). No
+    /// other connection commits DDL while the database's writer is held, so what the check kept is still current.
+    /// </summary>
+    public SqliteCommand? AfterCommit(string sql, SqliteTransaction transaction)
+    {
+        if (!ReferenceEquals(_checked, transaction))
+        {
+            return null;
+        }
+
+        if (!_commands.TryGetValue(sql, out var command))
+        {
+            command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.ReuseStatement = true;
+            _commands.Add(sql, command);
+        }
+
+        command.Transaction = null;
+        command.Parameters.Clear();
+        return command;
+    }
+
+    /// <summary>
     /// Outside any transaction, sets what the next transaction needs: read-only (<c>query_only</c>, so BEGIN DEFERRED cannot
     /// upgrade to a write) and whether its commit syncs the log (<c>synchronous = FULL</c>, decision 0010). Only a change
     /// runs: Turso makes every prepared statement prepare again after any such setting, so a change also drops the kept ones.

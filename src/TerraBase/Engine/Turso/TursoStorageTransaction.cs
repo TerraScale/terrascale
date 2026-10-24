@@ -1120,7 +1120,7 @@ internal sealed partial class TursoStorageTransaction(
             Command(TursoStatements.DropStates, name).ExecuteNonQuery();
 
             cancellationToken.ThrowIfCancellationRequested();
-            if (Command(TursoStatements.DropCollection, name).ExecuteNonQuery() == 0)
+            if (DropCollectionRow(name) == 0)
             {
                 return false;
             }
@@ -1204,7 +1204,7 @@ internal sealed partial class TursoStorageTransaction(
         else
         {
             DropTable(name);
-            Command(TursoStatements.DropCollection, name).ExecuteNonQuery();
+            DropCollectionRow(name);
             DropUniqueCollection(name, local: false);
         }
 
@@ -1397,6 +1397,11 @@ internal sealed partial class TursoStorageTransaction(
         }
     }
 
+    private const string CommitMarkerSql = "SELECT change_id, change_type FROM turso_cdc ORDER BY change_id DESC LIMIT 1;";
+
+    // Set once this transaction ran a statement through PlainCommand, which is where every DDL runs.
+    private bool _ranPlain;
+
     // Worker-only, after COMMIT and before releasing the exclusive writer; never read a later connection's head.
     private CommitMarker ReadCommitMarker()
     {
@@ -1405,9 +1410,12 @@ internal sealed partial class TursoStorageTransaction(
             store.Checkpoint?.Invoke("writer.marker", tenant);
         }
 
-        using var command = session.Connection.CreateCommand();
-        command.CommandText = "SELECT change_id, change_type FROM turso_cdc ORDER BY change_id DESC LIMIT 1;";
-        using var reader = command.ExecuteReader();
+        // Kept unless this transaction ran DDL: preparing this statement cost more than the rest of a small write's statements.
+        var kept = _ranPlain ? null : session.AfterCommit(CommitMarkerSql, transaction);
+        using var fresh = kept is null ? session.Connection.CreateCommand() : null;
+        fresh?.CommandText = CommitMarkerSql;
+
+        using var reader = (kept ?? fresh!).ExecuteReader();
         if (!reader.Read() || reader.GetInt64(0) <= 0 || reader.GetInt64(1) != 2)
         {
             throw new InvalidDataException("a client mutation has no final CDC commit row");
@@ -1500,6 +1508,8 @@ internal sealed partial class TursoStorageTransaction(
         (long ChangeBytes, int Captured, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged) saved)
     {
         _pending.Clear();
+        // A collection the rolled-back write created is gone again.
+        _tables = null;
         (_changeBytes, _captured, _writes, _writtenBytes, _offset, ChangedReaderState) =
             (saved.ChangeBytes, saved.Captured, saved.Writes, saved.WrittenBytes, saved.Offset, saved.CollectionsChanged);
         _savepoint = null;
@@ -1588,6 +1598,11 @@ internal sealed partial class TursoStorageTransaction(
         if (!write)
         {
             throw new InvalidOperationException("only a write transaction captures changes");
+        }
+
+        if (!store.Captures)
+        {
+            return ValueTask.CompletedTask;
         }
 
         return new(RunAsync(() =>
