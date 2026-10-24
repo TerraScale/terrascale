@@ -25,7 +25,9 @@ exact redirect URLs and session lifetimes 300–2592000 seconds. Redirects allow
 HTTP only on loopback development addresses and reject userinfo and fragments.
 Invalid settings return the producer's typed `400 invalid_request` error.
 
-Source compatibility is additive through optional record parameters. This SDK
+Existing constructor calls remain valid through optional parameters. Positional
+record deconstruction changes arity; consumers that deconstruct these records
+must update their patterns. This SDK
 contract test uses an HTTP fixture; it does not establish live-service or
 installed-dashboard qualification. The concrete producer revision and source hashes are in
 `hosted-settings-provenance.json`. The SDK merge follows the owning producer
