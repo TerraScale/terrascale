@@ -583,6 +583,8 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
                 throw new IOException("the catalog's head could not be read for its identity; the anchor is not written");
             }
 
+            // A healthy rewrite or a rebuild swap renews the identity and may restart the change log lower: anchored too, or
+            // the next start reads the new file as a restored older copy and stays closed.
             if (head <= Anchored && incarnation == _anchoredIncarnation)
             {
                 return;
@@ -679,6 +681,17 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
             }
 
             return base.WriteAsync(buffer, cancellationToken);
+        }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken).ConfigureAwait(false);
+        // A rolling restart may follow a change the periodic anchor has not caught yet (a renewed identity): anchor it last,
+        // so the next start opens on the catalog it left. Only an open gate anchors: a closed one may hold a restored copy.
+        if (_open)
+        {
+            await WriteAnchorAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
