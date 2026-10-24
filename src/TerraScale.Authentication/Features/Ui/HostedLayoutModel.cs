@@ -127,8 +127,8 @@ a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
 :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
 p { margin: 0; }
-.auth-page { min-height: 100vh; min-height: 100dvh; padding: 96px 16px; display: grid; place-items: center; align-content: center; }
-.card { width: min(420px, 100%); display: grid; gap: 20px; padding: 32px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-card); }
+.auth-page { min-height: 100vh; min-height: 100dvh; padding: 96px 16px; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; align-content: center; }
+.card { width: min(420px, 100%); min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; padding: 32px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-card); }
 .brand { display: flex; align-items: center; justify-content: center; gap: 12px; min-width: 0; font: 600 18px / 1.5 var(--font); letter-spacing: -0.015em; color: var(--ink); }
 .brand span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .logo-img { width: 32px; height: 32px; object-fit: contain; flex: none; }
@@ -138,7 +138,7 @@ h1 { margin: 0; font-size: var(--title-size); font-weight: 600; line-height: 1.2
 .sub strong { color: var(--ink); font-weight: 500; }
 .icon { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .icon-sm { width: 14px; height: 14px; }
-form { display: grid; gap: 16px; margin: 0; }
+form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin: 0; }
 .field { display: grid; gap: 6px; min-width: 0; }
 label { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 500; }
 label a { font-weight: 400; }
@@ -161,6 +161,7 @@ button.danger { background: light-dark(#c81e1e, #d92626); }
 .alert[data-state="limited"] { --state: var(--warning); }
 .alert[data-state="success"] { --state: var(--success); }
 .alert > .icon { margin-top: 2px; color: var(--state); }
+.alert > div { min-width: 0; }
 .alert strong { display: block; font-weight: 500; color: var(--state); }
 .alert p { font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 13px; }

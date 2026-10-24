@@ -524,6 +524,41 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    [Arguments(1440, 900)]
+    [Arguments(390, 844)]
+    public async Task Long_email_password_steps_and_errors_fit_the_viewport(int width, int height)
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var browser = await Chromium.BrowserAsync();
+        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+        var violations = new List<string>();
+        var page = await OpenSignInAsync(context, oidc.Server, violations);
+        await page.Locator("#sign-in-email").FillAsync("very-long-customer-address+mobile-proof@example.test");
+        await page.GetByRole(AriaRole.Button, new() { Name = "Use a password instead" }).ClickAsync();
+        await page.Locator("#sign-in-password").WaitForAsync();
+        foreach (var error in new[] { false, true })
+        {
+            if (error)
+            {
+                await page.Locator("#sign-in-password").FillAsync("deliberately invalid password");
+                await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
+                await Assert.That(await page.Locator(".alert").TextContentAsync()).Contains("Wrong email or password");
+            }
+
+            foreach (var mode in new[] { "light", "dark" })
+            {
+                await page.Locator(".theme-picker").SelectOptionAsync(mode);
+                var card = (await page.Locator(".card").BoundingBoxAsync())!;
+                await Assert.That(card.X).IsGreaterThanOrEqualTo(0);
+                await Assert.That(card.X + card.Width).IsLessThanOrEqualTo(width);
+                await Assert.That(await page.EvaluateAsync<int>("document.documentElement.scrollWidth")).IsLessThanOrEqualTo(width);
+            }
+        }
+
+        await Assert.That(violations).IsEmpty();
+    }
+
+    [Test]
     public async Task Six_digit_entry_submits_the_real_code_and_password_visibility_is_accessible()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
