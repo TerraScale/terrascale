@@ -11,8 +11,16 @@ import tempfile
 import textwrap
 
 workflow = Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
-match = re.search(r"      - name: Report the Slow result\n.*?        run: \|\n(.*?)(?=\n  [a-z][a-z0-9-]*:|\Z)", workflow.read_text(), re.DOTALL)
+workflow_text = workflow.read_text()
+match = re.search(r"      - name: Report the Slow result\n.*?        run: \|\n(.*?)(?=\n  [a-z][a-z0-9-]*:|\Z)", workflow_text, re.DOTALL)
 assert match, "Slow report block not found"
+report_header = match[0].split("        run: |", 1)[0]
+assert "if: ${{ always() }}" in report_header, "Report setup/build failures too"
+assert "continue-on-error:" not in report_header, "A failed Slow suite must make its job red"
+required = workflow_text.split("\n  test:\n", 1)[1]
+needs = re.search(r"^    needs: \[(.+)\]$", required, re.M)
+assert needs and not any("slow" in job for job in needs[1].split(",")), "Slow must not block required test"
+assert workflow_text.count("steps: *slow-steps") == 3, "All four Slow jobs must share the reporter"
 script = "set -euo pipefail\n" + textwrap.dedent(match[1])
 script = script.replace("${{ env.AREA }}", "auth").replace("${{ github.job }}", "main")
 assert "${{" not in script, "Unhandled workflow expression"

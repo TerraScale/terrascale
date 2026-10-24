@@ -476,8 +476,7 @@ jobs:
         if: ${{ always() && env.AREA == 'terrabase' }}
         run: rm -f "$RUNNER_TEMP/tigris-ci.env"
       - name: Report the Slow result
-        if: ${{ !cancelled() }}
-        continue-on-error: true
+        if: ${{ always() }}
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
