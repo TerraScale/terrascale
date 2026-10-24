@@ -27,7 +27,7 @@ Tigris and R2 run the same binary. Only the env file differs: endpoint, bucket a
 
 | item | value |
 | --- | --- |
-| binary | `08f47be9` = `feat/rt3a-free-reads-bench`: #521 (`3d671c43f`, T2 links) + the catch-up harness |
+| binary | `08f47be9` = `feat/rt3a-free-reads-bench`: #521 (`3d671c43f`, merged as `e7686d41`; T2 links) + the catch-up harness in this PR |
 | host | delta (16 CPUs), local gru + sjc nodes in one process, shared with other lanes |
 | host load (1-min) | Tigris 10.3 at start, 9.6 at end; R2 9.6 at start, 10.3 at end |
 | Tigris | `ts-terrabase-bench`, `https://fly.storage.tigris.dev`, the Tigris CI keys |
