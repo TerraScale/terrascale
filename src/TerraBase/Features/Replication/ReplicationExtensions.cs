@@ -14,7 +14,8 @@ public static class ReplicationExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.Services.AddSingleton<ReplicationTimings>();
-        builder.Services.AddSingleton<IChangeGroupSink, StorageChangeGroupSink>();
+        builder.Services.AddSingleton<StorageChangeGroupSink>();
+        builder.Services.AddSingleton<IChangeGroupSink>(provider => provider.GetRequiredService<StorageChangeGroupSink>());
         builder.Services.AddSingleton<IRebuildCertification, RebuildCertification>();
         builder.Services.AddSingleton<IReplicaRebuild, ReplicaRebuild>();
         builder.Services.AddSingleton<PeerStreamReceiver>();
@@ -25,6 +26,7 @@ public static class ReplicationExtensions
         // Recover SYSTEM before catalog inventory, platform seeding and backup snapshot work starts.
         builder.Services.Insert(1, ServiceDescriptor.Singleton<IHostedService, RebuildRecovery>());
         builder.Services.AddSingleton<AntiEntropy>();
+        builder.Services.AddSingleton<ReplicaSnapshots>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<AntiEntropy>());
         builder.Services.AddSingleton<ICatalogFreshness, CatalogFreshness>();
         builder.Services.AddSingleton<RemoteAckWaiter>();

@@ -23,6 +23,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
     // conservative cache invalidation becomes measurable.
     private long _epoch;
 
+    internal void InvalidateAll() => Interlocked.Increment(ref _epoch);
+
     public string Name => inner.Name;
 
     public StoragePressure StoragePressure => inner.StoragePressure;
@@ -200,6 +202,11 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
             WriteAsync(collection, id, () => inner.PatchAsync(collection, id, json, operations, cancellationToken), cancellationToken);
 
         // A collection's metadata document drops or creates its collection, as a replicated delta of a collection it lacks may.
+        public ValueTask<bool> JoinBaselineAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken) =>
+            collection is DocumentDelta.Collections or DocumentDelta.Indexes
+                ? WriteCollectionAsync(() => inner.JoinBaselineAsync(collection, id, state, at, cancellationToken), cancellationToken)
+                : WriteAsync(collection, id, () => inner.JoinBaselineAsync(collection, id, state, at, cancellationToken), cancellationToken);
+
         public ValueTask<bool> JoinAsync(string collection, string id, Lattices.DocumentState delta, Lattices.EntryVersion at, CancellationToken cancellationToken) =>
             collection is DocumentDelta.Collections or DocumentDelta.Indexes
                 ? WriteCollectionAsync(() => inner.JoinAsync(collection, id, delta, at, cancellationToken), cancellationToken)

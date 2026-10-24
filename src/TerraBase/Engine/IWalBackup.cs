@@ -20,7 +20,9 @@ public readonly record struct WalRead(long Bytes, bool Continuous, bool Remainin
 /// <summary>A consistent snapshot and the log read before it was pinned.</summary>
 /// <param name="Read">Committed changes appended before the snapshot, including whether they remain continuous.</param>
 /// <param name="At">UTC time when the snapshot's state was pinned, before copying it.</param>
-public readonly record struct WalSnapshot(WalRead Read, DateTimeOffset At);
+/// <param name="Incarnation">The physical file identity read inside that same pinned transaction.</param>
+/// <param name="Offset">The commit offset in that pinned file.</param>
+public readonly record struct WalSnapshot(WalRead Read, DateTimeOffset At, Ulid Incarnation = default, long Offset = 0);
 
 /// <summary>Where a restore at a time stops in one log segment, from the times its transactions were recorded with.</summary>
 /// <param name="Bytes">Log bytes from the segment's start that the restore replays: whole transactions, each run before the time.</param>

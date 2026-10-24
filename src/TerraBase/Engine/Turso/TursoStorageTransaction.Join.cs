@@ -19,7 +19,7 @@ internal sealed partial class TursoStorageTransaction
         return changed;
     }
 
-    internal ValueTask<bool> JoinBaselineAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken) =>
+    public ValueTask<bool> JoinBaselineAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken) =>
         RunAsync(() => Join(collection, id, state, at, cancellationToken, baseline: true), cancellationToken, mutation: true);
 
     internal ValueTask<bool> CanSalvageAsync(string collection, string id, DocumentState state, CancellationToken cancellationToken) =>

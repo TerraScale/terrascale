@@ -67,11 +67,20 @@ public sealed class HistoryErasureBackupTests
     // Real continuous backup ships both files before the erasure; their generations keep it at "backup" until the existing
     // plan retention and bucket snapshot retention remove them. The deleted payload is then in no local file, scratch included.
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     [Timeout(300_000)] // About 30 simulated days of real shipping and retention passes.
-    public async Task Backup_closure_waits_for_pre_erasure_generations_and_snapshots_then_completes(CancellationToken _1)
+    public async Task Backup_closure_waits_for_pre_erasure_generations_and_snapshots_then_completes(bool shipBeforeReceipt, CancellationToken _1)
     {
         await using var host = new Host();
-        await using var api = await host.StartAsync();
+        await using var api = await host.StartAsync(services =>
+        {
+            if (shipBeforeReceipt)
+            {
+                services.AddSingleton<IHealthyRewrite>(provider => new ShipBeforeReceipt(
+                    provider.GetRequiredService<TursoStorageEngine>(), provider.GetRequiredService<IContinuousBackup>(), host.Clock));
+            }
+        });
         await Host.SeedAsync(api);
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var (fence, erasure, subject, survivor) = (Id(), Id(), Id(), Id());
@@ -84,6 +93,9 @@ public sealed class HistoryErasureBackupTests
         await Host.PutAsync(api, HistoryErasure.MarkCollection, erasure, $$"""{"kind":"request","erasureId":"{{erasure}}","fenceId":"{{fence}}"}""");
         await backup.RunOnceAsync(CancellationToken.None);
         await Assert.That(host.S3.Objects.Keys.Any(key => key.StartsWith(BackupLayout.Snapshots(BackupLayout.File(Auth)), StringComparison.Ordinal))).IsTrue();
+
+        var preErasureGeneration = host.S3.Objects.Keys.Where(key => key.StartsWith(BackupLayout.Snapshots(BackupLayout.File(Auth)), StringComparison.Ordinal))
+            .Select(BackupLayout.ParseSnapshot).First()!.Generation;
 
         // Backup keys carry millisecond timestamps. Separate the pre-erasure inventory from the rewrite cut explicitly.
         host.Clock.Advance(TimeSpan.FromMilliseconds(1));
@@ -101,8 +113,19 @@ public sealed class HistoryErasureBackupTests
         await Host.CollectAndTrimAsync(api);
         await Assert.That(await Host.UntilPhaseAsync(host, api, backup, erasure, requested, HistoryErasure.Backup)).IsEqualTo(HistoryErasure.Backup).Because("generations and bucket snapshots from before the residue rewrite remain");
 
+        if (shipBeforeReceipt)
+        {
+            var receipt = await Host.OwnAsync(api, erasure);
+            await Assert.That(host.S3.Objects.Keys.Where(key => key.Contains("/snapshots/", StringComparison.Ordinal)).Select(BackupLayout.ParseSnapshot).Any(snapshot => snapshot is not null
+                && snapshot.Key.StartsWith(BackupLayout.Snapshots(BackupLayout.File(Auth)), StringComparison.Ordinal)
+                && snapshot.Generation.Time < receipt.ResidueAt && snapshot.At < receipt.ResidueAt)).IsTrue()
+                .Because("a real generation was pinned on the rewritten file before its receipt was published");
+        }
+
         // Shipping restarts generations on the rewritten files; plan retention (1 day here) removes the older objects.
         await DaysOfBackupAsync(host, backup, 3);
+        await Assert.That(host.S3.Objects.ContainsKey(BackupLayout.GenerationProof(BackupLayout.File(Auth), preErasureGeneration))).IsFalse()
+            .Because("retention removes obsolete certificates after their snapshots and WAL are gone");
 
         // A versioned bucket keeps what retention deleted: a noncurrent version under either prefix holds closure.
         host.S3.SeedVersion(customer: false, BackupLayout.File(Auth) + "/snapshots/hidden", "v-old", [1]);
@@ -215,6 +238,68 @@ public sealed class HistoryErasureBackupTests
         {
             host.Clock.Advance(TimeSpan.FromDays(1));
             await backup.RunOnceAsync(CancellationToken.None);
+        }
+    }
+
+    [Test]
+    [Arguments("valid")]
+    [Arguments("missing")]
+    [Arguments("tampered")]
+    [Arguments("other_file")]
+    [Arguments("later_offset")]
+    public async Task A_generation_predating_the_receipt_needs_authenticated_file_and_offset_evidence(string evidence)
+    {
+        await using var host = new Host();
+        await using var api = await host.StartAsync();
+        await Host.SeedAsync(api);
+        await Host.PutAsync(api, Users, Id(), "{\"survivor\":true}");
+        var native = api.Server.Services.GetRequiredService<IStorageEngine>();
+        var auth = (await native.OpenDatabaseAsync(Auth, CancellationToken.None))!;
+        long offset;
+        await using (var read = await auth.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            offset = await read.GetOffsetAsync(CancellationToken.None);
+        }
+        await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
+        var file = BackupLayout.File(Auth);
+        var snapshot = host.S3.Objects.Keys.Where(key => key.StartsWith(BackupLayout.Snapshots(file), StringComparison.Ordinal))
+            .Select(BackupLayout.ParseSnapshot).First()!;
+        var proof = BackupLayout.GenerationProof(file, snapshot.Generation);
+        await Assert.That(host.S3.Objects.ContainsKey(proof)).IsTrue();
+        if (evidence == "missing")
+        {
+            _ = await api.Server.Services.GetRequiredService<S3ObjectStore>().DeleteAsync(proof, CancellationToken.None);
+        }
+        else if (evidence == "tampered")
+        {
+            host.S3.Objects[proof][^1] ^= 1;
+        }
+        var target = evidence == "other_file" ? Id() : auth.Incarnation.ToString();
+        var minimum = evidence == "later_offset" ? long.MaxValue : offset;
+        host.Clock.Advance(TimeSpan.FromMilliseconds(1));
+        var cut = host.Clock.GetUtcNow();
+        await Assert.That(snapshot.At < cut && snapshot.Generation.Time < cut).IsTrue();
+        var clean = false;
+        try
+        {
+            clean = await HistoryErasures.OlderAbsentAsync(api.Server.Services.GetRequiredService<S3ObjectStore>(), file, cut,
+                CancellationToken.None, [new HistoryRewrite(Id(), target, minimum)], api.Server.Services.GetRequiredService<DataKeys>(), BackupLayout.KeyScope(Auth));
+        }
+        catch (InvalidDataException) when (evidence == "tampered")
+        {
+            // The caller's inventory error path keeps the erasure at backup.
+        }
+        await Assert.That(clean).IsEqualTo(evidence == "valid");
+    }
+
+    private sealed class ShipBeforeReceipt(IHealthyRewrite engine, IContinuousBackup backup, FakeTimeProvider clock) : IHealthyRewrite
+    {
+        public async ValueTask<HealthyRewrite> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken)
+        {
+            var result = await engine.RewriteAsync(database, minimumOffset, cancellationToken);
+            await backup.RunOnceAsync(cancellationToken);
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+            return result;
         }
     }
 

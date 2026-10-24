@@ -72,7 +72,7 @@ public sealed class AnchoredRevocation
 /// A new empty catalog starts automatically. An existing catalog behind its anchor stays closed for reviewed recovery;
 /// there is no operator bypass.
 /// </summary>
-internal sealed class CatalogGate : BackgroundService, ICatalogGate
+internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
 {
     /// <summary>Every machine that ever ran this cluster's catalog: id = machine id, body = <c>{"region": …}</c>; replicated.</summary>
     internal const string Members = "cluster_members";
@@ -134,10 +134,11 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
 
     public CatalogGate(
         IMembership membership, AntiEntropy antiEntropy, IReplicaStates states, IChangeGroupSource source, IStorageEngine engine, TerraBaseOptions options,
-        TimeProvider time, IMeterFactory meters, ILogger<CatalogGate> logger, PeerCredential credential, IMemberDirectory? directory = null,
+        TimeProvider time, IMeterFactory meters, ILogger<CatalogGate> logger, PeerCredential credential, LocalReplica self, IServiceProvider services, IMemberDirectory? directory = null,
         IObjectStore? bucket = null, DataKeys? keys = null)
     {
         _credential = credential;
+        (_self, _services) = (self, services);
         (_membership, _directory, _antiEntropy, _states, _source, _engine, _options, _time, _logger) =
             (membership, directory, antiEntropy, states, source, engine, options, time, logger);
         // The anchor needs the backup bucket and its keys: it is sealed like every backup object.
@@ -309,7 +310,8 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
             var majority = _anchorHeld && _restored == false && (_verified.Count + 1) * 2 > machines;
             // A fresh file cannot revive old security state; destroyed historical members need not vouch for it.
             var freshPull = _fresh && _restored == false && listed.Count > 0 && listed.All(peer => _verified.Contains(peer.Name));
-            if ((Pending.IsEmpty && (_verified.Count > 0 || (_directory is null && !_anchorMissing))) || majority || freshPull)
+            var revocationsHeld = await RevocationsHeldAsync(listed, cancellationToken).ConfigureAwait(false);
+            if (revocationsHeld && ((Pending.IsEmpty && (_verified.Count > 0 || (_directory is null && !_anchorMissing))) || majority || freshPull))
             {
                 // Pulled from every machine needed (or a majority, see above), at least one of them, and not restored; or a
                 // single machine by configuration.
@@ -493,6 +495,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
 
                 anchored = document.RootElement.GetProperty("head").GetInt64();
                 incarnation = document.RootElement.GetProperty("incarnation").GetString();
+                _revocation = document.RootElement.TryGetProperty("revocations", out _) ? ReadRevocation(document.RootElement) : null;
             }, cancellationToken).ConfigureAwait(false);
             if (!found)
             {
@@ -541,7 +544,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     {
         try
         {
-            await AnchorAsync(cancellationToken).ConfigureAwait(false);
+            await AnchorAsync(cancellationToken, revocation: true).ConfigureAwait(false);
             return true;
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
@@ -552,7 +555,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     }
 
     // Throws when the anchor cannot be written within AnchorTimeout.
-    private async Task AnchorAsync(CancellationToken cancellationToken)
+    private async Task AnchorAsync(CancellationToken cancellationToken, bool revocation = false)
     {
         if (_anchors is null)
         {
@@ -568,6 +571,11 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
         await _anchoring.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (revocation || _revocation is null)
+            {
+                _revocation = await MarkRevocationAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             // The head is read pinned to the identity it is anchored with: one read transaction checks both.
             var incarnation = (await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).Incarnation;
             if (await _source.HeadAsync(ChangeGroups.System, incarnation, cancellationToken).ConfigureAwait(false) is not { } head)
@@ -575,7 +583,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
                 throw new IOException("the catalog's head could not be read for its identity; the anchor is not written");
             }
 
-            if (head <= Anchored)
+            if (head <= Anchored && incarnation == _anchoredIncarnation)
             {
                 return;
             }
@@ -585,9 +593,15 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
             {
                 json.WriteStartObject();
                 json.WriteNumber("version", 1);
+                json.WriteNumber("revocations", 1);
                 json.WriteNumber("head", head);
                 json.WriteString("incarnation", incarnation.ToString());
                 json.WriteString("at", _time.GetUtcNow());
+                if (_revocation is { } witness)
+                {
+                    json.WriteNumber("replica", witness.Replica.Value);
+                    json.WriteNumber("stamp", witness.Stamp.Value);
+                }
                 json.WriteEndObject();
             }
 
@@ -597,6 +611,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
             await BackupObject.WriteAsync(body, sealedAnchor, AnchorKey, keyId, dataKey, cancellationToken).ConfigureAwait(false);
             sealedAnchor.Position = 0;
             await _anchors.PutAsync(AnchorKey, sealedAnchor, cancellationToken).ConfigureAwait(false);
+            _anchoredIncarnation = incarnation;
             Interlocked.Exchange(ref _anchored, head);
         }
         finally

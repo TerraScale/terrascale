@@ -235,7 +235,7 @@ internal sealed partial class ContinuousBackup
 
         if (oldest is null)
         {
-            return complete;
+            return complete && await RetainGenerationProofsAsync(store, file.Prefix, expires, cancellationToken).ConfigureAwait(false);
         }
 
         if (snapshots.Count > 0 && snapshots[^1].Key == oldest.Key)
@@ -262,7 +262,7 @@ internal sealed partial class ContinuousBackup
         }
 
         complete &= await DeleteAsync(store, [.. snapshots.Select(snapshot => snapshot.Key)], cancellationToken).ConfigureAwait(false);
-        return complete;
+        return complete && await RetainGenerationProofsAsync(store, file.Prefix, expires, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<bool> DeleteSegmentsAsync(IObjectStore store, string file, Ulid generation, long? before, CancellationToken cancellationToken)

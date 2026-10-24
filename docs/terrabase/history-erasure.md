@@ -22,7 +22,7 @@ backups, so no second machine writes the record (another region's ts-auth gets t
 | 202 `residue` | Every holder rewrote; some still has a tombstone or feed event at or below the cut in its auth file. |
 | 202 `backup` | A platform backup object, hidden version or upload older than the rewrites remains, or a bucket snapshot from before the first clean inventory. |
 | 202 `retire` | Certified: the subject's history is gone from every certified holder and backup. ts-auth may retire the fence; then each certified holder rewrites once more. |
-| 202 `epoch_stalled` | A holder restarted uncleanly (new replica epoch) since it marked: see "Replica epoch change". Never completes on its own. |
+| 202 `epoch_stalled` | A holder restarted uncleanly (new replica epoch) since it marked: see "Replica epoch change". Waits for certified old-epoch recovery; see [epoch recovery](erasure-epoch-recovery.md). |
 | 200 `complete` | All of the above done, retirement rewrite included. |
 | 409 `erasure_conflict` / `settlement_stale` | Another request time; a token that is not this machine's current one (single use). |
 
@@ -74,15 +74,9 @@ and `terrabase_history_erasure_epoch_stalled`. The ts-orchestrator rules (#145) 
 
 ## Replica epoch change (TS-875)
 
-An unclean restart gives the machine a new replica epoch, and peers delete the old epoch's `_tb_peers` row, applied
-progress included, on its first acknowledgement (`TursoStorageTransaction.Tail.cs`). Nothing then proves that every holder
-holds the old epoch's acknowledged writes, and SYSTEM keeps no per-origin history to show it. The holder fences again from
-its new epoch and keeps its older epochs in its receipt (`PreviousReplicas`); an origin a holder reported that is an older
-epoch of a marked holder counts the same. The erasure is `epoch_stalled`: no token, never complete, never inferred from the
-newer epoch, the own old epoch never treated as local, no GC override.
+An unclean restart gives the machine a new replica epoch. The holder fences again and keeps its older epochs in its receipt until actual peer snapshot proofs cover them. Every holder then supplies a fresh cut before auth re-verifies. See [epoch recovery](erasure-epoch-recovery.md) for the all-holder barrier, durable snapshot proof, and refusal conditions.
 
-Runbook: the epoch_stalled alert fires within 15 minutes. Escalate to engineering (Ku TS-875, "Safe automatic erasure
-re-cut after replica epoch change"). There is no operator override. The gauges are read on the metrics listener (no credential):
+Runbook: a persistent `epoch_stalled` alert fires within 15 minutes. Escalate to engineering with the erasure id, holder list, and snapshot/recovery errors. There is no operator override. The gauges are read on the metrics listener (no credential):
 `curl -s http://<node>:<metrics-port>/metrics | grep terrabase_history_erasure`.
 
 ## What is kept, and for how long
@@ -114,7 +108,7 @@ before these fields keep their logical cleanup but never get a history erasure (
 
 ## Backup closure
 
-By the requester, in two steps. (1) An inventory finds every snapshot and log generation of the auth file started after the
+By the requester, in two steps. [Generation lineage](backup-generation-lineage.md) also admits an authenticated clean generation pinned before its rewrite receipt. (1) An inventory finds every snapshot and log generation of the auth file started after the
 latest residue rewrite and every one of SYSTEM after the latest SYSTEM rewrite (a generation never spans a rewrite: the
 rewrite ends the backup tap), and no noncurrent version, delete marker or earlier multipart upload under either prefix
 (backup keys are written once, so a versioned bucket's hidden version is a removed object). Its time is kept as
@@ -130,4 +124,4 @@ whose noncurrent versions never expire keeps the erasure at `backup` forever (fa
   by a restore, rebuild or copy is detected (`history_erasure_lineage`) and fenced again. A SYSTEM-wide rollback is recovered
   by auth presenting its original request time until it retires the fence.
 - SYSTEM tombstones are permanent (only opaque ids, see above).
-- A replica epoch change stalls the erasure (TS-875).
+- A replica epoch change waits for certified old-epoch snapshot recovery (TS-875); missing proof keeps it stalled.

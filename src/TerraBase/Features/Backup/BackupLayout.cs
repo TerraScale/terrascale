@@ -41,6 +41,9 @@ internal static class BackupLayout
     public static string Snapshot(string file, DateTimeOffset at, Ulid generation, long position) =>
         string.Create(CultureInfo.InvariantCulture, $"{Snapshots(file)}{at.ToUnixTimeMilliseconds():D13}-{generation}-{position:D16}");
 
+    /// <summary>Authenticated lineage of a generation's initial pinned snapshot.</summary>
+    public static string GenerationProof(string file, Ulid generation) => $"{file}/generations/{generation}";
+
     public static string Segments(string file, Ulid generation) => $"{file}/wal/{generation}/";
 
     public static string Segment(string file, Ulid generation, long start, DateTimeOffset at) =>

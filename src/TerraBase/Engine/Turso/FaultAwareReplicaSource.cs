@@ -7,8 +7,18 @@ namespace TerraBase.Engine.Turso;
 
 /// <summary>Refuses source data and acknowledgements from a faulted copy; node faults remain fatal.</summary>
 internal sealed class FaultAwareReplicaSource(
-    TursoChangeGroupSource source, IReplicaCopyFaults faults, IRebuildStorage storage) : IChangeGroupSource, IReplicaStates
+    TursoChangeGroupSource source, IReplicaCopyFaults faults, IRebuildStorage storage) : IChangeGroupSource, IReplicaStates, IReplicaSnapshotSource
 {
+    public async IAsyncEnumerable<ReplicaSnapshotPage> SnapshotAsync(TenantContext database, Ulid incarnation,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await using var pages = source.SnapshotAsync(database, incarnation, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        while (await ReadAsync(database, incarnation, pages.MoveNextAsync, static () => false, cancellationToken).ConfigureAwait(false))
+        {
+            yield return pages.Current;
+        }
+    }
+
     public IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken) => source.ListDatabasesAsync(cancellationToken);
 
     public Task ChangedAsync(CancellationToken cancellationToken) => source.ChangedAsync(cancellationToken);

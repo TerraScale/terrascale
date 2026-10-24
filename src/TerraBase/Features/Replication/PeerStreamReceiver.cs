@@ -25,7 +25,7 @@ namespace TerraBase.Features.Replication;
 /// in flight, chained by <c>Batch.after</c>: each applies only after the one it follows applied, so an ack still covers every
 /// batch before it, and after a refusal the database's batches are refused until one follows the last applied batch again.
 /// </summary>
-internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
+internal sealed partial class PeerStreamReceiver : V1.Replication.ReplicationBase
 {
     private const int MaxRefills = 4;
     // Databases with a batch or frontier in progress per stream: room for the sender's 32 outstanding batches, plus as many

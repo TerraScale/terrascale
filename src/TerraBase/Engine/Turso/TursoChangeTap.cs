@@ -182,7 +182,18 @@ internal sealed class TursoChangeTap : IWalTap
                     throw;
                 }
 
-                return new WalSnapshot(read, _time.GetUtcNow());
+                return await _io.RunAsync(() =>
+                {
+                    using var command = _reader.CreateCommand();
+                    command.CommandText = "SELECT incarnation, value FROM commit_offset WHERE id = 1;";
+                    using var identity = command.ExecuteReader();
+                    if (!identity.Read() || !Ulid.TryParse(identity.GetString(0), out var incarnation) || incarnation == Ulid.Empty)
+                    {
+                        throw new InvalidDataException("the pinned backup snapshot has no file identity");
+                    }
+
+                    return new WalSnapshot(read, _time.GetUtcNow(), incarnation, identity.GetInt64(1));
+                }, cancellationToken).ConfigureAwait(false);
             }, cancellationToken, "the continuous backup's snapshot").ConfigureAwait(false);
 
             try

@@ -1,0 +1,142 @@
+using System.Net;
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
+using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Replication;
+using TerraBase.Testing;
+
+namespace TerraBase.Fast.Backup;
+
+public sealed class CatalogRestoreSafetyTests
+{
+    private static readonly string[] ReadScopes = ["documents:read"];
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task Restored_majorities_never_vouch_for_a_revocation_missing_from_all_their_catalogs(int stale)
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var bucket = new FakeS3();
+        var members = new FakeMemberStore();
+        await using var gru = new Machine("gru", bucket, members);
+        await using var sjc = new Machine("sjc", bucket, members);
+        await using var fra = new Machine("fra", bucket, members);
+        Machine[] machines = [gru, sjc, fra];
+        foreach (var machine in machines)
+        {
+            await machine.StartAsync();
+        }
+        foreach (var machine in machines)
+        {
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(machine.Gate.IsOpen));
+        }
+        var organization = await gru.Api.CreateOrganizationAsync("restore-majority");
+        var project = await gru.Api.CreateProjectAsync(organization, "project");
+        using var created = await gru.Api.Client.PostAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/api-keys"),
+            new { name = "restore-majority", scopes = ReadScopes }, token);
+        created.EnsureSuccessStatusCode();
+        var key = await created.Content.ReadFromJsonAsync<JsonElement>(token);
+        var secret = key.GetProperty("secret").GetString()!;
+        var id = key.GetProperty("key").GetProperty("id").GetString()!;
+        foreach (var machine in machines)
+        {
+            if (machine != gru)
+            {
+                _ = await machine.Api.Server.Services.GetRequiredService<AntiEntropy>().PullAsync(ChangeGroups.System,
+                    new ClusterMember("gru", gru.Api.Server.BaseAddress.ToString(), "gru", ""), token);
+            }
+            await Assert.That(await machine.Api.Server.Services.GetRequiredService<IApiKeyStore>().FindAsync(secret, token) is ApiKey).IsTrue();
+            await Assert.That(await machine.Gate.TryAnchorAsync(token)).IsTrue();
+            await machine.SnapshotAsync(token);
+        }
+
+        // The other two anchors stay at the snapshot. Their matching local anchors cannot prove that they hold gru's
+        // later, acknowledged revocation. In particular two restored peers must not form a stale serving majority.
+        await sjc.StopAsync();
+        await fra.StopAsync();
+        using var revoked = await gru.Api.Client.DeleteAsync(ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/api-keys/{id}"), token);
+        await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await gru.StopAsync();
+        for (var index = 0; index < machines.Length; index++)
+        {
+            if (index < stale)
+            {
+                machines[index].Restore();
+            }
+            await machines[index].StartAsync();
+        }
+        // Exercise the actual verification path after all listeners have new addresses, without advancing background clocks.
+        for (var pass = 0; pass < 3; pass++)
+        {
+            foreach (var machine in machines)
+            {
+                _ = await ((CatalogGate)machine.Gate).VerifyAsync(token);
+            }
+        }
+        foreach (var machine in machines)
+        {
+            await Assert.That(machine.Gate.IsOpen).IsEqualTo(stale == 0);
+            if (machine.Gate.IsOpen)
+            {
+                await Assert.That(await machine.Api.Server.Services.GetRequiredService<IApiKeyStore>().FindAsync(secret, token) is NotFound).IsTrue();
+            }
+            using var tls = new ClientTls();
+            using var client = tls.CreateClient(machine.Api.Server.ClientAddress!, secret);
+            using var response = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{project}/databases/missing/collections"), token);
+            await Assert.That(response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.ServiceUnavailable).IsTrue()
+                .Because("a restored catalog can contain the old key, but cannot authorize it");
+        }
+    }
+
+    private sealed class Machine(string region, FakeS3 bucket, FakeMemberStore members) : IAsyncDisposable
+    {
+        private readonly string _directory = Directory.CreateTempSubdirectory("catalog-restore-majority-").FullName;
+        private readonly FakeTimeProvider _time = new();
+        private ManagementApi? _api;
+        public ManagementApi Api => _api ?? throw new InvalidOperationException("machine stopped");
+        public ICatalogGate Gate => Api.Server.Services.GetRequiredService<ICatalogGate>();
+        public async Task StartAsync() => _api = await ManagementApi.StartAsync(settings =>
+        {
+            bucket.Configure(settings);
+            settings["node-name"] = region;
+            settings["region"] = region;
+            settings["data-directory"] = _directory;
+        }, services =>
+        {
+            bucket.Route(services);
+            ManualBackupHosting.Configure(services);
+            services.AddSingleton<IMemberDirectory>(members);
+        }, _time);
+        public async Task SnapshotAsync(CancellationToken token)
+        {
+            Directory.CreateDirectory(Path.Combine(_directory, ".restore-drill"));
+            await using var tap = await Api.Server.Services.GetRequiredService<IWalBackup>().OpenTapAsync(null, token);
+            _ = await tap!.SnapshotAsync(Stream.Null, Path.Combine(_directory, ".restore-drill", "before.db"), token);
+        }
+        public void Restore()
+        {
+            File.Copy(Path.Combine(_directory, ".restore-drill", "before.db"), Path.Combine(_directory, "_system.db"), overwrite: true);
+            File.Delete(Path.Combine(_directory, "_system.db-wal"));
+            File.Delete(Path.Combine(_directory, "_system.db-shm"));
+        }
+        public async Task StopAsync()
+        {
+            if (_api is { } api)
+            {
+                await api.DisposeAsync();
+                _api = null;
+            }
+        }
+        public async ValueTask DisposeAsync()
+        {
+            await StopAsync();
+            Directory.Delete(_directory, recursive: true);
+        }
+    }
+}

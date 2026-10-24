@@ -337,6 +337,8 @@ public sealed class CatalogGateTests
                 using var revoked = await api.Client.DeleteAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/projects/{database.Project}/api-keys/{id}"), token);
                 await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
                 await Assert.That(await api.Server.Services.GetRequiredService<IApiKeyStore>().FindAsync(secret, token) is NotFound).IsTrue();
+                using var removed = await api.Client.DeleteAsync(ManagementApi.Uri(database.Path), token);
+                await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
                 await Assert.That(s3.Objects.ContainsKey("catalog-anchor/local")).IsTrue();
                 if (anchor == "missing")
                 {
@@ -364,6 +366,7 @@ public sealed class CatalogGateTests
                 ManualBackupHosting.Configure(services);
                 services.AddSingleton<TimeProvider>(time);
             });
+            // The snapshot also predates database deletion. Its old database entry and API key must remain inaccessible.
             // Prove this is the stale, pre-revocation fixture rather than a discarded/empty catalog.
             await Assert.That(await restored.Services.GetRequiredService<IApiKeyStore>().FindAsync(secret, token) is ApiKey).IsTrue();
             using var tls = new ClientTls();
@@ -394,6 +397,9 @@ public sealed class CatalogGateTests
             using var pages = peer.ReadBucket(request, cancellationToken: token);
             var refused = await Assert.ThrowsAsync<RpcException>(() => pages.ResponseStream.MoveNext(token));
             await Assert.That(refused!.StatusCode).IsEqualTo(StatusCode.FailedPrecondition);
+            using var snapshot = peer.ReadSnapshot(new DigestRequest { Database = ChangeGroups.Wire(ChangeGroups.System, incarnation) }, cancellationToken: token);
+            var snapshotRefused = await Assert.ThrowsAsync<RpcException>(() => snapshot.ResponseStream.MoveNext(token));
+            await Assert.That(snapshotRefused!.StatusCode).IsEqualTo(StatusCode.FailedPrecondition);
             using var protectedRoute = await restored.Client.GetAsync(ManagementApi.Uri("/v1/management/organizations"), token);
             await Assert.That(protectedRoute.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
             using var provision = await restored.Client.PostAsJsonAsync(ManagementApi.Uri("/admin/api-keys"),
