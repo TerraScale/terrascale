@@ -541,6 +541,31 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/organizations/{organization}/projects/{project}/allowed-cidrs:
+    parameters:
+      - $ref: '#/components/parameters/Organization'
+      - $ref: '#/components/parameters/Project'
+    put:
+      operationId: set_project_allowed_cidrs
+      tags: [Projects]
+      summary: Set a project's IP allowlist
+      description: Needs the project's admin role. Replaces the allowlist every API key token of the project is held to, on top of the key's own (up to 32 IPv4 or IPv6 CIDRs or addresses, empty allows any address). TerraBase answers 403 ip_not_allowed otherwise; a change applies to tokens issued afterwards, within 60 seconds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AllowedCidrsRequest' }
+      responses:
+        '200':
+          description: The changed project.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/organizations/{organization}/projects/{project}/members:
     parameters:
       - $ref: '#/components/parameters/Organization'
@@ -701,6 +726,31 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/organizations/{organization}/api-keys/{key}/allowed-cidrs:
+    parameters:
+      - $ref: '#/components/parameters/Organization'
+      - $ref: '#/components/parameters/Key'
+    put:
+      operationId: set_organization_api_key_allowed_cidrs
+      tags: [API keys]
+      summary: Set an organization API key's IP allowlist
+      description: The same role as creating the key. Replaces its IP allowlist (up to 32 IPv4 or IPv6 CIDRs or addresses, empty allows any address). TerraBase answers 403 ip_not_allowed to a token of the key used from another address, or from outside the project's allowlist; a change applies to tokens issued afterwards, within 60 seconds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AllowedCidrsRequest' }
+      responses:
+        '200':
+          description: The changed key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKey' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/organizations/{organization}/projects/{project}/api-keys:
     parameters:
       - $ref: '#/components/parameters/Organization'
@@ -803,6 +853,32 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/terrascale/organizations/{organization}/projects/{project}/api-keys/{key}/allowed-cidrs:
+    parameters:
+      - $ref: '#/components/parameters/Organization'
+      - $ref: '#/components/parameters/Project'
+      - $ref: '#/components/parameters/Key'
+    put:
+      operationId: set_project_api_key_allowed_cidrs
+      tags: [API keys]
+      summary: Set a project API key's IP allowlist
+      description: The same role as creating the key. Replaces its IP allowlist (up to 32 IPv4 or IPv6 CIDRs or addresses, empty allows any address). TerraBase answers 403 ip_not_allowed to a token of the key used from another address, or from outside the project's allowlist; a change applies to tokens issued afterwards, within 60 seconds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AllowedCidrsRequest' }
+      responses:
+        '200':
+          description: The changed key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKey' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/organizations/{organization}/audit-events:
     parameters:
@@ -1202,7 +1278,7 @@ components:
         next: { type: ['string', 'null'] }
     Project:
       type: object
-      required: [id, organization_id, name, issuer, created_by, created_at, role]
+      required: [id, organization_id, name, issuer, created_by, created_at, role, allowed_cidrs]
       properties:
         id: { $ref: '#/components/schemas/Ulid' }
         organization_id: { $ref: '#/components/schemas/Ulid' }
@@ -1215,6 +1291,11 @@ components:
         created_at: { $ref: '#/components/schemas/Timestamp' }
         role:
           $ref: '#/components/schemas/ProjectRole'
+        allowed_cidrs:
+          type: array
+          maxItems: 32
+          description: IPv4 or IPv6 CIDRs or addresses every API key token of the project must be used from, stored canonical (host bits cleared, an address as /32 or /128); empty allows any address.
+          items: { type: string }
       example:
         id: 01M4EQ2FRJ8S8B29E8TQVWNW4K
         organization_id: 01M4EQ2FRJ8S8B29E8TQVWNW4J
@@ -1223,6 +1304,7 @@ components:
         created_by: 01M4EQ2FRJ8S8B29E8TQVWNW4M
         created_at: '2026-10-06T12:00:00Z'
         role: admin
+        allowed_cidrs: []
     ProjectPage:
       type: object
       required: [items, next]
@@ -1359,6 +1441,11 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
             - type: 'null'
+        allowed_cidrs:
+          type: array
+          maxItems: 32
+          description: IPv4 or IPv6 CIDRs or addresses its tokens must be used from, stored canonical (host bits cleared, an address as /32 or /128); empty allows any address.
+          items: { type: string }
     CreateProjectApiKeyRequest:
       type: object
       required: [name, scopes]
@@ -1380,6 +1467,21 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
             - type: 'null'
+        allowed_cidrs:
+          type: array
+          maxItems: 32
+          description: IPv4 or IPv6 CIDRs or addresses its tokens must be used from, stored canonical (host bits cleared, an address as /32 or /128); empty allows any address.
+          items: { type: string }
+    AllowedCidrsRequest:
+      type: object
+      required: [allowed_cidrs]
+      additionalProperties: false
+      properties:
+        allowed_cidrs:
+          type: array
+          maxItems: 32
+          description: IPv4 or IPv6 CIDRs or addresses its tokens must be used from, stored canonical (host bits cleared, an address as /32 or /128); empty allows any address.
+          items: { type: string }
     RotateApiKeyRequest:
       type: object
       additionalProperties: false
@@ -1392,7 +1494,7 @@ components:
           description: Seconds the previous secret keeps working.
     ApiKey:
       type: object
-      required: [id, name, organization_id, project_id, database, scopes, created_by, created_at, expires_at, previous_secret_expires_at, last_used_at]
+      required: [id, name, organization_id, project_id, database, scopes, created_by, created_at, expires_at, previous_secret_expires_at, last_used_at, allowed_cidrs]
       properties:
         id: { $ref: '#/components/schemas/ApiKeyId' }
         name: { type: string }
@@ -1422,6 +1524,11 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Timestamp'
             - type: 'null'
+        allowed_cidrs:
+          type: array
+          maxItems: 32
+          description: IPv4 or IPv6 CIDRs or addresses its tokens must be used from, stored canonical (host bits cleared, an address as /32 or /128); empty allows any address.
+          items: { type: string }
     ApiKeySecret:
       type: object
       required: [api_key, key]

@@ -23,7 +23,8 @@ internal sealed record TsAuthTokenResponse([property: JsonPropertyName("access_t
 /// <param name="Database">The key's database restriction, when it has one.</param>
 /// <param name="Scopes">Granted scopes.</param>
 /// <param name="ValidTo">When the access token expires.</param>
-internal sealed record TsAuthKeyGrant(string Subject, string ProjectId, string? Database, IReadOnlySet<string> Scopes, DateTimeOffset ValidTo);
+/// <param name="Allowlists">The key's and project's IP allowlists (<see cref="IpAllowlists"/>); empty for none.</param>
+internal sealed record TsAuthKeyGrant(string Subject, string ProjectId, string? Database, IReadOnlySet<string> Scopes, DateTimeOffset ValidTo, IReadOnlyList<IPNetwork[]> Allowlists);
 
 /// <summary>A key's grant, a refused key, or ts-auth is unavailable.</summary>
 internal readonly union TsAuthKeyResult(TsAuthKeyGrant, NotFound, Unavailable);
@@ -185,7 +186,21 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
         var scopes = jwt.TryGetPayloadValue<string>("scope", out var scope) && scope.Length <= 4096
             ? scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal)
             : [];
-        return new TsAuthKeyGrant(subject, project, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero));
+        List<IPNetwork[]> allowlists = [];
+        foreach (var claim in IpAllowlists.Claims)
+        {
+            if (jwt.TryGetPayloadValue<string>(claim, out var cidrs))
+            {
+                if (IpAllowlists.Parse(cidrs) is not { } networks)
+                {
+                    return new NotFound();
+                }
+
+                allowlists.Add(networks);
+            }
+        }
+
+        return new TsAuthKeyGrant(subject, project, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero), allowlists);
     }
 
     private static Unavailable Unavailable() => new("ts-auth key exchange is unavailable");

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -108,7 +109,7 @@ internal sealed class UserAuthenticationHandler(
         {
             return AuthenticateResult.Fail("invalid token kind");
         }
-        foreach (var name in new[] { "project_id", "org_id", "database", "scope" })
+        foreach (var name in new[] { "project_id", "org_id", "database", "scope", "key_cidrs", "project_cidrs" })
         {
             if (jwt.TryGetPayloadValue<object>(name, out var claim) && claim is not string)
             {
@@ -180,6 +181,20 @@ internal sealed class UserAuthenticationHandler(
                 .Select(value => new Claim("scope", value)));
         }
 
+        List<IPNetwork[]> allowlists = [];
+        foreach (var name in IpAllowlists.Claims)
+        {
+            if (jwt.TryGetPayloadValue<string>(name, out var cidrs))
+            {
+                if (project is null || endUser || IpAllowlists.Parse(cidrs) is not { } networks)
+                {
+                    return AuthenticateResult.Fail("invalid IP allowlist claim");
+                }
+
+                allowlists.Add(networks);
+            }
+        }
+
         // A platform role rides only on a user's own sign-in token, never on a project token.
         if (project is null && jwt.TryGetPayloadValue<string>(Platform.PlatformExplore.RoleClaim, out var role) && role == Platform.PlatformExplore.AdminRole)
         {
@@ -195,7 +210,7 @@ internal sealed class UserAuthenticationHandler(
         // Exactly the list the signature was checked against: a later refresh replaces it and so retires the entry.
         scope = endUser ? "documents:read documents:write" : scope;
         accepted = new ValidatedTokens.Accepted(
-            checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope);
+            checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope, allowlists);
         validated.Add(cacheKey, accepted);
         return Success(accepted);
     }
@@ -203,7 +218,7 @@ internal sealed class UserAuthenticationHandler(
     private AuthenticateResult Success(ValidatedTokens.Accepted accepted)
     {
         var principal = new ClaimsPrincipal(new ClaimsIdentity(accepted.Claims.Select(claim => new Claim(claim.Type, claim.Value)), SchemeName));
-        Context.Features.Set(new ProjectToken(accepted.Project, accepted.Database, accepted.Scope, new DateTimeOffset(accepted.ValidTo, TimeSpan.Zero)));
+        Context.Features.Set(new ProjectToken(accepted.Project, accepted.Database, accepted.Scope, new DateTimeOffset(accepted.ValidTo, TimeSpan.Zero), accepted.Allowlists));
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 

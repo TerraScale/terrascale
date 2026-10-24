@@ -198,7 +198,7 @@ public sealed class DeletionCleanupTests(TerraBaseFixture fixture)
         await Assert.That(held.AuthLogicalVerifiedAt).IsNull();
         await Assert.That(await store.GetAsync(AuthStore.MembershipCollection, owner.InstanceId, organization + "/" + owner.Id)).IsNotNull();
         await Assert.ThrowsAsync<ApiException>(() => oidc.Server.App.Services.GetRequiredService<ApiKeys>()
-            .CreateAsync(owner, organization, null, "late request", [], null, null, CancellationToken.None));
+            .CreateAsync(owner, organization, null, "late request", [], null, null, [], CancellationToken.None));
         await Assert.That(await store.QueryAsync(AuthStore.ApiKeyCollection, owner.InstanceId, "/organizationId", organization).AnyAsync()).IsFalse();
         await Assert.That((await JobAsync(store, independent.InstanceId, "account", independent.Id)).AuthLogicalVerifiedAt).IsNotNull();
     }

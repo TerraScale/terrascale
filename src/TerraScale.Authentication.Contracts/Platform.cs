@@ -41,7 +41,8 @@ public sealed record MembershipRecord(string InstanceId, string OrganizationId, 
 /// The opaque ULID TerraBase knows this project's closure by, drawn at random by its first closure intent and reused by
 /// every later one (docs/auth/project-closure.md); null until then.
 /// </param>
-public sealed record ProjectRecord(string Id, string InstanceId, string OrganizationId, string Name, string CreatedBy, DateTimeOffset CreatedAt, string? ClosureId = null);
+/// <param name="AllowedCidrs">Canonical CIDRs every API key token of the project must be used from; null or empty allows any address.</param>
+public sealed record ProjectRecord(string Id, string InstanceId, string OrganizationId, string Name, string CreatedBy, DateTimeOffset CreatedAt, string? ClosureId = null, IReadOnlyList<string>? AllowedCidrs = null);
 
 /// <summary>An explicit project role (collection <c>project_members</c>, addressed by project and user).</summary>
 /// <param name="InstanceId">Always the platform tenant.</param>
@@ -69,6 +70,7 @@ public sealed record ProjectMemberRecord(string InstanceId, string OrganizationI
 /// <param name="CreatedBy">The creating user.</param>
 /// <param name="CreatedAt">Creation time.</param>
 /// <param name="ExpiresAt">Optional expiry; an expired key is refused like a revoked one.</param>
+/// <param name="AllowedCidrs">Canonical CIDRs its tokens must be used from; null or empty allows any address.</param>
 public sealed record ApiKeyRecord(
     string Id,
     string InstanceId,
@@ -82,7 +84,8 @@ public sealed record ApiKeyRecord(
     DateTimeOffset? PreviousSecretExpiresAt,
     string CreatedBy,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? ExpiresAt);
+    DateTimeOffset? ExpiresAt,
+    IReadOnlyList<string>? AllowedCidrs = null);
 
 /// <summary>
 /// When an API key last exchanged a token (collection <c>api_key_usage</c>, addressed by key id). It is kept apart from the

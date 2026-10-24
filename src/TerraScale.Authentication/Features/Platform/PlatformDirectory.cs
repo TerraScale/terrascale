@@ -468,6 +468,21 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
             return new Plan<ProjectAccess>(operations, access with { Project = access.Project with { Value = renamed } }, claim);
         }, cancellationToken);
 
+    /// <summary>Replaces the project's IP allowlist (empty allows any address); needs its admin role.</summary>
+    public Task<ProjectAccess> SetProjectAllowedCidrsAsync(string userId, string organizationId, string projectId, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken) =>
+        this.CommitAsync(async () =>
+        {
+            var access = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            RequireRole(access, Roles.Admin);
+            var changed = access.Project.Value with { AllowedCidrs = allowedCidrs };
+            return new Plan<ProjectAccess>(
+            [
+                Authority(access, Roles.Admin),
+                AuthStore.Replace(AuthStore.ProjectCollection, Instance, projectId, Serialize(changed, PlatformJson.Default.ProjectRecord), access.Project.Version),
+                this.Audit(organizationId, userId, "project.allowed_cidrs_changed", projectId, string.Join(' ', allowedCidrs)),
+            ], access with { Project = access.Project with { Value = changed } });
+        }, cancellationToken);
+
     /// <summary>
     /// Commits the caller's closure intent for a project, needing its admin role in the same transaction, or returns the
     /// pending one (a retry, or another admin's). Nothing outside ts-auth changes here: see <see cref="Closures"/>.

@@ -81,6 +81,15 @@ public static class UserAuthExtensions
         ArgumentNullException.ThrowIfNull(app);
         app.Use(async (context, next) =>
         {
+            // An API key's token is used only from its key's and project's allowlists, on every route.
+            if (Identity(context.User, UserAuthenticationHandler.SchemeName) is not null
+                && context.Features.Get<ProjectToken>() is { Allowlists.Count: > 0 } restricted
+                && IpAllowlists.ClientOf(context) is var client && !IpAllowlists.Admits(restricted.Allowlists, client))
+            {
+                await BadRequests.WriteAsync(context, StatusCodes.Status403Forbidden, "ip_not_allowed", IpAllowlists.Refusal(client), op: null).ConfigureAwait(false);
+                return;
+            }
+
             if (Identity(context.User, UserAuthenticationHandler.SchemeName)?.HasClaim("token_kind", "end_user") == true
                 && context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName is not
                     ("getDocument" or "listDocuments" or "queryDocuments" or "createDocument" or "putDocument"

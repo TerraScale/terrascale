@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
@@ -23,7 +24,7 @@ internal sealed class ValidatedTokens([FromKeyedServices(UserAuthenticationHandl
     /// <summary>What the handler accepted: its claims and project-token fields, the keys it checked, and exp.</summary>
     internal sealed record Accepted(
         IReadOnlyList<SecurityKey> Keys, DateTime ValidTo, IReadOnlyList<(string Type, string Value)> Claims,
-        string? Project, string? Database, string? Scope);
+        string? Project, string? Database, string? Scope, IReadOnlyList<IPNetwork[]> Allowlists);
 
     public static string KeyOf(string token) => Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 
