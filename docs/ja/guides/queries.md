@@ -64,7 +64,7 @@ JavaScript's `database.transaction()` and C#'s `TransactAsync` expose database-s
 
 ## Aggregations
 
-No SDK wraps aggregates or geo filters yet. The examples below use the HTTP query route with `curl` and `jq`, and the `api` helper and `$DB` from the [vector search shell setup](/ja/guides/vector-search#set-up-the-shell).
+The HTTP examples below use the query route with `curl` and `jq`, and the `api` helper and `$DB` from the [vector search shell setup](/ja/guides/vector-search#set-up-the-shell). Each section ends with the same query from every SDK. The Go SDK ships aggregates and geo queries in `terrascale.tech/sdk` v0.0.4. The JavaScript, C#, Rust and Python SDKs have them on their `main` branches, but no tagged release includes them yet: JavaScript 0.0.6, C# 0.0.6, Rust v0.0.2 and Python v0.0.1 don't have them.
 
 Add `aggregate` to a query to get per-group counts and numeric summaries instead of documents:
 
@@ -101,6 +101,73 @@ JSON
 - `aggregate` cannot be combined with `sort`, `project`, `cursor` or `count`. It works with every filter, including `search`, `within` and end-user collection rules.
 
 A filter on an indexed field seeks that [index](/ja/guides/indexes); the grouping then sorts the group keys of the matches.
+
+### Aggregates from an SDK
+
+Sum and average `/amount` per `/status`. JavaScript, where `orders` is a collection handle such as `client.database('app').collection('orders')`:
+
+```js
+const { groups } = await orders.query({
+  aggregate: { groupBy: ['/status'], sum: ['/amount'], avg: ['/amount'] },
+  limit: 100,
+}, { signal })
+// [{ key: ['paid'], count: '250', sum: { '/amount': 12500.5 }, avg: { '/amount': 50.002 } }]
+```
+
+Go, where `orders` is `db.Collection("orders")`:
+
+```go
+res, err := orders.Query(ctx, tb.Query{
+	Aggregate: &tb.Aggregate{GroupBy: []string{"/status"}, Sum: []string{"/amount"}, Avg: []string{"/amount"}},
+	Limit:     100,
+})
+for _, g := range res.Groups {
+	fmt.Println(string(g.Key[0]), g.Count, *g.Sum["/amount"])
+	if avg := g.Avg["/amount"]; avg != nil {
+		fmt.Println("  avg", *avg)
+	}
+}
+```
+
+`Sum`, `Avg`, `Min` and `Max` map each pointer to a `*float64`. A sum is never nil. The others are nil when the group has no numbers at that path.
+
+C# (`TerraScale.DotNet`):
+
+```csharp
+TerraBaseDocumentPage page = await database.QueryAsync("orders", new TerraBaseQuery
+{
+    Aggregate = new TerraBaseAggregate { GroupBy = ["/status"], Sum = ["/amount"], Avg = ["/amount"] },
+    Limit = 100,
+}, cancellationToken);
+foreach (TerraBaseGroup g in page.Groups ?? [])
+    Console.WriteLine($"{g.Key[0]} {g.Count} {g.Sum?["/amount"]} {g.Avg?["/amount"]}");
+```
+
+Rust (`terrascale::v1`):
+
+```rust
+use terrascale::v1::{Aggregate, Query};
+
+let q = Query::new()
+    .aggregate(Aggregate::new().group_by(["/status"]).sum(["/amount"]).avg(["/amount"]))
+    .limit(100);
+let page = orders.query::<serde_json::Value>(&q).await?;
+for g in page.groups.unwrap_or_default() {
+    println!("{} {} {:?} {:?}", g.key[0], g.count, g.sum["/amount"], g.avg["/amount"]);
+}
+```
+
+Python (`terrascale`), where `orders` is `ts.database("app").collection("orders")`:
+
+```python
+from terrascale import query as q
+
+page = orders.query(aggregate=q.aggregate(["/status"], sum=["/amount"], avg=["/amount"]), limit=100)
+for g in page.groups or []:
+    print(g.key[0], g.count, g.sum["/amount"], g.avg["/amount"])
+```
+
+JavaScript returns `count` as a decimal string. The other SDKs decode it as an integer.
 
 ## Geospatial queries
 
@@ -149,6 +216,68 @@ JSON
 ```
 
 Like the [vector `near` sort](/ja/guides/vector-search), it must be the only sort key and returns one page of at most 100 documents with no cursor. Documents without a point are skipped.
+
+### Geo queries from an SDK
+
+Find points within 1 km, nearest first. Each returned document carries its `distance` in meters. JavaScript, where `places` is a collection handle:
+
+```js
+const { items } = await places.query({
+  filter: v1Filter.withinRadius('/loc', { lat: -23.55, lon: -46.63, meters: 1000 }),
+  sort: [{ near: { path: '/loc', lat: -23.55, lon: -46.63 } }],
+  limit: 10,
+}, { signal })
+```
+
+`v1Filter.withinBox('/loc', { south, west, north, east })` builds a box filter.
+
+Go:
+
+```go
+res, err := places.Query(ctx, tb.Query{
+	Filter: tb.WithinRadius("/loc", -23.55, -46.63, 1000),
+	Sort:   []tb.SortKey{tb.NearPoint("/loc", -23.55, -46.63)},
+	Limit:  10,
+})
+for _, d := range res.Items { fmt.Println(d.ID, *d.Distance) }
+```
+
+C#:
+
+```csharp
+TerraBaseDocumentPage page = await database.QueryAsync("places", new TerraBaseQuery
+{
+    Filter = TerraBaseFilter.WithinRadius("/loc", -23.55, -46.63, 1000),
+    Sort = [TerraBaseSort.NearPoint("/loc", -23.55, -46.63)],
+    Limit = 10,
+}, cancellationToken);
+foreach (var item in page.Items) Console.WriteLine($"{item.Id} {item.Distance}");
+```
+
+Rust:
+
+```rust
+use terrascale::v1::{Filter, GeoNear, Query};
+
+let q = Query::new()
+    .filter(Filter::within_radius("/loc", -23.55, -46.63, 1000.0))
+    .geo_near(GeoNear::new("/loc", -23.55, -46.63))
+    .limit(10);
+for doc in places.query::<serde_json::Value>(&q).await?.items {
+    println!("{} {:?}", doc.id, doc.distance);
+}
+```
+
+Python:
+
+```python
+page = places.query(q.within_radius("/loc", -23.55, -46.63, 1000),
+                    sort=[q.geo_near("/loc", -23.55, -46.63)], limit=10)
+for d in page.items:
+    print(d.id, d.distance)
+```
+
+Box filters are `tb.WithinBox`, `TerraBaseFilter.WithinBox`, `Filter::within_box` and `q.within_box`. Each takes `south, west, north, east`.
 
 ### Index tip
 
