@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.7 — live shape reconnect, browser bootstrap and read replica
+
+`subscribeShape` keeps its state and retries the same position after a lost
+connection, follows the bootstrap `307` in browsers, and accepts
+`replica: { load, save }` to restore its last resumable state across restarts
+and offline periods. `indexedDbShapeReplica(key)` stores it in IndexedDB.
+Writes are never queued locally. Also publishes the query aggregates and geo
+filters below.
+
 ## Unreleased — query aggregates and geo filters
 
 `query({ aggregate: { groupBy, sum, avg, min, max } })` returns typed

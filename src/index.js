@@ -21,6 +21,8 @@ export {
 } from "./v1/errors.js";
 export { v1Filter } from "./v1/filter.js";
 export { V1ShapeSubscription } from "./v1/shape-subscription.js";
+export { indexedDbShapeReplica } from "./v1/shape-replica.js";
+/** @typedef {import("./v1/shape-subscription.js").V1ShapeReplicaStore} V1ShapeReplicaStore */
 /** @typedef {import("./v1/shape-subscription.js").V1ShapeSubscribeOptions} V1ShapeSubscribeOptions */
 /** @typedef {import("./v1/shape-subscription.js").V1ShapeDocument} V1ShapeDocument */
 /** @typedef {import("./v1/shape-reader.js").V1SealedShapePosition} V1SealedShapePosition */

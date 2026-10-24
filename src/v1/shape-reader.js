@@ -5,6 +5,7 @@ import { decodeShapePage, encodeShapeRequest, requireShapeHandle, requireShapeOf
 import { decryptShapeObject } from "./shape-crypto.js";
 import { parseExactJson } from "./json.js";
 import { TerraBaseV1Error } from "./errors.js";
+import { OpaqueRedirectError } from "./transport.js";
 /** @import { V1Transport } from "./transport.js" */
 /** @import { V1ShapeRequest, V1ShapePage } from "./shapes.js" */
 /** @typedef {{handle: string; offset: string; epoch: string; keyId: string}} V1SealedShapePosition */
@@ -125,11 +126,9 @@ export async function readShapePage(transport, params, request, signal, ifNoneMa
       query.delete("cursor");
     }
   }
-  let response = await shapeCall(transport, params, "readFreeShape", { query, headers, signal });
-  if (response.status === 307) {
-    if (query.get("offset") !== "-1") malformed("unexpected shape redirect");
-    const location = response.headers.get("location");
-    if (location === null) malformed("shape redirect Location");
+  const bootstrap = query.get("offset") === "-1";
+  /** @param {string} location */
+  const redirectTarget = location => {
     const target = new URL(location, source);
     if (target.origin !== source.origin || target.pathname !== source.pathname || target.username !== "" || target.password !== "" || target.hash !== "") malformed("shape redirect target");
     for (const key of target.searchParams.keys()) {
@@ -144,6 +143,21 @@ export async function readShapePage(transport, params, request, signal, ifNoneMa
     delete headers["TB-Shape-Resume"];
     query.set("handle", handle);
     query.set("offset", offset);
+  };
+  let response;
+  try { response = await shapeCall(transport, params, "readFreeShape", { query, headers, signal }); }
+  catch (error) {
+    if (!(error instanceof OpaqueRedirectError) || !bootstrap) throw error;
+    // Browsers hide a manual 307; follow it natively, then hold the final URL to the Location rules.
+    response = await shapeCall(transport, params, "readFreeShape", { query: new URLSearchParams(query), headers: { ...headers }, signal, redirect: "follow" });
+    if (response.redirectedTo === undefined || response.status !== 200) malformed("shape bootstrap requires redirect");
+    redirectTarget(response.redirectedTo);
+  }
+  if (response.status === 307) {
+    if (!bootstrap) malformed("unexpected shape redirect");
+    const location = response.headers.get("location");
+    if (location === null) malformed("shape redirect Location");
+    redirectTarget(location);
     response = await shapeCall(transport, params, "readFreeShape", { query, headers, signal });
     if (response.status !== 200) malformed("repeated shape redirect");
   } else if (query.get("offset") === "-1") malformed("shape bootstrap requires redirect");

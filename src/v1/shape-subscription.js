@@ -3,6 +3,7 @@ import { TerraBaseV1Error } from "./errors.js";
 import { requireFilter } from "./filter.js";
 import { parseExactJson, stringifyExactJson } from "./json.js";
 import { readShapePage } from "./shape-reader.js";
+import { BodyTransportError, RequestTransportError } from "./transport.js";
 /**
  * @import { JsonObject } from "./json.js"
  * @import { V1Filter } from "./filter.js"
@@ -12,6 +13,14 @@ import { readShapePage } from "./shape-reader.js";
  * @typedef {object} V1ShapeSubscribeOptions
  * @property {AbortSignal | undefined} [signal] Closes the subscription when aborted; cancellation settles `done`.
  * @property {((subscription: V1ShapeSubscription) => void) | undefined} [onUpdate] Runs after validated responses and freshness changes; throwing rejects `done` unless already closed or aborted.
+ * @property {V1ShapeReplicaStore | undefined} [replica] Keeps the last resumable state for reads across restarts and while offline; writes still go to the server.
+ */
+/**
+ * Holds one subscription's state as exact JSON text, e.g. in IndexedDB or React Native storage. Scope one store
+ * to one signed-in subject: the replica holds that subject's authorized documents. A failing store rejects `done`.
+ * @typedef {object} V1ShapeReplicaStore
+ * @property {() => string | undefined | Promise<string | undefined>} load
+ * @property {(text: string | undefined) => void | Promise<void>} save Receives undefined after must_refetch discards state.
  */
 /** @typedef {{ readonly version: string; readonly document: JsonObject }} V1ShapeDocument */
 const retryBaseMilliseconds = 250;
@@ -81,6 +90,9 @@ export class V1ShapeSubscription {
   /** @type {V1Filter | undefined} */
   #where;
   #onUpdate;
+  #replica;
+  /** @type {string} */
+  #scope;
   #external;
   #onExternalAbort = () => this.close();
   #done;
@@ -92,9 +104,11 @@ export class V1ShapeSubscription {
    */
   constructor(transport, params, shape = {}, options = {}) {
     requireMembers(shape, ["where"], "shape");
-    requireMembers(options, ["signal", "onUpdate"], "shape subscribe option");
+    requireMembers(options, ["signal", "onUpdate", "replica"], "shape subscribe option");
     const { where } = shape;
-    const { signal, onUpdate } = options;
+    const { signal, onUpdate, replica } = options;
+    if (replica !== undefined && (typeof replica?.load !== "function" || typeof replica.save !== "function"))
+      throw new TypeError("replica has load and save functions.");
     if (signal !== undefined && !(signal instanceof AbortSignal)) throw new TypeError("signal is an AbortSignal.");
     if (onUpdate !== undefined && typeof onUpdate !== "function") throw new TypeError("onUpdate is a function.");
     this.#transport = transport;
@@ -102,6 +116,9 @@ export class V1ShapeSubscription {
     // Exact copy: a structuredClone would lose the source text of large or fractional JSON numbers.
     this.#where = where === undefined ? undefined : requireFilter(parseExactJson(stringifyExactJson(requireFilter(where), "shape filter")));
     this.#onUpdate = onUpdate;
+    this.#replica = replica;
+    // A replica restores only the identical shape it was saved from.
+    this.#scope = stringifyExactJson([this.#params.database, this.#params.collection, this.#where ?? null], "shape scope");
     this.#external = signal;
     if (signal?.aborted === true) this.close();
     else signal?.addEventListener("abort", this.#onExternalAbort);
@@ -120,6 +137,7 @@ export class V1ShapeSubscription {
     const signal = this.#controller.signal;
     let retries = 0;
     try {
+      if (this.#replica !== undefined) await this.#restore(signal);
       for (;;) {
         signal.throwIfAborted();
         const request = this.#request();
@@ -127,18 +145,22 @@ export class V1ShapeSubscription {
         try {
           page = await readShapePage(this.#transport, this.#params, request, signal);
         } catch (error) {
-          if (!(error instanceof TerraBaseV1Error)) throw error;
-          if (isRetryable(error)) {
+          // Shape reads are replay-safe GETs: a lost connection keeps state and resumes at the same position.
+          const lost = error instanceof RequestTransportError || error instanceof BodyTransportError;
+          if (lost || (error instanceof TerraBaseV1Error && isRetryable(error))) {
             retries = Math.min(retries + 1, maximumBackoffAttempt);
-            await sleep(retryDelay(retries, error.retryAfter), signal);
+            await sleep(retryDelay(retries, lost ? undefined : error.retryAfter), signal);
             continue;
           }
+          if (!(error instanceof TerraBaseV1Error)) throw error;
           if (error.status !== 409 || error.code !== "must_refetch") throw error;
           this.#recover(request, error);
+          if (this.#handle === undefined) await this.#replica?.save(undefined);
           continue;
         }
         retries = 0;
         this.#commit(page);
+        await this.#persist(signal);
         this.#onUpdate?.(this);
       }
     } catch (error) {
@@ -187,6 +209,36 @@ export class V1ShapeSubscription {
     this.#upToDate = false;
     this.#resumeAttempt = false;
     this.#onUpdate?.(this);
+  }
+  /** @param {AbortSignal} signal */
+  async #restore(signal) {
+    const text = await this.#replica?.load();
+    signal.throwIfAborted();
+    if (text === undefined) return;
+    /** @type {any} */
+    let saved;
+    try { saved = parseExactJson(text); } catch { saved = undefined; }
+    // Unknown or other-shape replicas are discarded, never merged.
+    if (saved?.format !== 1 || saved.scope !== this.#scope || typeof saved.handle !== "string" || typeof saved.offset !== "string" ||
+        !/^(?:0|[1-9][0-9]*)$/u.test(saved.offset) || !Array.isArray(saved.documents) ||
+        !saved.documents.every((/** @type {any} */ item) => Array.isArray(item) && typeof item[0] === "string" &&
+          typeof item[1]?.version === "string" && typeof item[1].document === "object" && item[1].document !== null)) return;
+    this.#documents = new Map(saved.documents.map((/** @type {[string, V1ShapeDocument]} */ [id, entry]) => [id, deepFreeze({ version: entry.version, document: entry.document })]));
+    this.#handle = saved.handle;
+    this.#offset = saved.offset;
+    this.#cursor = typeof saved.cursor === "string" ? saved.cursor : undefined;
+    this.#resume = typeof saved.resume === "string" ? saved.resume : undefined;
+    // Restored state is stale until the server confirms a fresh head.
+    this.#upToDate = false;
+    this.#onUpdate?.(this);
+  }
+  /** @param {AbortSignal} signal */
+  async #persist(signal) {
+    // Snapshot pages are not resumable positions; keep the previous replica until the snapshot completes.
+    if (this.#replica === undefined || this.#handle === undefined || this.#offset.startsWith("snap.")) return;
+    await this.#replica.save(stringifyExactJson({ format: 1, scope: this.#scope, handle: this.#handle, offset: this.#offset,
+      cursor: this.#cursor ?? null, resume: this.#resume ?? null, documents: [...this.#documents] }, "shape replica"));
+    signal.throwIfAborted();
   }
   /** @param {import("./shapes.js").V1ShapePage} page */
   #commit(page) {

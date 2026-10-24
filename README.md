@@ -263,7 +263,7 @@ feed, not authorized bounded-query snapshots or the planned reactive WebSocket A
 
 ## Free shape subscriptions (protocol v1)
 
-`collection.subscribeShape({ where? }, { onUpdate?, signal? })` follows a collection's
+`collection.subscribeShape({ where? }, { onUpdate?, signal?, replica? })` follows a collection's
 sealed snapshot, log chunks, and live long-polls. Its `state` is a map from document
 id to `{ version, document }`; `upToDate` becomes true only after a fresh response
 reports `up_to_date`. Each callback sees the complete applied response or a
@@ -283,23 +283,49 @@ try {
 ```
 
 `close()` cancels a pending read. Server errors reject `done` using the existing
-TerraBase error types; malformed responses and network failures also stop it.
+TerraBase error types; malformed responses also stop it. A lost connection
+(a fetch rejection or a body failing in transit) keeps state and retries the same
+position with backoff, because shape reads are replay-safe `GET`s.
 Observe `done` to detect terminal errors. A throwing `onUpdate` stops the
 subscription and rejects `done` with the callback's error; already applied state
 remains available. Calling `close()` or aborting takes precedence over a later
 callback exception and resolves `done`. Document
 upserts replace the prior value and deletes of unknown ids are harmless. Repeated
 events are applied: a sealed value can be newer than its event, including after
-failover. There are no durable local writes or offline mutation queue.
+failover. There are no durable local writes or offline mutation queue: every
+write goes to the server, and a live subscription delivers it back.
+
+Pass a token provider (`token: () => getAccessToken()`) to keep a subscription
+alive across token renewal: each long-poll asks it for the current token. A
+`401` or `403` still stops the subscription.
+
+### Read replica
+
+`replica: { load, save }` keeps the last resumable state as exact JSON text. On
+start the subscription restores those documents with `upToDate` false, calls
+`onUpdate`, and catches up from the saved handle and offset; while offline it
+keeps retrying and the restored state stays readable. A `409 must_refetch`
+clears the replica with the state. A replica saved for another database,
+collection or filter is ignored. `indexedDbShapeReplica(key)` stores it in
+browser IndexedDB; use one key per signed-in subject and shape, and clear it on
+sign-out. A failing store rejects `done`.
+
+```js
+import { indexedDbShapeReplica } from "@terrascale/sdk";
+const open = todos.subscribeShape({ where: v1Filter.eq("/done", false) }, {
+  replica: indexedDbShapeReplica(`${userId}/todos/open`),
+  onUpdate: s => render(s.state, s.upToDate),
+});
+```
 
 The client preserves state for one proven cursor-resume attempt when a different
 machine rejects its handle. It never resumes an incomplete snapshot. A failed
 resume or another `409 must_refetch` clears state and starts a fresh snapshot.
 Opaque resume tokens travel verbatim in the query, or `TB-Shape-Resume` when the
 request target would exceed the protocol limit. Only documented transient
-`shape_busy`, `unavailable`, and `shape_too_large` errors retry with backoff and
-`Retry-After` until success or cancellation; authorization, validation, and
-network errors stop the subscription. The backoff delay is capped at 30 seconds
+`shape_busy`, `unavailable`, and `shape_too_large` errors and lost connections
+retry with backoff and `Retry-After` until success or cancellation;
+authorization and validation errors stop the subscription. The backoff delay is capped at 30 seconds
 unless `Retry-After` requires longer. The maximum signed-64-bit live bucket is
 accepted as a response, as §4 allows, but cannot be sent as the next input;
 `done` rejects with a `TypeError` if that protocol limit is reached.
@@ -319,8 +345,10 @@ latest served epoch advances; historical objects fetch their keys again without
 retaining them. Any `409 must_refetch` on the shape or key route clears that
 collection's key cache. A failed tag, binding, frame, or response validation
 applies nothing. Key ids follow §12's 26 ASCII bytes without assuming a ULID.
-Native browser Fetch hides manual redirect metadata, so subscription bootstrap
-currently requires server fetch. TBS1 decryption uses WebCrypto in either runtime.
+Native browser Fetch hides a manual `307` behind an opaque redirect, so in a
+browser the bootstrap is sent again with `redirect: "follow"` and the final URL
+is held to the same same-route `Location` rules. TBS1 decryption uses WebCrypto
+in either runtime.
 
 This implements the [proposed protocol](contracts/shape-v1/shape-reads.md) at
 `993927ce7ecf8f9b889d24d4d1d21ec96eaf9416`, using `documents:read`. HTTP fakes and the
