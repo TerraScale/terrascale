@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/TerraScale/terrascale",
-  "revision": "ed8ba40539c8232fca200483f69a6a8d43271213",
+  "revision": "4068125ff273074731d47fdae25443ee62fdce63",
   "pullRequest": "https://github.com/TerraScale/terrascale/pull/602",
   "inputs": {
     "CompleteFileUploadEndpoint.cs.txt": {
