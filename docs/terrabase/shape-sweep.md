@@ -104,7 +104,9 @@ database:
 - advances a per-database cursor past current, protected and finished handles, at most 64 pages per pass,
   and wraps it at the end of the inventory so later retirements are found again.
 
-A batch that finds a damaged row (a body over the 8 MiB object bound) rolls back; the handle counts as
+A drop charges the floor and lineage bodies it deletes to the same budget, after the objects; a record that does
+not fit what is left stays for the next batch. A batch that finds a damaged row (a body over the 8 MiB object
+bound, a floor or lineage record's included) rolls back; the handle counts as
 malformed and the cursor moves past it, so it never pins the database. Cursors are kept only inside an
 inventory and only for listed databases. Closed, deleted, busy or damaged databases are skipped and
 retried next pass, also while shutdown is underway; only the sweep's own cancellation stops it, and it rolls

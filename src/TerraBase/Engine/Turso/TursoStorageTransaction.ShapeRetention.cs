@@ -103,27 +103,37 @@ internal sealed partial class TursoStorageTransaction : IShapeRetentionTransacti
         // The sentinel outlives the real rows until the last batch, so a partial drop still refuses old offsets; the
         // lineage record outlives the floor, so the handle stays classifiable until nothing of it is left.
         var forget = Command("""
-            DELETE FROM _tb_shape_chunk WHERE handle = $sentinel AND offset = 0
+            SELECT rowid, end_offset, octet_length(body) FROM _tb_shape_chunk WHERE handle = $sentinel AND offset = 0
             AND NOT EXISTS (SELECT 1 FROM _tb_shape_chunk WHERE handle = $handle)
             AND NOT EXISTS (SELECT 1 FROM _tb_shape_snapshot WHERE handle = $handle);
             """);
         forget.Parameters.AddWithValue("$sentinel", ShapeFloorPrefix + handle);
         forget.Parameters.AddWithValue("$handle", handle);
-        deleted += forget.ExecuteNonQuery();
-        if (deleted == maxRows)
+        if (!DropShapeRecord(forget, maxBytes, ref deleted, ref bytes, cancellationToken) || deleted == maxRows)
         {
             return (deleted, bytes);
         }
 
         var lineage = Command("""
-            DELETE FROM _tb_shape_chunk WHERE handle = $lineage AND offset = 0
+            SELECT rowid, end_offset, octet_length(body) FROM _tb_shape_chunk WHERE handle = $lineage AND offset = 0
             AND NOT EXISTS (SELECT 1 FROM _tb_shape_chunk WHERE handle IN ($handle, $sentinel))
             AND NOT EXISTS (SELECT 1 FROM _tb_shape_snapshot WHERE handle = $handle);
             """);
         lineage.Parameters.AddWithValue("$lineage", ShapeLineagePrefix + handle);
         lineage.Parameters.AddWithValue("$sentinel", ShapeFloorPrefix + handle);
         lineage.Parameters.AddWithValue("$handle", handle);
-        return (deleted + lineage.ExecuteNonQuery(), bytes);
+        _ = DropShapeRecord(lineage, maxBytes, ref deleted, ref bytes, cancellationToken);
+        return (deleted, bytes);
+    }
+
+    // Worker-only: deletes the floor or lineage row the candidate names, if any, and charges its body; false when it is left
+    // for the next batch because the budget is spent or it does not fit. Reads its size only; an oversized one faults the batch.
+    private bool DropShapeRecord(SqliteCommand candidate, long maxBytes, ref int deleted, ref long bytes, CancellationToken cancellationToken)
+    {
+        var (rows, size, _, left) = ShapeBudget(candidate, bytes < maxBytes ? maxBytes - bytes : -1);
+        deleted += DeleteShapeRows("_tb_shape_chunk", rows, cancellationToken);
+        bytes += size;
+        return !left;
     }
 
     // Worker-only: the handle's sentinel floor, or the feed's when higher.

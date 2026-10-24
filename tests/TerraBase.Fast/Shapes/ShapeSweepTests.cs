@@ -166,22 +166,30 @@ public sealed class ShapeSweepTests
         string[] handles = [(await node.SealAsync("")).Handle, (await node.SealAsync("""{"eq":["/n",1]}""")).Handle];
         Array.Sort(handles, StringComparer.Ordinal);
         var (damaged, healthy) = (handles[0], handles[1]);
-        // A body over the 8 MiB object bound fails every batch that reaches it.
-        await node.WriteAsync(connection => Execute(connection, "UPDATE _tb_shape_chunk SET body = $b WHERE handle = $h;",
-            ("$h", damaged), ("$b", new byte[ShapeRetention.BatchBytes + 1])));
+        var floor = (await node.SealAsync("""{"eq":["/n",2]}""")).Handle;
+        // A body over the 8 MiB object bound fails every batch that reaches it, a floor sentinel's included.
+        await node.WriteAsync(connection =>
+        {
+            Execute(connection, "UPDATE _tb_shape_chunk SET body = $b WHERE handle = $h;", ("$h", damaged), ("$b", new byte[ShapeRetention.BatchBytes + 1]));
+            Execute(connection, "DELETE FROM _tb_shape_chunk WHERE handle = $h;", ("$h", floor));
+            Execute(connection, "INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) VALUES ($h, 0, 5, $b, 0);",
+                ("$h", "~floor:" + floor), ("$b", new byte[ShapeRetention.BatchBytes + 1]));
+        });
         await node.DropAsync();
 
         var pass = await node.PassAsync();
         await Assert.That(pass.Retired).IsEqualTo(1);
-        await Assert.That(pass.Protected).IsEqualTo(1);
+        await Assert.That(pass.Protected).IsEqualTo(2);
         await Assert.That(pass.Failed).IsEqualTo(0);
         await Assert.That(await node.RowsAsync(healthy)).IsEqualTo(Rows.None);
         await Assert.That(await node.RowsAsync(damaged)).IsEqualTo(new Rows(1, 0, 0, 1));
+        await Assert.That(await node.RowsAsync(floor)).IsEqualTo(new Rows(0, 0, 1, 1));
 
         var next = await node.PassAsync();
-        await Assert.That(next.Protected).IsEqualTo(1);
+        await Assert.That(next.Protected).IsEqualTo(2);
         await Assert.That(next.Failed).IsEqualTo(0);
         await Assert.That(await node.RowsAsync(damaged)).IsEqualTo(new Rows(1, 0, 0, 1));
+        await Assert.That(await node.RowsAsync(floor)).IsEqualTo(new Rows(0, 0, 1, 1));
     }
 
     [Test]
@@ -283,6 +291,10 @@ public sealed class ShapeSweepTests
         // The same unfiltered handle: a chunk, a snapshot page and one lineage record.
         await Assert.That(await node.BootstrapAsync()).IsEqualTo(handle);
         await node.DropAsync();
+        var bodies = await node.ReadAsync(connection => Scalar(connection, """
+            SELECT (SELECT sum(octet_length(body)) FROM _tb_shape_chunk WHERE handle IN ($h, '~lineage:' || $h))
+                + (SELECT sum(octet_length(body)) FROM _tb_shape_snapshot WHERE handle = $h);
+            """, ("$h", handle)));
 
         using var cancellation = new CancellationTokenSource();
         await using (var transaction = await node.Api.Server.Services.GetRequiredService<IShapeStorage>()
@@ -290,7 +302,7 @@ public sealed class ShapeSweepTests
         {
             var step = await ((IShapeSweepTransaction)transaction).SweepShapeHandleAsync(handle, 0, ShapeRetention.BatchRows,
                 ShapeRetention.BatchBytes, cancellation.Token);
-            await Assert.That(step).IsEqualTo(new ShapeSweepStep(ShapeHandleState.Retired, 3, step.Bytes, 0, false));
+            await Assert.That(step).IsEqualTo(new ShapeSweepStep(ShapeHandleState.Retired, 3, bodies, 0, false));
             await cancellation.CancelAsync();
             await Assert.That(async () => await transaction.CommitAsync(cancellation.Token)).Throws<OperationCanceledException>();
         }
@@ -298,6 +310,47 @@ public sealed class ShapeSweepTests
         await Assert.That(await node.RowsAsync(handle)).IsEqualTo(new Rows(1, 1, 0, 1));
         await Assert.That((await node.PassAsync()).Retired).IsEqualTo(1);
         await Assert.That(await node.ShapeRowsAsync()).IsEqualTo(0L);
+    }
+
+    [Test]
+    public async Task A_drop_charges_floor_and_lineage_bodies_and_leaves_what_does_not_fit_for_the_next_batch()
+    {
+        await using var node = await Node.StartAsync();
+        await node.PutAsync(1);
+        var handle = (await node.SealAsync("")).Handle;
+        // A chunk that spends the whole byte budget, then a one-byte floor and the lineage record behind it.
+        await node.WriteAsync(connection =>
+        {
+            Execute(connection, "UPDATE _tb_shape_chunk SET body = $b WHERE handle = $h;", ("$h", handle), ("$b", new byte[ShapeRetention.BatchBytes]));
+            Chunk(connection, "~floor:" + handle, 0, end: 5);
+        });
+        var lineage = await node.ReadAsync(connection => Scalar(connection, "SELECT octet_length(body) FROM _tb_shape_chunk WHERE handle = $h;",
+            ("$h", "~lineage:" + handle)));
+        await node.DropAsync();
+
+        async Task<ShapeSweepStep> StepAsync(long maxBytes, bool commit)
+        {
+            await using var transaction = await node.Api.Server.Services.GetRequiredService<IShapeStorage>()
+                .BeginTransactionAsync(node.Store, write: true, CancellationToken.None);
+            var step = await ((IShapeSweepTransaction)transaction).SweepShapeHandleAsync(handle, 0, ShapeRetention.BatchRows, maxBytes,
+                CancellationToken.None);
+            if (commit)
+            {
+                _ = await transaction.CommitAsync(CancellationToken.None);
+            }
+
+            return step;
+        }
+
+        await Assert.That(await StepAsync(ShapeRetention.BatchBytes, commit: true)).IsEqualTo(new ShapeSweepStep(ShapeHandleState.Retired, 1,
+            ShapeRetention.BatchBytes, 0, true));
+        await Assert.That(await node.RowsAsync(handle)).IsEqualTo(new Rows(0, 0, 1, 1));
+        // The floor fits a budget the lineage does not, and only the floor is charged; this batch rolls back.
+        await Assert.That(await StepAsync(lineage, commit: false)).IsEqualTo(new ShapeSweepStep(ShapeHandleState.Retired, 1, 1, 0, true));
+        await Assert.That(await node.RowsAsync(handle)).IsEqualTo(new Rows(0, 0, 1, 1));
+        await Assert.That(await StepAsync(ShapeRetention.BatchBytes, commit: true)).IsEqualTo(new ShapeSweepStep(ShapeHandleState.Retired, 2,
+            1 + lineage, 0, false));
+        await Assert.That(await node.RowsAsync(handle)).IsEqualTo(Rows.None);
     }
 
     [Test]
