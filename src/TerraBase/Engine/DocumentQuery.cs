@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace TerraBase.Engine;
 
 /// <summary>A path into a document: object member names from the root, or the document id.</summary>
@@ -102,6 +104,57 @@ public sealed record ContainsFilter(DocumentPath Path, ScalarValue Value) : Docu
 /// <param name="Terms">Native search query, at most 4096 UTF-8 bytes.</param>
 public sealed record SearchFilter(DocumentPath Path, string Terms) : DocumentFilter;
 
+/// <summary>A point on the WGS 84 sphere, in decimal degrees.</summary>
+/// <param name="Lat">Latitude, -90 to 90.</param>
+/// <param name="Lon">Longitude, -180 to 180.</param>
+public sealed record GeoPoint(double Lat, double Lon);
+
+/// <summary>Distances on the sphere of the WGS 84 mean radius.</summary>
+public static class GeoDistance
+{
+    /// <summary>The WGS 84 mean radius in meters.</summary>
+    public const double EarthRadius = 6_371_008.8;
+
+    /// <summary>Haversine meters between two points on a sphere of the WGS 84 mean radius; +Infinity for non-numbers.</summary>
+    public static double Meters(object? lat, object? lon, object? toLat, object? toLon)
+    {
+        static double Radians(object? degrees)
+        {
+            return degrees is long or double ? Convert.ToDouble(degrees, CultureInfo.InvariantCulture) * Math.PI / 180 : double.NaN;
+        }
+
+        var (fromLat, fromLon, destLat, destLon) = (Radians(lat), Radians(lon), Radians(toLat), Radians(toLon));
+        var h = Math.Pow(Math.Sin((destLat - fromLat) / 2), 2) + (Math.Cos(fromLat) * Math.Cos(destLat) * Math.Pow(Math.Sin((destLon - fromLon) / 2), 2));
+        var meters = 2 * EarthRadius * Math.Asin(Math.Sqrt(Math.Min(1, h)));
+        return double.IsNaN(meters) ? double.PositiveInfinity : meters;
+    }
+}
+
+/// <summary>
+/// The value at <paramref name="Path"/> is an object with numeric <c>lat</c> and <c>lon</c> members inside the box
+/// and, with a <paramref name="Center"/>, at most <paramref name="Meters"/> from it (haversine). A box whose west edge
+/// exceeds its east edge crosses the antimeridian. The box terms are plain ranges an index on <c>lat</c> can seek.
+/// </summary>
+/// <param name="Path">Point member.</param>
+/// <param name="South">Least latitude.</param>
+/// <param name="West">West longitude edge.</param>
+/// <param name="North">Greatest latitude.</param>
+/// <param name="East">East longitude edge.</param>
+/// <param name="Center">Circle center, or <see langword="null"/> for the box alone.</param>
+/// <param name="Meters">Circle radius.</param>
+public sealed record WithinFilter(DocumentPath Path, double South, double West, double North, double East, GeoPoint? Center = null, double Meters = 0) : DocumentFilter;
+
+/// <summary>Groups matching documents and summarizes numeric members per group, in group key order.</summary>
+/// <param name="GroupBy">At most 4 grouping paths; none for one group of every match.</param>
+/// <param name="Values">Summaries: <c>sum</c>, <c>avg</c>, <c>min</c> or <c>max</c> of the numbers at a path.</param>
+public sealed record DocumentAggregate(IReadOnlyList<DocumentPath> GroupBy, IReadOnlyList<(string Op, DocumentPath Path)> Values);
+
+/// <summary>One group of an aggregate.</summary>
+/// <param name="Key">Per grouping path, its sort rank (1 null or missing, 2 false, 3 true, 4 number, 5 string, 6 array/object JSON text) and value.</param>
+/// <param name="Count">Matching documents in the group.</param>
+/// <param name="Values">Per summary, its value; <see langword="null"/> without numbers (sums are then 0).</param>
+public sealed record QueryGroup(IReadOnlyList<(long Rank, object? Value)> Key, long Count, IReadOnlyList<double?> Values);
+
 /// <summary>One sort key.</summary>
 /// <param name="Path">Sorted value.</param>
 /// <param name="Descending">Whether the order is descending.</param>
@@ -128,8 +181,10 @@ public sealed record QueryPosition(IReadOnlyList<object?> Keys, string Id);
 /// <param name="Limit">Most documents per page.</param>
 /// <param name="MaxBytes">Most JSON bytes per page beyond the first document.</param>
 /// <param name="Near">Vector similarity order instead of <paramref name="Sort"/>; its rows' only key is the distance.</param>
+/// <param name="Aggregate">Groups instead of documents: at most <paramref name="Limit"/> of them, or the query is invalid.</param>
 public sealed record DocumentQuery(
-    string Collection, DocumentFilter? Filter, IReadOnlyList<SortKey> Sort, QueryPosition? After, int Limit, long MaxBytes, NearSort? Near = null);
+    string Collection, DocumentFilter? Filter, IReadOnlyList<SortKey> Sort, QueryPosition? After, int Limit, long MaxBytes, NearSort? Near = null,
+    DocumentAggregate? Aggregate = null);
 
 /// <summary>
 /// Orders documents by ascending distance from <paramref name="Vector"/> to the numeric array at <paramref name="Path"/>,
@@ -138,7 +193,8 @@ public sealed record DocumentQuery(
 /// <param name="Path">Embedding member.</param>
 /// <param name="Vector">Query vector.</param>
 /// <param name="Euclidean">L2 distance when set, otherwise cosine distance.</param>
-public sealed record NearSort(DocumentPath Path, IReadOnlyList<double> Vector, bool Euclidean);
+/// <param name="Point">Instead of a vector, meters from this point to the <c>lat</c>/<c>lon</c> object at <paramref name="Path"/>.</param>
+public sealed record NearSort(DocumentPath Path, IReadOnlyList<double> Vector, bool Euclidean, GeoPoint? Point = null);
 
 /// <summary>One matching document with its sort values.</summary>
 /// <param name="Document">The live document.</param>
@@ -148,4 +204,5 @@ public sealed record QueryRow(StoredDocument Document, IReadOnlyList<object?> Ke
 /// <summary>One page of query results.</summary>
 /// <param name="Rows">Matching documents in order.</param>
 /// <param name="HasMore">Whether more matching documents follow.</param>
-public sealed record QueryPage(IReadOnlyList<QueryRow> Rows, bool HasMore);
+/// <param name="Groups">An aggregate's groups.</param>
+public sealed record QueryPage(IReadOnlyList<QueryRow> Rows, bool HasMore, IReadOnlyList<QueryGroup>? Groups = null);

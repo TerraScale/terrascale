@@ -16,8 +16,10 @@ namespace TerraBase.Features.Documents;
 /// <param name="Limit">Page size.</param>
 /// <param name="Digest">Binds cursors to this database, collection, filter, sort and projection.</param>
 /// <param name="Near">Vector similarity order replacing <paramref name="Sort"/>.</param>
+/// <param name="Aggregate">Groups instead of documents.</param>
 internal sealed record ParsedQuery(
-    DocumentFilter? Filter, IReadOnlyList<SortKey> Sort, IReadOnlyList<DocumentPath>? Project, int Limit, string Digest, NearSort? Near = null);
+    DocumentFilter? Filter, IReadOnlyList<SortKey> Sort, IReadOnlyList<DocumentPath>? Project, int Limit, string Digest, NearSort? Near = null,
+    DocumentAggregate? Aggregate = null);
 
 /// <summary>Parses the query v1 grammar shared by queries and transaction assertions.</summary>
 internal static class QueryParser
@@ -34,6 +36,7 @@ internal static class QueryParser
     private const int MaxValues = 256;
     private const int MaxSortKeys = 4;
     private const int MaxNearLimit = 100;
+    private const int MaxAggregateValues = 16;
     private const int MaxNearDimensions = 4096;
     private const int MaxProjection = 64;
     private const int MaxSegments = 16;
@@ -116,7 +119,38 @@ internal static class QueryParser
         var project = request.Project is null ? null : Projection.Normalize(request.Project.Select(Path));
         var digest = Digest(database, collection, Normalize(request.Filter), JsonSerializer.Serialize(sort, TerraBaseJsonContext.Default.IReadOnlyListQuerySortRequest),
             request.Project is null ? "" : JsonSerializer.Serialize(request.Project, TerraBaseJsonContext.Default.IReadOnlyListJsonElement));
-        return new ParsedQuery(filter, keys, project, request.Limit ?? DefaultLimit, digest, near);
+        return new ParsedQuery(filter, keys, project, request.Limit ?? DefaultLimit, digest, near, request.Aggregate is { } aggregate ? Aggregate(aggregate, request) : null);
+    }
+
+    private static DocumentAggregate Aggregate(QueryAggregateRequest aggregate, QueryRequest request)
+    {
+        if (request.Sort is not null || request.Project is not null || request.Cursor is not null || request.Count is not null)
+        {
+            throw Invalid("aggregate takes no sort, project, cursor or count");
+        }
+
+        if (aggregate.GroupBy is { Count: > MaxSortKeys })
+        {
+            throw Invalid("group_by has at most 4 paths");
+        }
+
+        var values = new List<(string Op, DocumentPath Path)>();
+        foreach (var (op, paths) in (ReadOnlySpan<(string, IReadOnlyList<string>?)>)[("sum", aggregate.Sum), ("avg", aggregate.Avg), ("min", aggregate.Min), ("max", aggregate.Max)])
+        {
+            foreach (var pointer in paths ?? [])
+            {
+                if (pointer == "$id" || (paths!.Count(other => other == pointer) > 1))
+                {
+                    throw Invalid($"{op} takes distinct JSON Pointers");
+                }
+
+                values.Add((op, Path(JsonSerializer.SerializeToElement(pointer, TerraBaseJsonContext.Default.String))));
+            }
+        }
+
+        return values.Count > MaxAggregateValues
+            ? throw Invalid("an aggregate has at most 16 sum, avg, min and max paths")
+            : new DocumentAggregate([.. (aggregate.GroupBy ?? []).Select(Path)], values);
     }
 
     private static NearSort Near(IReadOnlyList<QuerySortRequest> sort, QueryRequest request)
@@ -129,6 +163,13 @@ internal static class QueryParser
         if (request.Cursor is not null || request.Limit is > MaxNearLimit)
         {
             throw Invalid("near returns one page of at most 100 documents, without a cursor");
+        }
+
+        if (near.Lat is not null || near.Lon is not null)
+        {
+            return near.Vector is not null || near.Metric is not null ? throw Invalid("a geo near takes lat and lon, without vector or metric")
+                : Path(near.Path) is { IsId: false } point ? new NearSort(point, [], false, Point(near.Lat, near.Lon))
+                : throw Invalid("near path is a JSON Pointer");
         }
 
         if (near.Vector is not { Count: >= 1 and <= MaxNearDimensions } vector || vector.Any(static value => Math.Abs(value) > float.MaxValue))
@@ -426,6 +467,8 @@ internal static class QueryParser
                     : throw Invalid("prefix takes [path, string]");
             case "contains":
                 return new ContainsFilter(path, Scalar(value));
+            case "within":
+                return path.IsId ? throw Invalid("within takes a JSON Pointer") : Within(path, value);
             case "search":
                 if (path.IsId || value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(value.GetString())
                     || Encoding.UTF8.GetByteCount(value.GetString()!) > 4096 || value.GetString()!.Contains('\0', StringComparison.Ordinal))
@@ -453,13 +496,53 @@ internal static class QueryParser
         }
     }
 
-    internal static IEnumerable<SearchFilter> Searches(DocumentFilter? filter) => filter switch
+    private static GeoPoint Point(double? lat, double? lon) => lat is >= -90 and <= 90 && lon is >= -180 and <= 180
+        ? new GeoPoint(lat.Value, lon.Value)
+        : throw Invalid("lat is -90 to 90 and lon is -180 to 180");
+
+    // {"lat","lon","meters"} is a circle; {"south","west","north","east"} a box, crossing the antimeridian when west > east.
+    private static WithinFilter Within(DocumentPath path, JsonElement area)
     {
-        SearchFilter search => [search],
-        AndFilter and => and.Children.SelectMany(Searches),
-        OrFilter or => or.Children.SelectMany(Searches),
-        NotFilter not => Searches(not.Child),
-        _ => [],
+        double? Number(string name)
+        {
+            return area.ValueKind == JsonValueKind.Object && area.TryGetProperty(name, out var member)
+                && member.ValueKind == JsonValueKind.Number && member.TryGetDouble(out var number) ? number : null;
+        }
+
+        if (area.ValueKind == JsonValueKind.Object && area.GetPropertyCount() == 4)
+        {
+            var (south, west, north, east) = (Number("south"), Number("west"), Number("north"), Number("east"));
+            Point(south, west);
+            Point(north, east);
+            return south <= north ? new WithinFilter(path, south!.Value, west!.Value, north!.Value, east!.Value)
+                : throw Invalid("within box has south <= north");
+        }
+
+        if (area.ValueKind != JsonValueKind.Object || area.GetPropertyCount() != 3 || Number("meters") is not { } meters || meters is not (> 0 and <= 20_000_000))
+        {
+            throw Invalid("within takes [path, {lat, lon, meters (0 to 20000000)}] or [path, {south, west, north, east}]");
+        }
+
+        // The circle's bounding box: latitude spans meters along a meridian; longitude widens toward the poles,
+        // and a box touching a pole or crossing the antimeridian keeps every longitude.
+        var center = Point(Number("lat"), Number("lon"));
+        var degrees = meters / GeoDistance.EarthRadius * 180 / Math.PI;
+        var (low, high) = (center.Lat - degrees, center.Lat + degrees);
+        var span = low <= -90 || high >= 90 ? 180
+            : Math.Asin(Math.Min(1, Math.Sin(meters / GeoDistance.EarthRadius) / Math.Cos(center.Lat * Math.PI / 180))) * 180 / Math.PI;
+        var (minLon, maxLon) = center.Lon - span < -180 || center.Lon + span > 180 ? (-180.0, 180.0) : (center.Lon - span, center.Lon + span);
+        return new WithinFilter(path, Math.Max(-90, low), minLon, Math.Min(90, high), maxLon, center, meters);
+    }
+
+    internal static IEnumerable<SearchFilter> Searches(DocumentFilter? filter) => Leaves(filter).OfType<SearchFilter>();
+
+    internal static IEnumerable<DocumentFilter> Leaves(DocumentFilter? filter) => filter switch
+    {
+        null => [],
+        AndFilter and => and.Children.SelectMany(Leaves),
+        OrFilter or => or.Children.SelectMany(Leaves),
+        NotFilter not => Leaves(not.Child),
+        _ => [filter],
     };
 
     private static DocumentPath Path(JsonElement path)

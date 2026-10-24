@@ -77,7 +77,7 @@ public sealed class QueryDashboardDocumentsEndpoint(IManagementCommits commits) 
     private async ValueTask<IResult> QueryAsync(
         string collection, byte[] body, QueryRequest request, ParsedQuery query, QueryPosition? after, CancellationToken cancellationToken) =>
         await commits.QueryDocumentsAsync(
-            new DocumentQuery(collection, query.Filter, query.Sort, after, query.Limit, DocumentRoute.MaxPageBytes, query.Near),
+            new DocumentQuery(collection, query.Filter, query.Sort, after, query.Limit, DocumentRoute.MaxPageBytes, query.Near, query.Aggregate),
             request.Count == true && after is null ? MaxCount : null,
             cancellationToken) switch
         {
@@ -110,5 +110,6 @@ public sealed class QueryDashboardDocumentsEndpoint(IManagementCommits commits) 
                 Distance = query.Near is null ? null : row.Keys[0] as double?,
             })],
             next,
-            outcome.Count is var (n, complete) ? new CountBody(n.ToString(CultureInfo.InvariantCulture), complete) : null);
+            outcome.Count is var (n, complete) ? new CountBody(n.ToString(CultureInfo.InvariantCulture), complete) : null,
+            QueryDocumentsEndpoint.Groups(query, outcome.Page));
 }

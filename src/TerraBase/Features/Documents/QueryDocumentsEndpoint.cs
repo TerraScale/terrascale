@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Globalization;
+using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -21,7 +23,7 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDi
         Name("queryDocuments");
         Summary("Queries JSON documents");
         Description("""
-            Filters ({"and"|"or":[F…]} with 1 to 64 children, {"not":F}, {"eq"|"ne"|"lt"|"lte"|"gt"|"gte":[P,V]}, {"in"|"nin":[P,[V…]]} with 1 to 256 values, {"exists":P}, {"prefix":[P,"str"]}, {"contains":[P,V]}, {"search":[P,"terms"]} (requires a text index covering P, nonempty terms up to 4096 UTF-8 bytes, no NUL); at most 8 levels and 256 nodes) run inside Turso. P is a JSON Pointer of object members (nested paths allowed) or "$id"; V is a JSON scalar. Ordered comparisons only match values of V's type and reject null; ne and nin also match missing members. A sole sort {"path":"$score","order":"desc"} requires exactly one search predicate and returns each item's BM25 score, higher first, ties by id ascending; cursors retain score and id. search cannot combine with near. sort has at most 4 {path, order} keys, then id; repeated paths retain only their first occurrence, and keys after the unique $id are omitted; encoded cursors are at most 1 MiB and cursor-producing string values are at most 64 KiB UTF-8 each, and the compact query plus continuation must fit the 4 MiB request limit (400 sort_requires_index beyond); values order missing < null < false < true < numbers < strings < arrays/objects. project keeps at most 64 paths with their parents; duplicate decoded paths and descendants covered by selected ancestors are copied only once, with case-sensitive member names. limit is 1 to 1000 (default 50); a page also stops at 8 MiB of JSON. cursor is the previous page's next_cursor and only works with the same filter, sort and project (400 invalid_cursor). count counts matches among at most 100000 documents (exact is false beyond, and value is a lower bound), on requests without a cursor. Queries and counts are interrupted after 5 million engine work units or a 5-second deadline (400 invalid_query, query too expensive). Cancellation also interrupts Turso. sort [{"near":{"path":P,"vector":[…],"metric":"cosine"|"l2"}}] alone orders brute force by ascending distance (cosine, the default, or l2) to a vector of 1 to 4096 numbers, returned as each item's distance; it matches only documents whose P is a numeric array of the same length, combines with filter, and returns one page of at most limit 100 documents without next_cursor. A field sort requires at most 10000 live candidate documents and at most 8 MiB of candidate JSON, otherwise 400 sort_requires_index. lower and explain are not supported yet.
+            Filters ({"and"|"or":[F…]} with 1 to 64 children, {"not":F}, {"eq"|"ne"|"lt"|"lte"|"gt"|"gte":[P,V]}, {"in"|"nin":[P,[V…]]} with 1 to 256 values, {"exists":P}, {"prefix":[P,"str"]}, {"contains":[P,V]}, {"search":[P,"terms"]} (requires a text index covering P, nonempty terms up to 4096 UTF-8 bytes, no NUL), {"within":[P,{"lat":…,"lon":…,"meters":M}]} (haversine circle, M up to 20000000) or {"within":[P,{"south":…,"west":…,"north":…,"east":…}]} (box, west > east crosses the antimeridian) matching documents whose P is an object with numeric lat and lon (a btree index on P/lat lets the box seek); at most 8 levels and 256 nodes) run inside Turso. P is a JSON Pointer of object members (nested paths allowed) or "$id"; V is a JSON scalar. Ordered comparisons only match values of V's type and reject null; ne and nin also match missing members. A sole sort {"path":"$score","order":"desc"} requires exactly one search predicate and returns each item's BM25 score, higher first, ties by id ascending; cursors retain score and id. search cannot combine with near. sort has at most 4 {path, order} keys, then id; repeated paths retain only their first occurrence, and keys after the unique $id are omitted; encoded cursors are at most 1 MiB and cursor-producing string values are at most 64 KiB UTF-8 each, and the compact query plus continuation must fit the 4 MiB request limit (400 sort_requires_index beyond); values order missing < null < false < true < numbers < strings < arrays/objects. project keeps at most 64 paths with their parents; duplicate decoded paths and descendants covered by selected ancestors are copied only once, with case-sensitive member names. limit is 1 to 1000 (default 50); a page also stops at 8 MiB of JSON. cursor is the previous page's next_cursor and only works with the same filter, sort and project (400 invalid_cursor). count counts matches among at most 100000 documents (exact is false beyond, and value is a lower bound), on requests without a cursor. Queries and counts are interrupted after 5 million engine work units or a 5-second deadline (400 invalid_query, query too expensive). Cancellation also interrupts Turso. sort [{"near":{"path":P,"vector":[…],"metric":"cosine"|"l2"}}] alone orders brute force by ascending distance (cosine, the default, or l2) to a vector of 1 to 4096 numbers, returned as each item's distance; it matches only documents whose P is a numeric array of the same length, combines with filter, and returns one page of at most limit 100 documents without next_cursor. A field sort requires at most 10000 live candidate documents and at most 8 MiB of candidate JSON, otherwise 400 sort_requires_index. sort [{"near":{"path":P,"lat":…,"lon":…}}] orders the same way by meters to that point from P's {lat, lon}, returned as distance. aggregate {"group_by":[P…],"sum"|"avg"|"min"|"max":[P…]} (0 to 4 group_by paths, at most 16 summary paths, no sort, project, cursor or count) returns groups instead of items: per group its key (one JSON value per group_by path; missing groups as null), its count and the summaries over numbers only (sum 0, others null without any), in key order; limit bounds the groups (400 invalid_query beyond) and the work budget applies. lower and explain are not supported yet.
             """);
         Tags("Queries");
         Metadata(new RequestBodyMetadata(typeof(QueryRequest), DocumentRoute.JsonMediaType));
@@ -86,7 +88,7 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDi
         TenantContext database, string collection, byte[] body, QueryRequest request, ParsedQuery query, QueryPosition? after, CancellationToken cancellationToken) =>
         await documents.QueryAsync(
             database,
-            new DocumentQuery(collection, query.Filter, query.Sort, after, query.Limit, DocumentRoute.MaxPageBytes, query.Near),
+            new DocumentQuery(collection, query.Filter, query.Sort, after, query.Limit, DocumentRoute.MaxPageBytes, query.Near, query.Aggregate),
             request.Count == true && after is null ? MaxCount : null,
             cancellationToken) switch
         {
@@ -120,5 +122,59 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDi
                 Score = query.Sort is [{ Score: true }] ? Convert.ToDouble(row.Keys[1], CultureInfo.InvariantCulture) : null,
             })],
             next,
-            count is var (n, complete) ? new CountBody(n.ToString(CultureInfo.InvariantCulture), complete) : null);
+            count is var (n, complete) ? new CountBody(n.ToString(CultureInfo.InvariantCulture), complete) : null,
+            Groups(query, page));
+
+    /// <summary>An aggregate's groups as response bodies; <see langword="null"/> for a document query.</summary>
+    internal static IReadOnlyList<GroupBody>? Groups(ParsedQuery query, QueryPage page) => query.Aggregate is not { } aggregate || page.Groups is not { } groups
+        ? null
+        : [.. groups.Select(group =>
+        {
+            Dictionary<string, double?>? Summary(string op)
+            {
+                return aggregate.Values.Any(value => value.Op == op)
+                    ? aggregate.Values.Select((value, i) => (value, i)).Where(item => item.value.Op == op).ToDictionary(
+                        item => Pointer(item.value.Path), item => group.Values[item.i] is double number && double.IsFinite(number) ? number : (double?)null)
+                    : null;
+            }
+
+            return new GroupBody([.. group.Key.Select(Key)], group.Count.ToString(CultureInfo.InvariantCulture), Summary("sum"), Summary("avg"), Summary("min"), Summary("max"));
+        })];
+
+    private static string Pointer(DocumentPath path) =>
+        string.Concat(path.Segments!.Select(segment => "/" + segment.Replace("~", "~0", StringComparison.Ordinal).Replace("/", "~1", StringComparison.Ordinal)));
+
+    // Ranks as TursoQueryCompiler.CompileAggregate reports them: arrays and objects arrive as their JSON text.
+    private static JsonElement Key((long Rank, object? Value) key)
+    {
+        if (key is (6, string json))
+        {
+            return JsonElement.Parse(json);
+        }
+
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            switch (key)
+            {
+                case (2 or 3, _):
+                    writer.WriteBooleanValue(key.Rank == 3);
+                    break;
+                case (4, long integer):
+                    writer.WriteNumberValue(integer);
+                    break;
+                case (4, double real):
+                    writer.WriteNumberValue(real);
+                    break;
+                case (5, string text):
+                    writer.WriteStringValue(text);
+                    break;
+                default:
+                    writer.WriteNullValue();
+                    break;
+            }
+        }
+
+        return JsonElement.Parse(buffer.WrittenSpan);
+    }
 }
