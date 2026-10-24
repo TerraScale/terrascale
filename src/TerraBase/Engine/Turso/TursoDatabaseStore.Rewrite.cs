@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -15,6 +16,13 @@ internal sealed partial class TursoDatabaseStore
 
     /// <summary>Moves as a healthy rewrite starts: a backup tap opened before ends instead of holding the old file open.</summary>
     internal int Lineage => Volatile.Read(ref _lineage);
+
+    // How long and how often a healthy rewrite waits for this store's readers to end before it takes the writer.
+    private static readonly TimeSpan QuietBudget = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan QuietPoll = TimeSpan.FromMilliseconds(20);
+
+    // The longest a healthy rewrite holds the writer waiting for readers; then it is refused and its caller backs off.
+    internal static readonly TimeSpan HeldDrain = TimeSpan.FromSeconds(2);
 
     /// <summary>Runs as a healthy rewrite starts waiting for operations to end or handles to drain; for integration tests.</summary>
     internal Action? RewriteWaiting { get; set; }
@@ -53,7 +61,16 @@ internal sealed partial class TursoDatabaseStore
                 }
             }
 
-            // Writers first: a running write transaction may still open readers, which the pause below would hold.
+            // Readers get time to end first, without the writer: a reader held for seconds then delays only this rewrite,
+            // never the writers that would queue behind it (TS-982: a 30 s drain under the writer stalled every catalog
+            // write). Bounded and holding nothing, so no transaction waits on it; whatever is left drains under the writer.
+            var quiet = Stopwatch.GetTimestamp();
+            while (pool.BusyOf(this, _writerSession) > 0 && Stopwatch.GetElapsedTime(quiet) < QuietBudget)
+            {
+                await Task.Delay(QuietPoll, cancellationToken).ConfigureAwait(false);
+            }
+
+            // Writers next: a running write transaction may still open readers, which the pause below would hold.
             await AcquireWriterAsync("a healthy rewrite", cancellationToken).ConfigureAwait(false);
             quiesced.Writer = true;
             RefuseUnhealthy();
@@ -74,7 +91,16 @@ internal sealed partial class TursoDatabaseStore
                 RewriteWaiting?.Invoke();
             }
 
-            await drained.WaitAsync(cancellationToken).ConfigureAwait(false);
+            // Writers queue meanwhile: a reader still held after the wait above refuses the rewrite instead of stalling them.
+            try
+            {
+                await drained.WaitAsync(HeldDrain, cancellationToken).ConfigureAwait(false);
+            }
+            catch (TimeoutException error)
+            {
+                throw new RewriteRefusedException("the database did not drain while its writer was held", error);
+            }
+
             if (pool.FailedClosesOf(this) is > 0 and var failed)
             {
                 throw new RewriteRefusedException($"{failed} native closes of this database failed; its handles may still be open");

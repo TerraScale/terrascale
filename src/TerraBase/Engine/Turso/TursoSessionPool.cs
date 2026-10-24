@@ -359,6 +359,19 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase)
         paused?.TrySetResult();
     }
 
+    /// <summary>
+    /// Connections of <paramref name="store"/> held by a transaction, opening or closing, besides <paramref name="writer"/>: what
+    /// a drain would still wait for. A healthy rewrite waits for none before it takes the writer, so no writer queues behind it.
+    /// </summary>
+    public int BusyOf(TursoDatabaseStore store, TursoSession? writer)
+    {
+        lock (_gate)
+        {
+            var busy = _openByStore.GetValueOrDefault(store) - CountOf(store);
+            return writer is not null && _rented.Contains(writer) && _owners.GetValueOrDefault(writer) == store ? busy - 1 : busy;
+        }
+    }
+
     /// <summary>Native closes of <paramref name="store"/>'s connections that failed in this process: they may still be open.</summary>
     public int FailedClosesOf(TursoDatabaseStore store)
     {
