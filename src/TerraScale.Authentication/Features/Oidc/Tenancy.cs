@@ -48,6 +48,7 @@ public static class Tenancy
         var segments = (path.Value ?? string.Empty).Split('/', 4);
         var (tenant, rest) = segments switch
         {
+            [_, "signin", _] => (OidcIssuer.Slug, (string?)null),
             [_, "ui", var named, ..] => (named, (string?)null),
             [_, var named, var route] => (named, route),
             [_, var named, var first, var second] => (named, first + "/" + second),

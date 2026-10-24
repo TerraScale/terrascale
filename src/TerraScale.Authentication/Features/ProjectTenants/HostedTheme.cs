@@ -21,8 +21,9 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 /// <param name="FooterLinks">Project footer links.</param>
 /// <param name="BackgroundColor">Optional page background colour.</param>
 /// <param name="TextColor">Optional text colour.</param>
+/// <param name="Providers">Providers with credentials; absent providers have no button.</param>
 public sealed record HostedTheme(string? Name = null, string? LogoUrl = null, string? ThemeColor = null, bool Passcode = true, bool Password = true, bool SignUp = true,
-    int? TitleSize = null, string? DefaultTheme = null, IReadOnlyList<FooterLinkBody>? FooterLinks = null, string? BackgroundColor = null, string? TextColor = null)
+    int? TitleSize = null, string? DefaultTheme = null, IReadOnlyList<FooterLinkBody>? FooterLinks = null, string? BackgroundColor = null, string? TextColor = null, IReadOnlyList<string>? Providers = null)
 {
     internal const string ItemKey = "ts-auth:theme";
 
@@ -46,7 +47,13 @@ public static class HostedThemes
             var project = (await services.GetRequiredService<AuthStore>().GetAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, tenant, context.RequestAborted))
                 ?.Document.Deserialize(PlatformJson.Default.ProjectRecord);
             context.Items[HostedTheme.ItemKey] = new HostedTheme(settings.Name ?? project?.Name, settings.LogoUrl, settings.ThemeColor, settings.Passcode, settings.Password, settings.SignUp,
-                settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor);
+                settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor,
+                settings.Providers?.Where(provider => provider.Provider is SocialProviders.GitHub or SocialProviders.Google).Select(provider => provider.Provider).ToArray());
+        }
+
+        if (context.Request.Path.StartsWithSegments("/ui") && Tenancy.Resolved(context) == OidcIssuer.InstanceId)
+        {
+            context.Items[HostedTheme.ItemKey] = HostedTheme.Platform with { Providers = context.RequestServices.GetRequiredService<Configuration.AuthOptions>().SocialClients.Select(provider => provider.Provider).ToArray() };
         }
 
         await next(context);
