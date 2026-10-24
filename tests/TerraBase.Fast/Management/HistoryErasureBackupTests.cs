@@ -176,30 +176,31 @@ public sealed class HistoryErasureBackupTests
                 }
             }
         }));
+        // This test targets a refusal of SYSTEM after auth rewrites successfully. Backup shipping owns native readers
+        // and can legitimately time out auth's drain first; the backup-closure test covers that overlap separately.
         await Host.SeedAsync(api);
-        var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var (fence, erasure) = (Id(), Id());
         await Host.PutAsync(api, Jobs, fence, """{"scope":"account"}""");
         await Host.PutAsync(api, HistoryErasure.MarkCollection, erasure, $$"""{"kind":"request","erasureId":"{{erasure}}","fenceId":"{{fence}}"}""");
         var requested = host.Clock.GetUtcNow();
         await Host.RequestAsync(api, erasure, requested);
-        await Host.PassWithBackupAsync(api, backup);
+        await Host.PassAsync(api);
         var token = (await Host.RequestAsync(api, erasure, requested)).SettlementToken;
         await Assert.That((await Host.RequestAsync(api, erasure, requested, token)).Status).IsEqualTo(HistoryErasure.Rewriting);
         var marked = await Host.OwnAsync(api, erasure);
 
-        await Host.PassWithBackupAsync(api, backup);
+        await Host.PassAsync(api);
         await Assert.That(systemAttempts).IsEqualTo(1);
         var auth = await Host.AuthIncarnationAsync(api);
         await Assert.That((await Host.LineageAsync(api)).Auth).IsEqualTo(auth.ToString()).Because("the auth rewrite's lineage is recorded as it succeeds");
-        await Host.PassWithBackupAsync(api, backup);
+        await Host.PassAsync(api);
         await Assert.That(systemAttempts).IsEqualTo(1).Because("the refused file waits before its next attempt");
         var own = await Host.OwnAsync(api, erasure);
         await Assert.That(own.AuthMark).IsEqualTo(marked.AuthMark).Because("its own rewrite is no restore: no new fence marker");
 
         Volatile.Write(ref refusing, 0);
         host.Clock.Advance(TimeSpan.FromSeconds(11));
-        await Host.PassWithBackupAsync(api, backup);
+        await Host.PassAsync(api);
         own = await Host.OwnAsync(api, erasure);
         await Assert.That(own.Phase).IsEqualTo(HistoryErasure.Rewritten);
         await Assert.That(own.AuthMark).IsEqualTo(marked.AuthMark);
