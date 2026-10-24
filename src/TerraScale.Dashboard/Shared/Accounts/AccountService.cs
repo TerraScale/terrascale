@@ -136,11 +136,18 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         // created is listed again below, so the parallel list never hides it.
         var listing = platform.ListOrganizationsAsync(session, cancellationToken);
         var account = await EnsureAsync(session, cancellationToken);
+        // The organization this view selects also needs its members and ownership transfer; they load with its projects.
+        var accessFor = organizationId ?? (projectId is null ? account.ActiveOrganizationId : null);
+        // Its projects, members and transfer start before ts-auth's organization list answers, and are used only once
+        // that list grants the caller a role there. ts-auth authorizes each of these reads with the caller's own token.
+        var early = accessFor is { Length: > 0 } && TerraScaleIds.IsValid(accessFor)
+            ? (Projects: Deferred(() => platform.ListProjectsAsync(session, accessFor, cancellationToken)), Access: Deferred(() => FetchAccessAsync(session, accessFor, cancellationToken)))
+            : default;
+        // A refusal for an organization the list then leaves out is only ever a discarded task, never this call's failure.
+        static async Task<T> Deferred<T>(Func<Task<T>> read) => await read();
         var lives = await listing;
         if (account.PersonalOrganizationId.Length != 0 && lives.All(live => live.Id != account.PersonalOrganizationId))
             lives = await platform.ListOrganizationsAsync(session, cancellationToken);
-        // The organization this view selects also needs its members and ownership transfer; they load with its projects.
-        var accessFor = organizationId ?? (projectId is null ? account.ActiveOrganizationId : null);
         var prefetched = new System.Collections.Concurrent.ConcurrentDictionary<string, OrganizationAccess>(StringComparer.Ordinal);
         async Task HydrateSelectedAsync(OrganizationRecord org)
         {
@@ -152,9 +159,10 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             // Only a platform admin, checked against the signed access token on every request, sees the platform organization.
             var platformOrg = PlatformDatabases.IsPlatform(live.Id);
             if (platformOrg && await roles.PlatformRoleAsync(session, cancellationToken) != "admin") return null;
-            var access = live.Id == accessFor ? FetchAccessAsync(session, live.Id, cancellationToken) : null;
+            var selected = live.Id == accessFor && early.Projects is not null;
+            var access = live.Id == accessFor ? selected ? early.Access : FetchAccessAsync(session, live.Id, cancellationToken) : null;
             var stored = OrganizationStateAsync(live, cancellationToken);
-            var projects = platform.ListProjectsAsync(session, live.Id, cancellationToken);
+            var projects = selected ? early.Projects! : platform.ListProjectsAsync(session, live.Id, cancellationToken);
             var org = await stored;
             // ts-auth refuses an organization that requires two-factor to a caller without it; the
             // organization stays listed, keeps its stored projects and is blocked when selected.
