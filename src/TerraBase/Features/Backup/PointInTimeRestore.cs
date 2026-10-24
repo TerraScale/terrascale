@@ -132,7 +132,7 @@ internal sealed class PointInTimeRestore(
 
             if (at < earliest || at > storedLatest)
             {
-                return await OutsideAsync(database, at, now, deadline.Token).ConfigureAwait(false) switch
+                return await OutsideAsync(database, at, now, new(earliest, storedLatest), deadline.Token).ConfigureAwait(false) switch
                 {
                     Validation error => error,
                     Conflict error => error,
@@ -264,7 +264,7 @@ internal sealed class PointInTimeRestore(
 
         if (at < window.Earliest || at > window.Latest)
         {
-            return await OutsideAsync(source, at, now, cancellationToken).ConfigureAwait(false) switch
+            return await OutsideAsync(source, at, now, window, cancellationToken).ConfigureAwait(false) switch
             {
                 Validation error => error,
                 Conflict error => error,
@@ -321,15 +321,16 @@ internal sealed class PointInTimeRestore(
     // A time outside the window, for restore and plan alike: invalid only when no backup can ever hold it (after now, or
     // before the plan's retention window); otherwise the backup does not hold it yet or any more (an unshipped or lost
     // final segment, a lost snapshot), a retryable 409.
-    private async Task<OutsideResult> OutsideAsync(TenantContext database, DateTimeOffset at, DateTimeOffset now, CancellationToken cancellationToken) =>
-        at > now ? OutsideWindow() : await EarliestAsync(database, DateTimeOffset.MinValue, now, cancellationToken).ConfigureAwait(false) switch
+    private async Task<OutsideResult> OutsideAsync(TenantContext database, DateTimeOffset at, DateTimeOffset now, RestoreWindow window, CancellationToken cancellationToken) =>
+        at > now ? OutsideWindow(window) : await EarliestAsync(database, DateTimeOffset.MinValue, now, cancellationToken).ConfigureAwait(false) switch
         {
             DateTimeOffset retained when at >= retained => HistoryIncomplete(),
             Unavailable error => error,
-            DateTimeOffset => OutsideWindow(),
+            DateTimeOffset => OutsideWindow(window),
         };
 
-    private static Validation OutsideWindow() => new("pointInTime must lie between the restore window's earliest and latest times");
+    private static Validation OutsideWindow(RestoreWindow window) => new(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+        $"pointInTime must lie between the restore window's earliest and latest times: {window.Earliest:O} to {window.Latest:O}"));
 
     private static Conflict HistoryIncomplete() =>
         new("continuous backup cannot prove this database's history complete up to pointInTime", "backup_history_incomplete");

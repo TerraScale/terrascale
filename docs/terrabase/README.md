@@ -126,6 +126,7 @@ Enterprise admission. Rate, concurrency and memory refusals include `Retry-After
 Monthly [operation allowances](operation-allowance.md) stop new puts and patches at the plan's
 hard allowance; reads and deletes remain available.
 New databases stop at the plan's [database allowance](plan-database-allowance.md) (`409 database_limit`).
+[Point-in-time restore admission and retention](pitr-plan-entitlements-2026-10-24.md) use those same plan entitlements.
 Usage document counts and bytes come from [maintained per-collection counts](collection-counts.md), never from scans.
 Customers scrape a project's analytics with Prometheus, and the dashboard reads analytics and logs internally: [metrics export](metrics-export.md).
 
