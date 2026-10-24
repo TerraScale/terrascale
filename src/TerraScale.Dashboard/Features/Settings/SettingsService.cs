@@ -1,7 +1,6 @@
 using TerraScale.Dashboard.Features.Backups;
 using TerraScale.Dashboard.Features.Organizations;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Settings;
 
@@ -10,17 +9,22 @@ public interface ISettingsBackend
     Task<int> AuditRetentionAsync(AccountContext context, CancellationToken cancellationToken);
     Task<int> SetAuditRetentionAsync(AccountContext context, int days, CancellationToken cancellationToken);
 }
-public sealed class SettingsBackend(IHttpClientFactory factory) : ISettingsBackend
+// Audit retention is the dashboard's: it narrows the plan's audit window (OrganizationAudit.RetentionDays). TerraBase's
+// management audit retention belongs to organizations TerraBase manages itself, which ts-auth organizations are not.
+public sealed class SettingsBackend(AccountService accounts) : ISettingsBackend
 {
-    private TerraBaseManagementClient Client(AccountContext context)
+    public const int DefaultDays = 90;
+    public Task<int> AuditRetentionAsync(AccountContext context, CancellationToken cancellationToken) =>
+        Task.FromResult(context.Organization!.AuditRetentionDays ?? DefaultDays);
+    public async Task<int> SetAuditRetentionAsync(AccountContext context, int days, CancellationToken cancellationToken)
     {
-        var http = factory.CreateClient("platform");
-        return new(http, new() { EndpointResolver = new TerraBaseDiscovery(), AccessTokenProvider = _ => ValueTask.FromResult(context.Session.AccessToken) });
+        await accounts.UpdateOrganizationAsync(context, org =>
+        {
+            if (!org.CanManage(context.UserId)) throw new AccountAccessException("Organization management is required.");
+            org.AuditRetentionDays = days;
+        }, cancellationToken);
+        return days;
     }
-    public async Task<int> AuditRetentionAsync(AccountContext context, CancellationToken cancellationToken) =>
-        (await Client(context).GetAuditRetentionAsync(context.UserId, context.Organization!.Id, cancellationToken)).Days;
-    public async Task<int> SetAuditRetentionAsync(AccountContext context, int days, CancellationToken cancellationToken) =>
-        (await Client(context).SetAuditRetentionAsync(context.UserId, context.Organization!.Id, days, cancellationToken)).Days;
 }
 public sealed record ProjectSettings(string ProjectId, string ProjectName, int AuditRetentionDays, bool CanManage, bool ProjectCanBeDeleted);
 

@@ -57,6 +57,8 @@ public sealed class OrganizationRecord
     // Dashboard settings per ts-auth project id; only ts-auth's current projects are kept.
     public Dictionary<string, ProjectRecord> Projects { get; set; } = [];
     public List<AuditRecord> AuditEvents { get; set; } = [];
+    // The owner's audit retention (1 to 90 days); the plan's window caps it, and none means the plan's window.
+    public int? AuditRetentionDays { get; set; }
     [JsonIgnore] public Dictionary<string, InvitationRecord> Invitations { get; set; } = [];
     // Plan member allowance: invitations this dashboard is creating at ts-auth, by operation id,
     // until ts-auth lists them. Every change goes through the document's compare-and-set.
