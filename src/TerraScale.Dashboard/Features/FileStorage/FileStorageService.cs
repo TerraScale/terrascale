@@ -51,7 +51,8 @@ public sealed class FileStorageService(AccountService accounts, IProjectAccessTo
         var origin = await new TerraBaseDiscovery().ResolveAsync(token);
         return new TerraBaseDocumentsClient(factory.CreateClient("platform"), new()
         {
-            BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult(accessToken)
+            BaseAddress = origin,
+            AccessTokenProvider = _ => ValueTask.FromResult(accessToken)
         }).Project(project.Id);
     }
 }

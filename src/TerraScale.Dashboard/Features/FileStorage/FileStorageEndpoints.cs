@@ -97,9 +97,12 @@ public static class FileStorageEndpoints
     };
     private static string Message(Exception error) => Status(error) switch
     {
-        401 => "Sign in again to access project files.", 403 => "Your role cannot perform this file operation.",
-        404 => "The bucket or file is unavailable in this project.", 409 => "The file is incomplete or the bucket still contains files. Wait for cleanup before deleting a bucket.",
-        429 => "The shared database and file storage allowance is full.", 400 or 422 => "Check the bucket name, access rules, file metadata and upload details.",
+        401 => "Sign in again to access project files.",
+        403 => "Your role cannot perform this file operation.",
+        404 => "The bucket or file is unavailable in this project.",
+        409 => "The file is incomplete or the bucket still contains files. Wait for cleanup before deleting a bucket.",
+        429 => "The shared database and file storage allowance is full.",
+        400 or 422 => "Check the bucket name, access rules, file metadata and upload details.",
         _ => "File storage is temporarily unavailable. Try again."
     };
 }
