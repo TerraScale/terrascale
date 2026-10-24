@@ -36,11 +36,15 @@ public sealed class TerraBaseProjectClosureTests
     private const string Closure = "01JA0000000000000000000007";
 
     [Test]
-    [Arguments(1, 200, "accepted", Closure, true)]
-    [Arguments(1, 202, "pending", Closure, false)]
-    [Arguments(2, 200, "accepted", Closure, true)]
-    [Arguments(2, 202, "pending", Closure, false)]
-    public async Task Closure_answers_report_their_status_and_send_no_user(int version, int status, string state, string closure, bool accepted)
+    [Arguments(1, 200, "accepted", Closure, true, null)]
+    [Arguments(1, 202, "pending", Closure, false, null)]
+    [Arguments(2, 200, "accepted", Closure, true, null)]
+    [Arguments(2, 202, "pending", Closure, false, null)]
+    [Arguments(1, 200, "accepted", Closure, true, 2)]
+    [Arguments(1, 202, "pending", Closure, false, 2)]
+    [Arguments(2, 200, "accepted", Closure, true, 2)]
+    [Arguments(2, 202, "pending", Closure, false, 2)]
+    public async Task Closure_answers_report_their_status_and_send_no_user(int version, int status, string state, string closure, bool accepted, int? evidenceVersion)
     {
         HttpRequestMessage? sent = null;
         string? body = null;
@@ -48,7 +52,8 @@ public sealed class TerraBaseProjectClosureTests
         {
             sent = request;
             body = await request.Content!.ReadAsStringAsync(token);
-            var response = TerraBaseIntegrationFixture.Json($$"""{"status":"{{state}}","closureId":"{{closure}}","pendingHolders":{{(accepted ? 0 : 1)}}}""");
+            var evidence = evidenceVersion.HasValue ? ",\"evidenceVersion\":2" : string.Empty;
+            var response = TerraBaseIntegrationFixture.Json($$"""{"status":"{{state}}","closureId":"{{closure}}","pendingHolders":{{(accepted ? 0 : 1)}}{{evidence}}}""");
             response.StatusCode = (System.Net.HttpStatusCode)status;
             return response;
         });
@@ -59,6 +64,7 @@ public sealed class TerraBaseProjectClosureTests
         await Assert.That(answer.Accepted).IsEqualTo(accepted);
         await Assert.That(answer.ClosureId).IsEqualTo(Closure);
         await Assert.That(answer.PendingHolders).IsEqualTo(accepted ? 0 : 1);
+        await Assert.That(answer.EvidenceVersion).IsEqualTo(evidenceVersion ?? 0);
         await Assert.That(sent!.Method).IsEqualTo(HttpMethod.Put);
         await Assert.That(sent!.RequestUri!.AbsolutePath).IsEqualTo($"/admin/projects/{Project}/closure");
         await Assert.That(sent.Headers.Contains("X-TerraBase-User-Id")).IsFalse();

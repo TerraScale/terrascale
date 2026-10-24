@@ -49,4 +49,7 @@ namespace TerraScale.DotNet;
 [JsonSerializable(typeof(TerraScaleAuthProjectCreateOAuthClient))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformPage<TerraScaleAuthProjectOAuthClient>))]
 [JsonSerializable(typeof(TerraScaleAuthTokenResponse))]
+[JsonSerializable(typeof(TerraScaleAuthDeletionPage))]
+[JsonSerializable(typeof(TerraScaleAuthDeletionProof))]
+[JsonSerializable(typeof(TerraScaleAuthAcknowledgeDeletion))]
 internal sealed partial class TerraScaleAuthIntegrationJsonContext : JsonSerializerContext;

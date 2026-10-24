@@ -69,9 +69,10 @@ public sealed record TerraBaseProject(string Id, string OrganizationId, string N
 /// <param name="Status"><c>accepted</c> once every catalog holder confirmed the project empty under the fence; otherwise <c>pending</c>.</param>
 /// <param name="ClosureId">The closure id the fence was written with.</param>
 /// <param name="PendingHolders">TerraBase machines that have not confirmed the project empty under the fence.</param>
-public sealed record TerraBaseProjectClosure(string Status, string ClosureId, int PendingHolders)
+/// <param name="EvidenceVersion">Closure evidence version; absent legacy responses default to 0. Destructive consumers must require version 2 explicitly.</param>
+public sealed record TerraBaseProjectClosure(string Status, string ClosureId, int PendingHolders, int EvidenceVersion = 0)
 {
-    /// <summary>Whether TerraBase accepted the closure in every catalog holder.</summary>
+    /// <summary>Whether the returned status is accepted. Does not validate <see cref="EvidenceVersion"/>.</summary>
     public bool Accepted => this.Status == "accepted";
 }
 
