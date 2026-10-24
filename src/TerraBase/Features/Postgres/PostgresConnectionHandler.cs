@@ -9,9 +9,11 @@ using Microsoft.AspNetCore.Connections;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Sql;
+using TerraBase.Features.UserAuth;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -19,7 +21,7 @@ using ZLogger;
 namespace TerraBase.Features.Postgres;
 
 /// <summary>
-/// PostgreSQL wire protocol 3.0 on the postgres listener: plaintext behind the platform's TLS edge, a TerraBase API key as
+/// PostgreSQL wire protocol 3.0 on the postgres listener: plaintext behind the platform's TLS edge, a dashboard API key or a TerraBase API key as
 /// the password, and one <see cref="ISqlSession"/> per connection under the tenant's QoS admission.
 /// </summary>
 internal sealed class PostgresConnectionHandler(IServiceProvider services) : ConnectionHandler
@@ -216,6 +218,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
     private async ValueTask<Access> AuthorizeAsync(string secret, string database, CancellationToken cancellationToken)
     {
         var slash = database.IndexOf('/', StringComparison.Ordinal);
+        if (TsAuthKeyExchange.IsKey(secret))
+        {
+            return await AuthorizeDashboardKeyAsync(secret, database, slash, cancellationToken).ConfigureAwait(false);
+        }
+
         if (await Keys.FindAsync(secret, cancellationToken).ConfigureAwait(false) is not ApiKey key
             || !key.Scopes.Contains(ApiKeyScopes.DocumentsRead)
             || (slash < 0 ? key.ProjectId : database[..slash]) is not { } project
@@ -231,6 +238,42 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
             _ => Denied,
         };
+    }
+
+    // A dashboard API key, as ts-auth issues it: its access token names the project, an optional database and the scopes,
+    // and the project resolves to its storage namespace like a bearer token's on the client listener.
+    private async ValueTask<Access> AuthorizeDashboardKeyAsync(string secret, string database, int slash, CancellationToken cancellationToken)
+    {
+        var grant = await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(secret, cancellationToken).ConfigureAwait(false);
+        if (grant is Unavailable)
+        {
+            return new PgError("57P03", "authentication is unavailable; retry");
+        }
+
+        if (grant is not TsAuthKeyGrant { } key
+            || !key.Scopes.Contains(ApiKeyScopes.DocumentsRead)
+            || (slash >= 0 && !string.Equals(database[..slash], key.ProjectId, StringComparison.Ordinal))
+            || !DatabaseName.TryParse(database[(slash + 1)..], out var name)
+            || (key.Database is not null && !string.Equals(key.Database, name.Value, StringComparison.Ordinal)))
+        {
+            return Denied;
+        }
+
+        var organization = await services.GetRequiredService<IProjectCatalog>()
+            .ResolveProjectAsync(key.ProjectId, key.Subject, createIn: null, cancellationToken).ConfigureAwait(false);
+        if (organization is Unavailable)
+        {
+            return new PgError("57P03", "the database is unavailable; retry");
+        }
+
+        return organization is string found
+            ? await Tenants.FindDatabaseAsync(found, key.ProjectId, name.Value, cancellationToken).ConfigureAwait(false) switch
+            {
+                TenantContext tenant => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.DocumentsWrite)),
+                Unavailable => new PgError("57P03", "the database is unavailable; retry"),
+                _ => Denied,
+            }
+            : Denied;
     }
 
     private async Task ServeAsync(Session session, PipeReader input, PgWriter output, CancellationToken cancellationToken)

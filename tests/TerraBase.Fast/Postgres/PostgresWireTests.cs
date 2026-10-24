@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using Bogus;
 using Npgsql;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Postgres;
@@ -115,6 +116,43 @@ public sealed class PostgresWireTests
         var refused = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(connection, People));
 
         await Assert.That(refused!.SqlState).IsEqualTo("42501");
+    }
+
+    [Test]
+    public async Task Dashboard_api_keys_are_passwords_within_their_scopes_and_database()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        var writer = DashboardKey(api, database, "documents:read documents:write", database.Name);
+        var reader = DashboardKey(api, database, "documents:read", database.Name);
+        var elsewhere = DashboardKey(api, database, "documents:read documents:write", "other");
+        var unknown = EntityIds.New() + "_" + Faker.Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
+
+        await using (var source = Source(api, writer, database.Name))
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            await ExecuteAsync(connection, People);
+            await ExecuteAsync(connection, "INSERT INTO people (name) VALUES ($1)", Faker.Name.FullName());
+        }
+
+        var exchanged = api.Issuer.TokenRequests;
+        await using var again = Source(api, writer, $"{database.Project}/{database.Name}");
+        await using var reused = await again.OpenConnectionAsync();
+        var count = await ReadAsync(reused, "SELECT count(*) FROM people");
+        var reExchanged = api.Issuer.TokenRequests - exchanged;
+        await using var readOnly = Source(api, reader, database.Name);
+        await using var reading = await readOnly.OpenConnectionAsync();
+        var refused = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(reading, "DELETE FROM people"));
+        var wrongDatabase = await Assert.ThrowsAsync<PostgresException>(async () => await (await Source(api, elsewhere, database.Name).OpenConnectionAsync()).DisposeAsync());
+        var wrongKey = await Assert.ThrowsAsync<PostgresException>(async () => await (await Source(api, unknown, database.Name).OpenConnectionAsync()).DisposeAsync());
+
+        await Assert.That(count[0][0]).IsEqualTo("1");
+        await Assert.That(refused!.SqlState).IsEqualTo("42501");
+        await Assert.That(wrongDatabase!.SqlState).IsEqualTo("28P01");
+        await Assert.That(wrongKey!.SqlState).IsEqualTo("28P01");
+        // Later connections and statements reuse the writer's grant until its token nears expiry.
+        await Assert.That(reExchanged).IsEqualTo(0);
     }
 
     [Test]
@@ -293,6 +331,20 @@ public sealed class PostgresWireTests
         }
 
         return rows;
+    }
+
+    // A ts-auth project API key, as the dashboard issues it, restricted to one database.
+    private static string DashboardKey(ManagementApi api, ManagedDatabaseRef database, string scope, string restricted)
+    {
+        var id = EntityIds.New().ToString();
+        var key = id + "_" + Faker.Random.String2(52, "0123456789abcdefghjkmnpqrstvwxyz");
+        api.Issuer.GrantClient(key, () => api.Issuer.Mint(id, token =>
+        {
+            token.Claims["project_id"] = database.Project;
+            token.Claims["database"] = restricted;
+            token.Claims["scope"] = scope;
+        }));
+        return key;
     }
 
     private static async Task<(ManagedDatabaseRef Database, string Key)> DatabaseAsync(ManagementApi api, params string[] scopes)

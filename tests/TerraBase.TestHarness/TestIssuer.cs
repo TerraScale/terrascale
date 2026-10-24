@@ -42,6 +42,8 @@ public sealed class TestIssuer : IDisposable
     private readonly List<IDisposable> _keys = [];
     private readonly Dictionary<(string Token, string Organization, string Project), ProjectAuthority> _projects = [];
     private readonly Dictionary<string, RecoveryAuthority> _recovery = [];
+    private readonly Dictionary<string, Func<string>> _clients = [];
+    private int _tokenRequests;
     private int _discoveryFetches;
     private int _jwksFetches;
     private int _movedJwksFetches;
@@ -119,6 +121,31 @@ public sealed class TestIssuer : IDisposable
         lock (_gate)
         {
             _recovery[token] = authority;
+        }
+    }
+
+    /// <summary>Client credentials grants at <c>{Issuer}/oauth/token</c>, granted or not.</summary>
+    public int TokenRequests => Volatile.Read(ref _tokenRequests);
+
+    /// <summary>
+    /// Issues <paramref name="mint"/>'s access token for the dashboard API key <paramref name="key"/> (<c>&lt;key id&gt;_&lt;secret&gt;</c>)
+    /// through the client credentials grant, as ts-auth does; any other credential gets <c>401</c>.
+    /// </summary>
+    public void GrantClient(string key, Func<string> mint)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        lock (_gate)
+        {
+            _clients["Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(key[..key.IndexOf('_', StringComparison.Ordinal)] + ":" + key))] = mint;
+        }
+    }
+
+    /// <summary>Revokes a key <see cref="GrantClient"/> granted.</summary>
+    public void RevokeClient(string key)
+    {
+        lock (_gate)
+        {
+            _clients.Remove("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(key[..key.IndexOf('_', StringComparison.Ordinal)] + ":" + key)));
         }
     }
 
@@ -257,6 +284,7 @@ public sealed class TestIssuer : IDisposable
 
             _keys.Clear();
             _projects.Clear();
+            _clients.Clear();
         }
     }
 
@@ -374,6 +402,24 @@ public sealed class TestIssuer : IDisposable
             };
             response.Headers.Location = recovery.Redirect;
             return response;
+        }
+
+        if (uri.AbsoluteUri == Issuer + "/oauth/token" && method == "POST")
+        {
+            Interlocked.Increment(ref _tokenRequests);
+            Func<string>? mint;
+            lock (_gate)
+            {
+                mint = authorization is null ? null : _clients.GetValueOrDefault(authorization);
+            }
+
+            return mint is null
+                ? new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                : new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(new JsonObject { ["access_token"] = mint(), ["token_type"] = "Bearer", ["expires_in"] = 900 }.ToJsonString(),
+                        Encoding.UTF8, "application/json"),
+                };
         }
 
         string body;
