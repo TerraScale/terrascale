@@ -1,0 +1,18 @@
+{
+  "name": "terrascale-orm-drizzle",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "drizzle-kit generate",
+    "migrate": "node migrate.mjs",
+    "start": "node app.mjs"
+  },
+  "engines": { "node": "22.x || 24.x" },
+  "dependencies": {
+    "@libsql/client": "0.18.0",
+    "drizzle-orm": "0.45.4"
+  },
+  "devDependencies": {
+    "drizzle-kit": "0.31.11"
+  }
+}

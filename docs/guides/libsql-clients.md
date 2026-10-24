@@ -144,14 +144,18 @@ The Python package takes positional parameters only and sends integers outside t
 
 - `SELECT`, `VALUES` and `WITH … SELECT`, including joins, subqueries, aggregates, `GROUP BY`, window functions, `UNION` and `LIMIT`/`OFFSET`.
 - `INSERT` (with `VALUES` or `SELECT`), `INSERT OR REPLACE`, `REPLACE`, `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, `UPDATE` and `DELETE`.
+- `RETURNING` on `INSERT`, `UPDATE` and `DELETE`, with columns, `*` or `column AS name`: the new values, or the old ones for a delete.
 - `CREATE TABLE [IF NOT EXISTS]` and `DROP TABLE [IF EXISTS]`.
 - `CREATE [UNIQUE] INDEX [IF NOT EXISTS] name ON table (columns)` with 1 to 4 columns, and `DROP INDEX [IF EXISTS] name`. A `UNIQUE` index rejects duplicate writes with `SQLITE_CONSTRAINT_UNIQUE` (Postgres `23505`). On a table that already has rows, `CREATE UNIQUE INDEX` checks the existing rows first and fails with the same code, changing nothing, if they hold a duplicate. Partial (`WHERE`) and expression indexes are refused. Reads still scan their tables; see [Limits](#limits).
+- `REFERENCES` and `FOREIGN KEY` are accepted and not enforced, as in SQLite with foreign keys off. `PRAGMA foreign_keys = …` is accepted and changes nothing.
+- `PRAGMA read_uncommitted` and `PRAGMA [main.|temp.]table_info(t)`, which SQLAlchemy runs.
+- Names: plain, `"quoted"` and `` `quoted` `` (without quote characters inside), with an optional `main.` schema.
 - `BEGIN` (`DEFERRED`, `IMMEDIATE`, `EXCLUSIVE`, `READONLY`), `COMMIT`/`END` and `ROLLBACK`.
 - Parameters: `?`, `?NNN`, `:name`, `@name` and `$name`. Values: null, integer, real and text.
 - Column types follow SQLite affinity (`INTEGER`, `REAL`, `TEXT`, `NUMERIC`, none). `NOT NULL`, literal `DEFAULT`, `PRIMARY KEY` and `UNIQUE` are enforced.
-- Keys are yours: an `INTEGER` or `TEXT` primary key is the row's key, and composite keys work. An `INTEGER PRIMARY KEY` left out of an `INSERT` gets a generated positive integer, returned as the last insert rowid.
+- Keys are yours: an `INTEGER` or `TEXT` primary key is the row's key, and composite keys work. An `INTEGER` (or `SERIAL`) primary key left out of an `INSERT` gets a generated positive integer, returned as the last insert rowid.
 
-Refused with an error: partial and expression indexes, `WITH RECURSIVE`, blob values, `RETURNING`, `ON CONFLICT DO UPDATE`, `ALTER TABLE`, triggers, views, `PRAGMA`, `ATTACH`, `VACUUM`, savepoints, `CHECK` and `FOREIGN KEY` constraints, schema-qualified table names and functions outside SQLite's core scalar, aggregate, window, date/time and JSON functions (no table-valued functions).
+Refused with an error: partial and expression indexes, `WITH RECURSIVE`, blob values, expressions in `RETURNING`, `ON CONFLICT DO UPDATE`, `ALTER TABLE`, triggers, views, other `PRAGMA`s, `ATTACH`, `VACUUM`, savepoints, `CHECK` constraints, `[bracketed]` names, schemas other than `main` and functions outside SQLite's core scalar, aggregate, window, date/time and JSON functions (no table-valued functions).
 
 ## Limits
 
