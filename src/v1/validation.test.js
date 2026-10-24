@@ -231,6 +231,19 @@ describe("C# v1 pure contract validation", () => {
     expect(() => requireFilter({ in: ["/a", []] })).toThrow(TypeError);
   });
 
+  it("builds and validates within radius and box filters", () => {
+    expect(v1Filter.withinRadius("/loc", { lat: -23.55, lon: -46.63, meters: 1000 })).toEqual({ within: ["/loc", { lat: -23.55, lon: -46.63, meters: 1000 }] });
+    expect(v1Filter.withinBox("/loc", { south: -20, west: 179, north: -10, east: -170 })).toEqual({ within: ["/loc", { south: -20, west: 179, north: -10, east: -170 }] });
+    expect(requireFilter(v1Filter.not(v1Filter.withinRadius("/a/loc", { lat: 90, lon: 180, meters: 20_000_000 })))).toBeDefined();
+    for (const circle of [{ lat: 0, lon: 0, meters: 0 }, { lat: 0, lon: 0, meters: 20_000_001 }, { lat: 91, lon: 0, meters: 1 }, { lat: 0, lon: -181, meters: 1 }, { lat: Number.NaN, lon: 0, meters: 1 }])
+      expect(() => v1Filter.withinRadius("/loc", circle)).toThrow(TypeError);
+    expect(() => v1Filter.withinRadius("$id", { lat: 0, lon: 0, meters: 1 })).toThrow(TypeError);
+    expect(() => v1Filter.withinBox("/loc", { south: 10, west: 0, north: -10, east: 1 })).toThrow(/south/u);
+    expect(() => v1Filter.withinBox("/loc", /** @type {any} */ ({ lat: 0, lon: 0, meters: 1 }))).toThrow(TypeError);
+    expect(() => requireFilter({ within: ["/loc", { lat: 0, lon: 0, meters: 1, extra: 1 }] })).toThrow(TypeError);
+    expect(() => requireFilter({ within: ["/loc"] })).toThrow(TypeError);
+  });
+
   it("rejects unsupported and unsafe operation inputs before dispatch", async () => {
     await expect(docs.put(id, {}, /** @type {any} */ ({ idempotencyKey: "old-key" }))).rejects.toThrow(/Idempotency/u);
     await expect(docs.create({}, /** @type {any} */ ({ idempotencyKey: "old-key" }))).rejects.toThrow(/Idempotency/u);

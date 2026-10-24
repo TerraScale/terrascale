@@ -4,7 +4,7 @@ import {
   array, boolean, decodeDocument, decodeWrite, documentObject, durability, malformed, object, u64,
 } from "./decode.js";
 import { requireId } from "../ids.js";
-import { isJsonPointer, requireFilter, requirePath } from "./filter.js";
+import { isJsonPointer, requireFilter, requireGeoPoint, requirePath } from "./filter.js";
 import { requireDocumentId, requireName, requireVersion } from "./ids.js";
 import { assertJsonObject, assertJsonValue, ExactDecimal, stringifyExactJson } from "./json.js";
 import { readShapeManifest } from "./shape-manifest.js";
@@ -66,7 +66,31 @@ import { V1ChangeWebhooks } from "./change-webhooks.js";
  * Vector similarity sort, nearest first. It must be the only sort key; limit is at most 100 and there is no cursor.
  * @typedef {{ readonly near: { readonly path: V1Path; readonly vector: readonly number[]; readonly metric?: "cosine" | "l2" | undefined } }} V1NearSortKey
  */
-/** @typedef {V1FieldSortKey | V1NearSortKey} V1SortKey */
+/**
+ * Geo distance sort: meters from a WGS 84 point to each document's `{lat, lon}` object at `path`, nearest first,
+ * returned as `distance`. Like the vector `near`, it is the only sort key, limit is at most 100 and there is no cursor.
+ * @typedef {{ readonly near: { readonly path: string; readonly lat: number; readonly lon: number } }} V1GeoNearSortKey
+ */
+/** @typedef {V1FieldSortKey | V1NearSortKey | V1GeoNearSortKey} V1SortKey */
+/**
+ * Groups matches instead of returning documents. Summaries consider numbers only; at most 16 summary paths in total.
+ * @typedef {object} V1Aggregate
+ * @property {readonly V1Path[] | undefined} [groupBy] 0-4 paths; without it every match is one group.
+ * @property {readonly string[] | undefined} [sum] Distinct JSON Pointers.
+ * @property {readonly string[] | undefined} [avg] Distinct JSON Pointers.
+ * @property {readonly string[] | undefined} [min] Distinct JSON Pointers.
+ * @property {readonly string[] | undefined} [max] Distinct JSON Pointers.
+ */
+/**
+ * One aggregate group. Summaries are keyed by the requested JSON Pointer; `sum` is 0 and the others null without numbers.
+ * @typedef {object} V1Group
+ * @property {readonly JsonValue[]} key One value per `groupBy` path (missing members group as null).
+ * @property {string} count Matching documents in the group (decimal u64).
+ * @property {Readonly<Record<string, number | null>> | undefined} [sum]
+ * @property {Readonly<Record<string, number | null>> | undefined} [avg]
+ * @property {Readonly<Record<string, number | null>> | undefined} [min]
+ * @property {Readonly<Record<string, number | null>> | undefined} [max]
+ */
 /**
  * A query-v1 request. Every member is optional.
  * @typedef {object} V1Query
@@ -76,6 +100,7 @@ import { V1ChangeWebhooks } from "./change-webhooks.js";
  * @property {number | undefined} [limit] 1-1000 (server default 50).
  * @property {string | null | undefined} [cursor] A previous page's `nextCursor`.
  * @property {boolean | undefined} [count] Count every match (first page only).
+ * @property {V1Aggregate | undefined} [aggregate] Answer `groups` instead of items; `limit` bounds the groups. No sort, project, cursor or count.
  */
 /** @typedef {{ readonly value: string; readonly exact: boolean }} V1Count */
 /**
@@ -83,6 +108,7 @@ import { V1ChangeWebhooks } from "./change-webhooks.js";
  * @property {readonly V1Document[]} items Documents in query order.
  * @property {string | null} nextCursor
  * @property {V1Count | undefined} count
+ * @property {readonly V1Group[] | undefined} groups An aggregate query's groups in key order (`items` is then empty).
  */
 
 /** @typedef {{ readonly ifMatch: string } | { readonly ifNoneMatchAny: true }} V1Precondition */
@@ -99,7 +125,8 @@ import { V1ChangeWebhooks } from "./change-webhooks.js";
  * @property {readonly V1TransactionOpResult[]} results One per op, in order.
  */
 
-const queryMembers = new Set(["filter", "sort", "project", "limit", "cursor", "count"]);
+const queryMembers = new Set(["filter", "sort", "project", "limit", "cursor", "count", "aggregate"]);
+const summaries = /** @type {const} */ (["sum", "avg", "min", "max"]);
 
 /**
  * @param {string} path
@@ -183,7 +210,36 @@ function normalizePatch(patch) {
 }
 
 /**
- * @param {V1NearSortKey} key
+ * @param {V1Aggregate} aggregate
+ * @param {V1Query} query
+ * @returns {Record<string, unknown>}
+ */
+function encodeAggregate(aggregate, query) {
+  if (typeof aggregate !== "object" || aggregate === null || Array.isArray(aggregate)) throw new TypeError("aggregate is an object.");
+  if (query.sort !== undefined || query.project !== undefined || query.cursor != null || query.count !== undefined)
+    throw new TypeError("aggregate takes no sort, project, cursor or count.");
+  for (const member of Object.keys(aggregate))
+    if (member !== "groupBy" && !summaries.includes(/** @type {any} */ (member))) throw new TypeError(`Unknown aggregate member ${member}.`);
+  /** @type {Record<string, unknown>} */
+  const body = {};
+  if (aggregate.groupBy !== undefined) {
+    if (!Array.isArray(aggregate.groupBy) || aggregate.groupBy.length > 4) throw new TypeError("groupBy has at most 4 paths.");
+    body.group_by = aggregate.groupBy.map(requirePath);
+  }
+  let total = 0;
+  for (const op of summaries) {
+    const paths = aggregate[op];
+    if (paths === undefined) continue;
+    if (!Array.isArray(paths) || new Set(paths).size !== paths.length) throw new TypeError(`${op} takes distinct JSON Pointers.`);
+    total += paths.length;
+    body[op] = paths.map(pointer);
+  }
+  if (total > 16) throw new TypeError("An aggregate has at most 16 sum, avg, min and max paths.");
+  return body;
+}
+
+/**
+ * @param {V1NearSortKey | V1GeoNearSortKey} key
  * @param {V1Query} query
  * @returns {Record<string, unknown>}
  */
@@ -193,6 +249,13 @@ function nearSort(key, query) {
   if (query.limit !== undefined && query.limit > 100) throw new TypeError("A near query limit is at most 100.");
   const near = key.near;
   if (near === null || typeof near !== "object") throw new TypeError("near is an object.");
+  if ("lat" in near || "lon" in near) {
+    const geo = /** @type {V1GeoNearSortKey["near"]} */ (near);
+    for (const member of Object.keys(geo)) if (!["path", "lat", "lon"].includes(member)) throw new TypeError(`A geo near takes path, lat and lon, not ${member}.`);
+    requireGeoPoint(geo.lat, geo.lon);
+    if (requirePath(geo.path) === "$id") throw new TypeError("A geo near path is a JSON Pointer.");
+    return { near: { path: geo.path, lat: geo.lat, lon: geo.lon } };
+  }
   for (const member of Object.keys(near)) if (!["path", "vector", "metric"].includes(member)) throw new TypeError(`Unknown near member ${member}.`);
   if (near.metric !== undefined && near.metric !== "cosine" && near.metric !== "l2") throw new TypeError('near metric is "cosine" or "l2".');
   const vector = near.vector;
@@ -239,7 +302,27 @@ function encodeQuery(query) {
     if (typeof query.count !== "boolean") throw new TypeError("count is a boolean.");
     body.count = query.count;
   }
+  if (query.aggregate !== undefined) body.aggregate = encodeAggregate(query.aggregate, query);
   return stringifyExactJson(body, "query");
+}
+
+/**
+ * @param {JsonValue} value
+ * @returns {V1Group}
+ */
+function decodeGroup(value) {
+  const raw = object(value, "aggregate group");
+  /** @type {Record<string, unknown>} */
+  const group = { key: Object.freeze([...array(raw.key, "group key")]), count: u64(raw.count, "group count") };
+  for (const op of summaries) {
+    if (raw[op] === undefined) continue;
+    group[op] = Object.freeze(Object.fromEntries(Object.entries(object(raw[op], `group ${op}`)).map(([path, summary]) => {
+      const number = summary instanceof ExactDecimal ? summary.toNumber() : summary;
+      if (number !== null && (typeof number !== "number" || !Number.isFinite(number))) malformed(`group ${op}`);
+      return [path, number];
+    })));
+  }
+  return /** @type {V1Group} */ (Object.freeze(group));
 }
 
 /**
@@ -266,6 +349,7 @@ export function decodeQueryPage(value) {
     })),
     nextCursor: typeof next === "string" && next !== "" ? next : null,
     count,
+    groups: raw.groups === undefined ? undefined : Object.freeze(array(raw.groups, "aggregate groups").map(decodeGroup)),
   });
 }
 

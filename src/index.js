@@ -39,6 +39,9 @@ export { ExactDecimal } from "./v1/json.js";
 /** @typedef {import("./v1/terrabase-v1.js").V1Patch} V1Patch */
 /** @typedef {import("./v1/terrabase-v1.js").V1SortKey} V1SortKey */
 /** @typedef {import("./v1/terrabase-v1.js").V1NearSortKey} V1NearSortKey */
+/** @typedef {import("./v1/terrabase-v1.js").V1GeoNearSortKey} V1GeoNearSortKey */
+/** @typedef {import("./v1/terrabase-v1.js").V1Aggregate} V1Aggregate */
+/** @typedef {import("./v1/terrabase-v1.js").V1Group} V1Group */
 /** @typedef {import("./v1/terrabase-v1.js").V1Query} V1Query */
 /** @typedef {import("./v1/terrabase-v1.js").V1Count} V1Count */
 /** @typedef {import("./v1/terrabase-v1.js").V1QueryPage} V1QueryPage */
@@ -52,6 +55,8 @@ export { ExactDecimal } from "./v1/json.js";
 /** @typedef {import("./v1/filter.js").V1Filter} V1Filter */
 /** @typedef {import("./v1/filter.js").V1Path} V1Path */
 /** @typedef {import("./v1/filter.js").V1Scalar} V1Scalar */
+/** @typedef {import("./v1/filter.js").V1GeoCircle} V1GeoCircle */
+/** @typedef {import("./v1/filter.js").V1GeoBox} V1GeoBox */
 /** @typedef {import("./v1/json.js").JsonValue} V1JsonValue */
 /** @typedef {import("./v1/json.js").JsonObject} V1JsonObject */
 /** @typedef {import("./v1/json.js").JsonInput} V1JsonInput */

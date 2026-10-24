@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — query aggregates and geo filters
+
+`query({ aggregate: { groupBy, sum, avg, min, max } })` returns typed
+`groups` (`{ key, count, sum?, avg?, min?, max? }`) with empty `items`.
+`v1Filter.withinRadius(path, { lat, lon, meters })` and
+`v1Filter.withinBox(path, { south, west, north, east })` build `within`
+filters, and `sort: [{ near: { path, lat, lon } }]` orders by meters, returned
+as each item's `distance`.
+
 ## 0.0.6 — relational SQL
 
 `db.execute(sql, args)`, `db.query(sql, args)` and `db.batch(statements)` call
