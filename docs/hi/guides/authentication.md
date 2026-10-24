@@ -30,6 +30,18 @@ The response holds `access_token` (a JWT), `token_type: Bearer`, `expires_in: 90
 
 A key limited to one database works only for that database. **Read and write** keys carry `documents:read documents:write`.
 
+## Key expiry and IP allowlists
+
+**Expiry.** Choose when a key expires when you create it: 30 days, 90 days, 365 days, or never. An expired key fails the token exchange with `401` and error `invalid_client`. Access tokens it already issued stop being accepted within 60 seconds of expiry.
+
+**IP allowlists.** Limit a key and its project to client networks. Each list takes up to 32 CIDR ranges, IPv4 or IPv6, such as `203.0.113.0/24` or `2001:db8::/32`. A request is allowed only when the client IP is inside the key's list and inside the project's list. Set a list to empty to allow any address. TerraBase answers a request from outside either list with `403` and this body, in every region and on the Postgres wire protocol:
+
+```json
+{"error":{"code":"ip_not_allowed"}}
+```
+
+Changes to a key's or a project's allowlist apply within 60 seconds. Keep the allowlist of a server's egress addresses current, since a changed address stops working until the list includes it.
+
 ## Server applications
 
 Keep credentials in the application platform's secret store. Read them only on the server. Use a project/database scope and the minimum document permissions: reads need `documents:read`; writes need `documents:write`.
@@ -50,6 +62,6 @@ TerraScale uses TerraBase through the same SDK boundary as customer applications
 
 ## Failed authorization
 
-Handle `401` by checking expiry and revocation, then run the token exchange again. Handle `403` by checking the resource scope and operation permissions. Do not retry these errors automatically. Revoking a key does not end access tokens already issued from it: they stay valid until they expire, up to 15 minutes. Never log the token, authorization header, raw server error body or a customer document while diagnosing the request.
+Handle `401` by checking expiry and revocation, then run the token exchange again. Handle `403` by checking the resource scope and operation permissions. A `403` with the code `ip_not_allowed` means the client address is outside a key or project allowlist; see [Key expiry and IP allowlists](#key-expiry-and-ip-allowlists). Do not retry these errors automatically. Revoking a key does not end access tokens already issued from it: they stay valid until they expire, up to 15 minutes. Never log the token, authorization header, raw server error body or a customer document while diagnosing the request.
 
 </div>
