@@ -9,7 +9,9 @@ internal sealed class CustomerBackupResponseLimits : DelegatingHandler
         var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
         try
         {
-            var listing = request.RequestUri!.Query.Contains("list-type=2", StringComparison.Ordinal);
+            var listing = request.RequestUri!.Query.TrimStart('?').Split('&').Any(parameter =>
+                parameter == "list-type=2" || parameter.Split('=')[0] is "versions" or "uploads")
+                || request.Method == HttpMethod.Get && request.RequestUri.AbsolutePath == "/";
             if (!response.IsSuccessStatusCode || listing || request.Method == HttpMethod.Post)
             {
                 await response.Content.LoadIntoBufferAsync(response.IsSuccessStatusCode && listing ? 2 * 1024 * 1024 : 64 * 1024, cancellationToken).ConfigureAwait(false);

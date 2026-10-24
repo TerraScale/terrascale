@@ -186,6 +186,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             return await inner.CreateDatabaseWithIntentAsync(database, source, recordIntent, cancellationToken);
         }
 
+        public ValueTask<bool> VerifyDatabaseErasureAsync(TenantContext database, CancellationToken cancellationToken) =>
+            inner.VerifyDatabaseErasureAsync(database, cancellationToken);
+
         public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null)
         {
             if (hook.BeforeDelete is { } beforeDelete)
@@ -358,6 +361,10 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
             inner.ReadFeedMetadataAsync(cursor, collections, maxEvents, maxBytes, cancellationToken);
         public ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken) => inner.GetFeedHeadAsync(cancellationToken);
+
+        public ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetAppliedAsync(CancellationToken cancellationToken) => inner.GetAppliedAsync(cancellationToken);
+
+        public ValueTask<bool> HoldsHistoryAtOrBelowAsync(Hlc cut, CancellationToken cancellationToken) => inner.HoldsHistoryAtOrBelowAsync(cut, cancellationToken);
         public ValueTask<int> TrimFeedAsync(Hlc before, int limit, CancellationToken cancellationToken) => inner.TrimFeedAsync(before, limit, cancellationToken);
         public async ValueTask<DocumentPage> ListAsync(string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken)
         {
@@ -374,6 +381,13 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken, QueryObservation? observation = null) => inner.CountAsync(collection, filter, maxExamined, cancellationToken, observation);
         public ValueTask<bool> CreateCollectionAsync(CollectionInfo collection, CancellationToken cancellationToken) => inner.CreateCollectionAsync(collection, cancellationToken);
         public ValueTask<CollectionInfo?> GetCollectionAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionAsync(name, cancellationToken);
+        public ValueTask<CollectionAccessRules?> GetCollectionRulesAsync(string name, CancellationToken cancellationToken) =>
+            inner.GetCollectionRulesAsync(name, cancellationToken);
+        public ValueTask<bool> SetCollectionRulesAsync(string name, CollectionAccessRules rules, CancellationToken cancellationToken) =>
+            inner.SetCollectionRulesAsync(name, rules, cancellationToken);
+        public ValueTask<DocumentOwnerProof?> GetDocumentOwnerProofAsync(string collection, string id, CancellationToken cancellationToken) =>
+            inner.GetDocumentOwnerProofAsync(collection, id, cancellationToken);
+
         public ValueTask<JsonElement?> GetCollectionSchemaAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionSchemaAsync(name, cancellationToken);
         public ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken) => inner.SetCollectionSchemaAsync(name, schema, cancellationToken);
         public ValueTask<JsonElement?> GetCollectionTableAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionTableAsync(name, cancellationToken);

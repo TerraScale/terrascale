@@ -723,6 +723,12 @@ public sealed class CustomerBackupTests
         time.Advance(TimeSpan.FromHours(2));
         await ShipAsync(api, time);
 
+        // WAL expiry can reject its listing before reaching snapshots; exercise the hostile snapshot through restore too.
+        using var rejectedSnapshot = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
+            new { pointInTime = latest, name = "hostile-snapshot", destination = "customer" }, cancellationToken);
+        await Assert.That(rejectedSnapshot.IsSuccessStatusCode).IsFalse();
+        await AssertPublicAsync(await rejectedSnapshot.Content.ReadAsStringAsync(cancellationToken));
+
         // With valid snapshots, retention and restore must also validate the WAL listing independently.
         s3.CustomerListingOverride = (prefix, keys) =>
         {
@@ -1114,7 +1120,7 @@ public sealed class CustomerBackupTests
         await Assert.That(refreshed.GetProperty("sizeBytes").GetInt64()).IsGreaterThan(0);
         await Assert.That(refreshed.GetProperty("sizedAt").GetDateTimeOffset()).IsGreaterThan(previousMeasurement);
 
-        // Retention preserves the newest platform snapshot before the cutoff; seed an older one to prune.
+        // Both the older snapshot and the final platform baseline must expire after PITR plus one day.
         var parts = old.Split('/')[^1].Split('-');
         var expired = string.Create(CultureInfo.InvariantCulture,
             $"{File(database)}/snapshots/{time.GetUtcNow().AddDays(-2).ToUnixTimeMilliseconds():D13}-{parts[1]}-{parts[2]}");
@@ -1123,7 +1129,7 @@ public sealed class CustomerBackupTests
         await ShipAsync(api, time);
         await ShipAsync(api, time);
         await Assert.That(s3.Objects.ContainsKey(expired)).IsFalse();
-        await Assert.That(s3.Objects.ContainsKey(old)).IsTrue();
+        await Assert.That(s3.Objects.ContainsKey(old)).IsFalse();
         using var platformWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=platform"), cancellationToken);
         await Assert.That(platformWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         using var platformRestore = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),

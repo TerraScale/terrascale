@@ -369,10 +369,10 @@ public sealed class QueryCacheIntegrationTests
         }
 
         public ValueTask<WriteOutcome> WriteConfirmedAsync(
-            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
+            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool waitForRemote, CancellationToken cancellationToken)
         {
             Writes++;
-            return inner.WriteConfirmedAsync(database, operations, indexErrors, cancellationToken);
+            return inner.WriteConfirmedAsync(database, operations, indexErrors, waitForRemote, cancellationToken);
         }
 
         public IAsyncEnumerable<ExportRow> ExportAsync(TenantContext database, string? afterCollection, string? afterId, CancellationToken cancellationToken) =>
@@ -384,6 +384,11 @@ public sealed class QueryCacheIntegrationTests
         public ValueTask<QueryResult> QueryAsync(
             IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken, QueryObservation? observation = null) =>
             inner.QueryAsync(transaction, query, countLimit, cancellationToken, observation);
+        public ValueTask<CollectionRulesResult> GetCollectionRulesAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+            inner.GetCollectionRulesAsync(database, name, cancellationToken);
+        public ValueTask<CollectionRulesResult> SetCollectionRulesAsync(TenantContext database, string name, CollectionAccessRules rules, CancellationToken cancellationToken) =>
+            inner.SetCollectionRulesAsync(database, name, rules, cancellationToken);
+
         public ValueTask<CollectionSchemaResult> GetCollectionSchemaAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
             inner.GetCollectionSchemaAsync(database, name, cancellationToken);
 

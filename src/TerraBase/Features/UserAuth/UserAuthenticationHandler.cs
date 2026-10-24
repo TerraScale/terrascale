@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -101,6 +102,12 @@ internal sealed class UserAuthenticationHandler(
         }
 
         List<Claim> claims = [new(ClaimTypes.NameIdentifier, user)];
+        var endUser = jwt.TryGetPayloadValue<string>("token_kind", out var kind) && kind == "end_user";
+        if (jwt.TryGetPayloadValue<object>("token_kind", out _) && !endUser
+            || jwt.TryGetPayloadValue<object>("instance_id", out _) && !endUser)
+        {
+            return AuthenticateResult.Fail("invalid token kind");
+        }
         foreach (var name in new[] { "project_id", "org_id", "database", "scope" })
         {
             if (jwt.TryGetPayloadValue<object>(name, out var claim) && claim is not string)
@@ -127,6 +134,29 @@ internal sealed class UserAuthenticationHandler(
 
                 claims.Add(new Claim("org_id", organization));
             }
+        }
+
+        if (endUser)
+        {
+            // Inspect JSON types before IdentityModel can coerce a role or linkage value to a string.
+            using var payload = JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(jwt.EncodedPayload));
+            if (project is null || !payload.RootElement.TryGetProperty("instance_id", out var instance)
+                || instance.ValueKind != JsonValueKind.String || instance.GetString() != project
+                || payload.RootElement.TryGetProperty("scope", out _) || payload.RootElement.TryGetProperty("database", out _)
+                || payload.RootElement.TryGetProperty(Platform.PlatformExplore.RoleClaim, out _)
+                || payload.RootElement.TryGetProperty("is_anonymous", out var guest) && guest.ValueKind != JsonValueKind.False
+                || !payload.RootElement.TryGetProperty("roles", out var roles) || roles.ValueKind != JsonValueKind.Array
+                || roles.GetArrayLength() > 64 || roles.EnumerateArray().Any(role => role.ValueKind != JsonValueKind.String
+                    || string.IsNullOrWhiteSpace(role.GetString()) || role.GetString()!.Length > 128 || role.GetString()!.Any(char.IsControl)))
+            {
+                return AuthenticateResult.Fail("invalid end-user project linkage or roles");
+            }
+
+            claims.Add(new Claim("token_kind", "end_user"));
+            claims.AddRange(roles.EnumerateArray().Select(role => role.GetString()!).Distinct(StringComparer.Ordinal).Select(role => new Claim("roles", role)));
+            // These admit only the document pipeline; collection rules decide every data operation.
+            claims.Add(new Claim("scope", "documents:read"));
+            claims.Add(new Claim("scope", "documents:write"));
         }
 
         if (jwt.TryGetPayloadValue<string>("database", out var database))
@@ -163,6 +193,7 @@ internal sealed class UserAuthenticationHandler(
         }
 
         // Exactly the list the signature was checked against: a later refresh replaces it and so retires the entry.
+        scope = endUser ? "documents:read documents:write" : scope;
         accepted = new ValidatedTokens.Accepted(
             checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope);
         validated.Add(cacheKey, accepted);
@@ -176,7 +207,10 @@ internal sealed class UserAuthenticationHandler(
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 
-    private TokenValidationParameters Parameters(IReadOnlyList<SecurityKey> keys) => new()
+    private TokenValidationParameters Parameters(IReadOnlyList<SecurityKey> keys) => Parameters(terraBase, keys, time);
+
+    /// <summary>How every ts-auth access token is validated, here and for <see cref="TsAuthKeyExchange"/>.</summary>
+    internal static TokenValidationParameters Parameters(TerraBaseOptions terraBase, IReadOnlyList<SecurityKey> keys, TimeProvider? time) => new()
     {
         ValidIssuer = terraBase.AuthIssuer,
         ValidAudiences = terraBase.AuthAudiences,

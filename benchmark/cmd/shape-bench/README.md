@@ -110,3 +110,25 @@ deliveries count through a 5 s grace, and the after scrape follows a 6 s settle.
   the node, plus Tigris for each mirrored object (`reads > sealed + mirrored`). `point` reads are reported, not gated:
   they are node-wide and include the writer's. Any step over the bound, or any shard error, makes `merge` exit non-zero
   and print why.
+
+## Catch-up tiers (free reads T0, T1, T2)
+
+`shape-bench catchup [-tiers t0,t1,t2] [-readers 1,10,100,1000] [-chunks 100] [-repeats 3] [-out <base>]` measures
+readers that join behind the head (docs/terrabase/free-reads-cdn.md). Each step uses a new collection, so a new handle
+and new objects: one bootstrap seals the snapshot, then a write every 50 ms and a read at the head seal `-chunks` chunks
+behind it. On t1 and t2 the step waits until the manifest chain lists every object. Then N readers join evenly over
+10 s and each reads the snapshot page and every chunk to the head: t0 from the origin; t1 through the manifest and each
+object straight from the bucket by its presigned URL; t2 through the manifest and Cloudflare's cache in front of an R2
+bucket (`cf-cache-status`, location from the `cf-ray` suffix). The bucket decides: an R2 bucket's manifest links only CDN
+paths (t2), any other bucket presigned URLs (t1). Every object's size and sha256 are checked against the manifest.
+
+- t1 and t2 need a private test bucket: `BUCKET_NAME` (a `ts-*` name), the `AWS_*` variables and the bucket's
+  `TERRABASE_MASTER_KEY`, passed to the local host, whose nodes then back up and mirror to it.
+- Reported per (tier, readers), median and range over the repeats: origin storage reads (`shape_body` payload and `shape`
+  metadata, both nodes, from just before the first reader to 2 s after the last), origin shape requests, manifest calls,
+  object GETs, bucket GETs (every object GET on t1; on t2 every response that was not a cache HIT, an upper bound), CDN
+  locations, bucket GETs per object per location, the CDN hit ratio, bucket PUTs (mirror uploads during the readers) and
+  bytes. The JSON keeps each step's reader window (`Start`, `End`) for R2's own GetObject count.
+- Against running nodes (an OCI test cell): `-origin <client URL> -project <id> -database <id> -metrics <url,url>` with
+  `TS_BENCH_API_KEY`; the cell mirrors to its own bucket.
+- t2 bucket reads are R2 Class B operations; cache hits are free.

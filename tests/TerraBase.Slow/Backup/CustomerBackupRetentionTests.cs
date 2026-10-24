@@ -13,7 +13,9 @@ namespace TerraBase.Slow.Backup;
 public sealed class CustomerBackupRetentionTests
 {
     [Test]
-    public async Task Retention_drains_more_than_ten_thousand_expired_snapshots_without_deleting_a_later_snapshots_wal()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Retention_drains_more_than_ten_thousand_expired_snapshots_without_deleting_a_later_snapshots_wal(bool hardExpired)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var s3 = new FakeS3();
@@ -36,7 +38,7 @@ public sealed class CustomerBackupRetentionTests
         await ShipAsync(api, time, cancellationToken);
         var neededSegment = s3.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal));
         const int expiredCount = 10_002;
-        var first = time.GetUtcNow().AddDays(-3).ToUnixTimeMilliseconds();
+        var first = time.GetUtcNow().AddDays(hardExpired ? -3 : -1.5).ToUnixTimeMilliseconds();
         for (var index = 0; index < expiredCount; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -63,7 +65,14 @@ public sealed class CustomerBackupRetentionTests
             await ShipAsync(api, time, cancellationToken);
             await Assert.That(Volatile.Read(ref snapshotListings)).IsGreaterThan(10);
             var remaining = s3.CustomerObjects.Keys.Count(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
-            await Assert.That(remaining).IsLessThan(previous);
+            if (pass == 0 || !hardExpired)
+            {
+                await Assert.That(remaining).IsLessThan(previous);
+            }
+            else
+            {
+                await Assert.That(remaining).IsEqualTo(previous);
+            }
             previous = remaining;
             await Assert.That(s3.CustomerObjects.ContainsKey(currentSnapshot)).IsTrue();
             await Assert.That(s3.CustomerObjects.ContainsKey(neededSegment)).IsTrue();
@@ -72,8 +81,8 @@ public sealed class CustomerBackupRetentionTests
             await AssertDocumentAsync(data, restored, "after", after, cancellationToken);
         }
 
-        // One snapshot before the cutoff remains as the floor; all other expired snapshots have drained.
-        await Assert.That(previous).IsEqualTo(2);
+        // A recent floor survives; a hard-expired floor drains in the first pass. Both protect the real snapshot's WAL.
+        await Assert.That(previous).IsEqualTo(hardExpired ? 1 : 2);
         await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 

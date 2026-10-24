@@ -277,6 +277,7 @@ public sealed class IncarnationContractTests
         await Assert.That(await groups.AckAsync(database, Ulid.NewUlid(), peer, stale, default, CancellationToken.None)).IsFalse();
         await Assert.That(await groups.ReadAsync(database, old, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsNull();
         await Assert.That(await groups.HeadAsync(database, old, CancellationToken.None)).IsNull();
+        await Assert.That(await groups.RetainedAfterAsync(database, old, null, 0, CancellationToken.None)).IsNull();
         await Assert.That(await groups.RetainsAsync(database, old, 0, CancellationToken.None)).IsNull();
 
         // A row of the old incarnation (a copied or restored ack) with an id below the head holds every row, as 0 does.

@@ -14,6 +14,7 @@ using TerraBase.Features.Platform;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
+using TerraBase.Features.Webhooks;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -45,7 +46,7 @@ namespace TerraBase.Features.Management;
 internal sealed partial class EngineManagementService(
     IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
     Lazy<IDocumentService> documents, Lazy<IQueryShapeTracker> shapes, IMemoryBudget memory, IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota,
-    Lazy<IRemoteDurability> durability, Lazy<ICatalogGate> catalogGate)
+    Lazy<IRemoteDurability> durability, Lazy<ICatalogGate> catalogGate, Lazy<IWebhookErasure> webhookErasure)
     : IManagementService, IAccessService, IManagementCommits, ITenantDirectory, IHostedService, ICatalogGuard
 {
     private const string Organizations = "organizations";
@@ -655,20 +656,25 @@ internal sealed partial class EngineManagementService(
 
     // Removes a database from the catalog and records its cleanup intent, in the caller's transaction; the files go
     // after it commits (FinishDatabaseCleanupAsync), or at the next start.
-    private static async ValueTask<UnregisterResult> UnregisterDatabaseAsync(
+    private async ValueTask<UnregisterResult> UnregisterDatabaseAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, string databaseId, string region, CancellationToken cancellationToken) =>
         await DeletableAsync(transaction, userId, organizationId, projectId, databaseId, region, cancellationToken).ConfigureAwait(false) switch
         {
-            DeletableDatabase deletable => await UnregisterRecordAsync(transaction, deletable.Storage, deletable.Record, cancellationToken).ConfigureAwait(false),
+            DeletableDatabase deletable => await UnregisterRecordAsync(transaction, deletable.Storage, deletable.Record, cancellationToken, customerDeletion: true).ConfigureAwait(false),
             NotFound error => error,
             Forbidden error => error,
             Conflict error => error,
         };
 
     // Removes a database's record and records its cleanup intent, in the caller's transaction, after the caller's checks.
-    private static async ValueTask<TenantContext> UnregisterRecordAsync(
-        IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken, bool releaseName = true)
+    private async ValueTask<TenantContext> UnregisterRecordAsync(
+        IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken, bool releaseName = true, bool customerDeletion = false)
     {
+        if (customerDeletion)
+        {
+            await RecordDatabasePurgeAsync(transaction, storage, database, cancellationToken).ConfigureAwait(false);
+            await BackupDestinationHistory.CaptureAsync(transaction, storage, cancellationToken).ConfigureAwait(false);
+        }
         await PutAsync(transaction, PendingDatabaseCleanup, database.Id, storage, TerraBaseJsonContext.Default.TenantContext, cancellationToken).ConfigureAwait(false);
         if (releaseName)
         {
@@ -901,6 +907,12 @@ internal sealed partial class EngineManagementService(
                 recording = true;
                 decision = await WriteAsync<RecordedDeletion>(async transaction =>
                 {
+                    if (await DatabasePurge.IsDeletedAsync(transaction, storage.DatabaseId!, token).ConfigureAwait(false)
+                        || source is not null && await DatabasePurge.IsDeletedAsync(transaction, source.DatabaseId!, token).ConfigureAwait(false))
+                    {
+                        return false;
+                    }
+
                     await PutAsync(transaction, PendingDatabaseCleanup, storage.DatabaseId!, storage, TerraBaseJsonContext.Default.TenantContext, token).ConfigureAwait(false);
                     return true;
                 }, static error => error, token).ConfigureAwait(false);
@@ -944,6 +956,11 @@ internal sealed partial class EngineManagementService(
         IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, ManagedDatabase database,
         CancellationToken cancellationToken)
     {
+        if (await DatabasePurge.IsDeletedAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false))
+        {
+            return ManagementErrors.IdTaken;
+        }
+
         var check = await CanAddDatabaseAsync(transaction, project, database.Name, cancellationToken).ConfigureAwait(false);
         if (check is TenantContext tenant)
         {
@@ -1004,6 +1021,12 @@ internal sealed partial class EngineManagementService(
                 Forbidden error => error,
                 TenantContext => throw new UnreachableException(),
             };
+        }
+
+        // A closing project registers nothing here once this transaction sees its fence (docs/terrabase/project-closure.md).
+        if (await IsProjectClosedAsync(transaction, tenant.ProjectId!, cancellationToken).ConfigureAwait(false))
+        {
+            return ManagementErrors.NotFound;
         }
 
         var named = await GetAsync(transaction, DatabaseNames(tenant.ProjectId!), name, Id, cancellationToken).ConfigureAwait(false);
@@ -1129,16 +1152,22 @@ internal sealed partial class EngineManagementService(
         IStorageTransaction transaction, string collection, string? after, int limit, JsonTypeInfo<T> type, Func<T, string> id, CancellationToken cancellationToken)
     {
         var page = await transaction.ListAsync(collection, after, limit, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-        var items = page.Documents.Select(document => EntityPayload.Read(document, type)!).ToList();
-        return new ManagementPage<T>(items, page.HasMore ? id(items[^1]) : null);
+        var items = new List<T>(page.Documents.Count);
+        foreach (var document in page.Documents)
+        {
+            if (typeof(T) != typeof(ManagedDatabase) || !await DatabasePurge.IsDeletedAsync(transaction, document.Id, cancellationToken).ConfigureAwait(false))
+            {
+                items.Add(EntityPayload.Read(document, type)!);
+            }
+        }
+        return new ManagementPage<T>(items, page.HasMore ? id(EntityPayload.Read(page.Documents[^1], type)!) : null);
     }
 
     private static async ValueTask<T?> GetAsync<T>(
         IStorageTransaction transaction, string collection, string id, JsonTypeInfo<T> type, CancellationToken cancellationToken)
         where T : class
     {
-        var document = await transaction.GetAsync(collection, id, cancellationToken).ConfigureAwait(false);
-        return document is null ? null : EntityPayload.Read(document, type);
+        return await SystemCatalog.GetAsync(transaction, collection, id, type, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask PutAsync<T>(

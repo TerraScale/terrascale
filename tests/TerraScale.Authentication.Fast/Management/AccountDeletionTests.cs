@@ -68,6 +68,8 @@ public sealed class AccountDeletionTests(TerraBaseFixture fixture)
         await Assert.That(await oidc.AddMemberAsync(shared, bob.Id, "member")).IsTrue();
 
         await Assert.That(await oidc.FailAsync(HttpMethod.Delete, Account, aliceToken)).IsEqualTo((409, "last_owner"));
+        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
+        await Assert.That(await store.GetAsync(AuthStore.DeletionJobCollection, "terrascale", DeletionJob.Key("terrascale", "account", alice.Id))).IsNull();
 
         // Nothing was deleted, not even the organization it owns alone.
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, Organizations, aliceToken)).GetProperty("items").GetArrayLength()).IsEqualTo(2);

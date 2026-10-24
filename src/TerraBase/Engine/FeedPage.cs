@@ -16,6 +16,15 @@ public sealed record FeedEvent(ReplicaId Origin, Hlc Stamp, string Collection, s
 {
     /// <summary>The origin prefix through this event.</summary>
     public FeedPrefix? Prefix { get; init; }
+
+    /// <summary>Internal collection identity at persistence; null when its generation was unknown.</summary>
+    public string? CollectionGeneration { get; init; }
+
+    /// <summary>Internal bounded proof of the event's prior owner; never serialized in the public feed.</summary>
+    public DocumentOwnerProof? AccessBefore { get; init; }
+
+    /// <summary>Internal bounded proof of the event's resulting owner; never serialized in the public feed.</summary>
+    public DocumentOwnerProof? AccessAfter { get; init; }
 }
 
 /// <summary>A page of the changes feed after a cursor.</summary>

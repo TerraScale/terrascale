@@ -58,12 +58,16 @@ public sealed class QueryPlanTests
         ["ClientDocumentBytes"] = "SCALAR SUBQUERY 1 | SEARCH _tb_unique_conflicts USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) | SCALAR SUBQUERY 2 | SEARCH items USING INDEX sqlite_autoindex_items_1 (id=?) | SCAN CONSTANT ROW",
         ["ClientListFirst"] = "SCAN items AS d USING INDEX sqlite_autoindex_items_1 | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
         ["ClientListAfter"] = "SEARCH d USING INDEX sqlite_autoindex_items_1 (id>?) | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
-        ["ClientCollectionStats"] = "SCAN items",
+        ["ClientCollectionStats"] = "SCAN collections AS c USING COVERING INDEX sqlite_autoindex_collections_1 | SEARCH s USING INDEX sqlite_autoindex__tb_collection_stats_1 (collection=?) LEFT-JOIN",
+        ["ClientStoredBytes"] = "SCAN _tb_collection_stats",
+        ["AddCollectionStats"] = "",
+        ["DropCollectionStats"] = "SEARCH _tb_collection_stats USING COVERING INDEX sqlite_autoindex__tb_collection_stats_1 (collection=?)",
         ["ClientConflictBytes"] = "SCAN _tb_unique_conflicts",
         ["ClientCollectionNames"] = "SCAN collections USING COVERING INDEX sqlite_autoindex_collections_1",
         ["UpdateRow"] = "SEARCH items USING COVERING INDEX sqlite_autoindex_items_1 (id=?)",
         ["InsertRow"] = "",
         ["DeleteRow"] = "SEARCH items USING COVERING INDEX sqlite_autoindex_items_1 (id=?)",
+        ["RowBytes"] = "SEARCH items USING INDEX sqlite_autoindex_items_1 (id=?)",
     };
 
     [Test]

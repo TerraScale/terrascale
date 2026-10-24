@@ -13,6 +13,7 @@ using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Stats;
+using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -142,7 +143,8 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
     public ValueTask<DocumentRead> GetAsync(DocumentKey key, CancellationToken cancellationToken)
     {
         var hit = new StrongBox<bool>();
-        return ReadCertifiedAsync<DocumentRead>(key.Database, incarnation => ReadCachedDocumentAsync(key, incarnation, hit, cancellationToken),
+        return ReadCertifiedAsync<DocumentRead>(key.Database, incarnation => CollectionRuleAccess.EndUser
+            ? ReadAsync(key, cancellationToken) : ReadCachedDocumentAsync(key, incarnation, hit, cancellationToken),
             static () => DocumentRoute.UnknownDatabase, cancellationToken, hit);
     }
 
@@ -216,8 +218,22 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
+            var access = ProjectAccess.Current;
+            var rules = access is { IsEndUser: true } ? await transaction.GetCollectionRulesAsync(key.Collection, cancellationToken).ConfigureAwait(false) : null;
+            if (access is { IsEndUser: true } && !CollectionRuleAccess.Granted(rules, access, write: false))
+            {
+                return new Forbidden("the collection rules deny this operation", "access_denied");
+            }
+
+            var stored = await transaction.GetAsync(key.Collection, key.Id, cancellationToken).ConfigureAwait(false);
+            if (access is { IsEndUser: true } && (stored is null || !CollectionRuleAccess.CanRead(rules, stored.Json, access)))
+            {
+                // No tombstone ETag, hidden conflict, size or existence oracle is exposed to an unauthorized reader.
+                return DocumentMissing;
+            }
+
             // A deleted document comes back as its tombstone, without a body, so its 404 can carry its version.
-            if (await transaction.GetAsync(key.Collection, key.Id, cancellationToken).ConfigureAwait(false) is { } document)
+            if (stored is { } document)
             {
                 return document;
             }
@@ -230,7 +246,9 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
     public ValueTask<QueryResult> QueryAsync(
         TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken) =>
-        ReadCertifiedAsync<QueryResult>(database, incarnation => ReadCachedQueryAsync(database, incarnation, query, countLimit, cancellationToken),
+        ReadCertifiedAsync<QueryResult>(database, incarnation => CollectionRuleAccess.EndUser
+            ? ReadQueryAsync(database, query, countLimit, new QueryObservation(), cancellationToken)
+            : ReadCachedQueryAsync(database, incarnation, query, countLimit, cancellationToken),
             static () => DocumentRoute.UnknownDatabase, cancellationToken);
 
     private async ValueTask<QueryResult> ReadCachedQueryAsync(
@@ -313,6 +331,20 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken, QueryObservation? observation = null)
     {
         ArgumentNullException.ThrowIfNull(query);
+        if (ProjectAccess.Current is { IsEndUser: true } access)
+        {
+            var rules = await transaction.GetCollectionRulesAsync(query.Collection, cancellationToken).ConfigureAwait(false);
+            if (!CollectionRuleAccess.Granted(rules, access, write: false))
+            {
+                return new Forbidden("the collection rules deny this operation", "access_denied");
+            }
+
+            if (CollectionRuleAccess.Filter(rules!, access) is { } authorization)
+            {
+                query = query with { Filter = new AuthorizedFilter(authorization, query.Filter) };
+            }
+        }
+
         try
         {
             var page = await transaction.QueryAsync(query, cancellationToken, observation).ConfigureAwait(false);
@@ -410,11 +442,20 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
     }
 
     // One operation, with the engine's limits read where they are hit.
-    public async ValueTask<ApplyOutcome> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken)
+    public ValueTask<ApplyOutcome> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken) =>
+        ApplyWithAccessAsync(transaction, operation, ProjectAccess.Current, cancellationToken);
+
+    private async ValueTask<ApplyOutcome> ApplyWithAccessAsync(
+        IStorageTransaction transaction, DocumentOperation operation, ProjectAccess? access, CancellationToken cancellationToken)
     {
         try
         {
-            return await ApplyOperationAsync(transaction, operation, cancellationToken).ConfigureAwait(false);
+            if (await AuthorizeOperationAsync(transaction, operation, access, cancellationToken).ConfigureAwait(false) is { } denied)
+            {
+                return denied;
+            }
+
+            return await ApplyOperationAsync(transaction, operation, access, cancellationToken).ConfigureAwait(false);
         }
         catch (DocumentValidationException error)
         {
@@ -449,7 +490,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         (await CommitAsync(database, operations, indexErrors, cancellationToken).ConfigureAwait(false)).Outcome;
 
     public async ValueTask<WriteOutcome> WriteConfirmedAsync(
-        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
+        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool waitForRemote, CancellationToken cancellationToken)
     {
         if (!operations.Any(operation => operation is PutOperation or PatchOperation or DeleteOperation))
         {
@@ -461,16 +502,23 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             };
         }
 
-        // Admitted before it executes: a refusal here means this attempt executed nothing. A cell of one admits every write.
+        // Admitted before it executes: a refusal here means this attempt executed nothing. A cell of one admits every write. A
+        // database left in its home region alone takes no writes on either path; only a write that waits for another region is
+        // refused while none can confirm it, and only it keeps a waiter slot (0013e).
         var admission = await durability.AdmitAsync(database, cancellationToken).ConfigureAwait(false);
-        if (admission is not RemoteLease lease)
+        RemoteLease? lease = null;
+        switch (admission)
         {
-            return admission switch
-            {
-                Unavailable error => new DocumentRejected(error),
-                Conflict error => new DocumentRejected(error),
-                RemoteLease => throw new UnreachableException(),
-            };
+            case Conflict error:
+                return new DocumentRejected(error);
+            case Unavailable error when waitForRemote:
+                return new DocumentRejected(error);
+            case RemoteLease admitted when waitForRemote:
+                lease = admitted;
+                break;
+            case RemoteLease admitted:
+                admitted.Dispose();
+                break;
         }
 
         using (lease)
@@ -478,7 +526,8 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             try
             {
                 var (outcome, marker) = await CommitAsync(database, operations, indexErrors, cancellationToken).ConfigureAwait(false);
-                if (outcome is not WriteResult written || !durability.Confirms)
+                // Without the wait, the answer follows this region's FULL commit; replication continues in the background (0013e).
+                if (outcome is not WriteResult written || !waitForRemote || !durability.Confirms)
                 {
                     return outcome;
                 }
@@ -539,10 +588,12 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         using var lease = admission;
         var delta = 0L;
         var units = 0L;
+        // Group commit runs on a shared worker; carry this request's identity explicitly across that boundary.
+        var access = ProjectAccess.Current;
         var (outcome, commit) = await store.WriteAsync(
             async (transaction, token) =>
             {
-                var (result, change, growthOp, written) = await ApplyAllAsync(store, transaction, operations, indexErrors, admission.RequiresAccounting, token).ConfigureAwait(false);
+                var (result, change, growthOp, written) = await ApplyAllAsync(store, transaction, operations, indexErrors, admission.RequiresAccounting, access, token).ConfigureAwait(false);
                 (delta, units) = (change, written);
                 if (result is not WriteResult)
                 {
@@ -609,7 +660,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
     // Units: each put or patch bills its stored document's started 4 KiB, each delete one unit.
     private async ValueTask<(WriteOutcome Outcome, long Delta, int? GrowthOp, long Units)> ApplyAllAsync(
         IDatabaseStore store, IStorageTransaction transaction, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool accountStorage,
-        CancellationToken cancellationToken)
+        ProjectAccess? access, CancellationToken cancellationToken)
     {
         var collections = new HashSet<string>(StringComparer.Ordinal);
         var results = new OperationResult[operations.Count];
@@ -636,7 +687,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                 };
                 var before = accountStorage && id is not null
                     ? await transaction.GetDocumentBytesAsync(operation.Collection, id, cancellationToken).ConfigureAwait(false) : 0;
-                switch (await ApplyCheckedAsync(store, transaction, operation, collections, cancellationToken).ConfigureAwait(false))
+                switch (await ApplyCheckedAsync(store, transaction, operation, collections, access, cancellationToken).ConfigureAwait(false))
                 {
                     case OperationResult result:
                         results[i] = result;
@@ -668,18 +719,18 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
     // One operation of a client transaction: its collection must exist.
     private async ValueTask<ApplyOutcome> ApplyCheckedAsync(
-        IDatabaseStore store, IStorageTransaction transaction, DocumentOperation operation, HashSet<string> collections, CancellationToken cancellationToken)
+        IDatabaseStore store, IStorageTransaction transaction, DocumentOperation operation, HashSet<string> collections, ProjectAccess? access, CancellationToken cancellationToken)
     {
         if (collections.Add(operation.Collection) && !await store.HasCollectionAsync(operation.Collection, cancellationToken).ConfigureAwait(false))
         {
             return new DocumentRejected(UnknownCollection);
         }
 
-        return await ApplyAsync(transaction, operation, cancellationToken).ConfigureAwait(false);
+        return await ApplyWithAccessAsync(transaction, operation, access, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<ApplyOutcome> ApplyOperationAsync(
-        IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken)
+        IStorageTransaction transaction, DocumentOperation operation, ProjectAccess? access, CancellationToken cancellationToken)
     {
         switch (operation)
         {
@@ -739,13 +790,36 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                         json = JsonSerializer.SerializeToUtf8Bytes(document, TerraBaseJsonContext.Default.JsonObject);
                     }
 
+                    if (access is { IsEndUser: true }
+                        && await transaction.GetCollectionRulesAsync(patch.Collection, cancellationToken).ConfigureAwait(false) is { Owner: not null } rules
+                        && rules.Subject(json) != rules.Subject(current.Json))
+                    {
+                        return AccessDenied;
+                    }
+
                     var version = await transaction.PatchAsync(patch.Collection, patch.Id, json, operations, cancellationToken).ConfigureAwait(false);
                     // The stored document is the merged state's materialization, which counters and sets can make differ
                     // from the request's view of it.
                     var stored = await transaction.GetAsync(patch.Collection, patch.Id, cancellationToken).ConfigureAwait(false)
                         ?? throw new InvalidOperationException("a patched document has no body in the same transaction");
+                    ReadOnlyMemory<byte>? response = stored.Json;
+                    if (access is { IsEndUser: true })
+                    {
+                        var storedRules = await transaction.GetCollectionRulesAsync(patch.Collection, cancellationToken).ConfigureAwait(false);
+                        if (storedRules is { Owner: not null } && storedRules.Subject(stored.Json) != storedRules.Subject(current.Json))
+                        {
+                            return AccessDenied;
+                        }
+
+                        // A write grant does not grant a read of fields the caller did not supply.
+                        if (!CollectionRuleAccess.CanRead(storedRules, stored.Json, access))
+                        {
+                            response = null;
+                        }
+                    }
+
                     return new OperationResult(patch.Id, version, false, null,
-                        ETags.Version(transaction.Scope, patch.Collection, patch.Id, version, stored.Json), stored.Json);
+                        ETags.Version(transaction.Scope, patch.Collection, patch.Id, version, stored.Json), response);
                 }
 
             case DeleteOperation delete:
@@ -766,7 +840,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                         ETags.Version(transaction.Scope, delete.Collection, delete.Id, version!.Value, ReadOnlyMemory<byte>.Empty, deleted: true));
                 }
 
-            case AssertOperation { Filter: null } absent:
+            case AssertOperation { Filter: null } absent when access is not { IsEndUser: true }:
                 {
                     return await transaction.GetVersionAsync(absent.Collection, absent.Id, cancellationToken).ConfigureAwait(false) is not { Deleted: false }
                         ? new OperationResult(absent.Id, null, false, null)
@@ -775,12 +849,29 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
             case AssertOperation assert:
                 {
-                    var filter = new AndFilter([assert.Filter, new CompareFilter(DocumentPath.Id, Comparison.Equal, new ScalarValue(ScalarKind.Text, assert.Id))]);
+                    DocumentFilter filter = new CompareFilter(DocumentPath.Id, Comparison.Equal, new ScalarValue(ScalarKind.Text, assert.Id));
+                    if (assert.Filter is not null)
+                    {
+                        filter = new AndFilter([assert.Filter, filter]);
+                    }
+
+                    if (access is { IsEndUser: true }
+                        && await transaction.GetCollectionRulesAsync(assert.Collection, cancellationToken).ConfigureAwait(false) is { } rules
+                        && CollectionRuleAccess.Filter(rules, access) is { } authorization)
+                    {
+                        filter = new AuthorizedFilter(authorization, filter);
+                    }
+
                     try
                     {
                         var page = await transaction.QueryAsync(new DocumentQuery(assert.Collection, filter, [], null, 1, long.MaxValue), cancellationToken)
                             .ConfigureAwait(false);
-                        return page.Rows.Count == 1 ? new OperationResult(assert.Id, null, false, null) : new DocumentRejected(Failed("the document does not match"));
+                        if (page.Rows.Count == (assert.Filter is null ? 0 : 1))
+                        {
+                            return new OperationResult(assert.Id, null, false, null);
+                        }
+
+                        return new DocumentRejected(Failed(assert.Filter is null ? "the document exists" : "the document does not match"));
                     }
                     catch (QueryCapacityException error)
                     {
@@ -798,7 +889,17 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     bool complete;
                     try
                     {
-                        (count, complete) = await transaction.CountAsync(assertCount.Collection, assertCount.Filter, MaxAssertCount, cancellationToken)
+                        var filter = assertCount.Filter;
+                        if (access is { IsEndUser: true }
+                            && await transaction.GetCollectionRulesAsync(assertCount.Collection, cancellationToken).ConfigureAwait(false) is { } rules)
+                        {
+                            if (CollectionRuleAccess.Filter(rules, access) is { } authorization)
+                            {
+                                filter = new AuthorizedFilter(authorization, filter);
+                            }
+                        }
+
+                        (count, complete) = await transaction.CountAsync(assertCount.Collection, filter, MaxAssertCount, cancellationToken)
                             .ConfigureAwait(false);
                     }
                     catch (QueryCapacityException)

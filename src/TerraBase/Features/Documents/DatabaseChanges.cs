@@ -35,7 +35,7 @@ public interface IDatabaseChanges
 /// commit or the 15 s heartbeat. No per-connection queue: a slow client holds back only its own reads, and one that takes
 /// no bytes for 10 s is dropped.
 /// </summary>
-internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memory, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters, TerraBaseOptions options, IMembership membership)
+internal sealed partial class DatabaseChanges(IStorageEngine engine, IMemoryBudget memory, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters, TerraBaseOptions options, IMembership membership)
     : IDatabaseChanges
 {
     /// <summary>Open streams per database on one machine.</summary>
@@ -64,6 +64,11 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
     public async ValueTask<IResult> StreamAsync(
         HttpContext context, TenantContext database, FeedCursor? cursor, bool head, IReadOnlySet<string>? collections, CancellationToken cancellationToken)
     {
+        if (ProjectAccess.Current is { IsEndUser: true } access)
+        {
+            return await StreamEndUserAsync(context, database, cursor, head, collections, access, cancellationToken).ConfigureAwait(false);
+        }
+
         var id = database.DatabaseId ?? throw new ArgumentException("a client database has an id", nameof(database));
         var key = new DatabaseKey(database.OrganizationId, database.ProjectId, id);
         if (!TryOpen(key))

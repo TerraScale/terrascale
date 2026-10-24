@@ -136,14 +136,15 @@ public sealed partial class InvitationTests(TerraBaseFixture fixture)
         await oidc.OkAsync(HttpMethod.Post, "/v1/terrascale/invitations/decline", carolToken, new { token = declined }, HttpStatusCode.NoContent);
         await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{Organizations}/{id}/projects/{staging}", carolToken)).IsEqualTo((404, "not_found"));
 
-        // Deleting a project deletes its pending invitations, and a collaborator leaves with its last project.
+        // Deleting a project deletes all its invitations, whatever their status, and a collaborator leaves with its last project.
         var (_, daveToken) = await oidc.SignInUserAsync("dave@example.test");
         var pending = (await oidc.OkAsync(HttpMethod.Post, invitations, aliceToken, new { email = "dave@example.test", role = "viewer", project_id = staging }, HttpStatusCode.Created)).GetProperty("token").GetString()!;
         await oidc.OkAsync(HttpMethod.Delete, $"{Organizations}/{id}/projects/{staging}", aliceToken, status: HttpStatusCode.NoContent);
         await oidc.OkAsync(HttpMethod.Delete, $"{Organizations}/{id}/projects/{production}", aliceToken, status: HttpStatusCode.NoContent);
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, "/v1/terrascale/invitations/lookup", daveToken, new { token = pending })).IsEqualTo((404, "not_found"));
         var statuses = (await oidc.OkAsync(HttpMethod.Get, invitations, aliceToken)).GetProperty("items").EnumerateArray().Select(item => item.GetProperty("status").GetString()).ToArray();
-        await Assert.That(string.Join(',', statuses)).IsEqualTo("accepted,declined");
+        // Both projects are gone, so no invitation (accepted, declined or pending) keeps an invitee's email.
+        await Assert.That(statuses).IsEmpty();
         await Assert.That(await oidc.FailAsync(HttpMethod.Get, $"{Organizations}/{id}", carolToken)).IsEqualTo((404, "not_found"));
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, $"{Organizations}/{id}", bobToken)).GetProperty("role").GetString()).IsEqualTo("viewer");
 

@@ -76,12 +76,27 @@ message Database {
 }
 
 // Consecutive change groups of one database, the last one's change id, and the groups: a GroupList inside a TBLZ4E01 LZ4
-// application envelope (decision 0007). At most 1024 groups and 2 MiB of encoded groups; one batch per database in flight.
+// application envelope (decision 0007). At most 1024 groups and 2 MiB of encoded groups. Protocol 1: one batch per
+// database in flight. Protocol 2: up to ReplicationProtocol.Window, each naming in after the change id it follows (the
+// previous batch's last_change_id, or the sender's resume position); the receiver applies them in that chain only.
+// With a chunk, groups is empty: the receiver reads the same envelope from the shared object store (LogChunks). Only a
+// receiver whose Welcome set chunks gets one.
 message Batch {
   Database database = 1;
   uint64 last_change_id = 2;
   bytes groups = 3;
   optional fixed64 expect = 4;
+  LogChunk chunk = 5;
+  uint64 after = 6;
+}
+
+// A batch's envelope sealed in the object store: its key, the AES-256-GCM key it was sealed with (only ever sent on the
+// peer stream), the sealed object's length and the envelope's decoded length, which bounds the receiver's admission.
+message LogChunk {
+  string key = 1;
+  bytes seal = 2;
+  uint32 length = 3;
+  uint32 decoded = 4;
 }
 
 // Sent every second while nothing else is.
@@ -133,13 +148,18 @@ message StableReport {
 
 // The first answer: the receiving machine's replica id, under which the sender keeps its cursor, and the newest protocol it
 // speaks (0 from a build before the field, which speaks 1). The stream uses the lower of the two versions.
+// Chunks: the receiver reads batches' log chunks from the object store (absent from older builds: none is sent to them).
 message Welcome {
   fixed64 node = 1;
   uint32 protocol = 2;
+  bool chunks = 3;
 }
 
 // A batch committed durably (change_id = its last_change_id), with the highest stamp of the origin joined. Refused: the
-// receiver does not hold the database (yet); nothing was applied, and the sender retries later.
+// receiver does not hold the database (yet); nothing was applied, and the sender retries later. Chunk unread: the refusal
+// is a log chunk the receiver could not read from the object store, so the sender sends that peer's batches inline for a while.
+// A protocol 2 receiver answers a database's batches in the order they arrived, refusals included; after a refusal its
+// later batches of the database are refused until one follows the last applied batch again.
 message Ack {
   Database database = 1;
   uint64 change_id = 2;
@@ -150,6 +170,7 @@ message Ack {
   // A refused batch crossed missing coverage after a failed refill. Request a pinned refill even when the sender's
   // renewed copy has no scoped peer row. Ordinary catalog-lag and in-progress-refill refusals do not request one.
   bool refill_required = 6;
+  bool chunk_unread = 7;
 }
 
 message DigestRequest {

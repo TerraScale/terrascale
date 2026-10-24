@@ -211,8 +211,17 @@ paths:
       operationId: delete_account
       tags: [Members]
       summary: Delete your account
-      description: Deletes the caller's account, sessions, tokens and MFA, and frees its email. Organizations where the caller is the only member are deleted with their projects; the others are left. 409 last_owner, deleting nothing, while the caller is the last owner of an organization with other members.
+      description: |
+        Deletes the caller's account, sessions, tokens and MFA, and frees its email. Organizations where the caller is the
+        only member are deleted with their projects, each project only after TerraBase accepted its closure
+        (docs/terrabase/project-closure.md); the others are left. 202 while a project closure is pending: the account
+        stays until the closure finishes in the background, and repeating the request resumes it. A 409 (last_owner,
+        not_empty, closure_conflict, binding_conflict) before anything was removed ends the request: the account, its
+        memberships and organizations stay, but project closures it already started are not rolled back (TerraBase
+        fences are permanent) and finish on their own. Once removals began, a 409 only pauses the deletion until its
+        cause is resolved.
       responses:
+        '202': { description: 'A project closure is pending; the account is deleted in the background.' }
         '204': { description: 'Deleted.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -517,13 +526,20 @@ paths:
       tags: [Projects]
       summary: Delete a project
       description: |
-        Needs the project's admin role. Deletes its tenant, project roles, pending invitations and API keys; no
-        token is issued for it afterwards. TerraBase databases are not deleted: the platform deletes them first.
+        Needs the project's admin role. Commits a closure intent, then asks TerraBase to fence the project
+        permanently (docs/terrabase/project-closure.md). 204 once TerraBase accepted in every region: the project, its
+        tenant, project roles, invitations and API keys go, and no token is issued for it afterwards. 202 while
+        TerraBase has not accepted: the project refuses new roles, API keys and invitations, and the closure finishes in
+        the background; repeating the request resumes it. 409 not_empty, closure_conflict or binding_conflict, changing
+        nothing, when TerraBase refuses (for example while it holds the project's databases); once TerraBase showed the
+        fence, a later refusal keeps the closure pending instead. TerraBase databases are not deleted here.
       responses:
+        '202': { description: 'The closure is pending; the project is removed in the background.' }
         '204': { description: 'Deleted.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/Unavailable' }
   /v1/terrascale/organizations/{organization}/projects/{project}/members:
     parameters:
@@ -1065,7 +1081,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     Conflict:
-      description: name_taken, not_empty, last_owner, already_member, invitation_pending, invitation_expired, not_pending or rotation_pending.
+      description: name_taken, not_empty, last_owner, already_member, invitation_pending, invitation_expired, not_pending, rotation_pending, closure_conflict or binding_conflict.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }

@@ -19,6 +19,9 @@ public static class TerraBaseTransport
     /// <summary>The environment variable holding the peer credential: 64 hexadecimal characters (32 random bytes).</summary>
     public const string PeerSecretVariable = "TERRABASE_PEER_SECRET";
 
+    /// <summary>The request header that makes a TerraBase write wait for another region's durable acknowledgement.</summary>
+    public const string DurabilityHeader = "TB-Durability";
+
     /// <summary>The request header carrying the peer credential on TerraBase's internal listener.</summary>
     public const string PeerCredentialHeader = "X-TerraBase-Peer-Credential";
 
@@ -72,7 +75,7 @@ public static class TerraBaseTransport
             logger.ZLogWarning($"No TerraBase machine answered at {context.DnsEndPoint.Host:@Region} or at any of {otherRegions.Count:@Fallbacks} fallbacks; storage fails closed");
             throw new HttpRequestException(HttpRequestError.ConnectionError, $"No TerraBase machine answered at {context.DnsEndPoint.Host}");
         };
-        HttpMessageHandler pipeline = new FailClosed(handler);
+        HttpMessageHandler pipeline = new RemoteDurableHandler { InnerHandler = new FailClosed(handler) };
         return peerSecret is null ? pipeline : new PeerCredentialHandler(peerSecret) { InnerHandler = pipeline };
     }
 
@@ -80,6 +83,18 @@ public static class TerraBaseTransport
         peerSecret.Length == 64 && peerSecret.All(char.IsAsciiHexDigit)
             ? peerSecret
             : throw new AuthConfigurationException($"{PeerSecretVariable} must contain 64 hexadecimal characters");
+
+    // Credentials, sessions and revocations must survive the loss of one region: every write waits for another region's durable
+    // ack (TerraBase decision 0013e makes that a per-request choice). Read routes ignore the header.
+    private sealed class RemoteDurableHandler : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            request.Headers.Remove(DurabilityHeader);
+            request.Headers.Add(DurabilityHeader, "remote_durable");
+            return base.SendAsync(request, cancellationToken);
+        }
+    }
 
     // Sets the credential on every request, so a request never leaves without it. Redirects are off in TerraBaseHttp, so it never
     // reaches another host.

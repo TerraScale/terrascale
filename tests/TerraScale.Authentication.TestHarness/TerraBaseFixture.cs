@@ -46,6 +46,8 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         services.AddSingleton(provider => new TerraBaseDocumentsClient(provider.GetRequiredService<HttpClient>(), apiKey is null
             ? new TerraBaseDocumentsClientOptions { BaseAddress = this.Server.InternalAddress }
             : new TerraBaseDocumentsClientOptions { BaseAddress = this.Server.ClientAddress, ApiKey = apiKey }).Database(tenant.Project.Id, databaseName));
+        // Project closures reach this same regional TerraBase: its internal listener, with the peer credential.
+        services.AddKeyedSingleton(App.StorageAuthority, (_, _) => this.Server.Management());
     }
 
     /// <summary>Uses only this region's storage transport; an unavailable local backend fails closed.</summary>
@@ -56,6 +58,8 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
             peerSecret: TerraBaseTestServer.PeerSecret)));
         services.AddSingleton(provider => new TerraBaseDocumentsClient(provider.GetRequiredService<HttpClient>(),
             new TerraBaseDocumentsClientOptions { BaseAddress = ownRegion }).Database(tenant.Project.Id, localDatabase));
+        services.AddKeyedSingleton(App.StorageAuthority, (provider, _) => new TerraBaseManagementClient(provider.GetRequiredService<HttpClient>(),
+            new TerraBaseManagementClientOptions { BaseAddress = ownRegion }));
     }
 
     /// <summary>Creates and provisions another copy of the tenant's storage, <paramref name="name"/>: another region's.</summary>

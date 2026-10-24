@@ -1,6 +1,8 @@
 using System.Buffers;
 using System.Buffers.Text;
 using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
@@ -158,7 +160,7 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
             while (!more)
             {
                 // Turso drains a reader when closed; small metadata batches bound unused lookahead work.
-                var batch = ShapeSnapshotRows(shape.Collection, last,
+                var batch = ShapeSnapshotRows(shape.Collection, shape.OwnerFilter, last,
                     count == ShapeSnapshots.PageDocuments ? 1 : Math.Min(128, ShapeSnapshots.PageExamined - examined + 1), cancellationToken);
                 if (batch.Count == 0)
                 {
@@ -260,9 +262,9 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
     }
 
     private List<(string Id, long Bytes, long Version)> ShapeSnapshotRows(
-        string collection, string? afterId, int limit, CancellationToken cancellationToken)
+        string collection, DocumentFilter? ownerFilter, string? afterId, int limit, CancellationToken cancellationToken)
     {
-        var rows = TableCommand(afterId is null ? """
+        var sql = afterId is null ? """
             SELECT CAST(d.id AS BLOB), octet_length(d.doc),
                 (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = d.id), octet_length(d.id)
             FROM {0} d ORDER BY d.id LIMIT $limit;
@@ -270,11 +272,34 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
             SELECT CAST(d.id AS BLOB), octet_length(d.doc),
                 (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = d.id), octet_length(d.id)
             FROM {0} d WHERE d.id > $after ORDER BY d.id LIMIT $limit;
-            """, collection);
+            """;
+        string? ownerPath = null;
+        string? ownerSubject = null;
+        if (ownerFilter is not null)
+        {
+            if (ownerFilter is not CompareFilter { Op: Comparison.Equal, Path.Segments: { } segments, Value: { Kind: ScalarKind.Text, Value: string actor } })
+            {
+                throw new InvalidDataException("snapshot ownership requires a trusted subject equality");
+            }
+
+            // Apply ownership before examining rows: even a page's continuation id must be authorized.
+            ownerPath = "$" + string.Concat(segments.Select(segment => ".\""
+                + JsonEncodedText.Encode(segment, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).Value + "\""));
+            ownerSubject = actor;
+            var owner = "json_type(d.doc, $ownerPath) IS 'text' AND json_extract(d.doc, $ownerPath) = $ownerSubject";
+            sql = sql.Replace(" ORDER BY", afterId is null ? $" WHERE {owner} ORDER BY" : $" AND {owner} ORDER BY", StringComparison.Ordinal);
+        }
+
+        var rows = TableCommand(sql, collection);
         rows.Parameters.AddWithValue("$limit", limit);
         if (afterId is not null)
         {
             rows.Parameters.AddWithValue("$after", afterId);
+        }
+        if (ownerPath is not null)
+        {
+            rows.Parameters.AddWithValue("$ownerPath", ownerPath);
+            rows.Parameters.AddWithValue("$ownerSubject", ownerSubject!);
         }
 
         List<(string, long, long)> batch = [];

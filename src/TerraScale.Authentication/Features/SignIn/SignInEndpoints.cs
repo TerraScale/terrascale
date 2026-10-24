@@ -5,6 +5,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
@@ -39,7 +40,7 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         ValueTask.FromResult(SignInFlow.WrongSlug(this.HttpContext)
             ? Results.NotFound()
-            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Email, OidcIssuer.Slug, Next: SignInFlow.SafeNext(this.HttpContext.Request.Query["next"]),
+            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Email, SignInFlow.Tenant(this.HttpContext), Next: SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]),
                 Error: this.HttpContext.Request.Query["notice"] == "credential_changed" ? CredentialLineage.ConflictNotice : null)));
 }
 
@@ -83,15 +84,15 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
         if ((await hosted.LimitIpAsync(ip, mails: true, cancellationToken)
             ?? await hosted.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: true, cancellationToken)) is { } wait)
         {
-            return SignInFlow.Limited(this.HttpContext, SignInStep.Email, wait, address, SignInFlow.SafeNext(form.Next));
+            return SignInFlow.Limited(this.HttpContext, SignInStep.Email, wait, address, SignInFlow.SafeNext(this.HttpContext, form.Next));
         }
 
-        if (await passcodes.RequestAsync(OidcIssuer.InstanceId, address, cancellationToken) is { } issued)
+        if (await passcodes.RequestAsync(SignInFlow.Tenant(this.HttpContext), address, cancellationToken) is { } issued)
         {
             mail.Enqueue(issued, AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
         }
 
-        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Code, OidcIssuer.Slug, address, SignInFlow.SafeNext(form.Next)));
+        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Code, SignInFlow.Tenant(this.HttpContext), address, SignInFlow.SafeNext(this.HttpContext, form.Next)));
     }
 }
 
@@ -129,7 +130,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         }
 
         var address = form.Email?.Trim() ?? string.Empty;
-        var next = SignInFlow.SafeNext(form.Next);
+        var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         if (HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
         {
             throw ApiException.Unavailable();
@@ -143,7 +144,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
             return SignInFlow.Limited(this.HttpContext, SignInStep.Code, wait, address, next);
         }
 
-        if (await passcodes.VerifyAsync(OidcIssuer.InstanceId, address, form.Code ?? string.Empty, cancellationToken) is not { } session)
+        if (await passcodes.VerifyAsync(SignInFlow.Tenant(this.HttpContext), address, form.Code ?? string.Empty, cancellationToken) is not { } session)
         {
             AuthMetrics.SignIn("hosted_code", "refused");
             return SignInFlow.WrongCode(this.HttpContext, SignInStep.Code, address, next);
@@ -187,10 +188,10 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, HostedAuth hosted,
         }
 
         var address = form.Email?.Trim() ?? string.Empty;
-        var next = SignInFlow.SafeNext(form.Next);
+        var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         if (string.IsNullOrEmpty(form.Password))
         {
-            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Password, OidcIssuer.Slug, address, next));
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Password, SignInFlow.Tenant(this.HttpContext), address, next));
         }
 
         var ip = SignInFlow.Ip(this.HttpContext);
@@ -210,7 +211,7 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, HostedAuth hosted,
         if (user is null || await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
         {
             AuthMetrics.SignIn("hosted_password", "refused");
-            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Password, OidcIssuer.Slug, address, next,
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Password, SignInFlow.Tenant(this.HttpContext), address, next,
                 "Check both and try again, or email yourself a sign-in code.")
             { ErrorTitle = "Wrong email or password" }, StatusCodes.Status401Unauthorized);
         }
@@ -239,7 +240,7 @@ public sealed class SignUpPageEndpoint : EndpointWithoutRequest<IResult>
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         ValueTask.FromResult(SignInFlow.WrongSlug(this.HttpContext)
             ? Results.NotFound()
-            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, OidcIssuer.Slug, Next: SignInFlow.SafeNext(this.HttpContext.Request.Query["next"]))));
+            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), Next: SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]))));
 }
 
 /// <summary>
@@ -275,10 +276,10 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
         }
 
         var address = form.Email?.Trim() ?? string.Empty;
-        var next = SignInFlow.SafeNext(form.Next);
+        var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         if (Users.NormalizeEmail(address) is null || !PasswordHasher.Acceptable(form.Password))
         {
-            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, OidcIssuer.Slug, address, next,
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, SignInFlow.Tenant(this.HttpContext), address, next,
                 "Enter a valid email address and a password of at least 8 characters.")
             { ErrorTitle = "Check your details" }, StatusCodes.Status400BadRequest);
         }
@@ -286,7 +287,7 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options) 
         var (pending, wait) = await hosted.SignUpAsync(address, form.Password!, SignInFlow.Ip(this.HttpContext), cancellationToken);
         return wait is { } retry
             ? SignInFlow.Limited(this.HttpContext, SignInStep.SignUp, retry, address, next)
-            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUpCode, OidcIssuer.Slug, address, next) { PendingToken = pending });
+            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUpCode, SignInFlow.Tenant(this.HttpContext), address, next) { PendingToken = pending });
     }
 }
 
@@ -323,7 +324,7 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
         }
 
         var address = form.Email?.Trim() ?? string.Empty;
-        var next = SignInFlow.SafeNext(form.Next);
+        var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         var code = form.Code ?? string.Empty;
         if ((await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken)
             ?? await hosted.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: false, cancellationToken,
@@ -333,9 +334,9 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
             return SignInFlow.Limited(this.HttpContext, SignInStep.SignUpCode, wait, address, next, form.PendingToken);
         }
 
-        var user = await passcodes.RedeemAsync(OidcIssuer.InstanceId, address, code, PasscodePurpose.SignIn, cancellationToken);
+        var user = await passcodes.RedeemAsync(SignInFlow.Tenant(this.HttpContext), address, code, PasscodePurpose.SignIn, cancellationToken);
         if (user is null && form.PendingToken is { Length: > 0 } pending
-            && await passcodes.RedeemSignUpAsync(OidcIssuer.InstanceId, address, code, pending, cancellationToken) is { } created)
+            && await passcodes.RedeemSignUpAsync(SignInFlow.Tenant(this.HttpContext), address, code, pending, cancellationToken) is { } created)
         {
             logger.ZLogInformation($"Audit: hosted sign-up created user {created.Id:@UserId}");
             user = created;
@@ -371,7 +372,7 @@ public sealed class ResetPageEndpoint : EndpointWithoutRequest<IResult>
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         ValueTask.FromResult(SignInFlow.WrongSlug(this.HttpContext)
             ? Results.NotFound()
-            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Reset, OidcIssuer.Slug, Next: SignInFlow.SafeNext(this.HttpContext.Request.Query["next"]))));
+            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Reset, SignInFlow.Tenant(this.HttpContext), Next: SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]))));
 }
 
 /// <summary><c>POST /ui/{slug}/reset</c>: emails a reset code when the address has an account; the page is the same either way.</summary>
@@ -403,10 +404,10 @@ public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) :
         }
 
         var address = form.Email?.Trim() ?? string.Empty;
-        var next = SignInFlow.SafeNext(form.Next);
+        var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         return await hosted.StartPasswordResetAsync(address, SignInFlow.Ip(this.HttpContext), cancellationToken) is { } wait
             ? SignInFlow.Limited(this.HttpContext, SignInStep.Reset, wait, address, next)
-            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, OidcIssuer.Slug, address, next));
+            : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next));
     }
 }
 
@@ -441,17 +442,17 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
         }
 
         var address = form.Email?.Trim() ?? string.Empty;
-        var next = SignInFlow.SafeNext(form.Next);
+        var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         if (!PasswordHasher.Acceptable(form.Password))
         {
-            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, OidcIssuer.Slug, address, next,
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetCode, SignInFlow.Tenant(this.HttpContext), address, next,
                 "Choose a password of at least 8 characters.")
             { ErrorTitle = "Password too short" }, StatusCodes.Status400BadRequest);
         }
 
         var (reset, wait) = await hosted.CompletePasswordResetAsync(address, form.Code ?? string.Empty, form.Password!, SignInFlow.Ip(this.HttpContext), cancellationToken);
         return wait is { } retry ? SignInFlow.Limited(this.HttpContext, SignInStep.ResetCode, retry, address, next)
-            : reset ? SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetDone, OidcIssuer.Slug, address, next))
+            : reset ? SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.ResetDone, SignInFlow.Tenant(this.HttpContext), address, next))
             : SignInFlow.WrongCode(this.HttpContext, SignInStep.ResetCode, address, next);
     }
 }
@@ -465,12 +466,12 @@ internal static class SignInFlow
         context.Response.Headers.RetryAfter = retryAfter;
         context.Response.Headers.CacheControl = "no-store";
         return SignInPageModel.Render(context,
-            new SignInPageModel(step, OidcIssuer.Slug, email, next, $"Try again in {retryAfter} seconds.") { ErrorTitle = "Too many attempts", Limited = true, PendingToken = pendingToken },
+            new SignInPageModel(step, Tenant(context), email, next, $"Try again in {retryAfter} seconds.") { ErrorTitle = "Too many attempts", Limited = true, PendingToken = pendingToken },
             StatusCodes.Status429TooManyRequests);
     }
 
     public static IResult WrongCode(HttpContext context, SignInStep step, string email, string? next, string? pendingToken = null) =>
-        SignInPageModel.Render(context, new SignInPageModel(step, OidcIssuer.Slug, email, next, "This code is invalid, expired, already used, or superseded by a concurrent request. Check the latest email, or request a new code.")
+        SignInPageModel.Render(context, new SignInPageModel(step, Tenant(context), email, next, "This code is invalid, expired, already used, or superseded by a concurrent request. Check the latest email, or request a new code.")
         {
             ErrorTitle = "That code is wrong or expired",
             PendingToken = pendingToken,
@@ -497,19 +498,46 @@ internal static class SignInFlow
     public static async Task<IResult> SignedInAsync(HttpContext context, Sessions sessions, IssuedSession session, string? next, CancellationToken cancellationToken)
     {
         // The browser's previous session, if any, ends with this sign-in.
-        await sessions.RevokeAsync(OidcIssuer.InstanceId, context.Request.Cookies[SecuritySchemes.SessionCookieName], cancellationToken);
-        BrowserSecurity.SetSessionCookie(context.Response, session.Token);
-        return SignInPageModel.Render(context, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, OidcIssuer.Slug, Next: next));
+        var tenant = Tenant(context);
+        await sessions.RevokeAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
+        BrowserSecurity.SetSessionCookie(context.Response, session.Token, tenant);
+        return SignInPageModel.Render(context, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, tenant, Next: next));
     }
 
-    public static bool WrongSlug(HttpContext context) => !string.Equals(context.GetRouteValue("slug") as string, OidcIssuer.Slug, StringComparison.Ordinal);
+    /// <summary>Whether the page's slug is not a tenant: <c>terrascale</c> or an existing project (<see cref="Tenancy"/>).</summary>
+    public static bool WrongSlug(HttpContext context) => Tenancy.Resolved(context) is not { } tenant
+        || !string.Equals(context.GetRouteValue("slug") as string, tenant, StringComparison.Ordinal)
+        || !Allowed(context);
+
+    // A sign-in method the tenant turned off has no pages: passcode sign-in, password sign-in and reset, or sign-up.
+    private static bool Allowed(HttpContext context)
+    {
+        var theme = HostedTheme.Of(context);
+        var page = (context.Request.Path.Value ?? string.Empty).Split('/', 4) is [_, _, _, var rest] ? rest.TrimEnd('/') : string.Empty;
+        return page switch
+        {
+            "sign-in" => theme.Passcode || HttpMethods.IsGet(context.Request.Method),
+            "sign-in/verify" => theme.Passcode,
+            "sign-in/password" or "reset" or "reset/complete" => theme.Password,
+            "sign-up" or "sign-up/verify" => theme.SignUp,
+            _ => true,
+        };
+    }
+
+    /// <summary>The tenant of a hosted page whose slug <see cref="WrongSlug"/> accepted.</summary>
+    public static string Tenant(HttpContext context) => Tenancy.Resolved(context) ?? throw new InvalidOperationException("The page has no tenant.");
 
     /// <summary>The device page, which a sign-in may resume.</summary>
     public static string DevicePath => $"/ui/{OidcIssuer.Slug}/device";
 
-    /// <summary>Only this issuer's authorization endpoint or device page may be resumed, as a same-origin path.</summary>
-    public static string? SafeNext(string? next) =>
-        next is not null && (next.StartsWith($"/{OidcIssuer.Slug}/oauth/authorize?", StringComparison.Ordinal) || next == DevicePath || next.StartsWith(DevicePath + "?", StringComparison.Ordinal))
+    /// <summary>
+    /// Only the page's own issuer's authorization endpoint, or for the platform its device page, may be resumed, as a
+    /// same-origin path.
+    /// </summary>
+    public static string? SafeNext(HttpContext context, string? next) =>
+        next is not null && Tenancy.Resolved(context) is { } tenant
+            && (next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)
+                || !Tenancy.IsProject(tenant) && (next == DevicePath || next.StartsWith(DevicePath + "?", StringComparison.Ordinal)))
             && next.Length <= 4096
             && !next.Any(character => character is '\\' or '#' || char.IsControl(character) || char.IsWhiteSpace(character))
             ? next
@@ -546,5 +574,5 @@ internal static class SignInFlow
 
     public static IResult Refused(HttpContext context) => WrongSlug(context)
         ? Results.NotFound()
-        : SignInPageModel.Render(context, new SignInPageModel(SignInStep.Rejected, OidcIssuer.Slug), StatusCodes.Status403Forbidden);
+        : SignInPageModel.Render(context, new SignInPageModel(SignInStep.Rejected, Tenant(context)), StatusCodes.Status403Forbidden);
 }

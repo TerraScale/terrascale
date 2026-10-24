@@ -208,6 +208,11 @@ internal static class TigrisCiBucket
         settings["backup-access-key-id"] = Variable("AWS_ACCESS_KEY_ID");
         settings["backup-secret-key"] = Variable("AWS_SECRET_ACCESS_KEY");
         settings["master-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        if (R2)
+        {
+            // An R2 bucket's CDN copies are purged through this token (Zone Cache Purge on terrascale.tech).
+            settings["cloudflare-api-token"] = Variable("CLOUDFLARE_API_TOKEN");
+        }
     }
 
     public static AmazonS3Client Client() => new(Variable("AWS_ACCESS_KEY_ID"), Variable("AWS_SECRET_ACCESS_KEY"), new AmazonS3Config

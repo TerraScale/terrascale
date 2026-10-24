@@ -72,8 +72,8 @@ public sealed record OperationResult(string? Id, long? Version, bool Created, lo
 /// <param name="Results">One result per operation.</param>
 /// <param name="Scope">ETag scope of the database that committed this write.</param>
 /// <param name="Durability">
-/// What the answer guarantees (decision 0013a): <c>remote_durable</c> once another placed region confirmed it,
-/// <c>local_durable</c> on a cell of one or for a write without that confirmation, <c>unchanged</c> for assertions only.
+/// What the answer guarantees: <c>local_durable</c> once this region's commit is synced (decision 0013e), <c>remote_durable</c>
+/// once another placed region confirmed it (an opted-in write, decision 0013a), <c>unchanged</c> for assertions only.
 /// </param>
 public sealed record WriteResult(long Offset, IReadOnlyList<OperationResult> Results, Guid Scope, string Durability = WriteResult.LocalDurable)
 {
@@ -107,7 +107,7 @@ public sealed record NeverWritten;
 /// A document or its tombstone; that it was never written; an unknown database or collection; or an address that is
 /// outside the caller-supplied key bounds.
 /// </summary>
-public readonly union DocumentRead(StoredDocument, NeverWritten, NotFound, Validation);
+public readonly union DocumentRead(StoredDocument, NeverWritten, NotFound, Validation, Forbidden);
 
 /// <summary>A query page and its count, when one was asked for.</summary>
 /// <param name="Page">The page.</param>
@@ -115,7 +115,7 @@ public readonly union DocumentRead(StoredDocument, NeverWritten, NotFound, Valid
 public sealed record QueryOutcome(QueryPage Page, (long Count, bool Complete)? Count);
 
 /// <summary>A query's page, or why there is none: an unknown database or collection, or a query over the engine budget.</summary>
-public readonly union QueryResult(QueryOutcome, NotFound, Validation);
+public readonly union QueryResult(QueryOutcome, NotFound, Validation, Forbidden);
 
 /// <summary>An atomic write's result, or the operation that refused it.</summary>
 public readonly union WriteOutcome(WriteResult, DocumentRejected);
@@ -131,6 +131,12 @@ public sealed record ExportRow(string Collection, StoredDocument Document);
 /// <summary>JSON document operations for the client API, over <see cref="IStorageEngine"/>, with Documents API v1 failures.</summary>
 public interface IDocumentService
 {
+    /// <summary>Reads the replicated end-user access rules.</summary>
+    ValueTask<CollectionRulesResult> GetCollectionRulesAsync(TenantContext database, string name, CancellationToken cancellationToken);
+
+    /// <summary>Replaces end-user access rules; only project credentials may call this route.</summary>
+    ValueTask<CollectionRulesResult> SetCollectionRulesAsync(TenantContext database, string name, CollectionAccessRules rules, CancellationToken cancellationToken);
+
     /// <summary>Reads the declared collection schema; null schema means optional validation is disabled.</summary>
     ValueTask<CollectionSchemaResult> GetCollectionSchemaAsync(TenantContext database, string name, CancellationToken cancellationToken);
 
@@ -178,12 +184,13 @@ public interface IDocumentService
         TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken);
 
     /// <summary>
-    /// <see cref="WriteAsync"/> for a client write attempt (decision 0013a): on a cell, a write with a put, patch or delete
-    /// is admitted before it executes and answered only once another placed region confirmed its commit, or as outcome
-    /// unknown. Assertions only answer <c>unchanged</c> without a wait.
+    /// <see cref="WriteAsync"/> for a client write attempt: answered after this region's durable commit (decision 0013e). With
+    /// <paramref name="waitForRemote"/> (decision 0013a), on a cell, a write with a put, patch or delete is admitted before it
+    /// executes and answered only once another placed region confirmed its commit, or as outcome unknown. Assertions only
+    /// answer <c>unchanged</c> without a wait.
     /// </summary>
     ValueTask<WriteOutcome> WriteConfirmedAsync(
-        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken);
+        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool waitForRemote, CancellationToken cancellationToken);
 
     /// <summary>
     /// Applies one operation in a write transaction the caller owns and commits, with the refusals of

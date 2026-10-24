@@ -98,11 +98,32 @@ internal sealed class TursoQueryCompiler(
     }
 
     /// <summary>
-    /// Columns: rows examined and live matches among them. The LIMIT sits in the scan, ahead of the filter and of the
-    /// tombstone test. A separate bounded index scan detects an overflow row without loading its body or
-    /// evaluating its filter: only the first <paramref name="maxExamined"/> rows contribute matches.
+    /// Columns: rows examined and live matches among them. Trusted authorization precedes admission; the LIMIT
+    /// precedes the submitted filter. Unrestricted counts also examine tombstones. A separate bounded walk detects
+    /// overflow without evaluating the submitted filter: only the first <paramref name="maxExamined"/> rows contribute matches.
     /// </summary>
-    public string CompileCount(DocumentFilter? filter, long maxExamined, bool observe = false) => CandidateParameter is not null
+    public string CompileCount(DocumentFilter? filter, long maxExamined, bool observe = false)
+    {
+        if (filter is AuthorizedFilter authorized)
+        {
+            // Only trusted authorization precedes admission. Client predicates still run after the candidate LIMIT;
+            // tombstones have no readable document and cannot consume an owner's candidate allowance.
+            var scope = BudgetedAuthorization(authorized.Predicate);
+            var visit = observe ? "AND tb_query_scan(id)" : "";
+            return $"""
+                SELECT count(*) + EXISTS (
+                    SELECT 1 FROM {rows.From} WHERE {rows.Live} AND {scope} {visit}
+                    ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
+                ), coalesce(sum(matched), 0) FROM (
+                    SELECT {BudgetedFilter(authorized.ClientFilter)} AS matched FROM (
+                        SELECT id, {rows.Json} FROM {rows.From} WHERE {rows.Live} AND {scope} {visit}
+                        ORDER BY id LIMIT {Parameter(maxExamined)}
+                    )
+                );
+                """;
+        }
+
+        return CandidateParameter is not null
         ? $"""
         SELECT count(*) + EXISTS (
             SELECT 1 FROM {From} ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
@@ -131,6 +152,15 @@ internal sealed class TursoQueryCompiler(
             LEFT JOIN {rows.From} ON {rows.From}.id = examined {(observe ? "WHERE tb_query_scan(examined)" : "")}
         );
         """;
+    }
+
+    /// <summary>Sort admission considers the trusted readable set, before any submitted filter or cursor.</summary>
+    public string CompileSortAdmission(DocumentFilter? filter, bool observe = false) => $"""
+        SELECT octet_length({rows.Json}) FROM {From}
+        WHERE {(observe ? "tb_query_scan(id) AND " : "")}{rows.Live}
+            {(filter is AuthorizedFilter authorized ? "AND " + BudgetedAuthorization(authorized.Predicate) : "")}
+        ORDER BY id LIMIT 10001;
+        """;
 
     // A count examines a system collection's tombstones too.
     private string Counted => rows == RowSource.System ? "documents WHERE collection = $collection" : $"{rows.From} WHERE 1";
@@ -138,7 +168,24 @@ internal sealed class TursoQueryCompiler(
     // A plain AND keeps the filter's terms visible to the planner, so an index can seek them; the guard still precedes
     // the residual JSON predicates in Turso's WHERE evaluation. tb_qos_scan also stops the statement once its budget is
     // spent or it is cancelled: Turso has no progress handler.
-    private string ScanGuardedFilter(DocumentFilter? filter) => $"tb_qos_scan(coalesce(octet_length({rows.Json}), 0)) AND {Filter(filter)}";
+    private string ScanGuardedFilter(DocumentFilter? filter)
+    {
+        if (filter is AuthorizedFilter authorized)
+        {
+            var predicate = Filter(authorized.Predicate);
+            return $"{BudgetedAuthorization(authorized.Predicate)} AND CASE WHEN {predicate} THEN tb_qos_scan(coalesce(octet_length({rows.Json}), 0)) ELSE 0 END AND {Filter(authorized.ClientFilter)}";
+        }
+
+        return $"tb_qos_scan(coalesce(octet_length({rows.Json}), 0)) AND {Filter(filter)}";
+    }
+
+    // An unindexed owner seek still spends engine work and checks cancellation/deadlines. Keep a plain predicate
+    // beside the CASE so an existing owner expression index can seek it without scanning unrelated documents.
+    private string BudgetedAuthorization(DocumentFilter predicate)
+    {
+        var sql = Filter(predicate);
+        return $"(CASE WHEN tb_sql_row(id) THEN {sql} ELSE 0 END AND {sql})";
+    }
 
     // CASE fixes evaluation order: account a candidate before any JSON predicate parses its body.
     // This counts document candidates, not SQLite VM instructions, index entries or physical disk bytes.

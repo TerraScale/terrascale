@@ -7,6 +7,7 @@ using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Observability;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Features.Ui;
@@ -23,6 +24,9 @@ public static class App
 {
     /// <summary>OpenAPI document title; clients key on it.</summary>
     public const string ApiTitle = "TerraScale Auth API";
+
+    /// <summary>Service key for peer-only management calls to the regional TerraBase endpoint.</summary>
+    public const string StorageAuthority = "terrabase-authority";
 
     /// <summary>
     /// The trusted regional storage endpoint, required outside Development. Reads and writes use this copy without
@@ -93,13 +97,24 @@ public static class App
         builder.Services.AddSingleton<TotpCredentials>();
         builder.Services.AddSingleton<PlatformDirectory>();
         builder.Services.AddSingleton<AccountDeletion>();
+        // Shared-history erasure and project closure reach TerraBase through the regional peer transport, acting as no user.
+        builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) => new TerraBaseManagementClient(services.GetRequiredService<HttpClient>(),
+            new TerraBaseManagementClientOptions { BaseAddress = TerraBaseOrigin(options) }));
+        builder.Services.AddSingleton<Closures>();
+        builder.Services.AddSingleton<ClosureWorker>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<ClosureWorker>());
+        builder.Services.AddSingleton<DeletionCleanup>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<DeletionCleanup>());
         builder.Services.AddSingleton<PlatformBootstrap>();
         builder.Services.AddSingleton<PlatformAuthentication>();
         builder.Services.AddSingleton<ApiKeys>();
         builder.Services.AddSingleton<PlatformGrants>();
+        builder.Services.AddSingleton<EndUserAccessTokens>();
         builder.Services.AddHttpClient(GitHubActionsGrant.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(10));
         builder.Services.AddSingleton<GitHubActionsKeys>();
         builder.Services.AddSingleton<Invitations>();
+        builder.Services.AddSingleton<TenantDirectory>();
+        builder.Services.AddSingleton<ProjectAuthSettings>();
         builder.Services.AddHostedService<SessionPruner>();
         // Ready means this regional copy takes writes.
         builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredService<TerraBaseDatabase>()));
@@ -192,6 +207,8 @@ public static class App
             app.UseForwardedHeaders();
             TokenRateLimitMiddleware.UseClientGuard(app);
         }
+        app.UseTenancy();
+        app.UseHostedTheme();
         // OpenIddict answers discovery, JWKS and protocol errors here and validates passthrough requests first.
         app.UseAuthentication();
         app.MapTerraScaleEndpoints();

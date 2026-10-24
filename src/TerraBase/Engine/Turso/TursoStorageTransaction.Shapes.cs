@@ -281,48 +281,58 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
     private byte[]? ShapeChange(ShapeSealDefinition shape, long start, long end, HashSet<string>? unsettled, CancellationToken cancellationToken)
     {
         var command = Command("""
-            SELECT id FROM _tb_feed WHERE seq IN
-                (SELECT max(seq) FROM _tb_feed WHERE seq > $start AND seq <= $end AND collection = $collection GROUP BY id);
+            SELECT id, access_before, access_after FROM _tb_feed
+            WHERE seq > $start AND seq <= $end AND collection = $collection;
             """, shape.Collection);
         command.Parameters.AddWithValue("$start", start);
         command.Parameters.AddWithValue("$end", end);
-        List<string> rows = [];
+        Dictionary<string, bool> rows = [with(StringComparer.Ordinal)];
         CountRead("shape");
         using (var reader = command.ExecuteReader())
         {
             while (reader.Read())
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                rows.Add(reader.GetString(0));
+                var id = reader.GetString(0);
+                rows[id] = rows.GetValueOrDefault(id) || shape.OwnerAuthorization is null
+                    || MatchesOwnerProof(reader.IsDBNull(1) ? null : reader.GetString(1), shape.OwnerAuthorization)
+                    || MatchesOwnerProof(reader.IsDBNull(2) ? null : reader.GetString(2), shape.OwnerAuthorization);
             }
         }
         if (rows.Count == 0)
         {
             return [];
         }
-        if (unsettled is not null && rows.Exists(unsettled.Contains))
+        if (unsettled is not null && rows.Keys.Any(unsettled.Contains))
         {
             return null;
         }
 
-        rows.Sort(StringComparer.Ordinal);
         var buffer = new ArrayBufferWriter<byte>();
         using var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { MaxDepth = DocumentJson.MaxStoredDepth + 4 });
         writer.WriteStartObject();
         writer.WriteString("offset", ShapeNumber(end));
         writer.WriteStartArray("ops");
-        foreach (var id in rows)
+        var emitted = 0;
+        foreach (var (id, owned) in rows.OrderBy(row => row.Key, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var document = ReadShapeDocument(shape.Collection, id);
             if (document is not null)
             {
                 DocumentJson.ValidateStored(document.Json.Span);
-                if (shape.Predicate is not null && !shape.Predicate(document))
+                if (shape.OwnerAuthorization is { } owner && new CollectionAccessRules(owner.Path, null, null).Subject(document.Json) != owner.Subject
+                    || shape.Predicate is not null && !shape.Predicate(document))
                 {
                     document = null;
                 }
             }
+            // A client where filter never grants permission to learn a tombstone's id.
+            if (document is null && !owned)
+            {
+                continue;
+            }
+            emitted++;
             writer.WriteStartObject();
             writer.WriteString("op", document is null ? "delete" : "upsert");
             writer.WriteString("id", id);
@@ -341,15 +351,19 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         writer.WriteEndArray();
         writer.WriteEndObject();
         writer.Flush();
-        return buffer.WrittenSpan.ToArray();
+        return emitted == 0 ? [] : buffer.WrittenSpan.ToArray();
     }
+
+    private static bool MatchesOwnerProof(string? json, DocumentOwnerProof owner) =>
+        json is not null && JsonSerializer.Deserialize(json, ShapeJsonContext.Default.DocumentOwnerProof) == owner;
 
     // Project sizes before reading bodies; cover the candidate, growing output buffers and the persisted copy.
     private long ShapeChangeBytes(ShapeSealDefinition shape, long start, long end)
     {
         var collection = shape.Collection;
         var command = Command("""
-            SELECT coalesce(sum(octet_length(id)), 0), count(*) FROM _tb_feed
+            SELECT coalesce(sum(octet_length(id)), 0), count(*),
+                coalesce(sum(coalesce(octet_length(access_before), 0) + coalesce(octet_length(access_after), 0)), 0) FROM _tb_feed
             WHERE seq > $start AND seq <= $end AND collection = $collection;
             """, collection);
         command.Parameters.AddWithValue("$start", start);
@@ -359,7 +373,7 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
         using (var reader = command.ExecuteReader())
         {
             reader.Read();
-            bytes = checked(reader.GetInt64(0) * ShapeIdMemoryPerByte + reader.GetInt64(1) * 1024);
+            bytes = checked(reader.GetInt64(0) * ShapeIdMemoryPerByte + reader.GetInt64(1) * 1024 + reader.GetInt64(2) * 8);
         }
         if (HasTable(collection, "shape"))
         {

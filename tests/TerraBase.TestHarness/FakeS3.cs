@@ -20,14 +20,14 @@ namespace TerraBase.Testing;
 /// serves both through message handlers that replace the server's transports (no socket), and counts the master key's
 /// data key generations and unwraps.
 /// </summary>
-public sealed class FakeS3
+public sealed partial class FakeS3
 {
     public const string Bucket = "backup-test";
     public const string CustomerBucket = "customer-backup";
     public const string CustomerEndpoint = "https://customer-storage.test";
     public const string CustomerAccessKey = "customer-access";
     public const string CustomerSecretKey = "customer-secret";
-    private const string ObjectStorage = "https://objectstorage.test";
+    private const string R2Storage = "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com";
     private const string PlatformAccessKey = "test-access-key";
     private const string PlatformSecretKey = "test-secret-key";
     private static readonly XNamespace S3 = "http://s3.amazonaws.com/doc/2006-03-01/";
@@ -190,6 +190,9 @@ public sealed class FakeS3
     /// <summary>Refuses snapshot takes with 403 while true.</summary>
     public bool RejectSnapshots { get; set; }
 
+    /// <summary>Refuses snapshot expiry with 403 while true.</summary>
+    public bool RejectSnapshotDeletes { get; set; }
+
     /// <summary>The platform bucket's Tigris snapshots, oldest first.</summary>
     public IReadOnlyList<(string Version, DateTimeOffset At)> Snapshots
     {
@@ -260,10 +263,23 @@ public sealed class FakeS3
     }
 
     /// <summary>Sets every backup setting to this fake.</summary>
+    /// <summary>
+    /// Serves the platform bucket at an R2 account endpoint, so the server links shape objects through the CDN and purges
+    /// them through the Cloudflare API (<see cref="FakeCloudflare"/>).
+    /// </summary>
+    public bool R2 { get; init; }
+
+    private string ObjectStorage => R2 ? R2Storage : "https://objectstorage.test";
+
     public void Configure(Dictionary<string, string> settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
         settings["backup-endpoint"] = ObjectStorage;
+        if (R2)
+        {
+            settings["cloudflare-api-token"] = FakeCloudflare.Token;
+        }
+
         settings["backup-region"] = "test-region-1";
         settings["backup-bucket"] = Bucket;
         settings["backup-access-key-id"] = PlatformAccessKey;
@@ -323,11 +339,9 @@ public sealed class FakeS3
             return SnapshotResponse(request);
         }
 
-        return uri.GetLeftPart(UriPartial.Authority) switch
-        {
-            ObjectStorage or CustomerEndpoint => await ObjectResponseAsync(request, body, cancellationToken),
-            _ => new HttpResponseMessage(HttpStatusCode.NotFound),
-        };
+        return uri.GetLeftPart(UriPartial.Authority) is var authority && (authority == ObjectStorage || authority == CustomerEndpoint)
+            ? await ObjectResponseAsync(request, body, cancellationToken)
+            : new HttpResponseMessage(HttpStatusCode.NotFound);
     }
 
     private async Task<HttpResponseMessage> ObjectResponseAsync(HttpRequestMessage request, byte[] body, CancellationToken cancellationToken)
@@ -338,7 +352,7 @@ public sealed class FakeS3
         var (bucket, key) = slash < 0 ? (path, "") : (path[..slash], path[(slash + 1)..]);
         var customer = uri.GetLeftPart(UriPartial.Authority) == CustomerEndpoint;
         var objects = customer ? _customerObjects : _objects;
-        if (bucket != (customer ? CustomerBucket : Bucket))
+        if (bucket != (customer ? CustomerBucket : Bucket) && !IsPurgeBucket(customer, bucket))
         {
             return S3Error(HttpStatusCode.NotFound, "NoSuchBucket");
         }
@@ -357,9 +371,19 @@ public sealed class FakeS3
 
         ObjectRequested?.Invoke(customer, request.Method, key);
 
+        if (await DeletePurgeVersionAsync(request, customer, key, cancellationToken) is { } versionDeleted)
+        {
+            return versionDeleted;
+        }
+
+        if (key.Length == 0 && request.Method == HttpMethod.Get && uri.Query.TrimStart('?').Split('&').Any(part => part is "versions" or "versions="))
+        {
+            return PurgeVersions(customer, bucket, System.Web.HttpUtility.ParseQueryString(uri.Query));
+        }
+
         if (key.Length == 0 && request.Method == HttpMethod.Get && uri.Query.TrimStart('?').Split('&').Any(part => part is "uploads" or "uploads="))
         {
-            return ListUploads(customer, bucket, System.Web.HttpUtility.ParseQueryString(uri.Query));
+            return PurgeUploads(customer, bucket, System.Web.HttpUtility.ParseQueryString(uri.Query));
         }
 
         if (key.Length == 0 && request.Method == HttpMethod.Get)
@@ -838,6 +862,11 @@ public sealed class FakeS3
 
             if (request.Method == HttpMethod.Delete && version is not null)
             {
+                if (RejectSnapshotDeletes)
+                {
+                    return S3Error(HttpStatusCode.Forbidden, "AccessDenied");
+                }
+
                 return _snapshots.RemoveAll(item => item.Version == version) == 1
                     ? new HttpResponseMessage(HttpStatusCode.NoContent) { Content = new ByteArrayContent([]) }
                     : S3Error(HttpStatusCode.NotFound, "NoSuchVersion");

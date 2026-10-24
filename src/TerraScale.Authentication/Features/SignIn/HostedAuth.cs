@@ -19,7 +19,7 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// are also limited per email. Limits are shared by every replica and apply alike to addresses with and without an
 /// account, and every failure answers the same whatever the account state, so nothing tells an account from a stranger.
 /// </summary>
-public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail, ILogger<HostedAuth> logger)
+public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail, IHttpContextAccessor http, ILogger<HostedAuth> logger)
 {
     /// <summary>Calls per end-user IP per minute.</summary>
     public const int PerIp = 30;
@@ -50,6 +50,9 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
 
     private static readonly TimeSpan IpWindow = TimeSpan.FromMinutes(1);
 
+    // The hosted page's tenant: accounts, codes and rate-limit buckets never cross tenants.
+    private string Tenant => Tenancy.Current(http.HttpContext);
+
     /// <summary>
     /// Emails a sign-up code, or a sign-in code when the address has an account, and returns the pending token that
     /// must accompany a sign-up code's redemption; or how long to wait. The token is random either way, so it reveals
@@ -65,7 +68,8 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         // Hashed whether or not the address has an account, so both take the same time.
         var hash = await passwords.HashAsync(password, cancellationToken);
         var pending = Tokens.RandomToken(43);
-        mail.EnqueueIssue(() => passcodes.RequestSignUpAsync(OidcIssuer.InstanceId, email, hash, pending, CancellationToken.None));
+        var tenant = this.Tenant;
+        mail.EnqueueIssue(() => passcodes.RequestSignUpAsync(tenant, email, hash, pending, CancellationToken.None));
         return (pending, null);
     }
 
@@ -77,7 +81,8 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
             return wait;
         }
 
-        mail.EnqueueIssue(() => passcodes.RequestAsync(OidcIssuer.InstanceId, email, PasscodePurpose.PasswordReset, CancellationToken.None));
+        var tenant = this.Tenant;
+        mail.EnqueueIssue(() => passcodes.RequestAsync(tenant, email, PasscodePurpose.PasswordReset, CancellationToken.None));
         return null;
     }
 
@@ -102,7 +107,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
 
         // Hashed before the code is consumed, so a busy replica never burns the user's code.
         var hash = await passwords.HashAsync(password, cancellationToken);
-        if (await passcodes.ResetPasswordAsync(OidcIssuer.InstanceId, email, code, hash, cancellationToken) is not { } user)
+        if (await passcodes.ResetPasswordAsync(this.Tenant, email, code, hash, cancellationToken) is not { } user)
         {
             logger.ZLogInformation($"Audit: hosted {method:@Method} refused");
             return (false, null);
@@ -156,7 +161,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
             return null;
         }
 
-        var user = await users.FindByEmailAsync(OidcIssuer.InstanceId, email, cancellationToken);
+        var user = await users.FindByEmailAsync(this.Tenant, email, cancellationToken);
         return await passwords.VerifyAsync(password, user?.PasswordHash, cancellationToken) ? user : null;
     }
 
@@ -176,7 +181,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         }
 
         if (Users.NormalizeEmail(email) is { } normalized
-            && await limiter.AcquireCooldownAsync(OidcIssuer.InstanceId, "headless-mail-email", limiter.Fold(normalized), MailCooldown, cancellationToken) is { } cooldownWait)
+            && await limiter.AcquireCooldownAsync(this.Tenant, "headless-mail-email", limiter.Fold(normalized), MailCooldown, cancellationToken) is { } cooldownWait)
         {
             logger.ZLogWarning($"Audit: hosted request rate-limited by the {"headless-mail-email":@Purpose} budget");
             return cooldownWait;
@@ -209,7 +214,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
 
         foreach (var (purpose, subject, maximum, window) in budgets)
         {
-            if (await limiter.AcquireAsync(OidcIssuer.InstanceId, purpose, limiter.Fold(subject), maximum, window, cancellationToken) is { } wait)
+            if (await limiter.AcquireAsync(this.Tenant, purpose, limiter.Fold(subject), maximum, window, cancellationToken) is { } wait)
             {
                 logger.ZLogWarning($"Audit: hosted request rate-limited by the {purpose:@Purpose} budget");
                 return wait;
@@ -235,7 +240,7 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         CancellationToken cancellationToken, string locale = AuthEmails.English)
     {
         if (Users.NormalizeEmail(email) is not { } normalized
-            || await limiter.AcquireWithDeadlineAsync(OidcIssuer.InstanceId, purpose, limiter.Fold(normalized), maximum, window, cancellationToken) is not { } rejection)
+            || await limiter.AcquireWithDeadlineAsync(this.Tenant, purpose, limiter.Fold(normalized), maximum, window, cancellationToken) is not { } rejection)
         {
             return null;
         }
@@ -244,8 +249,9 @@ public sealed class HostedAuth(Users users, Passcodes passcodes, PasswordHasher 
         if (notify)
         {
             // Both known and unknown addresses enqueue the same work; only the worker looks up the account.
-            mail.EnqueueLockout(async () => await users.FindByEmailAsync(OidcIssuer.InstanceId, normalized, CancellationToken.None) is { } user
-                && await limiter.ClaimLockoutNoticeAsync(OidcIssuer.InstanceId, purpose, user.Id, rejection.Until, CancellationToken.None)
+            var tenant = this.Tenant;
+            mail.EnqueueLockout(async () => await users.FindByEmailAsync(tenant, normalized, CancellationToken.None) is { } user
+                && await limiter.ClaimLockoutNoticeAsync(tenant, purpose, user.Id, rejection.Until, CancellationToken.None)
                     ? new AuthEmailValues(user.Email) { LockoutUntil = rejection.Until }
                     : null, locale);
         }

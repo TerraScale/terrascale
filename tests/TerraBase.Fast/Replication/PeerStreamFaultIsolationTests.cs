@@ -457,9 +457,11 @@ public sealed class PeerStreamFaultIsolationTests
     [Test]
     [Arguments("retains", false)]
     [Arguments("head", false)]
+    [Arguments("retainedAfter", false)]
     [Arguments("horizon", false)]
     [Arguments("retains", true)]
     [Arguments("head", true)]
+    [Arguments("retainedAfter", true)]
     [Arguments("horizon", true)]
     public async Task A_fault_after_a_shipping_read_is_isolated_unless_it_affects_the_node(string boundary, bool nodeFault)
     {
@@ -977,7 +979,7 @@ public sealed class PeerStreamFaultIsolationTests
         {
             var retained = await ShippingReadAsync(database, "retains", () => inner.RetainsAsync(database, incarnation, after, cancellationToken));
             var gate = Volatile.Read(ref _shipping);
-            if (retained is not null && gate is not null && gate.Database == database && gate.Boundary is "head" or "horizon")
+            if (retained is not null && gate is not null && gate.Database == database && gate.Boundary is "head" or "retainedAfter" or "horizon")
             {
                 // Force only this test's refill branch; every storage call still passes through the production guard.
                 retained = false;
@@ -990,8 +992,15 @@ public sealed class PeerStreamFaultIsolationTests
         public async ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken)
         {
             var head = await ShippingReadAsync(database, "head", () => inner.HeadAsync(database, incarnation, cancellationToken));
-            await AfterShippingReadAsync(database, "horizon", cancellationToken);
+            await AfterShippingReadAsync(database, "retainedAfter", cancellationToken);
             return head;
+        }
+
+        public async ValueTask<long?> RetainedAfterAsync(TenantContext database, Ulid incarnation, long? through, long head, CancellationToken cancellationToken)
+        {
+            var retained = await ShippingReadAsync(database, "retainedAfter", () => inner.RetainedAfterAsync(database, incarnation, through, head, cancellationToken));
+            await AfterShippingReadAsync(database, "horizon", cancellationToken);
+            return retained;
         }
 
         public ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken) => inner.DigestAsync(database, expected, cancellationToken);

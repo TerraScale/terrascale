@@ -46,6 +46,10 @@ internal sealed class TursoChangeTap : IWalTap
     private readonly TimeProvider _time;
     // Replaced when a snapshot's read transaction may be left open (ReplaceReaderAsync).
     private TursoConnection _reader;
+    private int _disposed;
+
+    // The store's lineage this tap reads: a healthy rewrite replaces the file, so the tap ends and its owner opens another.
+    private readonly int _lineage;
 
     // The change_id of the last row read, kept in turso_cdc; 0 before anything was captured.
     private long _anchor;
@@ -69,23 +73,27 @@ internal sealed class TursoChangeTap : IWalTap
     /// <summary>Runs after a snapshot's read transaction begins, before the read that pins it; for integration tests.</summary>
     internal Func<CancellationToken, Task>? AfterSnapshotBegin { get; set; }
 
-    private TursoChangeTap(TursoDatabaseStore store, TursoIoPool io, TimeProvider time, TursoConnection reader)
+    private TursoChangeTap(TursoDatabaseStore store, TursoIoPool io, TimeProvider time, TursoConnection reader, int lineage)
     {
         _store = store;
         _io = io;
         _time = time;
         _reader = reader;
+        _lineage = lineage;
     }
 
     /// <summary>Opens a tap on <paramref name="store"/> that starts at the newest change; the caller holds an admission.</summary>
     public static async Task<TursoChangeTap> OpenAsync(TursoDatabaseStore store, TursoIoPool io, TimeProvider time, CancellationToken cancellationToken)
     {
         await using var operation = await store.BeginOperationAsync(cancellationToken).ConfigureAwait(false);
+        // Read before the reader is counted: a rewrite starting meanwhile either refuses it or ends this tap.
+        var lineage = store.Lineage;
+        store.OpenBackupReader();
         var reader = new TursoConnection($"Data Source={store.FilePath}") { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
         try
         {
             await io.RunAsync(() => TursoSession.OpenExisting(reader, store.FilePath), cancellationToken).ConfigureAwait(false);
-            var tap = new TursoChangeTap(store, io, time, reader);
+            var tap = new TursoChangeTap(store, io, time, reader, lineage);
             // Under the writer, so the anchor and the schema map describe the same commit; this also opens the writer, whose
             // capture creates turso_cdc.
             await store.WithWriterAsync(tap.Reset, "the continuous backup's tap", cancellationToken).ConfigureAwait(false);
@@ -95,6 +103,7 @@ internal sealed class TursoChangeTap : IWalTap
         catch (Exception error)
         {
             await io.RunAsync(reader.Dispose, CancellationToken.None).ConfigureAwait(false);
+            store.CloseBackupReader();
             await store.RecordOperationDamageAsync(error).ConfigureAwait(false);
             operation?.Complete();
             throw;
@@ -228,12 +237,19 @@ internal sealed class TursoChangeTap : IWalTap
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
         _store.BackupAnchor = null;
         await _io.RunAsync(_reader.Dispose, CancellationToken.None).ConfigureAwait(false);
+        _store.CloseBackupReader();
     }
 
     private async Task<T> AdmittedAsync<T>(Func<Task<T>> call)
     {
+        // Before the operation, which a rewrite holds: the owner disposes this tap and releases the old file.
+        ObjectDisposedException.ThrowIf(_lineage != _store.Lineage, _store);
         _io.Admit();
         try
         {

@@ -42,6 +42,8 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
         // project key's list entries are management state.
         return await catalog.WriteAsync<CreateApiKeyResult>(async transaction =>
             await EngineManagementService.ScopeExistsUncheckedAsync(transaction, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false)
+            // A closing project issues no key once this transaction sees its fence (docs/terrabase/project-closure.md).
+            && (projectId is null || !await ProjectClosure.IsClosedAsync(transaction, projectId, cancellationToken).ConfigureAwait(false))
                 ? new IssuedApiKey((await StoreAsync(transaction, secret, name, scopes, organizationId, projectId, databaseId, cancellationToken, expiresAt).ConfigureAwait(false)).Key, secret)
                 : new NotFound(),
             static error => error, cancellationToken).ConfigureAwait(false);
@@ -83,7 +85,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
             var found = databaseId is null
                 ? await EngineManagementService.GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is not null
                 : await EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false) is not null;
-            if (!found)
+            if (!found || await ProjectClosure.IsClosedAsync(transaction, projectId, cancellationToken).ConfigureAwait(false))
             {
                 return new NotFound();
             }

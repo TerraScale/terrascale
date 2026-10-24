@@ -2,6 +2,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
+using TerraBase.Features.UserAuth;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
@@ -50,7 +51,7 @@ public sealed class GetDatabaseChangesEndpoint(IDatabaseChanges changes, ITenant
                     Validation error => ErrorResponse.From(error),
                     NotFound error => ErrorResponse.From(error),
                     Unavailable error => ErrorResponse.From(error),
-                    TenantContext database when start.Cursor is not null && !start.Scope.Span.SequenceEqual(ChangeCursor.Scope(database, filter.Collections).Span) =>
+                    TenantContext database when ProjectAccess.Current is not { IsEndUser: true } && start.Cursor is not null && !start.Scope.Span.SequenceEqual(ChangeCursor.Scope(database, filter.Collections).Span) =>
                         ErrorResponse.From(new Gone("the cursor belongs to another database or collection filter; start again with cursor=now and re-read", "cursor_expired")),
                     TenantContext database => await changes.StreamAsync(HttpContext, database, start.Cursor, start.Head, filter.Collections, cancellationToken),
                 },

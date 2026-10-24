@@ -105,7 +105,8 @@ internal sealed partial class TursoDatabaseStore(
     // and indexes never decode a state. _tb_state keeps each document's replicated DocumentState in its
     // stored form (base64url), with its anti-entropy bucket and digest; the other _tb_ tables belong to the change feed,
     // the peer streams and anti-entropy, which later slices fill; _tb_refill holds the certificate of a rebuild's refill
-    // (decision 0013a section 1). Every new table is a rowid table.
+    // (decision 0013a section 1). _tb_collection_stats keeps each client collection's live document count and bytes, written
+    // with its rows, so usage and storage reads never scan a collection. Every new table is a rowid table.
     private const string ClientSchemaSql = """
         CREATE TABLE "_collections" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
         CREATE TABLE "_indexes" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
@@ -126,7 +127,8 @@ internal sealed partial class TursoDatabaseStore(
         );
         CREATE TABLE _tb_feed (
             seq INTEGER NOT NULL UNIQUE, commit_offset INTEGER NOT NULL, origin INTEGER NOT NULL, stamp INTEGER NOT NULL,
-            collection TEXT NOT NULL, id TEXT NOT NULL, deleted INTEGER NOT NULL, prefix BLOB NOT NULL
+            collection TEXT NOT NULL, id TEXT NOT NULL, deleted INTEGER NOT NULL, prefix BLOB NOT NULL,
+            access_before TEXT, access_after TEXT, collection_generation TEXT
         );
         CREATE INDEX _tb_feed_order ON _tb_feed (origin, stamp);
         CREATE TABLE _tb_feed_sequence (id INTEGER PRIMARY KEY CHECK (id = 1), seq INTEGER NOT NULL);
@@ -147,6 +149,7 @@ internal sealed partial class TursoDatabaseStore(
             name TEXT PRIMARY KEY, created_at INTEGER NOT NULL,
             entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
         );
+        CREATE TABLE _tb_collection_stats (collection TEXT PRIMARY KEY, documents INTEGER NOT NULL, bytes INTEGER NOT NULL);
         CREATE TABLE commit_offset (
             id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
         );
@@ -262,8 +265,9 @@ internal sealed partial class TursoDatabaseStore(
     /// A write transaction of a rebuild's certified refill, salvage or completion barrier: the only writes a copy under
     /// rebuild accepts. The caller checks the file's incarnation inside it (<see cref="RebuildLedger"/>).
     /// </summary>
-    internal ValueTask<TursoStorageTransaction> BeginRebuildTransactionAsync(CancellationToken cancellationToken) =>
-        BeginAsync(write: true, durable: true, cancellationToken, "a rebuild repair", rebuild: true);
+    /// <remarks>Only the intent journal's ordinary intents pass <paramref name="synced"/> false (decision 0013d).</remarks>
+    internal ValueTask<TursoStorageTransaction> BeginRebuildTransactionAsync(CancellationToken cancellationToken, bool synced = true) =>
+        BeginAsync(write: true, durable: synced, cancellationToken, "a rebuild repair", rebuild: true);
 
     /// <summary>This node's copy faults and rebuilds; null for stores built outside an engine.</summary>
     internal RebuildLedger? Ledger { get; init; }
@@ -331,11 +335,18 @@ internal sealed partial class TursoDatabaseStore(
         {
             Ledger?.FailClosed($"the system database faulted: {reason}");
         }
-        else
+        else if (Ledger is { } ledger)
         {
-            _ = Ledger?.FlagAsync(this);
+            Flagged = ledger.FlagAsync(this);
         }
     }
+
+    /// <summary>The latest <see cref="NoteCopyFault"/>'s durable <c>Faulting</c> mark; it never throws.</summary>
+    internal Task Flagged
+    {
+        get => Volatile.Read(ref field);
+        private set => Volatile.Write(ref field, value);
+    } = Task.CompletedTask;
 
     /// <summary>
     /// Records that a transaction may have left this file uncertain or damaged: a copy fault of a client database, the
@@ -381,7 +392,8 @@ internal sealed partial class TursoDatabaseStore(
 
         // Every write transaction syncs the write-ahead log at its commit (synchronous = FULL): what a write answers, the
         // system database's catalog and keys (decision 0012) and a client database's documents (0013), survives a power loss.
-        durable |= write;
+        // A rebuild transaction states its own: an ordinary write intent need only survive a process crash (0013d).
+        durable |= write && !rebuild;
         var ownsAdmission = !io.HasAdmission;
         if (ownsAdmission)
         {
@@ -395,7 +407,7 @@ internal sealed partial class TursoDatabaseStore(
         try
         {
             // Setup and BEGIN can also detect damage; record before opening a native session.
-            operation = await io.WithAdmissionAsync(() => BeginOperationAsync(cancellationToken)).ConfigureAwait(false);
+            operation = await io.WithAdmissionAsync(() => BeginOperationAsync(cancellationToken, intent: write)).ConfigureAwait(false);
             if (write)
             {
                 await AcquireWriterAsync(writer, cancellationToken).ConfigureAwait(false);
@@ -597,7 +609,7 @@ internal sealed partial class TursoDatabaseStore(
             return open;
         }
 
-        pool.OpenNew(this);
+        await WhileRewritingAsync(() => pool.OpenNew(this), cancellationToken).ConfigureAwait(false);
         TursoSession session;
         try
         {
@@ -607,7 +619,7 @@ internal sealed partial class TursoDatabaseStore(
         }
         catch (Exception error)
         {
-            pool.OpenFailed();
+            pool.OpenFailed(this);
             if (Closed && !cancellationToken.IsCancellationRequested)
             {
                 throw new ObjectDisposedException(GetType().FullName, error);
@@ -1189,7 +1201,7 @@ internal sealed partial class TursoDatabaseStore(
     {
         cancellationToken.ThrowIfCancellationRequested();
         // A deleted or shut-down database hands out no session.
-        if (pool.Rent(this) is { } idle)
+        if (await WhileRewritingAsync(() => pool.Rent(this), cancellationToken).ConfigureAwait(false) is { } idle)
         {
             return idle;
         }
@@ -1204,7 +1216,7 @@ internal sealed partial class TursoDatabaseStore(
         catch (Exception error)
         {
             // Rent counted an opening even when cancellation removed the queued Open before it started.
-            pool.OpenFailed();
+            pool.OpenFailed(this);
             if (Closed && !cancellationToken.IsCancellationRequested)
             {
                 // A delete can unlink the file after Rent found no session but before Turso opened it.

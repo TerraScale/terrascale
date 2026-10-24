@@ -57,7 +57,7 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
         {
             foreach (var (key, entry) in _entries)
             {
-                if (entry.Handle == handle && key.Database == owner && key.Collection == collection && entry.Filter.Filter is not null)
+                if (entry.Handle == handle && key.Database == owner && key.Collection == collection && entry.Filter.Canonical.Length > 0)
                 {
                     return entry.Filter;
                 }
@@ -112,7 +112,7 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
             entry.Node = _lru.AddFirst(entry);
             _entries[key] = entry;
             _counts[key.Database] = _counts.GetValueOrDefault(key.Database) + 1;
-            if (filter.Filter is not null)
+            if (filter.Canonical.Length > 0)
             {
                 _filtered[new ShapeFilterKey(database.DatabaseId!, collection, filter.Canonical)] = key;
             }
@@ -310,7 +310,7 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
     {
         _lru.Remove(entry.Node);
         _entries.Remove(entry.Key);
-        if (entry.Filter.Filter is not null)
+        if (entry.Filter.Canonical.Length > 0)
         {
             _filtered.Remove(new ShapeFilterKey(entry.Key.Database.Database!, entry.Key.Collection, entry.Key.Canonical));
         }
@@ -350,7 +350,7 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
     }
 
     private static long EntryBytes(TenantContext database, string collection, ShapeFilter filter, string handle) =>
-        EntryOverhead + 2L * (Length(database.OrganizationId) + Length(database.ProjectId) + Length(database.DatabaseId)
+        EntryOverhead + filter.AuthorizationBytes + 2L * (Length(database.OrganizationId) + Length(database.ProjectId) + Length(database.DatabaseId)
             + collection.Length + filter.Canonical.Length + handle.Length);
 
     private static int Length(string? value) => value?.Length ?? 0;

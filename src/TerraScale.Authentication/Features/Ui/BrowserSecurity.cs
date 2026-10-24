@@ -1,4 +1,5 @@
 using Scalar.AspNetCore;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Security;
 
@@ -57,11 +58,11 @@ public static class BrowserSecurity
         headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
     }
 
-    /// <summary>Sets the hosted session cookie: Secure, HttpOnly, SameSite=Lax, whole-origin path.</summary>
-    public static void SetSessionCookie(HttpResponse response, string value)
+    /// <summary>Sets the tenant's hosted session cookie: Secure, HttpOnly, SameSite=Lax, whole-origin path.</summary>
+    public static void SetSessionCookie(HttpResponse response, string value, string tenant)
     {
         ArgumentNullException.ThrowIfNull(response);
-        response.Cookies.Append(SecuritySchemes.SessionCookieName, value, new CookieOptions
+        response.Cookies.Append(Tenancy.SessionCookie(tenant), value, new CookieOptions
         {
             Path = "/",
             Secure = true,
@@ -71,11 +72,11 @@ public static class BrowserSecurity
         });
     }
 
-    /// <summary>Expires the hosted session cookie with the same path and flags.</summary>
-    public static void DeleteSessionCookie(HttpResponse response)
+    /// <summary>Expires the tenant's hosted session cookie with the same path and flags.</summary>
+    public static void DeleteSessionCookie(HttpResponse response, string tenant)
     {
         ArgumentNullException.ThrowIfNull(response);
-        response.Cookies.Delete(SecuritySchemes.SessionCookieName, new CookieOptions
+        response.Cookies.Delete(Tenancy.SessionCookie(tenant), new CookieOptions
         {
             Path = "/",
             Secure = true,

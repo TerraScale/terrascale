@@ -298,6 +298,21 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
         return true;
     }
 
+    public async ValueTask<long?> RetainedAfterAsync(TenantContext database, Ulid expected, long? through, long head, CancellationToken cancellationToken)
+    {
+        if (await incarnation(database, cancellationToken) != expected)
+        {
+            return null;
+        }
+
+        lock (_gate)
+        {
+            var groups = _groups.GetValueOrDefault(database, []);
+            var floor = groups.Count == 0 ? 0 : groups[0].ChangeId - 1;
+            return through is { } bound ? Math.Max(floor, groups.LastOrDefault(group => group.ChangeId <= bound)?.ChangeId ?? 0) : floor;
+        }
+    }
+
     public async ValueTask<long?> HeadAsync(TenantContext database, Ulid expected, CancellationToken cancellationToken)
     {
         if (await incarnation(database, cancellationToken) != expected)

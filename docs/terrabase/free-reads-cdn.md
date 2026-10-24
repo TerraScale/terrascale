@@ -37,16 +37,36 @@ and clients fall back to origin reads.
      the object's `Cache-Control`. Responses with status 400–599 are `no-store`, so a probe for a missing key cannot
      pin a 404 in the cache. Without this rule, Cloudflare does not cache extensionless keys (`cf-cache-status: DYNAMIC`).
    - Smart Tiered Cache is on for the zone, so a miss at one location is first served from an upper tier.
-3. Give the bucket's S3 credentials Object Read & Write on that bucket only. They go to OCI Vault and reach nodes
-   through ts-orch.
+3. Give the bucket's S3 credentials Object Read & Write on that bucket only. Give `cloudflare-api-token` Zone Cache
+   Purge on `terrascale.tech`. Both go to OCI Vault and reach nodes through ts-orch.
 
 Buckets set up this way: `terrascale-gru-terrabase` (production gru), `ts-terrabase-ci` (Slow tests),
 `ts-terrabase-bench` (benchmarks).
 
+## Purge
+
+Every time the mirror deletes an object from an R2 bucket, the object's CDN URL is queued for a Cloudflare single-file
+purge (`ShapeCdnPurge`). The mirror deletes objects in three places:
+
+- the retention trim below a shape's floor;
+- the hourly sweep of objects older than 7 days, which also clears handles and tenants that no longer exist;
+- a just-uploaded object that is no longer retained.
+
+A background worker sends the queued URLs to `POST /zones/<terrascale.tech>/purge_cache`, 100 per request (Cloudflare's
+limit on every plan). It waits and retries a throttled or failed request up to 5 times. It gives up at once on any other
+4xx answer, such as a bad token.
+
+The token is `cloudflare-api-token` (`TERRABASE_CLOUDFLARE_API_TOKEN`, or its `_FILE` from OCI Vault through ts-orch).
+It needs Zone Cache Purge on `terrascale.tech`. It is required with an R2 endpoint and refused with any other, so a node
+never links a CDN it cannot purge.
+
 ## Limits
 
-- A Cloudflare cache can keep an object after retention deletes it from the bucket (7 days). The object is ciphertext.
-  The manifest never lists it again, and nothing purges the cache.
+- A purge can fail: Cloudflare keeps refusing, or the queue (4096 URLs) is full. Then the cached copy stays until
+  Cloudflare evicts it. It is ciphertext that no manifest lists any more. `terrabase.shape.cdn.purges{outcome}` counts
+  purged, failed and dropped URLs.
+- A deleted tenant's objects leave the bucket, and so the cache, with the hourly expiry sweep, at most 7 days after they
+  were sealed. They do not leave at the moment of deletion.
 - Anyone who knows an object's name can download its ciphertext. Object names come only from authenticated manifests.
   Opening the bytes still needs the epoch key from the authenticated key route.
 - Live polls at the head stay on the origin (`private, no-store`). T2 serves only catch-up reads of sealed objects.

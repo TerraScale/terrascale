@@ -25,7 +25,7 @@ namespace TerraScale.Authentication.Features.Oidc;
 /// <summary>
 /// The hosted OpenID Connect issuers: one per tenant, <c>{TS_AUTH_PUBLIC_ORIGIN}/{tenant}</c>, with every protocol route
 /// under <c>/{tenant}/</c>. The <c>terrascale</c> tenant serves the platform; each project is a tenant whose discovery
-/// document and JWKS are served, with its own key ring. Its OAuth endpoints answer 404 until it has clients and users.
+/// users sign in to the customer's own applications with the authorization code flow, under its own key ring.
 /// </summary>
 public static class OidcIssuer
 {
@@ -95,6 +95,7 @@ public static class OidcIssuer
     {
         ArgumentNullException.ThrowIfNull(options);
         services.AddSingleton<ClientRegistration>();
+        services.AddHttpContextAccessor();
         services.AddOpenIddict()
             .AddCore(core =>
             {
@@ -229,64 +230,39 @@ public static class OidcIssuer
 /// <summary>
 /// Resolves OpenIddict's base and request URIs against the configured public origin instead of the request's Host
 /// header and scheme, so discovery, issuer checks and endpoint matching never trust request headers. The base URI is the
-/// tenant's issuer, named by the first path segment: <c>terrascale</c> for every endpoint, an existing project for its
-/// discovery document and JWKS only. Any other request gets the bare origin, under which no endpoint matches, so it
+/// tenant's issuer, as <see cref="Tenancy"/> resolved it: <c>terrascale</c> for every endpoint, an existing project for
+/// its discovery document, JWKS and authorization-code endpoints. Any other request gets the bare origin, under which no endpoint matches, so it
 /// falls through to routing and answers 404.
 /// </summary>
-public sealed class TrustPublicOrigin(AuthOptions options, AuthStore store) : IOpenIddictServerHandler<ProcessRequestContext>
+public sealed class TrustPublicOrigin(AuthOptions options) : IOpenIddictServerHandler<ProcessRequestContext>
 {
     /// <summary>The transaction property holding the request's tenant.</summary>
     public const string TenantProperty = "ts-auth:tenant";
 
     /// <inheritdoc />
-    public async ValueTask HandleAsync(ProcessRequestContext context)
+    public ValueTask HandleAsync(ProcessRequestContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
         var request = context.Transaction.GetHttpRequest() ?? throw new InvalidOperationException("OpenIddict ran outside an HTTP request.");
         var host = new HostString(options.PublicOrigin.Authority);
-        var tenant = await this.TenantAsync(request.Path, context.CancellationToken).ConfigureAwait(false);
+        var tenant = TenantOf(request);
         var basePath = tenant is null ? request.PathBase : request.PathBase.Add(new PathString("/" + tenant));
         context.BaseUri = Uri.TryCreate(UriHelper.BuildAbsolute(options.PublicOrigin.Scheme, host, basePath), UriKind.Absolute, out var baseUri) ? baseUri : null;
         context.RequestUri = Uri.TryCreate(UriHelper.BuildAbsolute(options.PublicOrigin.Scheme, host, request.PathBase, request.Path, request.QueryString), UriKind.Absolute, out var requestUri) ? requestUri : null;
         context.Transaction.SetProperty(TenantProperty, tenant);
+        return ValueTask.CompletedTask;
     }
 
-    private async Task<string?> TenantAsync(PathString path, CancellationToken cancellationToken)
+    private static string? TenantOf(HttpRequest request)
     {
-        var segments = (path.Value ?? string.Empty).Split('/', 3);
-        if (segments is not [_, var tenant, var rest] || tenant.Length == 0)
+        // The hosted device page is the platform issuer's end-user verification endpoint: the device codes it approves
+        // carry the issuer the token endpoint validates. No other hosted page is a protocol endpoint.
+        if (request.Path.StartsWithSegments("/ui", StringComparison.OrdinalIgnoreCase))
         {
-            return null;
+            return string.Equals(request.Path.Value?.TrimEnd('/'), DeviceFlow.PagePath, StringComparison.OrdinalIgnoreCase) ? OidcIssuer.Slug : null;
         }
 
-        // Endpoint matching ignores case, as routing does; the issuer stays the canonical slug.
-        if (string.Equals(tenant, OidcIssuer.Slug, StringComparison.OrdinalIgnoreCase))
-        {
-            return OidcIssuer.Slug;
-        }
-
-        // The hosted device page is the platform issuer's end-user verification endpoint: the device codes it
-        // approves carry the issuer the token endpoint validates.
-        if (string.Equals(path.Value?.TrimEnd('/'), DeviceFlow.PagePath, StringComparison.OrdinalIgnoreCase))
-        {
-            return OidcIssuer.Slug;
-        }
-
-        // A project tenant: its discovery document and JWKS, while the project exists.
-        if (rest is not (OidcIssuer.ConfigurationPath or OidcIssuer.JwksPath) || !TerraScaleIds.IsValid(tenant))
-        {
-            return null;
-        }
-
-        try
-        {
-            // Discovery and the JWKS decide nothing about authorization: this region's copy may answer.
-            return await store.GetLocalAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, tenant, cancellationToken).ConfigureAwait(false) is null ? null : tenant;
-        }
-        catch (Exception error) when (error is not (OperationCanceledException or OutOfMemoryException))
-        {
-            throw ApiException.Unavailable(error);
-        }
+        return Tenancy.Resolved(request.HttpContext);
     }
 }
 
@@ -385,13 +361,14 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             return;
         }
 
+        var tenant = context.Transaction.GetProperty<string>(TrustPublicOrigin.TenantProperty) ?? throw new InvalidOperationException("The request has no tenant.");
         var inherited = token.Bindings.Concat(CredentialLineage.Read(context.Principal!)).Distinct().ToArray();
         var addsBinding = context.EndpointType is not OpenIddictServerEndpointType.EndUserVerification;
         var binding = AuthStore.NewCredentialBinding("oidc", identifier);
         List<StoreOperation> operations =
         [
-            AuthStore.CredentialClaim(OidcIssuer.InstanceId, binding),
-            AuthStore.Replace(AuthStore.OidcTokenCollection, OidcIssuer.InstanceId, identifier,
+            AuthStore.CredentialClaim(tenant, binding),
+            AuthStore.Replace(AuthStore.OidcTokenCollection, tenant, identifier,
                 Redeemed(token, clock.GetUtcNow()), token.Version),
         ];
         string? approvedAuthorizationId = null;
@@ -409,7 +386,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             var approval = new OidcAuthorization
             {
                 Id = AuthStore.NewId(),
-                InstanceId = OidcIssuer.InstanceId,
+                InstanceId = tenant,
                 ApplicationId = parent.ApplicationId,
                 CreationDate = clock.GetUtcNow(),
                 Properties = parent.Properties,
@@ -420,8 +397,8 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             };
             approvedAuthorizationId = approval.Id;
             using var valid = JsonDocument.Parse("""{"eq":["/status","valid"]}""");
-            operations.Add(AuthStore.Require(AuthStore.OidcAuthorizationCollection, OidcIssuer.InstanceId, parentId, valid.RootElement.Clone()));
-            operations.Add(AuthStore.Create(AuthStore.OidcAuthorizationCollection, OidcIssuer.InstanceId, approval.Id,
+            operations.Add(AuthStore.Require(AuthStore.OidcAuthorizationCollection, tenant, parentId, valid.RootElement.Clone()));
+            operations.Add(AuthStore.Create(AuthStore.OidcAuthorizationCollection, tenant, approval.Id,
                 JsonSerializer.SerializeToElement(approval, OidcJson.Default.OidcAuthorization)));
         }
         else if (context.Request.IsDeviceCodeGrantType())
@@ -443,7 +420,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             return;
         }
 
-        if (await store.AreCredentialsCurrentAsync(OidcIssuer.InstanceId, inherited, context.CancellationToken).ConfigureAwait(false)
+        if (await store.AreCredentialsCurrentAsync(tenant, inherited, context.CancellationToken).ConfigureAwait(false)
             && await store.TransactAsync(operations, context.CancellationToken).ConfigureAwait(false) is null)
         {
             // Approval rewrites the existing device-code record; that record's LWW payload selects the approver.

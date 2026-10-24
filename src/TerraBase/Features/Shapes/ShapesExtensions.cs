@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Text.Json.Nodes;
 using Microsoft.OpenApi;
 using TerraBase.Configuration;
@@ -23,7 +24,7 @@ public static class ShapesExtensions
         ["307"] = ("offset=-1: Location names snap.<S>.0 of the newest published snapshot, or a resume's local commit boundary.", null, ["Location", "TB-Shape-Handle"]),
         ["400"] = ("Error codes: invalid_request, invalid_query.", Error("invalid_request", "resume cursor is malformed"), []),
         ["401"] = ("Error codes: invalid_key.", Error("invalid_key", "The request cannot be served."), []),
-        ["403"] = ("Error codes: forbidden_scope.", Error("forbidden_scope", "The request cannot be served."), []),
+        ["403"] = ("Error codes: forbidden_scope, forbidden.", Error("forbidden_scope", "The request cannot be served."), []),
         ["404"] = ("Error codes: unknown_database, unknown_collection.", Error("unknown_collection", "the collection does not exist"), []),
         ["409"] = ("Error codes: must_refetch; the body and TB-Shape-Handle name the current handle. Restart at offset=-1.",
             $$$"""{"error":{"code":"must_refetch","message":"shape lineage changed","handle":"{{{Handle}}}"}}""", ["TB-Shape-Handle"]),
@@ -67,8 +68,10 @@ public static class ShapesExtensions
     }
 
     /// <summary>Registers the shape services behind <c>GET …/collections/{collection}/shape</c>, their JSON metadata and examples.</summary>
-    public static IServiceCollection AddTerraBaseShapes(this IServiceCollection services) =>
-        services.ConfigureHttpJsonOptions(json =>
+    public static IServiceCollection AddTerraBaseShapes(this IServiceCollection services)
+    {
+        services.AddHttpClient(ShapeCdnPurge.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30));
+        return services.ConfigureHttpJsonOptions(json =>
             {
                 json.SerializerOptions.TypeInfoResolverChain.Insert(0, ShapeJsonContext.Default);
                 json.SerializerOptions.TypeInfoResolverChain.Insert(0, ShapeKeyJsonContext.Default);
@@ -118,8 +121,14 @@ public static class ShapesExtensions
                 provider.GetRequiredService<IShapeStorage>(), provider.GetRequiredService<IShapeMetrics>(), provider.GetRequiredService<IMemoryBudget>(), provider.GetRequiredService<TimeProvider>(),
                 () => provider.GetRequiredService<IShapeCrypto>(),
                 provider.GetService<BackupSettings>() is { } settings ? new ShapeObjectStore(settings,
-                    provider.GetRequiredService<IHttpClientFactory>(), provider.GetRequiredService<IObjectStore>(), provider.GetRequiredService<TimeProvider>()) : null,
+                    provider.GetRequiredService<IHttpClientFactory>(), provider.GetRequiredService<IObjectStore>(), provider.GetRequiredService<TimeProvider>(),
+                    provider.GetRequiredService<IShapeCdnPurge>()) : null,
                 provider.GetRequiredService<ILogger<ShapeMirror>>()))
+            .AddSingleton<ShapeCdnPurge>(provider => new ShapeCdnPurge(provider.GetRequiredService<IHttpClientFactory>(),
+                provider.GetService<BackupSettings>()?.CloudflareApiToken, provider.GetRequiredService<TimeProvider>(),
+                provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<ShapeCdnPurge>>()))
+            .AddSingleton<IShapeCdnPurge>(provider => provider.GetRequiredService<ShapeCdnPurge>())
+            .AddHostedService(provider => provider.GetRequiredService<ShapeCdnPurge>())
             .AddSingleton<IShapeMirror>(provider => provider.GetRequiredService<ShapeMirror>())
             .AddSingleton<IShapeKeyRetention>(provider => provider.GetRequiredService<ShapeMirror>())
             .AddHostedService(provider => provider.GetRequiredService<ShapeMirror>())
@@ -129,6 +138,7 @@ public static class ShapesExtensions
             .AddSingleton<IShapeCrypto>(provider => new ShapeCrypto(provider.GetService<DataKeys>(),
                 provider.GetRequiredService<IShapeKeyRetention>(), provider.GetRequiredService<IMemoryBudget>(),
                 provider.GetRequiredService<TimeProvider>()));
+    }
 
     private static void Document(OpenApiOperation operation)
     {

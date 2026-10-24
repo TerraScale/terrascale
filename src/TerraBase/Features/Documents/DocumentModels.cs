@@ -19,7 +19,7 @@ public sealed record DocumentBody(
 /// <param name="Id">Document id.</param>
 /// <param name="Version">The new version; for a delete, the tombstone's.</param>
 /// <param name="Offset">The database commit offset of the write, a decimal string.</param>
-/// <param name="Durability"><c>remote_durable</c> once another placed region confirmed the write, <c>local_durable</c> on a single-machine cell, <c>unchanged</c> for assertions only (decision 0013a).</param>
+/// <param name="Durability"><c>local_durable</c> once this region's commit is synced (the default, decision 0013e), <c>remote_durable</c> once another placed region confirmed the write (with <c>TB-Durability: remote_durable</c>, decision 0013a), <c>unchanged</c> for assertions only.</param>
 /// <param name="Document">After a PATCH, the stored document, with counters as integers and sets as sorted arrays.</param>
 public sealed record WriteBody(
     string Id, string Version, string Offset, string Durability,
@@ -148,6 +148,6 @@ public sealed record TransactionResultBody(
 
 /// <summary>Result of a transaction.</summary>
 /// <param name="Offset">The database commit offset, a decimal string.</param>
-/// <param name="Durability"><c>remote_durable</c> once another placed region confirmed the write, <c>local_durable</c> on a single-machine cell, <c>unchanged</c> for assertions only (decision 0013a).</param>
+/// <param name="Durability"><c>local_durable</c> once this region's commit is synced (the default, decision 0013e), <c>remote_durable</c> once another placed region confirmed the write (with <c>TB-Durability: remote_durable</c>, decision 0013a), <c>unchanged</c> for assertions only.</param>
 /// <param name="Results">One result per operation, in order.</param>
 public sealed record TransactionBody(string Offset, string Durability, IReadOnlyList<TransactionResultBody> Results);

@@ -42,7 +42,7 @@ public sealed class ListDocumentsEndpoint(IDocumentService documents, ITenantDir
 
     private async ValueTask<IResult> ListAsync(TenantContext database, string collection, IQueryCollection query, CancellationToken cancellationToken)
     {
-        var digest = QueryParser.Digest(database, collection, "list");
+        var digest = await CollectionRuleAccess.BindCursorAsync(documents, database, collection, QueryParser.Digest(database, collection, "list"), cancellationToken);
         if (!query.TryGetValue("cursor", out var cursor))
         {
             return await PageAsync(database, collection, digest, query, after: null, cancellationToken);
@@ -70,6 +70,7 @@ public sealed class ListDocumentsEndpoint(IDocumentService documents, ITenantDir
         {
             NotFound error => ErrorResponse.From(error),
             Validation error => ErrorResponse.From(error),
+            Forbidden error => ErrorResponse.From(error),
             QueryOutcome outcome => Page(collection, digest, outcome.Page, cancellationToken),
         };
 

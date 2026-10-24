@@ -47,6 +47,7 @@ public sealed class EmailTests
         await using var server = await StartAsync(logs, cloudflare: null, settings: values =>
         {
             values.Remove("environment");
+            values["terrabase-url"] = "http://127.0.0.1:9/";
         }, storage: true);
 
         await Assert.That(logs.Text).Contains("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN are not configured: email is logged, not delivered");

@@ -194,6 +194,7 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
             [
                 Authority(access, Roles.Owner),
                 AuthStore.Delete(AuthStore.OrganizationCollection, Instance, organizationId, access.Organization.Version),
+                DeletionJob.Enqueue(Instance, "organization", organizationId, clock),
             ], true);
         }, cancellationToken).ConfigureAwait(false);
 
@@ -256,7 +257,9 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
             List<StoreOperation> operations =
             [
                 Authority(access, owners ? Roles.Owner : Roles.Admin),
-                AuthStore.Replace(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, memberId), Serialize(updated, PlatformJson.Default.MembershipRecord), member.Version),
+                Roles.Rank(role) < Roles.Rank(current)
+                    ? AuthStore.Replace(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, memberId), Serialize(updated, PlatformJson.Default.MembershipRecord), member.Version).AddsNoAccess()
+                    : AuthStore.Replace(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, memberId), Serialize(updated, PlatformJson.Default.MembershipRecord), member.Version),
             ];
             var reshaped = Unoffered(organization with { Owners = count }, memberId, role);
             operations.Add(reshaped != organization
@@ -320,53 +323,47 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
         }, cancellationToken);
 
     /// <summary>
-    /// Takes <paramref name="userId"/> out of every organization before its account is deleted: an organization where it
-    /// is the only member is deleted with its projects, any other one is left. Checks first, so a 409
-    /// <c>last_owner</c> (the last owner of an organization with other members) changes nothing.
+    /// An account's organizations before it closes: those where it is the only member with a role (which close with their
+    /// projects) and the others (which it leaves). 409 <c>last_owner</c> while it is the last owner of an organization with
+    /// other members. Read again after the closure fences are committed: a member who joined before then makes the
+    /// organization shared, and the fences keep anyone from joining later.
     /// </summary>
-    public async Task LeaveEverywhereAsync(string userId, CancellationToken cancellationToken)
+    internal async Task<(IReadOnlyList<string> Sole, IReadOnlyList<string> Shared)> AccountScopeAsync(string userId, CancellationToken cancellationToken)
     {
-        var sole = new HashSet<string>(StringComparer.Ordinal);
+        var (sole, shared) = (new List<string>(), new List<string>());
         var memberships = await this.QueryAsync(AuthStore.MembershipCollection, [("/userId", userId)], PlatformJson.Default.MembershipRecord, cancellationToken)
             .Where(membership => membership.Value.UserId == userId).Select(membership => membership.Value).ToListAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var membership in memberships.Where(membership => membership.Role is not null))
+        foreach (var membership in memberships)
         {
-            var others = await this.QueryAsync(AuthStore.MembershipCollection, [("/organizationId", membership.OrganizationId)], PlatformJson.Default.MembershipRecord, cancellationToken)
+            var others = membership.Role is not null && await this.QueryAsync(AuthStore.MembershipCollection, [("/organizationId", membership.OrganizationId)], PlatformJson.Default.MembershipRecord, cancellationToken)
                 .AnyAsync(other => other.Value.OrganizationId == membership.OrganizationId && other.Value.UserId != userId && other.Value.Role is not null, cancellationToken).ConfigureAwait(false);
-            if (!others && membership.Role == Roles.Owner)
+            if (membership.Role == Roles.Owner && !others)
             {
                 sole.Add(membership.OrganizationId);
+                continue;
             }
-            else if (membership.Role == Roles.Owner && await this.OrganizationAsync(membership.OrganizationId, cancellationToken).ConfigureAwait(false) is { Value.Owners: <= 1 })
+
+            if (membership.Role == Roles.Owner && await this.OrganizationAsync(membership.OrganizationId, cancellationToken).ConfigureAwait(false) is { Value.Owners: <= 1 })
             {
                 throw Conflict("last_owner", "Make another member an owner of every organization you share before deleting your account.");
             }
+
+            shared.Add(membership.OrganizationId);
         }
 
-        foreach (var membership in memberships)
-        {
-            try
-            {
-                if (sole.Contains(membership.OrganizationId))
-                {
-                    await foreach (var project in this.QueryAsync(AuthStore.ProjectCollection, [("/organizationId", membership.OrganizationId)], PlatformJson.Default.ProjectRecord, cancellationToken).ConfigureAwait(false))
-                    {
-                        await this.DeleteProjectAsync(userId, membership.OrganizationId, project.Value.Id, cancellationToken).ConfigureAwait(false);
-                    }
-
-                    await this.DeleteOrganizationAsync(userId, membership.OrganizationId, cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    await this.RemoveAsync(userId, membership.OrganizationId, userId, cancellationToken).ConfigureAwait(false);
-                }
-            }
-            catch (ApiException error) when (error.Status == StatusCodes.Status404NotFound)
-            {
-                // Gone meanwhile, or a stale collaborator record that grants nothing.
-            }
-        }
+        return (sole, shared);
     }
+
+    /// <summary>The ids of an organization's projects.</summary>
+    internal IAsyncEnumerable<string> ProjectIdsAsync(string organizationId, CancellationToken cancellationToken) =>
+        this.QueryAsync(AuthStore.ProjectCollection, [("/organizationId", organizationId)], PlatformJson.Default.ProjectRecord, cancellationToken)
+            .Where(project => project.Value.OrganizationId == organizationId).Select(project => project.Value.Id);
+
+    /// <summary>Asserts that <paramref name="userId"/> still owns <paramref name="organizationId"/>, at the version read.</summary>
+    internal async Task<StoreOperation?> OwnerAssertionAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+        await this.MembershipAsync(organizationId, userId, cancellationToken).ConfigureAwait(false) is { Value.Role: Roles.Owner } membership
+            ? AuthStore.Require(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, userId), Filter("in", RoleList([Roles.Owner])), membership.Version)
+            : null;
 
     /// <summary>Creates a project, whose explicit admin becomes the creator; needs the member organization role.</summary>
     public Task<ProjectRecord> CreateProjectAsync(string userId, string organizationId, string name, CancellationToken cancellationToken) =>
@@ -471,30 +468,134 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
             return new Plan<ProjectAccess>(operations, access with { Project = access.Project with { Value = renamed } }, claim);
         }, cancellationToken);
 
-    /// <summary>Deletes a project and then its project roles, API keys and pending invitations; needs the project's admin role.</summary>
-    public async Task DeleteProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Commits the caller's closure intent for a project, needing its admin role in the same transaction, or returns the
+    /// pending one (a retry, or another admin's). Nothing outside ts-auth changes here: see <see cref="Closures"/>.
+    /// </summary>
+    internal async Task<Versioned<ClosureJob>> RequestProjectClosureAsync(string userId, string organizationId, string projectId, string? accountId, CancellationToken cancellationToken)
     {
         await this.CommitAsync(async () =>
         {
             var access = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             RequireRole(access, Roles.Admin);
-            var organization = access.Organization;
+            if (await this.ClosureAsync("project", projectId, cancellationToken).ConfigureAwait(false) is not null)
+            {
+                return new Plan<bool>([], true);
+            }
+
+            // The project's closure id is drawn at random once and kept on its record, so every later intent (a retry
+            // after a refusal included) presents the closure TerraBase may already hold. Nothing derives it from the id.
+            var project = access.Project.Value;
+            var closureId = project.ClosureId ?? AuthStore.NewId();
+            var (_, create) = ClosureJob.New(Instance, "project", projectId, organizationId, userId, clock, accountId, closureId);
             List<StoreOperation> operations =
             [
                 Authority(access, Roles.Admin),
-                AuthStore.Replace(AuthStore.OrganizationCollection, Instance, organizationId,
-                    Serialize(organization.Value with { Projects = organization.Value.Projects - 1 }, PlatformJson.Default.OrganizationRecord), organization.Version),
-                AuthStore.Delete(AuthStore.ProjectCollection, Instance, projectId, access.Project.Version),
+                project.ClosureId is null
+                    ? AuthStore.Replace(AuthStore.ProjectCollection, Instance, projectId, Serialize(project with { ClosureId = closureId }, PlatformJson.Default.ProjectRecord),
+                        access.Project.Version).AddsNoAccess()
+                    : AuthStore.Require(AuthStore.ProjectCollection, Instance, projectId, Filter("exists", "/id"), access.Project.Version),
+                create,
+                this.Audit(organizationId, userId, "project.closure_requested", projectId, access.Project.Value.Name),
             ];
-            var name = ProjectNameKey(organizationId, access.Project.Value.Name);
-            if (await store.FindUniqueAsync(Instance, ProjectNameKind, name, cancellationToken).ConfigureAwait(false) is { } held && held.OwnerId == projectId)
+            if (accountId is not null)
             {
-                operations.Add(AuthStore.Release(Instance, ProjectNameKind, name, held.Version));
+                // An account's step creates its project intents only while its account intent exists, so a concurrent
+                // cancellation cannot leave one behind without its driver.
+                operations.Add(AuthStore.Require(AuthStore.ClosureJobCollection, Instance, ClosureJob.Key("account", accountId), Filter("exists", "/id")));
             }
 
-            operations.Add(this.Audit(organizationId, userId, "project.deleted", projectId, access.Project.Value.Name));
             return new Plan<bool>(operations, true);
         }, cancellationToken).ConfigureAwait(false);
+        return await this.ClosureAsync("project", projectId, cancellationToken).ConfigureAwait(false)
+            is { } job && job.Value.OrganizationId == organizationId ? job : throw ApiException.Unavailable();
+    }
+
+    /// <summary>The pending closure intent of a scope's subject, or null.</summary>
+    internal async Task<Versioned<ClosureJob>?> ClosureAsync(string scope, string subjectId, CancellationToken cancellationToken)
+    {
+        if (await store.GetAsync(AuthStore.ClosureJobCollection, Instance, ClosureJob.Key(scope, subjectId), cancellationToken).ConfigureAwait(false) is not { } document
+            || document.Document.Deserialize(ClosureJson.Default.ClosureJob) is not { } job
+            || job.InstanceId != Instance || job.Scope != scope || job.SubjectId != subjectId || !IsId(job.Id))
+        {
+            return null;
+        }
+
+        // A replicated full-document deferral cannot erase evidence of a region's irreversible step.
+        if (scope == "account" && job.CommittedAt is null && await store.ClosureCommittedAtAsync(job, cancellationToken).ConfigureAwait(false) is { } committed)
+        {
+            job = job with { CommittedAt = committed };
+        }
+
+        return new(job, document.Version);
+    }
+
+    /// <summary>True only after every holder fenced this account generation; a pending barrier returns 503.</summary>
+    internal async Task<bool> CancelClosureAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken, string? unlessAccount = null)
+    {
+        if (job.Value.Scope == "account")
+        {
+            var answer = await store.CancelAccountClosureAsync(job.Value, cancellationToken).ConfigureAwait(false);
+            return answer.Status switch
+            {
+                "cancelled" => true,
+                "committed" => false,
+                _ => throw ApiException.Unavailable(),
+            };
+        }
+
+        return await store.TransactAsync(unlessAccount is null
+            ? [AuthStore.Delete(AuthStore.ClosureJobCollection, Instance, ClosureJob.Key(job.Value.Scope, job.Value.SubjectId), job.Version)]
+            : [
+                AuthStore.Delete(AuthStore.ClosureJobCollection, Instance, ClosureJob.Key(job.Value.Scope, job.Value.SubjectId), job.Version),
+                AuthStore.Absent(AuthStore.ClosureJobCollection, Instance, ClosureJob.Key("account", unlessAccount)),
+            ], cancellationToken).ConfigureAwait(false) is null;
+    }
+
+    /// <summary>
+    /// After TerraBase accepted the closure, removes the project root with its logical deletion job and the intent in one
+    /// transaction, then its project roles, API keys and invitations. The intent's committed admin role authorizes it.
+    /// True when the root is gone; false (nothing cleaned) when this intent is gone but the root survives.
+    /// </summary>
+    internal async Task<bool> RemoveClosedProjectAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        var (projectId, organizationId) = (job.Value.SubjectId, job.Value.OrganizationId!);
+        var removed = await this.CommitAsync(async () =>
+        {
+            if (await this.ClosureAsync("project", projectId, cancellationToken).ConfigureAwait(false) is not { } current || !current.Value.Same(job.Value))
+            {
+                // Not this intent any more: only an absent root is done; a surviving one keeps every record.
+                return new Plan<bool>([], await this.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) is null);
+            }
+
+            List<StoreOperation> operations = [AuthStore.Delete(AuthStore.ClosureJobCollection, Instance, ClosureJob.Key("project", projectId), current.Version)];
+            if (await this.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) is { } project && project.Value.OrganizationId == organizationId
+                && await this.OrganizationAsync(organizationId, cancellationToken).ConfigureAwait(false) is { } organization)
+            {
+                operations.Add(AuthStore.Replace(AuthStore.OrganizationCollection, Instance, organizationId,
+                    Serialize(organization.Value with { Projects = organization.Value.Projects - 1 }, PlatformJson.Default.OrganizationRecord), organization.Version));
+                operations.Add(AuthStore.Delete(AuthStore.ProjectCollection, Instance, projectId, project.Version));
+                operations.Add(DeletionJob.Enqueue(Instance, "project", projectId, clock, organizationId));
+                var name = ProjectNameKey(organizationId, project.Value.Name);
+                if (await store.FindUniqueAsync(Instance, ProjectNameKind, name, cancellationToken).ConfigureAwait(false) is { } held && held.OwnerId == projectId)
+                {
+                    operations.Add(AuthStore.Release(Instance, ProjectNameKind, name, held.Version));
+                }
+
+                // An erased requester's id is fenced from new records; the deletion job keeps the evidence then.
+                if (await users.GetAsync(Instance, job.Value.RequestedBy, cancellationToken).ConfigureAwait(false) is not null)
+                {
+                    operations.Add(this.Audit(organizationId, job.Value.RequestedBy, "project.deleted", projectId, project.Value.Name));
+                }
+            }
+
+            return new Plan<bool>(operations, true);
+        }, cancellationToken).ConfigureAwait(false);
+        if (!removed)
+        {
+            return false;
+        }
 
         // Every check and every token request of a key reads the project first, and a collaborator needs a project that
         // exists, so what is left behind grants nothing; retiring the roles also removes collaborators the project was the
@@ -513,13 +614,14 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
 
         await this.CleanUpAsync(AuthStore.ApiKeyCollection, [("/projectId", projectId)], PlatformJson.Default.ApiKeyRecord, key => key.Id, cancellationToken).ConfigureAwait(false);
         await this.CleanUpAsync(AuthStore.ApiKeyUsageCollection, [("/projectId", projectId)], PlatformJson.Default.ApiKeyUsageRecord, usage => usage.KeyId, cancellationToken).ConfigureAwait(false);
-        await this.RetireInvitationsAsync([("/projectId", projectId), ("/status", "pending")], cancellationToken).ConfigureAwait(false);
+        await this.RetireInvitationsAsync([("/projectId", projectId)], cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     // Deletes a deleted project's role and, as RemoveProjectRoleAsync does, the membership of a collaborator left with
     // no role on a live project. The membership is deleted at the version read, so a grant committed meanwhile (which
     // rewrites it) fails this attempt and the next one keeps it.
-    private Task<bool> RetireGrantAsync(string organizationId, string projectId, string memberId, CancellationToken cancellationToken) =>
+    internal Task<bool> RetireGrantAsync(string organizationId, string projectId, string memberId, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
         {
             if (await this.ProjectMemberAsync(projectId, memberId, cancellationToken).ConfigureAwait(false) is not { } grant)
@@ -567,15 +669,19 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
 
             var grant = existing is null ? new ProjectMemberRecord(Instance, organizationId, projectId, memberId, role, clock.GetUtcNow()) : existing.Value with { Role = role };
             var record = Serialize(grant, PlatformJson.Default.ProjectMemberRecord);
+            // Lowering an explicit role only takes access away: a pending closure lets it through.
+            var lowers = existing is not null && Roles.Rank(role) < Roles.Rank(existing.Value.Role);
             return new Plan<ProjectMemberRecord>(
             [
                 Authority(access, Roles.Admin),
                 // Orders the grant against a concurrent removal of the member (see RemoveAsync).
-                Touch(member),
+                lowers ? Touch(member).AddsNoAccess() : Touch(member),
                 AuthStore.Require(AuthStore.ProjectCollection, Instance, projectId, Filter("exists", "/id")),
                 existing is null
                     ? AuthStore.Create(AuthStore.ProjectMemberCollection, Instance, ProjectMemberKey(projectId, memberId), record)
-                    : AuthStore.Replace(AuthStore.ProjectMemberCollection, Instance, ProjectMemberKey(projectId, memberId), record, existing.Version),
+                    : lowers
+                        ? AuthStore.Replace(AuthStore.ProjectMemberCollection, Instance, ProjectMemberKey(projectId, memberId), record, existing.Version).AddsNoAccess()
+                        : AuthStore.Replace(AuthStore.ProjectMemberCollection, Instance, ProjectMemberKey(projectId, memberId), record, existing.Version),
                 this.Audit(organizationId, userId, "project_member.role_set", memberId, $"{projectId}/{role}"),
             ], grant);
         }, cancellationToken).ConfigureAwait(false);
@@ -603,7 +709,7 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
             {
                 operations.Add(member.Value.Role is null && !await this.CollaboratesAsync(memberId, organizationId, projectId, cancellationToken).ConfigureAwait(false)
                     ? AuthStore.Delete(AuthStore.MembershipCollection, Instance, MembershipKey(organizationId, memberId), member.Version)
-                    : Touch(member));
+                    : Touch(member).AddsNoAccess());
             }
 
             operations.Add(this.Audit(organizationId, userId, "project_member.removed", memberId, projectId));

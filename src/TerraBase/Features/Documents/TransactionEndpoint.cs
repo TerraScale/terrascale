@@ -26,7 +26,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         Description("""
             {"ops":[…]} with 1 to 1024 operations across the collections of one database: create (put with if_none_match "*"; id is generated as a ULID when omitted), put (document, optional if_match or if_none_match "*"), patch (exactly one of merge or ops, optional if_match), delete (optional if_match), assert (filter: the document exists and matches; or absent: true) and assert_count (filter, gte and/or lte; at most 16 per transaction, at most 10000 documents examined). Assertions see the state before this transaction's writes. Two operations may not target the same document. Every failure names the failing operation in error.op. Assertions also need the documents:read scope. Query assertions and counts are interrupted after 5 million engine work units or a 5-second deadline (400 invalid_query, query too expensive). Every id is a canonical uppercase ULID (400 invalid_document_id otherwise).
             Captured changes contain at most 2 MiB of UTF-8 collection names, ids and JSON. Exceeding this limit returns 503 capacity with the failing error.op, rolling back the entire transaction; split the writes into smaller transactions.
-            Mutations in a cell wait up to 10 seconds for another placed region's durable acknowledgement and answer remote_durable; a cell of one answers local_durable. Assertions only answer unchanged. Before execution, 503 remote_region_unavailable or confirmation_busy carries Retry-After; a database placed in its home region alone answers 409 placement_needs_two_regions until a placement update adds a region. An ambiguous commit or missing acknowledgement answers 503 write_outcome_unknown with region and machine, without Retry-After; never replay it automatically.
+            Mutations answer local_durable once this region's commit is synced to disk; replication to the other placed regions continues in the background. With the header TB-Durability: remote_durable, mutations in a cell also wait up to 10 seconds for another placed region's durable acknowledgement and answer remote_durable (a cell of one answers local_durable); only then, before execution, 503 remote_region_unavailable or confirmation_busy carries Retry-After, and an ambiguous commit or missing acknowledgement answers 503 write_outcome_unknown with region and machine, without Retry-After; never replay it automatically. Any other TB-Durability value answers 400. A database placed in its home region alone answers 409 placement_needs_two_regions on either path until a placement update adds a region. Assertions only answer unchanged.
             """);
         Tags("Transactions");
         Metadata(new RequestBodyMetadata(typeof(TransactionRequest), DocumentRoute.JsonMediaType));
@@ -47,21 +47,22 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
-            TenantContext database => (DocumentRoute.CheckParameters(HttpContext), DocumentRoute.CheckIdempotencyKey(HttpContext)) switch
+            TenantContext database => (DocumentRoute.CheckParameters(HttpContext), DocumentRoute.CheckIdempotencyKey(HttpContext), DocumentRoute.CheckDurability(HttpContext)) switch
             {
-                (Validation error, _) => ErrorResponse.From(error),
-                (_, Validation error) => ErrorResponse.From(error),
-                _ => await DocumentRoute.CheckBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_request", cancellationToken, DocumentRoute.JsonMediaType) switch
+                (Validation error, _, _) => ErrorResponse.From(error),
+                (_, Validation error, _) => ErrorResponse.From(error),
+                (_, _, Validation error) => ErrorResponse.From(error),
+                (_, _, bool waitForRemote) => await DocumentRoute.CheckBodyAsync(HttpContext, DocumentRoute.MaxRequestBytes, "invalid_request", cancellationToken, DocumentRoute.JsonMediaType) switch
                 {
                     Validation error => ErrorResponse.From(error),
                     PayloadTooLarge error => ErrorResponse.From(error),
                     UnsupportedMediaType error => ErrorResponse.From(error),
-                    byte[] body => await TransactAsync(database, body, cancellationToken),
+                    byte[] body => await TransactAsync(database, body, waitForRemote, cancellationToken),
                 },
             },
         };
 
-    private async ValueTask<IResult> TransactAsync(TenantContext database, byte[] body, CancellationToken cancellationToken)
+    private async ValueTask<IResult> TransactAsync(TenantContext database, byte[] body, bool waitForRemote, CancellationToken cancellationToken)
     {
         // The envelope is read without parsing the operations, so each operation, duplicate members included,
         // is checked by RequestJson on its own and its failures carry its index.
@@ -74,11 +75,11 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         return Ops(envelope.RootElement) switch
         {
             Validation error => ErrorResponse.From(error),
-            List<JsonElement> ops => await TransactAsync(database, ops, cancellationToken),
+            List<JsonElement> ops => await TransactAsync(database, ops, waitForRemote, cancellationToken),
         };
     }
 
-    private async ValueTask<IResult> TransactAsync(TenantContext database, List<JsonElement> ops, CancellationToken cancellationToken)
+    private async ValueTask<IResult> TransactAsync(TenantContext database, List<JsonElement> ops, bool waitForRemote, CancellationToken cancellationToken)
     {
         var operations = new List<DocumentOperation>(ops.Count);
         var targets = new HashSet<(string, string)>();
@@ -106,7 +107,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
             return ErrorResponse.From(new Forbidden("assertions need the documents:read scope", "forbidden_scope"), firstAssertion);
         }
 
-        return await documents.WriteConfirmedAsync(database, operations, indexErrors: true, cancellationToken) switch
+        return await documents.WriteConfirmedAsync(database, operations, indexErrors: true, waitForRemote, cancellationToken) switch
         {
             DocumentRejected rejected => ErrorResponse.From(rejected.Error, rejected.Op),
             WriteResult written => TypedResults.Ok(new TransactionBody(

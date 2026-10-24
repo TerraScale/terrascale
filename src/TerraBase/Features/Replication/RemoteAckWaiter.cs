@@ -46,6 +46,34 @@ internal sealed class RemoteAckWaiter(TimeProvider time)
         return new RemoteLease(() => Release(database));
     }
 
+    // Read head before this snapshot: a later admission cannot commit below it. An unregistered attempt may already
+    // have committed, so an unknown position requires replay from the retained boundary.
+    public long? ReplayThrough(TenantContext database, Ulid incarnation, long head)
+    {
+        lock (_gate)
+        {
+            if (!_databases.TryGetValue(Key(database), out var admitted))
+            {
+                return head;
+            }
+
+            if (admitted.Count > admitted.Pending.Count)
+            {
+                return null;
+            }
+
+            foreach (var waiting in admitted.Pending)
+            {
+                if (!waiting.Confirmed && waiting.Marker.Incarnation == incarnation)
+                {
+                    head = Math.Min(head, waiting.Marker.ChangeId - 1);
+                }
+            }
+
+            return head;
+        }
+    }
+
     /// <summary>
     /// An eligible ack: a peer of another placed region holds durably every own group of <paramref name="incarnation"/>
     /// after <paramref name="from"/> up to <paramref name="to"/>, each received in a live batch.

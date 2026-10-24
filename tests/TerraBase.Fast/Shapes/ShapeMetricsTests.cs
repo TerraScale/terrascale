@@ -7,9 +7,11 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Memory;
 using TerraBase.Fast.Documents;
+using TerraBase.Features.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
 using TerraBase.Hosting;
@@ -310,25 +312,83 @@ public sealed class ShapeMetricsTests
     }
 
     [Test]
-    public async Task Repeated_writes_in_one_transaction_count_the_stored_body_read_only_once()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Repeated_writes_in_one_transaction_count_the_stored_body_read_only_once(bool ownerRules)
     {
         await using var api = await DocumentApi.StartAsync();
+        if (ownerRules)
+        {
+            await CollectionAccessRulesTests.DeclareAsync(api, CollectionAccessRulesTests.OwnerRules());
+        }
         var id = DocumentApi.NewId();
-        await Assert.That((await api.PutAsync(id, new { a = 1 })).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await api.PutAsync(id, new { a = 1, owner = "first" })).Status).IsEqualTo(HttpStatusCode.Created);
         var token = TestContext.Current!.Execution.CancellationToken;
         var tenant = await api.TenantOfAsync();
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, token))!;
         await using var transaction = await store.BeginTransactionAsync(write: true, token);
 
         var before = PointReads(await ScrapeAsync(api.Server));
-        await transaction.PutAsync(DocumentApi.Collection, id, "{\"a\":2}"u8.ToArray(), token);
+        await transaction.PutAsync(DocumentApi.Collection, id, """{"a":2,"owner":"middle"}"""u8.ToArray(), token);
         var afterFirst = PointReads(await ScrapeAsync(api.Server));
         // Preflight and payload for the shared collection state, then for the document's stored state.
         await Assert.That(afterFirst - before).IsEqualTo(4d);
 
-        await transaction.PutAsync(DocumentApi.Collection, id, "{\"a\":3}"u8.ToArray(), token);
+        await transaction.PutAsync(DocumentApi.Collection, id, """{"a":3,"owner":"last"}"""u8.ToArray(), token);
         // Pending document state skips its two SELECTs; only the collection state's preflight and payload are read again.
         await Assert.That(PointReads(await ScrapeAsync(api.Server)) - afterFirst).IsEqualTo(2d);
+        await transaction.CommitAsync(token);
+
+        await using var read = await store.BeginTransactionAsync(write: false, token);
+        var generation = (await read.GetCollectionAsync(DocumentApi.Collection, token))!.Id;
+        var page = await read.ReadFeedAsync(null, new HashSet<string>([DocumentApi.Collection]), 100, 1024 * 1024, token);
+        var change = page.Events.Last(change => change.Id == id);
+        await Assert.That(change.CollectionGeneration).IsEqualTo(generation);
+        await Assert.That(change.AccessBefore?.Subject).IsEqualTo(ownerRules ? "first" : null);
+        await Assert.That(change.AccessAfter?.Subject).IsEqualTo(ownerRules ? "last" : null);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Pending_feed_proofs_use_current_collection_metadata(bool joined)
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var original = CollectionAccessRulesTests.OwnerRules();
+        await CollectionAccessRulesTests.DeclareAsync(api, original);
+        var id = DocumentApi.NewId();
+        await Assert.That((await api.PutAsync(id, new { owner = "first", nextOwner = "last" })).Status).IsEqualTo(HttpStatusCode.Created);
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
+        var current = original with { Owner = "/nextOwner" };
+        await using (var write = await store.BeginTransactionAsync(write: true, token))
+        {
+            await write.PutAsync(DocumentApi.Collection, id, """{"owner":"first","nextOwner":"last","value":2}"""u8.ToArray(), token);
+            if (joined)
+            {
+                var metadata = (await write.GetAsync(DocumentDelta.Collections, DocumentApi.Collection, token))!;
+                using var body = JsonDocument.Parse(metadata.Json);
+                using var rules = JsonDocument.Parse(JsonSerializer.Serialize(current, CollectionRulesJsonContext.Default.CollectionAccessRules));
+                var at = new EntryVersion(new Hlc(((ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16) + 1000), ReplicaId.Of(4113, 7, 1));
+                var state = DocumentState.Bottom.Put(at, body.RootElement).Set(at, "rules", rules.RootElement);
+                await Assert.That(await write.JoinAsync(DocumentDelta.Collections, DocumentApi.Collection, state, at, token)).IsTrue();
+            }
+            else
+            {
+                await Assert.That(await write.SetCollectionRulesAsync(DocumentApi.Collection, current, token)).IsTrue();
+            }
+            await write.CommitAsync(token);
+        }
+
+        await using var read = await store.BeginTransactionAsync(write: false, token);
+        var generation = (await read.GetCollectionAsync(DocumentApi.Collection, token))!.Id;
+        var page = await read.ReadFeedAsync(null, new HashSet<string>([DocumentApi.Collection]), 100, 1024 * 1024, token);
+        var change = page.Events.Last(change => change.Id == id);
+        await Assert.That(change.CollectionGeneration).IsEqualTo(generation);
+        await Assert.That(change.AccessBefore?.Subject).IsEqualTo("first");
+        await Assert.That(change.AccessBefore?.Policy).IsEqualTo(original.Fingerprint());
+        await Assert.That(change.AccessAfter?.Subject).IsEqualTo("last");
+        await Assert.That(change.AccessAfter?.Policy).IsEqualTo(current.Fingerprint());
     }
 
     [Test]

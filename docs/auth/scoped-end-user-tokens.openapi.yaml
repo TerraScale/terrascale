@@ -1,0 +1,163 @@
+openapi: 3.1.0
+info:
+  title: TerraScale scoped end-user token API
+  version: v1
+  description: Standalone supplement to platform-api.openapi.yaml for backend-asserted end-user identities.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://auth.terrascale.tech
+security:
+  - projectApiKey: []
+tags:
+  - name: API keys
+    description: Backend-only project credentials.
+paths:
+  /v1/terrascale/projects/{project}/end-user-tokens:
+    post:
+      operationId: mintEndUserToken
+      tags: [API keys]
+      summary: Assert an end-user identity for one project
+      description: |
+        Requires a live whole project API key for the exact route project, without a database restriction,
+        with both documents:read and documents:write. Organization keys, platform JWTs and cookies do not authenticate.
+        Authentication precedes body parsing. No browser CORS allowlist is added; keep the key on the backend.
+        The backend must verify the user's identity and authorize its asserted roles.
+        Accepts only UTF-8 JSON, at most 16384 bytes and four levels deep. Unknown members are rejected.
+        Duplicate roles are removed ordinally. The complete signed compact ES256 JWT must fit 8192 ASCII bytes,
+        including encoding and signature; excessive encoded size returns 400 invalid_request.
+        Tokens expire within 900 seconds, capped at key expiry. Revocation prevents future minting;
+        issued tokens validate offline until expiry plus validation clock skew. Rotation grace still applies.
+        Shares the OAuth token IP budget (default 1000/minute), plus 1000/minute per authenticated key.
+        Every response has Cache-Control: no-store.
+      parameters:
+        - name: project
+          in: path
+          required: true
+          description: Canonical uppercase project ULID matching the authenticated key.
+          schema:
+            $ref: '#/components/schemas/Ulid'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EndUserTokenRequest'
+            example:
+              user_id: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+              claims:
+                roles: [reader]
+      responses:
+        '200':
+          description: Signed project-scoped end-user access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EndUserTokenBody'
+        '400':
+          description: Invalid JSON, identity, roles, unknown members or oversized body or signed JWT (invalid_request).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '401':
+          description: Missing, invalid, expired, revoked or insufficient project authority (unauthorized).
+          headers:
+            WWW-Authenticate:
+              description: Bearer challenge for ts-auth.
+              schema:
+                type: string
+                const: 'Bearer realm="ts-auth"'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '429':
+          description: IP or authenticated key budget exhausted (rate_limited).
+          headers:
+            Retry-After:
+              description: Minimum delay in whole seconds before retrying.
+              required: true
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthErrorBody'
+        '503':
+          description: Storage admission unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+components:
+  securitySchemes:
+    projectApiKey:
+      type: http
+      scheme: bearer
+      description: Whole project API key with both document scopes, no database restriction, for the exact route project. Backend only; cookies are not accepted.
+  schemas:
+    Ulid:
+      type: string
+      minLength: 26
+      maxLength: 26
+      pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+    EndUserTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [user_id]
+      properties:
+        user_id:
+          $ref: '#/components/schemas/Ulid'
+        claims:
+          type: [object, 'null']
+          additionalProperties: false
+          properties:
+            roles:
+              type: [array, 'null']
+              maxItems: 64
+              description: Case-sensitive ordinal roles. Duplicates are removed. Each string must contain a non-whitespace character and no control characters, with at most 128 UTF-16 code units; the signed JWT size cap also applies.
+              items:
+                type: string
+                minLength: 1
+                maxLength: 128
+                pattern: '^(?!.*\p{Cc})(?=.*\S).+$'
+    EndUserTokenBody:
+      type: object
+      required: [access_token, token_type, expires_in]
+      properties:
+        access_token:
+          type: string
+          maxLength: 8192
+          description: Signed compact ES256 JWT with typ at+jwt, end_user token_kind, asserted subject and roles, and project_id equal to instance_id. No scope, database, org_id or platform_role claim.
+        token_type:
+          type: string
+          const: Bearer
+        expires_in:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 900
+    ErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+    OAuthErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          const: rate_limited
+        error_description:
+          type: [string, 'null']

@@ -16,6 +16,9 @@ internal sealed partial class TursoStorageTransaction
     // CDC rows read per query; a transaction may span pages.
     private const int TailPageRows = 4096;
 
+    // Unknown commit positions may replay a retained suffix only up to 64 MiB; known waiting markers are not capped.
+    private const long MaxUnknownReplayBytes = 64L * 1024 * 1024;
+
     /// <summary>
     /// Deletes the CDC rows of a client database that are shipped (docs/terrabase/multi-region-replication.md section 7):
     /// below the newest commit row that every peer heard from since <c>$gone</c> (Unix ms; 24 h ago, see
@@ -265,6 +268,48 @@ internal sealed partial class TursoStorageTransaction
     internal ValueTask<long> GetHeadAsync(CancellationToken cancellationToken) =>
         RunAsync(() => Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null ? 0
             : Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0, cancellationToken);
+
+    internal ValueTask<long> GetRetainedAfterAsync(long? through, long head, CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            if (Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null)
+            {
+                return 0L;
+            }
+
+            // Retention deletes strictly below a commit row; never resume inside a transaction's captured deltas.
+            var floor = Command("""
+                SELECT coalesce((SELECT CASE WHEN change_type = 2 THEN change_id ELSE change_id - 1 END
+                    FROM turso_cdc ORDER BY change_id LIMIT 1), 0);
+                """).ExecuteScalar() is long first ? first : 0;
+            if (through is null)
+            {
+                var size = Command("SELECT length(after) FROM turso_cdc WHERE change_id > $floor AND change_id <= $head ORDER BY change_id;");
+                size.Parameters.AddWithValue("$floor", floor);
+                size.Parameters.AddWithValue("$head", head);
+                using var reader = size.ExecuteReader();
+                long bytes = 0;
+                while (reader.Read())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    bytes += reader.IsDBNull(0) ? 0 : reader.GetInt64(0);
+                    if (bytes > MaxUnknownReplayBytes)
+                    {
+                        through = head;
+                        break;
+                    }
+                }
+            }
+
+            if (through is null)
+            {
+                return floor;
+            }
+
+            var command = Command("SELECT change_id FROM turso_cdc WHERE change_type = 2 AND change_id <= $through ORDER BY change_id DESC LIMIT 1;");
+            command.Parameters.AddWithValue("$through", through.Value);
+            return Math.Max(floor, command.ExecuteScalar() is long previous ? previous : 0);
+        }, cancellationToken);
 
     /// <summary>
     /// Retention without an acknowledgement (uncaptured): first each peer's acknowledged id rises over the rows past it that

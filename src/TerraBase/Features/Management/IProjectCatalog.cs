@@ -24,6 +24,12 @@ public interface IProjectCatalog
     /// <summary>Sets the plan of the storage organization a signed project enrolled; legacy-bound projects keep their owners' plan.</summary>
     ValueTask<SetPlanResult> SetEnrolledPlanAsync(string projectId, PlanTier plan, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Fences a ts-auth project for closure, or reports the fence's status; idempotent for the same closure id and
+    /// organization. Nothing is written when the project is not empty here or its binding names another organization.
+    /// </summary>
+    ValueTask<CloseProjectResult> CloseProjectAsync(string projectId, string closureId, string authorityOrganizationId, CancellationToken cancellationToken);
+
     /// <summary>Verifies a legacy owner's sign-in token with ts-auth before binding existing storage to its project.</summary>
     ValueTask<VerifyProjectBindingResult> VerifyBindingAsync(
         string userId, string organizationId, string projectId, string authorityOrganizationId, string token, CancellationToken cancellationToken);

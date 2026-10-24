@@ -56,6 +56,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private readonly Counter<long> _unreadable;
     private readonly Histogram<double> _remoteAckDelay;
     private readonly ReplicationTimings _timings;
+    private readonly LogChunks _chunks;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Link> _links = [with(StringComparer.Ordinal)];
 
@@ -64,8 +65,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     public PeerStreams(
         IMembership membership, IChangeGroupSource source, RemoteAckWaiter acks, IReplicaStates states, ITenantDirectory tenants, LocalReplica self, TerraBaseOptions options,
         TimeProvider time, IMeterFactory meters, ILogger<PeerStreams> logger, Lazy<ICatalogGate> catalogGate, PeerCredential credential, IReplicaCopyFaults faults, IRebuildStorage storage,
-        ReplicationTimings timings, DatabaseLifecycleCheckpoint checkpoint)
+        ReplicationTimings timings, DatabaseLifecycleCheckpoint checkpoint, LogChunks chunks)
     {
+        _chunks = chunks;
         _credential = credential;
         _timings = timings;
         (_membership, _source, _acks, _states, _tenants, _self, _options, _time, _logger) =
@@ -319,7 +321,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         _self.Presence.Heard(link.Peer.Name, peer, _self.Clock.Tick().Milliseconds);
         lock (link.Gate)
         {
-            (link.Connected, link.Origin, link.Protocol) = (true, peer, ReplicationProtocol.Negotiate(call.ResponseStream.Current.Welcome.Protocol));
+            (link.Connected, link.Origin, link.Protocol, link.Chunks) =
+                (true, peer, ReplicationProtocol.Negotiate(call.ResponseStream.Current.Welcome.Protocol), call.ResponseStream.Current.Welcome.Chunks);
             foreach (var cursor in link.Cursors.Values)
             {
                 (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.RequiresRefill, cursor.Refilling, cursor.Live, cursor.Stamps) =
@@ -750,6 +753,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
 
             Ulid incarnation;
+            long after;
             SourceGroups read;
             bool retained;
             long head = 0;
@@ -794,7 +798,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     continue;
                 }
 
-                incarnation = found;
+                (incarnation, after) = (found, acked);
                 if (cursor.Incarnation is { } previous && previous != incarnation)
                 {
                     Reset(link, database, cursor);
@@ -842,8 +846,17 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     }
 
                     head = heldHead;
-                    // A whole copied log resumes at the ack so post-restore writes still receive live durable acknowledgements.
-                    refillResume = retained ? acked : head;
+                    // Capture head before the waiter snapshot: later admissions must remain above every chosen resume.
+                    // Keep admitted writes in live batches after the refill, even when the earlier log was cut.
+                    var retainedStart = retained ? acked : await _source.RetainedAfterAsync(database, incarnation,
+                        _acks.ReplayThrough(database, incarnation, head), head, cancellationToken).ConfigureAwait(false);
+                    if (retainedStart is not { } start)
+                    {
+                        await HoldOrResetAsync(link, database, cursor, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    refillResume = start;
                     // A faulted frontier throws: no refill with a fabricated zero horizon can be sent.
                     horizon = await _states.HorizonAsync(database, cancellationToken).ConfigureAwait(false);
                 }
@@ -908,6 +921,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 continue;
             }
 
+            // A large batch may go through the object store, and then only up to its chunk's end (LogChunks).
+            (groups, var envelope, var chunk) = await _chunks.BatchAsync(link.Peer.Name, link.Chunks, database, incarnation, after, groups, cancellationToken)
+                .ConfigureAwait(false);
             var last = groups[^1].ChangeId;
             await stream.ReserveAsync().ConfigureAwait(false);
             lock (link.Gate)
@@ -926,7 +942,16 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
             await stream.WriteAsync(new PushFrame
             {
-                Batch = new Batch { Database = ChangeGroups.Wire(database, incarnation), LastChangeId = checked((ulong)last), Groups = ChangeGroups.Encode(groups), Expect = cursor.Stable.Value },
+                // One batch per database in flight: it follows the ack (protocol 2's chain of one).
+                Batch = new Batch
+                {
+                    Database = ChangeGroups.Wire(database, incarnation),
+                    LastChangeId = checked((ulong)last),
+                    Groups = envelope,
+                    Chunk = chunk,
+                    After = checked((ulong)after),
+                    Expect = cursor.Stable.Value,
+                },
             }, cancellationToken).ConfigureAwait(false);
 
             sent = true;
@@ -988,6 +1013,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private async ValueTask AckedAsync(Link link, Ack? ack, long at, Ledger ledger, CancellationToken cancellationToken)
     {
         var database = ChangeGroups.Tenant(ack?.Database);
+        _chunks.Acked(link.Peer.Name, link.Chunks, ack!);
         Ulid incarnation;
         bool live;
         long from;
@@ -1564,6 +1590,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
         // The protocol this connection uses (ReplicationProtocol.Negotiate of the peer's Welcome).
         public uint Protocol { get; set; }
+
+        // Whether the peer's Welcome said it reads log chunks.
+        public bool Chunks { get; set; }
 
         public Dictionary<TenantContext, Cursor> Cursors { get; } = [];
 

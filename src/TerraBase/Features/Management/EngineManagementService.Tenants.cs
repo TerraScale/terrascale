@@ -345,7 +345,8 @@ internal sealed partial class EngineManagementService
                     foreach (var document in databases.Documents)
                     {
                         var database = EntityPayload.Read(document, TerraBaseJsonContext.Default.ManagedDatabase)!;
-                        if (database.Home(options.Region) == homeRegion)
+                        if (database.Home(options.Region) == homeRegion
+                            && !await DatabasePurge.IsDeletedAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false))
                         {
                             records.Add(new TenantContext(organizationId, PlanTier.Hobby, project, database.Id));
                             if (records.Count == MemberPage)
@@ -376,8 +377,9 @@ internal sealed partial class EngineManagementService
         var history = await ReadAsync<AdoptDatabaseResult>(
             async transaction => !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                 ? UnreadableCatalog
-                : await transaction.GetVersionAsync(EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, cancellationToken)
-                    .ConfigureAwait(false) is null ? new Done() : CatalogDatabaseDeleted,
+                : !await DatabasePurge.IsDeletedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false)
+                    && await transaction.GetVersionAsync(EngineManagedBackupService.BackedUpDatabases, database.DatabaseId, cancellationToken)
+                        .ConfigureAwait(false) is null ? new Done() : CatalogDatabaseDeleted,
             static error => error, cancellationToken).ConfigureAwait(false);
         if (history is not Done)
         {
@@ -416,6 +418,11 @@ internal sealed partial class EngineManagementService
             placement.AllRegions);
         return await WriteAsync<AdoptDatabaseResult>(async transaction =>
         {
+            if (await DatabasePurge.IsDeletedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false))
+            {
+                return CatalogDatabaseDeleted;
+            }
+
             var check = await CanAddDatabaseAsync(transaction, project, name, cancellationToken).ConfigureAwait(false);
             if (check is TenantContext tenant)
             {
@@ -636,8 +643,9 @@ internal sealed partial class EngineManagementService
                     : (await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false)
                         && (await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
                             .ConfigureAwait(false))?.PlacedIn(options.Region) == true)
-                        || await GetAsync(transaction, PendingDatabaseCleanup, database.DatabaseId, TerraBaseJsonContext.Default.TenantContext, cancellationToken)
-                            .ConfigureAwait(false) is not null,
+                        || (!await DatabasePurge.IsDeletedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false)
+                            && await GetAsync(transaction, PendingDatabaseCleanup, database.DatabaseId, TerraBaseJsonContext.Default.TenantContext, cancellationToken)
+                                .ConfigureAwait(false) is not null),
                 static error => error, cancellationToken);
     }
 
@@ -672,6 +680,7 @@ internal sealed partial class EngineManagementService
         IStorageTransaction transaction, string organizationId, string projectId, string database, CancellationToken cancellationToken) =>
         await OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken).ConfigureAwait(false) is { } project
         && await GetAsync(transaction, DatabaseNames(projectId), database, Id, cancellationToken).ConfigureAwait(false) is { } databaseId
+        && !await DatabasePurge.IsDeletedAsync(transaction, databaseId, cancellationToken).ConfigureAwait(false)
             ? project with { DatabaseId = databaseId }
             : null;
 
