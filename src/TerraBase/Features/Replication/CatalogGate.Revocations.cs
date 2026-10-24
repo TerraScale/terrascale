@@ -3,6 +3,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Backup;
+using ZLogger;
 
 namespace TerraBase.Features.Replication;
 
@@ -13,6 +14,9 @@ internal sealed partial class CatalogGate
     private readonly IServiceProvider _services;
     private Ulid _anchoredIncarnation;
     private RevocationCut? _revocation;
+    private volatile string? _revocationStage;
+    private string? _lastMissingRevocations;
+    private DateTimeOffset? _lastMissingRevocationsAt;
     private readonly record struct RevocationCut(ReplicaId Replica, Hlc Stamp);
 
     // Written after the destructive transaction and before its external anchor/response. The stream cannot acknowledge
@@ -53,12 +57,14 @@ internal sealed partial class CatalogGate
 
         try
         {
+            _revocationStage = "reading catalog revocation membership";
             HashSet<string> names = [.. listed.Select(peer => peer.Name), _options.MachineId];
             if (_engine.SystemDatabaseExists)
             {
                 names.UnionWith((await RecordedAsync(_engine, cancellationToken).ConfigureAwait(false)).Keys);
             }
             // The volume's old membership can omit a machine added after the snapshot. Include the external anchors too.
+            _revocationStage = "listing external catalog revocation anchors";
             await foreach (var item in _anchors.ListAsync("catalog-anchor/", null, cancellationToken).ConfigureAwait(false))
             {
                 if (!item.Key.StartsWith("catalog-anchor/", StringComparison.Ordinal) || !names.Add(item.Key["catalog-anchor/".Length..]))
@@ -81,14 +87,15 @@ internal sealed partial class CatalogGate
             var legacy = false;
             foreach (var name in names.Order(StringComparer.Ordinal))
             {
-                // This node's own start head/identity was already checked against this anchor. Its own old epoch need not
-                // be inferred from a newer replica id, nor inserted into received coverage.
+                // This node's own start head/identity was already checked against this anchor. Its exact old-epoch
+                // cut was persisted under that same file's writer, without inferring coverage from a newer replica id.
                 if (name == _options.MachineId && _anchorHeld && _restored == false)
                 {
                     continue;
                 }
 
                 var key = "catalog-anchor/" + name;
+                _revocationStage = $"reading external catalog revocation anchor for {name}";
                 var found = await _anchors.ReadAsync(key, async (stream, token) =>
                 {
                     using var plain = new AnchorBody();
@@ -124,6 +131,7 @@ internal sealed partial class CatalogGate
                 return false;
             }
 
+            _revocationStage = "checking external catalog revocation coverage";
             if (await CoversRevocationsAsync(cuts, cancellationToken).ConfigureAwait(false))
             {
                 return true;
@@ -134,7 +142,11 @@ internal sealed partial class CatalogGate
             var origins = cuts.Select(cut => cut.Replica.Value).ToHashSet();
             foreach (var peer in listed.Where(peer => _verified.Contains(peer.Name)))
             {
-                _ = await _services.GetRequiredService<ReplicaSnapshots>().PullAsync(ChangeGroups.System, peer, origins, cancellationToken).ConfigureAwait(false);
+                _revocationStage = $"importing catalog revocation snapshot from {peer.Name}";
+                _logger.ZLogInformation($"Importing a catalog revocation snapshot from {peer.Name:@Peer} for {origins.Count} origins");
+                var imported = await _services.GetRequiredService<ReplicaSnapshots>().PullAsync(ChangeGroups.System, peer, origins, cancellationToken).ConfigureAwait(false);
+                _revocationStage = $"checking catalog revocation coverage after snapshot from {peer.Name}";
+                _logger.ZLogInformation($"Catalog revocation snapshot from {peer.Name:@Peer} finished with imported={imported}");
                 if (await CoversRevocationsAsync(cuts, cancellationToken).ConfigureAwait(false))
                 {
                     return true;
@@ -150,6 +162,10 @@ internal sealed partial class CatalogGate
             Pending = [.. Pending, $"external revocations unreadable ({error.GetType().Name})"];
             return false;
         }
+        finally
+        {
+            _revocationStage = null;
+        }
     }
 
     private async Task<bool> CoversRevocationsAsync(IReadOnlyList<RevocationCut> cuts, CancellationToken cancellationToken)
@@ -162,6 +178,20 @@ internal sealed partial class CatalogGate
         var store = await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         var applied = await transaction.GetAppliedAsync(cancellationToken).ConfigureAwait(false);
-        return cuts.All(cut => applied.TryGetValue(cut.Replica, out var stamp) && stamp.Value >= cut.Stamp.Value);
+        var missing = cuts.Where(cut => !applied.TryGetValue(cut.Replica, out var stamp) || stamp.Value < cut.Stamp.Value).ToArray();
+        if (missing.Length > 0)
+        {
+            // Only replica identities and causal stamps: no catalog bodies, object-store errors or credentials.
+            var evidence = string.Join(",", missing.Select(cut => $"{cut.Replica.Value:x}:{applied.GetValueOrDefault(cut.Replica).Value}/{cut.Stamp.Value}"));
+            var now = _time.GetUtcNow();
+            if (evidence != _lastMissingRevocations
+                && (_lastMissingRevocationsAt is not { } last || now - last >= TimeSpan.FromSeconds(30)))
+            {
+                _lastMissingRevocations = evidence;
+                _lastMissingRevocationsAt = now;
+                _logger.ZLogInformation($"Catalog revocation coverage is missing {missing.Length} cuts (replica:held/required): {evidence:@Cuts}");
+            }
+        }
+        return missing.Length == 0;
     }
 }
