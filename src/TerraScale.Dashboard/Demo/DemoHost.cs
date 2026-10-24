@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Reflection;
@@ -110,6 +111,8 @@ public sealed class DemoEnvironment
             builder.Services.Replace(ServiceDescriptor.Singleton<IDocumentBackend>(documents));
             builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new TestMeasurements()));
             builder.Services.Replace(ServiceDescriptor.Singleton<TerraScale.Dashboard.Features.Notifications.IAllowanceNotificationBackend, TestAllowanceNotifications>());
+            // Test hosts report overage through UsageOverageReporter directly; the hourly worker would share the allowance feed.
+            builder.Services.Remove(builder.Services.Single(service => service.ImplementationType == typeof(TerraScale.Dashboard.Features.Billing.UsageOverageWorker)));
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(imports)));
             builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
             builder.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(TimeProvider.System));
@@ -120,6 +123,18 @@ public sealed class DemoEnvironment
             configureScenario?.Invoke(builder);
         });
         app.MapGet("/__test/checkout", (string id) => Results.Redirect(stripe.Complete(id)));
+        // Test-only: report the signed-in organization's operation units now (or mark its pending overage invoiced), then list its overage items.
+        app.MapPost("/__test/billing/overage", async (HttpContext http, DashboardSessions sessions, AccountService accounts, UsageOverageReporter reporter) =>
+        {
+            if ((await AccountRequest.RequireAsync(http, sessions, accounts))?.Organization is not { } organization) return Results.Unauthorized();
+            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            if (!Csrf.Validate(http, form)) return Results.BadRequest();
+            if (form["invoice"] == "1") foreach (var item in stripe.OverageItems(organization.Id).Where(item => item.Invoice is null)) item.Invoice = "in_" + item.Id;
+            var now = DateTimeOffset.UtcNow;
+            if (long.TryParse(form["units"], CultureInfo.InvariantCulture, out var units))
+                await reporter.ReportAsync(organization.Id, units, new(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), http.RequestAborted);
+            return Results.Json(stripe.OverageItems(organization.Id).Select(item => new { item.Id, item.Subscription, item.Quantity, item.UnitAmountDecimal, item.Invoice, item.Metadata }));
+        });
         // Test-only stand-in for ts-auth's hosted sign-in and sign-up pages: the journey names the
         // account it signs in as. Without one the browser stops on the sign-in page, as it does at
         // ts-auth after logout, instead of silently signing an account back in.
@@ -861,7 +876,11 @@ sealed class TestStripeTransport : HttpMessageHandler
     private readonly ConcurrentDictionary<string, string> customerOrganizations = new();
     private readonly ConcurrentDictionary<string, string> checkoutIds = new();
     private readonly ConcurrentDictionary<string, Invoice[]> invoices = new();
+    private readonly ConcurrentDictionary<string, InvoiceItem> invoiceItems = new();
+    private readonly ConcurrentDictionary<string, string> invoiceItemIds = new();
     private string origin = "http://localhost";
+    private InvoiceItem[] InvoiceItems(string customer) => invoiceItems.Values.Where(item => item.Customer == customer).ToArray();
+    internal InvoiceItem[] OverageItems(string organizationId) => invoiceItems.Values.Where(item => item.Metadata.GetValueOrDefault("terrascale_org") == organizationId).ToArray();
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         if (request.RequestUri?.Host != "api.stripe.com") throw new HttpRequestException("Unexpected external request in demo: " + request.RequestUri?.Host);
@@ -919,6 +938,33 @@ sealed class TestStripeTransport : HttpMessageHandler
                     invoice_pdf = row.PdfUrl
                 }).ToArray()
             };
+        }
+        else if (request.Method == HttpMethod.Get && path == "/v1/invoiceitems")
+        {
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
+            if (!query.TryGetValue("customer", out var customer) || query.GetValueOrDefault("limit") != "100" || !query.ContainsKey("created[gte]"))
+                throw new HttpRequestException("Invoice items must be listed for one customer, a creation window and a bounded page size.");
+            value = new { @object = "list", has_more = false, url = "/v1/invoiceitems", data = InvoiceItems(customer.ToString()).Select(InvoiceItemJson).ToArray() };
+        }
+        else if (request.Method == HttpMethod.Post && path == "/v1/invoiceitems")
+        {
+            if (form["currency"] != "usd" || form["customer"].ToString().Length == 0 || form["subscription"].ToString().Length == 0) throw new HttpRequestException("Overage items must target a USD subscription invoice.");
+            var id = invoiceItemIds.GetOrAdd(idempotency, _ => "ii_" + Guid.NewGuid().ToString("N"));
+            value = InvoiceItemJson(invoiceItems.GetOrAdd(id, _ => new(id, form["customer"].ToString(), form["subscription"].ToString(),
+                form.Where(item => item.Key.StartsWith("metadata[", StringComparison.Ordinal)).ToDictionary(item => item.Key[9..^1], item => item.Value.ToString()))
+            { Quantity = long.Parse(form["quantity"]!, CultureInfo.InvariantCulture), UnitAmountDecimal = form["unit_amount_decimal"].ToString(), Description = form["description"].ToString() }));
+        }
+        else if (request.Method == HttpMethod.Post && path.StartsWith("/v1/invoiceitems/", StringComparison.Ordinal))
+        {
+            var item = invoiceItems[path["/v1/invoiceitems/".Length..]];
+            if (item.Invoice is not null) throw new HttpRequestException("Invoiced items are final.");
+            item.Quantity = long.Parse(form["quantity"]!, CultureInfo.InvariantCulture); item.UnitAmountDecimal = form["unit_amount_decimal"].ToString(); item.Description = form["description"].ToString();
+            value = InvoiceItemJson(item);
+        }
+        else if (request.Method == HttpMethod.Delete && path.StartsWith("/v1/invoiceitems/", StringComparison.Ordinal))
+        {
+            if (!invoiceItems.TryRemove(path["/v1/invoiceitems/".Length..], out var item) || item.Invoice is not null) throw new HttpRequestException("Only pending items can be deleted.");
+            value = new { id = item.Id, @object = "invoiceitem", deleted = true };
         }
         else if (request.Method == HttpMethod.Post && path == "/v1/checkout/sessions")
         {
@@ -1011,6 +1057,30 @@ sealed class TestStripeTransport : HttpMessageHandler
         public string SubscriptionId { get; set; } = "";
     }
     private sealed record Invoice(string Id, string Number, string Status, long Amount, string Currency, DateTimeOffset Created, string HostedUrl, string PdfUrl);
+    private static object InvoiceItemJson(InvoiceItem item) => new
+    {
+        id = item.Id,
+        @object = "invoiceitem",
+        customer = item.Customer,
+        currency = "usd",
+        quantity = item.Quantity,
+        description = item.Description,
+        invoice = item.Invoice,
+        metadata = item.Metadata,
+        parent = new { type = "subscription_details", subscription_details = new { subscription = item.Subscription } },
+        pricing = new { type = "price_details", unit_amount_decimal = item.UnitAmountDecimal }
+    };
+    internal sealed class InvoiceItem(string id, string customer, string subscription, Dictionary<string, string> metadata)
+    {
+        public string Id { get; } = id;
+        public string Customer { get; } = customer;
+        public string Subscription { get; } = subscription;
+        public Dictionary<string, string> Metadata { get; } = metadata;
+        public long Quantity { get; set; }
+        public string UnitAmountDecimal { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string? Invoice { get; set; }
+    }
 }
 
 sealed class TestClientAddress(TestStripeTransport stripe) : IStartupFilter

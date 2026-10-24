@@ -45,17 +45,7 @@ public sealed class AllowanceNotifications(IDashboardState state, IAllowanceNoti
         do
         {
             var page = await backend.ReadAsync(after, cancellationToken);
-            var now = clock.GetUtcNow();
-            var operationsSupported = page.OperationsContract == OperationsContract;
-            if (page.Items.Count > 0 && !operationsSupported)
-                throw new IOException("Allowance metering does not report authoritative global 4 KiB operation units.");
-            var month = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
-            if (page.PeriodStart != month || page.ObservedAt < month || page.ObservedAt > now || now - page.ObservedAt > TimeSpan.FromMinutes(5) ||
-                page.Items.Count > 25 || page.Items.Any(item => !TerraScaleIds.IsValid(item.OrganizationId) || item.Operations < 0 || item.LogicalBytes < 0) ||
-                page.Items.Select(item => item.OrganizationId).Distinct(StringComparer.Ordinal).Count() != page.Items.Count ||
-                page.Items.Any(item => after is not null && string.CompareOrdinal(item.OrganizationId, after) <= 0) ||
-                page.Next is not null && (!TerraScaleIds.IsValid(page.Next) || page.Items.Count == 0 || page.Items[^1].OrganizationId != page.Next || string.CompareOrdinal(page.Next, after) <= 0))
-                throw new IOException("Allowance producer returned an invalid billing period or page.");
+            var month = ValidatedMonth(page, after, clock.GetUtcNow());
             foreach (var item in page.Items)
             {
                 try { await ObserveAsync(item, month, cancellationToken); }
@@ -66,6 +56,21 @@ public sealed class AllowanceNotifications(IDashboardState state, IAllowanceNoti
             }
             after = page.Next;
         } while (after is not null);
+    }
+
+    // The usage feed is trusted only for the current UTC month, fresh, and in strictly ascending organization order.
+    public static DateTimeOffset ValidatedMonth(AllowanceUsagePage page, string? after, DateTimeOffset now)
+    {
+        if (page.Items.Count > 0 && page.OperationsContract != OperationsContract)
+            throw new IOException("Allowance metering does not report authoritative global 4 KiB operation units.");
+        var month = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        if (page.PeriodStart != month || page.ObservedAt < month || page.ObservedAt > now || now - page.ObservedAt > TimeSpan.FromMinutes(5) ||
+            page.Items.Count > 25 || page.Items.Any(item => !TerraScaleIds.IsValid(item.OrganizationId) || item.Operations < 0 || item.LogicalBytes < 0) ||
+            page.Items.Select(item => item.OrganizationId).Distinct(StringComparer.Ordinal).Count() != page.Items.Count ||
+            page.Items.Any(item => after is not null && string.CompareOrdinal(item.OrganizationId, after) <= 0) ||
+            page.Next is not null && (!TerraScaleIds.IsValid(page.Next) || page.Items.Count == 0 || page.Items[^1].OrganizationId != page.Next || string.CompareOrdinal(page.Next, after) <= 0))
+            throw new IOException("Allowance producer returned an invalid billing period or page.");
+        return month;
     }
 
     private async Task ObserveAsync(AllowanceUsageObservation item, DateTimeOffset month, CancellationToken cancellationToken)

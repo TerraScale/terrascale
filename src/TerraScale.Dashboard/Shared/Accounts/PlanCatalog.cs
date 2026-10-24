@@ -30,6 +30,7 @@ public static class PlanCatalog
     private static readonly JsonElement catalog = JsonSerializer.Deserialize<JsonElement>(PublishedJson);
     public static int OperationUnitBytes => catalog.GetProperty("metering").GetProperty("operationUnit").GetProperty("bytes").GetInt32();
     public static string OperationUnitName => catalog.GetProperty("metering").GetProperty("operationUnit").GetProperty("name").GetString()!;
+    public static decimal OperationUnitsPerMillionUsd => catalog.GetProperty("metering").GetProperty("overageRates").GetProperty("operationUnitsPerMillionUsd").GetDecimal();
     public static string AllowanceDefinition => catalog.GetProperty("metering").GetProperty("allowances").GetProperty("definition").GetString()!;
     public static string EnterpriseBilling => catalog.GetProperty("plans").EnumerateArray().Single(plan => plan.GetProperty("id").GetString() == "enterprise").GetProperty("billing").GetString()!;
     public static string OperationUnitDefinition => catalog.GetProperty("metering").GetProperty("operationUnit").GetProperty("definition").GetString()!;
