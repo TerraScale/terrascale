@@ -22,14 +22,10 @@ with zipfile.ZipFile(package) as archive:
     assert repository is not None
     assert repository.get("url") == metadata["repository"]
     assert repository.get("commit") == metadata["sourceRevision"]
-    assert f'lib/{metadata["targetFramework"]}/TerraScale.DotNet.dll' in archive.namelist()
-    if "assemblySha256" in metadata:
-        assert hashlib.sha256(archive.read(f'lib/{metadata["targetFramework"]}/TerraScale.DotNet.dll')).hexdigest() == metadata["assemblySha256"], "SDK assembly digest mismatch"
-    if "assemblySha256ByFramework" in metadata:
-        assemblies = metadata["assemblySha256ByFramework"]
-        assert set(assemblies) == {"net10.0", "net11.0"}, "SDK must qualify both supported frameworks"
-        for framework, digest in assemblies.items():
-            assert hashlib.sha256(archive.read(f"lib/{framework}/TerraScale.DotNet.dll")).hexdigest() == digest, "SDK assembly digest mismatch"
+    assemblies = metadata["assemblySha256ByFramework"]
+    assert set(assemblies) == {"net10.0", "net11.0"}, "SDK must qualify both supported frameworks"
+    for framework, digest in assemblies.items():
+        assert hashlib.sha256(archive.read(f"lib/{framework}/TerraScale.DotNet.dll")).hexdigest() == digest, "SDK assembly digest mismatch"
     if "contractSha256ByPath" in metadata:
         contracts = metadata["contractSha256ByPath"]
         packed = {name for name in archive.namelist() if name.startswith(("contracts/auth/", "contracts/terrabase/")) and not name.endswith("/")}
@@ -40,6 +36,8 @@ versions = ET.parse(root / "Directory.Packages.props")
 pins = versions.findall('.//PackageVersion[@Include="TerraScale.DotNet"]')
 assert len(pins) == 1 and pins[0].get("Version") == metadata["version"]
 project = ET.parse(root / "src/TerraScale.Dashboard/TerraScale.Dashboard.csproj")
+framework = project.findtext(".//TargetFramework") or ET.parse(root / "Directory.Build.props").findtext(".//TargetFramework")
+assert framework in assemblies, "SDK must support the application's framework"
 assert len(project.findall('.//PackageReference[@Include="TerraScale.DotNet"]')) == 1
 assert not project.findall(".//ProjectReference"), "Application must consume SDK packages"
 solution = ET.parse(root / "TerraScale.Dashboard.slnx")
