@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -50,7 +51,8 @@ public sealed class StateSdkScenario : IAsyncDisposable
         try
         {
             var builder = WebApplication.CreateBuilder();
-            builder.WebHost.UseUrls("http://127.0.0.1:0");
+            builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0,
+                listener => listener.Protocols = HttpProtocols.Http2));
             builder.Logging.ClearProviders();
             scenario.producer = builder.Build();
             scenario.producer.MapMethods("/{**path}", ["GET", "POST", "PUT", "DELETE"], (Func<HttpContext, Task<IResult>>)scenario.protocol.DispatchAsync);
@@ -62,7 +64,13 @@ public sealed class StateSdkScenario : IAsyncDisposable
     }
 
     public HttpClient CreateClient(bool replica = false) => Client(replica ? ReplicaOrigin : Origin);
-    public HttpClient CreateProviderClient() => Client(ProviderOrigin);
+    public HttpClient CreateProviderClient()
+    {
+        var client = Client(ProviderOrigin);
+        client.DefaultRequestVersion = HttpVersion.Version20;
+        client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact;
+        return client;
+    }
     public HttpClient CreateReplacementClient(HttpClient previous, bool replica = false) =>
         Client(replica ? ReplicaOrigin : Origin, cookieJars[previous]);
     private HttpClient Client(Uri origin, CookieContainer? cookies = null)
@@ -199,7 +207,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
                 request.VersionPolicy != HttpVersionPolicy.RequestVersionExact || request.Headers.Authorization is not null))
                 throw new HttpRequestException("Invalid private-listener request in the state SDK protocol fixture.");
             using var forwarded = new HttpRequestMessage(request.Method, stateRequest ? new Uri(origin, uri.PathAndQuery) : uri)
-            { Version = stateRequest ? HttpVersion.Version11 : request.Version, VersionPolicy = stateRequest ? HttpVersionPolicy.RequestVersionOrLower : request.VersionPolicy };
+            { Version = request.Version, VersionPolicy = request.VersionPolicy };
             foreach (var header in request.Headers) forwarded.Headers.TryAddWithoutValidation(header.Key, header.Value);
             foreach (var option in request.Options) forwarded.Options.Set(new HttpRequestOptionsKey<object?>(option.Key), option.Value);
             if (stateRequest) forwarded.Headers.Host = uri.Authority;
