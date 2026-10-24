@@ -255,6 +255,39 @@ public sealed class StorageTransactionTests
         await Assert.That(await again.GetAsync("items", "a", CancellationToken.None)).IsNull();
     }
 
+    // The node-local intent journal is never replicated or backed up: recording and retiring intents captures nothing, while
+    // the tenant database's own write is captured.
+    [Test]
+    public async Task Write_intents_capture_no_changes_and_the_tenant_write_is_captured()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var (engine, store) = await OpenAsync(server);
+        await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            _ = await writer.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
+            _ = await writer.CommitAsync(CancellationToken.None);
+        }
+
+        static Task<long> CapturedAsync(TursoDatabaseStore target)
+        {
+            return target.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT count(*) FROM sqlite_schema WHERE name = 'turso_cdc';";
+                if ((long)command.ExecuteScalar()! == 0)
+                {
+                    return 0L;
+                }
+
+                command.CommandText = "SELECT count(*) FROM turso_cdc;";
+                return (long)command.ExecuteScalar()!;
+            }, "a test counting captured changes", CancellationToken.None);
+        }
+
+        await Assert.That(await CapturedAsync(((TursoStorageEngine)engine).IntentStore!)).IsEqualTo(0L);
+        await Assert.That(await CapturedAsync(store)).IsGreaterThan(0L);
+    }
+
     [Test]
     public async Task A_shut_down_engine_opens_no_database()
     {

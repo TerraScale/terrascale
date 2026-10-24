@@ -1600,6 +1600,11 @@ internal sealed partial class TursoStorageTransaction(
             throw new InvalidOperationException("only a write transaction captures changes");
         }
 
+        if (!store.Captures)
+        {
+            return ValueTask.CompletedTask;
+        }
+
         return new(RunAsync(() =>
         {
             using var command = session.Connection.CreateCommand();
