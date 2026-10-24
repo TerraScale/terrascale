@@ -43,9 +43,11 @@ public sealed class AccountDeletion(
                 AuthStore.Require(AuthStore.UserCollection, user.InstanceId, user.Id,
                     PlatformDirectory.Filter("eq", new System.Text.Json.Nodes.JsonArray("/authStamp", user.AuthStamp))),
             ];
-            var (sole, _) = await platform.AccountScopeAsync(user.Id, cancellationToken).ConfigureAwait(false);
+            var candidates = new HashSet<string>(StringComparer.Ordinal);
             if (current is null)
             {
+                var (sole, _) = await platform.AccountScopeAsync(user.Id, cancellationToken).ConfigureAwait(false);
+                candidates.UnionWith(sole);
                 operations.Add(created.Create);
                 foreach (var organizationId in sole)
                 {
@@ -73,7 +75,6 @@ public sealed class AccountDeletion(
                 }
                 else
                 {
-                    var candidates = sole.ToHashSet(StringComparer.Ordinal);
                     if (current is not null)
                     {
                         await foreach (var owned in this.IntentsAsync(user.Id, "organization", cancellationToken).ConfigureAwait(false))

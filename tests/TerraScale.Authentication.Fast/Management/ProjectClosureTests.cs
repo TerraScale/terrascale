@@ -353,7 +353,9 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
     // Review R2 P3-2: once the account closure began removing things, a late last_owner (another owner left a shared
     // organization meanwhile) pauses it instead of cancelling a half-removed account; it finishes once resolved.
     [Test]
-    public async Task A_late_last_owner_after_removals_began_pauses_the_account_closure_until_resolved()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task An_existing_account_intent_handles_late_last_owner_through_its_refusal_path(bool committed)
     {
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
@@ -363,12 +365,21 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await oidc.AddMemberAsync(shared, bob.Id, "member");
         var services = oidc.Server.App.Services;
         var (store, directory, worker) = (services.GetRequiredService<AuthStore>(), services.GetRequiredService<PlatformDirectory>(), services.GetRequiredService<ClosureWorker>());
-        // The state the race leaves: the intent committed its removals while alice became the last owner with a member.
+        // A retry meets an existing intent after alice became the last owner with a member.
         var (job, _) = ClosureJob.New("terrascale", "account", alice.Id, null, alice.Id, clock);
         await store.CreateAsync(AuthStore.ClosureJobCollection, "terrascale", ClosureJob.Key("account", alice.Id),
-            JsonSerializer.SerializeToElement(job with { CommittedAt = clock.GetUtcNow() }, ClosureJson.Default.ClosureJob));
+            JsonSerializer.SerializeToElement(job with { CommittedAt = committed ? clock.GetUtcNow() : null }, ClosureJson.Default.ClosureJob));
 
-        await Assert.That(await oidc.FailAsync(HttpMethod.Delete, "/v1/terrascale/account", token)).IsEqualTo((409, "last_owner"));
+        var receipt = Receipt();
+        await Assert.That(await ReceiptCallAsync(oidc.Client, receipt, HttpMethod.Delete, token: token)).IsEqualTo((409, "last_owner"));
+        if (!committed)
+        {
+            await Assert.That(await directory.ClosureAsync("account", alice.Id, CancellationToken.None)).IsNull();
+            await Assert.That(await ReceiptCallAsync(oidc.Client, receipt)).IsEqualTo((409, "deletion_refused"));
+            await Assert.That(await services.GetRequiredService<Users>().GetAsync("terrascale", alice.Id)).IsNotNull();
+            return;
+        }
+
         var paused = (await directory.ClosureAsync("account", alice.Id, CancellationToken.None))!;
         await Assert.That(paused.Value.FailureCode).IsEqualTo("last_owner");
         await Assert.That(paused.Value.CommittedAt).IsNotNull();
