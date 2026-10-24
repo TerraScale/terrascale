@@ -9,6 +9,8 @@ public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", strin
 {
     public string? DraftName { get; init; }
     public string? DraftPhone { get; init; }
+    public IReadOnlyList<string>? Providers { get; init; }
+    public string? ConfirmProvider { get; init; }
     public string[] Permissions
     {
         get
@@ -32,7 +34,7 @@ public static class ProfileEndpoints
     {
         endpoints.MapGet("/account-deleted", (HttpContext http) =>
             AccountDeletedView.Create(new("Account deleted", DocumentModel.NonceFor(http))));
-        endpoints.MapGet("/profile", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens, ITsAuthMfa mfa) =>
+        endpoints.MapGet("/profile", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens, ITsAuthMfa mfa, ITsAuthProviders providers) =>
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
             if (context is null) return AccountRequest.LoginRedirect(http);
@@ -41,7 +43,12 @@ public static class ProfileEndpoints
             var list = tab is "access-tokens" or "danger" ? await tokens.ListAsync(context, http.RequestAborted) : null;
             var active = await sessions.ListAsync(http, context.Session);
             var status = tab == "security" ? await mfa.GetAccountMfaAsync(context.Session, http.RequestAborted) : null;
-            return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Tokens: list, Sessions: active, Mfa: status));
+            var linked = tab == "profile" ? await providers.ListProvidersAsync(context.Session, http.RequestAborted) : null;
+            return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Tokens: list, Sessions: active, Mfa: status)
+            {
+                Providers = linked,
+                ConfirmProvider = http.Request.Query["unlink"].ToString() is var selected && TsAuthGateway.IsSignInProvider(selected) ? selected : null
+            });
         });
         endpoints.MapPost("/api/v1/dashboard/profile", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
             await SaveAsync(http, sessions, accounts, false));
@@ -52,6 +59,7 @@ public static class ProfileEndpoints
         endpoints.MapPost("/api/v1/dashboard/profile/delete/continue", (HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform,
             IDashboardState state, AccessTokens tokens, IDashboardIdentity identity) =>
             AccountDeletion.ContinueAsync(http, sessions, platform, state, tokens, identity));
+        endpoints.MapPost("/api/v1/dashboard/profile/providers/{provider}/unlink", SignInMethods.UnlinkAsync);
         return endpoints;
     }
 
@@ -79,6 +87,7 @@ public static class ProfileEndpoints
         {
             var slice = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: error.Message, Sessions: await sessions.ListAsync(http, context.Session))
             {
+                Providers = await http.RequestServices.GetRequiredService<ITsAuthProviders>().ListProvidersAsync(context.Session, http.RequestAborted),
                 DraftName = language ? null : form["name"].ToString(),
                 DraftPhone = language ? null : form["phoneNumber"].ToString()
             });
