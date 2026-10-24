@@ -145,6 +145,26 @@ public sealed class ProjectTenantTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    public async Task Password_only_pages_offer_no_email_code_action_or_recovery_advice()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var faker = new Faker();
+        var (_, token) = await oidc.SignInUserAsync(faker.Internet.Email().ToLowerInvariant());
+        var project = await oidc.CreateProjectAsync(token, await oidc.CreateOrganizationAsync(token), faker.Commerce.ProductName());
+        await oidc.OkAsync(HttpMethod.Put, $"/v1/{project}/settings", token, new { methods = new { passcode = false, password = true, sign_up = false } });
+        var email = faker.Internet.Email().ToLowerInvariant();
+        using var password = await oidc.PostFormAsync($"/ui/{project}/sign-in/password", new() { ["email"] = email });
+        var page = await password.Content.ReadAsStringAsync();
+        await Assert.That(password.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(page).Contains("Forgot password?");
+        await Assert.That(page).DoesNotContain("Email me a sign-in code");
+        await Assert.That(page).DoesNotContain("Or get a one-time code by email");
+        using var wrong = await oidc.PostFormAsync($"/ui/{project}/sign-in/password", new() { ["email"] = email, ["password"] = "synthetic wrong password" });
+        await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(await wrong.Content.ReadAsStringAsync()).DoesNotContain("email yourself a sign-in code");
+    }
+
+    [Test]
     public async Task Unknown_project_tenants_serve_no_pages_or_endpoints()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);

@@ -16,7 +16,13 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 /// <param name="Passcode">Email passcode sign-in.</param>
 /// <param name="Password">Password sign-in and reset.</param>
 /// <param name="SignUp">Self sign-up.</param>
-public sealed record HostedTheme(string? Name = null, string? LogoUrl = null, string? ThemeColor = null, bool Passcode = true, bool Password = true, bool SignUp = true)
+/// <param name="TitleSize">Hosted title size in pixels.</param>
+/// <param name="DefaultTheme">Light, dark or system appearance.</param>
+/// <param name="FooterLinks">Project footer links.</param>
+/// <param name="BackgroundColor">Optional page background colour.</param>
+/// <param name="TextColor">Optional text colour.</param>
+public sealed record HostedTheme(string? Name = null, string? LogoUrl = null, string? ThemeColor = null, bool Passcode = true, bool Password = true, bool SignUp = true,
+    int? TitleSize = null, string? DefaultTheme = null, IReadOnlyList<FooterLinkBody>? FooterLinks = null, string? BackgroundColor = null, string? TextColor = null)
 {
     internal const string ItemKey = "ts-auth:theme";
 
@@ -39,7 +45,8 @@ public static class HostedThemes
             var settings = await services.GetRequiredService<ProjectAuthSettings>().GetAsync(tenant, context.RequestAborted);
             var project = (await services.GetRequiredService<AuthStore>().GetAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, tenant, context.RequestAborted))
                 ?.Document.Deserialize(PlatformJson.Default.ProjectRecord);
-            context.Items[HostedTheme.ItemKey] = new HostedTheme(settings.Name ?? project?.Name, settings.LogoUrl, settings.ThemeColor, settings.Passcode, settings.Password, settings.SignUp);
+            context.Items[HostedTheme.ItemKey] = new HostedTheme(settings.Name ?? project?.Name, settings.LogoUrl, settings.ThemeColor, settings.Passcode, settings.Password, settings.SignUp,
+                settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor);
         }
 
         await next(context);

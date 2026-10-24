@@ -8,7 +8,7 @@ case SignInStep.Email:
 <p class="sub">Welcome back. Use the email you signed up with.</p>
 break;
 case SignInStep.Password:
-<p class="sub">Or get a one-time code by email.</p>
+<p class="sub">@(Model.Theme.Passcode ? "Or get a one-time code by email." : "Use the password for your account.")</p>
 break;
 case SignInStep.Code:
 <p class="sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 10 minutes.</p>
@@ -106,11 +106,14 @@ case SignInStep.Password:
 </div>
 <button type="submit">Sign in</button>
 </form>
+@if (Model.Theme.Passcode)
+{
 <form method="post" action="/ui/@Model.Slug/sign-in">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <button type="submit" class="secondary"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg>Email me a sign-in code</button>
 </form>
+}
 break;
 case SignInStep.Code:
 <form method="post" action="/ui/@Model.Slug/sign-in/verify">
@@ -247,7 +250,9 @@ break;
 }
 @functions {
     /// <inheritdoc />
-    public HostedLayoutModel LayoutModel => new(Model.Title, Model.Nonce, Model.Theme.ThemeColor, Model.Theme.LogoUrl, Model.Theme.Name);
+    public HostedLayoutModel LayoutModel => new(Model.Title, Model.Nonce, Model.Theme.ThemeColor, Model.Theme.LogoUrl, Model.Theme.Name,
+        Model.Theme.TitleSize, Model.Theme.FooterLinks?.Select(link => (link.Label, link.Url)).ToArray(), Model.Theme.DefaultTheme, Model.Slug,
+        Model.Theme.BackgroundColor, Model.Theme.TextColor);
 
     /// <inheritdoc />
     protected override Task ExecuteSectionAsync(string name)

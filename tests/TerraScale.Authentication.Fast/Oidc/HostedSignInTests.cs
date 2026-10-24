@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Net.Http.Headers;
 using Microsoft.Playwright;
@@ -484,7 +485,7 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await ExpectSchemeAsync(page, "light");
         await page.ReloadAsync();
         await Assert.That(await picker.InputValueAsync()).IsEqualTo("light");
-        await Assert.That(await page.EvaluateAsync<string?>("localStorage.getItem('ts-auth-theme')")).IsEqualTo("light");
+        await Assert.That(await page.EvaluateAsync<string?>("localStorage.getItem('ts-auth-theme:terrascale')")).IsEqualTo("light");
         await ExpectSchemeAsync(page, "light");
 
         // An explicit choice ignores the OS; "system" follows it again.
@@ -522,6 +523,143 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
         await Assert.That(violations).IsEmpty();
     }
 
+    [Test]
+    public async Task Six_digit_entry_submits_the_real_code_and_password_visibility_is_accessible()
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        await oidc.CreateUserAsync();
+        var violations = new List<string>();
+        var browser = await Chromium.BrowserAsync();
+        await using var context = await browser.NewContextAsync();
+        var page = await OpenSignInAsync(context, oidc.Server, violations);
+        await page.Locator("#sign-in-email").FillAsync("alice@example.test");
+        await page.GetByRole(AriaRole.Button, new() { Name = "Email me a sign-in code", Exact = true }).ClickAsync();
+        var code = await oidc.Email.NextCodeAsync("alice@example.test");
+        await page.Locator(".otp input").First.FillAsync(code);
+        await Assert.That(await page.Locator("input[name=code]").InputValueAsync()).IsEqualTo(code);
+        await Assert.That(await page.Locator(".otp input").CountAsync()).IsEqualTo(6);
+        await page.GetByRole(AriaRole.Button, new() { Name = "Verify and sign in" }).ClickAsync();
+        await Assert.That(await page.Locator("h1").TextContentAsync()).IsEqualTo("Signed in");
+        await page.GotoAsync($"{OidcHarness.PublicOrigin}/ui/terrascale/sign-up");
+        await page.Locator("#sign-up-password").FillAsync("synthetic test password");
+        await page.GetByRole(AriaRole.Button, new() { Name = "Show password" }).ClickAsync();
+        await Assert.That(await page.Locator("#sign-up-password").GetAttributeAsync("type")).IsEqualTo("text");
+        await page.GetByRole(AriaRole.Button, new() { Name = "Hide password" }).ClickAsync();
+        await Assert.That(await page.Locator("#sign-up-password").GetAttributeAsync("type")).IsEqualTo("password");
+        await Assert.That(violations).IsEmpty();
+    }
+
+    [Test]
+    [Arguments("#a3e635", null, null)]
+    [Arguments("#ffffff", null, null)]
+    [Arguments("#000000", null, null)]
+    [Arguments("#a3e635", "#fafafa", null)]
+    [Arguments("#ffffff", "#fafafa", "#ffffff")]
+    [Arguments("#000000", "#0a0a0a", "#151515")]
+    [Arguments("#e11d48", "#777777", "#777777")]
+    [Arguments("#6d4aff", "#fce7f3", "#164e63")]
+    public async Task Project_theme_reaches_every_page_and_text_remains_readable(string accent, string? text, string? background)
+    {
+        await using var oidc = await OidcHarness.StartAsync(fixture);
+        var (_, token) = await oidc.SignInUserAsync(new Faker().Internet.Email().ToLowerInvariant());
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var project = await oidc.CreateProjectAsync(token, organization, "Nightforge");
+        var other = await oidc.CreateProjectAsync(token, organization, "Other project");
+        await oidc.OkAsync(HttpMethod.Put, $"/v1/{project}/settings", token, new
+        {
+            branding = new
+            {
+                theme_color = accent,
+                text_color = text,
+                background_color = background,
+                title_size = 32,
+                default_theme = "dark",
+                footer_links = new[] { new { label = "Support", url = "https://example.test/support" } }
+            },
+        });
+        var browser = await Chromium.BrowserAsync();
+        await using var context = await browser.NewContextAsync(new() { ColorScheme = ColorScheme.Light });
+        var violations = new List<string>();
+        var page = await OpenSignInAsync(context, oidc.Server, violations);
+        foreach (var path in new[] { "sign-in", "sign-up", "reset" })
+        {
+            await page.GotoAsync($"{OidcHarness.PublicOrigin}/ui/{project}/{path}");
+            await ExpectSchemeAsync(page, "dark");
+            await Assert.That(await page.Locator("h1").EvaluateAsync<string>("el => getComputedStyle(el).fontSize")).IsEqualTo("32px");
+            await Assert.That(await page.Locator(".foot-links a").CountAsync()).IsEqualTo(1);
+            await Assert.That(await page.Locator(".foot-links a").GetAttributeAsync("href")).IsEqualTo("https://example.test/support");
+
+            foreach (var mode in new[] { "light", "dark" })
+            {
+                await page.Locator(".theme-picker").SelectOptionAsync(mode);
+                await ExpectSchemeAsync(page, mode);
+                await ExpectReadableTextAsync(page);
+                if (background is not null)
+                {
+                    await Assert.That(await page.EvaluateAsync<string>("getComputedStyle(document.body).getPropertyValue('--page-background').trim()"))
+                        .IsEqualTo(background);
+                }
+
+                // A safe customer colour survives unchanged in its compatible scheme.
+                if (text == "#fafafa" && mode == "dark")
+                {
+                    await Assert.That(await page.Locator("h1").EvaluateAsync<string>("el => getComputedStyle(el).color")).IsEqualTo("rgb(250, 250, 250)");
+                }
+            }
+        }
+
+        // The password step's chip uses a different surface from the card and page.
+        await page.GotoAsync($"{OidcHarness.PublicOrigin}/ui/{project}/sign-in");
+        await page.Locator("#sign-in-email").FillAsync("reader@example.test");
+        await page.GetByRole(AriaRole.Button, new() { Name = "Use a password instead" }).ClickAsync();
+        await page.Locator(".chip").WaitForAsync();
+        foreach (var mode in new[] { "light", "dark" })
+        {
+            await page.Locator(".theme-picker").SelectOptionAsync(mode);
+            await ExpectSchemeAsync(page, mode);
+            await ExpectReadableTextAsync(page);
+            await page.Locator("button.secondary").HoverAsync();
+            await ExpectReadableTextAsync(page);
+        }
+
+        await page.Locator(".theme-picker").SelectOptionAsync("light");
+        await page.GotoAsync($"{OidcHarness.PublicOrigin}/ui/{other}/sign-in");
+        await Assert.That(await page.Locator(".theme-picker").InputValueAsync()).IsEqualTo("system");
+        await page.GotoAsync($"{OidcHarness.PublicOrigin}/ui/{project}/sign-in");
+        await Assert.That(await page.Locator(".theme-picker").InputValueAsync()).IsEqualTo("light");
+        await Assert.That(violations).IsEmpty();
+    }
+
+    private static async Task ExpectReadableTextAsync(IPage page)
+    {
+        var contrast = await page.EvaluateAsync<double[]>("""
+            () => {
+              const lum = c => { const v = c.match(/[\d.]+/g).slice(0,3).map(Number).map(v => v / 255).map(v => v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return .2126*v[0]+.7152*v[1]+.0722*v[2]; };
+              const ratio = (a,b) => (Math.max(lum(a),lum(b))+.05)/(Math.min(lum(a),lum(b))+.05);
+              const background = el => {
+                for (; el; el = el.parentElement) {
+                  const color = getComputedStyle(el).backgroundColor;
+                  if (color !== 'rgba(0, 0, 0, 0)') return color;
+                }
+                throw new Error('No painted background');
+              };
+              const results = [];
+              for (const selector of ['.brand span', 'h1', '.sub', '.card label', '.card input:not([type=hidden])', '.card button', '.card a', '.hint', '.alt', '.chip span', '.foot-links a', '.auth-powered', '.auth-powered b', '.theme-picker']) {
+                document.querySelectorAll(selector).forEach((el, index) => {
+                  results.push(ratio(getComputedStyle(el).color, background(el)));
+                  if (el.matches('input[placeholder]')) results.push(ratio(getComputedStyle(el, '::placeholder').color, background(el)));
+                });
+              }
+              return results;
+            }
+            """);
+        await Assert.That(contrast).IsNotEmpty();
+        for (var index = 0; index < contrast.Length; index++)
+        {
+            await Assert.That(contrast[index]).IsGreaterThanOrEqualTo(4.5).Because($"{page.Url}: contrast measurement {index}");
+        }
+    }
+
     /// <summary>
     /// Opens the real sign-in page. The browser never reaches the loopback listener directly: every request to the
     /// public origin is answered by the test server with its real headers, including the CSP, and anything else is refused.
@@ -537,7 +675,19 @@ public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
                 return;
             }
 
-            using var response = await server.Client.GetAsync(url.PathAndQuery);
+            using var request = new HttpRequestMessage(new HttpMethod(route.Request.Method), url.PathAndQuery);
+            if (route.Request.PostDataBuffer is { } body)
+            {
+                request.Content = new ByteArrayContent(body);
+                request.Content.Headers.TryAddWithoutValidation("Content-Type", route.Request.Headers["content-type"]);
+            }
+
+            foreach (var header in route.Request.Headers.Where(header => header.Key is "origin" or "cookie"))
+            {
+                request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+
+            using var response = await server.Client.SendAsync(request);
             var headers = response.Headers.Concat(response.Content.Headers)
                 .Where(header => header.Key is not ("Content-Length" or "Transfer-Encoding"))
                 .ToDictionary(header => header.Key, header => string.Join(", ", header.Value));

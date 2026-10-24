@@ -702,4 +702,5 @@ public sealed class OidcTokenStore(AuthStore store, IOpenIddictAuthorizationStor
 [JsonSerializable(typeof(OidcApplication))]
 [JsonSerializable(typeof(OidcAuthorization))]
 [JsonSerializable(typeof(OidcToken))]
+[JsonSerializable(typeof(OAuthErrorBody))]
 internal sealed partial class OidcJson : JsonSerializerContext;
