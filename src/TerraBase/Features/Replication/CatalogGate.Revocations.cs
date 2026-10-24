@@ -10,6 +10,15 @@ namespace TerraBase.Features.Replication;
 internal sealed partial class CatalogGate
 {
     internal const string Revocations = "catalog_revocations";
+
+    // A revocation snapshot holds this catalog's writer for the whole copy: minutes for a large catalog over the WAN, stalling
+    // the streams that deliver the same markers. So the first attempt is short, a failed one waits before the next while those
+    // streams catch up (a rolling restart misses only seconds of markers), and each cut-off attempt doubles the next one's
+    // budget up to the snapshot's own deadline, so a fresh catalog or one with an offline witness still completes.
+    internal static readonly TimeSpan SnapshotBudget = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan MaxSnapshotBudget = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan FirstSnapshotRetry = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan MaxSnapshotRetry = TimeSpan.FromMinutes(2);
     private readonly LocalReplica _self;
     private readonly IServiceProvider _services;
     private Ulid _anchoredIncarnation;
@@ -17,6 +26,9 @@ internal sealed partial class CatalogGate
     private volatile string? _revocationStage;
     private string? _lastMissingRevocations;
     private DateTimeOffset? _lastMissingRevocationsAt;
+    private long _snapshotRetryAt;
+    private TimeSpan _snapshotRetry;
+    private TimeSpan _snapshotBudget = SnapshotBudget;
     private readonly record struct RevocationCut(ReplicaId Replica, Hlc Stamp);
 
     // Written after the destructive transaction and before its external anchor/response. The stream cannot acknowledge
@@ -134,23 +146,53 @@ internal sealed partial class CatalogGate
             _revocationStage = "checking external catalog revocation coverage";
             if (await CoversRevocationsAsync(cuts, cancellationToken).ConfigureAwait(false))
             {
+                (_snapshotRetry, _snapshotBudget) = (TimeSpan.Zero, SnapshotBudget);
                 return true;
+            }
+
+            if (_snapshotRetry > TimeSpan.Zero && _time.GetTimestamp() < _snapshotRetryAt)
+            {
+                Pending = [.. Pending, "external revocations not replicated yet"];
+                return false;
             }
 
             // Copy every state and its vector atomically from a trusted witness; independently compared roots or a marker
             // joined on its own cannot prove the earlier deletion. No witness leaves the catalog closed.
             var origins = cuts.Select(cut => cut.Replica.Value).ToHashSet();
-            foreach (var peer in listed.Where(peer => _verified.Contains(peer.Name)))
+            var attempted = false;
+            using (var deadline = new CancellationTokenSource(_snapshotBudget, _time))
+            using (var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token))
             {
-                _revocationStage = $"importing catalog revocation snapshot from {peer.Name}";
-                _logger.ZLogInformation($"Importing a catalog revocation snapshot from {peer.Name:@Peer} for {origins.Count} origins");
-                var imported = await _services.GetRequiredService<ReplicaSnapshots>().PullAsync(ChangeGroups.System, peer, origins, cancellationToken).ConfigureAwait(false);
-                _revocationStage = $"checking catalog revocation coverage after snapshot from {peer.Name}";
-                _logger.ZLogInformation($"Catalog revocation snapshot from {peer.Name:@Peer} finished with imported={imported}");
-                if (await CoversRevocationsAsync(cuts, cancellationToken).ConfigureAwait(false))
+                try
                 {
-                    return true;
+                    foreach (var peer in listed.Where(peer => _verified.Contains(peer.Name)))
+                    {
+                        attempted = true;
+                        _revocationStage = $"importing catalog revocation snapshot from {peer.Name}";
+                        _logger.ZLogInformation($"Importing a catalog revocation snapshot from {peer.Name:@Peer} for {origins.Count} origins");
+                        var imported = await _services.GetRequiredService<ReplicaSnapshots>().PullAsync(ChangeGroups.System, peer, origins, budget.Token).ConfigureAwait(false);
+                        _revocationStage = $"checking catalog revocation coverage after snapshot from {peer.Name}";
+                        _logger.ZLogInformation($"Catalog revocation snapshot from {peer.Name:@Peer} finished with imported={imported}");
+                        if (await CoversRevocationsAsync(cuts, cancellationToken).ConfigureAwait(false))
+                        {
+                            (_snapshotRetry, _snapshotBudget) = (TimeSpan.Zero, SnapshotBudget);
+                            return true;
+                        }
+                    }
                 }
+                catch (Exception error) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    // An import cancelled mid-copy rolls back and releases the writer; the streams keep delivering meanwhile.
+                    _logger.ZLogWarning(error, $"A catalog revocation snapshot did not finish within {_snapshotBudget.TotalSeconds}s; the gate waits for replication and tries again with longer");
+                    _snapshotBudget = TimeSpan.FromTicks(Math.Min(_snapshotBudget.Ticks * 2, MaxSnapshotBudget.Ticks));
+                }
+            }
+
+            // No verified machine yet: nothing was copied, so the next pass may try at once.
+            if (attempted)
+            {
+                _snapshotRetry = _snapshotRetry == TimeSpan.Zero ? FirstSnapshotRetry : TimeSpan.FromTicks(Math.Min(_snapshotRetry.Ticks * 2, MaxSnapshotRetry.Ticks));
+                _snapshotRetryAt = _time.GetTimestamp() + (long)(_snapshotRetry.TotalSeconds * _time.TimestampFrequency);
             }
 
             Pending = [.. Pending, "external revocations not covered"];
