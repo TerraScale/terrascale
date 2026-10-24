@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/TerraScale/terrascale",
+  "revision": "8cf991cc1f06a436ec3000934cabdf3335b968d4",
+  "pull_request": "https://github.com/TerraScale/terrascale/pull/609",
+  "sources_sha256": {
+    "src/TerraScale.Authentication/Features/ProjectTenants/ProjectTenantEndpoint.cs": "9b09baff16b052e79bed6a7576595a92a547e134fa6992042ca4759449edc019",
+    "src/TerraScale.Authentication/Features/ProjectTenants/UpdateProjectSettingsEndpoint.cs": "423f7cabd29038dc5fb619114f9d8463addf3013b79f8037dde571de6303763f"
+  },
+  "operations": [
+    "get_project_settings",
+    "update_project_settings"
+  ],
+  "qualification": "Owning producer merged in TerraScale/terrascale#609; HTTP fixture coverage only. Installed package and live-service qualification remain separate.",
+  "fields": {
+    "branding": [
+      "title_size: int? (20..40)",
+      "default_theme: string? (light/dark/system)",
+      "footer_links: [{label: string, url: string}]?",
+      "background_color: string? (#rrggbb)",
+      "text_color: string? (#rrggbb)"
+    ],
+    "configuration": [
+      "redirect_urls: string[]",
+      "session_lifetime_seconds: int (default 1209600)"
+    ]
+  }
+}

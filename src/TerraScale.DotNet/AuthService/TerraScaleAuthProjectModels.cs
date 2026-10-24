@@ -13,7 +13,23 @@ public sealed record TerraScaleAuthProjectMethods(
 public sealed record TerraScaleAuthProjectBranding(
     [property: JsonPropertyName("name")] string? Name,
     [property: JsonPropertyName("logo_url")] string? LogoUrl,
-    [property: JsonPropertyName("theme_color")] string? ThemeColor);
+    [property: JsonPropertyName("theme_color")] string? ThemeColor,
+    [property: JsonPropertyName("title_size"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TitleSize = null,
+    [property: JsonPropertyName("default_theme"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DefaultTheme = null,
+    [property: JsonPropertyName("footer_links"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<TerraScaleAuthProjectFooterLink>? FooterLinks = null,
+    [property: JsonPropertyName("background_color"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BackgroundColor = null,
+    [property: JsonPropertyName("text_color"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TextColor = null);
+
+/// <summary>A labelled HTTPS footer link underneath the hosted authentication card.</summary>
+public sealed record TerraScaleAuthProjectFooterLink(
+    [property: JsonPropertyName("label")] string Label,
+    [property: JsonPropertyName("url")] string Url);
+
+/// <summary>Project redirect allowlist and absolute session duration, in seconds. An empty list adds no
+/// restriction to the OAuth client's exact registered redirects; the default duration is fourteen days.</summary>
+public sealed record TerraScaleAuthProjectConfiguration(
+    [property: JsonPropertyName("redirect_urls")] IReadOnlyList<string> RedirectUrls,
+    [property: JsonPropertyName("session_lifetime_seconds")] int SessionLifetimeSeconds = 1209600);
 
 /// <summary>Counts of a project tenant's end users and OAuth clients.</summary>
 public sealed record TerraScaleAuthProjectCounts(
@@ -29,7 +45,8 @@ public sealed record TerraScaleAuthProjectSettings(
     [property: JsonPropertyName("methods")] TerraScaleAuthProjectMethods Methods,
     [property: JsonPropertyName("branding")] TerraScaleAuthProjectBranding Branding,
     [property: JsonPropertyName("counts")] TerraScaleAuthProjectCounts Counts,
-    [property: JsonPropertyName("providers")] IReadOnlyList<TerraScaleAuthProjectProvider> Providers);
+    [property: JsonPropertyName("providers")] IReadOnlyList<TerraScaleAuthProjectProvider> Providers,
+    [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectConfiguration? Configuration = null);
 
 /// <summary>A social sign-in provider of a project tenant: <c>google</c>, <c>github</c>, <c>apple</c> or <c>oidc</c>.
 /// Unconfigured providers have null ClientId, Issuer, TeamId and KeyId. CallbackUrl is the redirect URL to register at
@@ -59,7 +76,8 @@ public sealed record TerraScaleAuthProjectProviderUpdate(
 /// <summary>PUT /settings body. A null part is omitted from the request and stays unchanged.</summary>
 public sealed record TerraScaleAuthProjectSettingsUpdate(
     [property: JsonPropertyName("methods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectMethods? Methods = null,
-    [property: JsonPropertyName("branding"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectBranding? Branding = null);
+    [property: JsonPropertyName("branding"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectBranding? Branding = null,
+    [property: JsonPropertyName("configuration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerraScaleAuthProjectConfiguration? Configuration = null);
 
 /// <summary>A project tenant end user. A disabled user cannot sign in.</summary>
 public sealed record TerraScaleAuthProjectUser(

@@ -100,6 +100,33 @@ public sealed class TerraScaleAuthProjectsContractTests
     }
 
     [Test]
+    public async Task HostedBrandingAndConfigurationCrossTheSdkHttpBoundary()
+    {
+        var project = new TerraScaleIdGenerator().NewId();
+        using var handler = new CaptureHandler(HttpStatusCode.OK, $$$"""
+            {"project_id":"{{{project}}}","issuer":"i","discovery_url":"d","sign_in_url":"s","methods":{"passcode":true,"password":true,"sign_up":true},
+            "branding":{"name":"Paperwork","logo_url":null,"theme_color":"#2158e8","title_size":30,"default_theme":"dark","footer_links":[{"label":"Privacy","url":"https://example.test/privacy"}],"background_color":"#151515","text_color":"#fafafa"},
+            "counts":{"users":0,"clients":0},"providers":[],"configuration":{"redirect_urls":["https://example.test/callback"],"session_lifetime_seconds":3600}}
+            """);
+        using var http = new HttpClient(handler);
+        var result = await Client(http).Projects.UpdateSettingsAsync(Token, project,
+            new(Branding: new("Paperwork", null, "#2158e8", 30, "dark", [new("Privacy", "https://example.test/privacy")], "#151515", "#fafafa"),
+                Configuration: new(["https://example.test/callback"], 3600)));
+        using var sent = JsonDocument.Parse(handler.Body!);
+        await Assert.That(sent.RootElement.TryGetProperty("methods", out _)).IsFalse();
+        await Assert.That(sent.RootElement.GetProperty("branding").GetProperty("title_size").GetInt32()).IsEqualTo(30);
+        await Assert.That(sent.RootElement.GetProperty("configuration").GetProperty("session_lifetime_seconds").GetInt32()).IsEqualTo(3600);
+        await Assert.That(result.Branding.DefaultTheme).IsEqualTo("dark");
+        await Assert.That(sent.RootElement.GetProperty("branding").GetProperty("background_color").GetString()).IsEqualTo("#151515");
+        await Assert.That(result.Branding.TextColor).IsEqualTo("#fafafa");
+        await Assert.That(result.Branding.FooterLinks![0].Label).IsEqualTo("Privacy");
+        await Assert.That(result.Configuration!.RedirectUrls).IsEquivalentTo(["https://example.test/callback"]);
+        await Assert.That(handler.Authorization!.ToString()).IsEqualTo("Bearer " + Token);
+        await Assert.That(handler.Uri!.AbsolutePath).IsEqualTo($"/v1/{project}/settings");
+        await Assert.That(handler.Calls).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task RoleTooLowSurfacesForbiddenOnceWithoutRetry()
     {
         var project = new TerraScaleIdGenerator().NewId();
