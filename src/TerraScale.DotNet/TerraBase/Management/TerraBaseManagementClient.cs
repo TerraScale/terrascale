@@ -130,17 +130,32 @@ public sealed class TerraBaseManagementClient
 
     /// <summary>
     /// ts-auth's project closure handoff (TerraBase docs/terrabase/project-closure.md): fences <paramref name="projectId"/>
-    /// permanently against new databases and enrollment, or reads the fence's status. Served only on TerraBase's private
-    /// listener behind the peer credential, so use a client without <see cref="TerraBaseManagementClientOptions.AccessTokenProvider"/>;
+    /// permanently against new databases and enrollment, or reads the fence's status. Version 1 accepts only empty projects.
+    /// Served only on TerraBase's private listener behind the peer credential, so use a client without
+    /// <see cref="TerraBaseManagementClientOptions.AccessTokenProvider"/>;
     /// no user acts. Idempotent: retry with the same <paramref name="closureId"/> after a lost response. A refusal writes
     /// nothing and throws <see cref="TerraBaseConflictException"/> (<c>not_empty</c>, <c>closure_conflict</c> or
     /// <c>binding_conflict</c>). Any other failure, a 404 included, proves nothing about the project.
     /// </summary>
-    public async Task<TerraBaseProjectClosure> CloseProjectAsync(string projectId, string authorityOrganizationId, string closureId, CancellationToken cancellationToken = default)
+    public Task<TerraBaseProjectClosure> CloseProjectAsync(string projectId, string authorityOrganizationId, string closureId, CancellationToken cancellationToken = default) =>
+        SendProjectClosureAsync(projectId, authorityOrganizationId, closureId, 1, cancellationToken);
+
+    /// <summary>
+    /// ts-auth's version 2 project erasure handoff for explicit account-deletion consent: authorizes a permanent project
+    /// fence and TerraBase's purge of the project's databases regardless of replication, TerraBase API keys and backup
+    /// destinations. Served only on TerraBase's private listener behind the peer credential; use a client without
+    /// <see cref="TerraBaseManagementClientOptions.AccessTokenProvider"/>. The caller must obtain consent before calling.
+    /// Idempotent: retry with the same <paramref name="closureId"/> after a lost response. A pending response is not proof
+    /// of completed erasure. Any failure, a 404 included, proves nothing about completion.
+    /// </summary>
+    public Task<TerraBaseProjectClosure> EraseProjectAsync(string projectId, string authorityOrganizationId, string closureId, CancellationToken cancellationToken = default) =>
+        SendProjectClosureAsync(projectId, authorityOrganizationId, closureId, 2, cancellationToken);
+
+    private async Task<TerraBaseProjectClosure> SendProjectClosureAsync(string projectId, string authorityOrganizationId, string closureId, int version, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(authorityOrganizationId);
         ArgumentException.ThrowIfNullOrEmpty(closureId);
-        var body = TerraBaseConnection.Json(new RequestBody { Version = 1, ClosureId = closureId, AuthorityOrganizationId = authorityOrganizationId }, Json.RequestBody);
+        var body = TerraBaseConnection.Json(new RequestBody { Version = version, ClosureId = closureId, AuthorityOrganizationId = authorityOrganizationId }, Json.RequestBody);
         var (closure, status) = await connection.SendAsync(HttpMethod.Put, "/admin/projects/" + TerraBaseConnection.Segment(projectId, nameof(projectId)) + "/closure",
             body, Json.TerraBaseProjectClosure, null, cancellationToken).ConfigureAwait(false);
         // A body that does not answer this closure, or contradicts its status code, is not evidence either way.

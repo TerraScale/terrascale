@@ -36,9 +36,11 @@ public sealed class TerraBaseProjectClosureTests
     private const string Closure = "01JA0000000000000000000007";
 
     [Test]
-    [Arguments(200, "accepted", Closure, true)]
-    [Arguments(202, "pending", Closure, false)]
-    public async Task Closure_answers_report_their_status_and_send_no_user(int status, string state, string closure, bool accepted)
+    [Arguments(1, 200, "accepted", Closure, true)]
+    [Arguments(1, 202, "pending", Closure, false)]
+    [Arguments(2, 200, "accepted", Closure, true)]
+    [Arguments(2, 202, "pending", Closure, false)]
+    public async Task Closure_answers_report_their_status_and_send_no_user(int version, int status, string state, string closure, bool accepted)
     {
         HttpRequestMessage? sent = null;
         string? body = null;
@@ -53,19 +55,30 @@ public sealed class TerraBaseProjectClosureTests
         using var http = new HttpClient(handler);
         var client = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = new Uri("http://100.64.0.1:8081") });
 
-        var answer = await client.CloseProjectAsync(Project, Organization, Closure);
+        var answer = await SendClosureAsync(client, version);
         await Assert.That(answer.Accepted).IsEqualTo(accepted);
+        await Assert.That(answer.ClosureId).IsEqualTo(Closure);
+        await Assert.That(answer.PendingHolders).IsEqualTo(accepted ? 0 : 1);
+        await Assert.That(sent!.Method).IsEqualTo(HttpMethod.Put);
         await Assert.That(sent!.RequestUri!.AbsolutePath).IsEqualTo($"/admin/projects/{Project}/closure");
         await Assert.That(sent.Headers.Contains("X-TerraBase-User-Id")).IsFalse();
-        await Assert.That(body).IsEqualTo($$"""{"version":1,"closureId":"{{Closure}}","authorityOrganizationId":"{{Organization}}"}""");
+        await Assert.That(sent.Headers.Contains("X-TerraBase-Organization-Id")).IsFalse();
+        await Assert.That(sent.Content!.Headers.ContentType!.MediaType).IsEqualTo("application/json");
+        await Assert.That(body).IsEqualTo($$"""{"version":{{version}},"closureId":"{{Closure}}","authorityOrganizationId":"{{Organization}}"}""");
     }
 
     // A success body that answers another closure, or calls a 202 accepted, proves nothing.
     [Test]
-    [Arguments(200, "accepted", "01JA0000000000000000000008")]
-    [Arguments(202, "accepted", Closure)]
-    [Arguments(200, "pending", Closure)]
-    public async Task Mismatched_closure_answers_are_invalid(int status, string state, string closure)
+    [Arguments(1, 200, "accepted", "01JA0000000000000000000008")]
+    [Arguments(1, 202, "accepted", Closure)]
+    [Arguments(1, 200, "pending", Closure)]
+    [Arguments(2, 200, "accepted", "01JA0000000000000000000008")]
+    [Arguments(2, 202, "pending", "01JA0000000000000000000008")]
+    [Arguments(2, 202, "accepted", Closure)]
+    [Arguments(2, 200, "pending", Closure)]
+    [Arguments(2, 201, "accepted", Closure)]
+    [Arguments(2, 200, "unknown", Closure)]
+    public async Task Mismatched_closure_answers_are_invalid(int version, int status, string state, string closure)
     {
         using var handler = new TerraBaseTestHandler((_, _) =>
         {
@@ -76,9 +89,33 @@ public sealed class TerraBaseProjectClosureTests
         using var http = new HttpClient(handler);
         var client = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = new Uri("http://100.64.0.1:8081") });
 
-        var error = await Assert.ThrowsAsync<TerraBaseException>(() => client.CloseProjectAsync(Project, Organization, Closure));
+        var error = await Assert.ThrowsAsync<TerraBaseException>(() => SendClosureAsync(client, version));
         await Assert.That(error!.ErrorCode).IsEqualTo("invalid_response");
     }
+
+    [Test]
+    [Arguments(1, "not_empty")]
+    [Arguments(1, "closure_conflict")]
+    [Arguments(2, "closure_conflict")]
+    [Arguments(2, "binding_conflict")]
+    public async Task Closure_conflicts_are_preserved_without_retry(int version, string code)
+    {
+        var requests = 0;
+        using var handler = new TerraBaseTestHandler((_, _) =>
+        {
+            requests++;
+            return Task.FromResult(TerraBaseIntegrationFixture.Json($$$"""{"error":{"code":"{{{code}}}","message":"refused"}}""", System.Net.HttpStatusCode.Conflict));
+        });
+        using var http = new HttpClient(handler);
+        var client = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = new Uri("http://100.64.0.1:8081") });
+
+        var error = await Assert.ThrowsAsync<TerraBaseConflictException>(() => SendClosureAsync(client, version));
+        await Assert.That(error!.ErrorCode).IsEqualTo(code);
+        await Assert.That(requests).IsEqualTo(1);
+    }
+
+    private static Task<TerraBaseProjectClosure> SendClosureAsync(TerraBaseManagementClient client, int version) =>
+        version == 1 ? client.CloseProjectAsync(Project, Organization, Closure) : client.EraseProjectAsync(Project, Organization, Closure);
 }
 
 public sealed class TerraBaseHistoryErasureTests
