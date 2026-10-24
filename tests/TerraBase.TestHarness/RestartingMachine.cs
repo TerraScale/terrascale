@@ -18,18 +18,20 @@ internal sealed class RestartingMachine(string region, FakeS3 bucket, FakeMember
 
     public ICatalogGate Gate => Api.Server.Services.GetRequiredService<ICatalogGate>();
 
-    public async Task StartAsync() =>
+    /// <summary>Starts this machine; <paramref name="services"/> replaces services for this start only.</summary>
+    public async Task StartAsync(Action<IServiceCollection>? services = null) =>
         _api = await ManagementApi.StartAsync(settings =>
         {
             bucket.Configure(settings);
             settings["region"] = region;
             settings["node-name"] = _name;
             settings["data-directory"] = _directory;
-        }, services =>
+        }, collection =>
         {
-            bucket.Route(services);
-            ManualBackupHosting.Configure(services);
-            services.AddSingleton<IMemberDirectory>(members);
+            bucket.Route(collection);
+            ManualBackupHosting.Configure(collection);
+            collection.AddSingleton<IMemberDirectory>(members);
+            services?.Invoke(collection);
         });
 
     /// <summary>A graceful stop: the host's shutdown runs, as on SIGTERM within its grace period.</summary>
