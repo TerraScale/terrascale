@@ -650,7 +650,7 @@ internal sealed partial class EngineManagementService
 
                     // The copy was taken before the commit: its source must still exist where the operation runs.
                     if (added.Database.BranchedFrom is { } source
-                        && await transaction.GetVersionAsync(Databases(op.Project!), source, cancellationToken).ConfigureAwait(false) is not { Deleted: false })
+                        && await GetAsync(transaction, Databases(op.Project!), source, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is null)
                     {
                         return new OperationFailed(ManagementErrors.NotFound);
                     }
@@ -874,6 +874,11 @@ internal sealed partial class EngineManagementService
                 {
                     // A chosen id registers a database another region holds under the same ids (docs/cross-region.md).
                     if (op.Id is { } id && prepared.Values.Any(added => added.Database.Id == id))
+                    {
+                        return ManagementErrors.IdTaken;
+                    }
+
+                    if (op.Id is { } purgeId && await DatabasePurge.IsDeletedAsync(transaction, purgeId, cancellationToken).ConfigureAwait(false))
                     {
                         return ManagementErrors.IdTaken;
                     }

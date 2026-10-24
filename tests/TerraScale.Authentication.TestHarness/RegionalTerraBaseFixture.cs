@@ -119,6 +119,7 @@ public sealed class RegionalTerraBaseFixture : IAsyncDisposable
             services.AddSingleton<IEmailSender>(email ?? new CapturingEmailSender());
             services.AddSingleton(this[region].Http);
             services.AddSingleton(this.Database(region));
+            services.AddKeyedSingleton(App.StorageAuthority, (_, _) => this[region].Management());
         },
         routes: routes,
         configure: builder => builder.Configuration["TS_REGION"] = region,

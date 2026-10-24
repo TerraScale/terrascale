@@ -510,7 +510,7 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         await Assert.That((await ErrorAsync(await RequestAsync(oidc, ""))).Error).IsEqualTo("invalid_request");
         var directory = services.GetRequiredService<PlatformDirectory>();
         var record = (await directory.ProjectAsync(project, CancellationToken.None))!.Value;
-        await directory.DeleteProjectAsync(record.CreatedBy, organization, project, CancellationToken.None);
+        await Assert.That(await services.GetRequiredService<Closures>().DeleteProjectAsync(record.CreatedBy, organization, project, CancellationToken.None)).IsTrue();
         await Assert.That((await ErrorAsync(await RequestAsync(oidc, github.Mint(GitHubActionsGrant.Audience)))).Error).IsEqualTo("invalid_client");
     }
 

@@ -37,6 +37,7 @@ internal sealed partial class ContinuousBackup
     private static readonly TimeSpan SizeInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan BucketSnapshotInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan BucketSnapshotRetention = TimeSpan.FromDays(14);
+    private static readonly TimeSpan BaselineSlack = TimeSpan.FromDays(1);
 
     // Kept past the window, so a restore that picked a snapshot just inside it finishes before retention deletes it.
     private static readonly TimeSpan RetentionGrace = TimeSpan.FromHours(1);
@@ -45,8 +46,7 @@ internal sealed partial class ContinuousBackup
     internal static (string Collection, string Id) RecordKey(TenantContext? database) =>
         database is null ? ("backup_status", "_system") : ($"databases/{database.DatabaseId}/backup_status", "current");
 
-    // Deletes what no restore inside the plan's window (plus the grace) needs: snapshots older than the newest one before
-    // the window, the segments before that one in its generation, and generations with no snapshot left.
+    // Keep a restore baseline before the window, but never beyond the plan plus one day.
     private async Task RetainAsync(ShippedFile file, CancellationToken cancellationToken)
     {
         var now = _time.GetUtcNow();
@@ -72,6 +72,8 @@ internal sealed partial class ContinuousBackup
 
         file.RetainedAt = now;
         var cutoff = now - TimeSpan.FromDays(file.RetentionDays) - RetentionGrace;
+        // Expire one pass early, including equality, so hourly scheduling fits inside the age cap.
+        var expires = now - TimeSpan.FromDays(file.RetentionDays) - BaselineSlack + RetentionInterval;
         long size = 0;
         var measure = now - file.SizedAt >= SizeInterval;
         var complete = true;
@@ -79,7 +81,11 @@ internal sealed partial class ContinuousBackup
         {
             try
             {
-                await RetainStoreAsync(file, store, cutoff, cancellationToken).ConfigureAwait(false);
+                if (!await RetainStoreAsync(file, store, cutoff, expires, cancellationToken).ConfigureAwait(false))
+                {
+                    throw new IOException("backup expiry is incomplete; an object deletion was refused or failed");
+                }
+
                 if (measure)
                 {
                     await foreach (var item in store.ListAsync(file.Prefix + "/", null, cancellationToken).ConfigureAwait(false))
@@ -114,8 +120,7 @@ internal sealed partial class ContinuousBackup
         await RecordAsync(file, cancellationToken).ConfigureAwait(false);
     }
 
-    // The member that ships _system keeps one Tigris snapshot of the whole bucket a day for 14 days, always keeping the
-    // newest (docs/terrabase/backup.md). Tigris has no schedule or retention of its own.
+    // Tigris has no retention of its own. Expiry runs before creation, including for the last snapshot.
     private async Task SnapshotBucketAsync(CancellationToken cancellationToken)
     {
         try
@@ -136,27 +141,32 @@ internal sealed partial class ContinuousBackup
             }
 
             var now = _time.GetUtcNow();
-            var snapshots = await _bucket.ListSnapshotsAsync(cancellationToken).ConfigureAwait(false);
+            var snapshots = (await _bucket.ListSnapshotsAsync(cancellationToken).ConfigureAwait(false)).ToList();
+            _newestBucketSnapshot = snapshots.Count == 0 ? null : snapshots.Max(snapshot => snapshot.At);
+            foreach (var snapshot in snapshots.Where(snapshot => snapshot.At <= now - BucketSnapshotRetention + RetentionInterval).ToArray())
+            {
+                try
+                {
+                    await _bucket.DeleteSnapshotAsync(snapshot.Version, cancellationToken).ConfigureAwait(false);
+                    snapshots.Remove(snapshot);
+                    _newestBucketSnapshot = snapshots.Count == 0 ? null : snapshots.Max(item => item.At);
+                    _bucketSnapshots.Add(1, new KeyValuePair<string, object?>("result", "deleted"));
+                    _logger.ZLogInformation($"Deleted the backup bucket snapshot {snapshot.Version} taken {snapshot.At:O}");
+                }
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+                {
+                    _bucketSnapshots.Add(1, new KeyValuePair<string, object?>("result", "failed"));
+                    _logger.ZLogWarning(error, $"Expiry of backup bucket snapshot {snapshot.Version} failed; it retries next hour");
+                }
+            }
+
             if (snapshots.Count == 0 || now - snapshots.Max(snapshot => snapshot.At) >= BucketSnapshotInterval)
             {
                 await _bucket.TakeSnapshotAsync(cancellationToken).ConfigureAwait(false);
                 _bucketSnapshots.Add(1, new KeyValuePair<string, object?>("result", "taken"));
                 _logger.ZLogInformation($"Took the daily snapshot of the backup bucket");
-                snapshots = await _bucket.ListSnapshotsAsync(cancellationToken).ConfigureAwait(false);
-            }
-
-            if (snapshots.Count == 0)
-            {
-                return;
-            }
-
-            var newest = snapshots.MaxBy(snapshot => snapshot.At);
-            _newestBucketSnapshot = newest.At;
-            foreach (var (version, at) in snapshots.Where(snapshot => now - snapshot.At > BucketSnapshotRetention && snapshot.Version != newest.Version))
-            {
-                await _bucket.DeleteSnapshotAsync(version, cancellationToken).ConfigureAwait(false);
-                _bucketSnapshots.Add(1, new KeyValuePair<string, object?>("result", "deleted"));
-                _logger.ZLogInformation($"Deleted the backup bucket snapshot {version} taken {at:O}");
+                var taken = await _bucket.ListSnapshotsAsync(cancellationToken).ConfigureAwait(false);
+                _newestBucketSnapshot = taken.Count == 0 ? null : taken.Max(snapshot => snapshot.At);
             }
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
@@ -168,9 +178,30 @@ internal sealed partial class ContinuousBackup
 
     // Inventories and deletions belong to one destination: partial uploads or a failed delete in the other destination
     // must remain discoverable on later passes. Bound deletion candidates, scanning the entire inventory to protect
-    // snapshots beyond the batch. Each hourly pass drains another expired prefix; segments delete sixteen at a time.
-    private static async Task RetainStoreAsync(ShippedFile file, IObjectStore store, DateTimeOffset cutoff, CancellationToken cancellationToken)
+    // snapshots beyond the batch. Hard-expired objects drain in batches of sixteen in the same pass.
+    private static async Task<bool> RetainStoreAsync(ShippedFile file, IObjectStore store, DateTimeOffset cutoff, DateTimeOffset expires, CancellationToken cancellationToken)
     {
+        var complete = true;
+        // Include orphan generations and the newest segment: a failing snapshot must not retain WAL forever.
+        var expiredKeys = new List<string>(16);
+        await foreach (var item in store.ListAsync(file.Prefix + "/wal/", null, cancellationToken).ConfigureAwait(false))
+        {
+            if (BackupLayout.ParseSegment(item.Key) is not { } segment || segment.At > expires)
+            {
+                continue;
+            }
+
+            expiredKeys.Add(item.Key);
+            if (expiredKeys.Count == 16)
+            {
+                complete &= await DeleteAsync(store, expiredKeys, cancellationToken).ConfigureAwait(false);
+                expiredKeys.Clear();
+            }
+        }
+
+        complete &= await DeleteAsync(store, expiredKeys, cancellationToken).ConfigureAwait(false);
+        expiredKeys.Clear();
+
         const int maxSnapshots = 10_000;
         var snapshots = new List<SnapshotKey>(maxSnapshots);
         SnapshotKey? oldest = null;
@@ -181,6 +212,18 @@ internal sealed partial class ContinuousBackup
                 continue;
             }
 
+            if (snapshot.At <= expires)
+            {
+                expiredKeys.Add(snapshot.Key);
+                if (expiredKeys.Count == 16)
+                {
+                    complete &= await DeleteAsync(store, expiredKeys, cancellationToken).ConfigureAwait(false);
+                    expiredKeys.Clear();
+                }
+
+                continue;
+            }
+
             oldest = snapshot;
             if (snapshots.Count < maxSnapshots)
             {
@@ -188,9 +231,11 @@ internal sealed partial class ContinuousBackup
             }
         }
 
+        complete &= await DeleteAsync(store, expiredKeys, cancellationToken).ConfigureAwait(false);
+
         if (oldest is null)
         {
-            return;
+            return complete;
         }
 
         if (snapshots.Count > 0 && snapshots[^1].Key == oldest.Key)
@@ -205,7 +250,7 @@ internal sealed partial class ContinuousBackup
         var lastCandidate = snapshots.Count > 0 ? snapshots[^1].Key : null;
         await foreach (var item in store.ListAsync(BackupLayout.Snapshots(file.Prefix), lastCandidate, cancellationToken).ConfigureAwait(false))
         {
-            if (BackupLayout.ParseSnapshot(item.Key) is { } snapshot && kept.TryGetValue(snapshot.Generation, out var position))
+            if (BackupLayout.ParseSnapshot(item.Key) is { } snapshot && snapshot.At > expires && kept.TryGetValue(snapshot.Generation, out var position))
             {
                 kept[snapshot.Generation] = position is { } frames ? Math.Min(frames, snapshot.Position) : snapshot.Position;
             }
@@ -213,17 +258,16 @@ internal sealed partial class ContinuousBackup
 
         foreach (var (generation, before) in kept)
         {
-            if (!await DeleteSegmentsAsync(store, file.Prefix, generation, before, cancellationToken).ConfigureAwait(false))
-            {
-                return;
-            }
+            complete &= await DeleteSegmentsAsync(store, file.Prefix, generation, before, cancellationToken).ConfigureAwait(false);
         }
 
-        _ = await DeleteAsync(store, [.. snapshots.Select(snapshot => snapshot.Key)], cancellationToken).ConfigureAwait(false);
+        complete &= await DeleteAsync(store, [.. snapshots.Select(snapshot => snapshot.Key)], cancellationToken).ConfigureAwait(false);
+        return complete;
     }
 
     private static async Task<bool> DeleteSegmentsAsync(IObjectStore store, string file, Ulid generation, long? before, CancellationToken cancellationToken)
     {
+        var complete = true;
         var batch = new List<string>(16);
         await foreach (var item in store.ListAsync(BackupLayout.Segments(file, generation), null, cancellationToken).ConfigureAwait(false))
         {
@@ -240,31 +284,39 @@ internal sealed partial class ContinuousBackup
             batch.Add(item.Key);
             if (batch.Count == 16)
             {
-                if (!await DeleteAsync(store, batch, cancellationToken).ConfigureAwait(false))
-                {
-                    return false;
-                }
+                complete &= await DeleteAsync(store, batch, cancellationToken).ConfigureAwait(false);
 
                 batch.Clear();
             }
         }
 
-        return await DeleteAsync(store, batch, cancellationToken).ConfigureAwait(false);
+        complete &= await DeleteAsync(store, batch, cancellationToken).ConfigureAwait(false);
+        return complete;
     }
 
-    // Deletes keys sixteen at a time in order; false once the bucket's retention rule still protects one of them.
+    // Failed keys remain retryable without starving later batches or committing a partial size measurement.
     private static async Task<bool> DeleteAsync(IObjectStore store, List<string> keys, CancellationToken cancellationToken)
     {
+        var complete = true;
         foreach (var chunk in keys.Chunk(16))
         {
-            var deleted = await Task.WhenAll(chunk.Select(key => store.DeleteAsync(key, cancellationToken))).ConfigureAwait(false);
-            if (!deleted.All(done => done))
+            cancellationToken.ThrowIfCancellationRequested();
+            var deleted = await Task.WhenAll(chunk.Select(async key =>
             {
-                return false;
-            }
+                try
+                {
+                    return await store.DeleteAsync(key, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    return false;
+                }
+            })).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            complete &= deleted.All(done => done);
         }
 
-        return true;
+        return complete;
     }
 
     // Rebuilds the file from the bucket up to the snapshot just stored, from the generation's previous snapshot when it has

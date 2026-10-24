@@ -40,6 +40,8 @@ public static class BackupExtensions
             .AddSingleton<ContinuousBackup>()
             .AddSingleton<IContinuousBackup>(provider => provider.GetRequiredService<ContinuousBackup>())
             .AddHostedService(provider => provider.GetRequiredService<ContinuousBackup>())
+            .AddSingleton<DatabaseBackupPurge>()
+            .AddHostedService(provider => provider.GetRequiredService<DatabaseBackupPurge>())
             .AddSingleton<BackupReader>()
             .AddSingleton<IPointInTimeRestore, PointInTimeRestore>();
     }

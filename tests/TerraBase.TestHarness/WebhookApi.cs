@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Features.Webhooks;
 using TerraBase.Primitives;
 
 namespace TerraBase.Testing;
@@ -121,7 +122,8 @@ internal sealed class WebhookApi : IAsyncDisposable
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(TimeSpan.FromSeconds(15));
         var request = Receiver.ReadAsync(deadline.Token).AsTask();
-        await DriveAsync(_ => Task.FromResult(request.IsCompleted), deadline.Token);
+        // A request can arrive while its pass is still held (a paused acknowledgment), so it wakes the wait too.
+        await DriveAsync(_ => Task.FromResult(request.IsCompleted), deadline.Token, request);
         return await request.WaitAsync(deadline.Token);
     }
 
@@ -143,7 +145,7 @@ internal sealed class WebhookApi : IAsyncDisposable
         return found;
     }
 
-    public async Task DriveAsync(Func<CancellationToken, Task<bool>> condition, CancellationToken token)
+    public async Task DriveAsync(Func<CancellationToken, Task<bool>> condition, CancellationToken token, Task? progress = null)
     {
         if (await condition(token))
         {
@@ -151,22 +153,24 @@ internal sealed class WebhookApi : IAsyncDisposable
         }
 
         Clock.Advance(TimeSpan.FromSeconds(1));
-        await ObserveAsync(condition, token);
+        await ObserveAsync(condition, token, progress);
     }
 
-    private async Task ObserveAsync(Func<CancellationToken, Task<bool>> condition, CancellationToken token)
+    public async Task ObserveAsync(Func<CancellationToken, Task<bool>> condition, CancellationToken token, Task? progress = null)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(TimeSpan.FromSeconds(15));
         while (true)
         {
+            // Take the pass before checking, so progress between the check and the wait is never missed. Waiting on the
+            // worker instead of polling the listener keeps the tenant rate budget, which refills on the fake clock only.
+            var pass = Api.Server.Services.GetRequiredService<WebhookService>().NextPassAsync();
             if (await condition(deadline.Token))
             {
                 return;
             }
 
-            // A real listener round-trip yields to the worker without spending wall-clock sleeps.
-            _ = await JsonAsync(Path, deadline.Token);
+            _ = await Task.WhenAny(pass, progress ?? pass).WaitAsync(deadline.Token);
         }
     }
 

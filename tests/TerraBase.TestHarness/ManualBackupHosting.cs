@@ -14,6 +14,9 @@ internal static class ManualBackupHosting
         var host = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
             && descriptor.ImplementationFactory?.Method.ReturnType is { } type && typeof(IContinuousBackup).IsAssignableFrom(type));
         services[services.IndexOf(host)] = ServiceDescriptor.Singleton<IHostedService, ManualBackupHost>();
+        var purge = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
+            && descriptor.ImplementationFactory?.Method.ReturnType == typeof(DatabaseBackupPurge));
+        services.Remove(purge); // Erasure passes, like shipping, are driven explicitly by the test.
     }
 
     private sealed class ManualBackupHost(IContinuousBackup backup) : IHostedService

@@ -3,7 +3,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
@@ -123,10 +125,73 @@ internal sealed class SystemCatalog(IStorageEngine engine, ICatalogGuard guard)
         }
     }
 
+    /// <summary>A bounded page of permanent purge authorities, including completed entries; null on catalog refusal.</summary>
+    /// <remarks>
+    /// An unreadable row (a replicated scalar or repeated key) is left out of the page, but the cursor moves past it so later
+    /// purges still progress. It is never reported complete: convergence counts it as a pending purge error.
+    /// </remarks>
+    public ValueTask<ManagementPage<DatabasePurgeRecord>?> ListDatabasePurgesAsync(string? after, int limit, CancellationToken cancellationToken) =>
+        ReadAsync<ManagementPage<DatabasePurgeRecord>?>(async transaction =>
+        {
+            var page = await transaction.ListAsync(DatabasePurge.Collection, after, Math.Clamp(limit, 1, 100), MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            List<DatabasePurgeRecord> items = [];
+            foreach (var document in page.Documents)
+            {
+                if (document.Json.Span.TrimStart(" \t\r\n"u8) is [(byte)'{', ..])
+                {
+                    try
+                    {
+                        if (EntityPayload.Read(document, TerraBaseJsonContext.Default.DatabasePurgeRecord) is { Database.DatabaseId: { } id } record && id == document.Id)
+                        {
+                            items.Add(record);
+                        }
+                    }
+                    catch (Exception error) when (error is JsonException or NotSupportedException or InvalidOperationException or ArgumentException)
+                    {
+                        // Left pending; see remarks.
+                    }
+                }
+            }
+
+            return new ManagementPage<DatabasePurgeRecord>(items, page.HasMore && page.Documents.Count > 0 ? page.Documents[^1].Id : null);
+        }, static _ => null, cancellationToken);
+
+    /// <summary>True only after every expected holder has published its own absence receipt.</summary>
+    public ValueTask<bool> AreActiveCopiesAbsentAsync(TenantContext database, CancellationToken cancellationToken) =>
+        ReadAsync<bool>(async transaction =>
+            await GetAsync(transaction, DatabasePurge.Collection, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false) is { } record
+            && DatabasePurge.SameDatabase(record.Database, database)
+            && await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, record, cancellationToken).ConfigureAwait(false), static _ => false, cancellationToken);
+
+    /// <summary>Records verified backup absence without removing the permanent id fence or changing deadlines.</summary>
+    public ValueTask<bool> MarkBackupVerifiedAsync(TenantContext database, DateTimeOffset verifiedAt, CancellationToken cancellationToken) =>
+        WriteAsync<bool>(async transaction =>
+        {
+            var record = await GetAsync(transaction, DatabasePurge.Collection, database.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+            // Authority and receipts are read under this writer; verifiedAt is the verifier's clock, never compared to another node's.
+            if (record is null || !DatabasePurge.SameDatabase(record.Database, database)
+                || !await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, record, cancellationToken).ConfigureAwait(false))
+            {
+                return false;
+            }
+
+            if (record.BackupVerifiedAt is null)
+            {
+                await PutAsync(transaction, DatabasePurge.Collection, database.DatabaseId!, record with { BackupVerifiedAt = verifiedAt },
+                    TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+            }
+            return true;
+        }, static _ => false, cancellationToken);
+
     public static async ValueTask<T?> GetAsync<T>(
         IStorageTransaction transaction, string collection, string id, JsonTypeInfo<T> type, CancellationToken cancellationToken)
         where T : class
     {
+        if (typeof(T) == typeof(ManagedDatabase) && await DatabasePurge.IsDeletedAsync(transaction, id, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
         var document = await transaction.GetAsync(collection, id, cancellationToken).ConfigureAwait(false);
         return document is null ? null : EntityPayload.Read(document, type);
     }

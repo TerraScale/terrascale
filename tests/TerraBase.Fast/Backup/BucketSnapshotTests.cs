@@ -85,7 +85,7 @@ public sealed class BucketSnapshotTests
     }
 
     [Test]
-    public async Task A_refused_snapshot_deletes_nothing_and_counts_a_failure()
+    public async Task A_refused_snapshot_still_expires_the_last_snapshot_and_clears_its_gauge()
     {
         var time = new FakeTimeProvider(Start);
         var s3 = new FakeS3 { Time = time, RejectSnapshots = true };
@@ -96,9 +96,49 @@ public sealed class BucketSnapshotTests
         await PassAsync(api, time, TimeSpan.FromHours(1), token);
         var metrics = await api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), token);
 
-        // The only snapshot is past retention but stays: nothing is deleted before a new one exists.
-        await Assert.That(s3.Snapshots.Select(snapshot => snapshot.At)).IsEquivalentTo([Start.AddDays(-20)]);
+        await Assert.That(s3.Snapshots).IsEmpty();
         await Assert.That(metrics).Contains("terrabase_backup_bucket_snapshots_total{otel_scope_name=\"TerraScale.TerraBase\",result=\"failed\"} 1");
+        await Assert.That(metrics).Contains("terrabase_backup_bucket_snapshots_total{otel_scope_name=\"TerraScale.TerraBase\",result=\"deleted\"} 1");
+        await Assert.That(metrics).Contains("terrabase_backup_bucket_snapshot_seconds{otel_scope_name=\"TerraScale.TerraBase\"} 0");
+    }
+
+    [Test]
+    public async Task The_last_snapshot_expires_at_the_inclusive_hourly_lookahead_boundary()
+    {
+        var time = new FakeTimeProvider(Start);
+        var s3 = new FakeS3 { Time = time, RejectSnapshots = true };
+        await using var api = await StartAsync(s3, time);
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var at = time.GetUtcNow() - TimeSpan.FromDays(14) + TimeSpan.FromHours(2);
+        s3.SeedSnapshot(at);
+
+        await PassAsync(api, time, TimeSpan.Zero, token);
+        await Assert.That(s3.Snapshots.Select(snapshot => snapshot.At)).IsEquivalentTo([at]);
+        await PassAsync(api, time, TimeSpan.FromHours(1), token);
+        await Assert.That(s3.Snapshots).IsEmpty();
+    }
+
+    [Test]
+    public async Task Refused_expiry_is_visible_retries_and_does_not_block_creation()
+    {
+        var time = new FakeTimeProvider(Start);
+        var s3 = new FakeS3 { Time = time, RejectSnapshotDeletes = true };
+        s3.SeedSnapshot(Start.AddDays(-20));
+        await using var api = await StartAsync(s3, time);
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+
+        var taken = await PassAsync(api, time, TimeSpan.FromHours(1), token);
+        var failed = await api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), token);
+        await Assert.That(s3.Snapshots.Select(snapshot => snapshot.At)).IsEquivalentTo([Start.AddDays(-20), taken]);
+        await Assert.That(failed).Contains("terrabase_backup_bucket_snapshots_total{otel_scope_name=\"TerraScale.TerraBase\",result=\"failed\"} 1");
+        await Assert.That(failed).DoesNotContain("result=\"deleted\"");
+        await Assert.That(failed).Contains($"terrabase_backup_bucket_snapshot_seconds{{otel_scope_name=\"TerraScale.TerraBase\"}} {taken.ToUnixTimeSeconds()}");
+
+        s3.RejectSnapshotDeletes = false;
+        await PassAsync(api, time, TimeSpan.FromHours(1), token);
+        var recovered = await api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), token);
+        await Assert.That(s3.Snapshots.Select(snapshot => snapshot.At)).IsEquivalentTo([taken]);
+        await Assert.That(recovered).Contains("terrabase_backup_bucket_snapshots_total{otel_scope_name=\"TerraScale.TerraBase\",result=\"deleted\"} 1");
     }
 
     [Test]

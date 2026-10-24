@@ -64,6 +64,19 @@ internal sealed class BackupTargets(
             : null;
     }
 
+    internal async Task<S3ObjectStore> PurgeStoreAsync(ProjectBackupDestinationRecord record, CancellationToken cancellationToken)
+    {
+        if (record.Version != 1)
+        {
+            throw new InvalidDataException("backup destination version is unavailable");
+        }
+
+        var (accessKeyId, secretKey) = await CustomerCredentials.OpenAsync(master, record.Credentials, cancellationToken).ConfigureAwait(false);
+        var destination = record.Destination;
+        return new S3ObjectStore(destination.Endpoint, destination.Region, destination.Bucket, accessKeyId, secretKey, http,
+            S3ObjectStore.CustomerHttpClientName, time, logger, bucket.UnprovenDeleted);
+    }
+
     private async Task<BackupTarget> CustomerAsync(TenantContext database, ProjectBackupDestinationRecord record, bool mirror, bool freshKey, CancellationToken cancellationToken)
     {
         if (record.Version != 1)

@@ -478,6 +478,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         try
         {
             CheckIntentJournal();
+            DeleteRewriteScratch();
             ReplicaId = ReplicaIdentityFile.Start(dataDirectory, replicaOwner ?? Environment.MachineName);
             // Stamps follow the host's clock: the query deadline's clock may be a test's fake that never moves.
             Member = new LocalReplica(ReplicaId, new MemberClock(HostTime, meter));
@@ -528,6 +529,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             _ = Locate(database);
+            await ThrowIfPurgeFencedAsync(key.Database, cancellationToken).ConfigureAwait(false);
             ThrowIfIntentPending(key);
             if (File.Exists(path) || Directory.Exists(path)
                 || Sidecars.Any(sidecar => File.Exists(path + sidecar) || Directory.Exists(path + sidecar)))
@@ -599,6 +601,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            await ThrowIfPurgeFencedAsync(key.Database, cancellationToken).ConfigureAwait(false);
             ThrowIfIntentPending(key);
             created = await CreateFileAsync(key.Database, path, cancellationToken, key).ConfigureAwait(false);
             if (created)
@@ -642,6 +645,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            await ThrowIfPurgeFencedAsync(key.Database, cancellationToken).ConfigureAwait(false);
             ThrowIfIntentPending(key);
             // A deletion between opening the source and taking the lifecycle lock retires that exact store.
             if (store.IsClosed)
@@ -786,7 +790,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         if (Directory.Exists(directory))
                         {
                             // Only exact private names belonging to this intent's database, including orphaned sidecars.
-                            foreach (var file in Directory.EnumerateFiles(directory, $".{key.Database}.*.creating*"))
+                            foreach (var file in Directory.EnumerateFiles(directory, $".{key.Database}.*.creating*")
+                                .Concat(Directory.EnumerateFiles(directory, $".{key.Database}.*.{RewriteSuffix}*")))
                             {
                                 cancellationToken.ThrowIfCancellationRequested();
                                 if (string.Equals(DatabaseIdFromFileName(Path.GetFileName(file)), key.Database, StringComparison.Ordinal))
@@ -1428,7 +1433,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             return IsId(database) ? database : null;
         }
 
-        if (name.Split('.') is not ["", var id, var nonce, var suffix] || !suffix.Equals("creating", comparison))
+        if (name.Split('.') is not ["", var id, var nonce, var suffix]
+            || !(suffix.Equals("creating", comparison) || suffix.Equals(RewriteSuffix, comparison)))
         {
             return null;
         }
@@ -1559,6 +1565,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             await initialize(temporary).ConfigureAwait(false);
             RejectDatabaseLinks(temporary);
             RejectDatabaseLinks(path);
+            await ThrowIfPurgeFencedAsync(name, CancellationToken.None).ConfigureAwait(false);
             File.Move(temporary, path, overwrite: false);
             published = true;
         }
@@ -1752,6 +1759,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 RejectDatabaseLinks(path);
+                await ThrowIfPurgeFencedAsync(key.Database, lifetime.Token).ConfigureAwait(false);
                 _stores[key] = store;
                 published = true;
                 _initializing.Remove(key);

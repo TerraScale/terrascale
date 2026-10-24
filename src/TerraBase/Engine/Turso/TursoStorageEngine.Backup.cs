@@ -103,6 +103,7 @@ internal sealed partial class TursoStorageEngine
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            await ThrowIfPurgeFencedAsync(key.Database, cancellationToken).ConfigureAwait(false);
             ThrowIfIntentPending(key);
             RejectDatabaseLinks(path);
             if (File.Exists(path))

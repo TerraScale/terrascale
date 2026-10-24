@@ -608,7 +608,7 @@ internal sealed partial class TursoDatabaseStore(
             return open;
         }
 
-        pool.OpenNew(this);
+        await WhileRewritingAsync(() => pool.OpenNew(this), cancellationToken).ConfigureAwait(false);
         TursoSession session;
         try
         {
@@ -618,7 +618,7 @@ internal sealed partial class TursoDatabaseStore(
         }
         catch (Exception error)
         {
-            pool.OpenFailed();
+            pool.OpenFailed(this);
             if (Closed && !cancellationToken.IsCancellationRequested)
             {
                 throw new ObjectDisposedException(GetType().FullName, error);
@@ -1200,7 +1200,7 @@ internal sealed partial class TursoDatabaseStore(
     {
         cancellationToken.ThrowIfCancellationRequested();
         // A deleted or shut-down database hands out no session.
-        if (pool.Rent(this) is { } idle)
+        if (await WhileRewritingAsync(() => pool.Rent(this), cancellationToken).ConfigureAwait(false) is { } idle)
         {
             return idle;
         }
@@ -1215,7 +1215,7 @@ internal sealed partial class TursoDatabaseStore(
         catch (Exception error)
         {
             // Rent counted an opening even when cancellation removed the queued Open before it started.
-            pool.OpenFailed();
+            pool.OpenFailed(this);
             if (Closed && !cancellationToken.IsCancellationRequested)
             {
                 // A delete can unlink the file after Rent found no session but before Turso opened it.

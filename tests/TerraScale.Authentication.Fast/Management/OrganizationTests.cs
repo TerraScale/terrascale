@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
+using TerraScale.DotNet.TerraBase;
 using static TerraScale.Authentication.Tests.PlatformCalls;
 
 namespace TerraScale.Authentication.Fast.Management;
@@ -487,7 +488,11 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
         await oidc.GrantAsync(fourth, dave.Id, "viewer");
         var leftover = (await store.GetAsync(AuthStore.ProjectMemberCollection, "terrascale", $"{third}/{dave.Id}"))!.Document;
         await oidc.OkAsync(HttpMethod.Delete, $"{Organizations}/{id}/projects/{third}", aliceToken, status: HttpStatusCode.NoContent);
-        await Assert.That(await store.TransactAsync([AuthStore.Create(AuthStore.ProjectMemberCollection, "terrascale", $"{third}/{dave.Id}", leftover)])).IsNull();
+        // The project's deletion job fences the store, so the store refuses to bring the role back; a clean-up that failed
+        // before the deletion leaves it behind in storage itself.
+        await Assert.That(await store.TransactAsync([AuthStore.Create(AuthStore.ProjectMemberCollection, "terrascale", $"{third}/{dave.Id}", leftover)])).IsEqualTo(0);
+        await oidc.Server.App.Services.GetRequiredService<TerraBaseDatabase>().PutDocumentAsync(AuthStore.ProjectMemberCollection,
+            AuthStore.NaturalKeyId("terrascale", AuthStore.ProjectMemberCollection, $"{third}/{dave.Id}"), leftover, TerraBasePrecondition.Absent);
         await oidc.OkAsync(HttpMethod.Delete, $"{Organizations}/{id}/projects/{fourth}/members/{dave.Id}", aliceToken, status: HttpStatusCode.NoContent);
         await Assert.That(await store.GetAsync(AuthStore.MembershipCollection, "terrascale", $"{id}/{dave.Id}")).IsNull();
         await Assert.That((await oidc.OkAsync(HttpMethod.Get, Organizations, daveToken)).GetProperty("items").GetArrayLength()).IsEqualTo(0);

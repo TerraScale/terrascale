@@ -37,7 +37,11 @@ public sealed record MembershipRecord(string InstanceId, string OrganizationId, 
 /// <param name="Name">Display name, unique in the organization ignoring case.</param>
 /// <param name="CreatedBy">The creating user.</param>
 /// <param name="CreatedAt">Creation time.</param>
-public sealed record ProjectRecord(string Id, string InstanceId, string OrganizationId, string Name, string CreatedBy, DateTimeOffset CreatedAt);
+/// <param name="ClosureId">
+/// The opaque ULID TerraBase knows this project's closure by, drawn at random by its first closure intent and reused by
+/// every later one (docs/auth/project-closure.md); null until then.
+/// </param>
+public sealed record ProjectRecord(string Id, string InstanceId, string OrganizationId, string Name, string CreatedBy, DateTimeOffset CreatedAt, string? ClosureId = null);
 
 /// <summary>An explicit project role (collection <c>project_members</c>, addressed by project and user).</summary>
 /// <param name="InstanceId">Always the platform tenant.</param>

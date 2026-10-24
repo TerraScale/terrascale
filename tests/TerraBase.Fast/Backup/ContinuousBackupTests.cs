@@ -407,14 +407,14 @@ public sealed class ContinuousBackupTests
         await WriteCatalogVersionAsync(api.Server, supportedVersion, token);
         time.Advance(TimeSpan.FromSeconds(1));
         await backup.RunOnceAsync(token);
-        // With the real seven-day Pro window restored, only the newest snapshot before the window is retained.
+        // Recovery expires even the newest stale baseline; the fresh snapshot honestly shortens the window.
         await Assert.That(s3.Objects.ContainsKey(snapshots[0])).IsFalse();
         await Assert.That(s3.Objects.ContainsKey(snapshots[1])).IsFalse();
-        await Assert.That(s3.Objects.ContainsKey(snapshots[2])).IsTrue();
+        await Assert.That(s3.Objects.ContainsKey(snapshots[2])).IsFalse();
         using var recovered = await api.Client.GetAsync(Uri($"{database.Path}/point-in-time"), token);
         await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var window = await recovered.Content.ReadFromJsonAsync<JsonElement>(token);
-        await Assert.That(window.GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(time.GetUtcNow() - TimeSpan.FromDays(7));
+        await Assert.That(window.GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(Snapshots(s3, database)[0].At);
     }
 
     private static async Task<byte[]> WriteCatalogVersionAsync(TerraBaseTestServer server, byte[] version, CancellationToken cancellationToken)

@@ -15,6 +15,7 @@ internal sealed partial class EngineManagementService
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        RegisterPurgeMetrics();
         _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => _unknownDatabaseFiles,
             description: "Files found at startup without a registered database; preserved for operator recovery.");
         // A restored catalog cannot authorize deleting files before it has been verified.
@@ -25,9 +26,10 @@ internal sealed partial class EngineManagementService
 
         // Only the current catalog owns cleanup intents; older formats are refused.
         var (hasCatalog, version) = await CatalogStateAsync(cancellationToken).ConfigureAwait(false);
+        var retried = false;
         if (version == CatalogVersion)
         {
-            while (true)
+            while (!retried)
             {
                 // One bounded page at a time; release the catalog connection before deleting storage.
                 var page = await ReadCatalogAsync(transaction => transaction.ListAsync(
@@ -50,7 +52,18 @@ internal sealed partial class EngineManagementService
                     checkpoint("recovery.intent", storage);
                     if (await FinishDatabaseCleanupAsync(storage, cancellationToken).ConfigureAwait(false) is Unavailable)
                     {
+                        // An unavailable or unsupported catalog cannot authorize an audit against this version either.
                         return;
+                    }
+
+                    if (await ReadCatalogAsync(async transaction =>
+                            await transaction.GetAsync(PendingDatabaseCleanup, storage.DatabaseId!, cancellationToken).ConfigureAwait(false) is not null,
+                            cancellationToken).ConfigureAwait(false))
+                    {
+                        // A still-closing copy or withheld receipt is retried by convergence without spinning during startup;
+                        // the file audit below still runs.
+                        retried = true;
+                        break;
                     }
                 }
             }
@@ -133,30 +146,63 @@ internal sealed partial class EngineManagementService
             if (abandonedCreation)
             {
                 // Replication can register the prepared copy before its local create is rejected.
-                return await ClearDatabaseCleanupAsync(storage, cancellationToken).ConfigureAwait(false);
+                return await ClearDatabaseCleanupAsync(storage, erasureVerified: false, cancellationToken).ConfigureAwait(false);
             }
 
             throw new InvalidOperationException("a database cleanup intent conflicts with the catalog");
         }
 
+        var authority = await ReadAsync<RecordedDeletion>(async transaction =>
+        {
+            var purge = await GetAsync(transaction, DatabasePurge.Collection, storage.DatabaseId!, TerraBaseJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+            if (purge is not null && (purge.FormatVersion != 1 || !DatabasePurge.SameDatabase(purge.Database, storage)))
+            {
+                throw new InvalidOperationException("a database purge conflicts with its cleanup scope");
+            }
+            return purge is not null;
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (authority is Unavailable unavailable)
+        {
+            return unavailable;
+        }
+
         await engine.DeleteDatabaseAsync(storage, cancellationToken, retainIntentOwnership: true).ConfigureAwait(false);
         checkpoint("cleanup.files", storage);
-        return await ClearDatabaseCleanupAsync(storage, cancellationToken).ConfigureAwait(false);
+        var erasureVerified = authority is true
+            && await webhookErasure.Value.EraseAsync(storage, cancellationToken).ConfigureAwait(false)
+            && await engine.VerifyDatabaseErasureAsync(storage, cancellationToken).ConfigureAwait(false);
+        if (authority is true && !erasureVerified)
+        {
+            // Keep the committed deletion pending until webhook payloads and every native handle are gone.
+            return new Done();
+        }
+
+        return await ClearDatabaseCleanupAsync(storage, erasureVerified, cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask<CatalogCheck> ClearDatabaseCleanupAsync(TenantContext storage, CancellationToken cancellationToken)
+    private async ValueTask<CatalogCheck> ClearDatabaseCleanupAsync(TenantContext storage, bool erasureVerified, CancellationToken cancellationToken)
     {
         try
         {
             checkpoint("cleanup.clearing", storage);
-            var cleared = await WriteAsync<CatalogCheck>(async transaction =>
+            var cleared = await WriteAsync<RecordedDeletion>(async transaction =>
             {
+                if (!await TryRecordLocalPurgeAbsenceAsync(transaction, storage, erasureVerified, cancellationToken).ConfigureAwait(false))
+                {
+                    // Authority can arrive after the earlier read; retain the intent until verified on retry.
+                    return false;
+                }
+
                 await transaction.DeleteAsync(PendingDatabaseCleanup, storage.DatabaseId!, cancellationToken).ConfigureAwait(false);
-                return new Done();
+                return true;
             }, static error => error, cancellationToken).ConfigureAwait(false);
             if (cleared is Unavailable refused)
             {
                 return refused;
+            }
+            if (cleared is false)
+            {
+                return new Done();
             }
 
             checkpoint("cleanup.committed", storage);

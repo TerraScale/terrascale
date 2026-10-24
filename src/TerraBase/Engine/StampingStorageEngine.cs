@@ -101,6 +101,9 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
     public ValueTask DisposeAsync() => inner.DisposeAsync();
 
+    public ValueTask<bool> VerifyDatabaseErasureAsync(TenantContext database, CancellationToken cancellationToken) =>
+        inner.VerifyDatabaseErasureAsync(database, cancellationToken);
+
     // Plans can change while a store remains open; only storage identity participates in invalidation.
     // Null is reserved for system storage and cannot be a valid tenant database.
     private static int DocumentStripe(TenantContext? database, string collection, string id) =>
@@ -204,6 +207,12 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
         public ValueTask RequireAppliedAsync(Lattices.ReplicaId origin, Lattices.Hlc expected, CancellationToken cancellationToken) =>
             inner.RequireAppliedAsync(origin, expected, cancellationToken);
+
+        public ValueTask<IReadOnlyDictionary<Lattices.ReplicaId, Lattices.Hlc>> GetAppliedAsync(CancellationToken cancellationToken) =>
+            RunAsync(() => inner.GetAppliedAsync(cancellationToken), cancellationToken);
+
+        public ValueTask<bool> HoldsHistoryAtOrBelowAsync(Lattices.Hlc cut, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.HoldsHistoryAtOrBelowAsync(cut, cancellationToken), cancellationToken);
 
         public async ValueTask RecordAppliedAsync(Lattices.ReplicaId origin, Lattices.Hlc applied, CancellationToken cancellationToken) =>
             _ = await RunAsync(async () =>

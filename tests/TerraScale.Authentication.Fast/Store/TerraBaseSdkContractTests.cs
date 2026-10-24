@@ -30,7 +30,8 @@ public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
             var template = operation.GetProperty("path").GetString()!;
             // Routing needs only a segment; non-ULID names also stop internal management mutations at validation.
             var path = Regex.Replace(template, @"\{([^{}]+)\}", match => match.Groups[1].Value);
-            using var request = client != "management"
+            var internalRoute = client == "management" || path.StartsWith("/admin/", StringComparison.Ordinal);
+            using var request = !internalRoute
                 ? new HttpRequestMessage(method, new Uri(fixture.Server.ClientAddress, path))
                 : new HttpRequestMessage(method, new Uri(fixture.Server.InternalAddress, path)) { Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact };
             if (method != HttpMethod.Get && method != HttpMethod.Delete)
@@ -38,7 +39,7 @@ public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
                 request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
             }
 
-            using var response = await (client == "management" ? fixture.Server.Http : fixture.Server.PublicHttp).SendAsync(request);
+            using var response = await (internalRoute ? fixture.Server.Http : fixture.Server.PublicHttp).SendAsync(request);
             if (response.StatusCode is HttpStatusCode.MethodNotAllowed
                 || response.StatusCode is HttpStatusCode.NotFound
                 && (await response.Content.ReadAsStringAsync()) is var body && (body.Length == 0 || body.Contains("unknown_route", StringComparison.Ordinal)))
