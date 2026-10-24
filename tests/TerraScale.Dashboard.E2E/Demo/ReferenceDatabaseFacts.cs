@@ -125,6 +125,12 @@ internal sealed class ReferenceDatabaseFacts : IBackupBackend
         return Task.FromResult(Database(scope, home, databaseId).Policy ?? throw new HttpRequestException("The source did not report a saved backup policy."));
     }
     public Task<ProducerBackup> CreateAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken ct) => throw ReadOnly();
+    public Task<BackupDestinationView?> DestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken ct) => Task.FromResult<BackupDestinationView?>(null);
+    public Task<BackupDestinationView> SetDestinationAsync(DatabaseScope scope, DatabaseRegion home, string endpoint, string region, string bucket, string accessKeyId, string secretKey, CancellationToken ct) => throw ReadOnly();
+    public Task RemoveDestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken ct) => throw ReadOnly();
+    public Task<ExportScheduleView> ExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken ct)
+    { ct.ThrowIfCancellationRequested(); _ = Database(scope, home, databaseId); return Task.FromResult(new ExportScheduleView(null, null, null)); }
+    public Task<ExportScheduleView> SetExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? cron, CancellationToken ct) => throw ReadOnly();
     public Task<ProducerBackupPolicy> SetPolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? cron, int retentionDays, bool disabled, CancellationToken ct) => throw ReadOnly();
     public Task<ManagedDatabase> RestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken ct) => throw ReadOnly();
 

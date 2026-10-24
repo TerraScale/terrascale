@@ -137,7 +137,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         [Description("Case-insensitive text matched against actor, action, target, source, and severity.")] string search = "",
         [Description("Only events with this raw action code. Omit or use all for every action.")] string action = "",
         [Description("info, warn, critical, unknown (not reported by the provider), or all (default).")] string severity = "",
-        [Description("Time window: 24h, 7d (default), 30d, or 90d, capped by the organization's retention.")] string range = "",
+        [Description("Time window: 24h, 7d (default), 30d, 90d, or 365d, capped by the plan's audit retention (retentionDays).")] string range = "",
         [Description("1-based page number. Defaults to 1.")] int page = 1,
         [Description("Events per page, 1-100. Defaults to 10.")] int pageSize = 10,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
@@ -147,9 +147,9 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         var context = await FreshAsync(organizationId, projectId);
         if (!context.CanManage) throw new AccountAccessException("Organization management is required.");
         var snapshot = await access.ReadAsync(context, Cancellation);
-        var retention = snapshot.AuditRetentionDays is >= 1 and <= 90 ? snapshot.AuditRetentionDays.Value
+        var retention = snapshot.AuditRetentionDays is >= 1 ? snapshot.AuditRetentionDays.Value
             : throw new IOException("Audit retention policy is unavailable.");
-        range = range is "24h" or "30d" or "90d" ? range : "7d";
+        range = range is "24h" or "30d" or "90d" or "365d" ? range : "7d";
         severity = severity is "info" or "warn" or "critical" or "unknown" ? severity : "all";
         var filter = new OrganizationFilters(Search: search.Trim(), Action: action.Length == 0 ? "all" : action, Severity: severity, Range: range, Now: time.GetUtcNow());
         var matches = filter.ApplyAudit(snapshot.AuditEvents, retention);
@@ -158,7 +158,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         var retained = snapshot.AuditEvents.Where(item => item.OccurredAt == DateTimeOffset.MinValue || item.OccurredAt >= time.GetUtcNow().AddDays(-retention));
         var rows = matches.Skip((page - 1) * pageSize).Take(pageSize).Select(item => new OrganizationAuditEventView(item.Id, item.OccurredAt,
             item.Actor, OrganizationFilters.AuditActorType(item), item.Action, OrganizationFilters.AuditActionLabel(item), item.Target,
-            item.TargetType, item.Source, OrganizationFilters.AuditSeverity(item), OrganizationFilters.AuditOutcome(item))).ToArray();
+            item.TargetType, item.Source, OrganizationFilters.AuditSeverity(item), OrganizationFilters.AuditOutcome(item), item.Ip ?? "")).ToArray();
         return new OrganizationAuditEvents(rows, matches.Count, matches.Count(item => OrganizationFilters.AuditSeverity(item) == "critical"),
             matches.Count(item => OrganizationFilters.AuditSeverity(item) == "warn"), matches.Count(item => OrganizationFilters.AuditSeverity(item) == "info"),
             matches.Count(item => OrganizationFilters.AuditSeverity(item) == "unknown"),

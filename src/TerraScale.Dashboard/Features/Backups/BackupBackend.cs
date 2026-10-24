@@ -43,6 +43,23 @@ public sealed class BackupBackend(IHttpClientFactory factory, IProjectAccessToke
         await SendAsync<ProducerBackupPolicy>(scope, home, "databases:write", HttpMethod.Put, await PathAsync(scope, home, databaseId, ct) + "/backup-policy",
             new { fullBackupCron, retentionDays, disabled }, ct);
 
+    // The destination is the project's; mode both keeps platform backups and mirrors them to the customer's bucket.
+    public async Task<BackupDestinationView?> DestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken ct)
+    {
+        try { return await SendAsync<BackupDestinationView>(scope, home, "databases:read", HttpMethod.Get, ProjectPath(scope) + "/backup-destination", null, ct); }
+        catch (DatabaseProviderException error) when (error.StatusCode == HttpStatusCode.NotFound) { return null; }
+    }
+    public Task<BackupDestinationView> SetDestinationAsync(DatabaseScope scope, DatabaseRegion home, string endpoint, string region, string bucket,
+        string accessKeyId, string secretKey, CancellationToken ct) =>
+        SendAsync<BackupDestinationView>(scope, home, "databases:write", HttpMethod.Put, ProjectPath(scope) + "/backup-destination",
+            new { endpoint, region, bucket, accessKeyId, secretKey, mode = "both" }, ct);
+    public Task RemoveDestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken ct) =>
+        SendAsync<JsonElement?>(scope, home, "databases:write", HttpMethod.Delete, ProjectPath(scope) + "/backup-destination", null, ct);
+    public async Task<ExportScheduleView> ExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken ct) =>
+        await SendAsync<ExportScheduleView>(scope, home, "databases:read", HttpMethod.Get, await PathAsync(scope, home, databaseId, ct) + "/export-schedule", null, ct);
+    public async Task<ExportScheduleView> SetExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? cron, CancellationToken ct) =>
+        await SendAsync<ExportScheduleView>(scope, home, "databases:write", HttpMethod.Put, await PathAsync(scope, home, databaseId, ct) + "/export-schedule", new { cron }, ct);
+
     public async Task<ManagedDatabase> RestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken ct)
     {
         var restored = await SendAsync<ManagedDatabase>(scope, home, "databases:write", HttpMethod.Post,
@@ -74,6 +91,7 @@ public sealed class BackupBackend(IHttpClientFactory factory, IProjectAccessToke
         using var response = await factory.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         if (response.StatusCode == HttpStatusCode.MisdirectedRequest) throw DatabaseWrongRegionException.From(response);
         if (!response.IsSuccessStatusCode) throw new DatabaseProviderException(response.StatusCode);
+        if (response.StatusCode == HttpStatusCode.NoContent && default(T) is null) return default!;
         using var document = await PlatformJson.ReadAsync(response.Content, timeout.Token);
         try { return document.RootElement.Deserialize<T>(Json) ?? throw new HttpRequestException("The backup provider returned an invalid response."); }
         catch (JsonException error) { throw new HttpRequestException("The backup provider returned an invalid response.", error); }

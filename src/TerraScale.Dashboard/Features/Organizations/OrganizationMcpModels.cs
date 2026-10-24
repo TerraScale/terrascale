@@ -21,9 +21,11 @@ public sealed record OrganizationAuditEventView(string Id, DateTimeOffset Occurr
     [property: Description("Raw action code, such as api_key.created.")] string Action, string ActionLabel, string Target,
     string TargetType, string Source,
     [property: Description("info, warn, critical, or unknown when the provider reports no severity.")] string Severity,
-    [property: Description("success or failure.")] string Outcome);
+    [property: Description("success or failure.")] string Outcome,
+    [property: Description("Client IP of the request that made the change; empty when the producer reports none.")] string Ip);
 public sealed record OrganizationAuditEvents(IReadOnlyList<OrganizationAuditEventView> Events,
     [property: Description("Events matching the filters across all pages.")] int Matching, int Critical, int Warn, int Info,
     [property: Description("Matching events whose severity the provider does not report.")] int Unknown,
     int Page, int PageCount, string Range, string Severity,
-    [property: Description("Action codes present in the retained history, for the action filter.")] IReadOnlyList<string> Actions, int RetentionDays);
+    [property: Description("Action codes present in the retained history, for the action filter.")] IReadOnlyList<string> Actions,
+    [property: Description("The plan's audit window in days: older events are not listed or exported.")] int RetentionDays);

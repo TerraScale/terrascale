@@ -157,7 +157,9 @@ public sealed class NotificationRecord
         (!Type.StartsWith("allowance-", StringComparison.Ordinal) || context.Organization?.RoleFor(context.UserId) == "owner");
 }
 
-public sealed record AuditRecord(string Id, string Actor, string Action, string Target, string TargetType, DateTimeOffset OccurredAt, string Source = "dashboard", string? Risk = null)
+// Ip is the client address of the request that recorded a dashboard event; events stored before it was recorded,
+// and other producers' events, have none.
+public sealed record AuditRecord(string Id, string Actor, string Action, string Target, string TargetType, DateTimeOffset OccurredAt, string Source = "dashboard", string? Risk = null, string? Ip = null)
 {
     // The dashboard knows what it records: its own events carry their catalog severity. Other
     // producers' events keep what they reported, and a missing value stays "Not reported".
@@ -171,6 +173,8 @@ public static class DashboardAuditSeverity
     public static IReadOnlyDictionary<string, string> ByAction { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["organization.renamed"] = "info",
+        ["session.created"] = "info",
+        ["database.created"] = "info",
         ["project.created"] = "info",
         ["project.renamed"] = "info",
         ["member.left"] = "info",
@@ -181,6 +185,13 @@ public static class DashboardAuditSeverity
         ["ownership.requested"] = "warning",
         ["project.deleted"] = "warning",
         ["settings.audit_retention_updated"] = "warning",
+        ["api_key.created"] = "warning",
+        ["api_key.revoked"] = "warning",
+        ["database.restored"] = "warning",
+        ["billing.plan_changed"] = "warning",
+        ["backup.destination_removed"] = "warning",
+        ["database.deleted"] = "critical",
+        ["backup.destination_updated"] = "critical",
         ["ownership.transferred"] = "critical",
         ["organization.deletion_requested"] = "critical",
         ["organization.deleted"] = "critical"

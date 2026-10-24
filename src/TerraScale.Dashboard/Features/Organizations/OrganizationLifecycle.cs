@@ -118,7 +118,7 @@ public sealed class OrganizationLifecycleService(IDashboardState state, AccountS
             if (org.Id != context.Organization.Id) throw new IOException("Organization projection identity changed.");
             if (deleted) { org.Archived = true; org.Status = "deleted"; org.DeletionRequested = true; }
             else org.Members.Remove(context.UserId);
-            org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, deleted ? "organization.deleted" : "member.left", deleted ? org.Name : context.UserId, "organization", time.GetUtcNow()));
+            org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, deleted ? "organization.deleted" : "member.left", deleted ? org.Name : context.UserId, "organization", time.GetUtcNow(), Ip: accounts.ClientIp));
             try
             {
                 await state.PutAsync(AccountService.OrganizationsCollection, org.Id, JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Matches(document.Version), cancellationToken);

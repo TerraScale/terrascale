@@ -11,7 +11,8 @@ namespace TerraScale.Dashboard.Shared.Accounts;
 
 // ts-auth decides which organizations and projects exist and the caller's role
 // in them. The dashboard stores only its own state for those IDs.
-public sealed class AccountService(IDashboardState state, TimeProvider time, ITsAuthPlatform platform, IPlatformRoleGateway roles, IHttpClientFactory http, TerraBasePlanSync plans)
+public sealed class AccountService(IDashboardState state, TimeProvider time, ITsAuthPlatform platform, IPlatformRoleGateway roles, IHttpClientFactory http, TerraBasePlanSync plans,
+    IHttpContextAccessor requests, ILogger<AccountService> logger)
 {
     public const string AccountsCollection = "dashboard_accounts";
     public const string IdentitiesCollection = "dashboard_account_identities";
@@ -335,7 +336,10 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             await HydrateAccessAsync(org, context.Session, cancellationToken);
             Member(org, context.Session, live.Role);
             if (!org.ContainsMember(context.UserId)) throw new AccountAccessException("Organization membership is required.");
+            var recorded = org.AuditEvents.Count;
             await update(org);
+            for (var index = recorded; index < org.AuditEvents.Count; index++)
+                if (org.AuditEvents[index].Ip is null) org.AuditEvents[index] = org.AuditEvents[index] with { Ip = ClientIp };
             if (org.Id != id) throw new AccountAccessException("Organization identity cannot change.");
             try
             {
@@ -344,6 +348,18 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             }
             catch (TerraBasePreconditionFailedException) when (attempt < 3) { }
         }
+    }
+
+    public DateTimeOffset Now => time.GetUtcNow();
+    // The client address of this request, as the forwarded-headers middleware resolved it from the loopback edge.
+    public string? ClientIp => requests.HttpContext?.Connection.RemoteIpAddress is { } ip ? (ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip).ToString() : null;
+
+    // Records audit events of a change its provider already committed: a failed record is logged and never fails that change.
+    public async Task RecordAsync(AccountContext context, Action<OrganizationRecord> record, CancellationToken cancellationToken)
+    {
+        try { await UpdateOrganizationAsync(context, record, cancellationToken); }
+        catch (Exception error) when (error is AccountAccessException or IOException or HttpRequestException or JsonException or TerraBaseException)
+        { logger.LogWarning("Audit event was not recorded ({ErrorType})", error.GetType().Name); }
     }
 
     public async Task SwitchOrganizationAsync(SessionRecord session, string id, CancellationToken cancellationToken)

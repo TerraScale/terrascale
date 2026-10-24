@@ -17,8 +17,17 @@ public sealed record BackupListing(
 public sealed record BackupRestoreResult(string DatabaseId, string Name, string Status);
 public sealed record ProducerBackup(string Id, string DatabaseId, string Status, string Trigger, long SizeBytes, DateTimeOffset CreatedAt);
 public sealed record ProducerBackupPolicy(string? FullBackupCron, int RetentionDays, bool Disabled, DateTimeOffset? UpdatedAt);
+// The project's own bucket at TerraBase (credentials are write-only there) and a database's scheduled NDJSON export into it.
+public sealed record BackupDestinationView(string Endpoint, string Region, string Bucket, string Mode, DateTimeOffset? UpdatedAt);
+public sealed record ExportRunView(DateTimeOffset StartedAt, DateTimeOffset? FinishedAt, string Status, string? Key, long Documents, long Bytes, string? Error);
+public sealed record ExportScheduleView(string? Cron, DateTimeOffset? UpdatedAt, ExportRunView? LastRun);
+public sealed record BackupExportView(BackupDestinationView? Destination, ExportScheduleView Schedule);
 public sealed record BackupPage(ShellModel Shell, DatabaseRecord Database, BackupListing? Listing, string Unavailable = "",
-    string Error = "", string RestoreId = "", string Name = "", string? FullBackupCron = null, string? RetentionDays = null);
+    string Error = "", string RestoreId = "", string Name = "", string? FullBackupCron = null, string? RetentionDays = null)
+{
+    public BackupExportView? Export { get; init; }
+    public bool ExportRead { get; init; }
+}
 
 public interface IBackupBackend
 {
@@ -27,5 +36,11 @@ public interface IBackupBackend
     Task<ProducerBackupPolicy> PolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
     Task<ProducerBackupPolicy> SetPolicyAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? fullBackupCron,
         int retentionDays, bool disabled, CancellationToken cancellationToken);
+    Task<BackupDestinationView?> DestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken);
+    Task<BackupDestinationView> SetDestinationAsync(DatabaseScope scope, DatabaseRegion home, string endpoint, string region, string bucket,
+        string accessKeyId, string secretKey, CancellationToken cancellationToken);
+    Task RemoveDestinationAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken);
+    Task<ExportScheduleView> ExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken);
+    Task<ExportScheduleView> SetExportScheduleAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? cron, CancellationToken cancellationToken);
     Task<ManagedDatabase> RestoreAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string backupId, string? name, CancellationToken cancellationToken);
 }

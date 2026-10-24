@@ -81,6 +81,7 @@ public static class AuthEndpoints
             }
             var account = await EnsureAccountAsync(context, session);
             await sessions.StartAsync(context, session);
+            await RecordSignInAsync(context, session, account);
             return HttpRedirects.SeeOther(flow.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : flow.ReturnTo);
         }
         catch (SignInRejectedException)
@@ -114,6 +115,15 @@ public static class AuthEndpoints
         if (session is not null) await auth.RevokeAsync(session, context.RequestAborted);
         await sessions.EndAsync(context);
         return HttpRedirects.SeeOther(await logout.EndSessionUrlAsync($"{context.Request.Scheme}://{context.Request.Host}", session?.IdToken, context.RequestAborted));
+    }
+
+    // The sign-in joins the audit history of the organization it opens; ts-auth validates the membership.
+    private static Task RecordSignInAsync(HttpContext context, SessionRecord session, AccountRecord account)
+    {
+        if (account.ActiveOrganizationId.Length == 0) return Task.CompletedTask;
+        var time = context.RequestServices.GetRequiredService<TimeProvider>();
+        return context.RequestServices.GetRequiredService<AccountService>().RecordAsync(new(session, account, [], new() { Id = account.ActiveOrganizationId }, null),
+            org => org.AuditEvents.Add(new(AccountService.NewId(), account.Email, "session.created", account.Email, "session", time.GetUtcNow())), context.RequestAborted);
     }
 
     private static async Task<AccountRecord> EnsureAccountAsync(HttpContext context, SessionRecord session)

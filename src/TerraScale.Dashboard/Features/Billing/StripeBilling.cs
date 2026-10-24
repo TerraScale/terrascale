@@ -234,6 +234,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
                 ?? throw new IOException("Billing organization is unavailable.");
             var org = AccountService.Read<OrganizationRecord>(organizationDocument);
             if (org.Id != orgId) throw new IOException("Billing organization changed.");
+            var previousPlanId = org.PlanId;
             Stripe.Checkout.Session? checkout = null;
             if (binding.SubscriptionId.Length == 0 && binding.CheckoutId.Length > 0)
             {
@@ -322,6 +323,9 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
                 binding.EffectivePlan = previousEffectivePlan;
                 binding.EffectiveInterval = previousEffectiveInterval;
             }
+            // Stripe reports the change; the plan it grants joins the organization's audit history.
+            if (org.PlanId != previousPlanId)
+                org.AuditEvents.Add(new(AccountService.NewId(), "billing service", "billing.plan_changed", PlanCatalog.Plans.FirstOrDefault(item => item.Id == org.PlanId)?.Name ?? org.PlanId, "plan", time.GetUtcNow()));
             try
             {
                 await state.PutAsync(Collection, orgId, JsonSerializer.SerializeToElement(binding), TerraBasePrecondition.Matches(billingDocument.Version), cancellationToken);
