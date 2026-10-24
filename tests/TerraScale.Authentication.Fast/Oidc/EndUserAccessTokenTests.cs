@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
@@ -68,9 +69,10 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task Unproven_key_ancestry_is_rejected_independently_for_current_and_previous_secrets(bool previous)
+    public async Task Rotated_keys_outlive_creator_sign_out_and_stop_on_grace_expiry_or_revocation(bool expirePrevious)
     {
-        await using var oidc = await this.StartAsync();
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await this.StartAsync(clock);
         var (owner, organization, project) = await SetupAsync(oidc);
         var original = await KeyAsync(oidc, owner, organization, project);
         var rotation = await oidc.OkAsync(HttpMethod.Post, $"{Keys(organization, project)}/{original[..26]}/rotate", owner,
@@ -82,14 +84,28 @@ public sealed class EndUserAccessTokenTests(TerraBaseFixture fixture)
 
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var key = (await store.GetAsync(AuthStore.ApiKeyCollection, OidcIssuer.InstanceId, original[..26]))!;
-        var record = JsonNode.Parse(key.Document.GetRawText())!.AsObject();
-        record.Remove(previous ? "previousSecretBindings" : "secretBindings");
-        await Assert.That(await store.ReplaceAsync(AuthStore.ApiKeyCollection, OidcIssuer.InstanceId, original[..26],
-            JsonSerializer.SerializeToElement(record), key.Version)).IsNotNull();
+        var creator = key.Document.Deserialize(PlatformJson.Default.ApiKeyRecord)!.CreatedBy;
+        await Assert.That(await oidc.Server.App.Services.GetRequiredService<Sessions>()
+            .RevokeAllAsync(OidcIssuer.InstanceId, creator)).IsTrue();
+        // Project keys belong to the backend and retain their authority after the creator signs out.
+        await oidc.OkAsync(HttpMethod.Post, Path(project), original, body);
+        await oidc.OkAsync(HttpMethod.Post, Path(project), current, body);
 
-        await Assert.That(await oidc.FailAsync(HttpMethod.Post, Path(project), previous ? original : current, body))
-            .IsEqualTo((401, "unauthorized"));
-        await oidc.OkAsync(HttpMethod.Post, Path(project), previous ? current : original, body);
+        if (expirePrevious)
+        {
+            clock.Advance(TimeSpan.FromSeconds(61));
+            await Assert.That(await oidc.FailAsync(HttpMethod.Post, Path(project), original, body)).IsEqualTo((401, "unauthorized"));
+            await oidc.OkAsync(HttpMethod.Post, Path(project), current, body);
+        }
+        else
+        {
+            await Assert.That(await store.CompareAndDeleteAsync(AuthStore.ApiKeyCollection, OidcIssuer.InstanceId,
+                original[..26], key.Version)).IsTrue();
+            foreach (var secret in new[] { original, current })
+            {
+                await Assert.That(await oidc.FailAsync(HttpMethod.Post, Path(project), secret, body)).IsEqualTo((401, "unauthorized"));
+            }
+        }
     }
 
     [Test]
