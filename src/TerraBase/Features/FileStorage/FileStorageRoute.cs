@@ -20,8 +20,8 @@ internal static class FileStorageRoute
         + "Keep URLs private. List accepts after (exclusive ULID), 50 results per page, with authorized filtering before pagination. "
         + "Delete queues cleanup; reserved bytes remain billed until physical deletion succeeds. Replicas are never counted again. No automatic mutation retries.";
 
-    public static string Bucket(HttpContext context) => (string)context.Request.RouteValues["bucket"]!;
-    public static string File(HttpContext context) => (string)context.Request.RouteValues["file"]!;
+    public static string BucketId(HttpContext context) => (string)context.Request.RouteValues["bucket"]!;
+    public static string FileId(HttpContext context) => (string)context.Request.RouteValues["file"]!;
     public static string? After(HttpContext context) => context.Request.Query.TryGetValue("after", out var value) ? value.ToString() : null;
 
     public static async ValueTask<IResult> RunAsync(HttpContext context, Func<ValueTask<FileStorageResult>> operation, int success)

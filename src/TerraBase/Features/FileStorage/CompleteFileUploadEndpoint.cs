@@ -29,5 +29,5 @@ public sealed class CompleteFileUploadEndpoint(IFileStorage files) : EndpointWit
 
     /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        FileStorageRoute.RunAsync(HttpContext, () => files.CompleteUploadAsync(FileStorageRoute.Bucket(HttpContext), FileStorageRoute.File(HttpContext), cancellationToken), 200);
+        FileStorageRoute.RunAsync(HttpContext, () => files.CompleteUploadAsync(FileStorageRoute.BucketId(HttpContext), FileStorageRoute.FileId(HttpContext), cancellationToken), 200);
 }
