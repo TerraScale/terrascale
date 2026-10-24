@@ -17,24 +17,22 @@ or its scan budget, so an empty page can still have a continuation cursor.
 Follow cursors until exhaustion; see [queries and pagination](/ar/guides/queries).
 The [change stream](/ar/guides/realtime) keeps events for 7 days.
 
-## Engine safety tiers
+## Plan entitlements
 
-TerraBase enforces these safety tiers per organization, shared by all its projects, databases and API keys. Rate, concurrency and memory refusals return HTTP 429 with Retry-After. The engine tier names Hobby, Pro and Enterprise are implementation safety tiers, not the commercial Free, Starter, Pro, Team and Enterprise plans. No mapping between commercial plans and engine tiers is published. The Enterprise engine tier still observes document, page, batch and process safety bounds.
+TerraBase enforces these entitlements per organization, shared by all its projects, databases and API keys. Free maps to the hobby engine tier; other plans map to the tier of the same name. Requests beyond the request-rate or concurrency entitlement receive HTTP 429 with Retry-After. The storage limit is a hard ceiling, distinct from the included storage allowance on the pricing page. "No plan ceiling" means the plan sets none; every plan still observes document, page, batch and process safety bounds. Support values are response targets, not an SLA.
 
-| Engine limit (per organization) | Hobby | Pro | Enterprise |
-| --- | --- | --- | --- |
-| Requests/s (burst) | 50 (100) | 500 (1,000) | No plan ceiling |
-| Concurrent HTTP requests | 4 | 16 | No plan ceiling |
-| Query execution time | 1 s | 5 s | No plan ceiling |
-| Candidate rows / JSON scanned per query | 10,000 / 16 MiB | 100,000 / 128 MiB | No plan ceiling |
-| Live document JSON storage | 1 GiB | 100 GiB | No plan ceiling |
+| Entitlement (per organization) | Free | Starter | Pro | Team | Enterprise |
+| --- | --- | --- | --- | --- | --- |
+| Requests/s (burst) | 50 (100) | 200 (400) | 500 (1,000) | 500 (1,000) | No plan ceiling |
+| Concurrent HTTP requests | 4 | 8 | 16 | 16 | No plan ceiling |
+| Query execution time | 1 s | 2 s | 5 s | 5 s | No plan ceiling |
+| Storage limit | 100 MB | 5 GB | 100 GB | 100 GB | No plan ceiling |
+| Point-in-time recovery window | 1 day | 3 days | 7 days | 14 days | 30 days |
+| Backup retention | 1 day | 3 days | 7 days | 14 days | 30 days |
+| Regions per database | 3 | 3 | 3 | 3 | 3 |
+| Support response target | Community | 2 business days | 1 business day | 8 hours | Custom |
+| Databases | 1 | 5 | 25 | 100 | Custom |
 
-## Plan policies
-
-The existing engine PITR defaults (days) are hobby 1 / pro 7 / enterprise 30. These engine defaults do not publish PITR entitlements for the commercial plans. No commercial plan-to-engine-tier mapping is published.
-
-Databases per org: Free 1 / Starter 5 / Pro 25 / Team 100 / Enterprise Custom.
-
-Subscription prices, allowances and metering are on the [pricing page](./pricing.md). Usage charges are not yet collected.
+Subscription prices, allowances and metering are on the [pricing page](./pricing.md).
 
 </div>

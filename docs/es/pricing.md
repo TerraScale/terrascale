@@ -11,23 +11,22 @@
 > **Approved subscription prices, allowances and usage rates.** Prices come from the catalog at
 > [terrascale.tech/pricing.json](https://terrascale.tech/pricing.json); the
 > [pricing page](https://terrascale.tech/pricing) renders the same catalog.
-> All prices are in USD. Allowances and overage rates are approved.
-> Usage charges are not yet collected. Confirm enrollment and service availability before purchase;
-> a published price does not establish that checkout or billing is available.
+> All prices are in USD. Free needs only sign-up; Starter, Pro and Team are bought through
+> checkout; Enterprise is arranged through sales.
 
 ## How usage is metered
 
 - **Operation units.** One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Writes count once regardless of the number of selected regions; reads count only in the serving region. Replication between regions is not billed. Failed, denied, invalid, throttled, and not-found requests are not billed.
 - **Storage across regions.** Stored bytes count once in every selected region. Storage uses decimal GB-region-month, averaged over time during the month.
 - **Client egress.** Outbound application response bytes to clients, excluding replication traffic; decimal GB.
-- **Allowances.** Free includes small allowances without a card and has no automatic overages. Paid plans include monthly allowances, then pay-as-you-go usage. Usage charges are not yet collected.
+- **Allowances.** Free includes small allowances without a card; new writes stop at its operation allowance and there are no overage charges. Paid plans include monthly allowances; operation units over the allowance are added to the next subscription invoice at the overage rate. Storage and client egress over the allowance are not billed yet.
 
 ## Plans and allowances
 
 |  | Free | Starter | Pro | Team | Enterprise |
 | --- | --- | --- | --- | --- | --- |
 | Subscription | $0; no card | $30/year only ($2.50/month equivalent) | $20/month | $50/month | $999/month support + usage; contact sales |
-| Availability | Public Alpha; confirm enrollment | Public Alpha; confirm enrollment | Public Alpha; confirm enrollment | Public Alpha; confirm enrollment | Contact sales; no self-service purchase |
+| Availability | Sign up | Checkout | Checkout | Checkout | Contact sales |
 | Projects | 1 | 5 | 25 | 100 | Custom |
 | Databases | 1 | 5 | 25 | 100 | Custom |
 | Members | 1 | 5 | 25 | 100 | Custom |
@@ -38,11 +37,15 @@
 
 Launch regions: GRU (São Paulo), SJC (San Jose), FRA (Frankfurt).
 
+Request rates, concurrency, query timeout, storage limit, point-in-time recovery, backup
+retention and support response targets per plan are in [plan entitlements](./limits.md#plan-entitlements).
+
 No trials or annual Pro/Team discounts are offered.
 
 ## Pay-as-you-go rates
 
-Paid plans include the allowances above, then pay-as-you-go usage at the approved rates:
+Paid plans include the allowances above. Operation units over the allowance are added to the next
+subscription invoice at the rate below. Storage and client egress over the allowance are not billed yet.
 
 | Meter | Rate (USD) |
 | --- | --- |
@@ -50,25 +53,23 @@ Paid plans include the allowances above, then pay-as-you-go usage at the approve
 | Storage | $0.50 per GB-region-month |
 | Client egress | $0.10 per decimal GB |
 
-These allowances and rates are approved. Usage charges are not yet collected.
-
 **Shared organization allowances.** Databases and branches share their owning organization’s plan allowances. There is no additional branch allowance. Each 4 KiB written counts once, no matter how many regions hold the database; reads count in the region that serves them; replication between regions is free. Storage is decimal GB-region-month, averaged over time: 100 MB stored across three regions for a full month consumes 0.3 GB-region-month.
 
-**Free.** Free requires no payment card and has no automatic overages. No trial or first-paid-month promotion is offered by this catalog.
+**Free.** Free requires no payment card and has no overage charges. No trial or first-paid-month promotion is offered by this catalog.
 
-**Enterprise.** $999 per month support plus usage; contact sales. Enterprise requires contact with sales and is unavailable for self-service purchase during Public Alpha. Confirm availability and contract terms before enrollment; priority response, SOC 2, and contractual SLA benefits are not published launch promises.
+**Enterprise.** $999 per month support plus usage; contact sales. Enterprise is arranged through sales and is not sold through checkout. SOC 2 and contractual SLA benefits are not published launch promises.
 
 ## Billing cycle
 
-Starter is billed yearly only; its monthly price is an equivalent, not a monthly purchase. Pro and Team are billed monthly. Enterprise support plus usage is arranged through sales. Operation-unit and client-egress allowances are monthly, including on Starter; they are not annual usage pools. Storage is averaged over time during the month. Usage charges are not yet collected. No trials or annual Pro/Team discounts are offered.
+Starter is billed yearly only; its monthly price is an equivalent, not a monthly purchase. Pro and Team are billed monthly. Enterprise support plus usage is arranged through sales. Operation-unit and client-egress allowances are monthly, including on Starter; they are not annual usage pools. Storage is averaged over time during the month. Operation units over a paid allowance are added to the next subscription invoice. No trials or annual Pro/Team discounts are offered.
 
 ## Subscription changes
 
-Confirm the available enrollment and subscription-change workflow before purchase. Published prices do not establish that checkout, proration, invoices or paid usage collection are available. A change of plan must preserve existing data; cancellation is not a deletion request.
+Starter, Pro and Team are bought and changed through checkout; Enterprise is arranged through sales. A change of plan must preserve existing data; cancellation is not a deletion request.
 
 ## Exhausted allowances
 
-Free has no automatic overages. Paid plans include allowances followed by pay-as-you-go usage at the approved rates above. Allowances and overage rates are approved; usage charges are not yet collected. Approved pricing does not establish current overage enforcement or payment collection. Reaching an allowance alone does not authorize deletion; account/database closure and retention deletion are separate workflows.
+Free stops new writes at its operation allowance and has no overage charges. On paid plans, operation units over the allowance are added to the next subscription invoice at the overage rate; storage and client egress over the allowance are not billed yet. Reaching an allowance alone does not authorize deletion; account/database closure and retention deletion are separate workflows.
 
 ## Unpaid storage
 

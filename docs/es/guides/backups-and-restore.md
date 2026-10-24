@@ -48,7 +48,7 @@ api "$TERRASCALE_API_URL/v1/projects/$PROJECT/databases/$DATABASE/point-in-time"
 { "earliest": "2026-10-15T09:00:00+00:00", "latest": "2026-10-22T14:31:07+00:00" }
 ```
 
-`earliest` is the oldest continuous backup snapshot, limited by your plan's PITR retention (see [limits](/es/limits)). `latest` is the newest time the backup proves restorable. `404` means the backup holds no data of this database within that retention.
+`earliest` is the oldest continuous backup snapshot, limited by your plan's PITR window (see [plan entitlements](/es/limits#plan-entitlements)). `latest` is the newest time the backup proves restorable. `404` means the backup holds no data of this database within that retention.
 
 ## Preview a restore
 

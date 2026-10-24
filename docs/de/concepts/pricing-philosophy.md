@@ -13,6 +13,6 @@ The public catalog meters operation units, storage across selected regions and c
 
 Plan allowances are shared at the organization level. Check the [canonical pricing sheet](/de/pricing) and [limits](/de/limits) before enrollment.
 
-Storage uses decimal GB-region-month averaged over time during the month. Client egress counts decimal outbound application response bytes and excludes replication. Subscription prices, allowances and rates are approved. Paid plans include allowances then pay-as-you-go; Free requires no card and has no automatic overages. Usage charges are not yet collected.
+Storage uses decimal GB-region-month averaged over time during the month. Client egress counts decimal outbound application response bytes and excludes replication. Subscription prices, allowances and rates are approved. Operation units over a paid plan's allowance are added to the next subscription invoice at the overage rate; storage and client egress over the allowance are not billed yet. Free requires no card, stops new writes at its operation allowance and has no overage charges.
 
 </div>
