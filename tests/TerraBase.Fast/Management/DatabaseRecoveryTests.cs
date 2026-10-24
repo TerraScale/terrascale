@@ -1224,59 +1224,62 @@ public sealed class DatabaseRecoveryTests
         var replaced = false;
         var revisited = false;
         List<string>? replacementCatalog = null;
-        await Assert.That(async () =>
+        await using (var api = await state.StartAsync(services =>
         {
-            await using var failed = await state.StartAsync(services =>
+            // Startup defers the replacement to convergence; keep that later pass outside this test.
+            services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow));
+            hook.Install(services);
+            services.AddSingleton<DatabaseLifecycleCheckpoint>(provider => (step, storage) =>
             {
-                hook.Install(services);
-                services.AddSingleton<DatabaseLifecycleCheckpoint>(provider => (step, storage) =>
+                if (storage.DatabaseId != state.Source)
                 {
-                    if (storage.DatabaseId != state.Source)
-                    {
-                        return;
-                    }
+                    return;
+                }
 
-                    if (step == "recovery.intent" && replaced)
-                    {
-                        // Stop before authorizing the replacement itself; only the stale page has run.
-                        revisited = true;
-                        throw new IOException("replacement intent awaits its own recovery");
-                    }
+                if (step == "recovery.intent" && replaced)
+                {
+                    // A replacement belongs to a later convergence pass, never this startup page.
+                    revisited = true;
+                    throw new IOException("replacement intent awaits its own recovery");
+                }
 
-                    if (step == replacementStep)
+                if (step == replacementStep)
+                {
+                    // Arm before either the recovery read or cleanup's write (including a durable begin).
+                    hook.BeforeCatalogBegin = async (_, token) =>
                     {
-                        // Arm before either the recovery read or cleanup's write (including a durable begin).
-                        hook.BeforeCatalogBegin = async (_, token) =>
+                        // The replacement's own transaction must not reenter this callback.
+                        hook.BeforeCatalogBegin = null;
+                        var system = await provider.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+                        long version;
+                        await using (var transaction = await system.BeginTransactionAsync(write: true, token))
                         {
-                            // The replacement's own transaction must not reenter this callback.
-                            hook.BeforeCatalogBegin = null;
-                            var system = await provider.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
-                            long version;
-                            await using (var transaction = await system.BeginTransactionAsync(write: true, token))
-                            {
-                                var pending = (await transaction.GetAsync("pending_database_cleanup", state.Source, token))!;
-                                // PUT mints a fresh state stamp even for identical JSON; version distinguishes the intent.
-                                version = await transaction.PutAsync("pending_database_cleanup", state.Source, pending.Json, token);
-                                await Assert.That(version).IsGreaterThan(pending.Version);
-                                await transaction.CommitAsync(token);
-                            }
+                            var pending = (await transaction.GetAsync("pending_database_cleanup", state.Source, token))!;
+                            // PUT mints a fresh state stamp even for identical JSON; version distinguishes the intent.
+                            version = await transaction.PutAsync("pending_database_cleanup", state.Source, pending.Json, token);
+                            await Assert.That(version).IsGreaterThan(pending.Version);
+                            await transaction.CommitAsync(token);
+                        }
 
-                            await using (var transaction = await system.BeginTransactionAsync(write: false, token))
-                            {
-                                var replacement = (await transaction.GetAsync("pending_database_cleanup", state.Source, token))!;
-                                await Assert.That(replacement.Version).IsEqualTo(version);
-                            }
+                        await using (var transaction = await system.BeginTransactionAsync(write: false, token))
+                        {
+                            var replacement = (await transaction.GetAsync("pending_database_cleanup", state.Source, token))!;
+                            await Assert.That(replacement.Version).IsEqualTo(version);
+                        }
 
-                            replacementCatalog = await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"));
-                            replaced = true;
-                        };
-                    }
-                });
+                        replacementCatalog = await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"));
+                        replaced = true;
+                    };
+                }
             });
-        }).Throws<IOException>();
+        }))
+        {
+            await Assert.That((await PendingAsync(api)).Documents.Count).IsEqualTo(1);
+            await AssertReadyAsync(api);
+        }
 
         await Assert.That(replaced).IsTrue();
-        await Assert.That(revisited).IsTrue();
+        await Assert.That(revisited).IsFalse();
         await Assert.That(await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"))).IsEquivalentTo(replacementCatalog!);
         if (replacementStep == "recovery.intent")
         {
