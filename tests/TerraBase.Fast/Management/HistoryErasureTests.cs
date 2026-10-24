@@ -234,6 +234,20 @@ public sealed class HistoryErasureTests
         {
             var before = sjc.Node;
 
+            // Recovery replaces sjc's file and invalidates its outgoing cursors. Before stopping the snapshot source,
+            // wait for fra to ACK a fresh local group in that incarnation. A receipt/token only proves the incoming
+            // recovery: an unfinished outgoing refill otherwise leaves fra refusing this origin's crash-fixture batch.
+            await PutAsync(sjc, Jobs, Id(), """{"replicationReady":true}""");
+            var source = sjc.Groups;
+            var incarnation = await IncarnationAsync(sjc, Auth);
+            var head = await source.HeadAsync(Auth, incarnation, CancellationToken.None);
+            await Assert.That(head).IsNotNull();
+            await Assert.That(await UntilAsync(sjc, async () =>
+            {
+                var cursor = await source.AckedAsync(Auth, fra.Node, CancellationToken.None);
+                return cursor is { RequiresRefill: false } ack && ack.Incarnation == incarnation && ack.Acked >= head!.Value ? 1 : 0;
+            }, 1)).IsTrue();
+
             var directory = Path.GetDirectoryName(((TursoDatabaseStore)await sjc.Api.Server.Services.GetRequiredService<TursoStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None)).FilePath)!;
             var oldIncarnation = await IncarnationAsync(sjc, Auth);
             var (late, survivor) = (Id(), Id());
