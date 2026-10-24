@@ -37,8 +37,7 @@ internal static class SegmentHistory
         var file = Path.Combine(scratch, $"restored-{Guid.NewGuid():N}.db");
         var found = await store.ReadAsync(prefix + "/snapshot", async (content, token) =>
         {
-            await using var target = File.Create(file);
-            await content.CopyToAsync(target, token).ConfigureAwait(false);
+            await SnapshotBundle.ReadAsync(content, file, token).ConfigureAwait(false);
         }, cancellationToken).ConfigureAwait(false);
         if (!found)
         {
