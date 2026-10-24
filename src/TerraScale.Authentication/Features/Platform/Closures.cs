@@ -34,11 +34,11 @@ public sealed class Closures(
     internal async Task<bool> AdvanceAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(job);
-        TerraBaseProjectClosure answer;
+        TerraBaseProjectClosure? answer;
         try
         {
             answer = job.Value.ProjectClosureVersion == 2
-                ? await terraBase.EraseProjectAsync(job.Value.SubjectId, job.Value.OrganizationId!, job.Value.Id, cancellationToken).ConfigureAwait(false)
+                ? await this.EraseOrCloseAsync(job.Value, cancellationToken).ConfigureAwait(false)
                 : await terraBase.CloseProjectAsync(job.Value.SubjectId, job.Value.OrganizationId!, job.Value.Id, cancellationToken).ConfigureAwait(false);
         }
         catch (TerraBaseConflictException error) when (error.ErrorCode is "not_empty" or "closure_conflict" or "binding_conflict")
@@ -65,6 +65,13 @@ public sealed class Closures(
             return false;
         }
 
+        if (answer is null)
+        {
+            // The older contract refused contents or could not read a newer fence. Neither disproves an existing fence.
+            await this.DeferAsync(job, "terrabase_erasure_unsupported", cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
         // TerraBase showed the fence: record it before anything else, so no later refusal can cancel this intent.
         if (await this.MarkFenceSeenAsync(job, cancellationToken).ConfigureAwait(false) is not { } seen)
         {
@@ -80,6 +87,29 @@ public sealed class Closures(
 
         return await directory.RemoveClosedProjectAsync(seen, cancellationToken).ConfigureAwait(false)
             || await this.WithoutIntentAsync(job, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<TerraBaseProjectClosure?> EraseOrCloseAsync(ClosureJob job, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await terraBase.EraseProjectAsync(job.SubjectId, job.OrganizationId!, job.Id, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TerraBaseException error) when (error.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.MethodNotAllowed or System.Net.HttpStatusCode.NotImplemented
+            || error is TerraBaseValidationException && error.ErrorCode is "invalid_request" or "unsupported" or "unsupported_version")
+        {
+            try
+            {
+                // Same authority and closure id, using today's empty-only path. It never authorizes destructive completion.
+                var legacy = await terraBase.CloseProjectAsync(job.SubjectId, job.OrganizationId!, job.Id, cancellationToken).ConfigureAwait(false);
+                return legacy with { EvidenceVersion = 0 };
+            }
+            catch (TerraBaseConflictException refused) when (refused.ErrorCode is "not_empty" or "closure_conflict")
+            {
+                // An earlier v2 fence may exist even when its response was lost before auth recorded FenceSeen.
+                return null;
+            }
+        }
     }
 
     // This intent vanished (a concurrent refusal cancelled it) after TerraBase showed the fence: done when the root is gone,

@@ -19,9 +19,12 @@ local cleanup; remote cleanup retries durably. Independent branches remain.
 
 Compatibility: version 1 still refuses nonempty projects and now waits for prior active purges. Both contracts
 require evidence-version-2 receipts; legacy empty-only receipts are refreshed. This also makes a delayed v1
-acceptance safe when auth adopts an intent in another region. Older TerraBase binaries reject version 2, so auth retains
-its durable intent until the TerraBase rollout. This adds a versioned JSON record and no SQLite schema
-change or storage-format bump. The response also carries `evidenceVersion: 2`. Auth keeps a durable pending intent when an older engine
-rejects version 2 or returns legacy acceptance without this evidence, and retries automatically after FR1
-updates TerraBase. There is no fallback to destructive version-1 behavior. This permits auth to auto-release
-before the scheduled TerraBase update. Collect live acceptance evidence after every holder is upgraded.
+acceptance safe when auth adopts an intent in another region. The response carries `evidenceVersion: 2`.
+This adds a versioned JSON record and no SQLite schema change or storage-format bump.
+
+Auth can auto-release before the TerraBase roll. It first requests version 2; a missing or unsupported
+contract, including old version-1 validation, falls back to the existing version-1 path with the same authority
+and closure id. Legacy `not_empty` or `closure_conflict` retains the account erasure intent: a conflict may
+encounter a newer fence whose response was lost. Legacy acceptance cannot certify erasure. The background
+driver retries version 2 and completes automatically after FR1 upgrades TerraBase, without another submit.
+Collect live acceptance evidence after every holder is upgraded.
