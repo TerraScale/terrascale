@@ -23,6 +23,7 @@ Use the [quickstart](/de/getting-started/) to establish one working application 
 - [Vector similarity search](/de/guides/vector-search): nearest-neighbour queries over stored embeddings for semantic search and RAG.
 - [Transactions](/de/guides/transactions): atomic multi-document writes with conditional asserts.
 - [Realtime changes](/de/guides/realtime): the server-sent changes feed and filtered collection shapes.
+- [Functions](/de/guides/functions): JavaScript functions called over HTTPS, on collection changes or on a cron schedule.
 - [Backups and restore](/de/guides/backups-and-restore): backup policy, point-in-time restore into a new database.
 - [Export your data](/de/guides/export): stream every document as NDJSON, resume and restore.
 - [Branches](/de/guides/branches): copy a database into a new branch database.
