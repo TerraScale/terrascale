@@ -1,6 +1,5 @@
 ---
 title: Full-text search
-head: [['meta', { name: 'robots', content: 'noindex' }]]
 ---
 
 <!-- i18n:fallback:pt-br -->
@@ -12,8 +11,8 @@ head: [['meta', { name: 'robots', content: 'noindex' }]]
 
 Create a text index over string fields, then use a `search` filter to find documents and sort them by relevance.
 
-::: warning Availability
-Full-text search is in development and is not available on the live API yet. These examples describe the API contract being implemented.
+::: info Availability
+Full-text search is available on the live API. SDK examples below require an SDK version containing the search helpers; use the HTTP examples if your installed version does not expose them yet.
 :::
 
 ## Set up the shell
@@ -118,7 +117,7 @@ The index above covers both `title` and `details.summary`; each `search` express
 
 ## SDK examples
 
-These examples target the SDK changes for full-text search, which are also in development. Each uses an authenticated database handle named `db`. They are alternatives to the HTTP index and query requests above. See [SDK reference](/pt-br/guides/sdks) for connection setup.
+These examples require the SDK search helpers. Check that your installed SDK version includes them before using these snippets. Each uses an authenticated database handle named `db`. They are alternatives to the HTTP index and query requests above. See [SDK reference](/pt-br/guides/sdks) for connection setup.
 
 ### JavaScript / TypeScript
 
