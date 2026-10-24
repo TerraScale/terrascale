@@ -50,8 +50,7 @@ public sealed class VectorQueryTests
         (ApiResponse Response, string Message)[] cases =
         [
             (await api.QueryAsync(new { sort = new object[] { near, new { path = "/a" } } }), "near is the only sort key, without path or order"),
-            (await api.QueryAsync(new { sort = new[] { near }, limit = 101 }), "near returns one page of at most 100 documents, without a cursor"),
-            (await api.QueryAsync(new { sort = new[] { near }, cursor = "x" }), "near returns one page of at most 100 documents, without a cursor"),
+            (await api.QueryAsync(new { sort = new[] { near }, cursor = "x" }), "near returns one page of at most 1000 documents, without a cursor"),
             (await api.QueryAsync(new { sort = new[] { new { near = new { path = "/v", vector = new double[4097] } } } }), "near vector has 1 to 4096 numbers within the float32 range"),
             (await api.QueryAsync(new { sort = new[] { new { near = new { path = "/v", vector = new double[3] } } } }), "a cosine near vector is not all zeros"),
             (await api.QueryAsync(new { sort = new[] { new { near = new { path = "/v", vector = Query, metric = "dot" } } } }), "near metric is cosine or l2"),

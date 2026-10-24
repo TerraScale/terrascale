@@ -317,6 +317,9 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         public ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken) =>
             WriteCollectionAsync(() => inner.CreateIndexAsync(index, cancellationToken), cancellationToken);
 
+        public ValueTask<bool> BuildVectorIndexAsync(CancellationToken cancellationToken) =>
+            RunAsync(() => inner.BuildVectorIndexAsync(cancellationToken), cancellationToken);
+
         public ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken) =>
             WriteCollectionAsync(() => inner.DropIndexAsync(name, cancellationToken), cancellationToken);
 

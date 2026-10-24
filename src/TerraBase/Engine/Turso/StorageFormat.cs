@@ -25,8 +25,9 @@ public static class StorageFormat
     /// 15: maintained per-collection document counts and bytes (<c>_tb_collection_stats</c>).
     /// 16: collection access proofs and collection generations in the persisted change feed.
     /// 17: aegis256 database/WAL pages, wrapped-key sidecars and encrypted snapshot bundles, batch 5.
+    /// 18: vector indexes (<c>_tb_vector_indexes</c>) and their derived slot and sign-code chunk tables.
     /// </summary>
-    public const int Version = 17;
+    public const int Version = 18;
 
     /// <summary>The format this build writes, for example <c>2-3f1a09c4e7b2</c>.</summary>
     public static string Id { get; } = $"{Version}-{Convert.ToHexStringLower(TursoDatabaseStore.FormatDigest)[..12]}";

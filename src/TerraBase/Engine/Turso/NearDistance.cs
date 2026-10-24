@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Text;
 using System.Text.Json;
 
@@ -32,7 +33,7 @@ internal sealed class NearDistance(NearSort near)
         try
         {
             var reader = new Utf8JsonReader(json);
-            return !Seek(ref reader) ? double.PositiveInfinity
+            return !Seek(ref reader, _path) ? double.PositiveInfinity
                 : near.Point is { } point ? Geo(ref reader, point) : Distance(ref reader);
         }
         catch (Exception error) when (error is JsonException or FormatException)
@@ -43,10 +44,10 @@ internal sealed class NearDistance(NearSort near)
     }
 
     // Leaves the reader on the value at the path; repeated member names take the first.
-    private bool Seek(ref Utf8JsonReader reader)
+    internal static bool Seek(ref Utf8JsonReader reader, byte[][] path)
     {
         reader.Read();
-        foreach (var segment in _path)
+        foreach (var segment in path)
         {
             if (reader.TokenType != JsonTokenType.StartObject)
             {
@@ -129,11 +130,28 @@ internal sealed class NearDistance(NearSort near)
             squares += (value - (double)query) * (value - (double)query);
         }
 
-        if (count != _query.Length)
+        return count != _query.Length ? double.PositiveInfinity : Result(dot, documentNorm, queryNorm, squares);
+    }
+
+    /// <summary>The distance to a vector index's stored values: <see cref="TursoStorageTransaction"/> float32, little-endian.</summary>
+    public double Measure(ReadOnlySpan<byte> values)
+    {
+        double dot = 0, documentNorm = 0, queryNorm = 0, squares = 0;
+        for (var i = 0; i < _query.Length; i++)
         {
-            return double.PositiveInfinity;
+            var value = BinaryPrimitives.ReadSingleLittleEndian(values[(4 * i)..]);
+            var query = _query[i];
+            dot += value * (double)query;
+            documentNorm += value * (double)value;
+            queryNorm += query * (double)query;
+            squares += (value - (double)query) * (value - (double)query);
         }
 
+        return Result(dot, documentNorm, queryNorm, squares);
+    }
+
+    private double Result(double dot, double documentNorm, double queryNorm, double squares)
+    {
         if (near.Euclidean)
         {
             return Math.Sqrt(squares);
