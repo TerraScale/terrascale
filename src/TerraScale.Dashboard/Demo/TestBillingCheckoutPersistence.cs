@@ -82,6 +82,7 @@ sealed class TestBillingCheckoutPersistence(IDashboardState underlying) : IDashb
         }
         return underlying.PutAsync(collection, id, document, precondition, cancellationToken);
     }
+    public Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken cancellationToken) => underlying.ListAsync(collection, cancellationToken);
     public Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken) =>
         underlying.DeleteAsync(collection, id, version, cancellationToken);
 }

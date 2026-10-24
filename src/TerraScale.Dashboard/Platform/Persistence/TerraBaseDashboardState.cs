@@ -69,6 +69,20 @@ public sealed class TerraBaseDashboardState(IHttpClientFactory http, IHostEnviro
         return document?.Id == key ? document with { Id = id } : document;
     }
 
+    public async Task<IReadOnlyList<TerraBaseDocument>> ListAsync(string collection, CancellationToken cancellationToken)
+    {
+        var database = Database();
+        var documents = new List<TerraBaseDocument>();
+        string? cursor = null;
+        do
+        {
+            var page = await database.ListDocumentsAsync(collection, 1000, cursor, cancellationToken);
+            documents.AddRange(page.Items);
+            cursor = page.NextCursor;
+        } while (cursor is not null);
+        return documents;
+    }
+
     public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken) =>
         await Database().PutDocumentAsync(collection, DocumentId(collection, id), document, precondition, cancellationToken);
 

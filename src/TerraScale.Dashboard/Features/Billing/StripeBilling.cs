@@ -162,6 +162,14 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         return true;
     }
 
+    // PlanReconciler finishes a checkout paid in the last day whose webhook and browser return both went missing.
+    internal async Task<bool> ReconcilePendingCheckoutAsync(BillingBinding binding, CancellationToken cancellationToken)
+    {
+        if (binding is not { Kind: "stripe", CheckoutId.Length: > 0, SubscriptionId.Length: 0, Status: "pending" } ||
+            time.GetUtcNow() - binding.StartedAt > TimeSpan.FromDays(1)) return false;
+        return await RefreshAsync(binding.OrganizationId, cancellationToken);
+    }
+
     public async Task<string> PortalAsync(AccountContext context, CancellationToken cancellationToken)
     {
         context = await OwnerAsync(context, cancellationToken);

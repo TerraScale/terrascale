@@ -185,6 +185,34 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         CheckProtocol(observation);
     }
 
+    [Test]
+    public async Task PlanReconcilerPublishesEveryOrganizationsPlanAgainAfterATerraBaseWipe()
+    {
+        await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
+        using var controls = scenario.CreateProviderClient();
+        Check(await scenario.StartHostsAsync(), "The dashboard starts against the producer: " + scenario.StartupError);
+        using var client = scenario.CreateClient();
+        await ReadyAsync(client);
+        await NativeAccountAsync(client);
+        var organization = await scenario.UpgradeOnlyOrganizationAsync(OrganizationRecord.StarterPlanId);
+        static string? Plan(JsonElement observed, string id) =>
+            observed.GetProperty("organizationPlans").TryGetProperty(id, out var plan) ? plan.GetString() : null;
+
+        await scenario.ReconcilePlansAsync();
+        Check(Plan(await ObserveAsync(controls), organization) == "starter", "One reconciler pass publishes a Starter organization's plan to TerraBase by organization id.");
+        // A TerraBase wipe drops every plan; nothing in billing changes, and no one opens the dashboard.
+        await ControlAsync(controls, new { command = "wipe-plans" });
+        await scenario.ReconcilePlansAsync();
+        var observed = await ObserveAsync(controls);
+        Check(Plan(observed, organization) == "starter", "The next reconciler pass restores the Starter plan TerraBase lost.");
+        Check(observed.GetProperty("failures").GetArrayLength() == 0, "Every plan publish and state list followed the producer contract: " + observed.GetProperty("failures").GetRawText());
+        // Each catalog plan names the TerraBase tier with its allowances; an unpaid organization keeps Hobby.
+        var tiers = PlanCatalog.Plans.Select(plan => TerraScale.Dashboard.Platform.Persistence.TerraBasePlanSync.PlanFor(new OrganizationRecord { PlanId = plan.Id, BillingStatus = "active" }));
+        Check(string.Join(",", tiers) == "hobby,starter,pro,team", "Free, Starter, Pro and Team publish hobby, starter, pro and team: " + string.Join(",", tiers));
+        Check(TerraScale.Dashboard.Platform.Persistence.TerraBasePlanSync.PlanFor(new OrganizationRecord { PlanId = OrganizationRecord.StarterPlanId, BillingStatus = "billing_required" }) == "hobby",
+            "An organization that has not paid keeps Hobby.");
+    }
+
     private static async Task<(string Email, string Password)> NativeAccountAsync(HttpClient client)
     {
         var suffix = Guid.NewGuid().ToString("N")[..12];
