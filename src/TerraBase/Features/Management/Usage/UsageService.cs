@@ -205,7 +205,8 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         return new ProjectUsage(
             projectId, items.Count, checked(items.Sum(item => item.StorageBytes) + fileBytes), checked(items.Sum(item => item.LogicalBytes) + fileBytes), items.Sum(item => item.Documents),
             items.Sum(item => item.Reads), items.Sum(item => item.Writes), Period(window, series), series, [.. items.Select(item => item with { Series = [] })],
-            new UsageMonth(month, project.Reads, project.Writes, project.Reads + project.Writes, organization.Reads + organization.Writes)) { FileBytes = fileBytes };
+            new UsageMonth(month, project.Reads, project.Writes, project.Reads + project.Writes, organization.Reads + organization.Writes))
+        { FileBytes = fileBytes };
     }
 
     public async ValueTask<AllowanceUsageResult> ListAllowanceUsageAsync(string? after, CancellationToken cancellationToken)
