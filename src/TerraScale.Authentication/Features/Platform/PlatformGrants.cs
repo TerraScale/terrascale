@@ -21,7 +21,7 @@ namespace TerraScale.Authentication.Features.Platform;
 /// <summary>
 /// The token endpoint grants of the platform contract (TS-598): an API key's client credentials, and a user's sign-in
 /// access token exchanged (RFC 8693), for a token that acts in one organization or project. The tokens are ES256
-/// <c>at+jwt</c> for the configured audiences, live at most 5 minutes and carry <c>org_id</c>, <c>project_id</c>,
+/// <c>at+jwt</c> for the configured audiences, live at most 60 seconds (<see cref="Lifetime"/>) and carry <c>org_id</c>, <c>project_id</c>,
 /// <c>database</c> and <c>scope</c>; no refresh or identity token comes with them, and no token entry is stored.
 /// </summary>
 public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, TotpCredentials mfa, AttemptLimiter limiter, AuthOptions options, TimeProvider clock,
