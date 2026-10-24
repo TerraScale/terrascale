@@ -13,6 +13,10 @@ namespace TerraBase.Features.Management.Queries;
 /// <param name="MaxLatencyMs">Longest observed query latency in milliseconds.</param>
 /// <param name="RowsScanned">Total rows the queries scanned.</param>
 /// <param name="LastSeenAt">Time of the latest observation.</param>
+/// <param name="LatencyBuckets">
+/// Observed latencies per power-of-two millisecond bucket: bucket 0 is under 1 ms, bucket i (1 to 18) is under 2^i ms and
+/// bucket 19 is the rest. Absent for statistics recorded before buckets existed.
+/// </param>
 public sealed record QueryShapeStats(
     [property: JsonRequired] string Id,
     [property: JsonRequired] string Collection,
@@ -21,7 +25,37 @@ public sealed record QueryShapeStats(
     [property: JsonRequired] double TotalLatencyMs,
     [property: JsonRequired] double MaxLatencyMs,
     [property: JsonRequired] long RowsScanned,
-    [property: JsonRequired] DateTimeOffset LastSeenAt);
+    [property: JsonRequired] DateTimeOffset LastSeenAt,
+    IReadOnlyList<long>? LatencyBuckets = null)
+{
+    /// <summary>Number of <see cref="LatencyBuckets"/>.</summary>
+    public const int BucketCount = 20;
+
+    /// <summary>The 95th percentile latency: its bucket's upper bound, at most the maximum; null without buckets.</summary>
+    public double? P95LatencyMs
+    {
+        get
+        {
+            if (LatencyBuckets is not { Count: BucketCount } buckets || buckets.Sum() is not (> 0 and var total))
+            {
+                return null;
+            }
+
+            long seen = 0;
+            var bucket = 0;
+            while ((seen += buckets[bucket]) < Math.Ceiling(total * 0.95))
+            {
+                bucket++;
+            }
+
+            return Math.Min(MaxLatencyMs, Math.Pow(2, bucket));
+        }
+    }
+
+    /// <summary>The bucket of one observed latency.</summary>
+    public static int Bucket(double milliseconds) =>
+        milliseconds < 1 ? 0 : Math.Min(BucketCount - 1, (int)Math.Floor(Math.Log2(milliseconds)) + 1);
+}
 
 /// <summary>The bounded observed query shapes of a database or dashboard scope, including pending observations on the primary.</summary>
 /// <param name="Items">Most queried first, then collection and shape id in ordinal order.</param>

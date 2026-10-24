@@ -84,6 +84,9 @@ public sealed class QueryShapeApiTests
         await Assert.That(normalized[0].GetProperty("queries").GetInt64()).IsEqualTo(3);
         await Assert.That(normalized[0].GetProperty("totalLatencyMs").GetDouble()).IsGreaterThan(0);
         await Assert.That(normalized[0].GetProperty("maxLatencyMs").GetDouble()).IsGreaterThan(0);
+        await Assert.That(normalized[0].GetProperty("latencyBuckets").EnumerateArray().Sum(bucket => bucket.GetInt64())).IsEqualTo(3);
+        await Assert.That(normalized[0].GetProperty("p95LatencyMs").GetDouble())
+            .IsGreaterThan(0).And.IsLessThanOrEqualTo(normalized[0].GetProperty("maxLatencyMs").GetDouble());
         await Assert.That(normalized[0].GetProperty("shape").GetString()!).DoesNotContain(secret);
         await Assert.That(normalized[0].GetProperty("shape").GetString()!).DoesNotContain("different-private-value");
 

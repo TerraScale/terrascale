@@ -32,7 +32,7 @@ public sealed class QueryApiTests
         const string Json = "application/json";
         (ApiResponse Response, string Code, string Message)[] cases =
         [
-            (await api.QueryAsync(new { explain = true }), "invalid_query", "explain is not supported yet"),
+            (await api.QueryAsync(new { explain = 1 }), "invalid_query", "explain is true or false"),
             (await api.QueryAsync(new { limit = 0 }), "invalid_query", "limit must be between 1 and 1000"),
             (await api.QueryAsync(new { sort = Enumerable.Range(0, 5).Select(i => new { path = $"/f{i}" }).ToArray() }), "invalid_query", "sort has at most 4 keys"),
             (await api.QueryAsync(new { project = Enumerable.Range(0, 65).Select(i => $"/f{i}").ToArray() }), "invalid_query", "project has at most 64 paths"),

@@ -55,7 +55,9 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
         }
 
         var owner = Owner(database);
-        var observation = new Counts(1, latency.TotalMilliseconds, latency.TotalMilliseconds, rowsScanned, time.GetUtcNow());
+        var buckets = new long[QueryShapeStats.BucketCount];
+        buckets[QueryShapeStats.Bucket(latency.TotalMilliseconds)] = 1;
+        var observation = new Counts(1, latency.TotalMilliseconds, latency.TotalMilliseconds, rowsScanned, time.GetUtcNow(), buckets);
         lock (_gate)
         {
             if (_disposed)
@@ -474,7 +476,8 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
             || !stats.Shape.StartsWith("[\"alpha\",", StringComparison.Ordinal) || Encoding.UTF8.GetByteCount(stats.Shape) > MaxShapeBytes
             || stats.Queries <= 0 || stats.RowsScanned < 0 || stats.LastSeenAt == default
             || !double.IsFinite(stats.TotalLatencyMs) || !double.IsFinite(stats.MaxLatencyMs)
-            || stats.MaxLatencyMs < 0 || stats.TotalLatencyMs < stats.MaxLatencyMs || Key(stats.Collection, stats.Id) != id)
+            || stats.MaxLatencyMs < 0 || stats.TotalLatencyMs < stats.MaxLatencyMs || Key(stats.Collection, stats.Id) != id
+            || stats.LatencyBuckets is { } buckets && (buckets.Count != QueryShapeStats.BucketCount || buckets.Any(count => count < 0) || buckets.Sum() > stats.Queries))
         {
             return false;
         }
@@ -487,15 +490,16 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
     }
 
     private static QueryShapeStats Merge(QueryShapeStats a, QueryShapeStats b) => Stats(a.Id, a.Collection, a.Shape, Add(
-        new Counts(a.Queries, a.TotalLatencyMs, a.MaxLatencyMs, a.RowsScanned, a.LastSeenAt),
-        new Counts(b.Queries, b.TotalLatencyMs, b.MaxLatencyMs, b.RowsScanned, b.LastSeenAt)));
+        new Counts(a.Queries, a.TotalLatencyMs, a.MaxLatencyMs, a.RowsScanned, a.LastSeenAt, a.LatencyBuckets),
+        new Counts(b.Queries, b.TotalLatencyMs, b.MaxLatencyMs, b.RowsScanned, b.LastSeenAt, b.LatencyBuckets)));
 
     private static QueryShapeStats Stats(string id, string collection, string shape, Counts count) =>
-        new(id, collection, shape, count.Queries, count.TotalLatencyMs, count.MaxLatencyMs, count.RowsScanned, count.LastSeenAt);
+        new(id, collection, shape, count.Queries, count.TotalLatencyMs, count.MaxLatencyMs, count.RowsScanned, count.LastSeenAt, count.Buckets);
 
     private static Counts Add(Counts a, Counts b) => new(
         Add(a.Queries, b.Queries), Math.Min(double.MaxValue, a.TotalLatencyMs + b.TotalLatencyMs), Math.Max(a.MaxLatencyMs, b.MaxLatencyMs),
-        Add(a.RowsScanned, b.RowsScanned), a.LastSeenAt > b.LastSeenAt ? a.LastSeenAt : b.LastSeenAt);
+        Add(a.RowsScanned, b.RowsScanned), a.LastSeenAt > b.LastSeenAt ? a.LastSeenAt : b.LastSeenAt,
+        a.Buckets is null ? b.Buckets : b.Buckets is null ? a.Buckets : [.. a.Buckets.Zip(b.Buckets, Add)]);
 
     private static long Add(long a, long b) => b > long.MaxValue - a ? long.MaxValue : a + b;
 
@@ -537,7 +541,8 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
     private readonly union SettleResult(bool, Unavailable);
     private readonly union FlushResult((long Dropped, long Unsupported), Unavailable);
 
-    private readonly record struct Counts(long Queries, double TotalLatencyMs, double MaxLatencyMs, long RowsScanned, DateTimeOffset LastSeenAt);
+    private readonly record struct Counts(
+        long Queries, double TotalLatencyMs, double MaxLatencyMs, long RowsScanned, DateTimeOffset LastSeenAt, IReadOnlyList<long>? Buckets);
     private readonly record struct Taken(DatabaseOwner Database, QueryShapeStats[] Shapes);
 
     // Keep observations arriving during a flush separate so removing its batch preserves the next batch's maximum.

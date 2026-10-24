@@ -246,7 +246,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
     public ValueTask<QueryResult> QueryAsync(
         TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken) =>
-        ReadCertifiedAsync<QueryResult>(database, incarnation => CollectionRuleAccess.EndUser
+        ReadCertifiedAsync<QueryResult>(database, incarnation => CollectionRuleAccess.EndUser || query.Explain
             ? ReadQueryAsync(database, query, countLimit, new QueryObservation(), cancellationToken)
             : ReadCachedQueryAsync(database, incarnation, query, countLimit, cancellationToken),
             static () => DocumentRoute.UnknownDatabase, cancellationToken);
