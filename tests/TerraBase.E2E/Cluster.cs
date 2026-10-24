@@ -284,6 +284,9 @@ public sealed class Cluster : IAsyncDisposable
     /// </summary>
     public void Delay(string a, string b, TimeSpan oneWay) => RequireLocal().Delay(a, b, oneWay);
 
+    /// <summary>Local nodes only: <paramref name="region"/>'s services and this database's tenant, for in-process benchmarks.</summary>
+    internal (IServiceProvider Services, TenantContext Database) Engine(string region) => RequireLocal().Engine(region);
+
     private Local RequireLocal() => _local ?? throw new NotSupportedException("this fault needs local nodes");
 
     private static async Task<Cluster> StartLocalCoreAsync(string[] regions, IReadOnlyDictionary<string, TimeSpan> skews, FakeS3? backups = null,
@@ -683,6 +686,10 @@ public sealed class Cluster : IAsyncDisposable
                 return true;
             }, CancellationToken.None, "an e2e storage stall");
         }
+
+        public (IServiceProvider, TenantContext) Engine(string region) =>
+            ((_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.Services,
+                new TenantContext(OrganizationId, PlanTier.Enterprise, _project, _database));
 
         public HttpClient ObjectClient(string region) =>
             (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.Services
