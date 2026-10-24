@@ -124,9 +124,13 @@ public static class OrganizationEndpoints
     {
         var tab = http.Request.Query["newProject"] == "1" ? "projects" : http.Request.Query["tab"].ToString();
         if (tab is not ("projects" or "members" or "invitations" or "audit" or "billing" or "danger")) tab = "organization";
-        var regions = tab == "projects" || http.Request.Query["newOrganization"] == "project" || http.Request.Query["newProject"] == "1"
-            ? await placement.RegionsAsync(http.RequestAborted) : [];
-        var access = context.Organization is not null ? await http.RequestServices.GetRequiredService<IOrganizationAccess>().ReadAsync(context, http.RequestAborted) : null;
+        var regionsRead = tab == "projects" || http.Request.Query["newOrganization"] == "project" || http.Request.Query["newProject"] == "1"
+            ? placement.RegionsAsync(http.RequestAborted) : null;
+        // The projects and billing tabs render no members, invitations, audit events or ownership transfer.
+        var accessRead = context.Organization is not null && tab is not ("projects" or "billing")
+            ? http.RequestServices.GetRequiredService<IOrganizationAccess>().ReadAsync(context, http.RequestAborted) : null;
+        IReadOnlyList<string> regions = regionsRead is null ? [] : await regionsRead;
+        var access = accessRead is null ? null : await accessRead;
         var wizard = http.Request.Query["newOrganization"].ToString();
         if (wizard is not ("organization" or "payment" or "project")) wizard = "";
         if (wizard.Length > 0 && wizard != "organization")
