@@ -559,6 +559,9 @@ public sealed class ProjectClosureTests(TerraBaseFixture fixture)
         await oidc.AddMemberAsync(shared, bob.Id, "member");
         var services = oidc.Server.App.Services;
         var (store, directory, worker) = (services.GetRequiredService<AuthStore>(), services.GetRequiredService<PlatformDirectory>(), services.GetRequiredService<ClosureWorker>());
+        // This case drives the refusal through HTTP, then resumes the committed case explicitly. The hosted pass
+        // must finish before seeding: otherwise it can begin cancelling this intent and the request correctly sees 202.
+        await worker.StopAsync(CancellationToken.None);
         // A retry meets an existing intent after alice became the last owner with a member.
         var (job, _) = ClosureJob.New("terrascale", "account", alice.Id, null, alice.Id, clock);
         await store.CreateAsync(AuthStore.ClosureJobCollection, "terrascale", ClosureJob.Key("account", alice.Id),
