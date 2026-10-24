@@ -21,12 +21,19 @@ using TerraBase.Features.Regions;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Sql;
 using TerraBase.Features.UserAuth;
+using TerraBase.Features.Functions;
 using TerraBase.Features.Webhooks;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Hosting;
 
 /// <summary>Source-generated JSON metadata for every request and response type (fast startup, no reflection-based serialization).</summary>
+[JsonSerializable(typeof(DeployFunctionRequest))]
+[JsonSerializable(typeof(FunctionBody))]
+[JsonSerializable(typeof(FunctionBody[]))]
+[JsonSerializable(typeof(FunctionLogBody))]
+[JsonSerializable(typeof(FunctionLogBody[]))]
+[JsonSerializable(typeof(FunctionRecord))]
 [JsonSerializable(typeof(CreateWebhookRequest))]
 [JsonSerializable(typeof(CreatedWebhookBody))]
 [JsonSerializable(typeof(WebhookBody[]))]

@@ -76,6 +76,7 @@
   <!-- Cron expressions for scheduled backups (Features/Management/Backups). -->
   <ItemGroup Label="Scheduling">
     <PackageVersion Include="Cronos" Version="0.13.0" />
+    <PackageVersion Include="Jint" Version="4.17.0" />
   </ItemGroup>
   <!-- Inter-node gRPC (Features/Replication): one release train for every Grpc.* package. -->
   <ItemGroup Label="gRPC">
