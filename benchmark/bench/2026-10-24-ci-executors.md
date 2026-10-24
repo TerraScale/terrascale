@@ -26,7 +26,7 @@ Native auth Slow passed all three attempts. Native TerraBase Slow reported the s
 | [40016172025](https://github.com/TerraScale/terrascale/actions/runs/40016172025) | 29m39s | 1107 | 1048 |
 | [40015347400](https://github.com/TerraScale/terrascale/actions/runs/40015347400) | 28m18s | 1028 | — |
 | [40013958709](https://github.com/TerraScale/terrascale/actions/runs/40013958709) | 33m46s | 1195 | 994 |
-| [40021492696](https://github.com/TerraScale/terrascale/actions/runs/40021492696) | 24m20s | 967 | 614 |
+| [40021492696](https://github.com/TerraScale/terrascale/actions/runs/40021492696) | 24m20s | 968 | 615 |
 
 Historical code, cache state and scheduling differ; use the fresh matched comparison for acceptance. Main baseline [40011832865](https://github.com/TerraScale/terrascale/actions/runs/40011832865) took 42m20s, including a 1107s production image step.
 
