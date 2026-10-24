@@ -1777,6 +1777,7 @@ public sealed class RemoteAckTests
                 // These tests cover the opt-in remote-durable answer (decision 0013a); the default is local_durable (0013e).
                 pair.Client.DefaultRequestHeaders.Add("TB-Durability", "remote_durable");
                 pair.PeerClient = pair._peer.DataClient(await pair._tenant.KeyAsync(pair._peer.Server, ["documents:read", "documents:write"], pair.Token));
+                pair.PeerClient.DefaultRequestHeaders.Add("TB-Durability", "remote_durable");
                 using var collection = await pair.Client.PostAsJsonAsync(new Uri($"{pair.DatabasePath}/collections", UriKind.Relative), new { name = "items" }, pair.Token);
                 await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
                 await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(pair._origin.Server.Services.GetRequiredService<IReplicationStatus>()

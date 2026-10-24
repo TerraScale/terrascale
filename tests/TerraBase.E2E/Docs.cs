@@ -30,10 +30,16 @@ internal static class Docs
 
     // PUT that is also sent again after 503 remote_region_unavailable or confirmation_busy, which the write route answers
     // before it executes anything; write_outcome_unknown (or any other 503) is never sent again. Answers the write's
-    // durability as the region acknowledged it (remote_durable, local_durable), or null when the answer names none.
+    // durability as the region acknowledged it (remote_durable, local_durable), or null when the answer names none. It asks
+    // for the remote-durable answer (TB-Durability, decision 0013e).
     public static async Task<string?> PutRefusedBeforeRunAsync(HttpClient client, Uri uri, JsonNode body, CancellationToken token = default)
     {
-        using var response = await SendAdmittedAsync(() => client.PutAsync(uri, Json(body, "application/json"), token), refusedBeforeRun: true, token: token);
+        using var response = await SendAdmittedAsync(async () =>
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Put, uri) { Content = Json(body, "application/json") };
+            request.Headers.Add("TB-Durability", "remote_durable");
+            return await client.SendAsync(request, token);
+        }, refusedBeforeRun: true, token: token);
         return (await BodyAsync(response, token))?["durability"]?.GetValue<string>();
     }
 
