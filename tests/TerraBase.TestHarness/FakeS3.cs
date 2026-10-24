@@ -27,7 +27,7 @@ public sealed partial class FakeS3
     public const string CustomerEndpoint = "https://customer-storage.test";
     public const string CustomerAccessKey = "customer-access";
     public const string CustomerSecretKey = "customer-secret";
-    private const string ObjectStorage = "https://objectstorage.test";
+    private const string R2Storage = "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com";
     private const string PlatformAccessKey = "test-access-key";
     private const string PlatformSecretKey = "test-secret-key";
     private static readonly XNamespace S3 = "http://s3.amazonaws.com/doc/2006-03-01/";
@@ -263,10 +263,23 @@ public sealed partial class FakeS3
     }
 
     /// <summary>Sets every backup setting to this fake.</summary>
+    /// <summary>
+    /// Serves the platform bucket at an R2 account endpoint, so the server links shape objects through the CDN and purges
+    /// them through the Cloudflare API (<see cref="FakeCloudflare"/>).
+    /// </summary>
+    public bool R2 { get; init; }
+
+    private string ObjectStorage => R2 ? R2Storage : "https://objectstorage.test";
+
     public void Configure(Dictionary<string, string> settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
         settings["backup-endpoint"] = ObjectStorage;
+        if (R2)
+        {
+            settings["cloudflare-api-token"] = FakeCloudflare.Token;
+        }
+
         settings["backup-region"] = "test-region-1";
         settings["backup-bucket"] = Bucket;
         settings["backup-access-key-id"] = PlatformAccessKey;
@@ -326,11 +339,9 @@ public sealed partial class FakeS3
             return SnapshotResponse(request);
         }
 
-        return uri.GetLeftPart(UriPartial.Authority) switch
-        {
-            ObjectStorage or CustomerEndpoint => await ObjectResponseAsync(request, body, cancellationToken),
-            _ => new HttpResponseMessage(HttpStatusCode.NotFound),
-        };
+        return uri.GetLeftPart(UriPartial.Authority) is var authority && (authority == ObjectStorage || authority == CustomerEndpoint)
+            ? await ObjectResponseAsync(request, body, cancellationToken)
+            : new HttpResponseMessage(HttpStatusCode.NotFound);
     }
 
     private async Task<HttpResponseMessage> ObjectResponseAsync(HttpRequestMessage request, byte[] body, CancellationToken cancellationToken)

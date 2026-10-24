@@ -194,6 +194,41 @@ public sealed class ShapeMirrorTests
     }
 
     [Test]
+    public async Task On_an_R2_bucket_objects_are_linked_by_CDN_path_and_a_trimmed_object_is_purged_from_the_CDN()
+    {
+        var cloudflare = new FakeCloudflare();
+        await using var harness = await Harness.StartAsync(cloudflare: cloudflare);
+        var start = await harness.Db.HeadAsync();
+        for (var commit = 0; commit < 3; commit++)
+        {
+            _ = await harness.CommitLargeAsync();
+        }
+
+        var chunks = await harness.SealAllAsync(start);
+        foreach (var chunk in chunks[..3])
+        {
+            await Assert.That(harness.Mirror.Queue(harness.Tenant, harness.Shape.ShapeId, harness.Shape.Handle, Text(chunk.Offset), Text(chunk.EndOffset),
+                chunk.EndOffset, chunk.ValuesAt, chunk.Body, harness.Time.GetUtcNow())).IsTrue();
+        }
+
+        await harness.MirroredAsync(3);
+        var before = (await harness.ManifestAsync(start)).Objects;
+        await Assert.That(before.Count).IsEqualTo(3);
+        foreach (var entry in before)
+        {
+            await Assert.That(entry.Url).IsEqualTo($"https://shapes-{FakeS3.Bucket}.terrascale.tech/{entry.Object}")
+                .Because("an R2 bucket's link is the object's stable path on the bucket's CDN host, with no signature");
+        }
+
+        var deleted = await harness.Mirror.TrimAsync(harness.Tenant, harness.Shape.Handle, chunks[2].Offset, harness.Cancellation);
+        await Assert.That(deleted).IsEqualTo(2);
+        await cloudflare.PurgedAsync(2, harness.Cancellation);
+        await Assert.That(cloudflare.Purged.Order(StringComparer.Ordinal).ToArray())
+            .IsEquivalentTo(before.Take(2).Select(entry => entry.Url).Order(StringComparer.Ordinal).ToArray(), TUnit.Assertions.Enums.CollectionOrdering.Matching)
+            .Because("exactly the deleted objects leave Cloudflare's cache; the retained one stays cached");
+    }
+
+    [Test]
     public async Task The_manifest_route_answers_at_most_eight_private_objects_in_one_contiguous_chain()
     {
         await using var harness = await Harness.StartAsync();
@@ -617,10 +652,11 @@ public sealed class ShapeMirrorTests
 
         public CancellationToken Cancellation { get; } = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
 
-        public static async Task<Harness> StartAsync(FakeTimeProvider? time = null)
+        /// <summary>With <paramref name="cloudflare"/>, the bucket is an R2 one whose CDN copies that fake purges.</summary>
+        public static async Task<Harness> StartAsync(FakeTimeProvider? time = null, FakeCloudflare? cloudflare = null)
         {
             time ??= new FakeTimeProvider(DateTimeOffset.UtcNow);
-            var s3 = new FakeS3 { Time = time };
+            var s3 = new FakeS3 { Time = time, R2 = cloudflare is not null };
             var puts = new ConcurrentDictionary<string, int>(StringComparer.Ordinal);
             var mirrored = new SemaphoreSlim(0);
             var attempts = new SemaphoreSlim(0);
@@ -636,6 +672,7 @@ public sealed class ShapeMirrorTests
             var api = await DocumentApi.StartAsync(s3.Configure, services =>
             {
                 s3.Route(services);
+                cloudflare?.Route(services);
                 ManualBackupHosting.Configure(services);
                 services.AddSingleton<TimeProvider>(time);
                 services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, time);
@@ -729,7 +766,7 @@ public sealed class ShapeMirrorTests
         {
             var services = _api.Server.Services;
             var objects = new ShapeObjectStore(services.GetRequiredService<BackupSettings>(), services.GetRequiredService<IHttpClientFactory>(),
-                services.GetRequiredService<IObjectStore>(), time);
+                services.GetRequiredService<IObjectStore>(), time, services.GetRequiredService<IShapeCdnPurge>());
             var crypto = services.GetRequiredService<IShapeCrypto>();
             return new ShapeMirror(services.GetRequiredService<IStorageEngine>(), services.GetRequiredService<IShapeStorage>(),
                 services.GetRequiredService<IShapeMetrics>(), services.GetRequiredService<IMemoryBudget>(), time,

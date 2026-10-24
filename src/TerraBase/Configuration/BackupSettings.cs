@@ -12,7 +12,7 @@ namespace TerraBase.Configuration;
 public sealed class BackupSettings
 {
     /// <summary>Every backup setting.</summary>
-    internal static string[] Keys => [.. Required, "backup-retention-days", "backup-key-rotation-days"];
+    internal static string[] Keys => [.. Required, "backup-retention-days", "backup-key-rotation-days", "cloudflare-api-token"];
 
     // Required together; the rest are optional.
     private static readonly string[] Required =
@@ -41,6 +41,13 @@ public sealed class BackupSettings
 
     /// <summary>The secret of the S3 credential.</summary>
     public required string SecretKey { get; init; }
+
+    /// <summary>
+    /// The Cloudflare API token (<c>TERRABASE_CLOUDFLARE_API_TOKEN</c>) that purges an R2 bucket's shape CDN copies on
+    /// <c>terrascale.tech</c> once the mirror deletes their objects (docs/terrabase/free-reads-cdn.md). Required with an R2
+    /// endpoint and refused with any other, so a node never links a CDN it cannot purge.
+    /// </summary>
+    public string? CloudflareApiToken { get; init; }
 
     /// <summary>The 256-bit master key that wraps every data key (<c>TERRABASE_MASTER_KEY</c>, base64).</summary>
     public required byte[] MasterKey { get; init; }
@@ -72,9 +79,18 @@ public sealed class BackupSettings
             throw new TerraBaseConfigurationException($"{string.Join(", ", Required)} must be set together");
         }
 
+        var endpoint = Https(values, "backup-endpoint");
+        var r2 = endpoint.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase);
+        if (r2 != values.ContainsKey("cloudflare-api-token"))
+        {
+            throw new TerraBaseConfigurationException(r2
+                ? "cloudflare-api-token must be set with an R2 backup-endpoint"
+                : "cloudflare-api-token is used only with an R2 backup-endpoint");
+        }
+
         return new BackupSettings
         {
-            Endpoint = Https(values, "backup-endpoint"),
+            Endpoint = endpoint,
             Region = Token(values, "backup-region"),
             Bucket = IsBucket(values["backup-bucket"])
                 ? values["backup-bucket"]
@@ -82,6 +98,7 @@ public sealed class BackupSettings
             AccessKeyId = Token(values, "backup-access-key-id"),
             SecretKey = Token(values, "backup-secret-key"),
             MasterKey = ParseMasterKey(values["master-key"]),
+            CloudflareApiToken = r2 ? Token(values, "cloudflare-api-token") : null,
             KeyRotationDays = values.TryGetValue("backup-key-rotation-days", out var rotation) ? ParseKeyRotation(rotation) : 90,
             RetentionDays = values.TryGetValue("backup-retention-days", out var retention) ? ParseRetention(retention) : DefaultRetentionDays,
         };
