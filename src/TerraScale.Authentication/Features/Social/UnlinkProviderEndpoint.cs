@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.SignIn;
@@ -20,7 +21,7 @@ public sealed class UnlinkProviderEndpoint(PlatformAuthentication authentication
         Delete("/v1/terrascale/account/providers/{provider}");
         this.Document("account_unlink_provider", "Unlink my sign-in provider", "Requires a live sign-in token and a fresh emailed sign-in code. Email-code sign-in remains available. Success revokes every prior session and token; sign in again.",
             "Account", typeof(UnlinkProviderRequest), StatusCodes.Status204NoContent, null, roleChecked: false, scoped: false);
-        Produces(StatusCodes.Status429TooManyRequests);
+        Produces<OAuthErrorBody>(StatusCodes.Status429TooManyRequests);
     }
 
     /// <inheritdoc />
