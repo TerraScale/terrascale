@@ -49,7 +49,8 @@ catalog has replicated. Units of databases deleted since stay in the month.
 ### Every organization, for the dashboard
 
 `GET /v1/usage/allowances[?after=<organization id>]` on the internal listener (shared peer
-credential, the same identity as `PUT /admin/projects/{project}/plan`) pages every organization,
+credential, the same identity as `PUT /admin/projects/{project}/plan` and
+`PUT /admin/organizations/{organization}/plan`, see [plan-database-allowance.md](plan-database-allowance.md)) pages every organization,
 25 at a time in id order: `periodStart`, `observedAt`, `items[{organizationId, operations,
 logicalBytes}]`, `next`, `operationsContract` (`operation-units-4kib-global-v1`)
 and `storageContract`. `operations` equals `organizationUnits`. Storage is not reported yet:

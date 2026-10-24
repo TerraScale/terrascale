@@ -272,6 +272,7 @@ internal sealed partial class EngineManagementService
                 NotFound missing => missing,
                 Unavailable unavailable => unavailable,
             },
+            Conflict { Code: ManagementErrors.DatabaseLimitCode } error => error,
             Unavailable error => error,
             NotFound or Forbidden or Conflict => ManagementErrors.NotFound,
         };

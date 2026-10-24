@@ -22,11 +22,12 @@ public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointW
         Put(DocumentRoute.DatabaseRoute);
         Name("legacyCreateDatabase");
         Summary("Creates a database");
-        Description("{project} is a project of the API key's organization. A key narrowed to one database cannot create others. A project the key does not reach answers 404.");
+        Description("{project} is a project of the API key's organization. A key narrowed to one database cannot create others. A project the key does not reach answers 404. 409 database_limit when the organization's live databases reach its plan's allowance.");
         Tags("Documents");
         Produces<DatabaseBody>(StatusCodes.Status201Created);
         Produces<DatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
         Metadata(ListenerMetadata.Client);
@@ -71,6 +72,7 @@ public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointW
             ProvisionedDatabase { Created: true } created => TypedResults.Created($"/v1/projects/{project}/databases/{name}", Body(created.Database, name.Value)),
             ProvisionedDatabase existing => TypedResults.Ok(Body(existing.Database, name.Value)),
             NotFound => ErrorResponse.From(DocumentRoute.UnknownDatabase),
+            Conflict error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
         };
     }

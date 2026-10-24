@@ -125,6 +125,7 @@ resource plan using the trusted platform operator; public user tokens cannot gra
 Enterprise admission. Rate, concurrency and memory refusals include `Retry-After`.
 Monthly [operation allowances](operation-allowance.md) stop new puts and patches at the plan's
 hard allowance; reads and deletes remain available.
+New databases stop at the plan's [database allowance](plan-database-allowance.md) (`409 database_limit`).
 Usage document counts and bytes come from [maintained per-collection counts](collection-counts.md), never from scans.
 
 ## Node pressure

@@ -133,6 +133,34 @@ internal sealed partial class EngineManagementService : IProjectCatalog
             return organization;
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
+    public async ValueTask<SetPlanResult> SetStoragePlanAsync(string organizationId, PlanTier plan, CancellationToken cancellationToken) =>
+        await WriteAsync<SetPlanResult>(async transaction =>
+        {
+            // A deleted organization stays deleted; Hobby is the default, so a missing organization needs no record for it.
+            var version = await transaction.GetVersionAsync(Organizations, organizationId, cancellationToken).ConfigureAwait(false);
+            var organization = version is { Deleted: false }
+                ? await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false)
+                : null;
+            if (version is { Deleted: true } || organization is null && plan == PlanTier.Hobby
+                || organization is not null && await CountAllAsync(transaction, Members(organizationId), cancellationToken).ConfigureAwait(false) > 0)
+            {
+                return ManagementErrors.NotFound;
+            }
+
+            if (organization?.Plan == plan)
+            {
+                return organization;
+            }
+
+            // Created as enrollment creates it (ResolveProjectAsync), which then adopts it with this plan.
+            organization = (organization ?? new Organization(organizationId, organizationId, OperatorHandler.KeyId, time.GetUtcNow())) with { Plan = plan };
+            await PutAsync(transaction, Organizations, organization.Id, organization, TerraBaseJsonContext.Default.Organization, cancellationToken)
+                .ConfigureAwait(false);
+            await RecordAsync(transaction, organizationId, OperatorHandler.KeyId, "settings.plan_updated", null, PlanName(plan), cancellationToken)
+                .ConfigureAwait(false);
+            return organization;
+        }, static error => error, cancellationToken).ConfigureAwait(false);
+
     public async ValueTask<VerifyProjectBindingResult> VerifyBindingAsync(
         string userId, string organizationId, string projectId, string authorityOrganizationId, string token, CancellationToken cancellationToken)
     {
