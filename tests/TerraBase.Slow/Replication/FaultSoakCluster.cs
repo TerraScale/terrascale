@@ -293,12 +293,12 @@ internal sealed partial class FaultSoakCluster : IAsyncDisposable
         var listeners = JsonNode.Parse(await File.ReadAllTextAsync(info, cancellationToken))!;
         node.Peer = new Uri(listeners["peer"]!.GetValue<string>());
         node.Client = PeerTls.CreateClient(new Uri(listeners["internal"]!.GetValue<string>()));
+        // The soak qualifies the multi-region guarantee: writes ask for another region's durable ack (decision 0013e).
+        node.Client.DefaultRequestHeaders.Add("TB-Durability", "remote_durable");
         node.Client.Timeout = TimeSpan.FromSeconds(30);
         _clients.Add(node.Client);
         node.Management = new HttpClient { BaseAddress = new Uri(listeners["client"]!.GetValue<string>()) };
         node.Management.DefaultRequestHeaders.Authorization = new("Bearer", listeners["projectToken"]!.GetValue<string>());
-        // The soak qualifies the multi-region guarantee: writes ask for another region's durable ack (decision 0013e).
-        node.Management.DefaultRequestHeaders.Add("TB-Durability", "remote_durable");
         node.Authority = listeners["authority"]!.GetValue<string>();
         _clients.Add(node.Management);
     }
