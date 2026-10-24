@@ -24,6 +24,50 @@ Open **Authentication** for your project.
 2. **Sign-in methods**: choose email codes, passwords, or both, and whether people can create their own accounts. At least one of email codes and passwords stays on. A method you turn off disappears from the hosted pages.
 3. **Branding**: set the name, an `https` logo URL and a `#rrggbb` theme color for the hosted pages. Without a name, the pages show your project's name.
 
+## Social sign-in
+
+Open **Authentication** for your project, then **Social sign-in**. You can connect four providers: **Google**, **GitHub**, **Apple**, and generic **OpenID Connect**, which works with any OIDC provider by its `https` issuer, such as Auth0, Keycloak or another TerraScale project.
+
+### Create an OAuth client at the provider
+
+Create the OAuth client yourself, with your own account at the provider. Then register the callback URL that the dashboard shows for that provider:
+
+```text
+https://auth.terrascale.tech/ui/<project ID>/social/<provider>/callback
+```
+
+Here `<provider>` is `google`, `github`, `apple` or `oidc`.
+
+- **Google**: Google Cloud console > APIs & Services > Credentials. Create an OAuth client ID of type **Web application**.
+- **GitHub**: Settings > Developer settings > OAuth Apps.
+- **Apple**: Apple Developer > Certificates, Identifiers & Profiles. Create a Services ID with Sign in with Apple enabled, and a key with Sign in with Apple enabled.
+
+### Enter the credentials
+
+Paste the client ID and client secret into the provider's form. Apple takes different fields: the Services ID as the client ID, your Team ID, your Key ID, and the `.p8` private key file in place of a secret.
+
+Secrets are stored encrypted and are never shown again. When you edit a provider, leave the secret empty to keep the stored one.
+
+### What end users see
+
+The hosted sign-in and sign-up pages show a **Continue with Google**, **Continue with GitHub**, **Continue with Apple** or **Continue with single sign-on** button for each provider you configure. If your application already uses the hosted pages, it needs no code change: the same authorization code flow described above handles social sign-in.
+
+An end user signs in only with a provider that confirms a verified email address:
+
+- A user is matched to an existing account by that email, so email codes, passwords and social sign-in reach the same account.
+- A new email creates an account only if the project allows sign-up.
+- Disabled users and users with MFA cannot sign in this way.
+
+### Manage providers through the API
+
+These calls need the project admin role and your TerraScale sign-in token.
+
+| Method and path | Purpose |
+| --- | --- |
+| `PUT /v1/{project}/providers/{provider}` | Configure a provider. Body: `client_id`, `client_secret`, `issuer` (`oidc` only), `team_id` and `key_id` (`apple` only). |
+| `DELETE /v1/{project}/providers/{provider}` | Remove a provider. |
+| `GET /v1/{project}/settings` | List the providers with `configured` and `callback_url`. |
+
 ## Sign users in
 
 Use any OpenID Connect client library and point it at the discovery URL. The flow is the standard one:
