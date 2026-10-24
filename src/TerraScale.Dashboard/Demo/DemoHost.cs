@@ -133,8 +133,16 @@ public sealed class DemoEnvironment
             var now = DateTimeOffset.UtcNow;
             if (long.TryParse(form["units"], CultureInfo.InvariantCulture, out var units))
                 await reporter.ReportAsync(organization.Id, units, new(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), http.RequestAborted);
-            return Results.Json(stripe.OverageItems(organization.Id).Select(item => new { item.Id, item.Subscription, item.Quantity, item.UnitAmountDecimal, item.Invoice, item.Metadata,
-                PendingInvoiceItemInterval = stripe.PendingInvoiceItemIntervals.GetValueOrDefault(item.Subscription ?? "") }));
+            return Results.Json(stripe.OverageItems(organization.Id).Select(item => new
+            {
+                item.Id,
+                item.Subscription,
+                item.Quantity,
+                item.UnitAmountDecimal,
+                item.Invoice,
+                item.Metadata,
+                PendingInvoiceItemInterval = stripe.PendingInvoiceItemIntervals.GetValueOrDefault(item.Subscription ?? "")
+            }));
         });
         // Test-only stand-in for ts-auth's hosted sign-in and sign-up pages: the journey names the
         // account it signs in as. Without one the browser stops on the sign-in page, as it does at
