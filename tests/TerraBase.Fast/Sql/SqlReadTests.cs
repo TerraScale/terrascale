@@ -140,14 +140,14 @@ public sealed class SqlReadTests
         string[] refused =
         [
             "SELECT * FROM items",
-            "SELECT * FROM main.people",
+            "SELECT * FROM temp.people",
             "SELECT * FROM sqlite_master",
             "SELECT * FROM json_each('[1]')",
             "SELECT load_extension('secret_lib')",
             "SELECT tb_qos_scan(1)",
             "SELECT randomblob(4)",
             "SELECT x'00'",
-            "SELECT main.people.id FROM people",
+            "SELECT other.people.id FROM people",
             "SELECT secret_column FROM people",
             "SELECT * FROM (WITH c AS (SELECT 1) SELECT * FROM c)",
             "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c) SELECT n FROM c",

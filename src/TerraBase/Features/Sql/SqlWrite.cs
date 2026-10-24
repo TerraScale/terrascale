@@ -28,11 +28,22 @@ internal enum InsertMode
 internal sealed record InsertSql(string Table, IReadOnlyList<string>? Columns, ReadSql? Source, InsertMode Mode) : ParsedSql
 {
     public override bool IsWrite => true;
+
+    /// <summary>The <c>RETURNING</c> list, or <see langword="null"/>.</summary>
+    public IReadOnlyList<SqlReturning>? Returning { get; init; }
 }
+
+/// <summary>A <c>RETURNING</c> item: a column of the written table, or every column for <c>*</c>.</summary>
+/// <param name="Column">The column as written, or <see langword="null"/> for <c>*</c>.</param>
+/// <param name="Alias">The result column name given with <c>AS</c>.</param>
+internal sealed record SqlReturning(string? Column, string? Alias);
 
 /// <summary><c>UPDATE</c> or <c>DELETE</c>: an engine read of the row ids and new values, then one patch or delete per row.</summary>
 /// <param name="Table">Target table.</param>
-/// <param name="Rows">The read: column 0 is <c>_id</c>, then one column per <c>set</c> or <c>inc</c> entry of <see cref="Assignments"/>.</param>
+/// <param name="Rows">
+/// The read: column 0 is <c>_id</c>, then one column per <c>set</c> or <c>inc</c> entry of <see cref="Assignments"/>, then
+/// with <see cref="Returning"/> every column of the table (<c>*</c>) as it was.
+/// </param>
 /// <param name="Assignments">Per assigned column: <c>set</c> (value from the read), <c>unset</c>, or <c>inc</c> by a literal; empty for a delete.</param>
 internal sealed record ChangeSql(string Table, ReadSql Rows, IReadOnlyList<(string Column, string Op, long By)> Assignments) : ParsedSql
 {
@@ -40,6 +51,9 @@ internal sealed record ChangeSql(string Table, ReadSql Rows, IReadOnlyList<(stri
 
     /// <summary>Whether this is a <c>DELETE</c>.</summary>
     public bool IsDelete => Assignments.Count == 0;
+
+    /// <summary>The <c>RETURNING</c> list, or <see langword="null"/>: new values for an update, old ones for a delete.</summary>
+    public IReadOnlyList<SqlReturning>? Returning { get; init; }
 }
 
 /// <summary>Translates writes and converts values by column affinity.</summary>
@@ -50,11 +64,6 @@ internal static class SqlWrite
 
     public static InsertSql Insert(InsertOperation insert)
     {
-        if (insert.Returning is not null)
-        {
-            throw new FormatException("RETURNING is not supported");
-        }
-
         var mode = insert.On switch
         {
             null => insert.Or switch
@@ -67,14 +76,18 @@ internal static class SqlWrite
             _ => throw new FormatException("ON CONFLICT supports DO NOTHING only"),
         };
         var columns = insert.Columns is { Count: > 0 } named ? named.Select(SqlParse.ColumnName).ToList() : null;
-        return new InsertSql(SqlParse.TableName(insert.Name), columns, insert.Source is { Query: var query } ? SqlRead.Read(query) : null, mode);
+        var table = SqlParse.TableName(insert.Name);
+        return new InsertSql(table, columns, insert.Source is { Query: var query } ? SqlRead.Read(query) : null, mode)
+        {
+            Returning = Returning(insert.Returning, table),
+        };
     }
 
     public static ChangeSql Update(Statement.Update update)
     {
-        if (update is not { Table: { Joins: null or [], Relation: { } relation }, From: null, Returning: null })
+        if (update is not { Table: { Joins: null or [], Relation: { } relation }, From: null })
         {
-            throw new FormatException("UPDATE supports one table without FROM or RETURNING");
+            throw new FormatException("UPDATE supports one table without FROM");
         }
 
         var table = Target(relation);
@@ -105,18 +118,37 @@ internal static class SqlWrite
             }
         }
 
-        return new ChangeSql(table, Select(relation, values, update.Selection), assignments);
+        var returning = Returning(update.Returning, table);
+        return new ChangeSql(table, Select(relation, values, update.Selection, returning is not null), assignments) { Returning = returning };
     }
 
     public static ChangeSql Delete(DeleteOperation delete)
     {
-        if (delete is not { Tables: null or [], Using: null, Returning: null, OrderBy: null or [], Limit: null, From.From: [{ Joins: null or [], Relation: { } relation }] })
+        if (delete is not { Tables: null or [], Using: null, OrderBy: null or [], Limit: null, From.From: [{ Joins: null or [], Relation: { } relation }] })
         {
-            throw new FormatException("DELETE supports one table without USING, ORDER BY, LIMIT or RETURNING");
+            throw new FormatException("DELETE supports one table without USING, ORDER BY or LIMIT");
         }
 
-        return new ChangeSql(Target(relation), Select(relation, [], delete.Selection), []);
+        var table = Target(relation);
+        var returning = Returning(delete.Returning, table);
+        return new ChangeSql(table, Select(relation, [], delete.Selection, returning is not null), []) { Returning = returning };
     }
+
+    // RETURNING lists columns of the written table (optionally qualified with its name) or *, each optionally AS a name.
+    private static List<SqlReturning>? Returning(Sequence<SelectItem>? items, string table) => items?.Select(item => item switch
+    {
+        SelectItem.Wildcard => new SqlReturning(null, null),
+        SelectItem.UnnamedExpression { Expression: var expression } => new SqlReturning(Returned(expression, table), null),
+        SelectItem.ExpressionWithAlias { Expression: var expression, Alias: var alias } => new SqlReturning(Returned(expression, table), alias.Value),
+        _ => throw new FormatException("RETURNING lists columns of the table or *, each optionally AS a name"),
+    }).ToList();
+
+    private static string Returned(Expression expression, string table) => expression switch
+    {
+        Expression.Identifier { Ident: var ident } => SqlParse.ColumnName(ident),
+        Expression.CompoundIdentifier { Idents: [var name, var ident] } when name.Value.Equals(table, StringComparison.OrdinalIgnoreCase) => SqlParse.ColumnName(ident),
+        _ => throw new FormatException("RETURNING lists columns of the table or *, each optionally AS a name"),
+    };
 
     private static string Target(TableFactor relation) => relation is TableFactor.Table { Name: var name }
         ? SqlParse.TableName(name)
@@ -124,9 +156,9 @@ internal static class SqlWrite
 
     // The rows a change addresses, read with their ids (and new values) from its validated syntax: one past the limit
     // tells that the statement is too big.
-    private static ReadSql Select(TableFactor relation, List<string> values, Expression? where)
+    private static ReadSql Select(TableFactor relation, List<string> values, Expression? where, bool everyColumn)
     {
-        var sql = $"SELECT \"_id\"{string.Concat(values.Select(value => ", " + value))} FROM {relation.ToSql()}"
+        var sql = $"SELECT \"_id\"{string.Concat(values.Select(value => ", " + value))}{(everyColumn ? ", *" : "")} FROM {relation.ToSql()}"
             + (where is null ? "" : " WHERE " + where.ToSql()) + $" LIMIT {MaxRows + 1}";
         return new Parser().ParseSql(sql, new SQLiteDialect()) is [Statement.Select { Query: var query }]
             ? SqlRead.Read(query)

@@ -38,22 +38,26 @@ tree, so the engine never sees text the validator did not see.
 | `DROP TABLE [IF EXISTS]` | drop the collection |
 | `CREATE [UNIQUE] INDEX`, `DROP INDEX` | the index service (unique: the unique-constraint service) |
 | `BEGIN [DEFERRED\|IMMEDIATE\|EXCLUSIVE]`, `BEGIN [TRANSACTION] READONLY`, `COMMIT`/`END`, `ROLLBACK` | the session (section 5) |
+| `INSERT`/`UPDATE`/`DELETE … RETURNING` columns, `*` or `column AS name` | the written rows: new values, old ones for a delete |
+| `PRAGMA foreign_keys = …`, `PRAGMA read_uncommitted`, `PRAGMA [main.\|temp.]table_info(t)` | no-op, `0`, SQLite's column rows (ORMs and libSQL clients send them) |
 
-Refused with an error that never quotes client text: `RETURNING`, `ON CONFLICT DO UPDATE`, `ALTER TABLE`, triggers,
-views, `PRAGMA`, `ATTACH`, `VACUUM`, savepoints, schema-qualified names, every table reference that is not a SQL table
+Refused with an error that never quotes client text: `RETURNING` expressions, `ON CONFLICT DO UPDATE`, `ALTER TABLE`,
+triggers, views, other `PRAGMA`s, `ATTACH`, `VACUUM`, savepoints, schemas other than `main` (`main.t` is `t`), every table reference that is not a SQL table
 of the database or a CTE of the statement, and every function outside the allow-list (core scalar, aggregate, window,
 date/time and JSON functions of SQLite; no table-valued functions). Blob values are refused: a JSON document cannot
 hold bytes.
 
-Only plain and `"…"` names and only `'…'` string literals are accepted (SQ1-e4): SqlParserCS renders `[a]]b]` and
-`N'a''b'` back without escaping, which made SQLite read other text than the validator saw. Literals in expressions are
+Only plain and `"…"` names, `` `…` `` names without quote characters (rewritten as `"…"`; Drizzle and Prisma quote with
+backticks) and only `'…'` string literals are accepted (SQ1-e4): SqlParserCS renders `[a]]b]` and `N'a''b'` back
+without escaping, which made SQLite read other text than the validator saw. Literals in expressions are
 numbers, strings, NULL, booleans and parameters. The rendered text must parse back to itself, and the engine refuses a
 program whose text holds more than one statement (Turso runs every statement of a command). `printf`, `format` and
 `replace` are not in the allow-list: nested calls build unbounded strings.
 
 Column types follow SQLite affinity on write (`INTEGER`, `REAL`, `TEXT`, `NUMERIC`, none). `NOT NULL`, literal
-`DEFAULT`, `PRIMARY KEY` and `UNIQUE` (through the unique-constraint service) are enforced; `CHECK` and `FOREIGN KEY`
-are refused.
+`DEFAULT`, `PRIMARY KEY` and `UNIQUE` (through the unique-constraint service) are enforced; `CHECK` is refused, and
+`REFERENCES`/`FOREIGN KEY` are accepted and not enforced, as in SQLite with foreign keys off (its default). A single
+`INTEGER` or `SERIAL` primary key left out of an `INSERT` is generated.
 
 ## 3. Keys
 
