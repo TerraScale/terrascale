@@ -29,7 +29,7 @@ public sealed class CorruptChangeLogMaintenanceTests
         {
             // The retention scan catches its decoder error internally, without an outer source read.
             _ = await transaction.TrimAsync(store.BackupAnchor, time.GetUtcNow(),
-                services.GetRequiredService<TursoStorageEngine>().ReplicaId, CancellationToken.None);
+                services.GetRequiredService<TursoStorageEngine>().ReplicaId, new HashSet<long>(), CancellationToken.None);
             await Assert.That(store.CopyFault).IsNotNull();
             await Assert.That(await ledger.GetAsync(database, CancellationToken.None)).IsNull()
                 .Because("the held transaction records its fault only during disposal");

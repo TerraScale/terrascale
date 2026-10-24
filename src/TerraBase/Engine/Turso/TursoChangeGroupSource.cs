@@ -38,6 +38,9 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
     // Databases a peer stream reached since the start: their tail lag is looked at every few seconds, so it keeps growing
     // while a peer is away and acknowledges nothing.
     private readonly ConcurrentDictionary<Ulid, TenantContext> _tracked = new();
+    // When each database's far-behind peers were last measured (UTC ticks), and FarBehindEvery between measurements.
+    private readonly ConcurrentDictionary<Ulid, long> _measured = new();
+    private static readonly TimeSpan FarBehindEvery = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan TailRefresh = TimeSpan.FromSeconds(5);
 
     public TursoChangeGroupSource(TursoStorageEngine engine, IMeterFactory meters, ILogger<TursoChangeGroupSource> logger, Func<IRemoteDurability?>? durability = null)
@@ -493,6 +496,7 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
                         _ = _tracked.TryRemove(incarnation, out _);
                         _ = _tail.TryRemove(incarnation, out _);
                         _ = _backlog.TryRemove(incarnation, out _);
+                        _ = _measured.TryRemove(incarnation, out _);
                         lock (_gate)
                         {
                             _ = _quiet.Remove(incarnation);
@@ -518,10 +522,10 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
         }
     }
 
-    // One retention pass over a database. Retention also runs without acks: a silent (24 h) or far-behind (1 GiB) peer stops
-    // holding rows even when no other peer acknowledges anything, and no ack holds a row past 24 h after it committed (a peer
-    // still heard from then refills); and acks rise over joined rows (Tail.cs), whose ranges are
-    // remembered as quiet.
+    // One retention pass over a database. Retention also runs without acks: a silent (24 h) or far-behind (2^20 change ids or
+    // 1 GiB) peer stops holding rows even when no other peer acknowledges anything, and no ack holds a row past 24 h after it
+    // committed (a peer still heard from then refills); and acks rise over joined rows (Tail.cs), whose ranges are remembered
+    // as quiet.
     internal async Task TrimAsync(TursoDatabaseStore store, CancellationToken cancellationToken)
     {
         long? floor;
@@ -533,6 +537,19 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
         var held = store.RequiresRemoteProof && store.Tenant is { } tenant && durability is not null
             ? await durability.HeldOriginsAsync(tenant, cancellationToken).ConfigureAwait(false)
             : FrozenSet<ReplicaId>.Empty;
+        // Also before the writer, and at most once a minute: measuring a backlog reads all of it (TS-982).
+        IReadOnlySet<long> farBehind = FrozenSet<long>.Empty;
+        var measuredAt = _engine.HostTime.GetUtcNow().UtcTicks;
+        if (!_measured.TryGetValue(store.Incarnation, out var last) || measuredAt - last >= FarBehindEvery.Ticks)
+        {
+            _measured[store.Incarnation] = measuredAt;
+            var reader = (TursoStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+            await using (reader.ConfigureAwait(false))
+            {
+                farBehind = await reader.FarBehindAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         var transaction = (TursoStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
@@ -546,7 +563,7 @@ internal sealed partial class TursoChangeGroupSource : BackgroundService, IChang
             var below = await transaction.ShapeFrontierHoldAsync(now.ToUnixTimeSeconds(), cancellationToken).ConfigureAwait(false) is { } hold
                 ? Math.Min(store.BackupAnchor ?? long.MaxValue, hold)
                 : store.BackupAnchor;
-            (var left, floor, var raised, var oldest) = await transaction.TrimAsync(below, now, _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
+            (var left, floor, var raised, var oldest) = await transaction.TrimAsync(below, now, _engine.ReplicaId, farBehind, cancellationToken).ConfigureAwait(false);
             // Before the commit wakes a stream: its RetainsAsync then already sees the ranges the raises proved quiet (which
             // hold whether or not the commit lands; the rows are unchanged until a later cut).
             foreach (var (from, to) in raised)

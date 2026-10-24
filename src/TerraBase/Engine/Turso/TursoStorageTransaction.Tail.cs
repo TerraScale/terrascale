@@ -89,11 +89,15 @@ internal sealed partial class TursoStorageTransaction
 
     // Worker-only. Rows come in commit order: one writer per file, so a transaction's rows are contiguous and end with its
     // commit row (change_type 2), and a reader never sees part of one.
-    private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) ReadChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken)
+    private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) ReadChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken) =>
+        ReadChangeGroups(after, maxGroups, maxBytes, self, long.MaxValue, cancellationToken);
+
+    private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) ReadChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, long maxRows,
+        CancellationToken cancellationToken)
     {
         try
         {
-            return DecodeChangeGroups(after, maxGroups, maxBytes, self, cancellationToken);
+            return DecodeChangeGroups(after, maxGroups, maxBytes, self, maxRows, cancellationToken);
         }
         catch (InvalidDataException error)
         {
@@ -108,7 +112,9 @@ internal sealed partial class TursoStorageTransaction
         }
     }
 
-    private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) DecodeChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken)
+    // Past maxRows rows with no group found it stops at the commit it reached: Quiet is then that commit's id.
+    private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) DecodeChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, long maxRows,
+        CancellationToken cancellationToken)
     {
         List<OriginGroup> groups = [];
         var quiet = after;
@@ -119,6 +125,7 @@ internal sealed partial class TursoStorageTransaction
         }
 
         var bytes = 0;
+        var scanned = 0L;
         long? first = null;
         var transaction = new TailTransaction(store.IsSystem);
         for (var from = after; ;)
@@ -133,6 +140,7 @@ internal sealed partial class TursoStorageTransaction
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     rows++;
+                    scanned++;
                     from = reader.GetInt64(0);
                     var type = reader.GetInt64(1);
                     // Turso's commit rows carry no table and no after-image, its delete rows no after-image. A row whose type
@@ -164,6 +172,10 @@ internal sealed partial class TursoStorageTransaction
                         else if (groups.Count == 0)
                         {
                             quiet = from;
+                            if (scanned >= maxRows)
+                            {
+                                return (groups, quiet, first);
+                            }
                         }
 
                         transaction = new TailTransaction(store.IsSystem);
@@ -315,14 +327,17 @@ internal sealed partial class TursoStorageTransaction
     /// Retention without an acknowledgement (uncaptured): first each peer's acknowledged id rises over the rows past it that
     /// hold no group of <paramref name="self"/> (joined remote writes and repairs, which are never shipped, so a peer has
     /// nothing there to acknowledge: a replica that only receives would otherwise keep every joined row), when every row
-    /// past it is still here (after a cut the peer refills instead), then a peer whose
-    /// unacknowledged CDC rows pass 1 GiB stops holding them (its <c>seen</c> goes to 0 until it is heard from again, and it
-    /// refills when it returns), then what <see cref="Retention"/> allows is deleted. Returns the CDC rows left, and the
+    /// past it is still here (after a cut the peer refills instead), over at most <see cref="QuietScanRows"/> rows a pass, then
+    /// a peer more than <see cref="MaxBehindRows"/> change ids behind, or of <paramref name="farBehind"/>
+    /// (<see cref="FarBehindAsync"/>: its unacknowledged CDC rows pass 1 GiB), stops
+    /// holding them (its <c>seen</c> goes to 0 until it is heard from again, and it refills when it returns), then what
+    /// <see cref="Retention"/> allows is deleted, below <paramref name="backupAnchor"/> unless it too is more than
+    /// <see cref="MaxBehindRows"/> change ids behind. Returns the CDC rows left, and the
     /// smallest acknowledged id of a peer still holding rows, each raise as the range it proved to hold no local group, and
     /// the oldest change id kept.
     /// </summary>
     internal async ValueTask<(long Left, long? Floor, List<(long From, long To)> Quiet, long Oldest)> TrimAsync(
-        long? backupAnchor, DateTimeOffset now, ReplicaId self, CancellationToken cancellationToken)
+        long? backupAnchor, DateTimeOffset now, ReplicaId self, IReadOnlySet<long> farBehind, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         return await RunAsync(() =>
@@ -357,7 +372,7 @@ internal sealed partial class TursoStorageTransaction
                 long quiet;
                 try
                 {
-                    (_, quiet, _) = ReadChangeGroups(at, 1, 1, self, cancellationToken);
+                    (_, quiet, _) = ReadChangeGroups(at, 1, 1, self, QuietScanRows, cancellationToken);
                 }
                 catch (InvalidDataException)
                 {
@@ -377,20 +392,22 @@ internal sealed partial class TursoStorageTransaction
                 }
             }
 
-            foreach (var (node, acked, _) in peers.Where(peer => newest - peer.Acked > FarBehindRows))
+            foreach (var (node, acked, _) in peers.Where(peer => newest - peer.Acked > MaxBehindRows
+                || farBehind.Contains(peer.Node) && newest - peer.Acked > FarBehindRows))
             {
-                var behind = Command("SELECT coalesce(sum(length(after)), 0) FROM turso_cdc WHERE change_id > $acked;");
-                behind.Parameters.AddWithValue("$acked", acked);
-                if (behind.ExecuteScalar() is long bytes && bytes > FarBehindBytes)
-                {
-                    var evict = Command("UPDATE _tb_peers SET seen = 0 WHERE node = $node;");
-                    evict.Parameters.AddWithValue("$node", node);
-                    evict.ExecuteNonQuery();
-                }
+                // Still as far behind as it was measured (FarBehindAsync) or counted, unless an ack moved it meanwhile.
+                var evict = Command("UPDATE _tb_peers SET seen = 0 WHERE node = $node AND (acked = $acked OR incarnation <> $incarnation);");
+                evict.Parameters.AddWithValue("$node", node);
+                evict.Parameters.AddWithValue("$acked", acked);
+                evict.Parameters.AddWithValue("$incarnation", incarnation);
+                evict.ExecuteNonQuery();
             }
 
             var delete = Command(Retention);
-            delete.Parameters.AddWithValue("$below", backupAnchor ?? long.MaxValue);
+            // The backup anchor and the shape frontier hold rows too, but no further back than a peer may: a backup tap that
+            // cannot read (or ship) pinned SYSTEM's whole log, whatever its peers acknowledged (TS-982). Its next read finds
+            // the rows gone, a hole, and its backup starts a new generation from a snapshot.
+            delete.Parameters.AddWithValue("$below", backupAnchor is { } below && newest - below <= MaxBehindRows ? below : long.MaxValue);
             delete.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
             delete.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             delete.ExecuteNonQuery();
@@ -405,6 +422,55 @@ internal sealed partial class TursoStorageTransaction
     // A peer this far behind in rows has its backlog's bytes measured; past FarBehindBytes it stops holding rows.
     private const long FarBehindRows = 65_536;
     private const long FarBehindBytes = 1L << 30;
+
+    // Change ids a peer may lag behind the newest before it stops holding rows, whatever their bytes: small rows (SYSTEM's
+    // joined catalog writes) stayed under FarBehindBytes while the log reached 1.3 GB and the writer stalled (TS-982).
+    // Counted from ids, so it costs nothing under the writer; an ack of another incarnation counts as 0.
+    private const long MaxBehindRows = 1L << 20;
+
+    // Rows one retention pass reads past an ack looking for a local group: a log of joined rows (SYSTEM receives every
+    // region's catalog writes) is walked over several passes instead of in one, under the writer (TS-982).
+    private const long QuietScanRows = 65_536;
+
+    /// <summary>
+    /// The peers whose unacknowledged CDC rows pass <see cref="FarBehindBytes"/>, measured in a read transaction: summing a
+    /// backlog reads all of it, which under the writer stalled every write for as long (TS-982). <see cref="TrimAsync"/> then
+    /// stops them holding rows.
+    /// </summary>
+    internal ValueTask<IReadOnlySet<long>> FarBehindAsync(CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            HashSet<long> far = [];
+            if (Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null)
+            {
+                return (IReadOnlySet<long>)far;
+            }
+
+            var newest = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0;
+            var incarnation = Command(TursoStatements.Incarnation).ExecuteScalar() as string ?? throw new InvalidDataException("database incarnation is missing");
+            List<(long Node, long Acked)> peers = [];
+            var peerRows = Command("SELECT node, CASE WHEN incarnation = $incarnation THEN acked ELSE 0 END FROM _tb_peers WHERE seen > 0;");
+            peerRows.Parameters.AddWithValue("$incarnation", incarnation);
+            using (var reader = peerRows.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    peers.Add((reader.GetInt64(0), reader.GetInt64(1)));
+                }
+            }
+
+            foreach (var acked in peers.Where(peer => newest - peer.Acked > FarBehindRows).Select(peer => peer.Acked).Distinct().ToList())
+            {
+                var behind = Command("SELECT coalesce(sum(length(after)), 0) FROM turso_cdc WHERE change_id > $acked;");
+                behind.Parameters.AddWithValue("$acked", acked);
+                if (behind.ExecuteScalar() is long bytes && bytes > FarBehindBytes)
+                {
+                    far.UnionWith(peers.Where(peer => peer.Acked == acked).Select(peer => peer.Node));
+                }
+            }
+
+            return (IReadOnlySet<long>)far;
+        }, cancellationToken);
 
     /// <summary>The smallest change id a peer heard from since <c>now - 24 h</c> acknowledged, or null when there is none.</summary>
     internal ValueTask<long?> GetFloorAsync(DateTimeOffset now, CancellationToken cancellationToken) =>

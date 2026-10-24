@@ -16,8 +16,9 @@ public sealed class HealthyRewriteReaderTests
 {
     private const string Probe = "rewrite_reader_probe";
 
-    // Generous for a shared CI runner: a write that queued behind the writer-held drain waited 2 s or more, on prod 30 s.
-    private static readonly TimeSpan WriteBound = TimeSpan.FromMilliseconds(250);
+    // Below the 2 s a write queued behind the writer-held drain waited (on prod 30 s), and above what a loaded 4-core CI
+    // runner adds to one SYSTEM write while the whole suite runs (658 ms seen; locally the slowest is a few ms).
+    private static readonly TimeSpan WriteBound = TimeSpan.FromSeconds(1);
 
     [Test]
     public async Task A_reader_held_through_a_system_rewrite_refuses_it_without_delaying_a_write()
