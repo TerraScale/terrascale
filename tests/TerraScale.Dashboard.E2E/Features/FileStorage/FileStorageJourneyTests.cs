@@ -95,7 +95,7 @@ public sealed class FileStorageJourneyTests(DashboardRootFixture fixture)
         using var complete = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/storage/complete", form);
         await Assert.That(complete.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var populated = await client.GetStringAsync("/storage");
-        await Assert.That(populated).Contains("hello.txt").And.Contains("\\u003Cscript\\u003E");
+        await Assert.That(populated).Contains("hello.txt").And.Contains("&lt;script&gt;");
         await Assert.That(populated.Contains("<script>", StringComparison.Ordinal)).IsFalse();
         await Assert.That(populated.Contains("signature=synthetic", StringComparison.Ordinal)).IsFalse();
         using var download = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/storage/download", form);
