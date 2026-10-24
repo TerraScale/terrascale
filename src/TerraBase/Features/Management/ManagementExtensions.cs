@@ -22,6 +22,7 @@ public static class ManagementExtensions
     {
         // One catalog instance behind every interface: it remembers that the catalog version is current.
         services.AddSingleton<EngineManagementService>();
+        services.AddSingleton<DatabaseAllowance>();
         services.AddSingleton(provider => new Lazy<ICatalogGate>(provider.GetRequiredService<ICatalogGate>));
         // Commits apply document operations; the document service reaches the catalog back through usage metering.
         services.AddSingleton(provider => new Lazy<IDocumentService>(provider.GetRequiredService<IDocumentService>));

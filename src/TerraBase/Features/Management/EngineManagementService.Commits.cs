@@ -663,7 +663,7 @@ internal sealed partial class EngineManagementService
                     }
 
                     var registered = await RegisterDatabaseAsync(
-                        transaction, project => MemberProjectAsync(project, userId, organization, op.Project!, cancellationToken), added.Database, cancellationToken).ConfigureAwait(false);
+                        transaction, project => MemberProjectAsync(project, userId, organization, op.Project!, cancellationToken), added.Database, databaseAllowance.Limit, cancellationToken).ConfigureAwait(false);
                     return registered switch
                     {
                         TenantContext => Body(ManagedDatabaseBody.From(added.Database, options.Region), TerraBaseJsonContext.Default.ManagedDatabaseBody),

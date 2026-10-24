@@ -46,7 +46,7 @@ namespace TerraBase.Features.Management;
 internal sealed partial class EngineManagementService(
     IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
     Lazy<IDocumentService> documents, Lazy<IQueryShapeTracker> shapes, IMemoryBudget memory, IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota,
-    Lazy<IRemoteDurability> durability, Lazy<ICatalogGate> catalogGate, Lazy<IWebhookErasure> webhookErasure)
+    Lazy<IRemoteDurability> durability, Lazy<ICatalogGate> catalogGate, Lazy<IWebhookErasure> webhookErasure, DatabaseAllowance databaseAllowance)
     : IManagementService, IAccessService, IManagementCommits, ITenantDirectory, IHostedService, ICatalogGuard
 {
     private const string Organizations = "organizations";
@@ -754,9 +754,12 @@ internal sealed partial class EngineManagementService(
         Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, string? sourceId, string? branchedFrom, CancellationToken cancellationToken,
         string? id = null, DatabasePlacement? placement = null, DateTimeOffset? createdAt = null)
     {
+        // A database homed in another region is a replica of a database counted where it was created.
+        var allowance = (placement?.Home ?? options.Region) == options.Region ? databaseAllowance.Limit : null;
+
         // Checked again when registering; this avoids creating storage for a request that cannot succeed.
         var precheck = await ReadAsync<AddDatabasePrecheck>(
-            async transaction => await CanAddDatabaseAsync(transaction, project, name, cancellationToken).ConfigureAwait(false) switch
+            async transaction => await CanAddDatabaseAsync(transaction, project, name, cancellationToken, allowance).ConfigureAwait(false) switch
             {
                 TenantContext free => free,
                 NotFound error => error,
@@ -830,7 +833,7 @@ internal sealed partial class EngineManagementService(
 
             registered = await WriteAsync<AddDatabasePrecheck>(async transaction =>
             {
-                var registration = await RegisterDatabaseAsync(transaction, project, database, cancellationToken).ConfigureAwait(false);
+                var registration = await RegisterDatabaseAsync(transaction, project, database, allowance, cancellationToken).ConfigureAwait(false);
                 if (registration is TenantContext && ProjectAccess.Current is { } access)
                 {
                     await RecordAsync(transaction, tenant.OrganizationId, access.Actor,
@@ -954,14 +957,14 @@ internal sealed partial class EngineManagementService(
     // Registers prepared storage and clears its intent in the caller's transaction, when the project still allows it.
     private static async ValueTask<AddDatabaseCheck> RegisterDatabaseAsync(
         IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, ManagedDatabase database,
-        CancellationToken cancellationToken)
+        Func<PlanTier, long>? allowance, CancellationToken cancellationToken)
     {
         if (await DatabasePurge.IsDeletedAsync(transaction, database.Id, cancellationToken).ConfigureAwait(false))
         {
             return ManagementErrors.IdTaken;
         }
 
-        var check = await CanAddDatabaseAsync(transaction, project, database.Name, cancellationToken).ConfigureAwait(false);
+        var check = await CanAddDatabaseAsync(transaction, project, database.Name, cancellationToken, allowance).ConfigureAwait(false);
         if (check is TenantContext tenant)
         {
             // Register the name, record and default backup owner in one native call.
@@ -1004,8 +1007,10 @@ internal sealed partial class EngineManagementService(
     }
 
     // The project's tenant when the project exists and the name is free in it.
+    // allowance: the plan's database allowance, which bounds a new database; null for a replica or a name check alone.
     private static async ValueTask<AddDatabaseCheck> CanAddDatabaseAsync(
-        IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, CancellationToken cancellationToken)
+        IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, CancellationToken cancellationToken,
+        Func<PlanTier, long>? allowance = null)
     {
         if (ProjectAccess.Current is { DatabaseName: not null } access && access.DatabaseName != name)
         {
@@ -1030,10 +1035,33 @@ internal sealed partial class EngineManagementService(
         }
 
         var named = await GetAsync(transaction, DatabaseNames(tenant.ProjectId!), name, Id, cancellationToken).ConfigureAwait(false);
-        return named is null
-            || await transaction.GetVersionAsync(Databases(tenant.ProjectId!), named, cancellationToken).ConfigureAwait(false) is { Deleted: true }
-            ? tenant
-            : ManagementErrors.NameTaken;
+        if (named is not null
+            && await transaction.GetVersionAsync(Databases(tenant.ProjectId!), named, cancellationToken).ConfigureAwait(false) is not { Deleted: true })
+        {
+            return ManagementErrors.NameTaken;
+        }
+
+        return allowance is not null && await DatabaseLimitAsync(transaction, tenant, allowance(tenant.Plan), cancellationToken).ConfigureAwait(false) is { } limit
+            ? limit
+            : tenant;
+    }
+
+    // The plan's database allowance, when the organization's live databases across its projects reach it. Counted in the
+    // registering transaction so concurrent creates cannot both pass; databases already above it stay. Platform databases are exempt.
+    private static async ValueTask<Conflict?> DatabaseLimitAsync(IStorageTransaction transaction, TenantContext tenant, long allowed, CancellationToken cancellationToken)
+    {
+        if (allowed == long.MaxValue || PlatformDatabases.IsPlatform(tenant.OrganizationId))
+        {
+            return null;
+        }
+
+        long used = 0;
+        foreach (var project in await ListAllAsync(transaction, Projects(tenant.OrganizationId), TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false))
+        {
+            used += await CountAllAsync(transaction, Databases(project.Id), cancellationToken).ConfigureAwait(false);
+        }
+
+        return used >= allowed ? ManagementErrors.DatabaseLimit(PlanName(tenant.Plan), allowed) : null;
     }
 
     // A project of the organization as a tenant: null when there is no organization or the project is not one of its projects.

@@ -20,6 +20,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
@@ -632,6 +633,8 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
                 // Replaces Program's registration (empty: records peers as unmatched and cannot send) before the test's callbacks, which may replace it again.
                 values.Replace(ServiceDescriptor.Singleton(peerCredential));
+                // Fixtures hold more databases than Hobby allows; plan allowance tests register the plans' allowances again.
+                values.Replace(ServiceDescriptor.Singleton(new DatabaseAllowance(_ => long.MaxValue)));
                 // Completion barriers must observe commits after the previous scrape, not its cached zero.
                 values.Configure<PrometheusAspNetCoreOptions>(options => options.ScrapeResponseCacheDurationMilliseconds = 0);
                 topology.ApplyIdentity(values);

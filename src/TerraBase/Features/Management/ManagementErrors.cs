@@ -50,6 +50,14 @@ internal static class ManagementErrors
     /// <summary>The database still has replica regions.</summary>
     public static readonly Conflict Replicated = new("remove the database's replica regions and allRegions first", "database_replicated");
 
+    /// <summary>The organization's live databases reach its plan's database allowance (https://terrascale.tech/pricing.json).</summary>
+    public static Conflict DatabaseLimit(string plan, long allowed) => new(
+        $"the organization's {plan} plan allows {allowed} database{(allowed == 1 ? "" : "s")}; delete a database or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing",
+        DatabaseLimitCode);
+
+    /// <summary>The stable code of <see cref="DatabaseLimit"/>.</summary>
+    public const string DatabaseLimitCode = "database_limit";
+
     /// <summary>The management catalog has a version this build does not know; it is left unchanged.</summary>
     public static readonly Unavailable CatalogUnsupported = new("the management catalog has an old or unsupported format; discard the affected data");
 

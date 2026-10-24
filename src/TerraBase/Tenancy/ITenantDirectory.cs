@@ -21,8 +21,8 @@ public readonly union FindDatabaseResult(TenantContext, NotFound, Unavailable);
 /// <param name="Created">Whether this call created it; <see langword="false"/> when it existed.</param>
 public sealed record ProvisionedDatabase(TenantContext Database, bool Created);
 
-/// <summary>A database created or found, or why there is none.</summary>
-public readonly union ProvisionDatabaseResult(ProvisionedDatabase, NotFound, Unavailable);
+/// <summary>A database created or found, or why there is none: a <see cref="Conflict"/> when the plan's database allowance is reached.</summary>
+public readonly union ProvisionDatabaseResult(ProvisionedDatabase, NotFound, Conflict, Unavailable);
 
 /// <summary>Known registration in this region, or an unreadable catalog.</summary>
 public readonly union RegisteredDatabaseResult(bool, Unavailable);
@@ -96,7 +96,8 @@ public interface ITenantDirectory
     /// <summary>
     /// Creates the database named <paramref name="database"/> in project <paramref name="projectId"/> of organization
     /// <paramref name="organizationId"/>, or finds it (<c>Created</c> is <see langword="false"/>) when it exists;
-    /// <see cref="NotFound"/> when the organization or the project in it does not exist, <see cref="Unavailable"/> as for
+    /// <see cref="NotFound"/> when the organization or the project in it does not exist, <see cref="Conflict"/> when its plan's
+    /// database allowance is reached, <see cref="Unavailable"/> as for
     /// <see cref="FindDatabaseAsync"/>.
     /// </summary>
     ValueTask<ProvisionDatabaseResult> CreateDatabaseAsync(
