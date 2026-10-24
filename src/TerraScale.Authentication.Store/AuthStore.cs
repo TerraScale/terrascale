@@ -115,7 +115,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TimeProvider clock)
     [
         UniqueCollection, ChallengeCollection, HealthCollection, UserCollection, SessionCollection, PasscodeCollection,
         SigningKeyCollection, OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection,
-        "rate_limits", "email_configs", "email_config_versions", "email_allowance_deliveries", "email_support_deliveries",
+        "rate_limits", "email_configs", "email_config_versions", "email_allowance_deliveries", "email_alert_deliveries", "email_support_deliveries",
         OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection, ApiKeyUsageCollection,
         InvitationCollection, AuditEventCollection, MfaCollection, DeletionJobCollection, ClosureJobCollection, HistoryMarkCollection,
         ClosureCancellationCollection, ClosureCommitCollection, ProjectAuthSettingsCollection, OrganizationSsoCollection,

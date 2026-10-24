@@ -67,6 +67,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/schema TsAuth(databases:read) getDatabaseSchema Schema
         GET /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:read) getCollectionSchema Schema
         GET /v1/projects/{project}/databases/{database}/usage TsAuth(databases:read) getDatabaseUsage Usage
+        GET /v1/projects/{project}/metrics TsAuth(databases:read) getProjectMetrics Analytics
         GET /v1/projects/{project}/replication TsAuth(databases:read) getProjectReplication Replication
         GET /v1/projects/{project}/saved-queries TsAuth(databases:read) listSavedQueries Queries
         GET /v1/projects/{project}/saved-queries/{query} TsAuth(databases:read) getSavedQuery Queries

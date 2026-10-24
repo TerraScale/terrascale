@@ -199,7 +199,7 @@ public sealed class AuthStoreTests(TerraBaseFixture fixture)
         await store.ProvisionAsync();
         await store.ProvisionAsync();
         await Assert.That((await database.ListCollectionsAsync()).Items.Select(collection => collection.Name))
-            .IsEquivalentTo(["api_key_usage", "api_keys", "audit_events", "closure_cancellations", "closure_commits", "closure_jobs", "deletion_jobs", "email_allowance_deliveries", "email_config_versions", "email_configs", "email_support_deliveries", "history_erasure_marks", "invitations", "memberships", "mfa_credentials", "oidc_applications", "oidc_authorizations", "oidc_tokens", "organization_sso", "organizations", "passcodes", "project_auth_settings", "project_members", "projects", "rate_limits", "sessions", "signing_keys", "storage_health", "uniques", "users", "verification_tokens"]);
+            .IsEquivalentTo(["api_key_usage", "api_keys", "audit_events", "closure_cancellations", "closure_commits", "closure_jobs", "deletion_jobs", "email_alert_deliveries", "email_allowance_deliveries", "email_config_versions", "email_configs", "email_support_deliveries", "history_erasure_marks", "invitations", "memberships", "mfa_credentials", "oidc_applications", "oidc_authorizations", "oidc_tokens", "organization_sso", "organizations", "passcodes", "project_auth_settings", "project_members", "projects", "rate_limits", "sessions", "signing_keys", "storage_health", "uniques", "users", "verification_tokens"]);
 
         var missing = fixture.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "missing");
         await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => new AuthStore(missing, TimeProvider.System).ProvisionAsync());
