@@ -1,6 +1,7 @@
 package v1_test
 
 import (
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -180,6 +181,67 @@ func TestNearRejects(t *testing.T) {
 		"cursor":         {Sort: []tb.SortKey{near}, Cursor: "next"},
 	} {
 		if _, err := col.Query(t.Context(), q); err == nil || !strings.Contains(err.Error(), "near") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}
+
+func TestGeoQuery(t *testing.T) {
+	const body = `{"filter":{"or":[{"within":["/loc",{"lat":-23.55,"lon":-46.63,"meters":1000}]},{"within":["/loc",{"south":-20,"west":179,"north":-10,"east":-170}]}]},"sort":[{"near":{"path":"/loc","lat":-23.55,"lon":-46.63}}],"limit":10}`
+	const reply = `{"items":[{"id":"` + parityID + `","version":"opaque","state":"value","document":{},"distance":12.5}],"next_cursor":null}`
+	col := parityClient(t, http.MethodPost, parityDatabase+"/collections/users/query", "", body, reply, http.StatusOK).Database(parityProject, "main").Collection("users")
+	res, err := col.Query(t.Context(), tb.Query{
+		Filter: tb.Or(tb.WithinRadius("/loc", -23.55, -46.63, 1000), tb.WithinBox("/loc", -20, 179, -10, -170)),
+		Sort:   []tb.SortKey{tb.NearPoint("/loc", -23.55, -46.63)}, Limit: 10,
+	})
+	if err != nil || len(res.Items) != 1 || res.Items[0].Distance == nil || *res.Items[0].Distance != 12.5 {
+		t.Fatalf("geo = %+v, %v", res, err)
+	}
+}
+
+func TestAggregateQuery(t *testing.T) {
+	const body = `{"filter":{"gte":["/created",1761264000000]},"aggregate":{"group_by":["/status"],"sum":["/amount"],"avg":["/amount"],"min":["/amount"],"max":["/amount"]},"limit":100}`
+	const reply = `{"items":[],"next_cursor":null,"groups":[{"key":["paid"],"count":"250","sum":{"/amount":12500.5},"avg":{"/amount":50.002},"min":{"/amount":1},"max":{"/amount":null}}]}`
+	col := parityClient(t, http.MethodPost, parityDatabase+"/collections/users/query", "", body, reply, http.StatusOK).Database(parityProject, "main").Collection("users")
+	res, err := col.Query(t.Context(), tb.Query{
+		Filter:    tb.Gte("/created", 1761264000000),
+		Aggregate: &tb.Aggregate{GroupBy: []string{"/status"}, Sum: []string{"/amount"}, Avg: []string{"/amount"}, Min: []string{"/amount"}, Max: []string{"/amount"}},
+		Limit:     100,
+	})
+	if err != nil || len(res.Items) != 0 || len(res.Groups) != 1 {
+		t.Fatalf("aggregate = %+v, %v", res, err)
+	}
+	g := res.Groups[0]
+	if len(g.Key) != 1 || string(g.Key[0]) != `"paid"` || g.Count != 250 || *g.Sum["/amount"] != 12500.5 || *g.Avg["/amount"] != 50.002 || *g.Min["/amount"] != 1 || g.Max["/amount"] != nil {
+		t.Fatalf("group = %+v", g)
+	}
+}
+
+func TestGeoAndAggregateRejects(t *testing.T) {
+	c, err := tb.New(tb.Config{BaseURL: "http://127.0.0.1:1", Token: "header.project.signature", MaxRetries: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	col := c.Database(parityProject, "main").Collection("users")
+	agg := &tb.Aggregate{Sum: []string{"/amount"}}
+	for name, tc := range map[string]struct {
+		q    tb.Query
+		want string
+	}{
+		"radius meters":  {tb.Query{Filter: tb.WithinRadius("/loc", 0, 0, -1)}, "within"},
+		"radius lat":     {tb.Query{Filter: tb.WithinRadius("/loc", 91, 0, 1)}, "within"},
+		"box inverted":   {tb.Query{Filter: tb.WithinBox("/loc", 10, 0, -10, 1)}, "within"},
+		"box lon":        {tb.Query{Filter: tb.WithinBox("/loc", 0, -181, 1, 1)}, "within"},
+		"near point":     {tb.Query{Sort: []tb.SortKey{tb.NearPoint("/loc", math.NaN(), 0)}}, "near"},
+		"near point key": {tb.Query{Sort: []tb.SortKey{tb.NearPoint("/loc", 0, 0), tb.Asc("/name")}}, "near"},
+		"near limit":     {tb.Query{Sort: []tb.SortKey{tb.NearPoint("/loc", 0, 0)}, Limit: 101}, "near"},
+		"agg sort":       {tb.Query{Aggregate: agg, Sort: []tb.SortKey{tb.Asc("/name")}}, "aggregate"},
+		"agg project":    {tb.Query{Aggregate: agg, Project: []string{"/name"}}, "aggregate"},
+		"agg cursor":     {tb.Query{Aggregate: agg, Cursor: "next"}, "aggregate"},
+		"agg count":      {tb.Query{Aggregate: agg, Count: true}, "aggregate"},
+		"agg group_by":   {tb.Query{Aggregate: &tb.Aggregate{GroupBy: []string{"/a", "/b", "/c", "/d", "/e"}}}, "aggregate"},
+	} {
+		if _, err := col.Query(t.Context(), tc.q); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v", name, err)
 		}
 	}
