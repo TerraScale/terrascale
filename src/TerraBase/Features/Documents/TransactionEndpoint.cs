@@ -75,11 +75,11 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         return Ops(envelope.RootElement) switch
         {
             Validation error => ErrorResponse.From(error),
-            List<JsonElement> ops => await TransactAsync(database, ops, cancellationToken),
+            List<JsonElement> ops => await TransactAsync(database, ops, waitForRemote, cancellationToken),
         };
     }
 
-    private async ValueTask<IResult> TransactAsync(TenantContext database, List<JsonElement> ops, CancellationToken cancellationToken)
+    private async ValueTask<IResult> TransactAsync(TenantContext database, List<JsonElement> ops, bool waitForRemote, CancellationToken cancellationToken)
     {
         var operations = new List<DocumentOperation>(ops.Count);
         var targets = new HashSet<(string, string)>();
