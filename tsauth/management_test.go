@@ -446,3 +446,62 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func second[T any](_ T, err error) error { return err }
+
+// keyJSON is an API key answer with the given allowed_cidrs JSON array.
+func keyJSON(id, cidrs string) string {
+	return `{"id":"` + id + `","name":"ci","organization_id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","project_id":"01ARZ3NDEKTSV4RRFFQ69G5FA7",` +
+		`"database":"","scopes":["documents:read"],"created_by":"01ARZ3NDEKTSV4RRFFQ69G5FA9","created_at":"2026-10-24T00:00:00Z",` +
+		`"expires_at":null,"allowed_cidrs":` + cidrs + `,"previous_secret_expires_at":null}`
+}
+
+func TestAPIKeyAllowedCIDRs(t *testing.T) {
+	const org, project, key = "01ARZ3NDEKTSV4RRFFQ69G5FA6", "01ARZ3NDEKTSV4RRFFQ69G5FA7", "01ARZ3NDEKTSV4RRFFQ69G5FA8"
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, r.Method+" "+r.URL.Path+" "+string(data))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+			io.WriteString(w, `{"api_key":`+keyJSON(key, `["203.0.113.0/24","2001:db8::/32"]`)+`,"key":"k"}`)
+		case r.Method == http.MethodPut:
+			io.WriteString(w, keyJSON(key, `[]`))
+		default:
+			http.Error(w, "unexpected", http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c, err := tsauth.New(tsauth.Config{Issuer: srv.URL + "/terrascale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := c.WithToken("t")
+	ctx := t.Context()
+
+	created, err := u.CreateAPIKey(ctx, org, project, tsauth.APIKeyRequest{Name: "ci", Scopes: []string{tsauth.ScopeDocumentsRead},
+		AllowedCIDRs: []string{"203.0.113.0/24", "2001:db8::/32"}})
+	if err != nil || !slices.Equal(created.APIKey.AllowedCIDRs, []string{"203.0.113.0/24", "2001:db8::/32"}) {
+		t.Fatalf("CreateAPIKey: %+v, %v", created, err)
+	}
+	if _, err := u.CreateAPIKey(ctx, org, project, tsauth.APIKeyRequest{Name: "plain", Scopes: []string{tsauth.ScopeDocumentsRead}}); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := u.SetAPIKeyAllowedCIDRs(ctx, org, project, key, nil)
+	if err != nil || cleared.ID != key || len(cleared.AllowedCIDRs) != 0 {
+		t.Fatalf("SetAPIKeyAllowedCIDRs: %+v, %v", cleared, err)
+	}
+	if _, err := u.SetAPIKeyAllowedCIDRs(ctx, org, "", key, []string{"198.51.100.7"}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		`POST /v1/terrascale/organizations/` + org + `/projects/` + project + `/api-keys {"name":"ci","scopes":["documents:read"],"allowed_cidrs":["203.0.113.0/24","2001:db8::/32"]}`,
+		`POST /v1/terrascale/organizations/` + org + `/projects/` + project + `/api-keys {"name":"plain","scopes":["documents:read"]}`,
+		`PUT /v1/terrascale/organizations/` + org + `/projects/` + project + `/api-keys/` + key + `/allowed-cidrs {"allowed_cidrs":[]}`,
+		`PUT /v1/terrascale/organizations/` + org + `/api-keys/` + key + `/allowed-cidrs {"allowed_cidrs":["198.51.100.7"]}`,
+	}
+	if !slices.Equal(bodies, want) {
+		t.Fatalf("requests:\n%s\nwant:\n%s", strings.Join(bodies, "\n"), strings.Join(want, "\n"))
+	}
+}

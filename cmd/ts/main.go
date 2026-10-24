@@ -90,7 +90,11 @@ const usage = `usage: ts [-project <name or id>] [-org <name or id>] <command>
                                           lines, newest first; -limit 1..100
   functions delete <db> <name>            delete a function and its logs
   keys list                               list the project's API keys
-  keys create <name> [<db>]               create a read/write API key, shown once
+  keys create <name> [<db>]               create a read/write API key, shown once;
+                                          set its lifetime and networks with
+                                          -expires 30d|90d|365d|never (default
+                                          never) and -allow-cidr <cidr>,... (both
+                                          go before the command)
   keys revoke <id>                        revoke an API key
 
 Sign-in is stored in the user config directory (terrascale/cli.json, mode 0600).
@@ -177,6 +181,8 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	fs.SetOutput(io.Discard)
 	project := fs.String("project", "", "project name or id")
 	org := fs.String("org", "", "organization name or id")
+	expires := fs.String("expires", "", "keys create: 30d, 90d, 365d or never")
+	allowCIDR := fs.String("allow-cidr", "", "keys create: comma-separated CIDRs")
 	if fs.Parse(args) != nil {
 		return errUsage
 	}
@@ -199,6 +205,15 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if name == "completion" {
 		return completion(operands[0], out)
+	}
+	var keyReq tsauth.APIKeyRequest
+	if name == "keys create" {
+		var err error
+		if keyReq, err = newKeyRequest(operands, *expires, *allowCIDR); err != nil {
+			return err
+		}
+	} else if *expires != "" || *allowCIDR != "" {
+		return errUsage
 	}
 	device, err := tsauth.NewDevice(tsauth.DeviceConfig{})
 	if err != nil {
@@ -234,7 +249,60 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if strings.HasPrefix(name, "functions ") {
 		return functions(ctx, s.tb.Database(s.project, operands[0]), name, fn, operands[1:], out)
 	}
+	if name == "keys create" {
+		return createKey(ctx, s, keyReq, out)
+	}
 	return s.run(ctx, name, operands, out)
+}
+
+// keyLifetimeDays maps the -expires values that set a key's lifetime.
+var keyLifetimeDays = map[string]int{"30d": 30, "90d": 90, "365d": 365}
+
+// newKeyRequest reads keys create's operands, <name> and an optional <db>,
+// and its -expires and -allow-cidr flags. A key expires never unless asked.
+func newKeyRequest(operands []string, expires, allowCIDR string) (tsauth.APIKeyRequest, error) {
+	req := tsauth.APIKeyRequest{Name: operands[0], Scopes: []string{tsauth.ScopeDatabasesRead, tsauth.ScopeDatabasesWrite,
+		tsauth.ScopeDocumentsRead, tsauth.ScopeDocumentsWrite}}
+	if len(operands) == 2 {
+		req.Database = operands[1]
+	}
+	if days, ok := keyLifetimeDays[expires]; ok {
+		at := time.Now().Add(time.Duration(days) * 24 * time.Hour)
+		req.ExpiresAt = &at
+	} else if expires != "" && expires != "never" {
+		return req, fmt.Errorf("-expires must be 30d, 90d, 365d or never: %w", errUsage)
+	}
+	if allowCIDR != "" {
+		for _, c := range strings.Split(allowCIDR, ",") {
+			if c = strings.TrimSpace(c); c != "" {
+				req.AllowedCIDRs = append(req.AllowedCIDRs, c)
+			}
+		}
+		if req.AllowedCIDRs == nil {
+			return req, fmt.Errorf("-allow-cidr needs at least one CIDR: %w", errUsage)
+		}
+	}
+	return req, nil
+}
+
+// createKey creates a key and prints its secret once, with its expiry and
+// allowed networks on stderr.
+func createKey(ctx context.Context, s *session, req tsauth.APIKeyRequest, out io.Writer) error {
+	k, err := s.user.CreateAPIKey(ctx, s.org, s.project, req)
+	if err != nil {
+		return err
+	}
+	expires := "never"
+	if k.APIKey.ExpiresAt != nil {
+		expires = k.APIKey.ExpiresAt.Format(time.RFC3339)
+	}
+	networks := "any address"
+	if len(k.APIKey.AllowedCIDRs) > 0 {
+		networks = strings.Join(k.APIKey.AllowedCIDRs, ",")
+	}
+	fmt.Fprintf(os.Stderr, "Created key %s (%s). Expires: %s. Allowed networks: %s.\nStore it now, it is not shown again:\n", k.APIKey.Name, k.APIKey.ID, expires, networks)
+	fmt.Fprintln(out, k.Key)
+	return nil
 }
 
 // credentials are the CLI's sign-in, kept in the user's config directory.
@@ -749,19 +817,6 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", k.Name, k.ID, cmp.Or(k.Database, "*"), strings.Join(k.Scopes, ","), expires)
 		}
 		return w.Flush()
-	case "keys create":
-		req := tsauth.APIKeyRequest{Name: args[0], Scopes: []string{tsauth.ScopeDatabasesRead, tsauth.ScopeDatabasesWrite,
-			tsauth.ScopeDocumentsRead, tsauth.ScopeDocumentsWrite}}
-		if len(args) == 2 {
-			req.Database = args[1]
-		}
-		k, err := s.user.CreateAPIKey(ctx, s.org, s.project, req)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "Created key %s (%s). Store it now, it is not shown again:\n", k.APIKey.Name, k.APIKey.ID)
-		fmt.Fprintln(out, k.Key)
-		return nil
 	case "keys revoke":
 		if err := s.user.RevokeAPIKey(ctx, s.org, s.project, args[0]); err != nil {
 			return err

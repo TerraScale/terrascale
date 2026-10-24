@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	v1 "terrascale.tech/sdk/v1"
 )
@@ -190,5 +191,30 @@ func TestCompletionOffersEveryCommand(t *testing.T) {
 	}
 	if err := run(t.Context(), []string{"completion", "tcsh"}, io.Discard); !errors.Is(err, errUsage) {
 		t.Fatalf("tcsh = %v", err)
+	}
+}
+
+func TestNewKeyRequestFlags(t *testing.T) {
+	req, err := newKeyRequest([]string{"ci", "app"}, "", "")
+	if err != nil || req.ExpiresAt != nil || req.AllowedCIDRs != nil || req.Database != "app" || req.Name != "ci" {
+		t.Fatalf("default: %+v, %v", req, err)
+	}
+	req, err = newKeyRequest([]string{"ci"}, "never", " 203.0.113.0/24, 198.51.100.7 ,")
+	if err != nil || req.ExpiresAt != nil || !slices.Equal(req.AllowedCIDRs, []string{"203.0.113.0/24", "198.51.100.7"}) {
+		t.Fatalf("never and cidrs: %+v, %v", req, err)
+	}
+	for expires, days := range map[string]int{"30d": 30, "90d": 90, "365d": 365} {
+		req, err = newKeyRequest([]string{"ci"}, expires, "")
+		if err != nil || req.ExpiresAt == nil {
+			t.Fatalf("%s: %+v, %v", expires, req, err)
+		}
+		if got := time.Until(*req.ExpiresAt).Round(time.Hour); got != time.Duration(days)*24*time.Hour {
+			t.Errorf("%s expires in %v", expires, got)
+		}
+	}
+	for _, bad := range [][2]string{{"7d", ""}, {"1y", ""}, {"", ","}, {"", " "}} {
+		if _, err := newKeyRequest([]string{"ci"}, bad[0], bad[1]); !errors.Is(err, errUsage) {
+			t.Errorf("expires %q cidrs %q: %v, want usage", bad[0], bad[1], err)
+		}
 	}
 }

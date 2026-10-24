@@ -191,6 +191,9 @@ type APIKey struct {
 	CreatedBy      string     `json:"created_by" ulid:"required"`
 	CreatedAt      time.Time  `json:"created_at"`
 	ExpiresAt      *time.Time `json:"expires_at"`
+	// AllowedCIDRs are the client networks the key works from; empty allows
+	// any address.
+	AllowedCIDRs []string `json:"allowed_cidrs"`
 	// PreviousSecretExpiresAt is until when the secret before the last
 	// rotation still works.
 	PreviousSecretExpiresAt *time.Time `json:"previous_secret_expires_at"`
@@ -211,6 +214,9 @@ type APIKeyRequest struct {
 	Database string
 	// ExpiresAt, when set, ends the key.
 	ExpiresAt *time.Time
+	// AllowedCIDRs, when set, limits the key to these client networks, such
+	// as 203.0.113.0/24 or 2001:db8::/32.
+	AllowedCIDRs []string
 }
 
 // AuditEvent is one recorded change, newest first.
@@ -437,11 +443,12 @@ func (u *User) CreateAPIKey(ctx context.Context, org, project string, req APIKey
 		return nil, errors.New("tsauth: only a project key can name a database")
 	}
 	body := struct {
-		Name      string     `json:"name"`
-		Scopes    []string   `json:"scopes"`
-		Database  *string    `json:"database,omitempty"`
-		ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	}{Name: req.Name, Scopes: req.Scopes, ExpiresAt: req.ExpiresAt}
+		Name         string     `json:"name"`
+		Scopes       []string   `json:"scopes"`
+		Database     *string    `json:"database,omitempty"`
+		ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+		AllowedCIDRs []string   `json:"allowed_cidrs,omitempty"`
+	}{Name: req.Name, Scopes: req.Scopes, ExpiresAt: req.ExpiresAt, AllowedCIDRs: req.AllowedCIDRs}
 	if req.Database != "" {
 		body.Database = &req.Database
 	}
@@ -456,6 +463,15 @@ func (u *User) APIKeys(ctx context.Context, org, project string, opts PageOption
 // APIKey reads a key.
 func (u *User) APIKey(ctx context.Context, org, project, key string) (*APIKey, error) {
 	return call[APIKey](ctx, u, http.MethodGet, keyPath(org, project, key), nil, nil)
+}
+
+// SetAPIKeyAllowedCIDRs replaces a key's client network allowlist; an empty
+// list allows any address.
+func (u *User) SetAPIKeyAllowedCIDRs(ctx context.Context, org, project, key string, cidrs []string) (*APIKey, error) {
+	if cidrs == nil {
+		cidrs = []string{}
+	}
+	return call[APIKey](ctx, u, http.MethodPut, keyPath(org, project, key, "allowed-cidrs"), nil, map[string][]string{"allowed_cidrs": cidrs})
 }
 
 // RevokeAPIKey revokes a key at once; tokens already issued live out their
