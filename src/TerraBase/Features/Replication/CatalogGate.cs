@@ -517,6 +517,23 @@ internal sealed partial class CatalogGate : BackgroundService, ICatalogGate
                 return true;
             }
 
+            if (_revocation is { } witness && witness.Replica != _self.Id)
+            {
+                // The authenticated anchor names this exact file and a commit no later than the head held at start.
+                // That proves this particular prefix even when an unclean restart changed our local replica epoch.
+                // Persist it in the same file's applied vector so a whole pinned snapshot can export the proof. A
+                // marker joined on its own, a newer epoch, or a different/older file never reaches this branch.
+                var store = await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+                await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+                if (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != _startIncarnation)
+                {
+                    return null;
+                }
+
+                await transaction.RecordAppliedAsync(witness.Replica, witness.Stamp, cancellationToken).ConfigureAwait(false);
+                _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             _anchorHeld = true;
             return false;
         }
