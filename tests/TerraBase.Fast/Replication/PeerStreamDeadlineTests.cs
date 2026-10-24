@@ -911,7 +911,8 @@ public sealed class PeerStreamDeadlineTests
         var waiter = api.Server.Services.GetRequiredService<RemoteAckWaiter>();
         using var lease = waiter.TryAdmit(database) is RemoteLease admitted ? admitted : throw new InvalidOperationException("a free confirmation slot was refused");
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
-        await Assert.That((await peer.NextAsync()).KindCase).IsEqualTo(refill ? PushFrame.KindOneofCase.Refill : PushFrame.KindOneofCase.Batch);
+        var sent = await peer.NextAsync();
+        await Assert.That(sent.KindCase).IsEqualTo(refill ? PushFrame.KindOneofCase.Refill : PushFrame.KindOneofCase.Batch);
         await time.UntilTimerAsync(Idle, after: 0, period: Idle);
         if (refill)
         {
@@ -934,14 +935,24 @@ public sealed class PeerStreamDeadlineTests
         await Assert.That(waiting.IsCompleted).IsFalse();
         release.SetResult();
         using var deadline = new CancellationTokenSource(Deadline);
-        await source.UntilAckedAsync(database, ReplicaId.Of(1, 9, 0), marker.ChangeId, deadline.Token);
+        // Admission can move a refill below the marker; only the frame's own position was acknowledged.
+        var acknowledged = (long)(refill ? sent.Refill.ChangeId : sent.Batch.LastChangeId);
+        await source.UntilAckedAsync(database, ReplicaId.Of(1, 9, 0), acknowledged, deadline.Token);
         await Assert.That(peer.Streams).IsEqualTo(1);
+        if (refill && acknowledged < marker.ChangeId)
+        {
+            var replay = (await peer.NextAsync()).Batch;
+            await Assert.That(replay).IsNotNull();
+            await Assert.That((long)replay!.LastChangeId).IsEqualTo(marker.ChangeId);
+            await Assert.That(source.AckedBy(database, ReplicaId.Of(1, 9, 0))).IsEqualTo(acknowledged);
+            await Assert.That(waiting.IsCompleted).IsFalse();
+        }
         if (!refill)
         {
             await Assert.That(await waiter.WaitAsync(database, marker, () => true, deadline.Token)).IsTrue();
         }
 
-        _ = await waiting;
+        await Assert.That(await waiting).IsEqualTo(!refill);
     }
 
     // The sender calls it on its response reader: count only, never block.
@@ -1195,6 +1206,7 @@ public sealed class PeerStreamDeadlineTests
         public ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) => source.RecordStableAsync(database, incarnation, peer, stable, cancellationToken);
         public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) => source.RetainsAsync(database, incarnation, after, cancellationToken);
         public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) => source.HeadAsync(database, incarnation, cancellationToken);
+        public ValueTask<long?> RetainedAfterAsync(TenantContext database, Ulid incarnation, long? through, long head, CancellationToken cancellationToken) => source.RetainedAfterAsync(database, incarnation, through, head, cancellationToken);
         public Task ChangedAsync(CancellationToken cancellationToken) => source.ChangedAsync(cancellationToken);
         public IDisposable Subscribe(Action<TenantContext> changed) => source.Subscribe(changed);
 
@@ -1274,6 +1286,7 @@ public sealed class PeerStreamDeadlineTests
         public ValueTask<bool> ProveAsync(TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken) => inner.ProveAsync(database, incarnation, from, through, held, cancellationToken);
         public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) => inner.RetainsAsync(database, incarnation, after, cancellationToken);
         public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) => inner.HeadAsync(database, incarnation, cancellationToken);
+        public ValueTask<long?> RetainedAfterAsync(TenantContext database, Ulid incarnation, long? through, long head, CancellationToken cancellationToken) => inner.RetainedAfterAsync(database, incarnation, through, head, cancellationToken);
         public IDisposable Subscribe(Action<TenantContext> changed) => inner.Subscribe(database =>
         {
             // Match discovery's client-only scope; frontier tests also delay these commit wakes.

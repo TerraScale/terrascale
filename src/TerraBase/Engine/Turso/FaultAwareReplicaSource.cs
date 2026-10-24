@@ -42,6 +42,9 @@ internal sealed class FaultAwareReplicaSource(
     public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) =>
         ReadAsync(database, incarnation, () => source.HeadAsync(database, incarnation, cancellationToken), static () => null, cancellationToken);
 
+    public ValueTask<long?> RetainedAfterAsync(TenantContext database, Ulid incarnation, long? through, long head, CancellationToken cancellationToken) =>
+        ReadAsync(database, incarnation, () => source.RetainedAfterAsync(database, incarnation, through, head, cancellationToken), static () => null, cancellationToken);
+
     public ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken) =>
         ReadAsync(database, expected, async () =>
         {

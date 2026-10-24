@@ -109,6 +109,13 @@ public interface IChangeGroupSource
 
     /// <summary>The newest change id of <paramref name="incarnation"/>, or 0: where a refilled peer's stream goes on; null when refused.</summary>
     ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// A complete retained transaction boundary no greater than <paramref name="through"/>, clamped to the oldest
+    /// retained boundary. Null through selects the oldest boundary up to 64 MiB of capture, otherwise the previously
+    /// captured head; null result means the copy was refused.
+    /// </summary>
+    ValueTask<long?> RetainedAfterAsync(TenantContext database, Ulid incarnation, long? through, long head, CancellationToken cancellationToken);
 }
 
 /// <summary>Where a receiver joins the groups an origin streams to it.</summary>
